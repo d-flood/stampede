@@ -1,144 +1,172 @@
 <script lang="ts">
-	import { appearance, type Appearance } from '#lib/config.svelte.ts';
-	import { connect, type Device, type ServerMessage } from '#lib/device.ts';
-	import { FitAddon, Terminal, init } from 'ghostty-web';
+	import { connect, type Device, type Project, type ServerMessage } from '#lib/device.ts';
+	import { form } from '#lib/form.ts';
+	import { labels } from '#lib/projects.ts';
+	import Picker from '#lib/shell/Picker.svelte';
+	import Rail from '#lib/shell/Rail.svelte';
+	import Button from '#lib/ui/Button.svelte';
+	import Dialog from '#lib/ui/Dialog.svelte';
+	import IconButton from '#lib/ui/IconButton.svelte';
 	import { onMount } from 'svelte';
+	import SidebarSimple from '~icons/ph/sidebar-simple';
 
-	let container: HTMLDivElement;
 	let device: Device | undefined;
-	let view: Terminal | undefined;
-	let fit: FitAddon | undefined;
-	let current: { terminalId: string; channel: number } | undefined;
-	let writing = false;
-	let ready = $state(false);
-	let connected = $state(false);
-	let shown = '';
+	let projects = $state<Project[]>([]);
+	let chosen = $state<string>();
+	let sidebar = $state(form() === 'desktop');
+	let picking = $state(false);
+	let directories = $state<string[]>([]);
+	let settle: ((error?: string) => void) | undefined;
+
+	const projectLabels = $derived(labels(projects));
+	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
 
 	onMount(() => {
-		let disposed = false;
-		init().then(() => {
-			if (!disposed) ready = true;
-		});
-		container.addEventListener('focusin', focus);
-		container.addEventListener('pointerdown', focus);
-		new ResizeObserver(propose).observe(container);
-		return () => {
-			disposed = true;
-			device?.close();
-			view?.dispose();
-		};
+		device = connect({ message, output() {} });
+		return () => device?.close();
 	});
-
-	$effect(() => {
-		if (!ready) return;
-		const next = appearance();
-		const key = JSON.stringify(next);
-		if (key === shown) return;
-		let stale = false;
-		document.fonts.load(`15px ${next.fontFamily}`).then(() => {
-			if (stale) return;
-			shown = key;
-			open(next);
-		});
-		return () => {
-			stale = true;
-		};
-	});
-
-	// ghostty-web can't change its theme after open(), so a new look gets a
-	// new view, re-attached for a fresh snapshot.
-	function open({ theme, fontFamily }: Appearance) {
-		view?.dispose();
-		const element = document.createElement('div');
-		container.replaceChildren(element);
-		view = window.terminal = new Terminal({ theme, fontFamily });
-		fit = new FitAddon();
-		view.loadAddon(fit);
-		view.open(element);
-		view.onData((data) => {
-			if (current && !writing) device?.input(current.channel, data);
-		});
-		if (!device) {
-			device = connect({ message, output });
-		} else if (current) {
-			device.send({ type: 'terminal.detach', channel: current.channel });
-			device.send({ type: 'terminal.attach', terminalId: current.terminalId });
-			current = undefined;
-		}
-	}
 
 	function message(message: ServerMessage) {
 		switch (message.type) {
-			case 'hello': {
-				connected = true;
-				const terminals = message.terminals;
-				const terminalId = terminals.find((id) => id === current?.terminalId) ?? terminals.at(-1);
-				if (terminalId) device?.send({ type: 'terminal.attach', terminalId });
+			case 'hello':
+				device?.send({ type: 'projects.list' });
 				break;
-			}
-			case 'terminal.attached':
-				current = { terminalId: message.terminalId, channel: message.channel };
-				view?.resize(message.cols, message.rows);
-				write('\x1bc');
-				propose();
+			case 'projects.changed':
+				projects = message.projects;
 				break;
-			case 'terminal.resized':
-				if (message.terminalId === current?.terminalId) view?.resize(message.cols, message.rows);
+			case 'picker.listed':
+				directories = message.directories;
+				break;
+			case 'project.opened':
+				chosen = message.projectId;
+				picking = false;
+				settle?.();
+				break;
+			case 'project.error':
+				settle?.(message.error);
 				break;
 		}
 	}
 
-	function output(channel: number, bytes: Uint8Array) {
-		if (channel === current?.channel) write(bytes);
+	function pick() {
+		directories = [];
+		picking = true;
+		device?.send({ type: 'picker.list' });
 	}
 
-	// Query responses come from the holder; ghostty-web's own ones are
-	// emitted synchronously inside write() and dropped by onData.
-	function write(data: string | Uint8Array) {
-		writing = true;
-		view?.write(data);
-		writing = false;
+	function open(path: string): Promise<string | undefined> {
+		settle?.();
+		device?.send({ type: 'project.open', path });
+		return new Promise((resolve) => (settle = resolve));
 	}
 
-	function propose() {
-		const size = fit?.proposeDimensions();
-		if (current && size) device?.send({ type: 'terminal.resize', terminalId: current.terminalId, ...size });
-	}
-
-	function focus() {
-		if (current) device?.send({ type: 'terminal.focus', terminalId: current.terminalId });
-	}
-
-	function create() {
-		current = undefined;
-		write('\x1bc');
-		device?.send({ type: 'terminal.create' });
-		view?.focus();
+	function reorder(order: string[]) {
+		projects = order.flatMap((id) => projects.filter((project) => project.id === id));
+		device?.send({ type: 'project.reorder', order });
 	}
 </script>
 
-<main>
-	<button onclick={create} disabled={!connected}>New Terminal</button>
-	<div class="terminal" bind:this={container}></div>
-</main>
+<div class="shell">
+	<Rail
+		{projects}
+		labels={projectLabels}
+		focused={focused?.id}
+		onfocus={(id) => (chosen = id)}
+		onreorder={reorder}
+		onclose={(projectId) => device?.send({ type: 'project.close', projectId })}
+		onpick={pick}
+	/>
+
+	{#if sidebar}
+		<aside aria-label="Sidebar">
+			{#if focused}
+				<h1 title={focused.path}>{projectLabels.get(focused.id)}</h1>
+			{/if}
+		</aside>
+	{/if}
+
+	<main>
+		<div class="strip">
+			<IconButton label="Sidebar" aria-expanded={sidebar} onclick={() => (sidebar = !sidebar)}>
+				<SidebarSimple />
+			</IconButton>
+			<div role="tablist" aria-label="Tabs"></div>
+		</div>
+		<div class="tabs">
+			{#if !focused}
+				<div class="empty">
+					<p>No Project open</p>
+					<Button variant="primary" onclick={pick}>Open Project</Button>
+				</div>
+			{/if}
+		</div>
+	</main>
+</div>
+
+<Dialog bind:open={picking} title="Open Project">
+	<Picker {directories} onopen={open} />
+</Dialog>
 
 <style>
-	main {
-		display: grid;
-		grid-template-rows: auto 1fr;
+	.shell {
+		display: flex;
 		height: 100dvh;
 	}
 
-	button {
-		justify-self: start;
+	aside {
+		flex: none;
+		width: 20rem;
+		border-right: var(--border-width) solid var(--border);
+		background: var(--surface-1);
 	}
 
-	.terminal {
+	h1 {
+		margin: 0;
+		padding: var(--space-3) var(--space-4) 0;
+		overflow: hidden;
+		font-size: var(--font-size-lg);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	main {
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	.strip {
+		display: flex;
+		align-items: center;
+		border-bottom: var(--border-width) solid var(--border);
+		background: var(--surface-1);
+	}
+
+	[role='tablist'] {
+		display: flex;
+		flex: 1;
+		align-self: stretch;
+		min-width: 0;
+		min-height: calc(var(--target-min) + var(--space-2));
+	}
+
+	.tabs {
+		flex: 1;
 		min-height: 0;
-		overflow: auto;
 	}
 
-	.terminal > :global(div) {
+	.empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-3);
 		height: 100%;
+		color: var(--muted-fg);
+	}
+
+	.empty p {
+		margin: 0;
 	}
 </style>

@@ -1,0 +1,131 @@
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tokio::sync::watch;
+
+use crate::config::expand;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Project {
+    pub id: String,
+    pub path: String,
+}
+
+pub type List = Arc<Vec<Project>>;
+
+pub struct Projects {
+    file: PathBuf,
+    list: watch::Sender<List>,
+}
+
+impl Projects {
+    pub fn load(data_dir: &Path) -> io::Result<Self> {
+        let file = data_dir.join("projects.json");
+        let list = match fs::read(&file) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+            bytes => serde_json::from_slice(&bytes?)?,
+        };
+        Ok(Self { file, list: watch::Sender::new(Arc::new(list)) })
+    }
+
+    pub fn list(&self) -> List {
+        self.list.borrow().clone()
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<List> {
+        self.list.subscribe()
+    }
+
+    pub fn open(&self, path: &str) -> Result<String, String> {
+        let path = expand(PathBuf::from(path));
+        if !path.is_absolute() {
+            return Err("Not an absolute path".to_owned());
+        }
+        let path = match fs::canonicalize(&path) {
+            Ok(path) if path.is_dir() => path,
+            Ok(_) => return Err("Not a directory".to_owned()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err("No such directory".to_owned());
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let path = path.into_os_string().into_string().map_err(|_| "Path is not UTF-8")?;
+        let id = id(&path);
+        self.change(|list| {
+            if list.iter().any(|project| project.id == id) {
+                return false;
+            }
+            list.push(Project { id: id.clone(), path });
+            true
+        });
+        Ok(id)
+    }
+
+    pub fn close(&self, id: &str) {
+        self.change(|list| {
+            let before = list.len();
+            list.retain(|project| project.id != id);
+            list.len() != before
+        });
+    }
+
+    pub fn reorder(&self, order: &[String]) {
+        self.change(|list| {
+            let before = list.clone();
+            list.sort_by_key(|project| {
+                order.iter().position(|id| *id == project.id).unwrap_or(usize::MAX)
+            });
+            *list != before
+        });
+    }
+
+    fn change(&self, modify: impl FnOnce(&mut Vec<Project>) -> bool) {
+        self.list.send_if_modified(|list| {
+            let changed = modify(Arc::make_mut(list));
+            if changed && let Err(error) = save(&self.file, list) {
+                eprintln!("cannot save {}: {error}", self.file.display());
+            }
+            changed
+        });
+    }
+}
+
+fn save(file: &Path, list: &[Project]) -> io::Result<()> {
+    if let Some(dir) = file.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let tmp = file.with_extension("json.tmp");
+    fs::write(&tmp, serde_json::to_vec_pretty(list)?)?;
+    fs::rename(tmp, file)
+}
+
+fn id(path: &str) -> String {
+    Sha256::digest(path)[..6].iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+pub fn directories(roots: &[PathBuf]) -> Vec<String> {
+    let home = crate::home();
+    let mut directories = Vec::new();
+    for root in roots {
+        let Ok(entries) = fs::read_dir(root) else { continue };
+        let mut children: Vec<_> = entries
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .filter(|path| path.is_dir())
+            .filter_map(|path| {
+                let path = match path.strip_prefix(&home) {
+                    Ok(rest) => Path::new("~").join(rest),
+                    Err(_) => path,
+                };
+                path.into_os_string().into_string().ok()
+            })
+            .collect();
+        children.sort();
+        directories.extend(children);
+    }
+    directories
+}

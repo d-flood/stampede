@@ -9,7 +9,7 @@ function screen(page: Page) {
 }
 
 test('a new Terminal runs echo hi', async ({ page }) => {
-	await page.goto('/');
+	await page.goto('/dev/terminal');
 	await page.getByRole('button', { name: 'New Terminal' }).click();
 	await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/\S/);
 	await page.keyboard.type('echo hi');

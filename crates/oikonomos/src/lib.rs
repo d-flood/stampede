@@ -2,6 +2,7 @@ mod config;
 mod device;
 mod holder;
 mod install;
+mod projects;
 mod protocol;
 mod terminals;
 mod themes;
@@ -22,6 +23,7 @@ use tokio::sync::watch;
 use config::{Config, Font};
 pub use holder::{HoldArgs, hold};
 pub use install::{InstallArgs, UninstallArgs, install, uninstall};
+use projects::Projects;
 use terminals::Terminals;
 use themes::Theme;
 
@@ -47,6 +49,7 @@ pub(crate) fn home() -> PathBuf {
 #[derive(Clone)]
 struct AppState {
     terminals: Arc<Terminals>,
+    projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
 }
 
@@ -64,10 +67,11 @@ fn router(state: AppState) -> Router {
 pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let config = config::watch(&args.config)?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
+    let projects = Arc::new(Projects::load(&args.data_dir)?);
     let terminals = Arc::new(Terminals::new(args.data_dir));
     terminals.restore().await?;
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, router(AppState { terminals, config })).await
+    axum::serve(listener, router(AppState { terminals, projects, config })).await
 }
 
 async fn version() -> Json<Value> {

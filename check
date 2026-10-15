@@ -6,7 +6,13 @@ OIKONOMOS_E2E_PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind(("12
 OIKONOMOS_E2E_ROOT=$(mktemp -d -t oikonomos-e2e-XXXXXX)
 export OIKONOMOS_E2E_PORT OIKONOMOS_E2E_ROOT
 mkdir "$OIKONOMOS_E2E_ROOT/data" "$OIKONOMOS_E2E_ROOT/projects"
-touch "$OIKONOMOS_E2E_ROOT/config.toml"
+mkdir "$OIKONOMOS_E2E_ROOT/projects/alpha" "$OIKONOMOS_E2E_ROOT/projects/beta"
+alpha=(git -C "$OIKONOMOS_E2E_ROOT/projects/alpha" -c init.defaultBranch=main -c user.name=oikonomos -c user.email=e2e@oikonomos.invalid -c commit.gpgsign=false)
+"${alpha[@]}" init -q
+echo "# alpha" > "$OIKONOMOS_E2E_ROOT/projects/alpha/README.md"
+"${alpha[@]}" add README.md
+"${alpha[@]}" commit -qm "Initial commit"
+echo "roots = [\"$OIKONOMOS_E2E_ROOT/projects\"]" > "$OIKONOMOS_E2E_ROOT/config.toml"
 
 cleanup() {
 	pkill -f -- "${OIKONOMOS_E2E_ROOT//./\\.}" || true

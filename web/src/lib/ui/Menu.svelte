@@ -1,36 +1,54 @@
 <script lang="ts">
-	import { DropdownMenu } from 'bits-ui';
+	import { ContextMenu, DropdownMenu } from 'bits-ui';
 	import type { Snippet } from 'svelte';
 
 	type Item = { label: string; onselect: () => void; disabled?: boolean };
+	type Layer = { wrapperProps: Record<string, unknown>; props: Record<string, unknown> };
 
-	let { items, trigger }: { items: Item[]; trigger: Snippet<[Record<string, unknown>]> } = $props();
+	let {
+		items,
+		context = false,
+		trigger
+	}: { items: Item[]; context?: boolean; trigger: Snippet<[Record<string, unknown>]> } = $props();
 </script>
 
-<DropdownMenu.Root>
-	<DropdownMenu.Trigger>
-		{#snippet child({ props })}
-			{@render trigger(props)}
-		{/snippet}
-	</DropdownMenu.Trigger>
-	<DropdownMenu.Portal>
-		<DropdownMenu.Content sideOffset={4} align="start">
-			{#snippet child({ wrapperProps, props })}
-				<div {...wrapperProps}>
-					<div {...props} class="menu">
-						{#each items as item (item.label)}
-							<DropdownMenu.Item onSelect={item.onselect} disabled={item.disabled}>
-								{#snippet child({ props })}
-									<div {...props} class="item">{item.label}</div>
-								{/snippet}
-							</DropdownMenu.Item>
-						{/each}
-					</div>
-				</div>
+{#snippet content({ wrapperProps, props }: Layer)}
+	<div {...wrapperProps}>
+		<div {...props} class="menu">
+			{#each items as item (item.label)}
+				<DropdownMenu.Item onSelect={item.onselect} disabled={item.disabled}>
+					{#snippet child({ props })}
+						<div {...props} class="item">{item.label}</div>
+					{/snippet}
+				</DropdownMenu.Item>
+			{/each}
+		</div>
+	</div>
+{/snippet}
+
+{#if context}
+	<ContextMenu.Root>
+		<ContextMenu.Trigger>
+			{#snippet child({ props })}
+				{@render trigger(props)}
 			{/snippet}
-		</DropdownMenu.Content>
-	</DropdownMenu.Portal>
-</DropdownMenu.Root>
+		</ContextMenu.Trigger>
+		<ContextMenu.Portal>
+			<ContextMenu.Content child={content} />
+		</ContextMenu.Portal>
+	</ContextMenu.Root>
+{:else}
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger>
+			{#snippet child({ props })}
+				{@render trigger(props)}
+			{/snippet}
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Portal>
+			<DropdownMenu.Content sideOffset={4} align="start" child={content} />
+		</DropdownMenu.Portal>
+	</DropdownMenu.Root>
+{/if}
 
 <style>
 	.menu {

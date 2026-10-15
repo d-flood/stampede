@@ -11,12 +11,14 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
-    sync::mpsc,
+    sync::{mpsc, watch},
     task::{AbortHandle, JoinSet},
 };
 
 use crate::{
     AppState,
+    config::Config,
+    projects::{self, Projects},
     protocol::Size,
     terminals::{Attachment, Terminals},
 };
@@ -39,6 +41,16 @@ enum Control {
     Focus { terminal_id: String },
     #[serde(rename = "terminal.detach")]
     Detach { channel: u32 },
+    #[serde(rename = "projects.list")]
+    ListProjects {},
+    #[serde(rename = "project.open")]
+    OpenProject { path: String },
+    #[serde(rename = "project.close")]
+    CloseProject { project_id: String },
+    #[serde(rename = "project.reorder")]
+    ReorderProjects { order: Vec<String> },
+    #[serde(rename = "picker.list")]
+    ListPicker {},
 }
 
 pub async fn upgrade(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> Response {
@@ -48,13 +60,15 @@ pub async fn upgrade(State(state): State<AppState>, upgrade: WebSocketUpgrade) -
 struct Device {
     id: String,
     terminals: Arc<Terminals>,
+    projects: Arc<Projects>,
+    config: watch::Receiver<Arc<Config>>,
     outgoing: mpsc::UnboundedSender<Message>,
     channels: HashMap<u32, (String, AbortHandle)>,
     next_channel: u32,
     attachments: JoinSet<()>,
 }
 
-async fn connect(socket: WebSocket, AppState { terminals, mut config }: AppState) {
+async fn connect(socket: WebSocket, AppState { terminals, projects, mut config }: AppState) {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = mpsc::unbounded_channel();
     let writer = tokio::spawn(async move {
@@ -64,9 +78,12 @@ async fn connect(socket: WebSocket, AppState { terminals, mut config }: AppState
             }
         }
     });
+    let mut list = projects.subscribe();
     let mut device = Device {
         id: uuid::Uuid::new_v4().to_string(),
         terminals,
+        projects,
+        config: config.clone(),
         outgoing,
         channels: HashMap::new(),
         next_channel: 1,
@@ -88,6 +105,10 @@ async fn connect(socket: WebSocket, AppState { terminals, mut config }: AppState
             Ok(()) = config.changed() => {
                 config.mark_unchanged();
                 send(&device.outgoing, json!({ "type": "config.changed" }));
+            }
+            Ok(()) = list.changed() => {
+                let projects = list.borrow_and_update().clone();
+                send(&device.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
             }
         }
     }
@@ -119,6 +140,25 @@ impl Device {
                 if let Some((_, attachment)) = self.channels.remove(&channel) {
                     attachment.abort();
                 }
+            }
+            Control::ListProjects {} => {
+                let projects = self.projects.list();
+                send(&self.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
+            }
+            Control::OpenProject { path } => match self.projects.open(&path) {
+                Ok(project_id) => {
+                    send(&self.outgoing, json!({ "type": "project.opened", "projectId": project_id }))
+                }
+                Err(error) => {
+                    send(&self.outgoing, json!({ "type": "project.error", "path": path, "error": error }))
+                }
+            },
+            Control::CloseProject { project_id } => self.projects.close(&project_id),
+            Control::ReorderProjects { order } => self.projects.reorder(&order),
+            Control::ListPicker {} => {
+                let roots = self.config.borrow().roots.clone();
+                let directories = projects::directories(&roots);
+                send(&self.outgoing, json!({ "type": "picker.listed", "directories": directories }));
             }
         }
     }

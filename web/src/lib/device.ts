@@ -1,10 +1,16 @@
 import { loadConfig } from '#lib/config.svelte.ts';
 
+export type Project = { id: string; path: string };
+
 export type ServerMessage =
 	| { type: 'hello'; version: string; terminals: string[] }
 	| { type: 'terminal.attached'; terminalId: string; channel: number; cols: number; rows: number }
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
-	| { type: 'config.changed' };
+	| { type: 'config.changed' }
+	| { type: 'projects.changed'; projects: Project[] }
+	| { type: 'project.opened'; projectId: string }
+	| { type: 'project.error'; path: string; error: string }
+	| { type: 'picker.listed'; directories: string[] };
 
 export type ClientMessage =
 	| { type: 'hello'; deviceId: string }
@@ -12,7 +18,12 @@ export type ClientMessage =
 	| { type: 'terminal.attach'; terminalId: string }
 	| { type: 'terminal.resize'; terminalId: string; cols: number; rows: number }
 	| { type: 'terminal.focus'; terminalId: string }
-	| { type: 'terminal.detach'; channel: number };
+	| { type: 'terminal.detach'; channel: number }
+	| { type: 'projects.list' }
+	| { type: 'project.open'; path: string }
+	| { type: 'project.close'; projectId: string }
+	| { type: 'project.reorder'; order: string[] }
+	| { type: 'picker.list' };
 
 export type Device = {
 	send(message: ClientMessage): void;

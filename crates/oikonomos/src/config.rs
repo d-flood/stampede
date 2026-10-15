@@ -14,11 +14,18 @@ use crate::themes::Theme;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 #[serde(default)]
 struct Settings {
+    roots: Vec<PathBuf>,
     theme: Option<String>,
     font: Fonts,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { roots: vec!["~/repos".into()], theme: None, font: Fonts::default() }
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -40,10 +47,21 @@ impl Default for Mono {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Config {
+    pub roots: Vec<PathBuf>,
     pub theme: Theme,
     pub font: Font,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            roots: Settings::default().roots.into_iter().map(expand).collect(),
+            theme: Theme::default(),
+            font: Font::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -73,20 +91,25 @@ impl Config {
             Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
             text => text?,
         };
-        let Settings { theme, font: Fonts { mono } } = toml::from_str(&text)?;
+        let Settings { roots, theme, font: Fonts { mono } } = toml::from_str(&text)?;
         let faces = mono.files.into_iter().enumerate().map(face).collect::<Result<_, _>>()?;
         Ok(Self {
+            roots: roots.into_iter().map(expand).collect(),
             theme: Theme::resolve(theme.as_deref())?,
             font: Font { family: mono.family, faces },
         })
     }
 }
 
-fn face((index, path): (usize, PathBuf)) -> Result<Face, Error> {
-    let path = match path.strip_prefix("~") {
+pub fn expand(path: PathBuf) -> PathBuf {
+    match path.strip_prefix("~") {
         Ok(rest) => crate::home().join(rest),
         Err(_) => path,
-    };
+    }
+}
+
+fn face((index, path): (usize, PathBuf)) -> Result<Face, Error> {
+    let path = expand(path);
     let data = fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     let (weight, style) = match ttf_parser::Face::parse(&data, 0) {
         Ok(face) => {
