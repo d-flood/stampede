@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+
+OIKONOMOS_E2E_PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+OIKONOMOS_E2E_ROOT=$(mktemp -d -t oikonomos-e2e-XXXXXX)
+export OIKONOMOS_E2E_PORT OIKONOMOS_E2E_ROOT
+mkdir "$OIKONOMOS_E2E_ROOT/data" "$OIKONOMOS_E2E_ROOT/projects"
+touch "$OIKONOMOS_E2E_ROOT/config.toml"
+
+cleanup() {
+	pkill -f -- "${OIKONOMOS_E2E_ROOT//./\\.}" || true
+	rm -rf "$OIKONOMOS_E2E_ROOT"
+}
+trap cleanup EXIT
+
+case ${1:-} in
+	"")
+		pnpm -C web install --frozen-lockfile
+		pnpm -C web check
+		pnpm -C web build
+		cargo build --release
+		cargo test --workspace
+		pnpm -C web exec playwright test
+		;;
+	rust)
+		cargo test --workspace "${@:2}"
+		;;
+	e2e)
+		pnpm -C web install --frozen-lockfile
+		pnpm -C web build
+		cargo build --release
+		pnpm -C web exec playwright test "${@:2}"
+		;;
+	*)
+		echo "usage: ./check [rust|e2e] [args…]" >&2
+		exit 2
+		;;
+esac
