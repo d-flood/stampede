@@ -175,8 +175,9 @@
 
 	.tabs {
 		display: flex;
-		overflow-x: auto;
+		overflow: auto hidden;
 		border-bottom: var(--border-width) solid var(--border);
+		background: var(--surface-1);
 	}
 
 	.swatches {
