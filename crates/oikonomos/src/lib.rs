@@ -1,4 +1,9 @@
-use std::{net::Ipv4Addr, path::PathBuf};
+mod device;
+mod holder;
+mod protocol;
+mod terminals;
+
+use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use axum::{
     Json, Router,
@@ -8,6 +13,9 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 use serde_json::{Value, json};
+
+pub use holder::{HoldArgs, hold};
+use terminals::Terminals;
 
 #[derive(RustEmbed)]
 #[folder = "../../web/build"]
@@ -24,20 +32,22 @@ pub struct ServeArgs {
     pub config: PathBuf,
 }
 
-fn home() -> PathBuf {
+pub(crate) fn home() -> PathBuf {
     std::env::home_dir().expect("HOME is not set")
 }
 
-pub fn router() -> Router {
+pub fn router(terminals: Arc<Terminals>) -> Router {
     Router::new()
         .route("/api/version", get(version))
+        .route("/ws", get(device::upgrade))
         .fallback(spa)
+        .with_state(terminals)
 }
 
 pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, router()).await
+    axum::serve(listener, router(Arc::new(Terminals::new(args.data_dir)))).await
 }
 
 async fn version() -> Json<Value> {
