@@ -9,13 +9,17 @@ axum = { version = "0.8.9", features = ["ws"] }
 clap = { version = "4.6.7", features = ["derive"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
 libghostty-vt = { git = "https://github.com/uzaaft/libghostty-rs", rev = "d2036baeb605d31d09a9e2ba6d0c923e04c34d54" }
+mime_guess = "2.0.5"
 nix = { version = "0.31.3", features = ["process"] }
+notify = "8.2.0"
 portable-pty = "0.9.0"
 rust-embed = { version = "8.13.0", features = ["mime-guess"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "process", "sync", "io-util"] }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "process", "sync", "io-util", "time", "fs"] }
 tokio-util = { version = "0.7.20", features = ["codec"] }
+toml = "1.1.8"
+ttf-parser = "0.25.1"
 uuid = { version = "1.28.0", features = ["v4"] }
 
 [dev-dependencies]

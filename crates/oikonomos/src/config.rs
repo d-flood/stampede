@@ -1,0 +1,147 @@
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+
+use notify::{RecursiveMode, Watcher};
+use serde::{Deserialize, Serialize};
+use tokio::sync::{mpsc, watch};
+use ttf_parser::Tag;
+
+use crate::themes::Theme;
+
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct Settings {
+    theme: Option<String>,
+    font: Fonts,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct Fonts {
+    mono: Mono,
+}
+
+#[derive(Deserialize)]
+#[serde(default)]
+struct Mono {
+    family: String,
+    files: Vec<PathBuf>,
+}
+
+impl Default for Mono {
+    fn default() -> Self {
+        Self { family: "JetBrains Mono".to_owned(), files: Vec::new() }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Config {
+    pub theme: Theme,
+    pub font: Font,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Font {
+    pub family: String,
+    pub faces: Vec<Face>,
+}
+
+impl Default for Font {
+    fn default() -> Self {
+        Self { family: Mono::default().family, faces: Vec::new() }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Face {
+    #[serde(skip)]
+    pub path: PathBuf,
+    pub url: String,
+    pub weight: String,
+    pub style: &'static str,
+}
+
+impl Config {
+    fn load(path: &Path) -> Result<Self, Error> {
+        let text = match fs::read_to_string(path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+            text => text?,
+        };
+        let Settings { theme, font: Fonts { mono } } = toml::from_str(&text)?;
+        let faces = mono.files.into_iter().enumerate().map(face).collect::<Result<_, _>>()?;
+        Ok(Self {
+            theme: Theme::resolve(theme.as_deref())?,
+            font: Font { family: mono.family, faces },
+        })
+    }
+}
+
+fn face((index, path): (usize, PathBuf)) -> Result<Face, Error> {
+    let path = match path.strip_prefix("~") {
+        Ok(rest) => crate::home().join(rest),
+        Err(_) => path,
+    };
+    let data = fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let (weight, style) = match ttf_parser::Face::parse(&data, 0) {
+        Ok(face) => {
+            let wght = Tag::from_bytes(b"wght");
+            let axis = face.variation_axes().into_iter().find(|axis| axis.tag == wght);
+            let weight = match axis {
+                Some(axis) => format!("{} {}", axis.min_value, axis.max_value),
+                None => face.weight().to_number().to_string(),
+            };
+            (weight, if face.is_italic() { "italic" } else { "normal" })
+        }
+        Err(_) => ("400".to_owned(), "normal"),
+    };
+    Ok(Face { path, url: format!("/fonts/host/{index}"), weight, style })
+}
+
+pub fn watch(path: &Path) -> io::Result<watch::Receiver<Arc<Config>>> {
+    let path = std::path::absolute(path)?;
+    let config = Config::load(&path).unwrap_or_else(|error| {
+        eprintln!("config {}: {error}", path.display());
+        Config::default()
+    });
+    let (sender, receiver) = watch::channel(Arc::new(config));
+    let dir = path.parent().unwrap_or(Path::new("/"));
+    fs::create_dir_all(dir)?;
+    let (events, mut pending) = mpsc::unbounded_channel();
+    let mut watcher = notify::recommended_watcher(move |event| {
+        let _ = events.send(event);
+    })
+    .map_err(io::Error::other)?;
+    watcher.watch(dir, RecursiveMode::NonRecursive).map_err(io::Error::other)?;
+    tokio::spawn(async move {
+        let _watcher = watcher;
+        while let Some(event) = pending.recv().await {
+            let Ok(notify::Event { kind, paths, .. }) = event else { continue };
+            let ours = paths.iter().any(|changed| changed.file_name() == path.file_name());
+            if kind.is_access() || !ours {
+                continue;
+            }
+            // Editors save in several events; read once they settle.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            while pending.try_recv().is_ok() {}
+            match Config::load(&path) {
+                Ok(config) => {
+                    sender.send_if_modified(|current| {
+                        let changed = **current != config;
+                        if changed {
+                            *current = Arc::new(config);
+                        }
+                        changed
+                    });
+                }
+                Err(error) => eprintln!("config {}: {error}", path.display()),
+            }
+        }
+    });
+    Ok(receiver)
+}

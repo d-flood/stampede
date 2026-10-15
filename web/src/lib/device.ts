@@ -1,14 +1,18 @@
+import { loadConfig } from '#lib/config.svelte.ts';
+
 export type ServerMessage =
 	| { type: 'hello'; version: string; terminals: string[] }
 	| { type: 'terminal.attached'; terminalId: string; channel: number; cols: number; rows: number }
-	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number };
+	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
+	| { type: 'config.changed' };
 
 export type ClientMessage =
 	| { type: 'hello'; deviceId: string }
 	| { type: 'terminal.create' }
 	| { type: 'terminal.attach'; terminalId: string }
 	| { type: 'terminal.resize'; terminalId: string; cols: number; rows: number }
-	| { type: 'terminal.focus'; terminalId: string };
+	| { type: 'terminal.focus'; terminalId: string }
+	| { type: 'terminal.detach'; channel: number };
 
 export type Device = {
 	send(message: ClientMessage): void;
@@ -41,7 +45,11 @@ export function connect(handlers: {
 		socket.binaryType = 'arraybuffer';
 		socket.onopen = () => send({ type: 'hello', deviceId: id });
 		socket.onmessage = ({ data }) => {
-			if (typeof data === 'string') return handlers.message(JSON.parse(data));
+			if (typeof data === 'string') {
+				const message: ServerMessage = JSON.parse(data);
+				if (message.type === 'config.changed') loadConfig();
+				return handlers.message(message);
+			}
 			const view = new DataView(data);
 			if (view.getUint8(0) === OUTPUT) handlers.output(view.getUint32(1), new Uint8Array(data, 5));
 		};
