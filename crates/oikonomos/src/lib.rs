@@ -46,8 +46,10 @@ pub fn router(terminals: Arc<Terminals>) -> Router {
 
 pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
+    let terminals = Arc::new(Terminals::new(args.data_dir));
+    terminals.restore().await?;
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, router(Arc::new(Terminals::new(args.data_dir)))).await
+    axum::serve(listener, router(terminals)).await
 }
 
 async fn version() -> Json<Value> {

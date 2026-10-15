@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    env, io,
+    env, fs, io,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
@@ -73,6 +73,34 @@ impl Terminals {
         }
     }
 
+    pub async fn restore(self: &Arc<Self>) -> io::Result<()> {
+        let entries = match fs::read_dir(self.data_dir.join("terminals")) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            entries => entries?,
+        };
+        for entry in entries {
+            let record = entry?.path();
+            if record.extension() != Some("json".as_ref()) {
+                continue;
+            }
+            let Some(id) = record.file_stem().and_then(|stem| stem.to_str()) else { continue };
+            match self.open(id).await {
+                Ok(()) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
+                    ) =>
+                {
+                    let _ = fs::remove_file(holder::socket_path(&self.data_dir, id));
+                    let _ = fs::remove_file(&record);
+                }
+                Err(error) => eprintln!("cannot reattach terminal {id}: {error}"),
+            }
+        }
+        Ok(())
+    }
+
     pub fn ids(&self) -> Vec<String> {
         self.terminals.lock().unwrap().iter().map(|(id, _)| id.clone()).collect()
     }
@@ -105,7 +133,7 @@ impl Terminals {
     }
 
     async fn open(self: &Arc<Self>, id: &str) -> io::Result<()> {
-        let record = std::fs::read(holder::record_path(&self.data_dir, id))?;
+        let record = fs::read(holder::record_path(&self.data_dir, id))?;
         let record: holder::Record = serde_json::from_slice(&record)?;
         let (mut frames, mut writer) = connect(&self.data_dir, id).await?;
         let (control, mut pending) = mpsc::unbounded_channel();
@@ -202,7 +230,15 @@ async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHal
         None => None,
     };
     match hello {
-        Some(Message::Hello(hello)) if hello.protocol == protocol::VERSION => Ok((frames, writer)),
+        Some(Message::Hello(hello)) if hello.protocol <= protocol::VERSION => Ok((frames, writer)),
+        Some(Message::Hello(hello)) => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "holder {id} speaks protocol {}, newer than {}; leaving it running",
+                hello.protocol,
+                protocol::VERSION
+            ),
+        )),
         _ => Err(io::Error::other(format!("holder {id} did not say hello"))),
     }
 }
