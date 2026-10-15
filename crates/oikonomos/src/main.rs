@@ -1,5 +1,7 @@
+use std::error::Error;
+
 use clap::{Parser, Subcommand};
-use oikonomos::ServeArgs;
+use oikonomos::{HoldArgs, ServeArgs};
 
 #[derive(Parser)]
 #[command(version)]
@@ -11,11 +13,14 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Serve(ServeArgs),
+    Hold(HoldArgs),
 }
 
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn Error>> {
     match Cli::parse().command {
-        Command::Serve(args) => oikonomos::serve(args).await,
+        Command::Serve(args) => {
+            Ok(tokio::runtime::Runtime::new()?.block_on(oikonomos::serve(args))?)
+        }
+        Command::Hold(args) => oikonomos::hold(args),
     }
 }
