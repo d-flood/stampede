@@ -1,21 +1,27 @@
+mod config;
 mod device;
 mod holder;
 mod protocol;
 mod terminals;
+mod themes;
 
 use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use axum::{
     Json, Router,
+    extract::{Path, State},
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::get,
 };
 use rust_embed::RustEmbed;
 use serde_json::{Value, json};
+use tokio::sync::watch;
 
+use config::{Config, Font};
 pub use holder::{HoldArgs, hold};
 use terminals::Terminals;
+use themes::Theme;
 
 #[derive(RustEmbed)]
 #[folder = "../../web/build"]
@@ -36,24 +42,57 @@ pub(crate) fn home() -> PathBuf {
     std::env::home_dir().expect("HOME is not set")
 }
 
-pub fn router(terminals: Arc<Terminals>) -> Router {
+#[derive(Clone)]
+struct AppState {
+    terminals: Arc<Terminals>,
+    config: watch::Receiver<Arc<Config>>,
+}
+
+fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/version", get(version))
+        .route("/api/theme", get(theme))
+        .route("/api/font", get(font))
+        .route("/fonts/host/{index}", get(host_font))
         .route("/ws", get(device::upgrade))
         .fallback(spa)
-        .with_state(terminals)
+        .with_state(state)
 }
 
 pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
+    let config = config::watch(&args.config)?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
     let terminals = Arc::new(Terminals::new(args.data_dir));
     terminals.restore().await?;
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, router(terminals)).await
+    axum::serve(listener, router(AppState { terminals, config })).await
 }
 
 async fn version() -> Json<Value> {
     Json(json!({ "version": env!("CARGO_PKG_VERSION") }))
+}
+
+async fn theme(State(state): State<AppState>) -> Json<Theme> {
+    Json(state.config.borrow().theme.clone())
+}
+
+async fn font(State(state): State<AppState>) -> Json<Font> {
+    Json(state.config.borrow().font.clone())
+}
+
+async fn host_font(State(state): State<AppState>, Path(index): Path<usize>) -> Response {
+    let path = match state.config.borrow().font.faces.get(index) {
+        Some(face) => face.path.clone(),
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+    match tokio::fs::read(&path).await {
+        Ok(data) => {
+            let mime = mime_guess::from_path(&path).first_or_octet_stream().to_string();
+            ([(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, "no-cache".into())], data)
+                .into_response()
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn spa(uri: Uri) -> Response {

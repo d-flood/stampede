@@ -10,9 +10,13 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::{
+    sync::mpsc,
+    task::{AbortHandle, JoinSet},
+};
 
 use crate::{
+    AppState,
     protocol::Size,
     terminals::{Attachment, Terminals},
 };
@@ -33,24 +37,24 @@ enum Control {
     Resize { terminal_id: String, cols: u16, rows: u16 },
     #[serde(rename = "terminal.focus")]
     Focus { terminal_id: String },
+    #[serde(rename = "terminal.detach")]
+    Detach { channel: u32 },
 }
 
-pub async fn upgrade(
-    State(terminals): State<Arc<Terminals>>,
-    upgrade: WebSocketUpgrade,
-) -> Response {
-    upgrade.on_upgrade(|socket| connect(socket, terminals))
+pub async fn upgrade(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> Response {
+    upgrade.on_upgrade(|socket| connect(socket, state))
 }
 
 struct Device {
     id: String,
     terminals: Arc<Terminals>,
     outgoing: mpsc::UnboundedSender<Message>,
-    channels: HashMap<u32, String>,
+    channels: HashMap<u32, (String, AbortHandle)>,
+    next_channel: u32,
     attachments: JoinSet<()>,
 }
 
-async fn connect(socket: WebSocket, terminals: Arc<Terminals>) {
+async fn connect(socket: WebSocket, AppState { terminals, mut config }: AppState) {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = mpsc::unbounded_channel();
     let writer = tokio::spawn(async move {
@@ -65,18 +69,26 @@ async fn connect(socket: WebSocket, terminals: Arc<Terminals>) {
         terminals,
         outgoing,
         channels: HashMap::new(),
+        next_channel: 1,
         attachments: JoinSet::new(),
     };
-    while let Some(Ok(message)) = stream.next().await {
-        match message {
-            Message::Text(text) => {
-                if let Ok(control) = serde_json::from_str(&text) {
-                    device.control(control).await;
+    config.mark_unchanged();
+    loop {
+        tokio::select! {
+            message = stream.next() => match message {
+                Some(Ok(Message::Text(text))) => {
+                    if let Ok(control) = serde_json::from_str(&text) {
+                        device.control(control).await;
+                    }
                 }
+                Some(Ok(Message::Binary(bytes))) => device.binary(&bytes),
+                Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                Some(Ok(_)) => {}
+            },
+            Ok(()) = config.changed() => {
+                config.mark_unchanged();
+                send(&device.outgoing, json!({ "type": "config.changed" }));
             }
-            Message::Binary(bytes) => device.binary(&bytes),
-            Message::Close(_) => break,
-            _ => {}
         }
     }
     writer.abort();
@@ -103,6 +115,11 @@ impl Device {
                 self.terminals.resize(&terminal_id, &self.id, Size { cols, rows })
             }
             Control::Focus { terminal_id } => self.terminals.lead(&terminal_id, &self.id),
+            Control::Detach { channel } => {
+                if let Some((_, attachment)) = self.channels.remove(&channel) {
+                    attachment.abort();
+                }
+            }
         }
     }
 
@@ -111,8 +128,8 @@ impl Device {
             Ok(attachment) => attachment,
             Err(error) => return eprintln!("cannot attach terminal {terminal_id}: {error}"),
         };
-        let channel = self.channels.len() as u32 + 1;
-        self.channels.insert(channel, terminal_id.clone());
+        let channel = self.next_channel;
+        self.next_channel += 1;
         let Size { cols, rows } = *size.borrow_and_update();
         let attached = json!({
             "type": "terminal.attached",
@@ -123,7 +140,8 @@ impl Device {
         });
         send(&self.outgoing, attached);
         let outgoing = self.outgoing.clone();
-        self.attachments.spawn(async move {
+        let terminal = terminal_id.clone();
+        let attachment = self.attachments.spawn(async move {
             loop {
                 tokio::select! {
                     bytes = output.next() => {
@@ -147,13 +165,14 @@ impl Device {
                 }
             }
         });
+        self.channels.insert(channel, (terminal, attachment));
     }
 
     fn binary(&self, bytes: &[u8]) {
         let [kind, c0, c1, c2, c3, payload @ ..] = bytes else { return };
         let channel = u32::from_be_bytes([*c0, *c1, *c2, *c3]);
         if *kind == INPUT
-            && let Some(terminal_id) = self.channels.get(&channel)
+            && let Some((terminal_id, _)) = self.channels.get(&channel)
         {
             self.terminals.input(terminal_id, &self.id, payload.to_vec());
         }

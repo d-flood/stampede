@@ -1,0 +1,129 @@
+@font-face {
+	font-family: 'JetBrains Mono';
+	src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+}
+
+@font-face {
+	font-family: 'JetBrains Mono';
+	src: url('/fonts/JetBrainsMono-Bold.woff2') format('woff2');
+	font-weight: 700;
+	font-style: normal;
+}
+
+@font-face {
+	font-family: 'JetBrains Mono';
+	src: url('/fonts/JetBrainsMono-Italic.woff2') format('woff2');
+	font-weight: 400;
+	font-style: italic;
+}
+
+@font-face {
+	font-family: 'JetBrains Mono';
+	src: url('/fonts/JetBrainsMono-BoldItalic.woff2') format('woff2');
+	font-weight: 700;
+	font-style: italic;
+}
+
+@font-face {
+	font-family: 'Symbols Nerd Font Mono';
+	src: url('/fonts/SymbolsNerdFontMono-Regular.woff2') format('woff2');
+}
+
+/* --light-* and --dark-* are set from /api/theme by config.svelte.ts. */
+:root {
+	--color-bg: var(--light-bg);
+	--color-fg: var(--light-fg);
+	--ansi-0: var(--light-ansi-0);
+	--ansi-1: var(--light-ansi-1);
+	--ansi-2: var(--light-ansi-2);
+	--ansi-3: var(--light-ansi-3);
+	--ansi-4: var(--light-ansi-4);
+	--ansi-5: var(--light-ansi-5);
+	--ansi-6: var(--light-ansi-6);
+	--ansi-7: var(--light-ansi-7);
+	--ansi-8: var(--light-ansi-8);
+	--ansi-9: var(--light-ansi-9);
+	--ansi-10: var(--light-ansi-10);
+	--ansi-11: var(--light-ansi-11);
+	--ansi-12: var(--light-ansi-12);
+	--ansi-13: var(--light-ansi-13);
+	--ansi-14: var(--light-ansi-14);
+	--ansi-15: var(--light-ansi-15);
+	--color-cursor: var(--light-cursor);
+	--color-selection-bg: var(--light-selection-bg);
+	--color-selection-fg: var(--light-selection-fg);
+
+	--surface-1: color-mix(in oklab, var(--color-bg) 96%, var(--color-fg));
+	--surface-2: color-mix(in oklab, var(--color-bg) 92%, var(--color-fg));
+	--surface-3: color-mix(in oklab, var(--color-bg) 86%, var(--color-fg));
+	--border: color-mix(in oklab, var(--color-bg) 80%, var(--color-fg));
+	--hover: color-mix(in oklab, var(--color-bg) 90%, var(--color-fg));
+	--muted-fg: color-mix(in oklab, var(--color-fg) 60%, var(--color-bg));
+
+	--status-working: var(--ansi-4);
+	--status-waiting: var(--ansi-3);
+	--status-done: var(--ansi-2);
+
+	--font-ui: system-ui, sans-serif;
+	--font-mono: 'JetBrains Mono', 'Symbols Nerd Font Mono', monospace;
+
+	--radius-sm: 3px;
+	--radius-md: 6px;
+	--radius-lg: 10px;
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-6: 24px;
+	--font-size-sm: 12px;
+	--font-size-md: 14px;
+	--font-size-lg: 16px;
+	--border-width: 1px;
+	--shadow-float: 0 6px 20px color-mix(in oklab, var(--ansi-0) 45%, transparent);
+	--dur-fast: 100ms;
+	--dur-med: 200ms;
+	--pulse: infinite;
+	--target-min: 28px;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--color-bg: var(--dark-bg);
+		--color-fg: var(--dark-fg);
+		--ansi-0: var(--dark-ansi-0);
+		--ansi-1: var(--dark-ansi-1);
+		--ansi-2: var(--dark-ansi-2);
+		--ansi-3: var(--dark-ansi-3);
+		--ansi-4: var(--dark-ansi-4);
+		--ansi-5: var(--dark-ansi-5);
+		--ansi-6: var(--dark-ansi-6);
+		--ansi-7: var(--dark-ansi-7);
+		--ansi-8: var(--dark-ansi-8);
+		--ansi-9: var(--dark-ansi-9);
+		--ansi-10: var(--dark-ansi-10);
+		--ansi-11: var(--dark-ansi-11);
+		--ansi-12: var(--dark-ansi-12);
+		--ansi-13: var(--dark-ansi-13);
+		--ansi-14: var(--dark-ansi-14);
+		--ansi-15: var(--dark-ansi-15);
+		--color-cursor: var(--dark-cursor);
+		--color-selection-bg: var(--dark-selection-bg);
+		--color-selection-fg: var(--dark-selection-fg);
+	}
+}
+
+@media (pointer: coarse) {
+	:root {
+		--target-min: 48px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	:root {
+		--dur-fast: 0s;
+		--dur-med: 0s;
+		--pulse: 0;
+	}
+}
