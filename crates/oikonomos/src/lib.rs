@@ -1,6 +1,7 @@
 mod config;
 mod device;
 mod holder;
+mod install;
 mod protocol;
 mod terminals;
 mod themes;
@@ -20,6 +21,7 @@ use tokio::sync::watch;
 
 use config::{Config, Font};
 pub use holder::{HoldArgs, hold};
+pub use install::{InstallArgs, UninstallArgs, install, uninstall};
 use terminals::Terminals;
 use themes::Theme;
 
