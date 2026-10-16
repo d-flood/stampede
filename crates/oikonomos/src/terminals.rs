@@ -136,19 +136,20 @@ impl Terminals {
         self.list().into_iter().filter(|terminal| terminal.owner == *owner).collect()
     }
 
-    pub async fn create(self: &Arc<Self>, project: &Project, device: &str) -> io::Result<Terminal> {
+    pub async fn create(
+        self: &Arc<Self>,
+        project: Option<&Project>,
+        device: &str,
+    ) -> io::Result<Terminal> {
         let id = format!("{:016x}", uuid::Uuid::new_v4().as_u64_pair().1);
         let shell = env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
-        let status = Command::new(env::current_exe()?)
-            .arg("hold")
-            .arg("--data-dir")
-            .arg(&self.data_dir)
-            .arg("--id")
-            .arg(&id)
-            .arg("--cwd")
-            .arg(&project.path)
-            .arg("--project")
-            .arg(&project.id)
+        let mut command = Command::new(env::current_exe()?);
+        command.arg("hold").arg("--data-dir").arg(&self.data_dir).arg("--id").arg(&id);
+        match project {
+            Some(project) => command.arg("--cwd").arg(&project.path).arg("--project").arg(&project.id),
+            None => command.arg("--cwd").arg(crate::home()),
+        };
+        let status = command
             .arg("--")
             .arg(shell)
             .arg("-l")

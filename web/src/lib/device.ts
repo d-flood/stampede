@@ -7,7 +7,7 @@ export type Terminal = { id: string; owner: { project: string } | 'drawer' };
 export type ServerMessage =
 	| { type: 'hello'; version: string; terminals: Terminal[] }
 	| { type: 'terminal.created'; terminal: Terminal }
-	| { type: 'terminals.changed'; projectId: string; terminals: Terminal[] }
+	| { type: 'terminals.changed'; projectId?: string; drawer?: true; terminals: Terminal[] }
 	| { type: 'terminal.attached'; terminalId: string; channel: number; cols: number; rows: number }
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
 	| { type: 'config.changed' }
@@ -19,6 +19,7 @@ export type ServerMessage =
 export type ClientMessage =
 	| { type: 'hello'; deviceId: string }
 	| { type: 'terminal.create'; projectId: string }
+	| { type: 'terminal.create'; owner: 'drawer' }
 	| { type: 'terminal.close'; terminalId: string }
 	| { type: 'terminal.attach'; terminalId: string }
 	| { type: 'terminal.resize'; terminalId: string; cols: number; rows: number }

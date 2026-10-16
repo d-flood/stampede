@@ -33,7 +33,7 @@ enum Control {
     #[serde(rename = "hello")]
     Hello { device_id: String },
     #[serde(rename = "terminal.create")]
-    Create { project_id: String },
+    Create { project_id: Option<String>, owner: Option<Owner> },
     #[serde(rename = "terminal.close")]
     Close { terminal_id: String },
     #[serde(rename = "terminal.attach")]
@@ -115,12 +115,12 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config }
                 send(&device.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
             }
             changed = changes.recv() => match changed {
-                Ok(Owner::Project(project_id)) => device.terminals_changed(&project_id),
-                Ok(Owner::Drawer) => {}
+                Ok(owner) => device.terminals_changed(&owner),
                 Err(RecvError::Lagged(_)) => {
                     for project in device.projects.list().iter() {
-                        device.terminals_changed(&project.id);
+                        device.terminals_changed(&Owner::Project(project.id.clone()));
                     }
+                    device.terminals_changed(&Owner::Drawer);
                 }
                 Err(RecvError::Closed) => break,
             },
@@ -141,10 +141,17 @@ impl Device {
                 });
                 send(&self.outgoing, hello);
             }
-            Control::Create { project_id } => {
+            Control::Create { project_id, owner } => {
                 let projects = self.projects.list();
-                let Some(project) = projects.iter().find(|project| project.id == project_id) else {
-                    return eprintln!("cannot create a terminal in {project_id}: not open");
+                let project = match (project_id, owner) {
+                    (Some(project_id), None) => {
+                        let Some(project) = projects.iter().find(|project| project.id == project_id) else {
+                            return eprintln!("cannot create a terminal in {project_id}: not open");
+                        };
+                        Some(project)
+                    }
+                    (None, Some(Owner::Drawer)) => None,
+                    _ => return eprintln!("terminal.create needs a projectId or owner \"drawer\""),
                 };
                 match self.terminals.create(project, &self.id).await {
                     Ok(terminal) => {
@@ -236,13 +243,20 @@ impl Device {
         self.channels.insert(channel, (terminal, attachment));
     }
 
-    fn terminals_changed(&self, project_id: &str) {
-        let terminals = self.terminals.owned(&Owner::Project(project_id.to_owned()));
-        let changed = json!({
-            "type": "terminals.changed",
-            "projectId": project_id,
-            "terminals": terminals,
-        });
+    fn terminals_changed(&self, owner: &Owner) {
+        let terminals = self.terminals.owned(owner);
+        let changed = match owner {
+            Owner::Project(project_id) => json!({
+                "type": "terminals.changed",
+                "projectId": project_id,
+                "terminals": terminals,
+            }),
+            Owner::Drawer => json!({
+                "type": "terminals.changed",
+                "drawer": true,
+                "terminals": terminals,
+            }),
+        };
         send(&self.outgoing, changed);
     }
 

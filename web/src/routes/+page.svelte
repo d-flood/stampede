@@ -2,6 +2,7 @@
 	import { connect, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
 	import { form } from '#lib/form.ts';
 	import { labels } from '#lib/projects.ts';
+	import Drawer from '#lib/shell/Drawer.svelte';
 	import Picker from '#lib/shell/Picker.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
@@ -49,7 +50,7 @@
 				break;
 			}
 			case 'terminals.changed':
-				terminals[message.projectId] = message.terminals;
+				if (message.projectId) terminals[message.projectId] = message.terminals;
 				break;
 			case 'terminal.created':
 				if (message.terminal.owner !== 'drawer') chosenTabs[message.terminal.owner.project] = message.terminal.id;
@@ -164,6 +165,8 @@
 		</div>
 	</main>
 </div>
+
+<Drawer {device} />
 
 <Dialog bind:open={picking} title="Open Project">
 	<Picker {directories} onopen={open} />

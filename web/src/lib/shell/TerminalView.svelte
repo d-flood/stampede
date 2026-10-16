@@ -20,8 +20,8 @@
 			if (!disposed) ready = true;
 		});
 		const unlisten = device.listen({ message, output });
-		container.addEventListener('focusin', focus);
-		container.addEventListener('pointerdown', focus);
+		container.addEventListener('focusin', lead);
+		container.addEventListener('pointerdown', lead);
 		const observer = new ResizeObserver(propose);
 		observer.observe(container);
 		return () => {
@@ -111,8 +111,12 @@
 		if (channel !== undefined && size) device.send({ type: 'terminal.resize', terminalId, ...size });
 	}
 
-	function focus() {
+	function lead() {
 		device.send({ type: 'terminal.focus', terminalId });
+	}
+
+	export function focus() {
+		view?.focus();
 	}
 </script>
 
