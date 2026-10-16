@@ -36,6 +36,12 @@ name = "Fake Codex"
 agent = "codex"
 command = "codex"
 env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
+
+[[rig]]
+name = "Fake Claude Tools"
+agent = "claude-code"
+command = "claude"
+env = { OIKONOMOS_FAKE_FIXTURE = "tools", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
 EOF
 
 cleanup() {

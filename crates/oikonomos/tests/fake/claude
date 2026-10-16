@@ -9,6 +9,7 @@ from pathlib import Path
 FLAGS = {'--input-format': 'stream-json', '--output-format': 'stream-json'}
 SWITCHES = ['--verbose', '--include-partial-messages', '--permission-prompt-tool=stdio']
 ENV = {'CLAUDE_CODE_ENTRYPOINT': 'sdk-ts', 'CLAUDE_CODE_SDK_READS_SESSION_STATE': '1'}
+RECORDED_CWD = '/tmp/oikonomos-chat'
 
 
 def fail(reason):
@@ -28,7 +29,7 @@ def kind(message):
 
 
 def remap(message):
-    text = json.dumps(message, ensure_ascii=False)
+    text = json.dumps(message, ensure_ascii=False).replace(RECORDED_CWD, os.getcwd())
     for recorded, sent in uuids.items():
         text = text.replace(recorded, sent)
     return text

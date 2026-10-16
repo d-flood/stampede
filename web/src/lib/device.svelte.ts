@@ -17,7 +17,15 @@ export type Terminal = {
 	state: 'live' | 'ended';
 };
 
-export type Item = { kind: 'user'; text: string; images: number } | { kind: 'text'; text: string; streaming: boolean };
+export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'other'; name: string; detail: string };
+
+export type Item =
+	| { kind: 'user'; text: string; images: number }
+	| { kind: 'text'; text: string; streaming: boolean }
+	| { kind: 'thinking'; seconds: number; text?: string }
+	| { kind: 'tools'; calls: ToolCall[] }
+	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
+	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit'; text: string };
 
 export type Context = { used: number; window: number };
 

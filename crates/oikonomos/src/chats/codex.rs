@@ -16,7 +16,7 @@ use tokio::{
 };
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
-use super::{Chat, Context, Driver, Event, Item, Tokens};
+use super::{Chat, CommandStatus, Context, Driver, Event, Item, Notice, Tokens, ToolCall, ToolKind, seconds};
 use crate::hooks::Status;
 
 const CLOSING: Duration = Duration::from_secs(5);
@@ -185,16 +185,30 @@ struct Transcript {
     starting: Option<u64>,
     turn: Option<String>,
     streaming: HashMap<String, (usize, String)>,
+    tools: Option<(usize, Vec<ToolCall>)>,
+    commands: HashMap<String, usize>,
+    previous: u64,
 }
 
 impl Transcript {
     fn new(thread: &str, events: UnboundedSender<Event>) -> Self {
-        Self { thread: thread.to_owned(), events, len: 0, starting: None, turn: None, streaming: HashMap::new() }
+        Self {
+            thread: thread.to_owned(),
+            events,
+            len: 0,
+            starting: None,
+            turn: None,
+            streaming: HashMap::new(),
+            tools: None,
+            commands: HashMap::new(),
+            previous: 0,
+        }
     }
 
     fn push(&mut self, item: Item) -> usize {
         let index = self.len;
         self.len += 1;
+        self.tools = None;
         let _ = self.events.send(Event::Item(index, item));
         index
     }
@@ -207,12 +221,12 @@ impl Transcript {
     fn resumed(&mut self, turns: &Value) {
         let turns = turns.as_array().map(Vec::as_slice).unwrap_or_default();
         for item in turns.iter().flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
-            let item = match item["type"].as_str() {
-                Some("userMessage") => user(item),
-                Some("agentMessage") => agent(item),
-                _ => continue,
-            };
-            self.push(item);
+            match item["type"].as_str() {
+                Some("userMessage") => {
+                    self.push(user(item));
+                }
+                _ => self.completed(item, 0),
+            }
         }
         let running = turns.last().filter(|turn| turn["status"] == "inProgress");
         self.turn = running.and_then(|turn| turn["id"].as_str()).map(str::to_owned);
@@ -248,6 +262,9 @@ impl Transcript {
             }
             Some("turn/completed") => {
                 self.turn = None;
+                if params["turn"]["status"] == "failed" {
+                    self.push(notice(&params["turn"]["error"]));
+                }
                 let _ = self.events.send(Event::Status(Status::Done));
             }
             Some("item/started") if item["type"] == "userMessage" => {
@@ -270,20 +287,106 @@ impl Transcript {
                     None => self.stream(id, delta),
                 }
             }
-            Some("item/completed") if item["type"] == "agentMessage" => {
-                let Some(id) = item["id"].as_str() else { return };
-                match self.streaming.remove(id) {
-                    Some((index, _)) => {
-                        let _ = self.events.send(Event::Item(index, agent(item)));
-                    }
-                    None => {
-                        self.push(agent(item));
-                    }
+            Some("item/started") if item["type"] == "commandExecution" => {
+                let index = self.push(command(item));
+                if let Some(id) = item["id"].as_str() {
+                    self.commands.insert(id.to_owned(), index);
                 }
+            }
+            Some("item/completed") => {
+                let at = params["completedAtMs"].as_u64().unwrap_or_default();
+                let since = std::mem::replace(&mut self.previous, at);
+                self.completed(item, if since == 0 { 0 } else { at.saturating_sub(since) });
             }
             _ => {}
         }
     }
+
+    /// Codex announces reasoning once it is done, so its duration runs from the item before.
+    fn completed(&mut self, item: &Value, elapsed: u64) {
+        let text = |key: &str| item[key].as_str().unwrap_or_default().to_owned();
+        match item["type"].as_str() {
+            Some("agentMessage") => match item["id"].as_str().and_then(|id| self.streaming.remove(id)) {
+                Some((index, _)) => {
+                    let _ = self.events.send(Event::Item(index, agent(item)));
+                }
+                None => {
+                    self.push(agent(item));
+                }
+            },
+            Some("reasoning") => {
+                let parts = |key: &str| {
+                    let parts: Vec<&str> = item[key].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                    Some(parts.join("\n\n")).filter(|text| !text.is_empty())
+                };
+                self.push(Item::Thinking { seconds: seconds(elapsed), text: parts("summary").or_else(|| parts("content")) });
+            }
+            Some("commandExecution") => match item["id"].as_str().and_then(|id| self.commands.remove(id)) {
+                Some(index) => {
+                    let _ = self.events.send(Event::Item(index, command(item)));
+                }
+                None => {
+                    self.push(command(item));
+                }
+            },
+            Some("webSearch") => {
+                let action = &item["action"];
+                let detail = |key: &str| action[key].as_str().map_or_else(|| text("query"), str::to_owned);
+                match action["type"].as_str() {
+                    Some("open_page") => self.call(ToolKind::Fetch, "webSearch", detail("url")),
+                    Some("find_in_page") => self.call(ToolKind::Search, "webSearch", detail("pattern")),
+                    _ => self.call(ToolKind::Web, "webSearch", text("query")),
+                }
+            }
+            Some("mcpToolCall") => {
+                let name = format!("{}.{}", text("server"), text("tool"));
+                self.call(ToolKind::Other, &name, item["arguments"].to_string());
+            }
+            Some("dynamicToolCall") => self.call(ToolKind::Other, &text("tool"), item["arguments"].to_string()),
+            Some("imageView") => self.call(ToolKind::Read, "imageView", text("path")),
+            Some("contextCompaction") => {
+                self.push(Item::compacted());
+            }
+            _ => {}
+        }
+    }
+
+    fn call(&mut self, kind: ToolKind, name: &str, detail: String) {
+        let call = ToolCall { kind, name: name.to_owned(), detail };
+        match &mut self.tools {
+            Some((index, calls)) => {
+                calls.push(call);
+                let _ = self.events.send(Event::Item(*index, Item::Tools { calls: calls.clone() }));
+            }
+            None => {
+                let index = self.push(Item::Tools { calls: vec![call.clone()] });
+                self.tools = Some((index, vec![call]));
+            }
+        }
+    }
+}
+
+fn command(item: &Value) -> Item {
+    let line = item["command"].as_str().unwrap_or_default();
+    let command = match shlex::split(line).as_deref() {
+        Some([_, flag, script]) if flag == "-lc" || flag == "-c" => script.clone(),
+        _ => line.to_owned(),
+    };
+    let status = match item["status"].as_str() {
+        Some("inProgress") => CommandStatus::Running,
+        Some("completed") => CommandStatus::Ok,
+        _ => CommandStatus::Failed,
+    };
+    Item::Command { command, status, output: item["aggregatedOutput"].as_str().unwrap_or_default().to_owned() }
+}
+
+fn notice(error: &Value) -> Item {
+    let message = error["message"].as_str().unwrap_or_default();
+    let api: Option<Value> = serde_json::from_str(message).ok();
+    let text = api.as_ref().and_then(|api| api["error"]["message"].as_str()).unwrap_or(message).to_owned();
+    let limit = ["usageLimitExceeded", "rateLimitExceeded", "sessionBudgetExceeded"];
+    let notice = if limit.iter().any(|limit| error["codexErrorInfo"] == *limit) { Notice::Limit } else { Notice::Error };
+    Item::Notice { notice, text }
 }
 
 fn user(item: &Value) -> Item {

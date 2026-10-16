@@ -14,9 +14,10 @@ use tokio::{
 use uuid::Uuid;
 
 use super::{
-    Chat, Context, Driver, Event, Item, Tokens,
+    Chat, CommandStatus, Context, Driver, Event, Item, Notice, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     protocol::{self, Message},
+    seconds,
 };
 use crate::hooks::Status;
 
@@ -67,7 +68,7 @@ pub async fn start(
     });
     writer.write_all(&input(&initialize)).await?;
     let (events, received) = mpsc::unbounded_channel();
-    Ok((drive(frames, writer, Transcript::new(events)), received))
+    Ok((drive(frames, writer, Transcript::new(events, cwd)), received))
 }
 
 /// Rebuilds the transcript from the session file up to the holder's latest turn, then from the turn the holder replays.
@@ -87,7 +88,7 @@ pub async fn reattach(
         _ => None,
     });
     let (events, received) = mpsc::unbounded_channel();
-    let mut transcript = Transcript::new(events);
+    let mut transcript = Transcript::new(events, &chat.cwd);
     transcript.replaying = true;
     transcript.window = chat.context.map(|context| context.window);
     if let Some(session) = &chat.agent_session
@@ -95,10 +96,13 @@ pub async fn reattach(
     {
         for entry in contents.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
             if turn.is_some() && entry["uuid"].as_str() == turn.as_deref() {
+                // A compaction recorded just before the replayed turn's prompt belongs to that turn, which replays it.
+                transcript.compacted = false;
                 break;
             }
             transcript.recorded(&entry);
         }
+        transcript.compact();
     }
     for message in replay {
         match message {
@@ -182,8 +186,12 @@ fn input(message: &Value) -> Vec<u8> {
 
 struct Transcript {
     events: UnboundedSender<Event>,
+    cwd: PathBuf,
     len: usize,
     streaming: HashMap<u64, (usize, String)>,
+    tools: Option<(usize, Vec<ToolCall>)>,
+    commands: HashMap<String, (usize, String)>,
+    compacted: bool,
     status: Status,
     replaying: bool,
     /// The model of the main loop's latest API call, and how many tokens it was sent.
@@ -192,11 +200,15 @@ struct Transcript {
 }
 
 impl Transcript {
-    fn new(events: UnboundedSender<Event>) -> Self {
+    fn new(events: UnboundedSender<Event>, cwd: &Path) -> Self {
         Self {
             events,
+            cwd: cwd.to_owned(),
             len: 0,
             streaming: HashMap::new(),
+            tools: None,
+            commands: HashMap::new(),
+            compacted: false,
             status: Status::Done,
             replaying: false,
             call: None,
@@ -207,6 +219,7 @@ impl Transcript {
     fn push(&mut self, item: Item) -> usize {
         let index = self.len;
         self.len += 1;
+        self.tools = None;
         let _ = self.events.send(Event::Item(index, item));
         index
     }
@@ -225,36 +238,53 @@ impl Transcript {
         }
     }
 
+    /// A compaction is recorded before the prompt that asked for it, so its notice waits for that prompt.
     fn recorded(&mut self, entry: &Value) {
-        if entry["isSidechain"] == true || entry["isMeta"] == true {
+        if entry["isSidechain"] == true || entry["isMeta"] == true || entry["isCompactSummary"] == true {
             return;
         }
         match entry["type"].as_str() {
-            Some("user") => {
-                if let Some(text) = entry["message"]["content"].as_str() {
-                    self.push(Item::User { text: text.to_owned(), images: 0 });
-                }
-            }
-            Some("assistant") => {
-                for block in entry["message"]["content"].as_array().into_iter().flatten() {
-                    if block["type"] == "text" {
-                        let text = block["text"].as_str().unwrap_or_default().to_owned();
-                        self.push(Item::Text { text, streaming: false });
+            Some("system") if entry["subtype"] == "compact_boundary" => self.compacted = true,
+            Some("user") => match entry["message"]["content"].as_str() {
+                Some(content) => {
+                    if let Some(text) = prompt(content) {
+                        self.push(Item::User { text, images: 0 });
+                        self.compact();
                     }
                 }
+                None => {
+                    self.compact();
+                    self.results(&entry["message"]["content"]);
+                }
+            },
+            Some("assistant") => {
+                self.compact();
+                self.assistant(entry, &entry["thinkingDurationMs"], false);
             }
             _ => {}
         }
     }
 
+    fn compact(&mut self) {
+        if std::mem::take(&mut self.compacted) {
+            self.push(Item::compacted());
+        }
+    }
+
     fn read(&mut self, message: &Value) {
+        let top = message["parent_tool_use_id"].is_null();
         match message["type"].as_str() {
             Some("system") if message["subtype"] == "init" => {
                 if let Some(session) = message["session_id"].as_str() {
                     let _ = self.events.send(Event::Session(session.to_owned()));
                 }
             }
-            Some("stream_event") if message["parent_tool_use_id"].is_null() => self.stream(&message["event"]),
+            Some("system") if message["subtype"] == "compact_boundary" => {
+                self.push(Item::compacted());
+            }
+            Some("stream_event") if top => self.stream(&message["event"]),
+            Some("assistant") if top => self.assistant(message, &message["thinking_duration_ms"], true),
+            Some("user") if top => self.results(&message["message"]["content"]),
             Some("result") => {
                 self.total(&message["modelUsage"]);
                 self.report(Status::Done);
@@ -293,6 +323,85 @@ impl Transcript {
         }
     }
 
+    /// Text blocks of a `streamed` message already arrived as stream events.
+    fn assistant(&mut self, message: &Value, thinking: &Value, streamed: bool) {
+        let blocks = message["message"]["content"].as_array().into_iter().flatten();
+        if let Some(error) = message["error"].as_str() {
+            let text: Vec<&str> = blocks.filter_map(|block| block["text"].as_str()).collect();
+            let notice = if error == "rate_limit" { Notice::Limit } else { Notice::Error };
+            self.push(Item::Notice { notice, text: text.join("\n") });
+            return;
+        }
+        for block in blocks {
+            match block["type"].as_str() {
+                Some("text") if !streamed => {
+                    let text = block["text"].as_str().unwrap_or_default().to_owned();
+                    self.push(Item::Text { text, streaming: false });
+                }
+                Some("thinking") => {
+                    let text = block["thinking"].as_str().filter(|text| !text.is_empty()).map(str::to_owned);
+                    self.push(Item::Thinking { seconds: seconds(thinking.as_u64().unwrap_or_default()), text });
+                }
+                Some("tool_use") => self.tool(block),
+                _ => {}
+            }
+        }
+    }
+
+    fn tool(&mut self, block: &Value) {
+        let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) else { return };
+        let input = &block["input"];
+        let text = |key: &str| input[key].as_str().unwrap_or_default().to_owned();
+        match name {
+            "Bash" => {
+                let command = text("command");
+                let running = Item::Command { command: command.clone(), status: CommandStatus::Running, output: String::new() };
+                let index = self.push(running);
+                self.commands.insert(id.to_owned(), (index, command));
+            }
+            "Read" => self.call(ToolKind::Read, name, self.relative(&text("file_path"))),
+            "Grep" | "Glob" => self.call(ToolKind::Search, name, text("pattern")),
+            "WebFetch" => self.call(ToolKind::Fetch, name, text("url")),
+            "WebSearch" => self.call(ToolKind::Web, name, text("query")),
+            _ => self.call(ToolKind::Other, name, input.to_string()),
+        }
+    }
+
+    fn results(&mut self, content: &Value) {
+        for block in content.as_array().into_iter().flatten().filter(|block| block["type"] == "tool_result") {
+            let Some((index, command)) = block["tool_use_id"].as_str().and_then(|id| self.commands.remove(id)) else {
+                continue;
+            };
+            let status = if block["is_error"] == true { CommandStatus::Failed } else { CommandStatus::Ok };
+            let output = match &block["content"] {
+                Value::String(text) => text.clone(),
+                blocks => {
+                    let texts: Vec<&str> = blocks.as_array().into_iter().flatten().filter_map(|block| block["text"].as_str()).collect();
+                    texts.join("\n")
+                }
+            };
+            let _ = self.events.send(Event::Item(index, Item::Command { command, status, output }));
+        }
+    }
+
+    fn call(&mut self, kind: ToolKind, name: &str, detail: String) {
+        let call = ToolCall { kind, name: name.to_owned(), detail };
+        match &mut self.tools {
+            Some((index, calls)) => {
+                calls.push(call);
+                let _ = self.events.send(Event::Item(*index, Item::Tools { calls: calls.clone() }));
+            }
+            None => {
+                let index = self.push(Item::Tools { calls: vec![call.clone()] });
+                self.tools = Some((index, vec![call]));
+            }
+        }
+    }
+
+    fn relative(&self, path: &str) -> String {
+        Path::new(path).strip_prefix(&self.cwd).map_or_else(|_| path.to_owned(), |path| path.display().to_string())
+    }
+
     fn stream(&mut self, event: &Value) {
         if event["type"] == "message_start" {
             return self.called(&event["message"]);
@@ -319,4 +428,24 @@ impl Transcript {
             _ => {}
         }
     }
+}
+
+/// The prompt a session-file user entry records: slash commands are stored as tags, and their output is not a prompt.
+fn prompt(content: &str) -> Option<String> {
+    if content.starts_with("<local-command-") {
+        return None;
+    }
+    if !content.starts_with("<command-") {
+        return Some(content.to_owned());
+    }
+    let tag = |name: &str| {
+        let start = content.find(&format!("<{name}>"))? + name.len() + 2;
+        let end = content[start..].find(&format!("</{name}>"))?;
+        Some(content[start..start + end].trim())
+    };
+    let name = tag("command-name")?;
+    Some(match tag("command-args") {
+        Some(args) if !args.is_empty() => format!("{name} {args}"),
+        _ => name.to_owned(),
+    })
 }

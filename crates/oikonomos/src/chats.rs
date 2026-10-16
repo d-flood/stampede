@@ -28,6 +28,57 @@ pub use holder::{HoldChatArgs, hold_chat};
 pub enum Item {
     User { text: String, images: usize },
     Text { text: String, streaming: bool },
+    Thinking {
+        seconds: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
+    Tools { calls: Vec<ToolCall> },
+    Command { command: String, status: CommandStatus, output: String },
+    Notice { notice: Notice, text: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ToolCall {
+    pub kind: ToolKind,
+    pub name: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolKind {
+    Read,
+    Search,
+    Fetch,
+    Web,
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CommandStatus {
+    Running,
+    Ok,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Notice {
+    Compacted,
+    Error,
+    Limit,
+}
+
+impl Item {
+    fn compacted() -> Self {
+        Item::Notice { notice: Notice::Compacted, text: "Conversation compacted".to_owned() }
+    }
+}
+
+fn seconds(milliseconds: u64) -> u64 {
+    (milliseconds + 500) / 1000
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

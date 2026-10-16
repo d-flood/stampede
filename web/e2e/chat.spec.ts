@@ -72,6 +72,53 @@ test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, 
 	await expect(tab).toHaveCount(0);
 });
 
+test('a Chat folds tools, thinking, commands and a long first prompt into lines that open on tap', async ({ page }, { project }) => {
+	const name = `blocks-${project.name}`;
+	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude Tools as Chat' }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Claude Tools/ });
+	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expect(tab.getByTitle('done')).toBeVisible();
+
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	const brief = Array.from({ length: 14 }, (_, line) => `Brief line ${line + 1}`).join('\n');
+	await panel.getByRole('textbox', { name: 'Composer' }).fill(brief);
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await expect(panel.getByText(/^All steps are done/)).toBeVisible();
+
+	const prompt = panel.locator('summary', { hasText: 'First prompt' });
+	await expect(prompt).toContainText('Brief line 1');
+	await expect(prompt).toContainText('14 lines');
+	const rest = panel.getByText('Brief line 14');
+	await expect(rest).toBeHidden();
+	await prompt.click();
+	await expect(rest).toBeVisible();
+
+	const tools = panel.locator('summary', { hasText: 'Read 2 files · searched the web · used ToolSearch' });
+	const search = panel.getByRole('listitem').filter({ hasText: 'IANA example domain' });
+	await expect(tools).toBeVisible();
+	await expect(search).toBeHidden();
+	await tools.click();
+	await expect(search).toHaveText('Web search IANA example domain');
+	await expect(panel.getByRole('listitem').filter({ hasText: 'todo.txt' })).toHaveText('Read todo.txt');
+
+	await expect(panel.getByText('Thought for 2s')).toHaveCount(2);
+
+	const failed = panel.locator('summary', { hasText: '$ wc -l missing.txt' });
+	const output = panel.getByText('wc: missing.txt: No such file or directory');
+	await expect(failed).toContainText('✗ failed');
+	await expect(panel.locator('summary', { hasText: '$ wc -l notes.txt' })).toContainText('✓');
+	await expect(output).toBeHidden();
+	await failed.click();
+	await expect(output).toBeVisible();
+
+	await tab.click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await expect(tab).toHaveCount(0);
+});
+
 test('a Chat that finishes unseen needs attention and opens from the Attention list or a notification', async ({ page }, { project }) => {
 	const name = `attention-${project.name}`;
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
