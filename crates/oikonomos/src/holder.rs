@@ -87,6 +87,15 @@ pub struct Record {
     pub protocol: u16,
 }
 
+impl Record {
+    fn end_agent(&mut self) {
+        self.rig = None;
+        self.agent = None;
+        self.status = None;
+        self.agent_session = None;
+    }
+}
+
 /// Launch counts as viewed, and so does a record from a holder that predates attention.
 fn viewed() -> bool {
     true
@@ -342,10 +351,7 @@ fn run(
                         record.status = Some(status);
                     }
                     Some(Transition::Exit) => {
-                        record.rig = None;
-                        record.agent = None;
-                        record.status = None;
-                        record.agent_session = None;
+                        record.end_agent();
                     }
                     None => {}
                 }
@@ -386,10 +392,7 @@ fn run(
                     && fs::read(format!("/proc/{leader}/cmdline"))
                         .is_ok_and(|argv| !launching.contains(&argv))
                 {
-                    record.rig = None;
-                    record.agent = None;
-                    record.status = None;
-                    record.agent_session = None;
+                    record.end_agent();
                     let _ = files.write_record(record);
                 }
                 let now = root && record.rig.is_none();

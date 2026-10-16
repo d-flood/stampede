@@ -3,6 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { openProject, showSidebar } from './shell.ts';
 
+test.use({ reducedMotion: 'reduce' });
+
 test('a Diff tab opened from Changes shows the change', async ({ page }, { project }) => {
 	const line = `export const ${project.name} = true;`;
 	appendFileSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/alpha/greeting.ts`, `${line}\n`);

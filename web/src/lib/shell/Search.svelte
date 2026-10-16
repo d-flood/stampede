@@ -2,6 +2,7 @@
 	import type { Device, Found, ServerMessage } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { split } from '#lib/git.ts';
 	import Badge from '#lib/ui/Badge.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import { onMount } from 'svelte';
@@ -90,11 +91,6 @@
 
 	function plural(count: number, noun: string) {
 		return `${count.toLocaleString()} ${noun}${count === 1 ? '' : 's'}`;
-	}
-
-	function split(path: string) {
-		const slash = path.lastIndexOf('/');
-		return { name: path.slice(slash + 1), dir: path.slice(0, slash + 1) };
 	}
 </script>
 

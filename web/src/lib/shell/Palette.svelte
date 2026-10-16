@@ -7,6 +7,7 @@
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import type { Project } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
+	import { split } from '#lib/git.ts';
 	import { Command } from 'bits-ui';
 	import fuzzysort, { type Key } from 'fuzzysort';
 
@@ -31,8 +32,8 @@
 		const snapshot = focused && listing(focused.id).snapshot;
 		if (!snapshot || (all && !query)) return [];
 		return fuzzysort.go(query, snapshot, { limit: 50, threshold: 0 }).map(({ target: path }) => {
-			const cut = path.lastIndexOf('/') + 1;
-			return { value: `file:${path}`, parent: path.slice(0, cut), label: path.slice(cut), onselect: () => onfile(path) };
+			const { name, dir } = split(path);
+			return { value: `file:${path}`, parent: dir, label: name, onselect: () => onfile(path) };
 		});
 	});
 	const groups: { heading: string; entries: Entry[] }[] = $derived([

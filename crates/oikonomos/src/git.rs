@@ -143,7 +143,6 @@ pub async fn show(
     Ok(content_at(&dir, &query.sha, &query.path).await)
 }
 
-/// Every uncommitted change against `HEAD`, or `None` when `dir` is not in a git repo.
 pub async fn changes(dir: &Path) -> Option<Vec<Change>> {
     let toplevel = toplevel(dir).await?;
     let prefix = dir.strip_prefix(toplevel).ok()?;
