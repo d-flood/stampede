@@ -1,0 +1,366 @@
+<script lang="ts">
+	import type { Device, Found, ServerMessage } from '#lib/device.ts';
+	import type { Cursor } from '#lib/files.svelte.ts';
+	import { form } from '#lib/form.ts';
+	import Badge from '#lib/ui/Badge.svelte';
+	import IconButton from '#lib/ui/IconButton.svelte';
+	import { onMount } from 'svelte';
+	import Eye from '~icons/ph/eye';
+	import EyeSlash from '~icons/ph/eye-slash';
+
+	type Props = { projectId: string; device: Device; hidden: boolean; onopen(path: string, cursor: Cursor): void };
+
+	let { projectId, device, hidden, onopen }: Props = $props();
+
+	let query = $state('');
+	let include = $state('');
+	let exclude = $state('');
+	let toggles = $state({ caseSensitive: false, wholeWord: false, regex: false, includeIgnored: false });
+	let results = $state.raw<{ file: string; matches: Found[] }[]>([]);
+	let done = $state<{ truncated: boolean; error?: string }>();
+	let input: HTMLInputElement;
+	let current: string | undefined;
+	let pending = 0;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+
+	const total = $derived(results.reduce((sum, { matches }) => sum + matches.length, 0));
+	const summary = $derived.by(() => {
+		if (!total) return done ? 'No results' : 'Searching…';
+		const counted = `${plural(total, 'result')} in ${plural(results.length, 'file')}`;
+		if (!done) return `${counted}…`;
+		return done.truncated ? `${counted} (limit reached)` : counted;
+	});
+
+	onMount(() => {
+		const unlisten = device.listen({ message });
+		return () => {
+			clearTimeout(timer);
+			unlisten();
+		};
+	});
+
+	$effect(() => {
+		if (!hidden && form() === 'desktop') input.focus();
+	});
+
+	function message(message: ServerMessage) {
+		switch (message.type) {
+			case 'hello':
+				pending = 0;
+				if (query) run();
+				break;
+			case 'search.started':
+				pending = Math.max(0, pending - 1);
+				if (pending) break;
+				current = message.searchId;
+				results = [];
+				done = undefined;
+				break;
+			case 'search.results':
+				if (!pending && message.searchId === current) results = [...results, { file: message.file, matches: message.matches }];
+				break;
+			case 'search.done':
+				if (!pending && message.searchId === current) done = message;
+				break;
+		}
+	}
+
+	function run() {
+		clearTimeout(timer);
+		results = [];
+		done = undefined;
+		current = undefined;
+		if (!query) return;
+		pending++;
+		device.send({ type: 'search.start', projectId, query, include: globs(include), exclude: globs(exclude), ...toggles });
+	}
+
+	function flip(toggle: keyof typeof toggles) {
+		toggles[toggle] = !toggles[toggle];
+		run();
+	}
+
+	function schedule() {
+		clearTimeout(timer);
+		timer = setTimeout(run, 250);
+	}
+
+	function globs(text: string) {
+		return text
+			.split(',')
+			.map((glob) => glob.trim())
+			.filter(Boolean);
+	}
+
+	function plural(count: number, noun: string) {
+		return `${count.toLocaleString()} ${noun}${count === 1 ? '' : 's'}`;
+	}
+
+	function split(path: string) {
+		const slash = path.lastIndexOf('/');
+		return { name: path.slice(slash + 1), dir: path.slice(0, slash + 1) };
+	}
+</script>
+
+<section aria-label="Search" {hidden}>
+	<form
+		onsubmit={(event) => {
+			event.preventDefault();
+			run();
+		}}
+	>
+		<div class="query">
+			<input
+				bind:this={input}
+				bind:value={query}
+				oninput={schedule}
+				placeholder="Search"
+				aria-label="Search"
+				aria-invalid={!!done?.error}
+				enterkeyhint="search"
+				autocomplete="off"
+				spellcheck={false}
+			/>
+			<button type="button" title="Match case" aria-label="Match case" aria-pressed={toggles.caseSensitive} onclick={() => flip('caseSensitive')}>Aa</button>
+			<button type="button" class="word" title="Match whole word" aria-label="Match whole word" aria-pressed={toggles.wholeWord} onclick={() => flip('wholeWord')}>ab</button>
+			<button type="button" title="Use regular expression" aria-label="Use regular expression" aria-pressed={toggles.regex} onclick={() => flip('regex')}>.*</button>
+		</div>
+		<input
+			bind:value={include}
+			oninput={schedule}
+			placeholder="Files to include, e.g. *.ts, src/**"
+			aria-label="Files to include"
+			enterkeyhint="search"
+			autocomplete="off"
+			spellcheck={false}
+		/>
+		<input
+			bind:value={exclude}
+			oninput={schedule}
+			placeholder="Files to exclude"
+			aria-label="Files to exclude"
+			enterkeyhint="search"
+			autocomplete="off"
+			spellcheck={false}
+		/>
+	</form>
+	<header>
+		{#if done?.error}
+			<p class="error" role="alert">{done.error}</p>
+		{:else}
+			<p role="status">{query ? summary : ''}</p>
+		{/if}
+		<IconButton
+			label={toggles.includeIgnored ? 'Skip ignored files' : 'Search ignored files'}
+			aria-pressed={toggles.includeIgnored}
+			onclick={() => flip('includeIgnored')}
+		>
+			{#if toggles.includeIgnored}<Eye />{:else}<EyeSlash />{/if}
+		</IconButton>
+	</header>
+	<ul class="results">
+		{#each results as { file, matches } (file)}
+			{@const { name, dir } = split(file)}
+			<li>
+				<div class="file" title={file}>
+					<span class="name">{name}</span>
+					<span class="dir">{dir}</span>
+					<Badge>{matches.length}</Badge>
+				</div>
+				<ul aria-label={file}>
+					{#each matches as { line, column, preview }, index (index)}
+						<li>
+							<button title={`${file}:${line}:${column}`} onclick={() => onopen(file, { line, column })}>
+								<span class="line">{line}</span>
+								<span class="preview">{preview}</span>
+							</button>
+						</li>
+					{/each}
+				</ul>
+			</li>
+		{/each}
+	</ul>
+</section>
+
+<style>
+	section {
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		min-height: 0;
+	}
+
+	section[hidden] {
+		display: none;
+	}
+
+	form {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		padding: 0 var(--space-2);
+	}
+
+	input {
+		box-sizing: border-box;
+		width: 100%;
+		min-width: 0;
+		min-height: var(--target-min);
+		padding: 0 var(--space-2);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg);
+		color: var(--color-fg);
+		font: inherit;
+		font-family: var(--font-mono);
+		outline: none;
+	}
+
+	input:focus-visible {
+		border-color: var(--status-working);
+	}
+
+	input[aria-invalid='true'] {
+		border-color: var(--ansi-1);
+	}
+
+	.query {
+		display: flex;
+		gap: var(--space-1);
+	}
+
+	.query input {
+		flex: 1;
+	}
+
+	.query button {
+		flex: none;
+		min-width: var(--target-min);
+		min-height: var(--target-min);
+		border: var(--border-width) solid transparent;
+		border-radius: var(--radius-sm);
+		background: none;
+		color: var(--muted-fg);
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		cursor: pointer;
+	}
+
+	.query button:hover {
+		background: var(--hover);
+		color: var(--color-fg);
+	}
+
+	.query button:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
+	}
+
+	.query [aria-pressed='true'] {
+		border-color: var(--status-working);
+		background: var(--surface-3);
+		color: var(--color-fg);
+	}
+
+	.word {
+		text-decoration: underline;
+	}
+
+	header {
+		display: flex;
+		align-items: center;
+		padding: 0 var(--space-1) 0 var(--space-3);
+	}
+
+	p {
+		flex: 1;
+		margin: 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.error {
+		color: var(--ansi-1);
+		font-family: var(--font-mono);
+		white-space: pre-wrap;
+	}
+
+	ul {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.results {
+		flex: 1;
+		overflow: auto;
+		padding-bottom: var(--space-3);
+	}
+
+	.file {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		min-height: var(--target-min);
+		padding: 0 var(--space-3);
+		white-space: nowrap;
+	}
+
+	.file .name {
+		flex: none;
+		max-width: 60%;
+		overflow: hidden;
+		font-weight: 600;
+		text-overflow: ellipsis;
+	}
+
+	.file .dir {
+		flex: 1;
+		overflow: hidden;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		text-overflow: ellipsis;
+	}
+
+	.results button {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-2);
+		width: 100%;
+		min-height: var(--target-min);
+		padding: 0 var(--space-3) 0 var(--space-6);
+		border: none;
+		background: none;
+		color: var(--color-fg);
+		font: inherit;
+		text-align: left;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+
+	.results button:hover {
+		background: var(--hover);
+	}
+
+	.results button:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
+		outline-offset: calc(-1 * var(--border-width));
+	}
+
+	.line {
+		flex: none;
+		min-width: 3ch;
+		color: var(--muted-fg);
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		font-variant-numeric: tabular-nums;
+		text-align: right;
+	}
+
+	.preview {
+		overflow: hidden;
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		text-overflow: ellipsis;
+		white-space: pre;
+	}
+</style>

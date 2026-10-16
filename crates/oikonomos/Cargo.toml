@@ -9,6 +9,9 @@ axum = { version = "0.8.9", features = ["ws"] }
 base64ct = { version = "1.8.3", features = ["alloc"] }
 clap = { version = "4.6.7", features = ["derive"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+grep-matcher = "0.1.9"
+grep-regex = "0.1.14"
+grep-searcher = "0.1.17"
 ignore = "0.4.33"
 libghostty-vt = { git = "https://github.com/uzaaft/libghostty-rs", rev = "d2036baeb605d31d09a9e2ba6d0c923e04c34d54" }
 mime_guess = "2.0.5"

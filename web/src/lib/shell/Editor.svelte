@@ -90,6 +90,16 @@
 		if (active && view && form() === 'desktop') view.focus();
 	});
 
+	$effect(() => {
+		const cursor = file.cursor;
+		if (!view || !cursor) return;
+		const { doc } = view.state;
+		const line = doc.line(Math.min(Math.max(cursor.line, 1), doc.lines));
+		const anchor = Math.min(line.from + cursor.column - 1, line.to);
+		view.dispatch({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: 'center' }) });
+		file.cursor = undefined;
+	});
+
 	async function keybindings(name: 'standard' | 'vim'): Promise<Extension> {
 		return name === 'vim' ? (await import('@replit/codemirror-vim')).vim() : [];
 	}

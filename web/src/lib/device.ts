@@ -17,6 +17,19 @@ export type Terminal = {
 
 export type Attention = { projectId: string; terminalId: string; label: string; status: Status };
 
+export type Found = { line: number; column: number; preview: string };
+
+export type Search = {
+	projectId: string;
+	query: string;
+	regex: boolean;
+	caseSensitive: boolean;
+	wholeWord: boolean;
+	include: string[];
+	exclude: string[];
+	includeIgnored: boolean;
+};
+
 export type ServerMessage =
 	| { type: 'hello'; version: string; terminals: Terminal[] }
 	| { type: 'terminal.created'; terminal: Terminal }
@@ -32,7 +45,10 @@ export type ServerMessage =
 	| { type: 'picker.listed'; directories: string[] }
 	| { type: 'fs.changed'; projectId: string; paths: string[]; git?: true }
 	| { type: 'attention.changed'; items: Attention[] }
-	| { type: 'git.changed'; projectId: string };
+	| { type: 'git.changed'; projectId: string }
+	| { type: 'search.started'; searchId: string }
+	| { type: 'search.results'; searchId: string; file: string; matches: Found[] }
+	| { type: 'search.done'; searchId: string; truncated: boolean; error?: string };
 
 export type ClientMessage =
 	| { type: 'hello'; deviceId: string; browserId: string }
@@ -49,7 +65,8 @@ export type ClientMessage =
 	| { type: 'project.close'; projectId: string }
 	| { type: 'project.reorder'; order: string[] }
 	| { type: 'picker.list' }
-	| { type: 'device.view'; terminalId: string | null };
+	| { type: 'device.view'; terminalId: string | null }
+	| ({ type: 'search.start' } & Search);
 
 type Listener = {
 	message?(message: ServerMessage): void;

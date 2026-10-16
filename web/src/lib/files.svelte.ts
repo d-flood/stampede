@@ -4,11 +4,14 @@ export type Entry ={ name: string; path: string; dir: boolean; ignored: boolean 
 
 export type Contents = { content: string; hash: string; binary?: undefined } | { binary: true; hash: string };
 
+export type Cursor = { line: number; column: number };
+
 export class OpenFile {
 	projectId: string;
 	path: string;
 	dirty = $state(false);
 	deleted = $state(false);
+	cursor = $state<Cursor>();
 
 	constructor(projectId: string, path: string) {
 		this.projectId = projectId;

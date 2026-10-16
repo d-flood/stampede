@@ -8,6 +8,7 @@ mod install;
 mod projects;
 mod protocol;
 mod push;
+mod search;
 mod terminals;
 mod themes;
 mod watcher;

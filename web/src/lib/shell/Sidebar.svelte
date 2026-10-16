@@ -4,9 +4,11 @@
 
 <script lang="ts">
 	import type { Device, Project } from '#lib/device.ts';
+	import type { Cursor } from '#lib/files.svelte.ts';
 	import type { Change, Git } from '#lib/git.ts';
 	import Changes from '#lib/shell/Changes.svelte';
 	import Files from '#lib/shell/Files.svelte';
+	import Search from '#lib/shell/Search.svelte';
 
 	type Props = {
 		open: boolean;
@@ -15,7 +17,7 @@
 		git?: Git;
 		device: Device;
 		section: Section;
-		onopen(path: string): void;
+		onopen(path: string, cursor?: Cursor): void;
 		ondiff(change: Change): void;
 	};
 
@@ -37,7 +39,7 @@
 		<h1 title={project.path}>{label}</h1>
 		<div class="sections" role="group" aria-label="Sections">
 			{#each shown as { id, label } (id)}
-				<button aria-pressed={current === id} disabled={id === 'history' || id === 'search'} onclick={() => (section = id)}>{label}</button>
+				<button aria-pressed={current === id} disabled={id === 'history'} onclick={() => (section = id)}>{label}</button>
 			{/each}
 		</div>
 		{#if current === 'files'}
@@ -47,6 +49,9 @@
 		{:else if current === 'changes'}
 			<Changes changes={git?.changes ?? []} onopen={ondiff} />
 		{/if}
+		{#key project.id}
+			<Search projectId={project.id} {device} hidden={current !== 'search'} {onopen} />
+		{/key}
 	{/if}
 </aside>
 

@@ -1,4 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use axum::{
     extract::{
@@ -22,6 +29,7 @@ use crate::{
     holder::Owner,
     projects::{self, Projects},
     protocol::Size,
+    search,
     terminals::{Attachment, Attention, Change, Terminals},
 };
 
@@ -59,6 +67,8 @@ enum Control {
     ListPicker {},
     #[serde(rename = "device.view")]
     View { terminal_id: Option<String> },
+    #[serde(rename = "search.start")]
+    Search(search::Query),
 }
 
 pub async fn upgrade(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> Response {
@@ -76,6 +86,7 @@ struct Device {
     channels: HashMap<u32, (String, AbortHandle)>,
     next_channel: u32,
     attachments: JoinSet<()>,
+    search: Option<Arc<AtomicBool>>,
 }
 
 async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, disk, git, .. }: AppState) {
@@ -105,6 +116,7 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
         channels: HashMap::new(),
         next_channel: 1,
         attachments: JoinSet::new(),
+        search: None,
     };
     config.mark_unchanged();
     loop {
@@ -167,6 +179,7 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
         }
     }
     device.terminals.view(device.connection, None, None);
+    device.cancel_search();
     writer.abort();
 }
 
@@ -250,6 +263,42 @@ impl Device {
             Control::View { terminal_id } => {
                 self.terminals.view(self.connection, self.browser.clone(), terminal_id)
             }
+            Control::Search(query) => self.search(query),
+        }
+    }
+
+    fn search(&mut self, query: search::Query) {
+        self.cancel_search();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.search = Some(Arc::clone(&cancelled));
+        let search_id = Uuid::new_v4().to_string();
+        send(&self.outgoing, json!({ "type": "search.started", "searchId": search_id }));
+        let projects = self.projects.list();
+        let Some(project) = projects.iter().find(|project| project.id == query.project_id) else {
+            let error = format!("Project {} is not open", query.project_id);
+            let done = json!({ "type": "search.done", "searchId": search_id, "truncated": false, "error": error });
+            return send(&self.outgoing, done);
+        };
+        let root = PathBuf::from(&project.path);
+        let outgoing = self.outgoing.clone();
+        tokio::task::spawn_blocking(move || {
+            let found = |file: &str, matches| {
+                let results = json!({ "type": "search.results", "searchId": search_id, "file": file, "matches": matches });
+                send(&outgoing, results);
+            };
+            let done = match search::run(&root, &query, &cancelled, found) {
+                Ok(truncated) => json!({ "type": "search.done", "searchId": search_id, "truncated": truncated }),
+                Err(error) => json!({ "type": "search.done", "searchId": search_id, "truncated": false, "error": error }),
+            };
+            if !cancelled.load(Ordering::Relaxed) {
+                send(&outgoing, done);
+            }
+        });
+    }
+
+    fn cancel_search(&self) {
+        if let Some(cancelled) = &self.search {
+            cancelled.store(true, Ordering::Relaxed);
         }
     }
 
