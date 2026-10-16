@@ -14,6 +14,7 @@ use tokio::{
     sync::{broadcast::error::RecvError, mpsc, watch},
     task::{AbortHandle, JoinSet},
 };
+use uuid::Uuid;
 
 use crate::{
     AppState,
@@ -21,7 +22,7 @@ use crate::{
     holder::Owner,
     projects::{self, Projects},
     protocol::Size,
-    terminals::{Attachment, Change, Terminals},
+    terminals::{Attachment, Attention, Change, Terminals},
 };
 
 const OUTPUT: u8 = 1;
@@ -54,6 +55,8 @@ enum Control {
     ReorderProjects { order: Vec<String> },
     #[serde(rename = "picker.list")]
     ListPicker {},
+    #[serde(rename = "device.view")]
+    View { terminal_id: Option<String> },
 }
 
 pub async fn upgrade(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> Response {
@@ -62,6 +65,7 @@ pub async fn upgrade(State(state): State<AppState>, upgrade: WebSocketUpgrade) -
 
 struct Device {
     id: String,
+    connection: Uuid,
     terminals: Arc<Terminals>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
@@ -84,9 +88,11 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
     let mut list = projects.subscribe();
     let mut changes = terminals.subscribe();
     let mut titles = terminals.subscribe_titles();
+    let mut attention = terminals.subscribe_attention();
     let mut disk = disk.subscribe();
     let mut device = Device {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: Uuid::new_v4().to_string(),
+        connection: Uuid::new_v4(),
         terminals,
         projects,
         config: config.clone(),
@@ -144,8 +150,13 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => break,
             },
+            Ok(()) = attention.changed() => {
+                let items = attention.borrow_and_update().clone();
+                device.attention_changed(&items);
+            }
         }
     }
+    device.terminals.view(device.connection, None);
     writer.abort();
 }
 
@@ -160,6 +171,7 @@ impl Device {
                     "terminals": self.terminals.list(),
                 });
                 send(&self.outgoing, hello);
+                self.attention_changed(&self.terminals.attention());
             }
             Control::Create { project_id, owner, rig } => {
                 let projects = self.projects.list();
@@ -222,6 +234,7 @@ impl Device {
                 let directories = projects::directories(&roots);
                 send(&self.outgoing, json!({ "type": "picker.listed", "directories": directories }));
             }
+            Control::View { terminal_id } => self.terminals.view(self.connection, terminal_id),
         }
     }
 
@@ -285,6 +298,10 @@ impl Device {
             }),
         };
         send(&self.outgoing, changed);
+    }
+
+    fn attention_changed(&self, items: &[Attention]) {
+        send(&self.outgoing, json!({ "type": "attention.changed", "items": items }));
     }
 
     fn retitle(&self, terminal_id: &str, label: &str) {

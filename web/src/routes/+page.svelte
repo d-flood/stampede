@@ -1,15 +1,17 @@
 <script lang="ts">
 	import { rigs } from '#lib/config.svelte.ts';
-	import { connect, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
+	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
 	import { OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { labels } from '#lib/projects.ts';
+	import AttentionList from '#lib/shell/Attention.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Editor from '#lib/shell/Editor.svelte';
 	import Picker from '#lib/shell/Picker.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
 	import Sidebar, { type Section } from '#lib/shell/Sidebar.svelte';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
+	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -22,6 +24,8 @@
 	const device = connect();
 	let projects = $state<Project[]>([]);
 	let terminals = $state<Record<string, Terminal[]>>({});
+	let attentionList = $state<Attention[]>([]);
+	let visible = $state(document.visibilityState === 'visible');
 	let files = $state<Record<string, OpenFile[]>>({});
 	let chosen = $state<string>();
 	let chosenTabs = $state<Record<string, string>>({});
@@ -39,6 +43,9 @@
 	const fileTabs = $derived((focused && files[focused.id]) || []);
 	const tabIds = $derived([...tabs.map((tab) => tab.id), ...fileTabs.map((file) => file.id)]);
 	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? '']) ?? tabIds.at(-1));
+	const shown = $derived((visible && tabs.find((tab) => tab.id === activeTab)?.id) || null);
+
+	$effect(() => device.send({ type: 'device.view', terminalId: shown }));
 
 	onMount(() => {
 		const unlisten = device.listen({ message });
@@ -57,8 +64,12 @@
 				}
 				terminals = owned;
 				device.send({ type: 'projects.list' });
+				device.send({ type: 'device.view', terminalId: shown });
 				break;
 			}
+			case 'attention.changed':
+				attentionList = message.items;
+				break;
 			case 'terminals.changed':
 				if (message.projectId) terminals[message.projectId] = message.terminals;
 				break;
@@ -94,6 +105,11 @@
 				settle?.(message.error);
 				break;
 		}
+	}
+
+	function attend({ projectId, terminalId }: Attention) {
+		chosen = projectId;
+		chosenTabs[projectId] = terminalId;
 	}
 
 	function pick() {
@@ -163,6 +179,8 @@
 	}
 </script>
 
+<svelte:document onvisibilitychange={() => (visible = document.visibilityState === 'visible')} />
+
 <div class="shell">
 	<Rail
 		{projects}
@@ -172,7 +190,15 @@
 		onreorder={reorder}
 		onclose={(projectId) => closeProject(projectId)}
 		onpick={pick}
-	/>
+	>
+		{#snippet badge(project)}
+			{@const count = attentionList.filter((item) => item.projectId === project.id).length}
+			{#if count}<Badge tone="waiting">{count}</Badge>{/if}
+		{/snippet}
+		{#snippet attention()}
+			<AttentionList items={attentionList} projects={projectLabels} onselect={attend} />
+		{/snippet}
+	</Rail>
 
 	<Sidebar
 		open={sidebar}

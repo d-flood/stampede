@@ -14,6 +14,8 @@ export type Terminal = {
 	label: string;
 };
 
+export type Attention = { projectId: string; terminalId: string; label: string; status: Status };
+
 export type ServerMessage =
 	| { type: 'hello'; version: string; terminals: Terminal[] }
 	| { type: 'terminal.created'; terminal: Terminal }
@@ -27,7 +29,8 @@ export type ServerMessage =
 	| { type: 'project.opened'; projectId: string }
 	| { type: 'project.error'; path: string; error: string }
 	| { type: 'picker.listed'; directories: string[] }
-	| { type: 'fs.changed'; projectId: string; paths: string[]; git?: true };
+	| { type: 'fs.changed'; projectId: string; paths: string[]; git?: true }
+	| { type: 'attention.changed'; items: Attention[] };
 
 export type ClientMessage =
 	| { type: 'hello'; deviceId: string }
@@ -42,7 +45,8 @@ export type ClientMessage =
 	| { type: 'project.open'; path: string }
 	| { type: 'project.close'; projectId: string }
 	| { type: 'project.reorder'; order: string[] }
-	| { type: 'picker.list' };
+	| { type: 'picker.list' }
+	| { type: 'device.view'; terminalId: string | null };
 
 type Listener = {
 	message?(message: ServerMessage): void;

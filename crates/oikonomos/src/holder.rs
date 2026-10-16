@@ -77,10 +77,17 @@ pub struct Record {
     pub status: Option<Status>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<String>,
+    #[serde(default = "viewed")]
+    pub viewed_since_done: bool,
     pub cwd: PathBuf,
     pub command: Vec<String>,
     pub size: Size,
     pub protocol: u16,
+}
+
+/// Launch counts as viewed, and so does a record from a holder that predates attention.
+fn viewed() -> bool {
+    true
 }
 
 pub fn socket_path(data_dir: &Path, id: &str) -> PathBuf {
@@ -130,6 +137,7 @@ pub fn hold(args: HoldArgs) -> Result<(), Box<dyn Error>> {
         agent: args.agent,
         status: None,
         agent_session: None,
+        viewed_since_done: viewed(),
         command: args.command,
         size: Size { cols: 80, rows: 24 },
         protocol: protocol::VERSION,
@@ -290,10 +298,11 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
                 }
                 break;
             }
-            Event::Received(_, Message::Agent(AgentState { status, session })) => {
+            Event::Received(_, Message::Agent(AgentState { status, session, viewed_since_done })) => {
                 if record.rig.is_some() {
                     record.status = status;
                     record.agent_session = session;
+                    record.viewed_since_done = viewed_since_done;
                     let _ = files.write_record(record);
                 }
             }

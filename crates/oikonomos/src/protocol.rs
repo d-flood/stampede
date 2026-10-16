@@ -38,10 +38,11 @@ pub struct Foreground {
     pub is_root_shell: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentState {
     pub status: Option<Status>,
     pub session: Option<String>,
+    pub viewed_since_done: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

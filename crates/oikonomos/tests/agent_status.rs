@@ -4,8 +4,8 @@ use std::{fs, process::Stdio};
 
 use common::{Server, control, next_control};
 use serde_json::{Value, json};
-use tokio::{io::AsyncWriteExt, process::Command};
-use tokio_tungstenite::connect_async;
+use tokio::{io::AsyncWriteExt, net::TcpStream, process::Command};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 const CONFIG: &str = r#"
 [[rig]]
@@ -21,15 +21,18 @@ command = "sh"
 args = ["-c", "exec sleep 600"]
 "#;
 
-/// The status after each hook event of a fixture; `-` is no status, the Agent having exited.
+type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+/// The status after each hook event of a fixture; `-` is no status, the Agent having exited,
+/// and `!` marks a Tab that needs attention.
 const SEQUENCES: [(&str, &str, &str, &str); 7] = [
-    ("claude", "claude-code", "simple-turn", "done working working working done"),
-    ("claude", "claude-code", "permission", "done working working waiting waiting working done"),
-    ("claude", "claude-code", "question", "done working working waiting waiting working done"),
-    ("claude", "claude-code", "exit", "done working done done done done -"),
-    ("codex", "codex", "simple-turn", "done working done"),
-    ("codex", "codex", "approval", "working working waiting working done"),
-    ("codex", "codex", "exit", "working done -"),
+    ("claude", "claude-code", "simple-turn", "done working working working done!"),
+    ("claude", "claude-code", "permission", "done working working waiting! waiting! working done!"),
+    ("claude", "claude-code", "question", "done working working waiting! waiting! working done!"),
+    ("claude", "claude-code", "exit", "done working done! done! done! done! -"),
+    ("codex", "codex", "simple-turn", "done working done!"),
+    ("codex", "codex", "approval", "working working waiting! working done!"),
+    ("codex", "codex", "exit", "working done! -"),
 ];
 
 #[tokio::test]
@@ -42,12 +45,13 @@ async fn recorded_hook_sequences_drive_agent_status() {
     control(&mut socket, json!({ "type": "project.open", "path": "~" })).await;
     let project_id = next_control(&mut socket, "project.opened").await["projectId"].clone();
 
-    for (rig, agent, fixture, expected) in SEQUENCES {
+    for (rig, agent, fixture, sequence) in SEQUENCES {
         let create = json!({ "type": "terminal.create", "projectId": project_id, "rig": rig });
         control(&mut socket, create).await;
         let created = next_control(&mut socket, "terminal.created").await;
         let terminal_id = created["terminal"]["id"].as_str().unwrap().to_owned();
         assert_eq!(created["terminal"]["status"], "done", "{agent} {fixture}: launch");
+        assert_eq!(created["terminal"]["needsAttention"], false, "{agent} {fixture}: launch");
 
         let path = format!("{}/tests/fixtures/hooks/{agent}/{fixture}.recorded.jsonl", env!("CARGO_MANIFEST_DIR"));
         let events: Vec<(String, Value)> = fs::read_to_string(path)
@@ -55,44 +59,77 @@ async fn recorded_hook_sequences_drive_agent_status() {
             .lines()
             .filter_map(|line| event(agent, serde_json::from_str(line).unwrap()))
             .collect();
-        let expected: Vec<&str> = expected.split(' ').collect();
+        let expected: Vec<&str> = sequence.split(' ').collect();
         assert_eq!(events.len(), expected.len(), "{agent} {fixture}: expectations");
 
-        for ((event, payload), status) in events.iter().zip(expected) {
-            let mut hook = Command::new(env!("CARGO_BIN_EXE_oikonomos"))
-                .args(["hook", agent, event])
-                .env("OIKONOMOS_TERMINAL_ID", &terminal_id)
-                .env("OIKONOMOS_HOOK_URL", &url)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
-            let mut stdin = hook.stdin.take().unwrap();
-            stdin.write_all(payload.to_string().as_bytes()).await.unwrap();
-            drop(stdin);
-            let output = hook.wait_with_output().await.unwrap();
-            assert!(output.status.success() && output.stdout.is_empty() && output.stderr.is_empty());
-
-            control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
-            let hello = next_control(&mut socket, "hello").await;
-            let terminal = hello["terminals"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|terminal| terminal["id"] == terminal_id)
-                .unwrap();
+        for ((event, payload), expected) in events.iter().zip(expected) {
+            hook(&url, &terminal_id, agent, event, payload).await;
+            let terminal = listed(&mut socket, &terminal_id).await;
             let context = format!("{agent} {fixture} after {event}: {terminal}");
-            if status == "-" {
+            if expected == "-" {
                 assert!(terminal.get("status").is_none(), "{context}");
                 assert!(terminal.get("rig").is_none(), "{context}");
                 assert!(terminal.get("agentSession").is_none(), "{context}");
+                assert_eq!(terminal["needsAttention"], false, "{context}");
             } else {
+                let status = expected.trim_end_matches('!');
                 assert_eq!(terminal["status"], status, "{context}");
                 assert_eq!(terminal["agentSession"], payload["session_id"], "{context}");
+                assert_eq!(terminal["needsAttention"], expected.ends_with('!'), "{context}");
+            }
+        }
+        if sequence.ends_with('-') {
+            continue;
+        }
+
+        let turn: Vec<&(String, Value)> = ["UserPromptSubmit", "Stop"]
+            .iter()
+            .map(|name| events.iter().find(|(event, _)| event == name).unwrap())
+            .collect();
+        let view = |terminal_id: Option<&str>| json!({ "type": "device.view", "terminalId": terminal_id });
+        control(&mut socket, view(Some(&terminal_id))).await;
+        let terminal = listed(&mut socket, &terminal_id).await;
+        assert_eq!(terminal["needsAttention"], false, "{agent} {fixture}: viewed: {terminal}");
+
+        for shown in [true, false] {
+            if !shown {
+                control(&mut socket, view(None)).await;
+            }
+            for (event, payload) in &turn {
+                hook(&url, &terminal_id, agent, event, payload).await;
+                let terminal = listed(&mut socket, &terminal_id).await;
+                let context = format!("{agent} {fixture} after {event}, shown {shown}: {terminal}");
+                let done = event == "Stop";
+                assert_eq!(terminal["status"], if done { "done" } else { "working" }, "{context}");
+                assert_eq!(terminal["needsAttention"], done && !shown, "{context}");
             }
         }
     }
+}
+
+async fn hook(url: &str, terminal_id: &str, agent: &str, event: &str, payload: &Value) {
+    let mut hook = Command::new(env!("CARGO_BIN_EXE_oikonomos"))
+        .args(["hook", agent, event])
+        .env("OIKONOMOS_TERMINAL_ID", terminal_id)
+        .env("OIKONOMOS_HOOK_URL", url)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = hook.stdin.take().unwrap();
+    stdin.write_all(payload.to_string().as_bytes()).await.unwrap();
+    drop(stdin);
+    let output = hook.wait_with_output().await.unwrap();
+    assert!(output.status.success() && output.stdout.is_empty() && output.stderr.is_empty());
+}
+
+/// A hello reply comes after every earlier control message and hook has been applied.
+async fn listed(socket: &mut Socket, terminal_id: &str) -> Value {
+    control(socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    let hello = next_control(socket, "hello").await;
+    let terminals = hello["terminals"].as_array().unwrap();
+    terminals.iter().find(|terminal| terminal["id"] == terminal_id).unwrap().clone()
 }
 
 /// Codex fixtures also record notify and OSC signals, which Rigs don't wire.
