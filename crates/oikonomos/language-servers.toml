@@ -1,0 +1,7 @@
+[typescript]
+version = "7.0.2"
+
+[typescript.linux-x64]
+package = "@typescript/typescript-linux-x64"
+url = "https://registry.npmjs.org/@typescript/typescript-linux-x64/-/typescript-linux-x64-7.0.2.tgz"
+sha256 = "7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3"

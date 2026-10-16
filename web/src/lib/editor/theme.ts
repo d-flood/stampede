@@ -42,7 +42,11 @@ const chrome = EditorView.theme({
 		borderRadius: 'var(--radius-md)',
 		boxShadow: 'var(--shadow-float)'
 	},
-	'.cm-tooltip-autocomplete > ul > li[aria-selected]': { backgroundColor: 'var(--hover)', color: 'var(--color-fg)' }
+	'.cm-tooltip-autocomplete > ul > li[aria-selected]': { backgroundColor: 'var(--hover)', color: 'var(--color-fg)' },
+	'.cm-lintRange-error': { backgroundImage: 'none', textDecoration: 'underline wavy var(--ansi-1)' },
+	'.cm-lintRange-warning': { backgroundImage: 'none', textDecoration: 'underline wavy var(--ansi-3)' },
+	'.cm-diagnostic-error': { borderLeftColor: 'var(--ansi-1)' },
+	'.cm-diagnostic-warning': { borderLeftColor: 'var(--ansi-3)' }
 });
 
 const highlight = HighlightStyle.define([

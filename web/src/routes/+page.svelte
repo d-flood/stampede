@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
+	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
@@ -44,6 +45,11 @@
 	let unfocused = $state(false);
 	let directories = $state<string[]>([]);
 	let settle: ((error?: string) => void) | undefined;
+	const servers = new LanguageServers(
+		device,
+		(projectId) => projects.find((project) => project.id === projectId)?.path,
+		(projectId, path) => openFile(projectId, path)
+	);
 
 	const projectLabels = $derived(labels(projects));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
@@ -71,6 +77,7 @@
 	});
 
 	function message(message: ServerMessage) {
+		servers.message(message);
 		switch (message.type) {
 			case 'hello': {
 				const owned: Record<string, Terminal[]> = {};
@@ -361,9 +368,9 @@
 				{#each open as file (file.id)}
 					{@const onshowdiff = (disk: string, buffer: string) => showDiff(file, disk, buffer)}
 					{#if file instanceof OpenDiff}
-						<Diff diff={file} {device} active={file.id === activeTab} {onshowdiff} />
+						<Diff diff={file} {device} {servers} active={file.id === activeTab} {onshowdiff} />
 					{:else}
-						<Editor {file} {device} git={git[file.projectId]} active={file.id === activeTab} {onshowdiff} />
+						<Editor {file} {device} {servers} git={git[file.projectId]} active={file.id === activeTab} {onshowdiff} />
 					{/if}
 				{/each}
 			{/each}

@@ -27,6 +27,7 @@ use crate::{
     AppState,
     config::Config,
     holder::Owner,
+    language_servers::{self, Input, LanguageServers, Server, Switch},
     projects::{self, Projects},
     protocol::Size,
     search,
@@ -69,6 +70,14 @@ enum Control {
     View { terminal_id: Option<String> },
     #[serde(rename = "search.start")]
     Search(search::Query),
+    #[serde(rename = "lsp.switch")]
+    Switch { project_id: String, on: bool },
+    #[serde(rename = "lsp.open")]
+    OpenServer { channel: String },
+    #[serde(rename = "lsp.close")]
+    CloseServer { channel: String },
+    #[serde(rename = "lsp")]
+    Lsp { channel: String, message: String },
 }
 
 pub async fn upgrade(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> Response {
@@ -87,9 +96,14 @@ struct Device {
     next_channel: u32,
     attachments: JoinSet<()>,
     search: Option<Arc<AtomicBool>>,
+    languages: Arc<LanguageServers>,
+    servers: HashMap<String, Server>,
 }
 
-async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, disk, git, .. }: AppState) {
+async fn connect(
+    socket: WebSocket,
+    AppState { terminals, projects, mut config, disk, git, languages, .. }: AppState,
+) {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = mpsc::unbounded_channel();
     let writer = tokio::spawn(async move {
@@ -105,6 +119,7 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
     let mut attention = terminals.subscribe_attention();
     let mut disk = disk.subscribe();
     let mut git = git.subscribe();
+    let mut switches = languages.subscribe();
     let mut device = Device {
         id: Uuid::new_v4().to_string(),
         browser: None,
@@ -117,6 +132,8 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
         next_channel: 1,
         attachments: JoinSet::new(),
         search: None,
+        languages,
+        servers: HashMap::new(),
     };
     config.mark_unchanged();
     loop {
@@ -138,6 +155,7 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
             Ok(()) = list.changed() => {
                 let projects = list.borrow_and_update().clone();
                 send(&device.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
+                device.stop_servers(|project_id| !projects.iter().any(|project| project.id == project_id));
             }
             changed = changes.recv() => match changed {
                 Ok(Change::Terminals(owner)) => device.terminals_changed(&owner),
@@ -176,6 +194,11 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => break,
             },
+            switch = switches.recv() => match switch {
+                Ok(switch) => device.switched(switch),
+                Err(RecvError::Lagged(_)) => device.send_switches(),
+                Err(RecvError::Closed) => break,
+            },
         }
     }
     device.terminals.view(device.connection, None, None);
@@ -196,6 +219,7 @@ impl Device {
                 });
                 send(&self.outgoing, hello);
                 self.attention_changed(&self.terminals.attention());
+                self.send_switches();
             }
             Control::Create { project_id, owner, rig } => {
                 let projects = self.projects.list();
@@ -264,6 +288,62 @@ impl Device {
                 self.terminals.view(self.connection, self.browser.clone(), terminal_id)
             }
             Control::Search(query) => self.search(query),
+            Control::Switch { project_id, on } => self.languages.switch(&project_id, on),
+            Control::OpenServer { channel } => self.open_server(channel),
+            Control::CloseServer { channel } => {
+                if let Some(server) = self.servers.get(&channel) {
+                    server.send(Input::Hidden);
+                }
+            }
+            Control::Lsp { channel, message } => {
+                if let Some(server) = self.servers.get(&channel) {
+                    server.send(Input::Message(message));
+                }
+            }
+        }
+    }
+
+    fn open_server(&mut self, channel: String) {
+        if let Some(server) = self.servers.get(&channel)
+            && server.running()
+        {
+            return server.send(Input::Shown);
+        }
+        let Some((project_id, language)) = language_servers::parse(&channel) else { return };
+        if !self.languages.is_on(project_id) {
+            return;
+        }
+        let projects = self.projects.list();
+        let Some(project) = projects.iter().find(|project| project.id == project_id) else { return };
+        let version = self.config.borrow().language_servers.pins.get(language).cloned();
+        match self.languages.start(&channel, &project.path, version, self.outgoing.clone()) {
+            Some(server) => {
+                self.servers.insert(channel, server);
+            }
+            None => eprintln!("no language server for {channel}"),
+        }
+    }
+
+    fn stop_servers(&mut self, stop: impl Fn(&str) -> bool) {
+        self.servers.retain(|channel, _| {
+            let keep = !language_servers::parse(channel).is_some_and(|(project_id, _)| stop(project_id));
+            if !keep {
+                send(&self.outgoing, json!({ "type": "lsp.state", "channel": channel, "state": "off" }));
+            }
+            keep
+        });
+    }
+
+    fn switched(&mut self, switch: Switch) {
+        send(&self.outgoing, json!(switch));
+        if !switch.on {
+            self.stop_servers(|project_id| project_id == switch.project_id);
+        }
+    }
+
+    fn send_switches(&self) {
+        for project in self.projects.list().iter() {
+            send(&self.outgoing, json!(Switch { project_id: project.id.clone(), on: self.languages.is_on(&project.id) }));
         }
     }
 
@@ -409,6 +489,6 @@ impl Device {
     }
 }
 
-fn send(outgoing: &mpsc::UnboundedSender<Message>, message: Value) {
+pub(crate) fn send(outgoing: &mpsc::UnboundedSender<Message>, message: Value) {
     let _ = outgoing.send(Message::Text(message.to_string().into()));
 }
