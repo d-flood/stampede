@@ -25,3 +25,11 @@ export async function head(projectId: string, path: string): Promise<string> {
 	if (!response.ok) throw new RequestError(response.status, await response.text());
 	return response.text();
 }
+
+export async function baseline(projectId: string, path: string, git?: Git): Promise<string | null> {
+	const change = git?.changes.find((change) => change.path === path);
+	if (!git?.isRepo || change?.kind === 'untracked') return null;
+	const content = await head(projectId, change?.from ?? path);
+	// HEAD is also empty for ignored files, so an empty HEAD counts only when git lists the path as changed.
+	return content || change ? content : null;
+}

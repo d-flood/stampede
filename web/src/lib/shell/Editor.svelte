@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { editor as settings } from '#lib/config.svelte.ts';
 	import type { Device } from '#lib/device.ts';
+	import { changeMarkers, setBaseline } from '#lib/editor/changes.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { theme } from '#lib/editor/theme.ts';
 	import { read, type OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { baseline, type Git } from '#lib/git.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import { Compartment, EditorState, type Extension } from '@codemirror/state';
@@ -14,9 +16,9 @@
 	import { onMount } from 'svelte';
 	import FloppyDisk from '~icons/ph/floppy-disk';
 
-	type Props = { file: OpenFile; device: Device; active: boolean; onshowdiff(disk: string, buffer: string): void };
+	type Props = { file: OpenFile; device: Device; git?: Git; active: boolean; onshowdiff(disk: string, buffer: string): void };
 
-	let { file, device, active, onshowdiff }: Props = $props();
+	let { file, device, git, active, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<EditorView>();
@@ -41,6 +43,7 @@
 							keys.of([]),
 							keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 							basicSetup,
+							changeMarkers,
 							syntax,
 							theme,
 							sync.listener
@@ -65,6 +68,18 @@
 		let stale = false;
 		keybindings(settings.keymap).then((extension) => {
 			if (!stale) current.dispatch({ effects: keys.reconfigure(extension) });
+		});
+		return () => {
+			stale = true;
+		};
+	});
+
+	$effect(() => {
+		const current = view;
+		if (!current) return;
+		let stale = false;
+		baseline(file.projectId, file.path, git).then((content) => {
+			if (!stale) current.dispatch({ effects: setBaseline.of(content === null ? null : current.state.toText(content)) });
 		});
 		return () => {
 			stale = true;

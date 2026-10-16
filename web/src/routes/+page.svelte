@@ -336,7 +336,7 @@
 					{#if file instanceof OpenDiff}
 						<Diff diff={file} {device} active={file.id === activeTab} {onshowdiff} />
 					{:else}
-						<Editor {file} {device} active={file.id === activeTab} {onshowdiff} />
+						<Editor {file} {device} git={git[file.projectId]} active={file.id === activeTab} {onshowdiff} />
 					{/if}
 				{/each}
 			{/each}

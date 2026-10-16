@@ -11,7 +11,8 @@ alpha=(git -C "$OIKONOMOS_E2E_ROOT/projects/alpha" -c init.defaultBranch=main -c
 "${alpha[@]}" init -q
 echo "# alpha" > "$OIKONOMOS_E2E_ROOT/projects/alpha/README.md"
 echo 'export const greeting = "hello";' > "$OIKONOMOS_E2E_ROOT/projects/alpha/greeting.ts"
-"${alpha[@]}" add README.md greeting.ts
+printf 'one\ntwo\nthree\n' | tee "$OIKONOMOS_E2E_ROOT/projects/alpha/"{desktop,pixel}.txt > /dev/null
+"${alpha[@]}" add .
 "${alpha[@]}" commit -qm "Initial commit"
 echo "roots = [\"$OIKONOMOS_E2E_ROOT/projects\"]" > "$OIKONOMOS_E2E_ROOT/config.toml"
 
