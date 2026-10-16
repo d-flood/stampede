@@ -3,18 +3,22 @@
 </script>
 
 <script lang="ts">
-	import type { Project } from '#lib/device.ts';
+	import type { Device, Project } from '#lib/device.ts';
+	import type { Git } from '#lib/git.ts';
+	import Changes from '#lib/shell/Changes.svelte';
 	import Files from '#lib/shell/Files.svelte';
 
 	type Props = {
 		open: boolean;
 		project?: Project;
 		label?: string;
+		git?: Git;
+		device: Device;
 		section: Section;
 		onopen(path: string): void;
 	};
 
-	let { open, project, label, section = $bindable(), onopen }: Props = $props();
+	let { open, project, label, git, device, section = $bindable(), onopen }: Props = $props();
 
 	const sections: { id: Section; label: string }[] = [
 		{ id: 'files', label: 'Files' },
@@ -22,20 +26,25 @@
 		{ id: 'history', label: 'History' },
 		{ id: 'search', label: 'Search' }
 	];
+
+	const shown = $derived(sections.filter(({ id }) => id !== 'changes' || git?.isRepo));
+	const current = $derived(shown.some(({ id }) => id === section) ? section : 'files');
 </script>
 
 <aside aria-label="Sidebar" hidden={!open}>
 	{#if project}
 		<h1 title={project.path}>{label}</h1>
 		<div class="sections" role="group" aria-label="Sections">
-			{#each sections as { id, label } (id)}
-				<button aria-pressed={section === id} disabled={id !== 'files'} onclick={() => (section = id)}>{label}</button>
+			{#each shown as { id, label } (id)}
+				<button aria-pressed={current === id} disabled={id === 'history' || id === 'search'} onclick={() => (section = id)}>{label}</button>
 			{/each}
 		</div>
-		{#if section === 'files'}
+		{#if current === 'files'}
 			{#key project.id}
-				<Files projectId={project.id} {onopen} />
+				<Files projectId={project.id} {device} changes={git?.changes ?? []} {onopen} />
 			{/key}
+		{:else if current === 'changes'}
+			<Changes changes={git?.changes ?? []} {onopen} />
 		{/if}
 	{/if}
 </aside>

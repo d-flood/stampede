@@ -3,6 +3,7 @@
 	import { connect, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
 	import { OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { status, type Git } from '#lib/git.ts';
 	import { labels } from '#lib/projects.ts';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Editor from '#lib/shell/Editor.svelte';
@@ -23,6 +24,7 @@
 	let projects = $state<Project[]>([]);
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let files = $state<Record<string, OpenFile[]>>({});
+	let git = $state<Record<string, Git>>({});
 	let chosen = $state<string>();
 	let chosenTabs = $state<Record<string, string>>({});
 	let sidebar = $state(form() === 'desktop');
@@ -81,6 +83,13 @@
 				for (const projectId in files) {
 					if (!projects.some((project) => project.id === projectId)) delete files[projectId];
 				}
+				for (const projectId in git) {
+					if (!projects.some((project) => project.id === projectId)) delete git[projectId];
+				}
+				for (const project of projects) loadGit(project.id);
+				break;
+			case 'git.changed':
+				loadGit(message.projectId);
 				break;
 			case 'picker.listed':
 				directories = message.directories;
@@ -94,6 +103,11 @@
 				settle?.(message.error);
 				break;
 		}
+	}
+
+	async function loadGit(projectId: string) {
+		const loaded = await status(projectId);
+		if (projects.some((project) => project.id === projectId)) git[projectId] = loaded;
 	}
 
 	function pick() {
@@ -178,6 +192,8 @@
 		open={sidebar}
 		project={focused}
 		label={focused && projectLabels.get(focused.id)}
+		git={focused && git[focused.id]}
+		{device}
 		bind:section
 		onopen={(path) => focused && openFile(focused.id, path)}
 	/>

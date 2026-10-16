@@ -1,6 +1,7 @@
 mod config;
 mod device;
 mod files;
+mod git;
 mod holder;
 mod hooks;
 mod install;
@@ -56,6 +57,7 @@ struct AppState {
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
     disk: broadcast::Sender<watcher::Changed>,
+    git: broadcast::Sender<git::Changed>,
 }
 
 fn router(state: AppState) -> Router {
@@ -68,6 +70,8 @@ fn router(state: AppState) -> Router {
         .route("/api/hook", post(hooks::receive).layer(DefaultBodyLimit::disable()))
         .route("/api/projects/{id}/tree", get(files::tree))
         .route("/api/projects/{id}/file", get(files::read).put(files::write))
+        .route("/api/projects/{id}/git", get(git::status))
+        .route("/api/projects/{id}/git/head", get(git::head))
         .route("/fonts/host/{index}", get(host_font))
         .route("/ws", get(device::upgrade))
         .fallback(spa)
@@ -82,8 +86,9 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let terminals = Arc::new(Terminals::new(args.data_dir, hook_url));
     terminals.restore().await?;
     let disk = watcher::spawn(projects.subscribe());
+    let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, router(AppState { terminals, projects, config, disk })).await
+    axum::serve(listener, router(AppState { terminals, projects, config, disk, git })).await
 }
 
 async fn version() -> Json<Value> {

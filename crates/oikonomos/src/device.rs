@@ -71,7 +71,7 @@ struct Device {
     attachments: JoinSet<()>,
 }
 
-async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, disk }: AppState) {
+async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, disk, git }: AppState) {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = mpsc::unbounded_channel();
     let writer = tokio::spawn(async move {
@@ -85,6 +85,7 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
     let mut changes = terminals.subscribe();
     let mut titles = terminals.subscribe_titles();
     let mut disk = disk.subscribe();
+    let mut git = git.subscribe();
     let mut device = Device {
         id: uuid::Uuid::new_v4().to_string(),
         terminals,
@@ -140,6 +141,11 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
                 Err(RecvError::Closed) => break,
             },
             changed = disk.recv() => match changed {
+                Ok(changed) => send(&device.outgoing, json!(changed)),
+                Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => break,
+            },
+            changed = git.recv() => match changed {
                 Ok(changed) => send(&device.outgoing, json!(changed)),
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => break,

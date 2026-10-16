@@ -31,7 +31,7 @@ export class RequestError extends Error {
 	}
 }
 
-async function json<T>(response: Response): Promise<T> {
+export async function json<T>(response: Response): Promise<T> {
 	if (!response.ok) throw new RequestError(response.status, await response.text());
 	return response.json();
 }

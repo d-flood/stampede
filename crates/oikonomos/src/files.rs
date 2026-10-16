@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 
 use crate::AppState;
 
-type Failure = (StatusCode, String);
+pub type Failure = (StatusCode, String);
 
 #[derive(Deserialize)]
 pub struct TreeQuery {
@@ -94,7 +94,7 @@ pub async fn write(
     .await
 }
 
-fn root(state: &AppState, id: &str) -> Result<PathBuf, Failure> {
+pub fn root(state: &AppState, id: &str) -> Result<PathBuf, Failure> {
     let projects = state.projects.list();
     match projects.iter().find(|project| project.id == id) {
         Some(project) => Ok(PathBuf::from(&project.path)),
