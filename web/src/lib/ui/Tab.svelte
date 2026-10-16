@@ -17,6 +17,7 @@
 		active?: boolean;
 		dirty?: boolean;
 		deleted?: boolean;
+		ended?: boolean;
 	};
 
 	let {
@@ -27,6 +28,7 @@
 		active = false,
 		dirty = false,
 		deleted = false,
+		ended = false,
 		...rest
 	}: Props = $props();
 
@@ -37,7 +39,7 @@
 	const Mark = $derived(status && marks[status]);
 </script>
 
-<button role="tab" aria-selected={active} class="{variant} {status ?? ''}" class:active class:deleted {...rest}>
+<button role="tab" aria-selected={active} class="{variant} {status ?? ''}" class:active class:deleted class:ended {...rest}>
 	<Icon />
 	<span class="label">{label}</span>
 	{#if variant === 'diff'}<span class="vs">↔ HEAD</span>{/if}
@@ -114,6 +116,12 @@
 
 	.deleted .label {
 		text-decoration: line-through;
+	}
+
+	.ended {
+		color: var(--muted-fg);
+		font-weight: 400;
+		font-style: italic;
 	}
 
 	.terminal .label {

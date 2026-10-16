@@ -36,6 +36,8 @@ enum Control {
     Create { project_id: Option<String>, owner: Option<Owner>, rig: Option<String> },
     #[serde(rename = "terminal.close")]
     Close { terminal_id: String },
+    #[serde(rename = "terminal.resume")]
+    Resume { terminal_id: String },
     #[serde(rename = "terminal.attach")]
     Attach { terminal_id: String },
     #[serde(rename = "terminal.resize")]
@@ -180,7 +182,8 @@ impl Device {
                     },
                     None => None,
                 };
-                match self.terminals.create(project, rig.as_ref(), &self.id).await {
+                let scrollback = self.config.borrow().scrollback;
+                match self.terminals.create(project, rig.as_ref(), None, scrollback, &self.id).await {
                     Ok(terminal) => {
                         send(&self.outgoing, json!({ "type": "terminal.created", "terminal": terminal }))
                     }
@@ -188,6 +191,7 @@ impl Device {
                 }
             }
             Control::Close { terminal_id } => self.terminals.close(&terminal_id),
+            Control::Resume { terminal_id } => self.resume(&terminal_id).await,
             Control::Attach { terminal_id } => self.attach(terminal_id).await,
             Control::Resize { terminal_id, cols, rows } => {
                 self.terminals.resize(&terminal_id, &self.id, Size { cols, rows })
@@ -222,6 +226,32 @@ impl Device {
                 let directories = projects::directories(&roots);
                 send(&self.outgoing, json!({ "type": "picker.listed", "directories": directories }));
             }
+        }
+    }
+
+    async fn resume(&self, terminal_id: &str) {
+        let Some((ended, _)) = self.terminals.ended(terminal_id) else { return };
+        let (Some(name), Some(session)) = (ended.rig, ended.agent_session) else {
+            return eprintln!("cannot resume terminal {terminal_id}: no Agent session");
+        };
+        let Some(rig) = self.config.borrow().rigs.iter().find(|rig| rig.name == name).cloned() else {
+            return eprintln!("cannot resume rig {name}: not in the config");
+        };
+        let projects = self.projects.list();
+        let project = match &ended.owner {
+            Owner::Project(project_id) => match projects.iter().find(|project| project.id == *project_id) {
+                Some(project) => Some(project),
+                None => return eprintln!("cannot resume terminal {terminal_id} in {project_id}: not open"),
+            },
+            Owner::Drawer => None,
+        };
+        let scrollback = self.config.borrow().scrollback;
+        match self.terminals.create(project, Some(&rig), Some(&session), scrollback, &self.id).await {
+            Ok(terminal) => {
+                self.terminals.dismiss(terminal_id);
+                send(&self.outgoing, json!({ "type": "terminal.created", "terminal": terminal }));
+            }
+            Err(error) => eprintln!("cannot resume terminal {terminal_id}: {error}"),
         }
     }
 
