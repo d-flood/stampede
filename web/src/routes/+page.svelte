@@ -1,10 +1,13 @@
 <script lang="ts">
 	import { connect, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
+	import { OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { labels } from '#lib/projects.ts';
 	import Drawer from '#lib/shell/Drawer.svelte';
+	import Editor from '#lib/shell/Editor.svelte';
 	import Picker from '#lib/shell/Picker.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
+	import Sidebar, { type Section } from '#lib/shell/Sidebar.svelte';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
@@ -18,9 +21,12 @@
 	const device = connect();
 	let projects = $state<Project[]>([]);
 	let terminals = $state<Record<string, Terminal[]>>({});
+	let files = $state<Record<string, OpenFile[]>>({});
 	let chosen = $state<string>();
 	let chosenTabs = $state<Record<string, string>>({});
 	let sidebar = $state(form() === 'desktop');
+	let section = $state<Section>('files');
+	let closing = $state<OpenFile>();
 	let picking = $state(false);
 	let directories = $state<string[]>([]);
 	let settle: ((error?: string) => void) | undefined;
@@ -28,7 +34,9 @@
 	const projectLabels = $derived(labels(projects));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
 	const tabs = $derived((focused && terminals[focused.id]) || []);
-	const activeTab = $derived(tabs.find((tab) => tab.id === chosenTabs[focused?.id ?? '']) ?? tabs.at(-1));
+	const fileTabs = $derived((focused && files[focused.id]) || []);
+	const tabIds = $derived([...tabs.map((tab) => tab.id), ...fileTabs.map((file) => file.id)]);
+	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? '']) ?? tabIds.at(-1));
 
 	onMount(() => {
 		const unlisten = device.listen({ message });
@@ -57,6 +65,9 @@
 				break;
 			case 'projects.changed':
 				projects = message.projects;
+				for (const projectId in files) {
+					if (!projects.some((project) => project.id === projectId)) delete files[projectId];
+				}
 				break;
 			case 'picker.listed':
 				directories = message.directories;
@@ -89,13 +100,37 @@
 		device.send({ type: 'project.reorder', order });
 	}
 
+	function leave(projectId: string, tabId: string) {
+		if (tabId !== activeTab) return;
+		const index = tabIds.indexOf(tabId);
+		const neighbor = tabIds[index + 1] ?? tabIds[index - 1];
+		if (neighbor) chosenTabs[projectId] = neighbor;
+	}
+
 	function closeTab(projectId: string, terminalId: string) {
-		if (terminalId === activeTab?.id) {
-			const index = tabs.findIndex((tab) => tab.id === terminalId);
-			const neighbor = tabs[index + 1] ?? tabs[index - 1];
-			if (neighbor) chosenTabs[projectId] = neighbor.id;
-		}
+		leave(projectId, terminalId);
 		device.send({ type: 'terminal.close', terminalId });
+	}
+
+	function openFile(projectId: string, path: string) {
+		files[projectId] ??= [];
+		let file = files[projectId].find((file) => file.path === path);
+		if (!file) {
+			file = new OpenFile(projectId, path);
+			files[projectId].push(file);
+		}
+		chosenTabs[projectId] = file.id;
+		if (form() === 'phone') sidebar = false;
+	}
+
+	function closeFile(file: OpenFile, discard = false) {
+		if (file.dirty && !discard) {
+			closing = file;
+			return;
+		}
+		closing = undefined;
+		leave(file.projectId, file.id);
+		files[file.projectId] = files[file.projectId].filter((open) => open !== file);
 	}
 </script>
 
@@ -110,13 +145,13 @@
 		onpick={pick}
 	/>
 
-	{#if sidebar}
-		<aside aria-label="Sidebar">
-			{#if focused}
-				<h1 title={focused.path}>{projectLabels.get(focused.id)}</h1>
-			{/if}
-		</aside>
-	{/if}
+	<Sidebar
+		open={sidebar}
+		project={focused}
+		label={focused && projectLabels.get(focused.id)}
+		bind:section
+		onopen={(path) => focused && openFile(focused.id, path)}
+	/>
 
 	<main>
 		<div class="strip">
@@ -133,8 +168,23 @@
 									{...props}
 									variant="terminal"
 									label="Terminal"
-									active={tab.id === activeTab?.id}
+									active={tab.id === activeTab}
 									onclick={() => (chosenTabs[projectId] = tab.id)}
+								/>
+							{/snippet}
+						</Menu>
+					{/each}
+					{#each fileTabs as file (file.id)}
+						<Menu context items={[{ label: 'Close', onselect: () => closeFile(file) }]}>
+							{#snippet trigger(props)}
+								<Tab
+									{...props}
+									variant="editor"
+									label={file.name}
+									title={file.path}
+									dirty={file.dirty}
+									active={file.id === activeTab}
+									onclick={() => (chosenTabs[projectId] = file.id)}
 								/>
 							{/snippet}
 						</Menu>
@@ -153,7 +203,12 @@
 		<div class="tabs">
 			{#each Object.entries(terminals) as [projectId, owned] (projectId)}
 				{#each owned as terminal (terminal.id)}
-					<TerminalView {device} terminalId={terminal.id} active={terminal.id === activeTab?.id} />
+					<TerminalView {device} terminalId={terminal.id} active={terminal.id === activeTab} />
+				{/each}
+			{/each}
+			{#each Object.values(files) as open}
+				{#each open as file (file.id)}
+					<Editor {file} active={file.id === activeTab} />
 				{/each}
 			{/each}
 			{#if !focused}
@@ -172,26 +227,21 @@
 	<Picker {directories} onopen={open} />
 </Dialog>
 
+<Dialog
+	bind:open={() => !!closing, (open) => !open && (closing = undefined)}
+	title="Discard unsaved changes?"
+	description={closing && `${closing.path} has unsaved changes.`}
+>
+	{#snippet actions()}
+		<Button onclick={() => (closing = undefined)}>Cancel</Button>
+		<Button variant="primary" onclick={() => closing && closeFile(closing, true)}>Discard</Button>
+	{/snippet}
+</Dialog>
+
 <style>
 	.shell {
 		display: flex;
 		height: 100dvh;
-	}
-
-	aside {
-		flex: none;
-		width: 20rem;
-		border-right: var(--border-width) solid var(--border);
-		background: var(--surface-1);
-	}
-
-	h1 {
-		margin: 0;
-		padding: var(--space-3) var(--space-4) 0;
-		overflow: hidden;
-		font-size: var(--font-size-lg);
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	main {

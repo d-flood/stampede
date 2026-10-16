@@ -12,12 +12,15 @@ type Palette = {
 };
 type ThemeResponse = { light: Palette; dark: Palette };
 type Font = { family: string; faces: { url: string; weight: string; style: string }[] };
+type EditorSettings = { keymap: 'standard' | 'vim' };
 
 export type Appearance = { theme: ITheme; fontFamily: string };
 
 const dark = new MediaQuery('(prefers-color-scheme: dark)');
 let revision = $state(0);
 let faces: FontFace[] = [];
+
+export const editor = $state<EditorSettings>({ keymap: 'standard' });
 
 async function get<T>(path: string): Promise<T> {
 	const response = await fetch(path);
@@ -26,7 +29,12 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export async function loadConfig() {
-	const [theme, font] = await Promise.all([get<ThemeResponse>('/api/theme'), get<Font>('/api/font')]);
+	const [theme, font, settings] = await Promise.all([
+		get<ThemeResponse>('/api/theme'),
+		get<Font>('/api/font'),
+		get<EditorSettings>('/api/editor')
+	]);
+	editor.keymap = settings.keymap;
 	const style = document.documentElement.style;
 	for (const scheme of ['light', 'dark'] as const) {
 		const palette = theme[scheme];

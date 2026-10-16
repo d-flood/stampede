@@ -15,9 +15,10 @@
 		agent?: 'claude-code' | 'codex';
 		status?: 'working' | 'waiting' | 'done';
 		active?: boolean;
+		dirty?: boolean;
 	};
 
-	let { variant, label, agent = 'claude-code', status, active = false, ...rest }: Props = $props();
+	let { variant, label, agent = 'claude-code', status, active = false, dirty = false, ...rest }: Props = $props();
 
 	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff };
 	const agents = { 'claude-code': Claude, codex: OpenAI };
@@ -31,6 +32,7 @@
 	<span class="label">{label}</span>
 	{#if variant === 'diff'}<span class="vs">↔ HEAD</span>{/if}
 	{#if Mark}<span class="mark" title={status}><Mark /></span>{/if}
+	{#if dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
 </button>
 
 <style>
@@ -120,6 +122,14 @@
 
 	.done {
 		--mark: var(--status-done);
+	}
+
+	.dirty {
+		flex: none;
+		width: 0.5em;
+		height: 0.5em;
+		border-radius: 50%;
+		background: currentColor;
 	}
 
 	.mark {

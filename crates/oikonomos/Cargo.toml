@@ -8,6 +8,7 @@ publish = false
 axum = { version = "0.8.9", features = ["ws"] }
 clap = { version = "4.6.7", features = ["derive"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+ignore = "0.4.33"
 libghostty-vt = { git = "https://github.com/uzaaft/libghostty-rs", rev = "d2036baeb605d31d09a9e2ba6d0c923e04c34d54" }
 mime_guess = "2.0.5"
 nix = { version = "0.31.3", features = ["process", "signal"] }
