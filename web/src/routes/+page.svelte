@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { rigs } from '#lib/config.svelte.ts';
 	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
-	import { OpenDiff, OpenFile } from '#lib/files.svelte.ts';
+	import { OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
 	import { labels } from '#lib/projects.ts';
@@ -205,8 +205,9 @@
 		return existing ?? tab;
 	}
 
-	function openFile(projectId: string, path: string) {
-		openTab(new OpenFile(projectId, path));
+	function openFile(projectId: string, path: string, cursor?: Cursor) {
+		const file = openTab(new OpenFile(projectId, path));
+		if (cursor) file.cursor = cursor;
 	}
 
 	function openDiff(projectId: string, { path, from }: Change, against: 'HEAD' | Commit = 'HEAD') {
@@ -256,7 +257,7 @@
 		git={focused && git[focused.id]}
 		{device}
 		bind:section
-		onopen={(path) => focused && openFile(focused.id, path)}
+		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		ondiff={(change, commit) => focused && openDiff(focused.id, change, commit)}
 	/>
 
