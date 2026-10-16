@@ -47,6 +47,8 @@
 	let copying = $state<string>();
 	let composing = $state(false);
 	let composer = $state<Composer>();
+	let dragged = $state<number>();
+	let wheeled = 0;
 	const live = $derived(device.connection === 'connected');
 	const observer = new ResizeObserver(propose);
 
@@ -112,6 +114,11 @@
 			if (event.inputType === 'insertText' && event.data && !event.isComposing) send(event.data);
 		});
 		if (onopen) linkify(next, () => project, onopen);
+		next.attachCustomWheelEventHandler((event) => {
+			if (!next.hasMouseTracking()) return false;
+			scroll(lines(event), event);
+			return true;
+		});
 		next.onData((data) => {
 			if (!writing) send(data);
 		});
@@ -176,7 +183,66 @@
 			ctrl = false;
 			data = control(data);
 		}
+		input(data);
+	}
+
+	function input(data: string) {
 		if (channel !== undefined && live) device.input(channel, data);
+	}
+
+	// ghostty-web has no mouse reporting and turns the wheel into arrow keys on the
+	// alternate screen, so apps tracking the mouse, like Claude Code, get wheel reports from here.
+	function scroll(amount: number, at?: { clientX: number; clientY: number }) {
+		if (!view) return;
+		const tracking = view.hasMouseTracking();
+		if (!tracking && view.buffer.active.type === 'normal') return view.scrollLines(amount);
+		wheeled += amount;
+		const count = Math.trunc(wheeled);
+		wheeled -= count;
+		if (!count) return;
+		if (!tracking) return input((count < 0 ? '\x1b[A' : '\x1b[B').repeat(Math.abs(count)));
+		const button = count < 0 ? 64 : 65;
+		const [col, row] = cell(at);
+		const report = view.getMode(1006)
+			? `\x1b[<${button};${col};${row}M`
+			: `\x1b[M${String.fromCharCode(32 + button, 32 + col, 32 + row)}`;
+		input(report.repeat(Math.abs(count)));
+	}
+
+	function grid() {
+		return container.querySelector('canvas')?.getBoundingClientRect();
+	}
+
+	function cell(at?: { clientX: number; clientY: number }) {
+		const rect = grid();
+		if (!view) return [1, 1];
+		if (!at || !rect) return [Math.ceil(view.cols / 2), Math.ceil(view.rows / 2)];
+		const clamp = (value: number, max: number) => Math.min(max, Math.max(1, Math.floor(value) + 1));
+		return [
+			clamp(((at.clientX - rect.left) / rect.width) * view.cols, view.cols),
+			clamp(((at.clientY - rect.top) / rect.height) * view.rows, view.rows)
+		];
+	}
+
+	function rowHeight() {
+		return (grid()?.height ?? 0) / (view?.rows ?? 1) || 1;
+	}
+
+	function lines({ deltaY, deltaMode }: WheelEvent) {
+		if (deltaMode === WheelEvent.DOM_DELTA_LINE) return deltaY;
+		if (deltaMode === WheelEvent.DOM_DELTA_PAGE) return deltaY * (view?.rows ?? 1);
+		return deltaY / rowHeight();
+	}
+
+	function grab(event: PointerEvent) {
+		dragged = event.clientY;
+		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+	}
+
+	function drag({ clientY }: PointerEvent) {
+		if (dragged === undefined) return;
+		scroll((dragged - clientY) / rowHeight());
+		dragged = clientY;
 	}
 
 	function blur({ relatedTarget }: FocusEvent) {
@@ -229,7 +295,20 @@
 		{/if}
 	</div>
 	{@render children?.()}
-	<div class="terminal" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
+	<div class="view">
+		<div class="terminal" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
+		{#if form() === 'phone'}
+			<div
+				class="rail"
+				class:dragging={dragged !== undefined}
+				aria-hidden="true"
+				onpointerdown={grab}
+				onpointermove={drag}
+				onpointerup={() => (dragged = undefined)}
+				onpointercancel={() => (dragged = undefined)}
+			></div>
+		{/if}
+	</div>
 	{#if typing && !ended && form() === 'phone'}
 		<KeyBar bind:ctrl disabled={!live} application={() => !!view?.getMode(1)} onkey={send} oncopy={copy} />
 	{/if}
@@ -264,10 +343,48 @@
 		color: var(--color-fg);
 	}
 
-	.terminal {
+	.view {
+		display: flex;
 		flex: 1;
 		min-height: 0;
+	}
+
+	.terminal {
+		flex: 1;
+		min-width: 0;
+		min-height: 0;
 		overflow: auto;
+	}
+
+	.rail {
+		position: relative;
+		z-index: 1;
+		display: flex;
+		flex: none;
+		align-items: center;
+		justify-content: center;
+		width: calc(var(--target-min) / 2);
+		border-left: var(--border-width) solid var(--border);
+		background: var(--surface-1);
+		touch-action: none;
+	}
+
+	.rail::before {
+		content: '';
+		width: var(--space-1);
+		height: var(--target-min);
+		border-radius: var(--radius-lg);
+		background: var(--muted-fg);
+	}
+
+	.rail::after {
+		content: '';
+		position: absolute;
+		inset: 0 0 0 calc(var(--target-min) / -2);
+	}
+
+	.rail.dragging {
+		background: var(--hover);
 	}
 
 	.terminal > :global(div) {

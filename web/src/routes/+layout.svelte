@@ -7,6 +7,10 @@
 {@render children()}
 
 <style>
+	:global(html) {
+		overscroll-behavior-y: none;
+	}
+
 	:global(body) {
 		margin: 0;
 		background: var(--color-bg);

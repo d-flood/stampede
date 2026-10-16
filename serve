@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+
+pnpm -C web install --frozen-lockfile
+pnpm -C web build
+cargo build --release
+exec target/release/oikonomos serve "$@"
