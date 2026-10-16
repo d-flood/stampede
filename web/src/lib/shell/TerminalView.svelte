@@ -4,10 +4,13 @@
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { linkify } from '#lib/links.ts';
+	import Composer from '#lib/shell/Composer.svelte';
 	import CopyMode from '#lib/shell/CopyMode.svelte';
 	import KeyBar, { control } from '#lib/shell/KeyBar.svelte';
+	import IconButton from '#lib/ui/IconButton.svelte';
 	import { FitAddon, Terminal, init } from 'ghostty-web';
 	import { onMount, type Snippet } from 'svelte';
+	import NotePencil from '~icons/ph/note-pencil';
 
 	type Props = {
 		device: Device;
@@ -32,6 +35,8 @@
 	let typing = $state(false);
 	let ctrl = $state(false);
 	let copying = $state<string>();
+	let composing = $state(false);
+	let composer = $state<Composer>();
 
 	onMount(() => {
 		let disposed = false;
@@ -71,7 +76,8 @@
 	$effect(() => {
 		if (!focused || !view) return;
 		window.terminal = view;
-		view.focus();
+		if (composing) composer?.focus();
+		else view.focus();
 	});
 
 	// ghostty-web can't change its theme after open(), so a new look gets a
@@ -161,6 +167,13 @@
 		copying = lines.join('\n').trimEnd();
 	}
 
+	function compose(text: string, enter: boolean) {
+		if (channel === undefined || !view) return false;
+		const pasted = view.hasBracketedPaste() ? `\x1b[200~${text}\x1b[201~` : text.replaceAll('\n', '\r');
+		device.input(channel, enter ? `${pasted}\r` : pasted);
+		return true;
+	}
+
 	function propose() {
 		const size = fit?.proposeDimensions();
 		if (channel !== undefined && size) device.send({ type: 'terminal.resize', terminalId, ...size });
@@ -176,10 +189,20 @@
 </script>
 
 <div class="panel" role="tabpanel" hidden={!active}>
+	{#if !ended}
+		<div class="toolbar">
+			<IconButton label="Composer" aria-pressed={composing} onclick={() => (composing = !composing)}>
+				<NotePencil />
+			</IconButton>
+		</div>
+	{/if}
 	{@render children?.()}
 	<div class="terminal" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
 	{#if typing && !ended && form() === 'phone'}
 		<KeyBar bind:ctrl application={() => !!view?.getMode(1)} onkey={send} oncopy={copy} />
+	{/if}
+	{#if composing && !ended}
+		<Composer bind:this={composer} {terminalId} onsend={compose} />
 	{/if}
 </div>
 
@@ -194,6 +217,19 @@
 
 	.panel[hidden] {
 		display: none;
+	}
+
+	.toolbar {
+		display: flex;
+		flex: none;
+		justify-content: flex-end;
+		padding: 0 var(--space-1);
+		border-bottom: var(--border-width) solid var(--border);
+	}
+
+	.toolbar :global([aria-pressed='true']) {
+		background: var(--hover);
+		color: var(--color-fg);
 	}
 
 	.terminal {
