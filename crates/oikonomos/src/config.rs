@@ -82,6 +82,72 @@ pub struct Rig {
     pub resume: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shortcut: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub mode: Option<String>,
+}
+
+impl Rig {
+    pub fn settings(&self) -> AgentSettings {
+        AgentSettings { model: self.model.clone(), effort: self.effort.clone(), mode: self.mode.clone() }
+    }
+}
+
+/// The model, effort and mode an Agent starts with.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AgentSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
+impl AgentSettings {
+    pub fn flags(&self, agent: Agent) -> Vec<String> {
+        let mut flags = Vec::new();
+        let mut add = |flag: &str, value: &str| flags.extend([flag.to_owned(), value.to_owned()]);
+        match agent {
+            Agent::ClaudeCode => {
+                if let Some(model) = &self.model {
+                    add("--model", model);
+                }
+                if let Some(effort) = &self.effort {
+                    add("--effort", effort);
+                }
+                if let Some(mode) = &self.mode {
+                    add("--permission-mode", mode);
+                }
+            }
+            Agent::Codex => {
+                if let Some(model) = &self.model {
+                    add("-m", model);
+                }
+                if let Some(effort) = &self.effort {
+                    add("-c", &format!("model_reasoning_effort={effort}"));
+                }
+                if let Some((approval, sandbox)) = self.mode.as_deref().and_then(codex_policy) {
+                    add("-a", approval);
+                    add("-s", sandbox);
+                }
+            }
+        }
+        flags
+    }
+}
+
+/// The approval policy and sandbox of a Codex mode.
+pub fn codex_policy(mode: &str) -> Option<(&'static str, &'static str)> {
+    match mode {
+        "read-only" => Some(("on-request", "read-only")),
+        "default" => Some(("on-request", "workspace-write")),
+        "full-access" => Some(("never", "danger-full-access")),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -96,6 +162,14 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "claude-code",
             Agent::Codex => "codex",
+        }
+    }
+
+    /// The modes a Rig can start this Agent in, by the Agent's own names.
+    pub fn modes(self) -> &'static [&'static str] {
+        match self {
+            Agent::ClaudeCode => &["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
+            Agent::Codex => &["read-only", "default", "full-access"],
         }
     }
 }
@@ -263,10 +337,19 @@ fn theme<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Theme, D::Error> 
 fn rigs<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Rig>, D::Error> {
     let rigs = Vec::<Rig>::deserialize(deserializer)?;
     let mut names = HashSet::new();
-    match rigs.iter().find(|rig| !names.insert(&rig.name)) {
-        Some(rig) => Err(D::Error::custom(format!("more than one rig is named {:?}", rig.name))),
-        None => Ok(rigs),
+    if let Some(rig) = rigs.iter().find(|rig| !names.insert(&rig.name)) {
+        return Err(D::Error::custom(format!("more than one rig is named {:?}", rig.name)));
     }
+    for rig in &rigs {
+        let modes = rig.agent.modes();
+        if let Some(mode) = &rig.mode
+            && !modes.contains(&mode.as_str())
+        {
+            let (name, agent, modes) = (&rig.name, rig.agent.name(), modes.join(", "));
+            return Err(D::Error::custom(format!("rig {name:?}: {agent} has no mode {mode:?}; its modes are {modes}")));
+        }
+    }
+    Ok(rigs)
 }
 
 fn faces<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Face>, D::Error> {
@@ -340,4 +423,62 @@ pub fn watch(path: &Path) -> io::Result<watch::Receiver<Arc<Config>>> {
         }
     });
     Ok(receiver)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rigs_carry_model_effort_and_mode() {
+        let config = Config::parse(
+            r#"
+[[rig]]
+name = "Opus"
+agent = "claude-code"
+command = "claude"
+env = { CLAUDE_CONFIG_DIR = "~/.claude-alt" }
+model = "opus"
+effort = "xhigh"
+mode = "acceptEdits"
+
+[[rig]]
+name = "Codex"
+agent = "codex"
+command = "codex"
+mode = "full-access"
+
+[[rig]]
+name = "Plain"
+agent = "codex"
+command = "codex"
+"#,
+        )
+        .unwrap();
+        let settings: Vec<AgentSettings> = config.rigs.iter().map(Rig::settings).collect();
+        let text = |value: &str| Some(value.to_owned());
+        assert_eq!(
+            settings,
+            [
+                AgentSettings { model: text("opus"), effort: text("xhigh"), mode: text("acceptEdits") },
+                AgentSettings { mode: text("full-access"), ..AgentSettings::default() },
+                AgentSettings::default(),
+            ]
+        );
+        assert_eq!(config.rigs[0].env["CLAUDE_CONFIG_DIR"], "~/.claude-alt");
+    }
+
+    #[test]
+    fn a_mode_its_agent_lacks_is_an_error_naming_the_rig() {
+        for (agent, mode) in [("codex", "acceptEdits"), ("codex", "plan"), ("claude-code", "read-only"), ("claude-code", "yolo")] {
+            let text = format!("roots = []\n\n[[rig]]\nname = \"Mine\"\nagent = \"{agent}\"\ncommand = \"x\"\nmode = \"{mode}\"\n");
+            let invalid = check(&text).unwrap_or_else(|| panic!("{agent} accepted mode {mode}"));
+            assert!(invalid.message.starts_with(&format!("rig \"Mine\": {agent} has no mode \"{mode}\"")), "{}", invalid.message);
+            assert_eq!(invalid.line, Some(3));
+        }
+        for (agent, mode) in [("codex", "read-only"), ("codex", "default"), ("claude-code", "default"), ("claude-code", "plan")] {
+            let text = format!("[[rig]]\nname = \"Mine\"\nagent = \"{agent}\"\ncommand = \"x\"\nmode = \"{mode}\"\n");
+            assert!(check(&text).is_none(), "{agent} refused mode {mode}");
+        }
+    }
 }

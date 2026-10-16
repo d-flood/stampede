@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-	import { rigs, type Rig } from '#lib/config.svelte.ts';
+	import { launchers, rigs, type Launcher } from '#lib/config.svelte.ts';
 	import type { Project } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { split } from '#lib/git.ts';
@@ -18,7 +18,7 @@
 		focused?: Project;
 		actions?: Action[];
 		onproject(projectId: string): void;
-		onrig(rig: Rig): void;
+		onrig(launcher: Launcher): void;
 		onfile(path: string): void;
 	};
 	type Entry = { value: string; label: string; parent?: string; onselect(): void };
@@ -47,11 +47,13 @@
 		},
 		{
 			heading: 'Rigs',
-			entries: find(all && focused ? rigs() : [], (rig) => rig.name).map((rig) => ({
-				value: `rig:${rig.name}`,
-				label: rig.name,
-				onselect: () => onrig(rig)
-			}))
+			entries: find(all && focused ? rigs() : [], (rig) => rig.name)
+				.flatMap(launchers)
+				.map((launcher) => ({
+					value: `rig:${launcher.label}`,
+					label: launcher.label,
+					onselect: () => onrig(launcher)
+				}))
 		},
 		{ heading: 'Files', entries: files },
 		{

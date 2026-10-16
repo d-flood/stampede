@@ -93,6 +93,10 @@ for line in fixture().read_text().splitlines():
             request_ids[entry['stdin']['request_id']] = message['request_id']
         if 'uuid' in message and 'uuid' in entry['stdin']:
             uuids[entry['stdin']['uuid']] = message['uuid']
+    elif 'args' in entry:
+        expected = entry['args']
+        if not any(args[i:i + len(expected)] == expected for i in range(len(args))):
+            fail(f'{expected} is missing from {args}')
     elif 'session' in entry:
         record(entry['session'])
     elif 'gate' in entry:

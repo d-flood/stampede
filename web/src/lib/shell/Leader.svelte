@@ -1,15 +1,15 @@
 <script lang="ts">
-	import { leader, rigs, type Rig } from '#lib/config.svelte.ts';
+	import { launchers, leader, rigs, type Launcher } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 
-	type Props = { ontab(index: number): void; onpalette(): void; onrig(rig: Rig): void; onsplit(): void };
+	type Props = { ontab(index: number): void; onpalette(): void; onrig(launcher: Launcher): void; onsplit(): void };
 
 	let { ontab, onpalette, onrig, onsplit }: Props = $props();
 
 	const modifiers = ['Control', 'Shift', 'Alt', 'AltGraph', 'Meta'];
 	let pending = $state<'leader' | 'rig'>();
 
-	const shortcuts = $derived(rigs().filter((rig) => rig.shortcut));
+	const shortcuts = $derived(rigs().filter((rig) => rig.shortcut).map((rig) => launchers(rig)[0]));
 	const chord = $derived.by(() => {
 		const parts = leader().toLowerCase().split('+');
 		const key = parts.pop();
@@ -35,8 +35,8 @@
 		const step = pending;
 		pending = undefined;
 		if (step === 'rig') {
-			const rig = shortcuts.find((rig) => rig.shortcut === key);
-			if (rig) onrig(rig);
+			const launcher = shortcuts.find(({ rig }) => rig.shortcut === key);
+			if (launcher) onrig(launcher);
 		} else if (/^[1-9]$/.test(key)) ontab(Number(key) - 1);
 		else if (key === 'p') onpalette();
 		else if (key === 's' && form() === 'desktop') onsplit();
@@ -54,8 +54,8 @@
 			{#if form() === 'desktop'}<span><kbd>s</kbd> Split</span>{/if}
 			{#if shortcuts.length}<span><kbd>r</kbd> Rig</span>{/if}
 		{:else}
-			{#each shortcuts as rig (rig.name)}
-				<span><kbd>{rig.shortcut}</kbd> {rig.name}</span>
+			{#each shortcuts as { rig, label } (rig.name)}
+				<span><kbd>{rig.shortcut}</kbd> {label}</span>
 			{/each}
 		{/if}
 		<span><kbd>Esc</kbd> Cancel</span>

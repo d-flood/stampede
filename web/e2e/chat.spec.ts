@@ -200,6 +200,39 @@ function filledWith(meter: Locator, token: string) {
 	}, token);
 }
 
+test('each Rig launches as a TUI or a Chat, the Chat first on the phone and the TUI on desktop', async ({ page }, { project }) => {
+	const created: string[] = [];
+	page.on('websocket', (socket) =>
+		socket.on('framesent', ({ payload }) => {
+			const type = typeof payload === 'string' && JSON.parse(payload).type;
+			if (type === 'chat.create' || type === 'terminal.create') created.push(type);
+		})
+	);
+	const name = `launch-${project.name}`;
+	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	const phone = project.name === 'pixel';
+	const order = phone ? ['Fake Claude as Chat', 'Fake Claude'] : ['Fake Claude', 'Fake Claude as Chat'];
+
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	const launchers = /^Fake Claude( as Chat)?$/;
+	await expect(page.getByRole('menuitem', { name: launchers })).toHaveText(order);
+	await page.keyboard.press('Escape');
+
+	await page.keyboard.press('Control+Space');
+	await page.keyboard.press('p');
+	await page.getByPlaceholder('Switch Project, launch a Rig, or open a file').fill('Fake Claude');
+	await expect(page.getByRole('option', { name: launchers })).toHaveText(order);
+	await page.keyboard.press('Escape');
+
+	await page.keyboard.press('Control+Space');
+	await page.keyboard.press('r');
+	await expect(page.getByRole('status').filter({ hasText: order[0] })).toBeVisible();
+	await page.keyboard.press('c');
+	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveAttribute('aria-selected', 'true');
+	expect(created).toEqual([phone ? 'chat.create' : 'terminal.create']);
+});
+
 /** Runs a Chat's turn to done from a second Device that shows nothing. */
 async function finishElsewhere(name: string) {
 	type Of<T> = Extract<ServerMessage, { type: T }>;

@@ -18,7 +18,7 @@ use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
 use super::{Chat, CommandStatus, Context, Driver, Event, Item, Notice, Tokens, ToolCall, ToolKind, seconds};
 use crate::{
-    config::Agent,
+    config::{Agent, AgentSettings, codex_policy},
     hooks::Status,
     usage::{Reading, Window},
 };
@@ -44,9 +44,13 @@ impl Driver for Codex {
     }
 }
 
-pub async fn start(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
+pub async fn start(
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    settings: &AgentSettings,
+) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let started = connection.call("thread/start", json!({ "cwd": cwd })).await?;
+    let started = connection.call("thread/start", thread(cwd, settings)).await?;
     let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
     let _ = events.send(Event::Session(thread.to_owned()));
@@ -139,6 +143,21 @@ fn readings(snapshot: &Value) -> Vec<Reading> {
         Some(Reading::new(Agent::Codex, kind, used, window["resetsAt"].as_u64().map(|seconds| seconds * 1000)))
     });
     windows.collect()
+}
+
+fn thread(cwd: &Path, settings: &AgentSettings) -> Value {
+    let mut params = json!({ "cwd": cwd });
+    if let Some(model) = &settings.model {
+        params["model"] = json!(model);
+    }
+    if let Some(effort) = &settings.effort {
+        params["config"] = json!({ "model_reasoning_effort": effort });
+    }
+    if let Some((approval, sandbox)) = settings.mode.as_deref().and_then(codex_policy) {
+        params["approvalPolicy"] = json!(approval);
+        params["sandbox"] = json!(sandbox);
+    }
+    params
 }
 
 fn codex(cwd: &Path, env: &BTreeMap<String, String>) -> Command {

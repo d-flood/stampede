@@ -624,7 +624,8 @@ fn label(rig: Option<&str>, shell: &str, title: &Title) -> String {
 
 fn launch(rig: &Rig, session: Option<&str>, exe: &Path, shell: &str) -> String {
     let words = |words: &[String]| words.iter().map(|word| format!(" {}", quote(word))).collect::<String>();
-    let (command, args, hooks) = (&rig.command, words(&rig.args), words(&hooks::wiring(rig.agent, exe)));
+    let args = words(&[rig.args.clone(), rig.settings().flags(rig.agent)].concat());
+    let (command, hooks) = (&rig.command, words(&hooks::wiring(rig.agent, exe)));
     let line = match (session.map(quote), &rig.resume, rig.agent) {
         (None, ..) => format!("{command}{args}{hooks}"),
         (Some(session), Some(resume), _) => format!("{}{args}{hooks}", resume.replace("{session}", &session)),

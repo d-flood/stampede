@@ -23,7 +23,7 @@ use super::{
     seconds,
 };
 use crate::{
-    config::Agent,
+    config::{Agent, AgentSettings},
     hooks::Status,
     usage::{Reading, Window},
 };
@@ -66,9 +66,11 @@ pub async fn start(
     id: &str,
     cwd: &Path,
     env: &BTreeMap<String, String>,
+    settings: &AgentSettings,
 ) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
     let env = env.iter().map(|(name, value)| (name.as_str(), value.as_str())).chain(SDK_ENV);
-    holder::spawn(data_dir, id, cwd, env, ["claude"].iter().chain(&ARGS)).await?;
+    let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.flags(Agent::ClaudeCode));
+    holder::spawn(data_dir, id, cwd, env, command).await?;
     let (frames, mut writer, _) = holder::connect(data_dir, id).await?;
     let initialize = json!({
         "type": "control_request",

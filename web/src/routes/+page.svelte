@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { version } from '$app/env';
-	import { rigs, type Rig } from '#lib/config.svelte.ts';
+	import { launchers, rigs, type Launcher } from '#lib/config.svelte.ts';
 	import { connect, tabOf, type Attention, type Chat, type Project, type Reading, type ServerMessage, type Terminal } from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
@@ -307,18 +307,18 @@
 	}
 
 	function newTab(projectId: string) {
-		const create = (rig?: string) => () => device.send({ type: 'terminal.create', projectId, rig });
-		const chat = (rig: string) => () => device.send({ type: 'chat.create', projectId, rig });
-		const launchers = rigs().flatMap((rig) => [
-			{ label: rig.name, onselect: create(rig.name) },
-			{ label: `${rig.name} as Chat`, onselect: chat(rig.name) }
-		]);
-		const rest = [{ label: 'Terminal', onselect: create() }, { label: 'Open file', onselect: () => openPalette('files') }];
-		return launchers.length ? [{ heading: 'Rigs', items: launchers }, ...rest] : rest;
+		const items = rigs()
+			.flatMap(launchers)
+			.map((launcher) => ({ label: launcher.label, onselect: () => launch(launcher, projectId) }));
+		const terminal = () => device.send({ type: 'terminal.create', projectId });
+		const rest = [{ label: 'Terminal', onselect: terminal }, { label: 'Open file', onselect: () => openPalette('files') }];
+		return items.length ? [{ heading: 'Rigs', items }, ...rest] : rest;
 	}
 
-	function launch(rig: Rig) {
-		if (focused) device.send({ type: 'terminal.create', projectId: focused.id, rig: rig.name });
+	function launch({ rig, chat }: Launcher, projectId = focused?.id) {
+		if (!projectId) return;
+		if (chat) device.send({ type: 'chat.create', projectId, rig: rig.name });
+		else device.send({ type: 'terminal.create', projectId, rig: rig.name });
 	}
 
 	function jump(index: number) {
@@ -799,7 +799,7 @@
 				{focused}
 				actions={[{ label: 'Open config', run: openConfig }]}
 				onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
-				onrig={(rig) => (launch(rig), (palette = undefined))}
+				onrig={(launcher) => (launch(launcher), (palette = undefined))}
 				onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
 			/>
 		{/await}

@@ -28,6 +28,7 @@ name = "Fake Claude"
 agent = "claude-code"
 command = "claude"
 env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn" }
+shortcut = "c"
 EOF
 cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
 

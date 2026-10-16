@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::{
     attention::{Attention, Feed, Source, Tab},
-    config::{Agent, Rig},
+    config::{Agent, AgentSettings, Rig},
     hooks::Status,
     projects::Project,
     usage::{Reading, Usage},
@@ -127,6 +127,8 @@ pub struct Chat {
     pub context: Option<Context>,
     #[serde(default)]
     pub tokens: Option<Tokens>,
+    #[serde(default)]
+    pub settings: AgentSettings,
 }
 
 #[derive(Clone)]
@@ -195,14 +197,15 @@ impl Chats {
             viewed_since_done: true,
             context: None,
             tokens: None,
+            settings: rig.settings(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
         let started = match rig.agent {
-            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env)
+            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env, &chat.settings)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-            Agent::Codex => codex::start(&chat.cwd, &rig.env)
+            Agent::Codex => codex::start(&chat.cwd, &rig.env, &chat.settings)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
         };
