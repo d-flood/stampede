@@ -66,6 +66,12 @@
 	--status-waiting: var(--ansi-3);
 	--status-done: var(--ansi-2);
 
+	--git-modified: var(--ansi-3);
+	--git-renamed: var(--ansi-6);
+	--git-added: var(--ansi-2);
+	--git-untracked: var(--ansi-2);
+	--git-deleted: var(--ansi-1);
+
 	--font-ui: system-ui, sans-serif;
 	--font-mono: 'JetBrains Mono', 'Symbols Nerd Font Mono', monospace;
 
