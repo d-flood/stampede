@@ -90,7 +90,7 @@ export type Device = {
 const OUTPUT = 1;
 const INPUT = 2;
 
-function deviceId(): string {
+export function deviceId(): string {
 	let id = sessionStorage.getItem('deviceId');
 	if (!id) {
 		id = crypto.randomUUID();

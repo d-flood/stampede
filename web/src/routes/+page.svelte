@@ -1,10 +1,12 @@
 <script lang="ts">
+	import { version } from '$app/env';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
+	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { labels } from '#lib/projects.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
 	import Diff from '#lib/shell/Diff.svelte';
@@ -33,21 +35,22 @@
 	import SidebarSimple from '~icons/ph/sidebar-simple';
 	import TerminalWindow from '~icons/ph/terminal-window';
 
+	const restored = restore();
 	const device = connect();
 	let projects = $state<Project[]>([]);
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let attentionList = $state<Attention[]>([]);
 	let visible = $state(document.visibilityState === 'visible');
-	let files = $state<Record<string, OpenFile[]>>({});
+	let files = $state<Record<string, OpenFile[]>>(restored.files);
 	let git = $state<Record<string, Git>>({});
-	let chosen = $state<string>();
-	let chosenTabs = $state<Record<string, string>>({});
-	let splits = $state<Record<string, Split>>({});
+	let chosen = $state(restored.chosen);
+	let chosenTabs = $state<Record<string, string>>(restored.chosenTabs);
+	let splits = $state<Record<string, Split>>(restored.splits);
 	let dragging = $state<{ id: string; x: number; y: number; moved: boolean; over?: Side }>();
 	let dragged = false;
 	let main: HTMLElement;
-	let sidebar = $state(form() === 'desktop');
-	let section = $state<Section>('files');
+	let sidebar = $state(restored.sidebar?.open ?? form() === 'desktop');
+	let section = $state<Section>(restored.sidebar?.section ?? 'files');
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
 	let picking = $state(false);
@@ -84,8 +87,10 @@
 		{ title: label ?? 'Tabs' },
 		{ title: sectionShowing(section, focused && git[focused.id]).label, sub: label }
 	]);
+	const deviceLayout = $derived(capture({ chosen, terminals, files, chosenTabs, splits, sidebar: { open: sidebar, section } }));
 
 	$effect(() => device.send({ type: 'device.view', terminalIds: shown }));
+	$effect(() => saveLayout(deviceLayout));
 
 	const query = new URLSearchParams(location.search);
 	const [queryProject, queryTerminal] = [query.get('project'), query.get('terminal')];
@@ -106,6 +111,10 @@
 		servers.message(message);
 		switch (message.type) {
 			case 'hello': {
+				if (message.version !== version && sessionStorage.getItem('reloadedFor') !== message.version) {
+					sessionStorage.setItem('reloadedFor', message.version);
+					putLayout(deviceLayout).then(() => location.reload());
+				}
 				const owned: Record<string, Terminal[]> = {};
 				for (const terminal of message.terminals) {
 					if (terminal.owner !== 'drawer') (owned[terminal.owner.project] ??= []).push(terminal);
@@ -150,6 +159,9 @@
 				}
 				for (const projectId in splits) {
 					if (!projects.some((project) => project.id === projectId)) delete splits[projectId];
+				}
+				for (const projectId in chosenTabs) {
+					if (!projects.some((project) => project.id === projectId)) delete chosenTabs[projectId];
 				}
 				for (const project of projects) loadGit(project.id);
 				break;
@@ -417,6 +429,8 @@
 </script>
 
 <svelte:document onvisibilitychange={() => (visible = document.visibilityState === 'visible')} />
+
+<svelte:window onpagehide={() => sendClosing(deviceLayout)} />
 
 {#snippet badge(project: Project)}
 	{@const count = attentionList.filter((item) => item.projectId === project.id).length}

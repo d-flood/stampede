@@ -6,6 +6,7 @@ mod holder;
 mod hooks;
 mod install;
 mod language_servers;
+mod layouts;
 mod projects;
 mod protocol;
 mod push;
@@ -32,6 +33,7 @@ pub use holder::{HoldArgs, hold};
 pub use hooks::{HookArgs, hook};
 pub use install::{InstallArgs, UninstallArgs, install, uninstall};
 use language_servers::LanguageServers;
+use layouts::Layouts;
 use projects::Projects;
 use push::Push;
 use terminals::Terminals;
@@ -66,6 +68,7 @@ struct AppState {
     git: broadcast::Sender<git::Changed>,
     push: Arc<Push>,
     languages: Arc<LanguageServers>,
+    layouts: Arc<Layouts>,
 }
 
 fn router(state: AppState) -> Router {
@@ -80,6 +83,8 @@ fn router(state: AppState) -> Router {
         .route("/api/hook", post(hooks::receive).layer(DefaultBodyLimit::disable()))
         .route("/api/push/key", get(push::key))
         .route("/api/push/subscribe", post(push::subscribe))
+        .route("/api/devices/{id}/layout", get(layouts::read).put(layouts::write))
+        .route("/api/devices/{id}/closing", post(layouts::closing))
         .route("/api/projects/{id}/tree", get(files::tree))
         .route("/api/projects/{id}/files", get(files::paths))
         .route("/api/projects/{id}/file", get(files::read).head(files::exists).put(files::write))
@@ -101,14 +106,16 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let projects = Arc::new(Projects::load(&args.data_dir)?);
     let push = Arc::new(Push::load(&args.data_dir)?);
     let languages = Arc::new(LanguageServers::load(&args.data_dir)?);
+    let layouts = Arc::new(Layouts::load(&args.data_dir)?);
     let hook_url = format!("http://{}/api/hook", listener.local_addr()?);
     let terminals = Arc::new(Terminals::new(args.data_dir, hook_url));
     terminals.restore().await?;
     push::spawn(Arc::clone(&push), Arc::clone(&terminals));
+    layouts::spawn(Arc::clone(&layouts));
     let disk = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    let state = AppState { terminals, projects, config, config_path: args.config, disk, git, push, languages };
+    let state = AppState { terminals, projects, config, config_path: args.config, disk, git, push, languages, layouts };
     axum::serve(listener, router(state)).await
 }
 
