@@ -19,7 +19,7 @@ use toml::value::{Datetime, Offset};
 use uuid::Uuid;
 
 use super::{
-    Answer, Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind,
+    Answer, Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     protocol::{self, Message},
     Request, diff, seconds, unified, words,
@@ -113,7 +113,9 @@ async fn launch(
     settings: &AgentSettings,
     session: Option<&str>,
 ) -> io::Result<(Frames, OwnedWriteHalf, Transcript, UnboundedReceiver<Event>)> {
-    let variables = env.iter().map(|(name, value)| (name.as_str(), value.as_str())).chain(SDK_ENV);
+    let variables = [("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1")].into_iter()
+        .chain(env.iter().map(|(name, value)| (name.as_str(), value.as_str())))
+        .chain(SDK_ENV);
     let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.flags(Agent::ClaudeCode));
     let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
     holder::spawn(data_dir, id, cwd, variables, command.chain(resume)).await?;
@@ -180,6 +182,9 @@ pub async fn reattach(
         let _ = transcript.events.send(Event::Request(request));
     }
     let _ = transcript.events.send(Event::Status(transcript.status));
+    if transcript.todos_held {
+        transcript.report_todos();
+    }
     Ok((drive(frames, writer, transcript), received))
 }
 
@@ -414,6 +419,12 @@ struct Transcript {
     tools: Option<(usize, Vec<ToolCall>)>,
     commands: HashMap<String, (usize, String)>,
     edits: HashSet<String>,
+    subagents: HashMap<String, (Subagent, Transcript)>,
+    todos: Vec<(String, Todo)>,
+    creating: HashSet<String>,
+    tasks: HashMap<String, String>,
+    todos_held: bool,
+    history: Option<PathBuf>,
     compacted: bool,
     status: Status,
     replaying: bool,
@@ -434,6 +445,12 @@ impl Transcript {
             tools: None,
             commands: HashMap::new(),
             edits: HashSet::new(),
+            subagents: HashMap::new(),
+            todos: Vec::new(),
+            creating: HashSet::new(),
+            tasks: HashMap::new(),
+            todos_held: false,
+            history: None,
             compacted: false,
             status: Status::Done,
             replaying: false,
@@ -475,6 +492,14 @@ impl Transcript {
         }
     }
 
+    fn report_todos(&mut self) {
+        self.todos_held = self.replaying;
+        if !self.replaying {
+            let todos = self.todos.iter().map(|(_, todo)| todo.clone()).collect();
+            let _ = self.events.send(Event::Todos(todos));
+        }
+    }
+
     fn sent(&mut self, message: &Value) {
         if let Some(text) = message["message"]["content"].as_str() {
             self.push(Item::User { text: text.to_owned(), images: 0 });
@@ -489,7 +514,9 @@ impl Transcript {
 
     /// Translates the session file's entries, up to the one whose uuid is `until`.
     fn history(&mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>) {
-        let Some(contents) = session_file(env, session).and_then(|path| fs::read_to_string(path).ok()) else { return };
+        let Some(path) = session_file(env, session) else { return };
+        let Ok(contents) = fs::read_to_string(&path) else { return };
+        self.history = Some(path);
         for entry in contents.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
             if until.is_some() && entry["uuid"].as_str() == until {
                 // A compaction recorded just before the replayed turn's prompt belongs to that turn, which replays it.
@@ -498,6 +525,7 @@ impl Transcript {
             }
             self.recorded(&entry);
         }
+        self.history = None;
         self.compact();
     }
 
@@ -547,12 +575,37 @@ impl Transcript {
                     let _ = self.events.send(Event::Session(session.to_owned()));
                 }
             }
+            Some("system") if message["subtype"] == "task_started" => {
+                if let (Some(task), Some(tool)) = (message["task_id"].as_str(), message["tool_use_id"].as_str()) {
+                    self.tasks.insert(task.to_owned(), tool.to_owned());
+                }
+            }
+            Some("system") if message["subtype"] == "task_updated" || message["subtype"] == "task_notification" => {
+                let tool = message["tool_use_id"].as_str().or_else(|| message["task_id"].as_str().and_then(|task| self.tasks.get(task).map(String::as_str)));
+                let status = message["status"].as_str().or_else(|| message["patch"]["status"].as_str());
+                if matches!(status, Some("completed" | "failed" | "stopped"))
+                    && let Some((subagent, _)) = tool.and_then(|tool| self.subagents.get_mut(tool))
+                {
+                    subagent.status = Status::Done;
+                    let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                }
+            }
             Some("system") if message["subtype"] == "compact_boundary" => {
                 self.push(Item::compacted());
             }
             Some("stream_event") if top => self.stream(&message["event"]),
             Some("assistant") if top => self.assistant(message, &message["thinking_duration_ms"], true),
             Some("user") if top => self.results(&message["message"]["content"], &message["tool_use_result"]),
+            Some("assistant" | "user") => {
+                let result = &message["tool_use_result"];
+                let parent = message["parent_tool_use_id"].as_str().and_then(|parent| self.subagents.get_mut(parent));
+                if let Some((subagent, transcript)) = parent {
+                    transcript.nested(message, result);
+                    if subagent.update() {
+                        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                    }
+                }
+            }
             Some("command_lifecycle") if message["state"] != "queued" => {
                 if let Some(uuid) = message["command_uuid"].as_str() {
                     self.steering.remove(uuid);
@@ -657,17 +710,85 @@ impl Transcript {
             "Grep" | "Glob" => self.call(ToolKind::Search, name, text("pattern")),
             "WebFetch" => self.call(ToolKind::Fetch, name, text("url")),
             "WebSearch" => self.call(ToolKind::Web, name, text("query")),
+            "Agent" | "Task" => {
+                let (mut subagent, events) = Subagent::new(input["subagent_type"].as_str().map(str::to_owned), text("description"));
+                subagent.index = self.push(subagent.item());
+                self.subagents.insert(id.to_owned(), (subagent, Transcript::new(events, &self.cwd)));
+            }
+            "TodoWrite" => {
+                let todos = input["todos"].as_array().into_iter().flatten().map(|todo| {
+                    let text = todo["content"].as_str().unwrap_or_default().to_owned();
+                    (String::new(), Todo { text, status: todo_status(todo["status"].as_str().unwrap_or_default()) })
+                });
+                self.todos = todos.collect();
+                self.report_todos();
+            }
+            "TaskCreate" => {
+                self.creating.insert(id.to_owned());
+            }
+            "TaskUpdate" => {
+                let task = input["taskId"].as_str().unwrap_or_default();
+                if input["status"] == "deleted" {
+                    self.todos.retain(|(id, _)| id != task);
+                } else if let Some((_, todo)) = self.todos.iter_mut().find(|(id, _)| id == task) {
+                    if let Some(status) = input["status"].as_str() {
+                        todo.status = todo_status(status);
+                    }
+                    if let Some(subject) = input["subject"].as_str() {
+                        todo.text = subject.to_owned();
+                    }
+                }
+                self.report_todos();
+            }
             _ => self.call(ToolKind::Other, name, input.to_string()),
         }
     }
 
-    fn results(&mut self, content: &Value, structured: &Value) {
+    /// Claude streams only a subagent's tool calls and their results, so its other activity is left out of the session file's too.
+    fn nested(&mut self, message: &Value, result: &Value) {
+        let content = &message["message"]["content"];
+        match message["type"].as_str() {
+            Some("assistant") => {
+                for block in content.as_array().into_iter().flatten().filter(|block| block["type"] == "tool_use") {
+                    self.tool(block);
+                }
+            }
+            Some("user") => self.results(content, result),
+            _ => {}
+        }
+    }
+
+    fn results(&mut self, content: &Value, result: &Value) {
         for block in content.as_array().into_iter().flatten().filter(|block| block["type"] == "tool_result") {
             let Some(id) = block["tool_use_id"].as_str() else { continue };
             if self.edits.remove(id) && block["is_error"] != true {
-                self.edit(structured);
+                self.edit(result);
             }
-            let Some((index, command)) = self.commands.remove(id) else { continue };
+            if self.creating.remove(id)
+                && let (Some(task), Some(text)) = (result["task"]["id"].as_str(), result["task"]["subject"].as_str())
+            {
+                self.todos.push((task.to_owned(), Todo { text: text.to_owned(), status: TodoStatus::Pending }));
+                self.report_todos();
+            }
+            if let Some((subagent, transcript)) = self.subagents.get_mut(id) {
+                if let Some(history) = &self.history
+                    && let Some(agent) = result["agentId"].as_str()
+                {
+                    let path = history.with_extension("").join("subagents").join(format!("agent-{agent}.jsonl"));
+                    let contents = fs::read_to_string(path).unwrap_or_default();
+                    for entry in contents.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
+                        transcript.nested(&entry, &entry["toolUseResult"]);
+                    }
+                }
+                subagent.update();
+                if result["isAsync"] != true {
+                    subagent.status = Status::Done;
+                }
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
+            let Some((index, command)) = self.commands.remove(id) else {
+                continue;
+            };
             let status = if block["is_error"] == true { CommandStatus::Failed } else { CommandStatus::Ok };
             let output = match &block["content"] {
                 Value::String(text) => text.clone(),
@@ -751,6 +872,14 @@ fn hunk(hunk: &Value) -> String {
         text.push('\n');
     }
     text
+}
+
+fn todo_status(status: &str) -> TodoStatus {
+    match status {
+        "in_progress" => TodoStatus::Active,
+        "completed" => TodoStatus::Done,
+        _ => TodoStatus::Pending,
+    }
 }
 
 /// The prompt a session-file user entry records: slash commands are stored as tags, and their output is not a prompt.

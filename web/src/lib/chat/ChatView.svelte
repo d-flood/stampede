@@ -4,6 +4,7 @@
 	import Meters from '#lib/chat/Meters.svelte';
 	import Queued from '#lib/chat/Queued.svelte';
 	import RequestCard from '#lib/chat/RequestCard.svelte';
+	import Todos from '#lib/chat/Todos.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import type { Answer, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -78,6 +79,7 @@
 			<ContextBar context={chat.context} compact />
 		</div>
 	{/if}
+	<Todos todos={chat.todos} working={chat.status === 'working'} />
 	<div class="transcript" {@attach follow}>
 		<div class="column">
 			<Transcript {items} {ondiff} />

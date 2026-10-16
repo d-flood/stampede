@@ -75,6 +75,18 @@ command = "codex"
 env = { OIKONOMOS_FAKE_FIXTURE = "approval", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
 EOF
 
+for form in desktop pixel; do
+mkdir "$OIKONOMOS_E2E_ROOT/subagent-$form"
+cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
+
+[[rig]]
+name = "Fake Claude Subagent $form"
+agent = "claude-code"
+command = "claude"
+env = { OIKONOMOS_FAKE_FIXTURE = "subagents", OIKONOMOS_FAKE_GATES = "$OIKONOMOS_E2E_ROOT/subagent-$form", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
+EOF
+done
+
 cleanup() {
 	pkill -f -- "${OIKONOMOS_E2E_ROOT//./\\.}" || true
 	rm -rf "$OIKONOMOS_E2E_ROOT"

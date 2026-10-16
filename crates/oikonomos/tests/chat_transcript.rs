@@ -23,6 +23,8 @@ const HELLO_DIFF: &str = "@@ -0,0 +1,1 @@\n+print(\"hello\")\n";
 struct View {
     items: Vec<Value>,
     statuses: Vec<Value>,
+    todos: Vec<Value>,
+    children: Vec<Value>,
 }
 
 #[tokio::test]
@@ -213,6 +215,81 @@ async fn api_errors_become_error_notices() {
     }
 }
 
+#[tokio::test]
+async fn claude_subagent_activity_stays_nested_and_todos_replace_live_and_after_restart() {
+    subagents("claude-code").await;
+}
+
+#[tokio::test]
+async fn codex_subagent_activity_stays_nested_and_todos_replace_live_and_after_restart() {
+    subagents("codex").await;
+}
+
+async fn subagents(agent: &str) {
+    let (mut server, mut socket, chat_id) = launch(agent, "subagents").await;
+    let mut view = View::default();
+    view.turn(&mut socket, &chat_id, "Find needle using a subagent and track the steps.").await;
+    assert_eq!(view.children.first().unwrap()["status"], "working");
+    assert_eq!(view.children.first().unwrap()["items"], json!([]));
+    assert!(view.children.iter().any(|child| child["status"] == "working" && child["items"].as_array().is_some_and(|items| !items.is_empty())));
+    let child = view.items.iter().find(|item| item["kind"] == "subagent").unwrap();
+    assert_eq!(child["status"], "done");
+    let mut expected = if agent == "claude-code" {
+        assert_eq!(child["name"], "Explore");
+        assert_eq!(child["task"], "Find file mentioning needle");
+        json!([{ "kind": "tools", "calls": [
+            { "kind": "read", "name": "Read", "detail": "notes.txt" },
+            { "kind": "read", "name": "Read", "detail": "todo.txt" },
+        ] }])
+    } else {
+        assert_eq!(child["task"], "find_needle");
+        json!([
+            { "kind": "command", "command": "cat notes.txt todo.txt", "status": "ok", "output": "alpha\nneedle in a haystack\nomega\nbuy milk\nwalk the dog\n" },
+            { "kind": "thinking", "seconds": 2 },
+            { "kind": "command", "command": "cat notes.txt", "status": "ok", "output": "alpha\nneedle in a haystack\nomega\n" },
+            { "kind": "command", "command": "cat todo.txt", "status": "ok", "output": "buy milk\nwalk the dog\n" },
+            { "kind": "text", "text": "notes.txt mentions “needle”; todo.txt does not.", "streaming": false },
+        ])
+    };
+    assert_eq!(child["items"], expected);
+    assert_eq!(view.items.iter().filter(|item| item["kind"] == "subagent").count(), 1);
+    assert!(!view.items.iter().any(|item| item["kind"] == "text" && item["text"] == "notes.txt mentions “needle”; todo.txt does not."));
+    assert!(!view.items.iter().any(|item| item["kind"] == "command" && item["command"].as_str().unwrap().contains("cat ")));
+    assert!(!view.items.iter().any(|item| item["kind"] == "tools" && item["calls"].as_array().unwrap().iter().any(|call| call["detail"] == "todo.txt")));
+    let labels = if agent == "claude-code" {
+        ["Find which file mentions \"needle\"", "Count lines in matching file", "Answer"]
+    } else {
+        ["Find which file mentions \"needle\"", "Count that file's lines", "Answer"]
+    };
+    let snapshot = |statuses: &[&str]| json!(labels.iter().zip(statuses).map(|(text, status)| json!({ "text": text, "status": status })).collect::<Vec<_>>());
+    let mut todos = if agent == "claude-code" { vec![snapshot(&["pending"]), snapshot(&["pending", "pending"]), snapshot(&["pending", "pending", "pending"])] } else { Vec::new() };
+    todos.push(snapshot(&["active", "pending", "pending"]));
+    if agent == "claude-code" { todos.push(snapshot(&["done", "pending", "pending"])); }
+    todos.push(snapshot(&["done", "active", "pending"]));
+    if agent == "claude-code" { todos.push(snapshot(&["done", "done", "pending"])); }
+    todos.push(snapshot(&["done", "done", "active"]));
+    todos.push(snapshot(&["done", "done", "done"]));
+    assert_eq!(view.todos, todos);
+    view.turn(&mut socket, &chat_id, DONE).await;
+    let before = view.items;
+    server.restart().await;
+    let (mut socket, restored) = reattach(&server, &chat_id, before.len()).await;
+    let restored_child = restored.items.iter().find(|item| item["kind"] == "subagent").unwrap();
+    if agent == "codex" {
+        expected[1]["seconds"] = json!(0);
+        let mut restored = restored;
+        restored.follow(&mut socket, &chat_id, |view| view.items.iter().find(|item| item["kind"] == "subagent").unwrap()["items"] == expected).await;
+    } else {
+        assert_eq!(restored_child["items"], expected);
+        let mut restored = restored;
+        restored.turn(&mut socket, &chat_id, "Set the first task back to pending with your task tool, then say done in one word.").await;
+        assert_eq!(restored.todos.last(), Some(&snapshot(&["pending", "done", "done"])));
+    }
+    let record: Value = serde_json::from_slice(&std::fs::read(server.root.path().join("data/chats").join(format!("{chat_id}.json"))).unwrap()).unwrap();
+    let expected_status = if agent == "claude-code" { "pending" } else { "done" };
+    assert_eq!(record["todos"], snapshot(&[expected_status, "done", "done"]));
+}
+
 fn user(text: &str) -> Value {
     json!({ "kind": "user", "text": text, "images": 0 })
 }
@@ -256,7 +333,7 @@ async fn reattach(server: &Server, chat_id: &str, len: usize) -> (Socket, View) 
     next_control(&mut socket, "hello").await;
     control(&mut socket, json!({ "type": "chat.attach", "chatId": chat_id })).await;
     let items = next_control(&mut socket, "chat.items").await["items"].as_array().unwrap().clone();
-    let mut view = View { items, statuses: Vec::new() };
+    let mut view = View { items, ..View::default() };
     view.follow(&mut socket, chat_id, |view| view.items.len() >= len).await;
     (socket, view)
 }
@@ -278,7 +355,11 @@ impl View {
                 }
                 match message["type"].as_str().unwrap() {
                     "chat.status" => self.statuses.push(message["status"].clone()),
+                    "chat.todos" => self.todos.push(message["todos"].clone()),
                     "chat.item" => {
+                        if message["item"]["kind"] == "subagent" {
+                            self.children.push(message["item"].clone());
+                        }
                         let index = message["index"].as_u64().unwrap() as usize;
                         assert!(index <= self.items.len(), "{message}");
                         match self.items.get_mut(index) {

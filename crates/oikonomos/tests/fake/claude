@@ -58,6 +58,8 @@ def waiting():
 def read(expected):
     while (received := readline()) is not None:
         message = json.loads(received)
+        if message.get('type') == 'user' and fixture().name == 'subagents.recorded.jsonl' and os.environ.get('CLAUDE_CODE_ENABLE_TODO_TOOLS') != '1':
+            fail('subagent turn without CLAUDE_CODE_ENABLE_TODO_TOOLS=1')
         if kind(message)[:2] == ('control_request', 'get_usage') != kind(expected)[:2]:
             usage = json.loads((FIXTURES / 'usage.recorded.jsonl').read_text().splitlines()[1])['stdout']
             usage['response']['request_id'] = message['request_id']
@@ -77,8 +79,11 @@ def remap(message):
 def record(entry):
     config = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')
     project = config / 'projects' / re.sub(r'[^a-zA-Z0-9]', '-', os.getcwd())
-    project.mkdir(parents=True, exist_ok=True)
-    with open(project / f'{entry["sessionId"]}.jsonl', 'a') as session:
+    path = project / f'{entry["sessionId"]}.jsonl'
+    if entry.get('isSidechain'):
+        path = project / entry['sessionId'] / 'subagents' / f'agent-{entry["agentId"]}.jsonl'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'a') as session:
         session.write(remap(entry) + '\n')
 
 

@@ -24,6 +24,7 @@ export type Item =
 	| { kind: 'text'; text: string; streaming: boolean }
 	| { kind: 'thinking'; seconds: number; text?: string }
 	| { kind: 'tools'; calls: ToolCall[] }
+	| { kind: 'subagent'; name?: string; task: string; status: Status; items: Item[] }
 	| { kind: 'edit'; path: string; diff: string; added: number; removed: number }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted'; text: string };
@@ -34,6 +35,7 @@ export type Request =
 	| { kind: 'other'; id: string; title: string; detail: string };
 
 export type Answer = { allow: true } | { allow: false; instead?: string };
+export type Todo = { text: string; status: 'pending' | 'active' | 'done' };
 
 export type Context = { used: number; window: number };
 
@@ -49,6 +51,7 @@ export type Chat = {
 	context: Context | null;
 	tokens: Tokens | null;
 	queued: string[];
+	todos: Todo[];
 };
 
 export type Reading = { agent: Agent; window: 'five-hour' | 'weekly'; used: number; resetsAt?: number; readAt: number };
@@ -90,6 +93,7 @@ export type ServerMessage =
 	| { type: 'chat.status'; chatId: string; status: Status }
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
 	| { type: 'sessions.listed'; projectId: string; sessions: Session[] }
+	| { type: 'chat.todos'; chatId: string; todos: Todo[] }
 	| { type: 'chat.queued'; chatId: string; queued: string[] }
 	| { type: 'chat.request'; chatId: string; request: Request }
 	| { type: 'chat.resolved'; chatId: string; requestId: string }

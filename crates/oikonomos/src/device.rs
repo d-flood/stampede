@@ -257,6 +257,9 @@ async fn connect(
                     let meters = json!({ "type": "chat.meters", "chatId": chat_id, "context": context, "tokens": tokens });
                     send(&device.outgoing, meters);
                 }
+                Ok(chats::Change::Todos { chat_id, todos }) => {
+                    send(&device.outgoing, json!({ "type": "chat.todos", "chatId": chat_id, "todos": todos }));
+                }
                 Err(RecvError::Lagged(_)) => {
                     for project in device.projects.list().iter() {
                         device.chats_changed(&project.id);

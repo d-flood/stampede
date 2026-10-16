@@ -90,7 +90,7 @@ async fn a_codex_chat_starts_its_thread_with_its_rigs_model_effort_and_mode() {
         json!({
             "cwd": server.root.path().join("home"),
             "model": "gpt-6-luna",
-            "config": { "model_reasoning_effort": "low" },
+            "config": { "model_reasoning_effort": "low", "tools.update_plan": { "enabled": true } },
             "approvalPolicy": "on-request",
             "sandbox": "read-only",
         })

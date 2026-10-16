@@ -2,6 +2,7 @@
 	import Command from '#lib/chat/Command.svelte';
 	import Edit from '#lib/chat/Edit.svelte';
 	import Notice from '#lib/chat/Notice.svelte';
+	import Subagent from '#lib/chat/Subagent.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Thinking from '#lib/chat/Thinking.svelte';
 	import Tools from '#lib/chat/Tools.svelte';
@@ -24,6 +25,8 @@
 		<Edit {item} {ondiff} />
 	{:else if item.kind === 'command'}
 		<Command {item} />
+	{:else if item.kind === 'subagent'}
+		<Subagent {item} {ondiff} />
 	{:else if item.kind === 'notice'}
 		<Notice {item} />
 	{/if}

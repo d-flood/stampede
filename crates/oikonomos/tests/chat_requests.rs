@@ -98,6 +98,43 @@ async fn a_codex_approval_replayed_before_the_resume_response_is_kept() {
     restart("codex", path.to_str().unwrap(), json!({ "decision": "accept" })).await;
 }
 
+#[tokio::test]
+async fn a_codex_subagents_request_is_answered_from_the_parent_chat() {
+    let mut entries: Vec<Value> = include_str!("fixtures/chats/codex/approval.recorded.jsonl")
+        .lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let mut child: Value = include_str!("fixtures/chats/codex/subagents.recorded.jsonl")
+        .lines().map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .find(|entry| entry["stdout"]["method"] == "item/completed" && entry["stdout"]["params"]["item"]["type"] == "subAgentActivity")
+        .unwrap();
+    let child_id = child["stdout"]["params"]["item"]["agentThreadId"].clone();
+    let index = entries.iter().position(|entry| entry["stdout"]["method"] == "item/commandExecution/requestApproval").unwrap();
+    child["stdout"]["params"]["threadId"] = entries[index]["stdout"]["params"]["threadId"].clone();
+    entries[index]["stdout"]["params"]["threadId"] = child_id.clone();
+    entries.insert(index, child);
+    for entry in &mut entries {
+        if entry["stdout"]["method"] == "serverRequest/resolved" {
+            entry["stdout"]["params"]["threadId"] = child_id.clone();
+        }
+    }
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("child-approval.recorded.jsonl");
+    fs::write(&path, entries.into_iter().map(|entry| entry.to_string() + "\n").collect::<String>()).unwrap();
+    let launched = Launched::new("codex", path.to_str().unwrap()).await;
+    let mut device = Device::open(launched.server.port, "parent", &launched.chat_id).await;
+    device.send(COMPOUND).await;
+    device.follow(|device| device.status == "waiting" && !device.requests.is_empty()).await;
+    assert_eq!(device.items.iter().find(|item| item["kind"] == "subagent").unwrap()["status"], "waiting");
+    let request = device.requests[0].clone();
+    assert_eq!(request["kind"], "command");
+    device.answer(&request, json!({ "allow": true })).await;
+    device.follow(|device| device.status == "done").await;
+    assert_eq!(device.statuses, ["working", "waiting", "working", "done"]);
+    assert_eq!(device.items.iter().find(|item| item["kind"] == "subagent").unwrap()["status"], "working");
+    assert_eq!(device.resolved, [request["id"].clone()]);
+    close_chat(&mut device.socket, launched.server.root.path(), &launched.chat_id).await;
+    assert_eq!(launched.answers(), [json!({ "decision": "accept" })]);
+}
+
 async fn first_answer_wins(agent: &str, allowed: Value) {
     let launched = Launched::new(agent, "approval").await;
     let chat_id = &launched.chat_id;

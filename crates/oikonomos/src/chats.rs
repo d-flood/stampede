@@ -12,7 +12,10 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
+use tokio::sync::{
+    broadcast,
+    mpsc::{self, UnboundedReceiver, UnboundedSender},
+};
 use uuid::Uuid;
 
 use crate::{
@@ -37,6 +40,13 @@ pub enum Item {
     Tools { calls: Vec<ToolCall> },
     Edit { path: String, diff: String, added: usize, removed: usize },
     Command { command: String, status: CommandStatus, output: String },
+    Subagent {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        task: String,
+        status: Status,
+        items: Vec<Item>,
+    },
     Notice { notice: Notice, text: String },
 }
 
@@ -123,6 +133,54 @@ fn unified(old: &str, new: &str) -> String {
     diff
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Todo {
+    pub text: String,
+    pub status: TodoStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TodoStatus {
+    Pending,
+    Active,
+    Done,
+}
+
+struct Subagent {
+    index: usize,
+    name: Option<String>,
+    task: String,
+    status: Status,
+    events: UnboundedReceiver<Event>,
+    items: Vec<Item>,
+}
+
+impl Subagent {
+    fn new(name: Option<String>, task: String) -> (Self, UnboundedSender<Event>) {
+        let (sender, events) = mpsc::unbounded_channel();
+        (Self { index: 0, name, task, status: Status::Working, events, items: Vec::new() }, sender)
+    }
+
+    fn update(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok(event) = self.events.try_recv() {
+            if let Event::Item(index, item) = event {
+                match self.items.get_mut(index) {
+                    Some(existing) => *existing = item,
+                    None => self.items.push(item),
+                }
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn item(&self) -> Item {
+        Item::Subagent { name: self.name.clone(), task: self.task.clone(), status: self.status, items: self.items.clone() }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Context {
     pub used: u64,
@@ -182,6 +240,7 @@ pub enum Event {
     Truncate(usize),
     Request(Request),
     Resolved(String),
+    Todos(Vec<Todo>),
 }
 
 /// One Agent's wire protocol. A driver's events end when its Agent has stopped.
@@ -214,6 +273,8 @@ pub struct Chat {
     pub settings: AgentSettings,
     #[serde(default)]
     pub queued: Vec<String>,
+    #[serde(default)]
+    pub todos: Vec<Todo>,
 }
 
 #[derive(Serialize)]
@@ -260,6 +321,7 @@ pub enum Change {
     Meters { chat_id: String, context: Option<Context>, tokens: Option<Tokens> },
     Request { chat_id: String, seq: u64, request: Request },
     Resolved { chat_id: String, seq: u64, request_id: String },
+    Todos { chat_id: String, todos: Vec<Todo> },
 }
 
 pub struct Chats {
@@ -323,6 +385,7 @@ impl Chats {
             tokens: None,
             settings: rig.settings(),
             queued: Vec::new(),
+            todos: Vec::new(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
@@ -456,6 +519,15 @@ impl Chats {
                     self.save(&chat);
                     let (context, tokens) = (chat.context, chat.tokens);
                     let _ = self.changed.send(Change::Meters { chat_id: id.clone(), context, tokens });
+                }
+                Event::Todos(todos) => {
+                    let mut chat = entry.chat.lock().unwrap();
+                    if chat.todos == todos {
+                        continue;
+                    }
+                    chat.todos = todos.clone();
+                    self.save(&chat);
+                    let _ = self.changed.send(Change::Todos { chat_id: id.clone(), todos });
                 }
                 Event::Item(index, item) => {
                     let mut transcript = entry.transcript.lock().unwrap();

@@ -1,7 +1,7 @@
 import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test, type Locator } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openProject, showSidebar } from './shell.ts';
 
@@ -404,3 +404,45 @@ async function finishElsewhere(name: string) {
 	socket.close();
 	return { projectId, chatId: chat.id };
 }
+
+
+test('a Chat pins todos above its transcript and expands subagent activity', async ({ page }, { project }) => {
+	const name = `subagent-${project.name}`;
+	const root = process.env.OIKONOMOS_E2E_ROOT!;
+	mkdirSync(`${root}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: `Fake Claude Subagent ${project.name} as Chat` }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Claude Subagent/ });
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
+	await panel.getByRole('button', { name: 'Send' }).click();
+	const todos = panel.getByRole('region', { name: 'Todos' });
+	await expect(todos.locator('summary')).toHaveText('Todos 0 of 3 · Find which file mentions "needle"');
+	await expect(tab.getByTitle('working')).toBeVisible();
+	await expect.poll(() => existsSync(`${root}/subagent-${project.name}/todos`)).toBe(true);
+	const expanded = project.name === 'pixel';
+	await expect(todos.locator('details')).toHaveJSProperty('open', expanded);
+	if (expanded) {
+		await expect(todos.getByRole('listitem')).toHaveCount(3);
+		await expect(todos.getByRole('listitem').first()).toBeInViewport();
+	} else {
+		await expect(todos.getByRole('listitem').first()).toBeHidden();
+		await todos.locator('summary').click();
+		await expect(todos.getByRole('listitem').first()).toBeVisible();
+	}
+	unlinkSync(`${root}/subagent-${project.name}/todos`);
+	await expect(tab.getByTitle('done')).toBeVisible();
+	await expect(todos.locator('summary')).toHaveText('Todos 3 of 3');
+	const child = panel.locator('details').filter({ has: page.locator('summary', { hasText: 'Explore · Find file mentioning needle' }) });
+	await expect(child.locator(':scope > summary')).toContainText('↳ Explore · Find file mentioning needle');
+	await expect(child.locator('summary .status')).toHaveText('done');
+	await expect(child.getByText('Read 2 files')).toBeHidden();
+	await child.locator(':scope > summary').click();
+	await expect(child.getByText('Read 2 files')).toBeVisible();
+	await child.getByText('Read 2 files').click();
+	await expect(child.getByRole('listitem')).toHaveText(['Read notes.txt', 'Read todo.txt']);
+	await tab.click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await expect(tab).toHaveCount(0);
+});

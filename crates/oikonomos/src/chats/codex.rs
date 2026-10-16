@@ -17,7 +17,7 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
 use super::{
-    Answer, Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind, diff, relative,
+    Answer, Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, diff, relative,
     seconds, unified, words,
 };
 use crate::{
@@ -123,6 +123,10 @@ async fn rejoin(
         .await;
     }
     transcript.report(transcript.status);
+    for child in transcript.subagents.keys().cloned().collect::<Vec<_>>() {
+        let read = connection.request("thread/read", json!({ "threadId": child, "includeTurns": true })).await?;
+        transcript.reading.insert(read, child);
+    }
     Ok((connection, proxy))
 }
 
@@ -214,7 +218,7 @@ fn run(
                         let _ = connection.interrupt(&mut transcript).await;
                     }
                     Some(Request::Answer(id, answer)) => {
-                        let Some((rpc, grant)) = transcript.asked.remove(&id) else { continue };
+                        let Some((rpc, grant)) = transcript.resolved(&id) else { continue };
                         let result = match (&answer, grant) {
                             (Answer::Allow, Some(permissions)) => json!({ "permissions": permissions, "scope": "turn" }),
                             (Answer::Deny { .. }, Some(_)) => json!({ "permissions": {}, "scope": "turn" }),
@@ -285,12 +289,12 @@ fn readings(snapshot: &Value) -> Vec<Reading> {
 }
 
 fn thread(cwd: &Path, settings: &AgentSettings) -> Value {
-    let mut params = json!({ "cwd": cwd });
+    let mut params = json!({ "cwd": cwd, "config": { "tools.update_plan": { "enabled": true } } });
     if let Some(model) = &settings.model {
         params["model"] = json!(model);
     }
     if let Some(effort) = &settings.effort {
-        params["config"] = json!({ "model_reasoning_effort": effort });
+        params["config"]["model_reasoning_effort"] = json!(effort);
     }
     if let Some((approval, sandbox)) = settings.mode.as_deref().and_then(codex_policy) {
         params["approvalPolicy"] = json!(approval);
@@ -410,12 +414,14 @@ struct Transcript {
     streaming: HashMap<String, (usize, String)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     commands: HashMap<String, usize>,
+    subagents: HashMap<String, (Subagent, Transcript)>,
+    reading: HashMap<u64, String>,
     previous: u64,
     steering: HashMap<u64, Value>,
     /// A steer that reached the daemon after its turn had ended, to start a turn with instead.
     unsteered: Option<Value>,
     status: Status,
-    asked: HashMap<String, (Value, Option<Value>)>,
+    asked: HashMap<String, (Value, Option<Value>, Option<String>)>,
     edits: HashMap<String, Value>,
 }
 
@@ -431,6 +437,8 @@ impl Transcript {
             streaming: HashMap::new(),
             tools: None,
             commands: HashMap::new(),
+            subagents: HashMap::new(),
+            reading: HashMap::new(),
             previous: 0,
             steering: HashMap::new(),
             unsteered: None,
@@ -466,6 +474,8 @@ impl Transcript {
         self.starting = None;
         self.streaming.clear();
         self.commands.clear();
+        self.subagents.clear();
+        self.reading.clear();
         self.steering.clear();
         self.unsteered = None;
         self.asked.clear();
@@ -496,8 +506,31 @@ impl Transcript {
 
     fn ask(&mut self, message: &Value, grant: Option<Value>) -> String {
         let id = key(&message["id"]);
-        self.asked.insert(id.clone(), (message["id"].clone(), grant));
+        let child = message["params"]["threadId"].as_str().filter(|thread| self.subagents.contains_key(*thread)).map(str::to_owned);
+        if let Some(child) = &child {
+            self.child_status(child, Status::Waiting);
+        }
+        self.asked.insert(id.clone(), (message["id"].clone(), grant, child));
         id
+    }
+
+    fn resolved(&mut self, id: &str) -> Option<(Value, Option<Value>)> {
+        let (rpc, grant, child) = self.asked.remove(id)?;
+        if let Some(child) = child
+            && !self.asked.values().any(|(_, _, pending)| pending.as_ref() == Some(&child))
+        {
+            self.child_status(&child, Status::Working);
+        }
+        Some((rpc, grant))
+    }
+
+    fn child_status(&mut self, thread: &str, status: Status) {
+        if let Some((subagent, _)) = self.subagents.get_mut(thread)
+            && subagent.status != Status::Done && subagent.status != status
+        {
+            subagent.status = status;
+            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+        }
     }
 
     fn read(&mut self, message: &Value) {
@@ -519,9 +552,43 @@ impl Transcript {
             }
             return;
         }
-        let params = &message["params"];
-        if params.get("threadId").is_some_and(|thread| thread != self.thread.as_str()) {
+        if let Some(child) = response(message).and_then(|id| self.reading.remove(&id))
+            && let Some((subagent, transcript)) = self.subagents.get_mut(&child)
+        {
+            let turns = message["result"]["thread"]["turns"].as_array().into_iter().flatten();
+            for item in turns.flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
+                transcript.completed(item, 0);
+            }
+            if subagent.update() {
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
             return;
+        }
+        let params = &message["params"];
+        if let Some(thread) = params["threadId"].as_str()
+            && thread != self.thread
+        {
+            if self.subagents.contains_key(thread) {
+                if message["method"] == "item/started" && params["item"]["type"] == "fileChange" {
+                    self.edited(&params["item"]);
+                }
+                if message["method"] == "item/completed" && let Some(id) = params["item"]["id"].as_str() {
+                    self.edits.remove(id);
+                }
+            }
+            if message["method"] == "item/completed"
+                && let Some((subagent, transcript)) = self.subagents.get_mut(thread)
+            {
+                transcript.read(message);
+                if subagent.update() {
+                    let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                }
+            }
+            let request = message.get("id").is_some() && message.get("method").is_some();
+            let resolved = message["method"] == "serverRequest/resolved";
+            if !self.subagents.contains_key(thread) || (!request && !resolved) {
+                return;
+            }
         }
         let item = &params["item"];
         match message["method"].as_str() {
@@ -566,9 +633,21 @@ impl Transcript {
             }
             Some("serverRequest/resolved") => {
                 let id = key(&params["requestId"]);
-                if self.asked.remove(&id).is_some() {
+                if self.resolved(&id).is_some() {
                     let _ = self.events.send(Event::Resolved(id));
                 }
+            }
+            Some("turn/plan/updated") => {
+                let steps = params["plan"].as_array().into_iter().flatten();
+                let todos = steps.map(|step| {
+                    let status = match step["status"].as_str() {
+                        Some("inProgress") => TodoStatus::Active,
+                        Some("completed") => TodoStatus::Done,
+                        _ => TodoStatus::Pending,
+                    };
+                    Todo { text: step["step"].as_str().unwrap_or_default().to_owned(), status }
+                });
+                let _ = self.events.send(Event::Todos(todos.collect()));
             }
             Some("turn/completed") => {
                 self.turn = None;
@@ -682,6 +761,43 @@ impl Transcript {
             Some("imageView") => self.call(ToolKind::Read, "imageView", text("path")),
             Some("contextCompaction") => {
                 self.push(Item::compacted());
+            }
+            Some("collabAgentToolCall") => {
+                for thread in item["receiverThreadIds"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                    if !self.subagents.contains_key(thread) && item["tool"] == "spawnAgent" {
+                        let task = text("prompt");
+                        let (mut subagent, events) = Subagent::new(None, task);
+                        subagent.index = self.push(subagent.item());
+                        self.subagents.insert(thread.to_owned(), (subagent, Transcript::new(thread, &self.cwd, events)));
+                    }
+                    if let Some((subagent, _)) = self.subagents.get_mut(thread) {
+                        subagent.status = match item["agentsStates"][thread]["status"].as_str() {
+                            Some("completed" | "errored" | "shutdown" | "notFound") => Status::Done,
+                            Some("waiting") => Status::Waiting,
+                            _ => subagent.status,
+                        };
+                        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                    }
+                }
+            }
+            Some("subAgentActivity") => {
+                let Some(thread) = item["agentThreadId"].as_str() else { return };
+                match item["kind"].as_str() {
+                    Some("started") if !self.subagents.contains_key(thread) => {
+                        let task = text("agentPath").rsplit('/').next().unwrap_or_default().to_owned();
+                        let (mut subagent, events) = Subagent::new(None, task);
+                        subagent.index = self.push(subagent.item());
+                        self.subagents.insert(thread.to_owned(), (subagent, Transcript::new(thread, &self.cwd, events)));
+                    }
+                    Some("completed" | "interrupted") => {
+                        if let Some((subagent, _)) = self.subagents.get_mut(thread) {
+                            subagent.update();
+                            subagent.status = Status::Done;
+                            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                        }
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         }

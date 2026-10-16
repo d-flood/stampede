@@ -182,6 +182,8 @@ def check(message, recorded):
     params = message.get('params') or {}
     if method == 'initialize' and params.get('capabilities', {}).get('experimentalApi') is not True:
         fail(f'initialize without capabilities.experimentalApi: {params}')
+    if method == 'thread/start' and params.get('config', {}).get('tools.update_plan', {}).get('enabled') is not True:
+        fail('thread/start without tools.update_plan.enabled')
     if method == 'thread/start' and os.path.realpath(params.get('cwd') or '') != os.path.realpath(os.getcwd()):
         fail(f'thread/start cwd {params.get("cwd")} is not the proxy cwd {os.getcwd()}')
 

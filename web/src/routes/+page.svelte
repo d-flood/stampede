@@ -195,6 +195,11 @@
 					chat.tokens = message.tokens;
 				}
 				break;
+			case 'chat.todos':
+				for (const chat of Object.values(chats).flat()) {
+					if (chat.id === message.chatId) chat.todos = message.todos;
+				}
+				break;
 			case 'chat.queued':
 				for (const chat of Object.values(chats).flat()) {
 					if (chat.id === message.chatId) chat.queued = message.queued;
