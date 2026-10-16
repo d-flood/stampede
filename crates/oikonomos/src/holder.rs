@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::{self, Sender},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use libghostty_vt::{
@@ -32,9 +32,9 @@ use crate::{
     protocol::{self, AgentState, Foreground, Hello, Message, Size, Title},
 };
 
-const SCROLLBACK_LINES: usize = 10_000;
 const MAX_CONTINUATION: usize = 1 << 20;
 const FOREGROUND_POLL: Duration = Duration::from_millis(100);
+const SAVE_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(clap::Args)]
 pub struct HoldArgs {
@@ -50,6 +50,8 @@ pub struct HoldArgs {
     pub rig: Option<String>,
     #[arg(long, requires = "rig")]
     pub agent: Option<Agent>,
+    #[arg(long, value_name = "LINES")]
+    pub scrollback: usize,
     #[arg(last = true, required = true)]
     pub command: Vec<String>,
 }
@@ -62,7 +64,7 @@ pub enum Owner {
     Drawer,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
     pub id: String,
     #[serde(default)]
@@ -98,9 +100,14 @@ pub fn record_path(data_dir: &Path, id: &str) -> PathBuf {
     data_dir.join("terminals").join(format!("{id}.json"))
 }
 
+pub fn scrollback_path(data_dir: &Path, id: &str) -> PathBuf {
+    data_dir.join("terminals").join(format!("{id}.scrollback"))
+}
+
 struct Files {
     socket: PathBuf,
     record: PathBuf,
+    scrollback: PathBuf,
 }
 
 impl Files {
@@ -109,12 +116,19 @@ impl Files {
         fs::write(&tmp, serde_json::to_vec(record)?)?;
         fs::rename(tmp, &self.record)
     }
+
+    fn write_scrollback(&self, snapshot: &[u8]) -> io::Result<()> {
+        let tmp = self.scrollback.with_extension("scrollback.tmp");
+        fs::write(&tmp, snapshot)?;
+        fs::rename(tmp, &self.scrollback)
+    }
 }
 
 impl Drop for Files {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.socket);
         let _ = fs::remove_file(&self.record);
+        let _ = fs::remove_file(&self.scrollback);
     }
 }
 
@@ -124,6 +138,7 @@ pub fn hold(args: HoldArgs) -> Result<(), Box<dyn Error>> {
     let files = Files {
         socket: socket_path(&args.data_dir, &args.id),
         record: record_path(&args.data_dir, &args.id),
+        scrollback: scrollback_path(&args.data_dir, &args.id),
     };
     let mut record = Record {
         cwd: match args.cwd {
@@ -149,7 +164,7 @@ pub fn hold(args: HoldArgs) -> Result<(), Box<dyn Error>> {
         std::process::exit(0);
     }
     setsid()?;
-    run(listener, &files, &mut record)
+    run(listener, &files, &mut record, args.scrollback)
 }
 
 enum Event {
@@ -166,7 +181,12 @@ struct Conn {
     attached: bool,
 }
 
-fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(), Box<dyn Error>> {
+fn run(
+    listener: UnixListener,
+    files: &Files,
+    record: &mut Record,
+    scrollback: usize,
+) -> Result<(), Box<dyn Error>> {
     let pty = native_pty_system().openpty(pty_size(record.size))?;
     let mut command = CommandBuilder::new(&record.command[0]);
     command.args(&record.command[1..]);
@@ -221,7 +241,9 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
     let titled = Cell::new(false);
     let mut terminal = Terminal::new(record.size.cols, record.size.rows)?;
     terminal
-        .set_scrollback_max_lines(Some(SCROLLBACK_LINES))?
+        // The default byte cap (10 KB) would prune long before the line cap.
+        .set_scrollback_max_bytes(None)?
+        .set_scrollback_max_lines(Some(scrollback))?
         .set_continuation_max_bytes(MAX_CONTINUATION)?
         .on_pty_write({
             let input = input.clone();
@@ -249,10 +271,13 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
     let mut reported = titles.current.clone();
     let mut conns: HashMap<u64, Conn> = HashMap::new();
     let mut next_id = 0;
+    let mut changed = false;
+    let mut saved = Instant::now();
     for event in received {
         match event {
             Event::Output(bytes) => {
                 terminal.vt_write(&bytes);
+                changed = true;
                 if titled.replace(false) {
                     titles.set(terminal.title().unwrap_or_default(), pty.master.process_group_leader());
                 }
@@ -288,6 +313,7 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
             Event::Received(_, Message::Resize(size)) => {
                 if resize(&mut terminal, &*pty.master, size).is_ok() {
                     record.size = size;
+                    changed = true;
                     let _ = files.write_record(record);
                 }
             }
@@ -311,6 +337,13 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
                 conns.remove(&id);
             }
             Event::Tick => {
+                if changed && saved.elapsed() >= SAVE_INTERVAL {
+                    changed = false;
+                    saved = Instant::now();
+                    if let Ok(bytes) = snapshot(&mut terminal) {
+                        let _ = files.write_scrollback(&bytes);
+                    }
+                }
                 let Some(leader) = pty.master.process_group_leader() else { continue };
                 titles.foreground(leader);
                 let root = pid.is_some_and(|pid| pid as i32 == leader);

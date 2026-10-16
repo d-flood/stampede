@@ -34,7 +34,7 @@ type Frames = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 pub struct Terminals {
     data_dir: PathBuf,
     hook_url: String,
-    terminals: Mutex<Vec<(String, Arc<Entry>)>>,
+    terminals: Mutex<Vec<(String, Slot)>>,
     changed: broadcast::Sender<Change>,
     titles: broadcast::Sender<(String, String)>,
     views: Mutex<HashMap<Uuid, String>>,
@@ -64,6 +64,7 @@ pub struct Terminal {
     pub needs_attention: bool,
     #[serde(skip)]
     viewed_since_done: bool,
+    pub state: State,
 }
 
 #[derive(Clone, PartialEq, Serialize)]
@@ -73,6 +74,18 @@ pub struct Attention {
     terminal_id: String,
     label: String,
     status: Status,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum State {
+    Live,
+    Ended,
+}
+
+enum Slot {
+    Live(Arc<Entry>),
+    Ended(Terminal, Size),
 }
 
 struct Entry {
@@ -95,21 +108,26 @@ pub struct Attachment {
     pub output: Output,
 }
 
-pub struct Output {
-    frames: Frames,
-    _writer: OwnedWriteHalf,
+pub enum Output {
+    Live { frames: Frames, _writer: OwnedWriteHalf },
+    Saved(Option<Vec<u8>>),
 }
 
 impl Output {
     pub async fn next(&mut self) -> Option<Vec<u8>> {
-        while let Some(Ok(frame)) = self.frames.next().await {
-            if let Ok(Some(Message::Snapshot(bytes) | Message::Output(bytes))) =
-                protocol::decode(&frame)
-            {
-                return Some(bytes);
+        match self {
+            Output::Live { frames, .. } => {
+                while let Some(Ok(frame)) = frames.next().await {
+                    if let Ok(Some(Message::Snapshot(bytes) | Message::Output(bytes))) =
+                        protocol::decode(&frame)
+                    {
+                        return Some(bytes);
+                    }
+                }
+                None
             }
+            Output::Saved(saved) => saved.take(),
         }
-        None
     }
 }
 
@@ -138,14 +156,13 @@ impl Terminals {
                 continue;
             }
             match read_record(&path) {
-                Ok(record) => records.push((path, record)),
+                Ok(record) => records.push(record),
                 Err(error) => eprintln!("cannot read {}: {error}", path.display()),
             }
         }
-        records.sort_by_key(|(_, record)| record.created);
-        for (path, record) in records {
-            let id = record.id.clone();
-            match self.open(record).await {
+        records.sort_by_key(|record| record.created);
+        for record in records {
+            match self.open(record.clone()).await {
                 Ok(_) => {}
                 Err(error)
                     if matches!(
@@ -153,13 +170,19 @@ impl Terminals {
                         io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
                     ) =>
                 {
-                    let _ = fs::remove_file(holder::socket_path(&self.data_dir, &id));
-                    let _ = fs::remove_file(&path);
+                    self.end(record);
                 }
-                Err(error) => eprintln!("cannot reattach terminal {id}: {error}"),
+                Err(error) => eprintln!("cannot reattach terminal {}: {error}", record.id),
             }
         }
         Ok(())
+    }
+
+    fn end(&self, record: Record) {
+        let size = record.size;
+        let (terminal, ..) = describe(record);
+        let terminal = Terminal { status: None, state: State::Ended, ..terminal };
+        self.terminals.lock().unwrap().push((terminal.id.clone(), Slot::Ended(terminal, size)));
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Change> {
@@ -180,7 +203,13 @@ impl Terminals {
 
     pub fn list(&self) -> Vec<Terminal> {
         let terminals = self.terminals.lock().unwrap();
-        terminals.iter().map(|(_, entry)| entry.terminal.lock().unwrap().clone()).collect()
+        terminals
+            .iter()
+            .map(|(_, slot)| match slot {
+                Slot::Live(entry) => entry.terminal.lock().unwrap().clone(),
+                Slot::Ended(terminal, _) => terminal.clone(),
+            })
+            .collect()
     }
 
     pub fn owned(&self, owner: &Owner) -> Vec<Terminal> {
@@ -191,6 +220,8 @@ impl Terminals {
         self: &Arc<Self>,
         project: Option<&Project>,
         rig: Option<&Rig>,
+        session: Option<&str>,
+        scrollback: usize,
         device: &str,
     ) -> io::Result<Terminal> {
         let id = format!("{:016x}", Uuid::new_v4().as_u64_pair().1);
@@ -199,6 +230,7 @@ impl Terminals {
         let mut command = Command::new(&exe);
         command.env("OIKONOMOS_HOOK_URL", &self.hook_url);
         command.arg("hold").arg("--data-dir").arg(&self.data_dir).arg("--id").arg(&id);
+        command.arg("--scrollback").arg(scrollback.to_string());
         match project {
             Some(project) => command.arg("--cwd").arg(&project.path).arg("--project").arg(&project.id),
             None => command.arg("--cwd").arg(crate::home()),
@@ -208,7 +240,9 @@ impl Terminals {
         }
         command.arg("--").arg(&shell);
         match rig {
-            Some(rig) => command.args(["-l", "-i", "-c"]).arg(launch(rig, &exe, &shell.to_string_lossy())),
+            Some(rig) => {
+                command.args(["-l", "-i", "-c"]).arg(launch(rig, session, &exe, &shell.to_string_lossy()))
+            }
             None => command.arg("-l"),
         };
         let status = command
@@ -229,33 +263,18 @@ impl Terminals {
     async fn open(self: &Arc<Self>, record: Record) -> io::Result<Terminal> {
         let (mut frames, mut writer) = connect(&self.data_dir, &record.id).await?;
         let (control, mut pending) = mpsc::unbounded_channel();
-        let shell = Path::new(&record.command[0]).file_name().unwrap_or_default();
-        let shell = shell.to_string_lossy().into_owned();
-        let title = Title {
-            title: None,
-            cwd: record.cwd,
-        };
-        let mut terminal = Terminal {
-            id: record.id,
-            owner: record.owner,
-            status: record.rig.as_ref().map(|_| record.status.unwrap_or(Status::Done)),
-            agent_session: record.agent_session,
-            label: label(record.rig.as_deref(), &shell, &title),
-            rig: record.rig,
-            agent: record.agent,
-            needs_attention: false,
-            viewed_since_done: record.viewed_since_done,
-        };
+        let size = record.size;
+        let (mut terminal, shell, title) = describe(record);
         terminal.attend();
         let entry = Arc::new(Entry {
             terminal: Mutex::new(terminal.clone()),
             shell,
             title: Mutex::new(title),
             control,
-            size: watch::Sender::new(record.size),
+            size: watch::Sender::new(size),
             lead: Mutex::default(),
         });
-        self.terminals.lock().unwrap().push((terminal.id.clone(), Arc::clone(&entry)));
+        self.terminals.lock().unwrap().push((terminal.id.clone(), Slot::Live(Arc::clone(&entry))));
         let _ = self.changed.send(Change::Terminals(terminal.owner.clone()));
         self.refresh_attention();
         let terminals = Arc::clone(self);
@@ -296,12 +315,22 @@ impl Terminals {
     }
 
     pub async fn attach(&self, id: &str) -> io::Result<Attachment> {
+        if let Some((_, size)) = self.ended(id) {
+            let saved = match tokio::fs::read(holder::scrollback_path(&self.data_dir, id)).await {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+                saved => saved?,
+            };
+            return Ok(Attachment {
+                size: watch::channel(size).1,
+                output: Output::Saved(Some(saved)),
+            });
+        }
         let entry = self.get(id).ok_or(io::ErrorKind::NotFound)?;
         let (frames, mut writer) = connect(&self.data_dir, id).await?;
         writer.write_all(&protocol::encode(&Message::Attach)).await?;
         Ok(Attachment {
             size: entry.size.subscribe(),
-            output: Output {
+            output: Output::Live {
                 frames,
                 _writer: writer,
             },
@@ -375,9 +404,29 @@ impl Terminals {
     }
 
     pub fn close(&self, id: &str) {
-        if let Some(entry) = self.get(id) {
-            let _ = entry.control.send(Message::Hangup);
+        match self.get(id) {
+            Some(entry) => {
+                let _ = entry.control.send(Message::Hangup);
+            }
+            None => self.dismiss(id),
         }
+    }
+
+    pub fn ended(&self, id: &str) -> Option<(Terminal, Size)> {
+        let terminals = self.terminals.lock().unwrap();
+        terminals.iter().find_map(|(other, slot)| match slot {
+            Slot::Ended(terminal, size) if other == id => Some((terminal.clone(), *size)),
+            _ => None,
+        })
+    }
+
+    pub fn dismiss(&self, id: &str) {
+        let Some((terminal, _)) = self.ended(id) else { return };
+        self.terminals.lock().unwrap().retain(|(other, _)| other != id);
+        for path in [holder::record_path, holder::socket_path, holder::scrollback_path] {
+            let _ = fs::remove_file(path(&self.data_dir, id));
+        }
+        let _ = self.changed.send(Change::Terminals(terminal.owner));
     }
 
     pub fn lead(&self, id: &str, device: &str) {
@@ -402,7 +451,10 @@ impl Terminals {
 
     fn get(&self, id: &str) -> Option<Arc<Entry>> {
         let terminals = self.terminals.lock().unwrap();
-        terminals.iter().find(|(other, _)| other == id).map(|(_, entry)| Arc::clone(entry))
+        terminals.iter().find_map(|(other, slot)| match slot {
+            Slot::Live(entry) if other == id => Some(Arc::clone(entry)),
+            _ => None,
+        })
     }
 }
 
@@ -486,6 +538,28 @@ impl Entry {
     }
 }
 
+fn describe(record: Record) -> (Terminal, String, Title) {
+    let shell = Path::new(&record.command[0]).file_name().unwrap_or_default();
+    let shell = shell.to_string_lossy().into_owned();
+    let title = Title {
+        title: None,
+        cwd: record.cwd,
+    };
+    let terminal = Terminal {
+        id: record.id,
+        owner: record.owner,
+        status: record.rig.as_ref().map(|_| record.status.unwrap_or(Status::Done)),
+        agent_session: record.agent_session,
+        label: label(record.rig.as_deref(), &shell, &title),
+        rig: record.rig,
+        agent: record.agent,
+        needs_attention: false,
+        viewed_since_done: record.viewed_since_done,
+        state: State::Live,
+    };
+    (terminal, shell, title)
+}
+
 fn label(rig: Option<&str>, shell: &str, title: &Title) -> String {
     match (rig, &title.title) {
         (Some(rig), Some(title)) => format!("{rig} · {title}"),
@@ -499,15 +573,16 @@ fn label(rig: Option<&str>, shell: &str, title: &Title) -> String {
     }
 }
 
-fn launch(rig: &Rig, exe: &Path, shell: &str) -> String {
-    let args: String = rig
-        .args
-        .iter()
-        .cloned()
-        .chain(hooks::wiring(rig.agent, exe))
-        .map(|arg| format!(" {}", quote(&arg)))
-        .collect();
-    format!("{}{args}; exec {} -l -i", rig.command, quote(shell))
+fn launch(rig: &Rig, session: Option<&str>, exe: &Path, shell: &str) -> String {
+    let words = |words: &[String]| words.iter().map(|word| format!(" {}", quote(word))).collect::<String>();
+    let (command, args, hooks) = (&rig.command, words(&rig.args), words(&hooks::wiring(rig.agent, exe)));
+    let line = match (session.map(quote), &rig.resume, rig.agent) {
+        (None, ..) => format!("{command}{args}{hooks}"),
+        (Some(session), Some(resume), _) => format!("{}{args}{hooks}", resume.replace("{session}", &session)),
+        (Some(session), None, Agent::ClaudeCode) => format!("{command}{args}{hooks} --resume {session}"),
+        (Some(session), None, Agent::Codex) => format!("{command} resume{args}{hooks} {session}"),
+    };
+    format!("{line}; exec {} -l -i", quote(shell))
 }
 
 pub fn quote(word: &str) -> String {

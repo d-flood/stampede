@@ -12,6 +12,7 @@ export type Terminal = {
 	status?: Status;
 	agentSession?: string;
 	label: string;
+	state: 'live' | 'ended';
 };
 
 export type Attention = { projectId: string; terminalId: string; label: string; status: Status };
@@ -37,6 +38,7 @@ export type ClientMessage =
 	| { type: 'terminal.create'; projectId: string; rig?: string }
 	| { type: 'terminal.create'; owner: 'drawer' }
 	| { type: 'terminal.close'; terminalId: string }
+	| { type: 'terminal.resume'; terminalId: string }
 	| { type: 'terminal.attach'; terminalId: string }
 	| { type: 'terminal.resize'; terminalId: string; cols: number; rows: number }
 	| { type: 'terminal.focus'; terminalId: string }

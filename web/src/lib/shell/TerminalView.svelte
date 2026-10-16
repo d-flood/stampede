@@ -2,9 +2,11 @@
 	import { appearance, type Appearance } from '#lib/config.svelte.ts';
 	import type { Device, ServerMessage } from '#lib/device.ts';
 	import { FitAddon, Terminal, init } from 'ghostty-web';
-	import { onMount } from 'svelte';
+	import { onMount, type Snippet } from 'svelte';
 
-	let { device, terminalId, active }: { device: Device; terminalId: string; active: boolean } = $props();
+	type Props = { device: Device; terminalId: string; active: boolean; ended?: boolean; children?: Snippet };
+
+	let { device, terminalId, active, ended = false, children }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<Terminal>();
@@ -61,7 +63,7 @@
 		view?.dispose();
 		const element = document.createElement('div');
 		container.replaceChildren(element);
-		const next = new Terminal({ theme, fontFamily });
+		const next = new Terminal({ theme, fontFamily, disableStdin: ended });
 		fit = new FitAddon();
 		next.loadAddon(fit);
 		next.open(element);
@@ -120,11 +122,25 @@
 	}
 </script>
 
-<div class="terminal" role="tabpanel" hidden={!active} bind:this={container}></div>
+<div class="panel" role="tabpanel" hidden={!active}>
+	{@render children?.()}
+	<div class="terminal" bind:this={container}></div>
+</div>
 
 <style>
-	.terminal {
+	.panel {
+		display: flex;
+		flex-direction: column;
 		height: 100%;
+	}
+
+	.panel[hidden] {
+		display: none;
+	}
+
+	.terminal {
+		flex: 1;
+		min-height: 0;
 		overflow: auto;
 	}
 

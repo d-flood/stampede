@@ -19,6 +19,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 #[serde(default)]
 struct Settings {
     roots: Vec<PathBuf>,
+    scrollback: usize,
     theme: Option<String>,
     font: Fonts,
     rig: Vec<Rig>,
@@ -29,6 +30,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             roots: vec!["~/repos".into()],
+            scrollback: 10_000,
             theme: None,
             font: Fonts::default(),
             rig: Vec::new(),
@@ -66,6 +68,8 @@ pub struct Rig {
     pub args: Vec<String>,
     #[serde(default, skip_serializing)]
     pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing)]
+    pub resume: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -101,6 +105,7 @@ pub enum Keymap {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub roots: Vec<PathBuf>,
+    pub scrollback: usize,
     pub theme: Theme,
     pub font: Font,
     pub rigs: Vec<Rig>,
@@ -111,6 +116,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             roots: Settings::default().roots.into_iter().map(expand).collect(),
+            scrollback: Settings::default().scrollback,
             theme: Theme::default(),
             font: Font::default(),
             rigs: Vec::new(),
@@ -146,7 +152,8 @@ impl Config {
             Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
             text => text?,
         };
-        let Settings { roots, theme, font: Fonts { mono }, rig: rigs, editor } = toml::from_str(&text)?;
+        let Settings { roots, scrollback, theme, font: Fonts { mono }, rig: rigs, editor } =
+            toml::from_str(&text)?;
         let faces = mono.files.into_iter().enumerate().map(face).collect::<Result<_, _>>()?;
         let mut names = HashSet::new();
         if let Some(rig) = rigs.iter().find(|rig| !names.insert(&rig.name)) {
@@ -154,6 +161,7 @@ impl Config {
         }
         Ok(Self {
             roots: roots.into_iter().map(expand).collect(),
+            scrollback,
             theme: Theme::resolve(theme.as_deref())?,
             font: Font { family: mono.family, faces },
             rigs,

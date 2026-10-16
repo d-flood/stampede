@@ -19,6 +19,7 @@
 	import Tab from '#lib/ui/Tab.svelte';
 	import { onMount } from 'svelte';
 	import Plus from '~icons/ph/plus';
+	import Power from '~icons/ph/power';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
 
 	const device = connect();
@@ -157,6 +158,21 @@
 		device.send({ type: 'terminal.close', terminalId });
 	}
 
+	function resumable(terminal: Terminal) {
+		return !!terminal.rig && !!terminal.agentSession;
+	}
+
+	function resume(terminalId: string) {
+		device.send({ type: 'terminal.resume', terminalId });
+	}
+
+	function tabMenu(projectId: string, tab: Terminal) {
+		const close = () => closeTab(projectId, tab.id);
+		if (tab.state === 'live') return [{ label: 'Close', onselect: close }];
+		const resuming = resumable(tab) ? [{ label: 'Resume', onselect: () => resume(tab.id) }] : [];
+		return [...resuming, { label: 'Dismiss', onselect: close }];
+	}
+
 	function openFile(projectId: string, path: string) {
 		files[projectId] ??= [];
 		let file = files[projectId].find((file) => file.path === path);
@@ -217,13 +233,14 @@
 				{#if focused}
 					{@const projectId = focused.id}
 					{#each tabs as tab (tab.id)}
-						<Menu context items={[{ label: 'Close', onselect: () => closeTab(projectId, tab.id) }]}>
+						<Menu context items={tabMenu(projectId, tab)}>
 							{#snippet trigger(props)}
 								<Tab
 									{...props}
 									variant={tab.agent ? 'agent' : 'terminal'}
 									agent={tab.agent}
 									status={tab.status}
+									ended={tab.state === 'ended'}
 									label={tab.label}
 									active={tab.id === activeTab}
 									onclick={() => (chosenTabs[projectId] = tab.id)}
@@ -260,7 +277,20 @@
 		<div class="tabs">
 			{#each Object.entries(terminals) as [projectId, owned] (projectId)}
 				{#each owned as terminal (terminal.id)}
-					<TerminalView {device} terminalId={terminal.id} active={terminal.id === activeTab} />
+					{@const ended = terminal.state === 'ended'}
+					<TerminalView {device} terminalId={terminal.id} active={terminal.id === activeTab} {ended}>
+						{#if ended}
+							<div class="ended" role="status">
+								<span class="message"><Power /> Lost to a Host reboot; showing its last output.</span>
+								<div class="choices">
+									{#if resumable(terminal)}
+										<Button variant="primary" onclick={() => resume(terminal.id)}>Resume</Button>
+									{/if}
+									<Button onclick={() => closeTab(projectId, terminal.id)}>Dismiss</Button>
+								</div>
+							</div>
+						{/if}
+					</TerminalView>
 				{/each}
 			{/each}
 			{#each Object.values(files) as open}
@@ -351,5 +381,34 @@
 
 	.empty p {
 		margin: 0;
+	}
+
+	.ended {
+		display: flex;
+		flex: none;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-2) var(--space-3);
+		padding: var(--space-2) var(--space-3);
+		border-bottom: var(--border-width) solid var(--border);
+		background: var(--surface-1);
+		color: var(--muted-fg);
+	}
+
+	.message {
+		display: inline-flex;
+		flex: 1 1 16rem;
+		align-items: center;
+		gap: var(--space-2);
+	}
+
+	.message :global(svg) {
+		flex: none;
+	}
+
+	.choices {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
 	}
 </style>
