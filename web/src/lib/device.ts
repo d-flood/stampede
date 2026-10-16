@@ -26,7 +26,8 @@ export type ServerMessage =
 	| { type: 'projects.changed'; projects: Project[] }
 	| { type: 'project.opened'; projectId: string }
 	| { type: 'project.error'; path: string; error: string }
-	| { type: 'picker.listed'; directories: string[] };
+	| { type: 'picker.listed'; directories: string[] }
+	| { type: 'fs.changed'; projectId: string; paths: string[]; git?: true };
 
 export type ClientMessage =
 	| { type: 'hello'; deviceId: string }

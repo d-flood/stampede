@@ -212,8 +212,9 @@
 									{...props}
 									variant="editor"
 									label={file.name}
-									title={file.path}
+									title={file.deleted ? `${file.path} (deleted on disk)` : file.path}
 									dirty={file.dirty}
+									deleted={file.deleted}
 									active={file.id === activeTab}
 									onclick={() => (chosenTabs[projectId] = file.id)}
 								/>
@@ -238,7 +239,7 @@
 			{/each}
 			{#each Object.values(files) as open}
 				{#each open as file (file.id)}
-					<Editor {file} active={file.id === activeTab} />
+					<Editor {file} {device} active={file.id === activeTab} />
 				{/each}
 			{/each}
 			{#if !focused}
