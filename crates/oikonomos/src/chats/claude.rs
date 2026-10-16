@@ -14,7 +14,7 @@ use tokio::{
 use uuid::Uuid;
 
 use super::{
-    Chat, Driver, Event, Item,
+    Chat, Context, Driver, Event, Item, Tokens,
     holder::{self, Frames},
     protocol::{self, Message},
 };
@@ -89,6 +89,7 @@ pub async fn reattach(
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(events);
     transcript.replaying = true;
+    transcript.window = chat.context.map(|context| context.window);
     if let Some(session) = &chat.agent_session
         && let Some(contents) = session_file(env, session).and_then(|path| fs::read_to_string(path).ok())
     {
@@ -185,11 +186,22 @@ struct Transcript {
     streaming: HashMap<u64, (usize, String)>,
     status: Status,
     replaying: bool,
+    /// The model of the main loop's latest API call, and how many tokens it was sent.
+    call: Option<(String, u64)>,
+    window: Option<u64>,
 }
 
 impl Transcript {
     fn new(events: UnboundedSender<Event>) -> Self {
-        Self { events, len: 0, streaming: HashMap::new(), status: Status::Done, replaying: false }
+        Self {
+            events,
+            len: 0,
+            streaming: HashMap::new(),
+            status: Status::Done,
+            replaying: false,
+            call: None,
+            window: None,
+        }
     }
 
     fn push(&mut self, item: Item) -> usize {
@@ -243,12 +255,48 @@ impl Transcript {
                 }
             }
             Some("stream_event") if message["parent_tool_use_id"].is_null() => self.stream(&message["event"]),
-            Some("result") => self.report(Status::Done),
+            Some("result") => {
+                self.total(&message["modelUsage"]);
+                self.report(Status::Done);
+            }
             _ => {}
         }
     }
 
+    fn called(&mut self, message: &Value) {
+        let usage = &message["usage"];
+        let sent = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"];
+        let used = sent.iter().filter_map(|field| usage[field].as_u64()).sum();
+        self.call = message["model"].as_str().map(|model| (model.to_owned(), used));
+        self.meter(None);
+    }
+
+    fn total(&mut self, models: &Value) {
+        let Some(models) = models.as_object().filter(|models| !models.is_empty()) else { return };
+        let count = |fields: &[&str]| {
+            models.values().flat_map(|usage| fields.iter().filter_map(|field| usage[field].as_u64())).sum()
+        };
+        let input = count(&["inputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"]);
+        let output = count(&["outputTokens"]);
+        if let Some((model, _)) = &self.call
+            && let Some(window) = models.get(model).and_then(|usage| usage["contextWindow"].as_u64())
+        {
+            self.window = Some(window);
+        }
+        self.meter(Some(Tokens { input, output }));
+    }
+
+    fn meter(&self, tokens: Option<Tokens>) {
+        let context = self.call.as_ref().zip(self.window).map(|((_, used), window)| Context { used: *used, window });
+        if context.is_some() || tokens.is_some() {
+            let _ = self.events.send(Event::Meters(context, tokens));
+        }
+    }
+
     fn stream(&mut self, event: &Value) {
+        if event["type"] == "message_start" {
+            return self.called(&event["message"]);
+        }
         let Some(block) = event["index"].as_u64() else { return };
         match event["type"].as_str() {
             Some("content_block_start") if event["content_block"]["type"] == "text" => {

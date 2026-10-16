@@ -16,7 +16,7 @@ use tokio::{
 };
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
-use super::{Chat, Driver, Event, Item};
+use super::{Chat, Context, Driver, Event, Item, Tokens};
 use crate::hooks::Status;
 
 const CLOSING: Duration = Duration::from_secs(5);
@@ -238,6 +238,14 @@ impl Transcript {
         }
         let item = &params["item"];
         match message["method"].as_str() {
+            Some("thread/tokenUsage/updated") => {
+                let usage = &params["tokenUsage"];
+                let (used, window) = (usage["last"]["totalTokens"].as_u64(), usage["modelContextWindow"].as_u64());
+                let context = used.zip(window).map(|(used, window)| Context { used, window });
+                let (input, output) = (usage["total"]["inputTokens"].as_u64(), usage["total"]["outputTokens"].as_u64());
+                let tokens = input.zip(output).map(|(input, output)| Tokens { input, output });
+                let _ = self.events.send(Event::Meters(context, tokens));
+            }
             Some("turn/completed") => {
                 self.turn = None;
                 let _ = self.events.send(Event::Status(Status::Done));

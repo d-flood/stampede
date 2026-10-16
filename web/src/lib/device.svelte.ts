@@ -19,6 +19,10 @@ export type Terminal = {
 
 export type Item = { kind: 'user'; text: string; images: number } | { kind: 'text'; text: string; streaming: boolean };
 
+export type Context = { used: number; window: number };
+
+export type Tokens = { input: number; output: number };
+
 export type Chat = {
 	id: string;
 	projectId: string;
@@ -26,6 +30,8 @@ export type Chat = {
 	agent: Agent;
 	status: Status;
 	agentSession?: string;
+	context: Context | null;
+	tokens: Tokens | null;
 };
 
 export type Attention = { projectId: string; label: string; status: Status } & ({ terminalId: string } | { chatId: string });
@@ -61,6 +67,7 @@ export type ServerMessage =
 	| { type: 'chat.items'; chatId: string; items: Item[] }
 	| { type: 'chat.item'; chatId: string; index: number; item: Item }
 	| { type: 'chat.status'; chatId: string; status: Status }
+	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
 	| { type: 'config.changed' }
 	| { type: 'projects.changed'; projects: Project[] }
 	| { type: 'project.opened'; projectId: string }

@@ -14,6 +14,8 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await expect(tab.getByTitle('done')).toBeVisible();
 
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	const context = panel.getByRole('meter', { name: 'Context' });
+	await expect(context).toHaveCount(0);
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	await composer.fill('Greet the reader');
 	await panel.getByRole('button', { name: 'Send' }).click();
@@ -21,6 +23,12 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await expect(panel.locator('strong', { hasText: 'welcome' })).toBeVisible();
 	await expect(panel.getByText(/^Hello and welcome!/)).toBeVisible();
 	await expect(tab.getByTitle('done')).toBeVisible();
+	if (project.name === 'pixel') {
+		await expect(context).toHaveText('2%');
+	} else {
+		await expect(context).toContainText('22k / 1M');
+		await expect(panel.getByText('23k in · 32 out')).toBeVisible();
+	}
 
 	await composer.fill('Anything else?');
 	await panel.getByRole('button', { name: 'Send' }).click();
@@ -51,6 +59,13 @@ test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, 
 	await expect(panel.locator('strong', { hasText: 'glad' })).toBeVisible();
 	await expect(panel.getByText('Welcome—glad you’re here.')).toBeVisible();
 	await expect(tab.getByTitle('done')).toBeVisible();
+	const context = panel.getByRole('meter', { name: 'Context' });
+	if (project.name === 'pixel') {
+		await expect(context).toHaveText('5%');
+	} else {
+		await expect(context).toContainText('22k / 475k');
+		await expect(panel.getByText('22k in · 14 out')).toBeVisible();
+	}
 
 	await tab.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();

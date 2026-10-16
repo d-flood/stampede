@@ -30,11 +30,25 @@ pub enum Item {
     Text { text: String, streaming: bool },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Context {
+    pub used: u64,
+    pub window: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Tokens {
+    pub input: u64,
+    pub output: u64,
+}
+
 pub enum Event {
     Session(String),
     Status(Status),
     /// Appends the Item when its index is the transcript's length, and replaces the one there otherwise.
     Item(usize, Item),
+    /// Replaces whichever of the Chat's context fill and token counts it carries.
+    Meters(Option<Context>, Option<Tokens>),
 }
 
 /// One Agent's wire protocol. A driver's events end when its Agent has stopped.
@@ -56,6 +70,10 @@ pub struct Chat {
     pub agent_session: Option<String>,
     pub status: Status,
     pub viewed_since_done: bool,
+    #[serde(default)]
+    pub context: Option<Context>,
+    #[serde(default)]
+    pub tokens: Option<Tokens>,
 }
 
 #[derive(Clone)]
@@ -63,6 +81,7 @@ pub enum Change {
     Chats(String),
     Status(String, Status),
     Item { chat_id: String, seq: u64, index: usize, item: Item },
+    Meters { chat_id: String, context: Option<Context>, tokens: Option<Tokens> },
 }
 
 pub struct Chats {
@@ -119,6 +138,8 @@ impl Chats {
             agent_session: None,
             status: Status::Done,
             viewed_since_done: true,
+            context: None,
+            tokens: None,
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
@@ -209,6 +230,18 @@ impl Chats {
                     if status != Status::Working {
                         self.attention.call(item, self.showing(&id));
                     }
+                }
+                Event::Meters(context, tokens) => {
+                    let mut chat = entry.chat.lock().unwrap();
+                    let before = (chat.context, chat.tokens);
+                    chat.context = context.or(chat.context);
+                    chat.tokens = tokens.or(chat.tokens);
+                    if (chat.context, chat.tokens) == before {
+                        continue;
+                    }
+                    self.save(&chat);
+                    let (context, tokens) = (chat.context, chat.tokens);
+                    let _ = self.changed.send(Change::Meters { chat_id: id.clone(), context, tokens });
                 }
                 Event::Item(index, item) => {
                     let mut transcript = entry.transcript.lock().unwrap();

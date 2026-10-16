@@ -1,4 +1,6 @@
 <script lang="ts">
+	import ContextBar from '#lib/chat/ContextBar.svelte';
+	import Meters from '#lib/chat/Meters.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import type { Chat, Device, Item, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -58,12 +60,20 @@
 </script>
 
 <div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active}>
+	{#if form() === 'phone' && chat.context}
+		<div class="chips">
+			<ContextBar context={chat.context} compact />
+		</div>
+	{/if}
 	<div class="transcript" {@attach follow}>
 		<div class="column">
 			<Transcript {items} />
 		</div>
 	</div>
 	<Composer id={chat.id} disabled={!live} insert={false} placeholder="Message {chat.rig}" onsend={send} />
+	{#if form() === 'desktop'}
+		<Meters {chat} />
+	{/if}
 </div>
 
 <style>
@@ -75,6 +85,15 @@
 
 	.panel[hidden] {
 		display: none;
+	}
+
+	.chips {
+		display: flex;
+		flex: none;
+		align-items: center;
+		justify-content: flex-end;
+		padding: var(--space-2) var(--space-4);
+		border-bottom: var(--border-width) solid var(--border);
 	}
 
 	.transcript {

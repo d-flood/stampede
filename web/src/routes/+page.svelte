@@ -170,6 +170,13 @@
 					if (chat.id === message.chatId) chat.status = message.status;
 				}
 				break;
+			case 'chat.meters':
+				for (const chat of Object.values(chats).flat()) {
+					if (chat.id !== message.chatId) continue;
+					chat.context = message.context;
+					chat.tokens = message.tokens;
+				}
+				break;
 			case 'chat.created':
 				place(message.chat.projectId, message.chat.id);
 				choose(message.chat.projectId, message.chat.id);
