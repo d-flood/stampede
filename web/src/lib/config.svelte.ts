@@ -16,12 +16,13 @@ type EditorSettings = { keymap: 'standard' | 'vim' };
 
 export type Appearance = { theme: ITheme; fontFamily: string };
 export type Agent = 'claude-code' | 'codex';
-export type Rig = { name: string; agent: Agent };
+export type Rig = { name: string; agent: Agent; shortcut?: string };
 
 const dark = new MediaQuery('(prefers-color-scheme: dark)');
 let revision = $state(0);
 let faces: FontFace[] = [];
 let configured = $state.raw<Rig[]>([]);
+let chord = $state('ctrl+space');
 
 export const editor = $state<EditorSettings>({ keymap: 'standard' });
 
@@ -32,13 +33,15 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export async function loadConfig() {
-	const [theme, font, rigs, settings] = await Promise.all([
+	const [theme, font, rigs, settings, leaderKey] = await Promise.all([
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
 		get<Rig[]>('/api/rigs'),
-		get<EditorSettings>('/api/editor')
+		get<EditorSettings>('/api/editor'),
+		get<string>('/api/leader')
 	]);
 	editor.keymap = settings.keymap;
+	chord = leaderKey;
 	const style = document.documentElement.style;
 	for (const scheme of ['light', 'dark'] as const) {
 		const palette = theme[scheme];
@@ -59,6 +62,10 @@ export async function loadConfig() {
 
 export function rigs(): Rig[] {
 	return configured;
+}
+
+export function leader(): string {
+	return chord;
 }
 
 export function appearance(): Appearance {

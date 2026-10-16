@@ -39,6 +39,7 @@
 		"@types/node": "^26.6.5",
 		"bits-ui": "^2.19.5",
 		"codemirror": "^6.0.2",
+		"fuzzysort": "^4.0.2",
 		"ghostty-web": "0.4.0",
 		"svelte": "^5.57.2",
 		"svelte-check": "^4.7.6",

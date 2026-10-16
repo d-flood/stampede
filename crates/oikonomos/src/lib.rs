@@ -70,10 +70,12 @@ fn router(state: AppState) -> Router {
         .route("/api/font", get(font))
         .route("/api/rigs", get(rigs))
         .route("/api/editor", get(editor))
+        .route("/api/leader", get(leader))
         .route("/api/hook", post(hooks::receive).layer(DefaultBodyLimit::disable()))
         .route("/api/push/key", get(push::key))
         .route("/api/push/subscribe", post(push::subscribe))
         .route("/api/projects/{id}/tree", get(files::tree))
+        .route("/api/projects/{id}/files", get(files::paths))
         .route("/api/projects/{id}/file", get(files::read).put(files::write))
         .route("/api/projects/{id}/git", get(git::status))
         .route("/api/projects/{id}/git/head", get(git::head))
@@ -116,6 +118,10 @@ async fn rigs(State(state): State<AppState>) -> Json<Vec<Rig>> {
 
 async fn editor(State(state): State<AppState>) -> Json<Editor> {
     Json(state.config.borrow().editor.clone())
+}
+
+async fn leader(State(state): State<AppState>) -> Json<String> {
+    Json(state.config.borrow().leader.clone())
 }
 
 async fn host_font(State(state): State<AppState>, Path(index): Path<usize>) -> Response {

@@ -1,4 +1,5 @@
 import { form } from '#lib/form.ts';
+import fuzzysort, { type Snapshot } from 'fuzzysort';
 
 export type Entry ={ name: string; path: string; dir: boolean; ignored: boolean };
 
@@ -55,6 +56,42 @@ export class RequestError extends Error {
 export async function json<T>(response: Response): Promise<T> {
 	if (!response.ok) throw new RequestError(response.status, await response.text());
 	return response.json();
+}
+
+class Listing {
+	snapshot = $state.raw<Snapshot>();
+	#projectId: string;
+	#stale = true;
+
+	constructor(projectId: string) {
+		this.#projectId = projectId;
+	}
+
+	async refresh() {
+		if (!this.#stale) return;
+		this.#stale = false;
+		try {
+			this.snapshot = fuzzysort.snapshot(await json<string[]>(await fetch(`/api/projects/${this.#projectId}/files`)));
+		} catch {
+			this.#stale = true;
+		}
+	}
+
+	invalidate() {
+		this.#stale = true;
+	}
+}
+
+const listings = new Map<string, Listing>();
+
+export function listing(projectId: string): Listing {
+	let found = listings.get(projectId);
+	if (!found) listings.set(projectId, (found = new Listing(projectId)));
+	return found;
+}
+
+export function invalidate(projectId: string) {
+	listings.get(projectId)?.invalidate();
 }
 
 export async function list(projectId: string, path: string, includeIgnored: boolean): Promise<Entry[]> {

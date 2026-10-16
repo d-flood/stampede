@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { rigs } from '#lib/config.svelte.ts';
+	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
-	import { OpenDiff, OpenFile } from '#lib/files.svelte.ts';
+	import { invalidate, listing, OpenDiff, OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { status, type Change, type Git } from '#lib/git.ts';
 	import { labels } from '#lib/projects.ts';
@@ -9,6 +9,8 @@
 	import Diff from '#lib/shell/Diff.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Editor from '#lib/shell/Editor.svelte';
+	import Leader from '#lib/shell/Leader.svelte';
+	import Palette, { type Scope } from '#lib/shell/Palette.svelte';
 	import Picker from '#lib/shell/Picker.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
 	import Sidebar, { type Section } from '#lib/shell/Sidebar.svelte';
@@ -38,6 +40,7 @@
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
 	let picking = $state(false);
+	let palette = $state<Scope>();
 	let directories = $state<string[]>([]);
 	let settle: ((error?: string) => void) | undefined;
 
@@ -111,6 +114,9 @@
 			case 'git.changed':
 				loadGit(message.projectId);
 				break;
+			case 'fs.changed':
+				invalidate(message.projectId);
+				break;
 			case 'picker.listed':
 				directories = message.directories;
 				break;
@@ -164,8 +170,21 @@
 	function newTab(projectId: string) {
 		const create = (rig?: string) => () => device.send({ type: 'terminal.create', projectId, rig });
 		const launchers = rigs().map((rig) => ({ label: rig.name, onselect: create(rig.name) }));
-		const terminal = { label: 'Terminal', onselect: create() };
-		return launchers.length ? [{ heading: 'Rigs', items: launchers }, terminal] : [terminal];
+		const rest = [{ label: 'Terminal', onselect: create() }, { label: 'Open file', onselect: () => openPalette('files') }];
+		return launchers.length ? [{ heading: 'Rigs', items: launchers }, ...rest] : rest;
+	}
+
+	function launch(rig: Rig) {
+		if (focused) device.send({ type: 'terminal.create', projectId: focused.id, rig: rig.name });
+	}
+
+	function jump(index: number) {
+		if (focused && tabIds[index]) chosenTabs[focused.id] = tabIds[index];
+	}
+
+	function openPalette(scope: Scope) {
+		if (focused) listing(focused.id).refresh();
+		palette = scope;
 	}
 
 	function leave(projectId: string, tabId: string) {
@@ -351,6 +370,25 @@
 </div>
 
 <Drawer {device} />
+
+<Leader ontab={jump} onpalette={() => openPalette('all')} onrig={launch} />
+
+<Dialog
+	bind:open={() => !!palette, (open) => !open && (palette = undefined)}
+	title={palette === 'files' ? 'Open File' : 'Command Palette'}
+>
+	{#if palette}
+		<Palette
+			scope={palette}
+			{projects}
+			labels={projectLabels}
+			{focused}
+			onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
+			onrig={(rig) => (launch(rig), (palette = undefined))}
+			onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
+		/>
+	{/if}
+</Dialog>
 
 <Dialog bind:open={picking} title="Open Project">
 	<Picker {directories} onopen={open} />
