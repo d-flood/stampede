@@ -191,6 +191,7 @@
 	}
 
 	function attend({ projectId, terminalId }: Pick<Attention, 'projectId' | 'terminalId'>) {
+		if (drawerOpen) drawer.toggle();
 		focus(projectId);
 		choose(projectId, terminalId);
 	}
