@@ -77,7 +77,7 @@ fn router(state: AppState) -> Router {
         .route("/api/push/subscribe", post(push::subscribe))
         .route("/api/projects/{id}/tree", get(files::tree))
         .route("/api/projects/{id}/files", get(files::paths))
-        .route("/api/projects/{id}/file", get(files::read).put(files::write))
+        .route("/api/projects/{id}/file", get(files::read).head(files::exists).put(files::write))
         .route("/api/projects/{id}/git", get(git::status))
         .route("/api/projects/{id}/git/head", get(git::head))
         .route("/api/projects/{id}/git/log", get(git::history))

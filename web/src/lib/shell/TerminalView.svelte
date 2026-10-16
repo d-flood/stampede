@@ -1,12 +1,22 @@
 <script lang="ts">
 	import { appearance, type Appearance } from '#lib/config.svelte.ts';
-	import type { Device, ServerMessage } from '#lib/device.ts';
+	import type { Device, Project, ServerMessage } from '#lib/device.ts';
+	import type { Cursor } from '#lib/files.svelte.ts';
+	import { linkify } from '#lib/links.ts';
 	import { FitAddon, Terminal, init } from 'ghostty-web';
 	import { onMount, type Snippet } from 'svelte';
 
-	type Props = { device: Device; terminalId: string; active: boolean; ended?: boolean; children?: Snippet };
+	type Props = {
+		device: Device;
+		terminalId: string;
+		active: boolean;
+		ended?: boolean;
+		project?: Project;
+		onopen?(path: string, cursor?: Cursor): void;
+		children?: Snippet;
+	};
 
-	let { device, terminalId, active, ended = false, children }: Props = $props();
+	let { device, terminalId, active, ended = false, project, onopen, children }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<Terminal>();
@@ -67,6 +77,7 @@
 		fit = new FitAddon();
 		next.loadAddon(fit);
 		next.open(element);
+		if (onopen) linkify(next, () => project, onopen);
 		next.onData((data) => {
 			if (channel !== undefined && !writing) device.input(channel, data);
 		});

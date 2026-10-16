@@ -81,6 +81,19 @@ pub async fn read(
     .await
 }
 
+pub async fn exists(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Query(query): Query<FileQuery>,
+) -> Result<Response, Failure> {
+    let root = root(&state, &id)?;
+    blocking(move || {
+        let status = if resolve(&root, &query.path)?.is_file() { StatusCode::OK } else { StatusCode::NOT_FOUND };
+        Ok(status.into_response())
+    })
+    .await
+}
+
 pub async fn write(
     State(state): State<AppState>,
     Param(id): Param<String>,
