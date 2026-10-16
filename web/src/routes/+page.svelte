@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { version } from '$app/env';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
-	import { connect, type Attention, type Chat, type Project, type ServerMessage, type Terminal } from '#lib/device.svelte.ts';
+	import { connect, tabOf, type Attention, type Chat, type Project, type ServerMessage, type Terminal } from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -92,6 +92,7 @@
 	const phone = $derived(form() === 'phone');
 	const foreground = $derived(visible && (!phone || (screen === 1 && !drawerOpen)));
 	const shown = $derived(foreground ? tabs.filter((tab) => showing(tab.id)).map((tab) => tab.id) : []);
+	const shownChats = $derived(foreground ? chatTabs.filter((chat) => showing(chat.id)).map((chat) => chat.id) : []);
 	const label = $derived(focused && projectLabels.get(focused.id));
 	const titles = $derived([
 		{ title: 'Projects' },
@@ -102,16 +103,16 @@
 		capture({ chosen, terminals, chats, files, chosenTabs, splits, sidebar: { open: sidebar, section } })
 	);
 
-	$effect(() => device.send({ type: 'device.view', terminalIds: shown }));
+	$effect(() => device.send({ type: 'device.view', terminalIds: shown, chatIds: shownChats }));
 	$effect(() => saveLayout(deviceLayout));
 
 	const query = new URLSearchParams(location.search);
-	const [queryProject, queryTerminal] = [query.get('project'), query.get('terminal')];
-	if (queryProject && queryTerminal) attend({ projectId: queryProject, terminalId: queryTerminal });
+	const [queryProject, queryTab] = [query.get('project'), query.get('tab')];
+	if (queryProject && queryTab) attend(queryProject, queryTab);
 
 	onMount(() => {
 		const unlisten = device.listen({ message });
-		const notified = ({ data }: MessageEvent<Attention>) => attend(data);
+		const notified = ({ data }: MessageEvent<Attention>) => attend(data.projectId, tabOf(data));
 		navigator.serviceWorker?.addEventListener('message', notified);
 		return () => {
 			unlisten();
@@ -138,7 +139,7 @@
 				chats = chatsOwned;
 				for (const project of projects) invalidate(project.id);
 				device.send({ type: 'projects.list' });
-				device.send({ type: 'device.view', terminalIds: shown });
+				device.send({ type: 'device.view', terminalIds: shown, chatIds: shownChats });
 				break;
 			}
 			case 'attention.changed':
@@ -215,10 +216,10 @@
 		}
 	}
 
-	function attend({ projectId, terminalId }: Pick<Attention, 'projectId' | 'terminalId'>) {
+	function attend(projectId: string, tabId: string) {
 		if (drawerOpen) drawer.toggle();
 		focus(projectId);
-		choose(projectId, terminalId);
+		choose(projectId, tabId);
 	}
 
 	function focus(projectId: string) {
@@ -485,7 +486,7 @@
 
 {#snippet attention()}
 	<ThemeSwitcher />
-	<AttentionList items={attentionList} projects={projectLabels} onselect={attend} />
+	<AttentionList items={attentionList} projects={projectLabels} onselect={(item) => attend(item.projectId, tabOf(item))} />
 {/snippet}
 
 {#snippet sidebarPanel()}

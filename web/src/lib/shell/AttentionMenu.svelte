@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Attention } from '#lib/device.svelte.ts';
+	import { tabOf, type Attention } from '#lib/device.svelte.ts';
 	import { DropdownMenu } from 'bits-ui';
 	import type { Snippet } from 'svelte';
 
@@ -34,7 +34,7 @@
 									<div {...props} class="heading">Needs attention</div>
 								{/snippet}
 							</DropdownMenu.GroupHeading>
-							{#each items as item (item.terminalId)}
+							{#each items as item (tabOf(item))}
 								<DropdownMenu.Item onSelect={() => onselect(item)}>
 									{#snippet child({ props })}
 										<div {...props} class="item">{@render entry(item)}</div>

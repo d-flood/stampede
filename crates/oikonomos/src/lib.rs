@@ -1,3 +1,4 @@
+mod attention;
 mod chats;
 mod config;
 mod device;
@@ -29,6 +30,7 @@ use rust_embed::RustEmbed;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, watch};
 
+use attention::Feed;
 use chats::Chats;
 use config::{Config, Editor, Font, Keybar, Rig};
 pub use chats::{HoldChatArgs, hold_chat};
@@ -65,6 +67,7 @@ pub(crate) fn home() -> PathBuf {
 struct AppState {
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
+    attention: Arc<Feed>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
     config_path: PathBuf,
@@ -116,8 +119,9 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let languages = Arc::new(LanguageServers::load(&args.data_dir)?);
     let layouts = Arc::new(Layouts::load(&args.data_dir)?);
     let hook_url = format!("http://{}/api/hook", listener.local_addr()?);
-    let chats = Arc::new(Chats::new(args.data_dir.clone()));
-    let terminals = Arc::new(Terminals::new(args.data_dir, hook_url));
+    let attention = Arc::new(Feed::default());
+    let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention)));
+    let terminals = Arc::new(Terminals::new(args.data_dir, hook_url, Arc::clone(&attention)));
     terminals.restore().await?;
     terminals.scrollback(config.borrow().scrollback);
     let mut settings = config.clone();
@@ -127,11 +131,11 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
             configured_terminals.scrollback(settings.borrow_and_update().scrollback);
         }
     });
-    push::spawn(Arc::clone(&push), Arc::clone(&terminals));
+    push::spawn(Arc::clone(&push), &attention);
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    let state = AppState { terminals, chats, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts };
+    let state = AppState { terminals, chats, attention, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts };
     axum::serve(listener, router(state)).await
 }
 

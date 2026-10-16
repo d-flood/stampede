@@ -21,8 +21,7 @@ use web_push_native::{
 
 use crate::{
     AppState,
-    hooks::Status,
-    terminals::{Attention, Change, Terminals},
+    attention::{Attention, Feed},
 };
 
 const CONTACT: &str = "mailto:oikonomos@localhost";
@@ -149,18 +148,16 @@ impl Target {
     }
 }
 
-pub fn spawn(push: Arc<Push>, terminals: Arc<Terminals>) {
-    let mut changes = terminals.subscribe();
+pub fn spawn(push: Arc<Push>, attention: &Feed) {
+    let mut calls = attention.calls();
     tokio::spawn(async move {
         loop {
-            match changes.recv().await {
-                Ok(Change::Status(id, Status::Waiting | Status::Done)) => {
-                    let Some(item) = terminals.item(&id) else { continue };
-                    let except = terminals.showing(&id);
+            match calls.recv().await {
+                Ok((item, except)) => {
                     let push = Arc::clone(&push);
                     tokio::spawn(async move { push.send(&item, &except).await });
                 }
-                Ok(_) | Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => break,
             }
         }

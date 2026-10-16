@@ -28,7 +28,11 @@ export type Chat = {
 	agentSession?: string;
 };
 
-export type Attention = { projectId: string; terminalId: string; label: string; status: Status };
+export type Attention = { projectId: string; label: string; status: Status } & ({ terminalId: string } | { chatId: string });
+
+export function tabOf(item: Attention): string {
+	return 'chatId' in item ? item.chatId : item.terminalId;
+}
 
 export type Found = { line: number; column: number; preview: string };
 
@@ -90,7 +94,7 @@ export type ClientMessage =
 	| { type: 'project.close'; projectId: string }
 	| { type: 'project.reorder'; order: string[] }
 	| { type: 'picker.list' }
-	| { type: 'device.view'; terminalIds: string[] }
+	| { type: 'device.view'; terminalIds: string[]; chatIds: string[] }
 	| ({ type: 'search.start' } & Search)
 	| { type: 'lsp.switch'; projectId: string; on: boolean }
 	| { type: 'lsp.open' | 'lsp.close'; channel: string }

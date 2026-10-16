@@ -25,6 +25,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
+    attention::{Attention, Feed},
     chats::{self, Chats},
     config::Config,
     holder::Owner,
@@ -32,7 +33,7 @@ use crate::{
     projects::{self, Projects},
     protocol::Size,
     search,
-    terminals::{Attachment, Attention, Change, Terminals},
+    terminals::{Attachment, Change, Terminals},
 };
 
 const OUTPUT: u8 = 1;
@@ -78,7 +79,11 @@ enum Control {
     #[serde(rename = "picker.list")]
     ListPicker {},
     #[serde(rename = "device.view")]
-    View { terminal_ids: Vec<String> },
+    View {
+        terminal_ids: Vec<String>,
+        #[serde(default)]
+        chat_ids: Vec<String>,
+    },
     #[serde(rename = "search.start")]
     Search(search::Query),
     #[serde(rename = "lsp.switch")]
@@ -102,6 +107,7 @@ struct Device {
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
     attached: HashMap<String, u64>,
+    attention: Arc<Feed>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
     outgoing: mpsc::UnboundedSender<Message>,
@@ -115,7 +121,7 @@ struct Device {
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, chats, projects, mut config, disk, git, languages, .. }: AppState,
+    AppState { terminals, chats, attention, projects, mut config, disk, git, languages, .. }: AppState,
 ) {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = mpsc::unbounded_channel();
@@ -129,8 +135,8 @@ async fn connect(
     let mut list = projects.subscribe();
     let mut changes = terminals.subscribe();
     let mut titles = terminals.subscribe_titles();
-    let mut attention = terminals.subscribe_attention();
     let mut chat_changes = chats.subscribe();
+    let mut attention_changes = attention.subscribe();
     let mut disk = disk.subscribe();
     let mut git = git.subscribe();
     let mut switches = languages.subscribe();
@@ -141,6 +147,7 @@ async fn connect(
         terminals,
         chats,
         attached: HashMap::new(),
+        attention,
         projects,
         config: config.clone(),
         outgoing,
@@ -221,8 +228,8 @@ async fn connect(
                 }
                 Err(RecvError::Closed) => break,
             },
-            Ok(()) = attention.changed() => {
-                let items = attention.borrow_and_update().clone();
+            Ok(()) = attention_changes.changed() => {
+                let items = attention_changes.borrow_and_update().clone();
                 device.attention_changed(&items);
             }
             changed = git.recv() => match changed {
@@ -238,6 +245,7 @@ async fn connect(
         }
     }
     device.terminals.view(device.connection, None, Vec::new());
+    device.chats.view(device.connection, None, Vec::new());
     device.cancel_search();
     writer.abort();
 }
@@ -255,7 +263,7 @@ impl Device {
                     "chats": self.chats.list(),
                 });
                 send(&self.outgoing, hello);
-                self.attention_changed(&self.terminals.attention());
+                self.attention_changed(&self.attention.items());
                 self.send_switches();
             }
             Control::Create { project_id, owner, rig } => {
@@ -343,8 +351,9 @@ impl Device {
                 let directories = projects::directories(&roots);
                 send(&self.outgoing, json!({ "type": "picker.listed", "directories": directories }));
             }
-            Control::View { terminal_ids } => {
-                self.terminals.view(self.connection, self.browser.clone(), terminal_ids)
+            Control::View { terminal_ids, chat_ids } => {
+                self.terminals.view(self.connection, self.browser.clone(), terminal_ids);
+                self.chats.view(self.connection, self.browser.clone(), chat_ids);
             }
             Control::Search(query) => self.search(query),
             Control::Switch { project_id, on } => self.languages.switch(&project_id, on),

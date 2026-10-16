@@ -3,6 +3,7 @@ mod holder;
 mod protocol;
 
 use std::{
+    collections::{HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -14,6 +15,7 @@ use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
 use uuid::Uuid;
 
 use crate::{
+    attention::{Attention, Feed, Source, Tab},
     config::{Agent, Rig},
     hooks::Status,
     projects::Project,
@@ -66,6 +68,8 @@ pub struct Chats {
     data_dir: PathBuf,
     chats: Mutex<Vec<Arc<Entry>>>,
     changed: broadcast::Sender<Change>,
+    views: Mutex<HashMap<Uuid, (Option<String>, Vec<String>)>>,
+    attention: Arc<Feed>,
 }
 
 struct Entry {
@@ -81,8 +85,14 @@ struct Transcript {
 }
 
 impl Chats {
-    pub fn new(data_dir: PathBuf) -> Self {
-        Self { data_dir, chats: Mutex::default(), changed: broadcast::Sender::new(1024) }
+    pub fn new(data_dir: PathBuf, attention: Arc<Feed>) -> Self {
+        Self {
+            data_dir,
+            chats: Mutex::default(),
+            changed: broadcast::Sender::new(1024),
+            views: Mutex::default(),
+            attention,
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Change> {
@@ -146,10 +156,16 @@ impl Chats {
                     }
                     chat.status = status;
                     if status == Status::Done {
-                        chat.viewed_since_done = false;
+                        chat.viewed_since_done = self.shown(&id);
                     }
                     self.save(&chat);
+                    let item = chat.attention();
+                    drop(chat);
                     let _ = self.changed.send(Change::Status(id.clone(), status));
+                    self.refresh_attention();
+                    if status != Status::Working {
+                        self.attention.call(item, self.showing(&id));
+                    }
                 }
                 Event::Item(index, item) => {
                     let mut transcript = entry.transcript.lock().unwrap();
@@ -166,6 +182,7 @@ impl Chats {
         self.chats.lock().unwrap().retain(|other| !Arc::ptr_eq(other, &entry));
         let _ = fs::remove_file(record_path(&self.data_dir, &id));
         let _ = self.changed.send(Change::Chats(project_id));
+        self.refresh_attention();
     }
 
     fn save(&self, chat: &Chat) {
@@ -193,9 +210,64 @@ impl Chats {
         }
     }
 
+    pub fn view(&self, connection: Uuid, browser: Option<String>, chat_ids: Vec<String>) {
+        let entries: Vec<_> = chat_ids.iter().filter_map(|id| self.get(id)).collect();
+        if chat_ids.is_empty() {
+            self.views.lock().unwrap().remove(&connection);
+        } else {
+            self.views.lock().unwrap().insert(connection, (browser, chat_ids));
+        }
+        let mut viewed = false;
+        for entry in entries {
+            let mut chat = entry.chat.lock().unwrap();
+            if chat.status == Status::Done && !chat.viewed_since_done {
+                chat.viewed_since_done = true;
+                self.save(&chat);
+                viewed = true;
+            }
+        }
+        if viewed {
+            self.refresh_attention();
+        }
+    }
+
+    fn shown(&self, id: &str) -> bool {
+        self.views.lock().unwrap().values().any(|(_, shown)| shown.iter().any(|shown| shown == id))
+    }
+
+    fn showing(&self, id: &str) -> HashSet<String> {
+        let views = self.views.lock().unwrap();
+        let showing = views.values().filter(|(_, shown)| shown.iter().any(|shown| shown == id));
+        showing.filter_map(|(browser, _)| browser.clone()).collect()
+    }
+
+    fn refresh_attention(&self) {
+        let items = self.list().iter().filter(|chat| chat.needs_attention()).map(Chat::attention).collect();
+        self.attention.publish(Source::Chats, items);
+    }
+
     fn get(&self, id: &str) -> Option<Arc<Entry>> {
         let chats = self.chats.lock().unwrap();
         chats.iter().find(|entry| entry.chat.lock().unwrap().id == id).cloned()
+    }
+}
+
+impl Chat {
+    fn needs_attention(&self) -> bool {
+        match self.status {
+            Status::Waiting => true,
+            Status::Done => !self.viewed_since_done,
+            Status::Working => false,
+        }
+    }
+
+    fn attention(&self) -> Attention {
+        Attention {
+            project_id: self.project_id.clone(),
+            tab: Tab::Chat { chat_id: self.id.clone() },
+            label: self.rig.clone(),
+            status: self.status,
+        }
     }
 }
 

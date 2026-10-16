@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-	import type { Attention } from '#lib/device.svelte.ts';
+	import { tabOf, type Attention } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { enable, notifications, type Notifications } from '#lib/push.ts';
 	import Badge from '#lib/ui/Badge.svelte';
@@ -50,7 +50,7 @@
 	{@render trigger({ onclick: () => (sheet = true) })}
 	<Dialog bind:open={sheet} full title="Needs attention">
 		<ul class="sheet">
-			{#each items as item (item.terminalId)}
+			{#each items as item (tabOf(item))}
 				<li>
 					<button class="item" onclick={() => ((sheet = false), onselect(item))}>{@render entry(item)}</button>
 				</li>

@@ -22,6 +22,7 @@ use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
 use uuid::Uuid;
 
 use crate::{
+    attention::{Attention, Feed, Source, Tab},
     config::{Agent, Rig},
     holder::{self, Owner, Record},
     hooks::{self, Status, Transition},
@@ -43,7 +44,7 @@ pub struct Terminals {
     changed: broadcast::Sender<Change>,
     titles: broadcast::Sender<(String, String)>,
     views: Mutex<HashMap<Uuid, (Option<String>, Vec<String>)>>,
-    attention: watch::Sender<Vec<Attention>>,
+    attention: Arc<Feed>,
 }
 
 #[derive(Clone)]
@@ -70,15 +71,6 @@ pub struct Terminal {
     #[serde(skip)]
     viewed_since_done: bool,
     pub state: State,
-}
-
-#[derive(Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Attention {
-    project_id: String,
-    terminal_id: String,
-    label: String,
-    status: Status,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
@@ -137,7 +129,7 @@ impl Output {
 }
 
 impl Terminals {
-    pub fn new(data_dir: PathBuf, hook_url: String) -> Self {
+    pub fn new(data_dir: PathBuf, hook_url: String, attention: Arc<Feed>) -> Self {
         Self {
             data_dir,
             hook_url,
@@ -145,7 +137,7 @@ impl Terminals {
             changed: broadcast::Sender::new(64),
             titles: broadcast::Sender::new(64),
             views: Mutex::default(),
-            attention: watch::Sender::default(),
+            attention,
         }
     }
 
@@ -196,14 +188,6 @@ impl Terminals {
 
     pub fn subscribe_titles(&self) -> broadcast::Receiver<(String, String)> {
         self.titles.subscribe()
-    }
-
-    pub fn subscribe_attention(&self) -> watch::Receiver<Vec<Attention>> {
-        self.attention.subscribe()
-    }
-
-    pub fn attention(&self) -> Vec<Attention> {
-        self.attention.borrow().clone()
     }
 
     pub fn list(&self) -> Vec<Terminal> {
@@ -326,6 +310,7 @@ impl Terminals {
                                     let _ = terminals.changed.send(Change::Terminals(owner.clone()));
                                     if let Some(status) = status && Some(status) != before.status {
                                         let _ = terminals.changed.send(Change::Status(id.clone(), status));
+                                        terminals.call(&id, status);
                                     }
                                     terminals.refresh_attention();
                                 }
@@ -406,10 +391,14 @@ impl Terminals {
             None => {}
         }
         let after = terminal.agent_state();
+        let status = after.status;
         if after != before {
             let _ = entry.control.send(Message::Agent(after));
         }
         drop(terminal);
+        if let Some(now) = status && status != before.status {
+            self.call(id, now);
+        }
         self.refresh_attention();
         true
     }
@@ -434,24 +423,25 @@ impl Terminals {
         self.views.lock().unwrap().values().any(|(_, shown)| shown.iter().any(|shown| shown == id))
     }
 
-    pub fn showing(&self, id: &str) -> HashSet<String> {
+    fn showing(&self, id: &str) -> HashSet<String> {
         let views = self.views.lock().unwrap();
         let showing = views.values().filter(|(_, shown)| shown.iter().any(|shown| shown == id));
         showing.filter_map(|(browser, _)| browser.clone()).collect()
     }
 
-    pub fn item(&self, id: &str) -> Option<Attention> {
-        let terminal = self.get(id)?.terminal.lock().unwrap().clone();
-        Attention::of(Terminal { needs_attention: true, ..terminal })
+    fn call(&self, id: &str, status: Status) {
+        if status == Status::Working {
+            return;
+        }
+        let Some(entry) = self.get(id) else { return };
+        let terminal = entry.terminal.lock().unwrap().clone();
+        if let Some(item) = Attention::of(Terminal { needs_attention: true, ..terminal }) {
+            self.attention.call(item, self.showing(id));
+        }
     }
 
     fn refresh_attention(&self) {
-        let items: Vec<Attention> = self.list().into_iter().filter_map(Attention::of).collect();
-        self.attention.send_if_modified(|current| {
-            let changed = *current != items;
-            *current = items;
-            changed
-        });
+        self.attention.publish(Source::Terminals, self.list().into_iter().filter_map(Attention::of).collect());
     }
 
     pub fn close(&self, id: &str) {
@@ -549,7 +539,7 @@ impl Attention {
         match (terminal.owner, terminal.status) {
             (Owner::Project(project_id), Some(status)) if terminal.needs_attention => Some(Self {
                 project_id,
-                terminal_id: terminal.id,
+                tab: Tab::Terminal { terminal_id: terminal.id },
                 label: terminal.label,
                 status,
             }),
