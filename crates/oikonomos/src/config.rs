@@ -27,6 +27,7 @@ struct Settings {
     #[serde(deserialize_with = "rigs")]
     rig: Vec<Rig>,
     editor: Editor,
+    keybar: Keybar,
     language_servers: LanguageServers,
 }
 
@@ -40,6 +41,7 @@ impl Default for Settings {
             font: Fonts::default(),
             rig: Vec::new(),
             editor: Editor::default(),
+            keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
         }
     }
@@ -112,6 +114,18 @@ pub enum Keymap {
     Vim,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Keybar {
+    pub extra: Vec<String>,
+}
+
+impl Default for Keybar {
+    fn default() -> Self {
+        Self { extra: vec!["|".to_owned(), "/".to_owned()] }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LanguageServers {
@@ -127,6 +141,7 @@ pub struct Config {
     pub font: Font,
     pub rigs: Vec<Rig>,
     pub editor: Editor,
+    pub keybar: Keybar,
     pub language_servers: LanguageServers,
 }
 
@@ -140,6 +155,7 @@ impl Default for Config {
             font: Font::default(),
             rigs: Vec::new(),
             editor: Editor::default(),
+            keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
         }
     }
@@ -168,8 +184,17 @@ pub struct Face {
 
 impl Config {
     fn parse(text: &str) -> Result<Self, toml::de::Error> {
-        let Settings { roots, leader, scrollback, theme, font: Fonts { mono }, rig: rigs, editor, language_servers } =
-            toml::from_str(text)?;
+        let Settings {
+            roots,
+            leader,
+            scrollback,
+            theme,
+            font: Fonts { mono },
+            rig: rigs,
+            editor,
+            keybar,
+            language_servers,
+        } = toml::from_str(text)?;
         Ok(Self {
             roots: roots.into_iter().map(expand).collect(),
             leader,
@@ -178,6 +203,7 @@ impl Config {
             font: Font { family: mono.family, faces: mono.files },
             rigs,
             editor,
+            keybar,
             language_servers,
         })
     }

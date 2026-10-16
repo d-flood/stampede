@@ -13,6 +13,7 @@ type Palette = {
 type ThemeResponse = { light: Palette; dark: Palette };
 type Font = { family: string; faces: { url: string; weight: string; style: string }[] };
 type EditorSettings = { keymap: 'standard' | 'vim' };
+type Keybar = { extra: string[] };
 
 export type Appearance = { theme: ITheme; fontFamily: string };
 export type Agent = 'claude-code' | 'codex';
@@ -23,6 +24,7 @@ let revision = $state(0);
 let faces: FontFace[] = [];
 let configured = $state.raw<Rig[]>([]);
 let chord = $state('ctrl+space');
+let extras = $state.raw<string[]>([]);
 
 export const editor = $state<EditorSettings>({ keymap: 'standard' });
 
@@ -33,15 +35,17 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export async function loadConfig() {
-	const [theme, font, rigs, settings, leaderKey] = await Promise.all([
+	const [theme, font, rigs, settings, leaderKey, keys] = await Promise.all([
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
 		get<Rig[]>('/api/rigs'),
 		get<EditorSettings>('/api/editor'),
-		get<string>('/api/leader')
+		get<string>('/api/leader'),
+		get<Keybar>('/api/keybar')
 	]);
 	editor.keymap = settings.keymap;
 	chord = leaderKey;
+	extras = keys.extra;
 	const style = document.documentElement.style;
 	for (const scheme of ['light', 'dark'] as const) {
 		const palette = theme[scheme];
@@ -66,6 +70,10 @@ export function rigs(): Rig[] {
 
 export function leader(): string {
 	return chord;
+}
+
+export function keybarExtras(): string[] {
+	return extras;
 }
 
 export function appearance(): Appearance {

@@ -27,7 +27,7 @@ use rust_embed::RustEmbed;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, watch};
 
-use config::{Config, Editor, Font, Rig};
+use config::{Config, Editor, Font, Keybar, Rig};
 pub use holder::{HoldArgs, hold};
 pub use hooks::{HookArgs, hook};
 pub use install::{InstallArgs, UninstallArgs, install, uninstall};
@@ -76,6 +76,7 @@ fn router(state: AppState) -> Router {
         .route("/api/rigs", get(rigs))
         .route("/api/editor", get(editor))
         .route("/api/leader", get(leader))
+        .route("/api/keybar", get(keybar))
         .route("/api/config/file", get(files::read_config).put(files::write_config))
         .route("/api/hook", post(hooks::receive).layer(DefaultBodyLimit::disable()))
         .route("/api/push/key", get(push::key))
@@ -134,6 +135,10 @@ async fn editor(State(state): State<AppState>) -> Json<Editor> {
 
 async fn leader(State(state): State<AppState>) -> Json<String> {
     Json(state.config.borrow().leader.clone())
+}
+
+async fn keybar(State(state): State<AppState>) -> Json<Keybar> {
+    Json(state.config.borrow().keybar.clone())
 }
 
 async fn host_font(State(state): State<AppState>, Path(index): Path<usize>) -> Response {

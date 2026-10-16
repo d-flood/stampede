@@ -25,7 +25,7 @@
 		</Dialog.Overlay>
 		<Dialog.Content>
 			{#snippet child({ props })}
-				<div {...props} class="dialog" class:full>
+				<div {...props} class="dialog" class:full class:footed={!!actions}>
 					<div class="heading">
 						<Dialog.Title>
 							{#snippet child({ props })}
@@ -93,6 +93,11 @@
 		border-radius: 0;
 		box-shadow: none;
 		transform: none;
+	}
+
+	.full.footed {
+		display: flex;
+		flex-direction: column;
 	}
 
 	.heading {

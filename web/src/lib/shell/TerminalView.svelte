@@ -2,7 +2,10 @@
 	import { appearance, type Appearance } from '#lib/config.svelte.ts';
 	import type { Device, Project, ServerMessage } from '#lib/device.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
+	import { form } from '#lib/form.ts';
 	import { linkify } from '#lib/links.ts';
+	import CopyMode from '#lib/shell/CopyMode.svelte';
+	import KeyBar, { control } from '#lib/shell/KeyBar.svelte';
 	import { FitAddon, Terminal, init } from 'ghostty-web';
 	import { onMount, type Snippet } from 'svelte';
 
@@ -26,6 +29,9 @@
 	let writing = false;
 	let ready = $state(false);
 	let shown = '';
+	let typing = $state(false);
+	let ctrl = $state(false);
+	let copying = $state<string>();
 
 	onMount(() => {
 		let disposed = false;
@@ -74,13 +80,22 @@
 		view?.dispose();
 		const element = document.createElement('div');
 		container.replaceChildren(element);
-		const next = new Terminal({ theme, fontFamily, disableStdin: ended });
+		// ghostty-web's scrollback is a byte budget; 4 KB a row keeps Copy mode's 2,000 rows up to about 300 columns.
+		const next = new Terminal({ theme, fontFamily, disableStdin: ended, scrollback: 2000 * 4096 });
 		fit = new FitAddon();
 		next.loadAddon(fit);
 		next.open(element);
+		for (const input of [element, next.textarea]) {
+			for (const name of ['autocomplete', 'autocorrect', 'autocapitalize']) input?.setAttribute(name, 'off');
+			input?.setAttribute('spellcheck', 'false');
+		}
+		// ghostty-web reads only keydown and compositionend, so text a soft keyboard commits directly would be lost.
+		element.addEventListener('beforeinput', (event) => {
+			if (event.inputType === 'insertText' && event.data && !event.isComposing) send(event.data);
+		});
 		if (onopen) linkify(next, () => project, onopen);
 		next.onData((data) => {
-			if (channel !== undefined && !writing) device.input(channel, data);
+			if (!writing) send(data);
 		});
 		view = next;
 		if (channel !== undefined) device.send({ type: 'terminal.detach', channel });
@@ -120,6 +135,32 @@
 		writing = false;
 	}
 
+	function send(data: string) {
+		if (ctrl) {
+			ctrl = false;
+			data = control(data);
+		}
+		if (channel !== undefined) device.input(channel, data);
+	}
+
+	function blur({ relatedTarget }: FocusEvent) {
+		typing = container.contains(relatedTarget as Node | null);
+		if (!typing) ctrl = false;
+	}
+
+	function copy() {
+		const buffer = view?.buffer.active;
+		if (!view || !buffer) return;
+		const lines = [];
+		for (let y = Math.max(0, buffer.length - view.rows - 2000); y < buffer.length; y++) {
+			const line = buffer.getLine(y);
+			const cells = Array.from({ length: line?.length ?? 0 }, (_, x) => line?.getCell(x));
+			// Blank cells read as '', and the second half of a wide character has width 0.
+			lines.push(cells.map((cell) => (cell?.getWidth() ? cell.getChars() || ' ' : '')).join('').trimEnd());
+		}
+		copying = lines.join('\n').trimEnd();
+	}
+
 	function propose() {
 		const size = fit?.proposeDimensions();
 		if (channel !== undefined && size) device.send({ type: 'terminal.resize', terminalId, ...size });
@@ -136,8 +177,13 @@
 
 <div class="panel" role="tabpanel" hidden={!active}>
 	{@render children?.()}
-	<div class="terminal" bind:this={container}></div>
+	<div class="terminal" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
+	{#if typing && !ended && form() === 'phone'}
+		<KeyBar bind:ctrl application={() => !!view?.getMode(1)} onkey={send} oncopy={copy} />
+	{/if}
 </div>
+
+<CopyMode bind:text={copying} />
 
 <style>
 	.panel {
