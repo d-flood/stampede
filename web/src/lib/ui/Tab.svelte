@@ -16,9 +16,19 @@
 		status?: 'working' | 'waiting' | 'done';
 		active?: boolean;
 		dirty?: boolean;
+		deleted?: boolean;
 	};
 
-	let { variant, label, agent = 'claude-code', status, active = false, dirty = false, ...rest }: Props = $props();
+	let {
+		variant,
+		label,
+		agent = 'claude-code',
+		status,
+		active = false,
+		dirty = false,
+		deleted = false,
+		...rest
+	}: Props = $props();
 
 	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff };
 	const agents = { 'claude-code': Claude, codex: OpenAI };
@@ -27,7 +37,7 @@
 	const Mark = $derived(status && marks[status]);
 </script>
 
-<button role="tab" aria-selected={active} class="{variant} {status ?? ''}" class:active {...rest}>
+<button role="tab" aria-selected={active} class="{variant} {status ?? ''}" class:active class:deleted {...rest}>
 	<Icon />
 	<span class="label">{label}</span>
 	{#if variant === 'diff'}<span class="vs">↔ HEAD</span>{/if}
@@ -100,6 +110,10 @@
 		left: 0;
 		height: 2px;
 		background: var(--mark);
+	}
+
+	.deleted .label {
+		text-decoration: line-through;
 	}
 
 	.terminal .label {

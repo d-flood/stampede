@@ -6,6 +6,7 @@ export class OpenFile {
 	projectId: string;
 	path: string;
 	dirty = $state(false);
+	deleted = $state(false);
 
 	constructor(projectId: string, path: string) {
 		this.projectId = projectId;
@@ -21,8 +22,17 @@ export class OpenFile {
 	}
 }
 
+export class RequestError extends Error {
+	status: number;
+
+	constructor(status: number, message: string) {
+		super(message);
+		this.status = status;
+	}
+}
+
 async function json<T>(response: Response): Promise<T> {
-	if (!response.ok) throw new Error(await response.text());
+	if (!response.ok) throw new RequestError(response.status, await response.text());
 	return response.json();
 }
 
@@ -36,11 +46,17 @@ export async function read(projectId: string, path: string): Promise<Contents> {
 	return json(await fetch(`/api/projects/${projectId}/file?${new URLSearchParams({ path })}`));
 }
 
-export async function save(projectId: string, path: string, content: string, baseHash: string) {
+export async function save(
+	projectId: string,
+	path: string,
+	content: string,
+	baseHash: string
+): Promise<{ hash: string; conflict?: undefined } | { conflict: Contents }> {
 	const response = await fetch(`/api/projects/${projectId}/file`, {
 		method: 'PUT',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ path, content, baseHash })
 	});
-	return json<{ hash: string }>(response);
+	if (response.status === 409) return { conflict: await response.json() };
+	return json(response);
 }

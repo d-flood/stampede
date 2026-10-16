@@ -7,6 +7,7 @@ mod projects;
 mod protocol;
 mod terminals;
 mod themes;
+mod watcher;
 
 use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
@@ -19,7 +20,7 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 use serde_json::{Value, json};
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 
 use config::{Config, Editor, Font, Rig};
 pub use holder::{HoldArgs, hold};
@@ -52,6 +53,7 @@ struct AppState {
     terminals: Arc<Terminals>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
+    disk: broadcast::Sender<watcher::Changed>,
 }
 
 fn router(state: AppState) -> Router {
@@ -75,8 +77,9 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let projects = Arc::new(Projects::load(&args.data_dir)?);
     let terminals = Arc::new(Terminals::new(args.data_dir));
     terminals.restore().await?;
+    let disk = watcher::spawn(projects.subscribe());
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, router(AppState { terminals, projects, config })).await
+    axum::serve(listener, router(AppState { terminals, projects, config, disk })).await
 }
 
 async fn version() -> Json<Value> {
