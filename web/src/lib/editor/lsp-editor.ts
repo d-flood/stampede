@@ -164,7 +164,7 @@ export class Session {
 			client.request<object, Report>('textDocument/diagnostic', { textDocument: { uri: file.uri } }).then(
 				(report) => {
 					if (report.kind !== 'full' || client !== this.#client) return;
-					for (const view of file.views) show(view, report);
+					for (const view of file.views) show(view, report, file.doc);
 				},
 				() => {}
 			);
@@ -172,9 +172,10 @@ export class Session {
 	}
 }
 
-function show(view: EditorView, report: Report) {
+function show(view: EditorView, report: Report, doc: Text) {
 	const plugin = LSPPlugin.get(view);
 	if (!plugin) return;
+	if (!plugin.syncedDoc.eq(doc)) return view.dispatch(setDiagnostics(view.state, []));
 	const at = (position: Position) => plugin.unsyncedChanges.mapPos(offset(plugin.syncedDoc, position));
 	const diagnostics = report.items.map(({ range, severity, message }) => ({
 		from: at(range.start),
@@ -217,11 +218,16 @@ class SharedWorkspace extends Workspace {
 	syncFiles() {
 		const updates = [];
 		for (const file of this.files) {
+			const edited = file.views.find((view) => LSPPlugin.get(view)?.unsyncedChanges.empty === false);
+			if (edited && edited !== file.views[0]) {
+				file.views = [edited, ...file.views.filter((view) => view !== edited)];
+				file.replaced = true;
+			}
 			const main = file.views[0];
 			const plugin = LSPPlugin.get(main);
 			if (!plugin) continue;
 			const prevDoc = file.doc;
-			// A second view of the file takes over when the first closes, and may not match it.
+			// The last edited view owns the document, and other views of the file may not match it.
 			const changes = file.replaced
 				? ChangeSet.of({ from: 0, to: prevDoc.length, insert: main.state.doc }, prevDoc.length)
 				: plugin.unsyncedChanges;
