@@ -111,7 +111,14 @@ pub fn decode(frame: &[u8]) -> io::Result<Option<Message>> {
         RESIZE => Message::Resize(serde_json::from_slice(payload)?),
         HANGUP => Message::Hangup,
         FOREGROUND_CHANGED => Message::ForegroundChanged(serde_json::from_slice(payload)?),
-        AGENT => Message::Agent(serde_json::from_slice(payload)?),
+        // The title-rule branch of protocol 4 used tag 9 before Agent state claimed it.
+        AGENT => match serde_json::from_slice(payload) {
+            Ok(state) => Message::Agent(state),
+            Err(error) => match serde_json::from_slice(payload) {
+                Ok(title) => Message::TitleChanged(title),
+                Err(_) => return Err(error.into()),
+            },
+        },
         TITLE_CHANGED => Message::TitleChanged(serde_json::from_slice(payload)?),
         SCROLLBACK => Message::Scrollback(serde_json::from_slice(payload)?),
         HOOK => Message::Hook(serde_json::from_slice(payload)?),

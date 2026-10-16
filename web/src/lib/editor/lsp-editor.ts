@@ -130,7 +130,13 @@ export class Session {
 		if (!root) return;
 		const refresh = ViewPlugin.define(() => {
 			this.refresh();
-			return { update: (update) => void (update.docChanged && this.refresh()) };
+			return {
+				update: (update) => {
+					if (!update.docChanged) return;
+					(this.#client?.workspace as SharedWorkspace | undefined)?.edited(update.view);
+					this.refresh();
+				}
+			};
 		});
 		this.#client = new LSPClient({
 			rootUri: uri(root),
@@ -161,10 +167,11 @@ export class Session {
 		if (!client) return;
 		client.sync();
 		for (const file of client.workspace.files as SharedFile[]) {
+			const { doc, version } = file;
 			client.request<object, Report>('textDocument/diagnostic', { textDocument: { uri: file.uri } }).then(
 				(report) => {
-					if (report.kind !== 'full' || client !== this.#client) return;
-					for (const view of file.views) show(view, report, file.doc);
+					if (report.kind !== 'full' || client !== this.#client || file.version !== version) return;
+					for (const view of file.views) show(view, report, doc);
 				},
 				() => {}
 			);
@@ -215,14 +222,16 @@ class SharedWorkspace extends Workspace {
 		this.#session = session;
 	}
 
+	edited(view: EditorView) {
+		const file = this.files.find((file) => file.views.includes(view));
+		if (!file || file.views[0] === view) return;
+		file.views = [view, ...file.views.filter((other) => other !== view)];
+		file.replaced = true;
+	}
+
 	syncFiles() {
 		const updates = [];
 		for (const file of this.files) {
-			const edited = file.views.find((view) => LSPPlugin.get(view)?.unsyncedChanges.empty === false);
-			if (edited && edited !== file.views[0]) {
-				file.views = [edited, ...file.views.filter((view) => view !== edited)];
-				file.replaced = true;
-			}
 			const main = file.views[0];
 			const plugin = LSPPlugin.get(main);
 			if (!plugin) continue;
