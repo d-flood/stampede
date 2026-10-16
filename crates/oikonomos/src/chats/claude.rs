@@ -78,6 +78,35 @@ pub async fn start(
     settings: &AgentSettings,
     session: Option<&str>,
 ) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
+    let (frames, writer, transcript, received) = launch(data_dir, id, cwd, env, settings, session).await?;
+    Ok((drive(frames, writer, transcript), received))
+}
+
+pub async fn resume(
+    data_dir: &Path,
+    chat: &Chat,
+    env: &BTreeMap<String, String>,
+) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
+    let _ = fs::remove_file(holder::socket_path(data_dir, &chat.id));
+    let session = chat.agent_session.as_deref();
+    let (frames, writer, mut transcript, received) =
+        launch(data_dir, &chat.id, &chat.cwd, env, &chat.settings, session).await?;
+    transcript.window = chat.context.map(|context| context.window);
+    if chat.status != Status::Done {
+        transcript.push(Item::interrupted());
+    }
+    let _ = transcript.events.send(Event::Status(Status::Done));
+    Ok((drive(frames, writer, transcript), received))
+}
+
+async fn launch(
+    data_dir: &Path,
+    id: &str,
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    settings: &AgentSettings,
+    session: Option<&str>,
+) -> io::Result<(Frames, OwnedWriteHalf, Transcript, UnboundedReceiver<Event>)> {
     let variables = env.iter().map(|(name, value)| (name.as_str(), value.as_str())).chain(SDK_ENV);
     let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.flags(Agent::ClaudeCode));
     let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
@@ -94,7 +123,7 @@ pub async fn start(
     if let Some(session) = session {
         transcript.history(env, session, None);
     }
-    Ok((drive(frames, writer, transcript), received))
+    Ok((frames, writer, transcript, received))
 }
 
 /// Rebuilds the transcript from the session file up to the holder's latest turn, then from the turn the holder replays.

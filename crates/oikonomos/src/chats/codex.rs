@@ -12,7 +12,7 @@ use tokio::{
     io::Join,
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
-    time::timeout,
+    time::{Instant, interval, sleep, timeout},
 };
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
@@ -24,6 +24,8 @@ use crate::{
 };
 
 const CLOSING: Duration = Duration::from_secs(5);
+const HEARTBEAT: Duration = Duration::from_secs(5);
+const RECONNECTING: Duration = Duration::from_secs(30);
 
 const SOURCES: [&str; 5] = ["cli", "vscode", "exec", "appServer", "unknown"];
 
@@ -61,17 +63,45 @@ pub async fn start(
     let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
     let _ = events.send(Event::Session(thread.to_owned()));
-    Ok((run(connection, proxy, Transcript::new(thread, events)), received))
+    Ok((run(connection, proxy, Transcript::new(thread, events), cwd, env), received))
 }
 
 pub async fn resume(chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
     let thread = chat.agent_session.as_deref().ok_or_else(|| io::Error::other("the chat has no thread"))?;
-    let (mut connection, proxy) = connect(&chat.cwd, env).await?;
-    let resumed = connection.call("thread/resume", json!({ "threadId": thread })).await?;
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(thread, events);
+    transcript.status = chat.status;
+    let (connection, proxy) = rejoin(&chat.cwd, env, &mut transcript).await?;
+    Ok((run(connection, proxy, transcript, &chat.cwd, env), received))
+}
+
+async fn rejoin(
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    transcript: &mut Transcript,
+) -> io::Result<(Connection, Child)> {
+    let (mut connection, proxy) = connect(cwd, env).await?;
+    let resumed = connection.call("thread/resume", json!({ "threadId": transcript.thread })).await?;
     transcript.resumed(&resumed["thread"]["turns"]);
-    Ok((run(connection, proxy, transcript), received))
+    Ok((connection, proxy))
+}
+
+async fn reconnect(
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    transcript: &mut Transcript,
+) -> Option<(Connection, Child)> {
+    let deadline = Instant::now() + RECONNECTING;
+    loop {
+        match rejoin(cwd, env, transcript).await {
+            Ok(rejoined) => return Some(rejoined),
+            Err(_) if Instant::now() < deadline => sleep(Duration::from_secs(1)).await,
+            Err(error) => {
+                eprintln!("cannot reconnect to codex thread {}: {error}", transcript.thread);
+                return None;
+            }
+        }
+    }
 }
 
 /// This cwd's threads, non-interactive ones included.
@@ -121,22 +151,27 @@ async fn connect(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Conn
     Ok((connection, proxy))
 }
 
-fn run(mut connection: Connection, mut proxy: Child, mut transcript: Transcript) -> Codex {
+fn run(
+    mut connection: Connection,
+    mut proxy: Child,
+    mut transcript: Transcript,
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+) -> Codex {
     let (requests, mut pending) = mpsc::unbounded_channel();
+    let (cwd, env) = (cwd.to_owned(), env.clone());
     tokio::spawn(async move {
+        // The proxy outlives a daemon that has gone until it next relays something.
+        let mut heartbeat = interval(HEARTBEAT);
         loop {
             tokio::select! {
                 request = pending.recv() => match request {
                     Some(Request::Send(text)) => {
                         let input = json!([{ "type": "text", "text": text, "text_elements": [] }]);
-                        if connection.send(&mut transcript, input).await.is_err() {
-                            break;
-                        }
+                        let _ = connection.send(&mut transcript, input).await;
                     }
                     Some(Request::Interrupt) => {
-                        if connection.interrupt(&mut transcript).await.is_err() {
-                            break;
-                        }
+                        let _ = connection.interrupt(&mut transcript).await;
                     }
                     Some(Request::Close) | None => {
                         let _ = timeout(CLOSING, connection.close(&mut transcript)).await;
@@ -146,14 +181,21 @@ fn run(mut connection: Connection, mut proxy: Child, mut transcript: Transcript)
                 message = connection.next() => match message {
                     Some(message) => {
                         transcript.read(&message);
-                        if let Some(input) = transcript.unsteered.take()
-                            && connection.start(&mut transcript, input).await.is_err()
-                        {
-                            break;
+                        if let Some(input) = transcript.unsteered.take() {
+                            let _ = connection.start(&mut transcript, input).await;
                         }
                     }
-                    None => break,
+                    None => {
+                        let _ = proxy.kill().await;
+                        match reconnect(&cwd, &env, &mut transcript).await {
+                            Some(rejoined) => (connection, proxy) = rejoined,
+                            None => return,
+                        }
+                    }
                 },
+                _ = heartbeat.tick() => {
+                    let _ = connection.ping().await;
+                }
             }
         }
         let _ = proxy.kill().await;
@@ -217,6 +259,10 @@ impl Connection {
         self.socket.send(Message::text(message.to_string())).await.map_err(io::Error::other)
     }
 
+    async fn ping(&mut self) -> io::Result<()> {
+        self.socket.send(Message::Ping(Default::default())).await.map_err(io::Error::other)
+    }
+
     async fn request(&mut self, method: &str, params: Value) -> io::Result<u64> {
         let id = self.next;
         self.next += 1;
@@ -257,7 +303,7 @@ impl Connection {
     }
 
     async fn start(&mut self, transcript: &mut Transcript, input: Value) -> io::Result<()> {
-        let _ = transcript.events.send(Event::Status(Status::Working));
+        transcript.report(Status::Working);
         let id = self.request("turn/start", json!({ "threadId": transcript.thread, "input": input })).await?;
         transcript.starting = Some(id);
         Ok(())
@@ -311,6 +357,7 @@ struct Transcript {
     steering: HashMap<u64, Value>,
     /// A steer that reached the daemon after its turn had ended, to start a turn with instead.
     unsteered: Option<Value>,
+    status: Status,
 }
 
 impl Transcript {
@@ -327,7 +374,13 @@ impl Transcript {
             previous: 0,
             steering: HashMap::new(),
             unsteered: None,
+            status: Status::Done,
         }
+    }
+
+    fn report(&mut self, status: Status) {
+        self.status = status;
+        let _ = self.events.send(Event::Status(status));
     }
 
     fn push(&mut self, item: Item) -> usize {
@@ -345,6 +398,14 @@ impl Transcript {
 
     fn resumed(&mut self, turns: &Value) {
         let turns = turns.as_array().map(Vec::as_slice).unwrap_or_default();
+        let _ = self.events.send(Event::Truncate(0));
+        self.len = 0;
+        self.tools = None;
+        self.starting = None;
+        self.streaming.clear();
+        self.commands.clear();
+        self.steering.clear();
+        self.unsteered = None;
         for item in turns.iter().flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
             match item["type"].as_str() {
                 Some("userMessage") => {
@@ -353,10 +414,13 @@ impl Transcript {
                 _ => self.completed(item, 0),
             }
         }
-        let running = turns.last().filter(|turn| turn["status"] == "inProgress");
+        let last = turns.last();
+        let running = last.filter(|turn| turn["status"] == "inProgress");
         self.turn = running.and_then(|turn| turn["id"].as_str()).map(str::to_owned);
-        let status = if self.turn.is_some() { Status::Working } else { Status::Done };
-        let _ = self.events.send(Event::Status(status));
+        if self.status != Status::Done && running.is_none() && !last.is_some_and(|turn| turn["status"] == "completed") {
+            self.push(Item::interrupted());
+        }
+        self.report(if self.turn.is_some() { Status::Working } else { Status::Done });
     }
 
     fn read(&mut self, message: &Value) {
@@ -366,7 +430,7 @@ impl Transcript {
                 Some(turn) => self.turn = Some(turn.to_owned()),
                 None => {
                     eprintln!("codex turn/start failed: {}", message["error"]);
-                    let _ = self.events.send(Event::Status(Status::Done));
+                    self.report(Status::Done);
                 }
             }
             return;
@@ -404,7 +468,7 @@ impl Transcript {
                 if params["turn"]["status"] == "interrupted" {
                     self.push(Item::interrupted());
                 }
-                let _ = self.events.send(Event::Status(Status::Done));
+                self.report(Status::Done);
             }
             Some("item/started") if item["type"] == "userMessage" => {
                 self.push(user(item));

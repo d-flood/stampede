@@ -123,6 +123,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let layouts = Arc::new(Layouts::load(&args.data_dir)?);
     let hook_url = format!("http://{}/api/hook", listener.local_addr()?);
     let attention = Arc::new(Feed::default());
+    push::spawn(Arc::clone(&push), &attention);
     let usage = Arc::new(Usage::default());
     let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage)));
     let rigs = config.borrow().rigs.clone();
@@ -138,7 +139,6 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
             configured_terminals.scrollback(settings.borrow_and_update().scrollback);
         }
     });
-    push::spawn(Arc::clone(&push), &attention);
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);

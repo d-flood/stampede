@@ -86,9 +86,17 @@ def readline():
 
 def waiting():
     global buffered
-    if not buffered and select.select([stdin], [], [], 0)[0]:
-        buffered += stdin.read(65536)
-    return bool(buffered)
+    while True:
+        if select.select([stdin], [], [], 0)[0]:
+            buffered += stdin.read(65536)
+        if not buffered or buffered[0] & 0x0F not in (9, 10):
+            return bool(buffered)
+        if len(buffered) < 2:
+            return False
+        size = 2 + (4 if buffered[1] & 0x80 else 0) + (buffered[1] & 0x7F)
+        if len(buffered) < size:
+            return False
+        buffered = buffered[size:]
 
 
 def handshake():
@@ -199,6 +207,10 @@ def proxy():
                 ids[entry['stdin']['id']] = message['id']
         elif 'gate' in entry:
             gate(entry['gate'])
+        elif 'daemon' in entry:
+            # Like the real proxy, which notices that its daemon has gone only once it relays something.
+            stdin.read(1)
+            sys.exit(1)
         else:
             message = entry['stdout']
             if 'method' not in message and message.get('id') in ids:

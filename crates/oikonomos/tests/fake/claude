@@ -99,11 +99,18 @@ for name, value in ENV.items():
     if os.environ.get(name) != value:
         fail(f'{name} is not {value}')
 
+entries = [json.loads(line) for line in fixture().read_text().splitlines()]
+start = 0
+if '--resume' in args:
+    session = args[args.index('--resume') + 1]
+    start = next((index + 1 for index, entry in enumerate(entries) if entry.get('resume') == session), 0)
+
 request_ids = {}
 uuids = {}
 pending = b''
-for line in fixture().read_text().splitlines():
-    entry = json.loads(line)
+for entry in entries[start:]:
+    if 'resume' in entry:
+        break
     if 'stdin' in entry:
         message = read(entry['stdin'])
         if message is None:

@@ -107,6 +107,7 @@ pub enum Event {
     /// Replaces whichever of the Chat's context fill and token counts it carries.
     Meters(Option<Context>, Option<Tokens>),
     Usage(Vec<Reading>),
+    Truncate(usize),
 }
 
 /// One Agent's wire protocol. A driver's events end when its Agent has stopped.
@@ -179,6 +180,7 @@ pub enum Change {
     Chats(String),
     Status(String, Status),
     Queued(String, Vec<String>),
+    Truncated(String),
     Item { chat_id: String, seq: u64, index: usize, item: Item },
     Meters { chat_id: String, context: Option<Context>, tokens: Option<Tokens> },
 }
@@ -285,9 +287,15 @@ impl Chats {
         for chat in chats {
             let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
             let reattached = match chat.agent {
-                Agent::ClaudeCode => claude::reattach(&self.data_dir, &chat, &env)
-                    .await
-                    .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+                Agent::ClaudeCode => match claude::reattach(&self.data_dir, &chat, &env).await {
+                    Err(error)
+                        if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused) =>
+                    {
+                        claude::resume(&self.data_dir, &chat, &env).await
+                    }
+                    reattached => reattached,
+                }
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
                 Agent::Codex => codex::resume(&chat, &env)
                     .await
                     .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
@@ -320,8 +328,12 @@ impl Chats {
                     self.save(&chat);
                 }
                 Event::Status(status) => {
+                    let interrupted = matches!(
+                        entry.transcript.lock().unwrap().items.last(),
+                        Some(Item::Notice { notice: Notice::Interrupted, .. })
+                    );
                     let mut chat = entry.chat.lock().unwrap();
-                    if status == Status::Done && !chat.queued.is_empty() {
+                    if status == Status::Done && !chat.queued.is_empty() && !interrupted {
                         let text = chat.queued.remove(0);
                         self.queued(&chat);
                         entry.driver.send(&text);
@@ -366,6 +378,12 @@ impl Chats {
                     let _ = self.changed.send(Change::Item { chat_id: id.clone(), seq, index, item });
                 }
                 Event::Usage(readings) => self.usage.record(readings),
+                Event::Truncate(len) => {
+                    let mut transcript = entry.transcript.lock().unwrap();
+                    transcript.items.truncate(len);
+                    transcript.seq += 1;
+                    let _ = self.changed.send(Change::Truncated(id.clone()));
+                }
             }
         }
         self.chats.lock().unwrap().retain(|other| !Arc::ptr_eq(other, &entry));

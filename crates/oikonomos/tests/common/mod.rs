@@ -10,7 +10,13 @@ use std::{
     time::Duration,
 };
 
+use axum::{Router, body::Bytes, extract, http::StatusCode, routing::post};
+use base64ct::{Base64UrlUnpadded, Encoding};
 use futures_util::{SinkExt, StreamExt};
+use nix::{
+    sys::signal::{Signal, kill},
+    unistd::Pid,
+};
 use libghostty_vt::{
     Terminal,
     fmt::{Format, Formatter, FormatterOptions},
@@ -21,9 +27,11 @@ use tempfile::TempDir;
 use tokio::{
     net::TcpStream,
     process::{Child, Command},
+    sync::mpsc,
     time::{Instant, sleep, timeout},
 };
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use web_push_native::{Auth, decrypt, p256::SecretKey};
 
 pub fn state(terminal: &Terminal) -> String {
     let modes = [
@@ -302,16 +310,67 @@ pub async fn close_chat(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
 
 /// Every process but the server that names the test's root in its command line or runs inside it.
 pub fn leftovers(root: &Path) -> Vec<String> {
+    processes(root).into_iter().map(|(_, cmdline)| cmdline).collect()
+}
+
+pub fn reboot(root: &Path) {
+    for (pid, _) in processes(root) {
+        let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
+    }
+}
+
+fn processes(root: &Path) -> Vec<(i32, String)> {
     let canonical = fs::canonicalize(root).unwrap();
     let root = root.to_str().unwrap();
     fs::read_dir("/proc")
         .unwrap()
         .flatten()
         .filter_map(|entry| {
-            entry.file_name().to_str()?.parse::<u32>().ok()?;
+            let pid = entry.file_name().to_str()?.parse::<i32>().ok()?;
             let cmdline = String::from_utf8_lossy(&fs::read(entry.path().join("cmdline")).ok()?).replace('\0', " ");
             let inside = fs::read_link(entry.path().join("cwd")).is_ok_and(|cwd| cwd.starts_with(&canonical));
-            ((cmdline.contains(root) || inside) && !cmdline.contains(" serve ")).then_some(cmdline)
+            ((cmdline.contains(root) || inside) && !cmdline.contains(" serve ")).then_some((pid, cmdline))
         })
         .collect()
+}
+
+pub async fn subscribe(server: &Server, browsers: &[&str]) -> mpsc::UnboundedReceiver<(String, Value)> {
+    let secret = SecretKey::from_slice(&[7; 32]).unwrap();
+    let auth = Auth::clone_from_slice(&[9; 16]);
+    let keys = json!({
+        "p256dh": Base64UrlUnpadded::encode_string(&secret.public_key().to_sec1_bytes()),
+        "auth": Base64UrlUnpadded::encode_string(&auth),
+    });
+    let (sender, pushes) = mpsc::unbounded_channel();
+    let receive = move |extract::Path(browser): extract::Path<String>, body: Bytes| {
+        let (secret, auth, sender) = (secret.clone(), auth, sender.clone());
+        async move {
+            let payload = decrypt(body.to_vec(), &secret, &auth).unwrap();
+            sender.send((browser, serde_json::from_slice(&payload).unwrap())).unwrap();
+            StatusCode::CREATED
+        }
+    };
+    let endpoint = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = endpoint.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(endpoint, Router::new().route("/{browser}", post(receive))).await });
+    let client = reqwest::Client::new();
+    for browser in browsers {
+        let subscription = json!({
+            "browserId": browser,
+            "subscription": { "endpoint": format!("http://127.0.0.1:{port}/{browser}"), "keys": keys },
+        });
+        let response = client
+            .post(format!("http://127.0.0.1:{}/api/push/subscribe", server.port))
+            .header("content-type", "application/json")
+            .body(subscription.to_string())
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success(), "{}", response.status());
+    }
+    pushes
+}
+
+pub async fn pushed(pushes: &mut mpsc::UnboundedReceiver<(String, Value)>) -> (String, Value) {
+    timeout(Duration::from_secs(10), pushes.recv()).await.expect("no push arrived").unwrap()
 }

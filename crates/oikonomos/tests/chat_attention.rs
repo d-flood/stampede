@@ -2,18 +2,11 @@ mod common;
 
 use std::{env, fs, time::Duration};
 
-use axum::{Router, body::Bytes, extract::Path, http::StatusCode, routing::post};
-use base64ct::{Base64UrlUnpadded, Encoding};
-use common::{Server, control, next_control};
+use common::{Server, control, next_control, pushed, subscribe};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::mpsc,
-    time::timeout,
-};
+use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
-use web_push_native::{Auth, decrypt, p256::SecretKey};
 
 const CONFIG: &str = r#"
 [[rig]]
@@ -66,48 +59,6 @@ async fn start(socket: &mut Socket, project_id: &Value, shown: bool) -> String {
     control(socket, json!({ "type": "device.view", "terminalIds": [], "chatIds": shown })).await;
     control(socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Greet the reader" })).await;
     chat_id
-}
-
-/// Subscribes each browser to pushes at a local endpoint, which decrypts what it receives.
-async fn subscribe(server: &Server, browsers: &[&str]) -> mpsc::UnboundedReceiver<(String, Value)> {
-    let secret = SecretKey::from_slice(&[7; 32]).unwrap();
-    let auth = Auth::clone_from_slice(&[9; 16]);
-    let keys = json!({
-        "p256dh": Base64UrlUnpadded::encode_string(&secret.public_key().to_sec1_bytes()),
-        "auth": Base64UrlUnpadded::encode_string(&auth),
-    });
-    let (sender, pushes) = mpsc::unbounded_channel();
-    let receive = move |Path(browser): Path<String>, body: Bytes| {
-        let (secret, auth, sender) = (secret.clone(), auth, sender.clone());
-        async move {
-            let payload = decrypt(body.to_vec(), &secret, &auth).unwrap();
-            sender.send((browser, serde_json::from_slice(&payload).unwrap())).unwrap();
-            StatusCode::CREATED
-        }
-    };
-    let endpoint = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = endpoint.local_addr().unwrap().port();
-    tokio::spawn(async move { axum::serve(endpoint, Router::new().route("/{browser}", post(receive))).await });
-    let client = reqwest::Client::new();
-    for browser in browsers {
-        let subscription = json!({
-            "browserId": browser,
-            "subscription": { "endpoint": format!("http://127.0.0.1:{port}/{browser}"), "keys": keys },
-        });
-        let response = client
-            .post(format!("http://127.0.0.1:{}/api/push/subscribe", server.port))
-            .header("content-type", "application/json")
-            .body(subscription.to_string())
-            .send()
-            .await
-            .unwrap();
-        assert!(response.status().is_success(), "{}", response.status());
-    }
-    pushes
-}
-
-async fn pushed(pushes: &mut mpsc::UnboundedReceiver<(String, Value)>) -> (String, Value) {
-    timeout(Duration::from_secs(10), pushes.recv()).await.expect("no push arrived").unwrap()
 }
 
 /// The attention feed's next change.
