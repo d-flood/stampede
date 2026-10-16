@@ -163,7 +163,7 @@ def list_threads(message):
 
 
 def send(message):
-    payload = json.dumps(message, ensure_ascii=False).encode()
+    payload = json.dumps(message, ensure_ascii=False).replace(HERE, os.getcwd()).encode()
     length = len(payload)
     if length < 126:
         header = bytes([0x81, length])

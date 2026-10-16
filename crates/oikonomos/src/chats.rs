@@ -35,6 +35,7 @@ pub enum Item {
         text: Option<String>,
     },
     Tools { calls: Vec<ToolCall> },
+    Edit { path: String, diff: String, added: usize, removed: usize },
     Command { command: String, status: CommandStatus, output: String },
     Notice { notice: Notice, text: String },
 }
@@ -81,10 +82,45 @@ impl Item {
     fn interrupted() -> Self {
         Item::Notice { notice: Notice::Interrupted, text: "Interrupted".to_owned() }
     }
+
+    fn edit(path: String, diff: String) -> Self {
+        let count = |sign: char| diff.lines().skip_while(|line| !line.starts_with("@@")).filter(|line| line.starts_with(sign)).count();
+        Item::Edit { path, added: count('+'), removed: count('-'), diff }
+    }
 }
 
 fn seconds(milliseconds: u64) -> u64 {
     (milliseconds + 500) / 1000
+}
+
+fn relative(cwd: &Path, path: &str) -> String {
+    Path::new(path).strip_prefix(cwd).map_or_else(|_| path.to_owned(), |path| path.display().to_string())
+}
+
+fn unified(old: &str, new: &str) -> String {
+    if old == new {
+        return String::new();
+    }
+    let (old, new): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
+    let prefix = old.iter().zip(&new).take_while(|(old, new)| old == new).count();
+    let suffix = old[prefix..].iter().rev().zip(new[prefix..].iter().rev()).take_while(|(old, new)| old == new).count();
+    let (start, after) = (prefix.saturating_sub(3), suffix.min(3));
+    let (old_end, new_end) = (old.len() - suffix, new.len() - suffix);
+    let range = |end: usize| {
+        let count = end + after - start;
+        format!("{},{count}", if count == 0 { start } else { start + 1 })
+    };
+    let mut diff = format!("@@ -{} +{} @@\n", range(old_end), range(new_end));
+    let lines = old[start..prefix].iter().map(|line| (' ', line))
+        .chain(old[prefix..old_end].iter().map(|line| ('-', line)))
+        .chain(new[prefix..new_end].iter().map(|line| ('+', line)))
+        .chain(old[old_end..old_end + after].iter().map(|line| (' ', line)));
+    for (sign, line) in lines {
+        diff.push(sign);
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    diff
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

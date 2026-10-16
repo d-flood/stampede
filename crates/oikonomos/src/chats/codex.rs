@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     io,
-    path::Path,
+    path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
 };
@@ -16,7 +16,7 @@ use tokio::{
 };
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
-use super::{Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind, seconds};
+use super::{Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind, relative, seconds, unified};
 use crate::{
     config::{Agent, AgentSettings, codex_policy},
     hooks::Status,
@@ -63,13 +63,13 @@ pub async fn start(
     let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
     let _ = events.send(Event::Session(thread.to_owned()));
-    Ok((run(connection, proxy, Transcript::new(thread, events), cwd, env), received))
+    Ok((run(connection, proxy, Transcript::new(thread, cwd, events), cwd, env), received))
 }
 
 pub async fn resume(chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
     let thread = chat.agent_session.as_deref().ok_or_else(|| io::Error::other("the chat has no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
-    let mut transcript = Transcript::new(thread, events);
+    let mut transcript = Transcript::new(thread, &chat.cwd, events);
     transcript.status = chat.status;
     let (connection, proxy) = rejoin(&chat.cwd, env, &mut transcript).await?;
     Ok((run(connection, proxy, transcript, &chat.cwd, env), received))
@@ -346,6 +346,7 @@ fn response(message: &Value) -> Option<u64> {
 
 struct Transcript {
     thread: String,
+    cwd: PathBuf,
     events: UnboundedSender<Event>,
     len: usize,
     starting: Option<u64>,
@@ -361,9 +362,10 @@ struct Transcript {
 }
 
 impl Transcript {
-    fn new(thread: &str, events: UnboundedSender<Event>) -> Self {
+    fn new(thread: &str, cwd: &Path, events: UnboundedSender<Event>) -> Self {
         Self {
             thread: thread.to_owned(),
+            cwd: cwd.to_owned(),
             events,
             len: 0,
             starting: None,
@@ -535,6 +537,19 @@ impl Transcript {
                     self.push(command(item));
                 }
             },
+            Some("fileChange") if item["status"] == "completed" => {
+                for change in item["changes"].as_array().into_iter().flatten() {
+                    let (kind, diff) = (&change["kind"], change["diff"].as_str().unwrap_or_default());
+                    let path = kind["move_path"].as_str().or(change["path"].as_str()).unwrap_or_default();
+                    // An added or deleted file's diff is its whole content.
+                    let diff = match kind["type"].as_str() {
+                        Some("add") => unified("", diff),
+                        Some("delete") => unified(diff, ""),
+                        _ => diff.to_owned(),
+                    };
+                    self.push(Item::edit(relative(&self.cwd, path), diff));
+                }
+            }
             Some("webSearch") => {
                 let action = &item["action"];
                 let detail = |key: &str| action[key].as_str().map_or_else(|| text("query"), str::to_owned);

@@ -9,7 +9,8 @@
 	import { onMount } from 'svelte';
 	import { on } from 'svelte/events';
 
-	let { device, chat, active }: { device: Device; chat: Chat; active: boolean } = $props();
+	let { device, chat, active, ondiff }: { device: Device; chat: Chat; active: boolean; ondiff(path: string): void } =
+		$props();
 
 	let items = $state<Item[]>([]);
 	const live = $derived(device.connection === 'connected');
@@ -62,7 +63,7 @@
 	{/if}
 	<div class="transcript" {@attach follow}>
 		<div class="column">
-			<Transcript {items} />
+			<Transcript {items} {ondiff} />
 			<Queued queued={chat.queued} />
 		</div>
 	</div>

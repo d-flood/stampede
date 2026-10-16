@@ -1,6 +1,6 @@
 mod common;
 
-use std::{env, time::Duration};
+use std::{env, fs, time::Duration};
 
 use common::{Server, control, next, next_control};
 use serde_json::{Value, json};
@@ -14,6 +14,10 @@ const CLAUDE_ANSWER: &str = "All steps are done: notes.txt has 3 lines and \"nee
 const CODEX_PROMPT: &str = "Think it over briefly first. Then, in order: run `wc -l notes.txt`, run `wc -l missing.txt` (it will fail), and search the web for \"IANA example domain\". Finally answer in one short sentence.";
 const CODEX_ANSWER: &str = "`notes.txt` has 3 lines, `missing.txt` was absent, and the search found [IANA’s Example Domains page](https://www.iana.org/help/example-domains).";
 const DONE: &str = "Say done in one word.";
+const CLAUDE_EDITS: &str = "Make these changes in order: in notes.txt change `beta` to `BETA` with Edit, create hello.py containing `print(\"hello\")` with Write, and in analysis.ipynb replace the first cell's source with `print(2)` with NotebookEdit. Then answer in one short sentence.";
+const CODEX_EDITS: &str = "Use apply_patch to make these changes: in notes.txt change `beta` to `BETA`, add hello.py containing `print(\"hello\")`, and delete old.txt. Then answer in one short sentence.";
+const NOTES_DIFF: &str = "@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n";
+const HELLO_DIFF: &str = "@@ -0,0 +1,1 @@\n+print(\"hello\")\n";
 
 #[derive(Default)]
 struct View {
@@ -99,6 +103,104 @@ async fn codex_tools_reasoning_and_commands_normalize_to_blocks_live_and_from_th
 }
 
 #[tokio::test]
+async fn claude_edits_writes_and_notebook_edits_become_edit_items_live_and_from_the_session_file() {
+    let (mut server, mut socket, chat_id) = launch("claude-code", "edits").await;
+    let mut view = View::default();
+    view.turn(&mut socket, &chat_id, CLAUDE_EDITS).await;
+    let search = json!({ "query": "select:NotebookEdit", "max_results": 1 }).to_string();
+    let notebook = [
+        "@@ -6,9 +6,7 @@",
+        r#"    "id": "a1b2c3d4","#,
+        r#"    "metadata": {},"#,
+        r#"    "outputs": [],"#,
+        r#"-   "source": ["#,
+        r#"-    "print(1)""#,
+        "-   ]",
+        r#"+   "source": "print(2)""#,
+        "   }",
+        "  ],",
+        r#"  "metadata": {"#,
+        "",
+    ];
+    let expected = [
+        user(CLAUDE_EDITS),
+        json!({ "kind": "thinking", "seconds": 0 }),
+        json!({ "kind": "tools", "calls": [
+            { "kind": "read", "name": "Read", "detail": "notes.txt" },
+            { "kind": "read", "name": "Read", "detail": "analysis.ipynb" },
+            { "kind": "other", "name": "ToolSearch", "detail": search },
+        ] }),
+        json!({ "kind": "thinking", "seconds": 1 }),
+        edit("notes.txt", NOTES_DIFF, 1, 1),
+        edit("hello.py", HELLO_DIFF, 1, 0),
+        edit("analysis.ipynb", &notebook.join("\n"), 1, 3),
+        text("I changed `beta` to `BETA` in notes.txt, created hello.py with `print(\"hello\")`, and set the first cell of analysis.ipynb to `print(2)`. ✅"),
+        user(DONE),
+        text("Done."),
+    ];
+    assert_eq!(view.items, expected[..8]);
+
+    server.restart().await;
+    let (mut socket, mut view) = reattach(&server, &chat_id, 8).await;
+    assert_eq!(view.items, expected[..8], "edits replayed by the holder");
+    view.turn(&mut socket, &chat_id, DONE).await;
+    assert_eq!(view.items, expected);
+
+    server.restart().await;
+    let (_, view) = reattach(&server, &chat_id, expected.len()).await;
+    assert_eq!(view.items, expected, "edits read from the session file");
+}
+
+#[tokio::test]
+async fn each_file_of_a_codex_file_change_becomes_an_edit_item_live_and_from_the_thread() {
+    let (mut server, mut socket, chat_id) = launch("codex", "edits").await;
+    let mut view = View::default();
+    view.turn(&mut socket, &chat_id, CODEX_EDITS).await;
+    let expected = [
+        user(CODEX_EDITS),
+        text("I’ll apply the three file changes."),
+        json!({
+            "kind": "command",
+            "command": "cat notes.txt old.txt",
+            "status": "ok",
+            "output": "alpha\nbeta\ngamma\nobsolete\n",
+        }),
+        edit("hello.py", HELLO_DIFF, 1, 0),
+        edit("notes.txt", NOTES_DIFF, 1, 1),
+        edit("old.txt", "@@ -1,1 +0,0 @@\n-obsolete\n", 0, 1),
+        text("Changed `beta` to `BETA` in `notes.txt`, added `hello.py` containing `print(\"hello\")`, and deleted `old.txt`."),
+    ];
+    assert_eq!(view.items, expected);
+
+    server.restart().await;
+    let (_, view) = reattach(&server, &chat_id, expected.len()).await;
+    assert_eq!(view.items, expected, "edits from thread/resume");
+}
+
+#[tokio::test]
+async fn legacy_multiedit_and_unified_file_headers_preserve_edit_counts() {
+    for (agent, prompt) in [("claude-code", CLAUDE_EDITS), ("codex", CODEX_EDITS)] {
+        let fixture = fs::read_to_string(format!("{}/tests/fixtures/chats/{agent}/edits.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let fixture = if agent == "claude-code" {
+            fixture.replace(r#""name": "Edit""#, r#""name": "MultiEdit""#)
+        } else {
+            fixture.replace("@@ -1,3 +1,3 @@", "--- a/notes.txt\\n+++ b/notes.txt\\n@@ -1,3 +1,3 @@")
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("edits.jsonl");
+        fs::write(&path, fixture).unwrap();
+        let (_server, mut socket, chat_id) = launch(agent, path.to_str().unwrap()).await;
+        let mut view = View::default();
+        view.turn(&mut socket, &chat_id, prompt).await;
+        let edits: Vec<_> = view.items.iter().filter(|item| item["kind"] == "edit").collect();
+        assert_eq!(edits.len(), 3, "{agent}");
+        let notes = edits.iter().find(|item| item["path"] == "notes.txt").unwrap();
+        assert_eq!(notes["added"], 1, "{agent}");
+        assert_eq!(notes["removed"], 1, "{agent}");
+    }
+}
+
+#[tokio::test]
 async fn api_errors_become_error_notices() {
     for (agent, error) in [
         ("claude-code", "There's an issue with the selected model (claude-nonexistent-9). It may not exist or you may not have access to it."),
@@ -113,6 +215,10 @@ async fn api_errors_become_error_notices() {
 
 fn user(text: &str) -> Value {
     json!({ "kind": "user", "text": text, "images": 0 })
+}
+
+fn edit(path: &str, diff: &str, added: usize, removed: usize) -> Value {
+    json!({ "kind": "edit", "path": path, "diff": diff, "added": added, "removed": removed })
 }
 
 fn text(text: &str) -> Value {

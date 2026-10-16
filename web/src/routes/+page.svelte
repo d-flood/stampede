@@ -704,7 +704,12 @@
 				>
 					{#if showing(chat.id) || warm()}
 						{#await import('#lib/chat/ChatView.svelte') then { default: ChatView }}
-							<ChatView {device} {chat} active={showing(chat.id)} />
+							<ChatView
+								{device}
+								{chat}
+								active={showing(chat.id)}
+								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}
+							/>
 						{/await}
 					{/if}
 				</div>

@@ -22,7 +22,7 @@ use super::{
     Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     protocol::{self, Message},
-    seconds,
+    seconds, unified,
 };
 use crate::{
     config::{Agent, AgentSettings},
@@ -366,6 +366,7 @@ struct Transcript {
     streaming: HashMap<u64, (usize, String)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     commands: HashMap<String, (usize, String)>,
+    edits: HashSet<String>,
     compacted: bool,
     status: Status,
     replaying: bool,
@@ -384,6 +385,7 @@ impl Transcript {
             streaming: HashMap::new(),
             tools: None,
             commands: HashMap::new(),
+            edits: HashSet::new(),
             compacted: false,
             status: Status::Done,
             replaying: false,
@@ -450,7 +452,7 @@ impl Transcript {
                 }
                 None => {
                     self.compact();
-                    self.results(&entry["message"]["content"]);
+                    self.results(&entry["message"]["content"], &entry["toolUseResult"]);
                 }
             },
             Some("attachment") if entry["attachment"]["type"] == "queued_command" => {
@@ -485,7 +487,7 @@ impl Transcript {
             }
             Some("stream_event") if top => self.stream(&message["event"]),
             Some("assistant") if top => self.assistant(message, &message["thinking_duration_ms"], true),
-            Some("user") if top => self.results(&message["message"]["content"]),
+            Some("user") if top => self.results(&message["message"]["content"], &message["tool_use_result"]),
             Some("command_lifecycle") if message["state"] != "queued" => {
                 if let Some(uuid) = message["command_uuid"].as_str() {
                     self.steering.remove(uuid);
@@ -577,6 +579,9 @@ impl Transcript {
                 let index = self.push(running);
                 self.commands.insert(id.to_owned(), (index, command));
             }
+            "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => {
+                self.edits.insert(id.to_owned());
+            }
             "Read" => self.call(ToolKind::Read, name, self.relative(&text("file_path"))),
             "Grep" | "Glob" => self.call(ToolKind::Search, name, text("pattern")),
             "WebFetch" => self.call(ToolKind::Fetch, name, text("url")),
@@ -585,11 +590,13 @@ impl Transcript {
         }
     }
 
-    fn results(&mut self, content: &Value) {
+    fn results(&mut self, content: &Value, structured: &Value) {
         for block in content.as_array().into_iter().flatten().filter(|block| block["type"] == "tool_result") {
-            let Some((index, command)) = block["tool_use_id"].as_str().and_then(|id| self.commands.remove(id)) else {
-                continue;
-            };
+            let Some(id) = block["tool_use_id"].as_str() else { continue };
+            if self.edits.remove(id) && block["is_error"] != true {
+                self.edit(structured);
+            }
+            let Some((index, command)) = self.commands.remove(id) else { continue };
             let status = if block["is_error"] == true { CommandStatus::Failed } else { CommandStatus::Ok };
             let output = match &block["content"] {
                 Value::String(text) => text.clone(),
@@ -602,6 +609,20 @@ impl Transcript {
         }
         if interrupted(content) {
             self.push(Item::interrupted());
+        }
+    }
+
+    /// A created file's patch is empty, and a notebook edit reports the whole notebook before and after instead.
+    fn edit(&mut self, result: &Value) {
+        let text = |key: &str| result[key].as_str().unwrap_or_default();
+        let diff = match result["structuredPatch"].as_array() {
+            Some(_) if result["type"] == "create" => unified("", text("content")),
+            Some(hunks) => hunks.iter().map(hunk).collect(),
+            None => unified(text("original_file"), text("updated_file")),
+        };
+        let path = result["filePath"].as_str().unwrap_or(text("notebook_path"));
+        if !path.is_empty() {
+            self.push(Item::edit(self.relative(path), diff));
         }
     }
 
@@ -620,7 +641,7 @@ impl Transcript {
     }
 
     fn relative(&self, path: &str) -> String {
-        Path::new(path).strip_prefix(&self.cwd).map_or_else(|_| path.to_owned(), |path| path.display().to_string())
+        super::relative(&self.cwd, path)
     }
 
     fn stream(&mut self, event: &Value) {
@@ -649,6 +670,16 @@ impl Transcript {
             _ => {}
         }
     }
+}
+
+fn hunk(hunk: &Value) -> String {
+    let count = |key: &str| hunk[key].as_u64().unwrap_or_default();
+    let mut text = format!("@@ -{},{} +{},{} @@\n", count("oldStart"), count("oldLines"), count("newStart"), count("newLines"));
+    for line in hunk["lines"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        text.push_str(line);
+        text.push('\n');
+    }
+    text
 }
 
 /// The prompt a session-file user entry records: slash commands are stored as tags, and their output is not a prompt.

@@ -1,6 +1,7 @@
 import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test, type Locator } from '@playwright/test';
-import { copyFileSync, mkdirSync, utimesSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openProject, showSidebar } from './shell.ts';
 
@@ -177,6 +178,49 @@ test('a working Chat steers, queues until its turn ends, and interrupts, with no
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
 	await expect(tab).toHaveCount(0);
 });
+
+for (const agent of ['Claude', 'Codex']) {
+	test(`a ${agent} edit is a card that opens its file in a Diff tab`, async ({ page }, { project }) => {
+		const name = `${agent.toLowerCase()}-edits-${project.name}`;
+		const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+		mkdirSync(root);
+		const git = (...args: string[]) =>
+			execFileSync('git', ['-C', root, '-c', 'user.name=oikonomos', '-c', 'user.email=e2e@oikonomos.invalid', '-c', 'commit.gpgsign=false', ...args]);
+		git('init', '-q');
+		writeFileSync(`${root}/notes.txt`, 'alpha\nbeta\ngamma\n');
+		git('add', '.');
+		git('commit', '-qm', 'Initial notes');
+		// The fake Agent only replays its recording, so the edit it reports is made here.
+		writeFileSync(`${root}/notes.txt`, 'alpha\nBETA\ngamma\n');
+		await openProject(page, name);
+		await page.getByRole('button', { name: 'New Tab' }).click();
+		await page.getByRole('menuitem', { name: `Fake ${agent} Edits as Chat` }).click();
+		const tab = page.getByRole('tab', { name: new RegExp(`^Fake ${agent} Edits`) });
+		await expect(tab).toHaveAttribute('aria-selected', 'true');
+		await expect(tab.getByTitle('done')).toBeVisible();
+
+		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+		await panel.getByRole('textbox', { name: 'Composer' }).fill('Make the edits');
+		await panel.getByRole('button', { name: 'Send' }).click();
+		await expect(tab.getByTitle('done')).toBeVisible();
+
+		const card = panel.locator('.edit').filter({ hasText: 'Edited notes.txt' });
+		await expect(card).toContainText('+1 −1');
+		const added = card.getByText('+BETA');
+		if (project.name === 'pixel') {
+			await expect(added).toBeHidden();
+			await card.getByText('Edited notes.txt').click();
+		}
+		await expect(added).toBeVisible();
+		await expect(card.getByText('-beta')).toBeVisible();
+
+		await card.getByRole('button', { name: 'Open diff' }).click();
+		await expect(page.getByRole('tab', { name: /^notes\.txt ↔ HEAD/ })).toHaveAttribute('aria-selected', 'true');
+		const diff = page.locator('.diff:not([hidden])');
+		await expect(diff.locator('.path')).toHaveText('notes.txt');
+		await expect(diff.locator('.cm-changedLine', { hasText: /^BETA$/ })).toBeVisible();
+	});
+}
 
 test('a Chat that finishes unseen needs attention and opens from the Attention list or a notification', async ({ page }, { project }) => {
 	const name = `attention-${project.name}`;

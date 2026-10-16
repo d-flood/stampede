@@ -24,6 +24,7 @@ export type Item =
 	| { kind: 'text'; text: string; streaming: boolean }
 	| { kind: 'thinking'; seconds: number; text?: string }
 	| { kind: 'tools'; calls: ToolCall[] }
+	| { kind: 'edit'; path: string; diff: string; added: number; removed: number }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted'; text: string };
 
