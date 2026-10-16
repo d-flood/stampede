@@ -63,6 +63,11 @@ pub async fn tree(
     .await
 }
 
+pub async fn paths(State(state): State<AppState>, Param(id): Param<String>) -> Result<Response, Failure> {
+    let root = root(&state, &id)?;
+    blocking(move || Ok(Json(walk(&root)).into_response())).await
+}
+
 pub async fn read(
     State(state): State<AppState>,
     Param(id): Param<String>,
@@ -145,6 +150,19 @@ fn list(dir: &Path, rel: &str, include_ignored: bool) -> io::Result<Vec<Entry>> 
     }
     entries.sort_by_key(|entry| (!entry.dir, entry.name.to_lowercase()));
     Ok(entries)
+}
+
+fn walk(root: &Path) -> Vec<String> {
+    let mut paths: Vec<_> = WalkBuilder::new(root)
+        .hidden(false)
+        .filter_entry(|entry| entry.file_name() != ".git")
+        .build()
+        .flatten()
+        .filter(|entry| entry.file_type().is_some_and(|kind| !kind.is_dir()))
+        .filter_map(|entry| Some(entry.path().strip_prefix(root).ok()?.to_str()?.to_owned()))
+        .collect();
+    paths.sort_unstable();
+    paths
 }
 
 fn contents(bytes: Vec<u8>) -> Value {

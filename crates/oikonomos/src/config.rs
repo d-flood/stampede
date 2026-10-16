@@ -19,6 +19,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 #[serde(default)]
 struct Settings {
     roots: Vec<PathBuf>,
+    leader: String,
     scrollback: usize,
     theme: Option<String>,
     font: Fonts,
@@ -30,6 +31,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             roots: vec!["~/repos".into()],
+            leader: "ctrl+space".to_owned(),
             scrollback: 10_000,
             theme: None,
             font: Fonts::default(),
@@ -70,6 +72,8 @@ pub struct Rig {
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing)]
     pub resume: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortcut: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -105,6 +109,7 @@ pub enum Keymap {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub roots: Vec<PathBuf>,
+    pub leader: String,
     pub scrollback: usize,
     pub theme: Theme,
     pub font: Font,
@@ -116,6 +121,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             roots: Settings::default().roots.into_iter().map(expand).collect(),
+            leader: Settings::default().leader,
             scrollback: Settings::default().scrollback,
             theme: Theme::default(),
             font: Font::default(),
@@ -152,7 +158,7 @@ impl Config {
             Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
             text => text?,
         };
-        let Settings { roots, scrollback, theme, font: Fonts { mono }, rig: rigs, editor } =
+        let Settings { roots, leader, scrollback, theme, font: Fonts { mono }, rig: rigs, editor } =
             toml::from_str(&text)?;
         let faces = mono.files.into_iter().enumerate().map(face).collect::<Result<_, _>>()?;
         let mut names = HashSet::new();
@@ -161,6 +167,7 @@ impl Config {
         }
         Ok(Self {
             roots: roots.into_iter().map(expand).collect(),
+            leader,
             scrollback,
             theme: Theme::resolve(theme.as_deref())?,
             font: Font { family: mono.family, faces },
