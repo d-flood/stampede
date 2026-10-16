@@ -15,7 +15,7 @@ type Font = { family: string; faces: { url: string; weight: string; style: strin
 type EditorSettings = { keymap: 'standard' | 'vim' };
 type Keybar = { extra: string[] };
 
-export type Appearance = { theme: ITheme; fontFamily: string };
+export type Appearance = { theme: ITheme; fontFamily: string; scrollback: number };
 export type Agent = 'claude-code' | 'codex';
 export type Rig = { name: string; agent: Agent; shortcut?: string };
 
@@ -25,6 +25,7 @@ let faces: FontFace[] = [];
 let configured = $state.raw<Rig[]>([]);
 let chord = $state('ctrl+space');
 let extras = $state.raw<string[]>([]);
+let scrollback = $state(10_000);
 
 export const editor = $state<EditorSettings>({ keymap: 'standard' });
 
@@ -35,17 +36,19 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export async function loadConfig() {
-	const [theme, font, rigs, settings, leaderKey, keys] = await Promise.all([
+	const [theme, font, rigs, settings, leaderKey, keys, lines] = await Promise.all([
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
 		get<Rig[]>('/api/rigs'),
 		get<EditorSettings>('/api/editor'),
 		get<string>('/api/leader'),
-		get<Keybar>('/api/keybar')
+		get<Keybar>('/api/keybar'),
+		get<number>('/api/scrollback')
 	]);
 	editor.keymap = settings.keymap;
 	chord = leaderKey;
 	extras = keys.extra;
+	scrollback = lines;
 	const style = document.documentElement.style;
 	for (const scheme of ['light', 'dark'] as const) {
 		const palette = theme[scheme];
@@ -107,6 +110,7 @@ export function appearance(): Appearance {
 			brightCyan: ansi(14),
 			brightWhite: ansi(15)
 		},
-		fontFamily: token('--font-mono')
+		fontFamily: token('--font-mono'),
+		scrollback
 	};
 }

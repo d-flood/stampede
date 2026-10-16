@@ -65,6 +65,7 @@ struct AppState {
     config: watch::Receiver<Arc<Config>>,
     config_path: PathBuf,
     disk: broadcast::Sender<watcher::Changed>,
+    opened: watcher::Opened,
     git: broadcast::Sender<git::Changed>,
     push: Arc<Push>,
     languages: Arc<LanguageServers>,
@@ -80,6 +81,7 @@ fn router(state: AppState) -> Router {
         .route("/api/editor", get(editor))
         .route("/api/leader", get(leader))
         .route("/api/keybar", get(keybar))
+        .route("/api/scrollback", get(scrollback))
         .route("/api/config/file", get(files::read_config).put(files::write_config))
         .route("/api/hook", post(hooks::receive).layer(DefaultBodyLimit::disable()))
         .route("/api/push/key", get(push::key))
@@ -111,12 +113,20 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let hook_url = format!("http://{}/api/hook", listener.local_addr()?);
     let terminals = Arc::new(Terminals::new(args.data_dir, hook_url));
     terminals.restore().await?;
+    terminals.scrollback(config.borrow().scrollback);
+    let mut settings = config.clone();
+    let configured_terminals = Arc::clone(&terminals);
+    tokio::spawn(async move {
+        while settings.changed().await.is_ok() {
+            configured_terminals.scrollback(settings.borrow_and_update().scrollback);
+        }
+    });
     push::spawn(Arc::clone(&push), Arc::clone(&terminals));
     layouts::spawn(Arc::clone(&layouts));
-    let disk = watcher::spawn(projects.subscribe());
+    let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    let state = AppState { terminals, projects, config, config_path: args.config, disk, git, push, languages, layouts };
+    let state = AppState { terminals, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts };
     axum::serve(listener, router(state)).await
 }
 
@@ -146,6 +156,10 @@ async fn leader(State(state): State<AppState>) -> Json<String> {
 
 async fn keybar(State(state): State<AppState>) -> Json<Keybar> {
     Json(state.config.borrow().keybar.clone())
+}
+
+async fn scrollback(State(state): State<AppState>) -> Json<usize> {
+    Json(state.config.borrow().scrollback)
 }
 
 async fn host_font(State(state): State<AppState>, Path(index): Path<usize>) -> Response {

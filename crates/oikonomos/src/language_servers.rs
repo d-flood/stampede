@@ -234,11 +234,8 @@ impl LanguageServers {
         let (program, args): (_, Vec<OsString>) = match language {
             "typescript" => (install("typescript").await?.join("lib/tsc"), vec!["--lsp".into(), "--stdio".into()]),
             "svelte" => {
-                if pins.contains_key("svelte") {
-                    return Err("oikonomos: svelte-language-server is pinned by its committed lockfile and takes no version override".to_owned());
-                }
                 let node = install("node").await?;
-                let svelte = detached(Arc::clone(self).install_svelte(node.clone())).await?;
+                let svelte = detached(Arc::clone(self).install_svelte(node.clone(), pins.get("svelte").cloned())).await?;
                 let server = svelte.join("node_modules/svelte-language-server/bin/server.js");
                 (node.join("bin/node"), vec![server.into(), "--stdio".into()])
             }
@@ -309,8 +306,16 @@ impl LanguageServers {
         Ok(dir)
     }
 
-    async fn install_svelte(self: Arc<Self>, node: PathBuf) -> Result<PathBuf, String> {
-        let dir = self.dir.join("svelte").join(&*SVELTE_VERSION);
+    async fn install_svelte(self: Arc<Self>, node: PathBuf, version: Option<String>) -> Result<PathBuf, String> {
+        let version = version.unwrap_or_else(|| SVELTE_VERSION.clone());
+        let core = version.split(['-', '+']).next().unwrap_or_default().split('.').collect::<Vec<_>>();
+        let valid = core.len() == 3
+            && core.iter().all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+            && version.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte));
+        if !valid {
+            return Err("oikonomos: the Svelte pin must be an exact version".to_owned());
+        }
+        let dir = self.dir.join("svelte").join(&version);
         if dir.is_dir() {
             return Ok(dir);
         }
@@ -324,6 +329,26 @@ impl LanguageServers {
             let written = fs::create_dir_all(&tmp)
                 .and_then(|()| SVELTE.iter().try_for_each(|(name, text)| fs::write(tmp.join(name), text)));
             written.map_err(|error| format!("oikonomos: cannot write {}: {error}", tmp.display()))?;
+            if version != *SVELTE_VERSION {
+                let mut manifest: Value = serde_json::from_str(SVELTE[0].1).map_err(|error| error.to_string())?;
+                manifest["dependencies"]["svelte-language-server"] = json!(version);
+                fs::write(tmp.join("package.json"), serde_json::to_vec(&manifest).map_err(|error| error.to_string())?)
+                    .map_err(|error| error.to_string())?;
+                let output = Command::new(node.join("bin/node"))
+                    .arg(node.join("lib/node_modules/npm/bin/npm-cli.js"))
+                    .args(["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund", "--no-update-notifier"])
+                    .args(["--userconfig", "/dev/null", "--cache"])
+                    .arg(self.cache.as_ref().map_or_else(|| scratch.clone(), |cache| cache.join("npm")))
+                    .current_dir(&tmp)
+                    .env_remove("PATH")
+                    .stdin(Stdio::null())
+                    .output()
+                    .await
+                    .map_err(|error| format!("oikonomos: cannot resolve Svelte pin: {error}"))?;
+                if !output.status.success() {
+                    return Err(format!("oikonomos: cannot resolve Svelte pin: {}", String::from_utf8_lossy(&output.stderr)));
+                }
+            }
             let output = Command::new(node.join("bin/node"))
                 .arg(node.join("lib/node_modules/npm/bin/npm-cli.js"))
                 .args(["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--no-update-notifier"])

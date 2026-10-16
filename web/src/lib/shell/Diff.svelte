@@ -27,12 +27,13 @@
 		device: Device;
 		servers: LanguageServers;
 		active: boolean;
+		displayed: boolean;
 		focused: boolean;
 		onshowdiff(disk: string, buffer: string): void;
 	};
 	type Shown = { b: EditorView; original: Text; editable: boolean; setOriginal(content: string): void; destroy(): void };
 
-	let { diff, device, servers, active, focused, onshowdiff }: Props = $props();
+	let { diff, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let shown = $state.raw<Shown>();
@@ -40,7 +41,7 @@
 	let note = $state<string>();
 	let heads = 0;
 	const sync = new Sync(() => diff, () => shown?.b);
-	const editable = $derived(diff.against === 'HEAD' && !diff.deleted);
+	const editable = $derived(diff.against === 'HEAD');
 
 	onMount(() => {
 		let disposed = false;
@@ -77,6 +78,11 @@
 		untrack(() => {
 			if (shown && shown.editable !== now) build(shown.original, shown.b.state.doc);
 		});
+	});
+
+	$effect(() => {
+		const current = shown?.b;
+		if (current) servers.displayed(current, displayed);
 	});
 
 	$effect(() => {

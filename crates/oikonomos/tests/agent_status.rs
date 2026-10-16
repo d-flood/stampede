@@ -1,10 +1,10 @@
 mod common;
 
-use std::{fs, process::Stdio};
+use std::{fs, process::Stdio, time::Duration};
 
 use common::{Server, control, next_control};
 use serde_json::{Value, json};
-use tokio::{io::AsyncWriteExt, net::TcpStream, process::Command};
+use tokio::{io::AsyncWriteExt, net::TcpStream, process::Command, time::{Instant, sleep}};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 const CONFIG: &str = r#"
@@ -37,8 +37,7 @@ const SEQUENCES: [(&str, &str, &str, &str); 7] = [
 
 #[tokio::test]
 async fn recorded_hook_sequences_drive_agent_status() {
-    let server = Server::with_config("status", CONFIG).await;
-    let url = format!("http://127.0.0.1:{}/api/hook", server.port);
+    let mut server = Server::with_config("status", CONFIG).await;
     let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
     control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
     next_control(&mut socket, "hello").await;
@@ -63,7 +62,7 @@ async fn recorded_hook_sequences_drive_agent_status() {
         assert_eq!(events.len(), expected.len(), "{agent} {fixture}: expectations");
 
         for ((event, payload), expected) in events.iter().zip(expected) {
-            hook(&url, &terminal_id, agent, event, payload).await;
+            hook(&server, &terminal_id, agent, event, payload).await;
             let terminal = listed(&mut socket, &terminal_id).await;
             let context = format!("{agent} {fixture} after {event}: {terminal}");
             if expected == "-" {
@@ -96,7 +95,7 @@ async fn recorded_hook_sequences_drive_agent_status() {
                 control(&mut socket, view(&[])).await;
             }
             for (event, payload) in &turn {
-                hook(&url, &terminal_id, agent, event, payload).await;
+                hook(&server, &terminal_id, agent, event, payload).await;
                 let terminal = listed(&mut socket, &terminal_id).await;
                 let context = format!("{agent} {fixture} after {event}, shown {shown}: {terminal}");
                 let done = event == "Stop";
@@ -105,13 +104,37 @@ async fn recorded_hook_sequences_drive_agent_status() {
             }
         }
     }
+
+    control(&mut socket, json!({ "type": "terminal.create", "projectId": project_id, "rig": "claude" })).await;
+    let created = next_control(&mut socket, "terminal.created").await;
+    let terminal_id = created["terminal"]["id"].as_str().unwrap();
+    let payload = json!({ "session_id": "outage-session" });
+    hook(&server, terminal_id, "claude-code", "UserPromptSubmit", &payload).await;
+    let record = server.root.path().join(format!("data/terminals/{terminal_id}.json"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let saved: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+        if saved["status"] == "working" { break; }
+        assert!(Instant::now() < deadline);
+        sleep(Duration::from_millis(20)).await;
+    }
+    server.stop().await;
+    hook(&server, terminal_id, "claude-code", "Stop", &payload).await;
+    server.restart().await;
+    let (mut reconnected, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    let terminal = listed(&mut reconnected, terminal_id).await;
+    assert_eq!(terminal["status"], "done");
+    assert_eq!(terminal["agentSession"], "outage-session");
+    assert_eq!(terminal["needsAttention"], true);
 }
 
-async fn hook(url: &str, terminal_id: &str, agent: &str, event: &str, payload: &Value) {
+async fn hook(server: &Server, terminal_id: &str, agent: &str, event: &str, payload: &Value) {
+    let url = format!("http://127.0.0.1:{}/api/hook", server.port);
     let mut hook = Command::new(env!("CARGO_BIN_EXE_oikonomos"))
         .args(["hook", agent, event])
         .env("OIKONOMOS_TERMINAL_ID", terminal_id)
         .env("OIKONOMOS_HOOK_URL", url)
+        .env("OIKONOMOS_DATA_DIR", server.root.path().join("data"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -3,6 +3,7 @@
 	import { form } from '#lib/form.ts';
 	import { warm } from '#lib/paint.svelte.ts';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
+	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import Tab from '#lib/ui/Tab.svelte';
@@ -10,10 +11,9 @@
 	import Plus from '~icons/ph/plus';
 	import X from '~icons/ph/x';
 
-	let { device }: { device: Device } = $props();
+	let { device, open = $bindable(false) }: { device: Device; open?: boolean } = $props();
 
 	let panel: HTMLElement;
-	let open = $state(false);
 	let terminals = $state<Terminal[]>([]);
 	let chosen = $state<string>();
 	const views: Record<string, TerminalView> = {};
@@ -84,6 +84,7 @@
 							{...props}
 							variant="terminal"
 							label={tab.label}
+							ended={tab.state === 'ended'}
 							active={tab.id === active?.id}
 							onclick={() => (chosen = tab.id)}
 						/>
@@ -108,8 +109,16 @@
 					{device}
 					terminalId={terminal.id}
 					active={terminal.id === active?.id}
-					focused={terminal.id === active?.id}
-				/>
+					focused={open && terminal.id === active?.id}
+					ended={terminal.state === 'ended'}
+				>
+					{#if terminal.state === 'ended'}
+						<div class="ended" role="status">
+							<span>Lost to a Host reboot; showing its last output.</span>
+							<Button onclick={() => closeTab(terminal.id)}>Dismiss</Button>
+						</div>
+					{/if}
+				</TerminalView>
 			{/each}
 		{/if}
 	</div>
@@ -160,6 +169,16 @@
 	.phone [role='tablist'] {
 		overflow-x: auto;
 		scrollbar-width: none;
+	}
+
+	.ended {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-2);
+		padding: var(--space-2);
+		border-bottom: var(--border-width) solid var(--border);
+		color: var(--muted-fg);
 	}
 
 	.tabs {

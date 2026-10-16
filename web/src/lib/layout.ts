@@ -1,4 +1,4 @@
-import { deviceId, type Terminal } from '#lib/device.svelte.ts';
+import { claimDeviceId, deviceId, type Terminal } from '#lib/device.svelte.ts';
 import { OpenConfig, OpenDiff, OpenFile, type Layout as DiffMode } from '#lib/files.svelte.ts';
 import type { Commit } from '#lib/git.ts';
 import type { Section } from '#lib/shell/Sidebar.svelte';
@@ -38,6 +38,7 @@ function url(path: string) {
 }
 
 export async function loadLayout() {
+	await claimDeviceId();
 	const response = await fetch(url('layout'));
 	saved = response.ok ? await response.json() : null;
 }

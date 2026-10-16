@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Agent,
-    hooks::Status,
+    hooks::{self, Status, Transition},
     protocol::{self, AgentState, Foreground, Hello, Message, Size, Title},
 };
 
@@ -192,6 +192,7 @@ fn run(
     command.args(&record.command[1..]);
     command.cwd(&record.cwd);
     command.env("OIKONOMOS_TERMINAL_ID", &record.id);
+    command.env("OIKONOMOS_DATA_DIR", files.record.parent().unwrap().parent().unwrap());
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     let mut child = pty.slave.spawn_command(command)?;
@@ -293,6 +294,7 @@ fn run(
                     let foreground = Message::ForegroundChanged(Foreground { is_root_shell });
                     let _ = conn.frames.send(protocol::encode(&foreground));
                     let _ = conn.frames.send(protocol::encode(&Message::TitleChanged(reported.clone())));
+                    let _ = conn.frames.send(protocol::encode(&Message::Agent(agent_state(record))));
                     conns.insert(next_id, conn);
                 }
             }
@@ -317,12 +319,42 @@ fn run(
                     let _ = files.write_record(record);
                 }
             }
+            Event::Received(_, Message::Scrollback(lines)) => {
+                terminal.set_scrollback_max_lines(Some(lines))?;
+                changed = true;
+            }
             Event::Received(_, Message::Hangup) => {
                 // portable-pty starts the child with setsid, so its pid names its process group.
                 if let Some(pid) = pid {
                     let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGHUP);
                 }
                 break;
+            }
+            Event::Received(id, Message::Hook(hook)) if record.agent == Some(hook.agent) => {
+                if let Some(session) = hook.payload["session_id"].as_str() {
+                    record.agent_session = Some(session.to_owned());
+                }
+                match hooks::transition(hook.agent, &hook.event, &hook.payload) {
+                    Some(Transition::To(status)) => {
+                        if status == Status::Done && agent_state(record).status != Some(status) {
+                            record.viewed_since_done = false;
+                        }
+                        record.status = Some(status);
+                    }
+                    Some(Transition::Exit) => {
+                        record.rig = None;
+                        record.agent = None;
+                        record.status = None;
+                        record.agent_session = None;
+                    }
+                    None => {}
+                }
+                let _ = files.write_record(record);
+                let frame = protocol::encode(&Message::Agent(agent_state(record)));
+                for conn in conns.values() { let _ = conn.frames.send(frame.clone()); }
+                if let Some(conn) = conns.get(&id) {
+                    let _ = conn.frames.send(protocol::encode(&Message::Hooked));
+                }
             }
             Event::Received(_, Message::Agent(AgentState { status, session, viewed_since_done })) => {
                 if record.rig.is_some() {
@@ -411,6 +443,14 @@ impl Titles {
         }
         self.setter = self.foreground;
         self.current.title = (!title.is_empty()).then(|| title.to_owned());
+    }
+}
+
+fn agent_state(record: &Record) -> AgentState {
+    AgentState {
+        status: record.rig.as_ref().map(|_| record.status.unwrap_or(Status::Done)),
+        session: record.agent_session.clone(),
+        viewed_since_done: record.viewed_since_done,
     }
 }
 

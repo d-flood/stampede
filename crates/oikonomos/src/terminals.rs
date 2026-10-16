@@ -31,6 +31,11 @@ use crate::{
 
 type Frames = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 
+struct Initial {
+    state: AgentState,
+    title: Title,
+}
+
 pub struct Terminals {
     data_dir: PathBuf,
     hook_url: String,
@@ -261,10 +266,18 @@ impl Terminals {
     }
 
     async fn open(self: &Arc<Self>, record: Record) -> io::Result<Terminal> {
-        let (mut frames, mut writer) = connect(&self.data_dir, &record.id).await?;
+        let (mut frames, mut writer, initial) = connect(&self.data_dir, &record.id).await?;
         let (control, mut pending) = mpsc::unbounded_channel();
         let size = record.size;
-        let (mut terminal, shell, title) = describe(record);
+        let (mut terminal, shell, mut title) = describe(record);
+        if let Some(initial) = initial {
+            title = initial.title;
+            terminal.status = initial.state.status;
+            terminal.agent_session = initial.state.session;
+            terminal.viewed_since_done = initial.state.viewed_since_done;
+            if terminal.status.is_none() { terminal.end_agent(&shell, &title); }
+            terminal.label = label(terminal.rig.as_deref(), &shell, &title);
+        }
         terminal.attend();
         let entry = Arc::new(Entry {
             terminal: Mutex::new(terminal.clone()),
@@ -296,6 +309,27 @@ impl Terminals {
                                 let _ = terminals.changed.send(Change::Terminals(owner.clone()));
                                 terminals.refresh_attention();
                             }
+                            Ok(Some(Message::Agent(state))) => {
+                                let mut terminal = entry.terminal.lock().unwrap();
+                                let before = terminal.agent_state();
+                                let status = state.status;
+                                if terminal.agent.is_some() {
+                                    terminal.status = status;
+                                    terminal.agent_session = state.session;
+                                    terminal.viewed_since_done = state.viewed_since_done;
+                                    if status.is_none() { terminal.end_agent(&entry.shell, &entry.title.lock().unwrap()); }
+                                    terminal.attend();
+                                }
+                                let changed = before != terminal.agent_state();
+                                drop(terminal);
+                                if changed {
+                                    let _ = terminals.changed.send(Change::Terminals(owner.clone()));
+                                    if let Some(status) = status && Some(status) != before.status {
+                                        let _ = terminals.changed.send(Change::Status(id.clone(), status));
+                                    }
+                                    terminals.refresh_attention();
+                                }
+                            }
                             Ok(Some(Message::TitleChanged(title))) => {
                                 if let Some(label) = entry.retitle(title) {
                                     let _ = terminals.titles.send((id.clone(), label));
@@ -326,7 +360,7 @@ impl Terminals {
             });
         }
         let entry = self.get(id).ok_or(io::ErrorKind::NotFound)?;
-        let (frames, mut writer) = connect(&self.data_dir, id).await?;
+        let (frames, mut writer, _) = connect(&self.data_dir, id).await?;
         writer.write_all(&protocol::encode(&Message::Attach)).await?;
         Ok(Attachment {
             size: entry.size.subscribe(),
@@ -344,11 +378,11 @@ impl Terminals {
         }
     }
 
-    pub fn hook(&self, id: &str, agent: Agent, event: &str, payload: &Value) {
-        let Some(entry) = self.get(id) else { return };
+    pub fn hook(&self, id: &str, agent: Agent, event: &str, payload: &Value) -> bool {
+        let Some(entry) = self.get(id) else { return false };
         let mut terminal = entry.terminal.lock().unwrap();
         if terminal.agent != Some(agent) {
-            return;
+            return false;
         }
         let before = terminal.agent_state();
         if let Some(session) = payload["session_id"].as_str() {
@@ -377,6 +411,7 @@ impl Terminals {
         }
         drop(terminal);
         self.refresh_attention();
+        true
     }
 
     pub fn view(&self, connection: Uuid, browser: Option<String>, terminal_ids: Vec<String>) {
@@ -452,6 +487,14 @@ impl Terminals {
             lead.device = Some(device.to_owned());
             if let Some(&size) = lead.sizes.get(device) {
                 entry.apply(size);
+            }
+        }
+    }
+
+    pub fn scrollback(&self, lines: usize) {
+        for (_, slot) in self.terminals.lock().unwrap().iter() {
+            if let Slot::Live(entry) = slot {
+                let _ = entry.control.send(Message::Scrollback(lines));
             }
         }
     }
@@ -609,7 +652,7 @@ fn read_record(path: &Path) -> io::Result<Record> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 
-async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHalf)> {
+async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHalf, Option<Initial>)> {
     let socket = UnixStream::connect(holder::socket_path(data_dir, id)).await?;
     let (reader, writer) = socket.into_split();
     let codec = LengthDelimitedCodec::builder().max_frame_length(protocol::MAX_FRAME).new_codec();
@@ -619,7 +662,23 @@ async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHal
         None => None,
     };
     match hello {
-        Some(Message::Hello(hello)) if hello.protocol <= protocol::VERSION => Ok((frames, writer)),
+        Some(Message::Hello(hello)) if hello.protocol <= protocol::VERSION => {
+            let initial = if hello.protocol >= 6 {
+                let mut title = None;
+                loop {
+                    let frame = frames.next().await.ok_or(io::ErrorKind::UnexpectedEof)??;
+                    match protocol::decode(&frame)? {
+                        Some(Message::TitleChanged(current)) => title = Some(current),
+                        Some(Message::Agent(state)) => break Some(Initial {
+                            state,
+                            title: title.ok_or_else(|| io::Error::other("holder sent no title"))?,
+                        }),
+                        _ => {}
+                    }
+                }
+            } else { None };
+            Ok((frames, writer, initial))
+        },
         Some(Message::Hello(hello)) => Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!(

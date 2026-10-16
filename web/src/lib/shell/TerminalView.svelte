@@ -17,6 +17,7 @@
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import { FitAddon, Terminal } from 'ghostty-web';
 	import { onMount, type Snippet } from 'svelte';
+	import Copy from '~icons/ph/copy';
 	import NotePencil from '~icons/ph/note-pencil';
 
 	type Props = {
@@ -90,13 +91,13 @@
 
 	// ghostty-web can't change its theme after open(), so a new look gets a
 	// new view, re-attached for a fresh snapshot.
-	function open({ theme, fontFamily }: Appearance) {
+	function open({ theme, fontFamily, scrollback }: Appearance) {
 		const replaced = view;
 		replaced?.dispose();
 		const element = document.createElement('div');
 		container.replaceChildren(element);
-		// ghostty-web's scrollback is a byte budget; 4 KB a row keeps Copy mode's 2,000 rows up to about 300 columns.
-		const next = new Terminal({ ...size, theme, fontFamily, disableStdin: ended, scrollback: 2000 * 4096 });
+		// ghostty-web measures scrollback in bytes; reserve 4 KB per configured row.
+		const next = new Terminal({ ...size, theme, fontFamily, disableStdin: ended, scrollback: scrollback * 4096 });
 		fit = new FitAddon();
 		next.loadAddon(fit);
 		next.open(element);
@@ -218,13 +219,15 @@
 </script>
 
 <div class="panel" role="tabpanel" hidden={!active}>
-	{#if !ended}
-		<div class="toolbar">
+	<div class="toolbar">
+		{#if !ended}
 			<IconButton label="Composer" aria-pressed={composing} onclick={() => (composing = !composing)}>
 				<NotePencil />
 			</IconButton>
-		</div>
-	{/if}
+		{:else}
+			<IconButton label="Copy mode" onclick={copy}><Copy /></IconButton>
+		{/if}
+	</div>
 	{@render children?.()}
 	<div class="terminal" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
 	{#if typing && !ended && form() === 'phone'}

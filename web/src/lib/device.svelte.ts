@@ -105,6 +105,28 @@ export function deviceId(): string {
 	return id;
 }
 
+let claimed: Promise<void> | undefined;
+
+export function claimDeviceId(): Promise<void> {
+	return (claimed ??= new Promise((resolve) => {
+		const channel = new BroadcastChannel('oikonomos-windows');
+		const token = crypto.randomUUID();
+		let ready = false;
+		let occupied = false;
+		channel.onmessage = ({ data }) => {
+			if (data.type === 'probe' && data.deviceId === deviceId() && (ready || token < data.token)) {
+				channel.postMessage({ type: 'occupied', token: data.token });
+			} else if (data.type === 'occupied' && data.token === token) occupied = true;
+		};
+		channel.postMessage({ type: 'probe', deviceId: deviceId(), token });
+		setTimeout(() => {
+			if (occupied) sessionStorage.setItem('deviceId', crypto.randomUUID());
+			ready = true;
+			resolve();
+		}, 50);
+	}));
+}
+
 export function browserId(): string {
 	let id = localStorage.getItem('browserId');
 	if (!id) {

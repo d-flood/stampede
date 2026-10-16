@@ -42,6 +42,21 @@ async fn a_newly_attached_device_sees_the_holders_screen() {
     assert!(late.text().contains("line 1\n"));
     assert_eq!(state(&late.terminal), state(&watcher.terminal));
 
+    watcher.terminal.set_scrollback_max_bytes(None).unwrap();
+    watcher.send("seq 1 2000; echo history-ready\r").await;
+    watcher.settle(|text| text.contains("2000\nhistory-ready")).await;
+    fs::write(server.root.path().join("config.toml"), "scrollback = 3\n").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut limited = View::open(server.port, "limited", Some(&terminal_id)).await;
+        limited.settle(|text| text.contains("history-ready")).await;
+        if limited.terminal.scrollback_rows().unwrap() < 500 {
+            assert!(!limited.text().contains("line 1\n"));
+            break;
+        }
+        assert!(Instant::now() < deadline, "the live Terminal ignored the scrollback setting: {} rows", limited.terminal.scrollback_rows().unwrap());
+    }
+
     watcher.send("exit\r").await;
     let socket = server.root.path().join(format!("data/terminals/{terminal_id}.sock"));
     let deadline = Instant::now() + Duration::from_secs(10);

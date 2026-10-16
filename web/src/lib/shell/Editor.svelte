@@ -27,11 +27,12 @@
 		servers: LanguageServers;
 		git?: Git;
 		active: boolean;
+		displayed: boolean;
 		focused: boolean;
 		onshowdiff(disk: string, buffer: string): void;
 	};
 
-	let { file, device, servers, git, active, focused, onshowdiff }: Props = $props();
+	let { file, device, servers, git, active, displayed, focused, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<EditorView>();
@@ -98,6 +99,11 @@
 		return () => {
 			stale = true;
 		};
+	});
+
+	$effect(() => {
+		const current = view;
+		if (current) servers.displayed(current, displayed);
 	});
 
 	$effect(() => {

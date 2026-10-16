@@ -5,9 +5,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::hooks::Status;
+use crate::hooks::{Hook, Status};
 
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 pub const MAX_FRAME: usize = 256 << 20;
 
 const HELLO: u8 = 1;
@@ -20,6 +20,9 @@ const HANGUP: u8 = 7;
 const FOREGROUND_CHANGED: u8 = 8;
 const AGENT: u8 = 9;
 const TITLE_CHANGED: u8 = 10;
+const SCROLLBACK: u8 = 11;
+const HOOK: u8 = 12;
+const HOOKED: u8 = 13;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Size {
@@ -63,6 +66,9 @@ pub enum Message {
     ForegroundChanged(Foreground),
     Agent(AgentState),
     TitleChanged(Title),
+    Scrollback(usize),
+    Hook(Hook),
+    Hooked,
 }
 
 pub fn encode(message: &Message) -> Vec<u8> {
@@ -79,6 +85,9 @@ pub fn encode(message: &Message) -> Vec<u8> {
         }
         Message::Agent(state) => (AGENT, serde_json::to_vec(state).unwrap()),
         Message::TitleChanged(title) => (TITLE_CHANGED, serde_json::to_vec(title).unwrap()),
+        Message::Scrollback(lines) => (SCROLLBACK, serde_json::to_vec(lines).unwrap()),
+        Message::Hook(hook) => (HOOK, serde_json::to_vec(hook).unwrap()),
+        Message::Hooked => (HOOKED, Vec::new()),
     };
     let mut frame = Vec::with_capacity(5 + payload.len());
     frame.extend_from_slice(&(payload.len() as u32 + 1).to_be_bytes());
@@ -104,6 +113,9 @@ pub fn decode(frame: &[u8]) -> io::Result<Option<Message>> {
         FOREGROUND_CHANGED => Message::ForegroundChanged(serde_json::from_slice(payload)?),
         AGENT => Message::Agent(serde_json::from_slice(payload)?),
         TITLE_CHANGED => Message::TitleChanged(serde_json::from_slice(payload)?),
+        SCROLLBACK => Message::Scrollback(serde_json::from_slice(payload)?),
+        HOOK => Message::Hook(serde_json::from_slice(payload)?),
+        HOOKED => Message::Hooked,
         _ => return Ok(None),
     }))
 }

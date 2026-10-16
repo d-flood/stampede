@@ -31,11 +31,18 @@ pub struct Changed {
     pub git: bool,
 }
 
-type Signal = Option<notify::Result<Event>>;
+enum Signal {
+    Event(notify::Result<Event>),
+    Open(PathBuf),
+    Stop,
+}
 
-pub fn spawn(mut projects: watch::Receiver<List>) -> broadcast::Sender<Changed> {
+pub type Opened = tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>;
+
+pub fn spawn(mut projects: watch::Receiver<List>) -> (broadcast::Sender<Changed>, Opened) {
     let (changes, _) = broadcast::channel(256);
     let sender = changes.clone();
+    let (opened, mut openings) = tokio::sync::mpsc::unbounded_channel();
     tokio::spawn(async move {
         let mut watching = HashMap::<String, mpsc::Sender<Signal>>::new();
         loop {
@@ -43,7 +50,7 @@ pub fn spawn(mut projects: watch::Receiver<List>) -> broadcast::Sender<Changed> 
             watching.retain(|id, stop| {
                 let open = list.iter().any(|project| project.id == *id);
                 if !open {
-                    let _ = stop.send(None);
+                    let _ = stop.send(Signal::Stop);
                 }
                 open
             });
@@ -58,30 +65,41 @@ pub fn spawn(mut projects: watch::Receiver<List>) -> broadcast::Sender<Changed> 
                     Err(error) => eprintln!("cannot watch {}: {error}", project.path),
                 }
             }
-            if projects.changed().await.is_err() {
-                break;
+            tokio::select! {
+                changed = projects.changed() => if changed.is_err() { break; },
+                Some((project, path)) = openings.recv() => {
+                    if let Some(watcher) = watching.get(&project) {
+                        let _ = watcher.send(Signal::Open(path));
+                    }
+                }
             }
         }
     });
-    changes
+    (changes, opened)
 }
 
 fn start(project: Project, changes: broadcast::Sender<Changed>) -> notify::Result<mpsc::Sender<Signal>> {
     let (signals, pending) = mpsc::channel();
     let events = signals.clone();
     let watcher = notify::recommended_watcher(move |event| {
-        let _ = events.send(Some(event));
+        let _ = events.send(Signal::Event(event));
     })?;
     thread::spawn(move || {
         let mut tree = Tree::new(PathBuf::from(&project.path), watcher);
-        while let Ok(Some(first)) = pending.recv() {
+        while let Ok(signal) = pending.recv() {
+            let first = match signal {
+                Signal::Event(event) => event,
+                Signal::Open(path) => { tree.open(path); continue; }
+                Signal::Stop => return,
+            };
             let mut batch = vec![first];
             let deadline = Instant::now() + DEBOUNCE;
             loop {
                 match pending.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                    Ok(Some(event)) => batch.push(event),
+                    Ok(Signal::Event(event)) => batch.push(event),
+                    Ok(Signal::Open(path)) => tree.open(path),
                     Err(RecvTimeoutError::Timeout) => break,
-                    Ok(None) | Err(RecvTimeoutError::Disconnected) => return,
+                    Ok(Signal::Stop) | Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
             let (paths, git) = tree.absorb(batch);
@@ -99,6 +117,7 @@ struct Tree {
     git_dir: Option<PathBuf>,
     watcher: RecommendedWatcher,
     watched: HashSet<PathBuf>,
+    opened: HashSet<PathBuf>,
     ignores: HashMap<PathBuf, Gitignore>,
     excludes: [Gitignore; 2],
 }
@@ -120,6 +139,7 @@ impl Tree {
             git_dir,
             watcher,
             watched: HashSet::new(),
+            opened: HashSet::new(),
             ignores: HashMap::new(),
             excludes: [exclude, global],
         };
@@ -148,7 +168,7 @@ impl Tree {
                     EventKind::Create(CreateKind::Folder) | EventKind::Remove(RemoveKind::Folder) => true,
                     _ => path.is_dir(),
                 };
-                if self.ignored(&path, dir) {
+                if self.ignored(&path, dir) && !self.opened.iter().any(|opened| opened.starts_with(&path)) {
                     continue;
                 }
                 rescan |= path.file_name().is_some_and(|name| name == ".gitignore");
@@ -168,8 +188,21 @@ impl Tree {
             }
             self.ignores.clear();
             self.scan(&self.root.clone());
+            for path in self.opened.clone() { self.open(path); }
         }
         (paths, git)
+    }
+
+    fn open(&mut self, path: PathBuf) {
+        self.opened.insert(path.clone());
+        for parent in path.ancestors().skip(1).take_while(|parent| parent.starts_with(&self.root)) {
+            if !self.watched.contains(parent) {
+                match self.watcher.watch(parent, RecursiveMode::NonRecursive) {
+                    Ok(()) => { self.watched.insert(parent.to_owned()); }
+                    Err(error) => eprintln!("cannot watch {}: {error}", parent.display()),
+                }
+            }
+        }
     }
 
     fn scan(&mut self, dir: &Path) -> Vec<String> {

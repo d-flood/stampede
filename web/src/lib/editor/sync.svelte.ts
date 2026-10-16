@@ -37,6 +37,7 @@ export class Sync {
 			message: (message) => {
 				const file = this.#file();
 				if (message.type === 'hello') return this.#resync();
+				if (message.type === 'config.changed' && file instanceof OpenConfig) return this.refresh();
 				if (message.type !== 'fs.changed' || message.projectId !== file.projectId || file instanceof OpenConfig) return;
 				if (message.paths.some((path) => file.path === path || file.path.startsWith(`${path}/`))) this.refresh();
 			}
@@ -60,6 +61,7 @@ export class Sync {
 				if (!result.conflict.binary) this.conflict = result.conflict;
 				return;
 			}
+			file.deleted = false;
 			this.#hash = result.hash;
 			this.#saved = doc;
 			this.conflict = undefined;
@@ -98,7 +100,12 @@ export class Sync {
 			else if (file.dirty) this.conflict = contents;
 			else this.load(contents);
 		} catch (error) {
-			if (current === this.#generation && error instanceof RequestError && error.status === 404) file.deleted = true;
+			if (current === this.#generation && error instanceof RequestError && error.status === 404) {
+				file.deleted = true;
+				const disk = { content: '', hash: '' };
+				if (file.dirty) this.conflict = disk;
+				else this.load(disk);
+			}
 		}
 	}
 

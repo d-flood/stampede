@@ -62,6 +62,7 @@
 	let screens: HTMLElement | undefined;
 	let held = $state(false);
 	let drawer: Drawer;
+	let drawerOpen = $state(false);
 	let settle: ((error?: string) => void) | undefined;
 	const servers = new LanguageServers(
 		device,
@@ -80,8 +81,9 @@
 	const side: Side = $derived(layout && layout.right.active === activeTab ? 'right' : 'left');
 	const split = $derived(form() === 'desktop' ? layout : undefined);
 	const groups = $derived(split ? [split.left, split.right] : [whole]);
-	const shown = $derived(visible ? tabs.filter((tab) => showing(tab.id)).map((tab) => tab.id) : []);
 	const phone = $derived(form() === 'phone');
+	const foreground = $derived(visible && (!phone || (screen === 1 && !drawerOpen)));
+	const shown = $derived(foreground ? tabs.filter((tab) => showing(tab.id)).map((tab) => tab.id) : []);
 	const label = $derived(focused && projectLabels.get(focused.id));
 	const titles = $derived([
 		{ title: 'Projects' },
@@ -597,7 +599,7 @@
 						{#if active || warm()}
 							{#if file instanceof OpenDiff}
 								{#await import('#lib/shell/Diff.svelte') then { default: Diff }}
-									<Diff diff={file} {device} {servers} {active} focused={file.id === activeTab} {onshowdiff} />
+									<Diff diff={file} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
 								{/await}
 							{:else}
 								{#await editor() then { default: Editor }}
@@ -607,6 +609,7 @@
 										{servers}
 										git={git[file.projectId]}
 										{active}
+										displayed={active && foreground}
 										focused={file.id === activeTab}
 										{onshowdiff}
 									/>
@@ -681,7 +684,7 @@
 	</div>
 {/if}
 
-<Drawer bind:this={drawer} {device} />
+<Drawer bind:this={drawer} bind:open={drawerOpen} {device} />
 
 {#if device.connection === 'reconnecting'}
 	<div class="reconnecting" role="status"><WifiSlash /> Reconnecting…</div>

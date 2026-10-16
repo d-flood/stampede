@@ -12,6 +12,12 @@ alpha=(git -C "$OIKONOMOS_E2E_ROOT/projects/alpha" -c init.defaultBranch=main -c
 echo "# alpha" > "$OIKONOMOS_E2E_ROOT/projects/alpha/README.md"
 echo 'export const greeting = "hello";' > "$OIKONOMOS_E2E_ROOT/projects/alpha/greeting.ts"
 printf 'one\ntwo\nthree\n' | tee "$OIKONOMOS_E2E_ROOT/projects/alpha/"{desktop,pixel}.txt > /dev/null
+mkdir "$OIKONOMOS_E2E_ROOT/projects/alpha/ignored"
+echo 'ignored/' > "$OIKONOMOS_E2E_ROOT/projects/alpha/.gitignore"
+for form in desktop pixel; do
+    echo 'initial ignored contents' > "$OIKONOMOS_E2E_ROOT/projects/alpha/ignored/$form.txt"
+    touch "$OIKONOMOS_E2E_ROOT/projects/alpha/empty-$form.ts"
+done
 "${alpha[@]}" add .
 "${alpha[@]}" commit -qm "Initial commit"
 echo "roots = [\"$OIKONOMOS_E2E_ROOT/projects\"]" > "$OIKONOMOS_E2E_ROOT/config.toml"

@@ -39,7 +39,7 @@ export function languageServer(servers: LanguageServers, projectId: string, path
 	return [
 		compartment.of([]),
 		ViewPlugin.define((view) => {
-			const entry = { view, compartment, path: `${root}/${path}`, languageId, editor };
+			const entry = { view, compartment, path: `${root}/${path}`, languageId, editor, shown: false };
 			session.attach(entry);
 			return { destroy: () => session.detach(entry) };
 		})
@@ -67,16 +67,34 @@ export class Session {
 		this.channel = channel;
 	}
 
+	get shown() {
+		return [...this.views].some((entry) => entry.shown);
+	}
+
+	show(view: EditorView, shown: boolean) {
+		const entry = [...this.views].find((entry) => entry.view === view);
+		if (!entry) return;
+		const before = this.shown;
+		entry.shown = shown;
+		this.visibility(before);
+	}
+
+	visibility(before: boolean) {
+		if (before !== this.shown && this.servers.switches[this.projectId]) {
+			this.servers.send({ type: this.shown ? 'lsp.open' : 'lsp.close', channel: this.channel });
+		}
+	}
+
 	attach(entry: Attached) {
-		if (!this.views.size && this.servers.switches[this.projectId]) this.servers.send({ type: 'lsp.open', channel: this.channel });
 		this.views.add(entry);
 		this.servers.attached(entry);
 		queueMicrotask(() => this.#connect(entry));
 	}
 
 	detach(entry: Attached) {
+		const before = this.shown;
 		this.views.delete(entry);
-		if (!this.views.size && this.servers.switches[this.projectId]) this.servers.send({ type: 'lsp.close', channel: this.channel });
+		this.visibility(before);
 	}
 
 	update(state: State) {

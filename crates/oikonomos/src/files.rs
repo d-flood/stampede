@@ -82,7 +82,9 @@ pub async fn read(
 ) -> Result<Response, Failure> {
     let root = root(&state, &id)?;
     blocking(move || {
-        let bytes = fs::read(resolve(&root, &query.path)?).map_err(failure)?;
+        let path = resolve(&root, &query.path)?;
+        let _ = state.opened.send((id, path.clone()));
+        let bytes = fs::read(path).map_err(failure)?;
         Ok(Json(contents(bytes)).into_response())
     })
     .await
@@ -108,10 +110,29 @@ pub async fn write(
 ) -> Result<Response, Failure> {
     let root = root(&state, &id)?;
     blocking(move || {
-        let path = resolve(&root, &save.path)?;
-        let current = fs::read(&path).map_err(failure)?;
-        if hash(&current) != save.base_hash {
-            return Ok((StatusCode::CONFLICT, Json(contents(current))).into_response());
+        let path = match resolve(&root, &save.path) {
+            Ok(path) => path,
+            Err((StatusCode::NOT_FOUND, _)) => {
+                if root.join(&save.path).is_symlink() {
+                    return Err((StatusCode::FORBIDDEN, "Cannot recreate a dangling symlink".to_owned()));
+                }
+                let relative = Path::new(&save.path);
+                let parent = relative.parent().unwrap_or(Path::new(""));
+                resolve(&root, &parent.to_string_lossy())?.join(relative.file_name().ok_or_else(|| {
+                    (StatusCode::BAD_REQUEST, "No file name".to_owned())
+                })?)
+            }
+            Err(error) => return Err(error),
+        };
+        let current = match fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(failure(error)),
+        };
+        let current_hash = current.as_deref().map(hash).unwrap_or_default();
+        if current_hash != save.base_hash {
+            let current = current.map_or_else(|| json!({ "content": "", "hash": "" }), contents);
+            return Ok((StatusCode::CONFLICT, Json(current)).into_response());
         }
         fs::write(&path, &save.content).map_err(failure)?;
         Ok(Json(json!({ "hash": hash(save.content.as_bytes()) })).into_response())

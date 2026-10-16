@@ -5,7 +5,7 @@ import type { EditorView } from '@codemirror/view';
 
 export type State = 'off' | 'starting' | 'on' | 'error';
 
-export type Attached = { view: EditorView; compartment: Compartment; path: string; languageId: string; editor: boolean };
+export type Attached = { view: EditorView; compartment: Compartment; path: string; languageId: string; editor: boolean; shown: boolean };
 
 const languages: Record<string, [server: string, languageId: string]> = {
 	ts: ['typescript', 'typescript'],
@@ -67,7 +67,7 @@ export class LanguageServers {
 			case 'lsp.switch':
 				this.switches[message.projectId] = message.on;
 				for (const session of this.sessions.values()) {
-					if (message.on && session.projectId === message.projectId && session.views.size) {
+					if (message.on && session.projectId === message.projectId && session.shown) {
 						this.send({ type: 'lsp.open', channel: session.channel });
 					}
 				}
@@ -88,6 +88,10 @@ export class LanguageServers {
 				break;
 			}
 		}
+	}
+
+	displayed(view: EditorView, shown: boolean) {
+		for (const session of this.sessions.values()) session.show(view, shown);
 	}
 
 	attached(entry: Attached) {

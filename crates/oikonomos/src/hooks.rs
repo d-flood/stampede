@@ -3,7 +3,8 @@ use std::{
     error::Error,
     io::{self, Read, Write},
     net::{TcpStream, ToSocketAddrs},
-    path::Path,
+    os::unix::net::UnixStream,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -12,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{AppState, config::Agent};
+use crate::{AppState, config::Agent, holder, protocol::{self, Message}};
 
 const TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -61,20 +62,39 @@ pub struct HookArgs {
 
 /// Agents run this on every hook, so it never fails, blocks for long, or prints.
 pub fn hook(args: HookArgs) {
-    let _ = post(args);
+    let _ = report(args);
 }
 
-fn post(HookArgs { agent, event }: HookArgs) -> Result<(), Box<dyn Error>> {
+fn report(HookArgs { agent, event }: HookArgs) -> Result<(), Box<dyn Error>> {
     let mut stdin = Vec::new();
     io::stdin().read_to_end(&mut stdin)?;
+    let hook = Hook {
+        terminal_id: env::var("OIKONOMOS_TERMINAL_ID")?,
+        agent: serde_json::from_value(json!(agent))?,
+        event,
+        payload: serde_json::from_slice(&stdin).unwrap_or_default(),
+    };
+    if post(&hook).is_ok() {
+        return Ok(());
+    }
+    let dir = PathBuf::from(env::var_os("OIKONOMOS_DATA_DIR").ok_or("no data directory")?);
+    let mut stream = UnixStream::connect(holder::socket_path(&dir, &hook.terminal_id))?;
+    stream.set_read_timeout(Some(TIMEOUT))?;
+    stream.set_write_timeout(Some(TIMEOUT))?;
+    protocol::read(&mut stream)?;
+    stream.write_all(&protocol::encode(&Message::Hook(hook)))?;
+    while let Some(message) = protocol::read(&mut stream)? {
+        if matches!(message, Message::Hooked) { break; }
+    }
+    Ok(())
+}
+
+fn post(hook: &Hook) -> Result<(), Box<dyn Error>> {
     let deadline = Instant::now() + TIMEOUT;
-    let terminal_id = env::var("OIKONOMOS_TERMINAL_ID")?;
     let url = env::var("OIKONOMOS_HOOK_URL")?;
     let rest = url.strip_prefix("http://").ok_or("not an http URL")?;
     let (authority, path) = rest.split_once('/').ok_or("no path")?;
-    let payload: Value = serde_json::from_slice(&stdin).unwrap_or_default();
-    let body = json!({ "terminalId": terminal_id, "agent": agent, "event": event, "payload": payload })
-        .to_string();
+    let body = serde_json::to_string(hook)?;
     let address = authority.to_socket_addrs()?.next().ok_or("no address")?;
     let mut stream = TcpStream::connect_timeout(&address, TIMEOUT)?;
     let remaining = deadline.saturating_duration_since(Instant::now());
@@ -86,23 +106,27 @@ fn post(HookArgs { agent, event }: HookArgs) -> Result<(), Box<dyn Error>> {
         body.len(),
     )?;
     // The response means the server has applied this event, so the next hook can't overtake it.
-    stream.read_to_end(&mut Vec::new())?;
-    Ok(())
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response)?;
+    if response.starts_with(b"HTTP/1.1 204") { Ok(()) } else { Err("hook endpoint did not accept the event".into()) }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hook {
-    terminal_id: String,
-    agent: Agent,
-    event: String,
+    pub terminal_id: String,
+    pub agent: Agent,
+    pub event: String,
     #[serde(default)]
-    payload: Value,
+    pub payload: Value,
 }
 
 pub async fn receive(State(state): State<AppState>, Json(hook): Json<Hook>) -> StatusCode {
-    state.terminals.hook(&hook.terminal_id, hook.agent, &hook.event, &hook.payload);
-    StatusCode::NO_CONTENT
+    if state.terminals.hook(&hook.terminal_id, hook.agent, &hook.event, &hook.payload) {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    }
 }
 
 pub fn transition(agent: Agent, event: &str, payload: &Value) -> Option<Transition> {
@@ -149,7 +173,7 @@ pub fn wiring(agent: Agent, exe: &Path) -> Vec<String> {
             vec!["--settings".to_owned(), json!({ "hooks": hooks }).to_string()]
         }
         Agent::Codex => {
-            let mut args = Vec::new();
+            let mut args = vec!["-c".to_owned(), "features.codex_hooks=true".to_owned()];
             let mut state = Vec::new();
             for (event, snake, timeout) in CODEX_EVENTS {
                 let command = format!("{} hook codex {event}", crate::terminals::quote(&exe));
