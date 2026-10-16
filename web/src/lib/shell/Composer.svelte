@@ -2,14 +2,16 @@
 	import Button from '#lib/ui/Button.svelte';
 
 	type Props = {
-		terminalId: string;
+		id: string;
 		disabled: boolean;
+		insert?: boolean;
+		placeholder?: string;
 		onsend(text: string, enter: boolean): boolean;
 	};
 
-	let { terminalId, disabled, onsend }: Props = $props();
+	let { id, disabled, insert = true, placeholder, onsend }: Props = $props();
 
-	const key = $derived(`composer:${terminalId}`);
+	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? '');
 	let box: HTMLTextAreaElement;
 
@@ -36,15 +38,18 @@
 		bind:value={text}
 		oninput={keep}
 		aria-label="Composer"
+		{placeholder}
 		rows="3"
 		autocorrect="on"
 		autocapitalize="sentences"
 		spellcheck="true"
 	></textarea>
 	<div class="actions">
-		<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
-			Insert
-		</Button>
+		{#if insert}
+			<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
+				Insert
+			</Button>
+		{/if}
 		<Button
 			variant="primary"
 			disabled={!text || disabled}

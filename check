@@ -21,6 +21,14 @@ done
 "${alpha[@]}" add .
 "${alpha[@]}" commit -qm "Initial commit"
 echo "roots = [\"$OIKONOMOS_E2E_ROOT/projects\"]" > "$OIKONOMOS_E2E_ROOT/config.toml"
+cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<'EOF'
+
+[[rig]]
+name = "Fake Claude"
+agent = "claude-code"
+command = "claude"
+env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn" }
+EOF
 
 cleanup() {
 	pkill -f -- "${OIKONOMOS_E2E_ROOT//./\\.}" || true

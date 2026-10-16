@@ -17,6 +17,17 @@ export type Terminal = {
 	state: 'live' | 'ended';
 };
 
+export type Item = { kind: 'user'; text: string; images: number } | { kind: 'text'; text: string; streaming: boolean };
+
+export type Chat = {
+	id: string;
+	projectId: string;
+	rig: string;
+	agent: Agent;
+	status: Status;
+	agentSession?: string;
+};
+
 export type Attention = { projectId: string; terminalId: string; label: string; status: Status };
 
 export type Found = { line: number; column: number; preview: string };
@@ -34,13 +45,18 @@ export type Search = {
 };
 
 export type ServerMessage =
-	| { type: 'hello'; version: string; terminals: Terminal[] }
+	| { type: 'hello'; version: string; terminals: Terminal[]; chats: Chat[] }
 	| { type: 'terminal.created'; terminal: Terminal }
 	| { type: 'terminals.changed'; projectId?: string; drawer?: true; terminals: Terminal[] }
 	| { type: 'terminal.status'; terminalId: string; status: Status }
 	| { type: 'terminal.title'; terminalId: string; label: string }
 	| { type: 'terminal.attached'; terminalId: string; channel: number; cols: number; rows: number }
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
+	| { type: 'chat.created'; chat: Chat }
+	| { type: 'chats.changed'; projectId: string; chats: Chat[] }
+	| { type: 'chat.items'; chatId: string; items: Item[] }
+	| { type: 'chat.item'; chatId: string; index: number; item: Item }
+	| { type: 'chat.status'; chatId: string; status: Status }
 	| { type: 'config.changed' }
 	| { type: 'projects.changed'; projects: Project[] }
 	| { type: 'project.opened'; projectId: string }
@@ -66,6 +82,9 @@ export type ClientMessage =
 	| { type: 'terminal.resize'; terminalId: string; cols: number; rows: number }
 	| { type: 'terminal.focus'; terminalId: string }
 	| { type: 'terminal.detach'; channel: number }
+	| { type: 'chat.create'; projectId: string; rig: string }
+	| { type: 'chat.send'; chatId: string; text: string }
+	| { type: 'chat.close' | 'chat.attach' | 'chat.detach'; chatId: string }
 	| { type: 'projects.list' }
 	| { type: 'project.open'; path: string }
 	| { type: 'project.close'; projectId: string }

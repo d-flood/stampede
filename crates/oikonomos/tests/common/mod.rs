@@ -120,6 +120,10 @@ impl Drop for Server {
             .arg("-f")
             .arg(format!("oikonomos hold --data-dir {}", data_dir.display()))
             .status();
+        let _ = std::process::Command::new("pkill")
+            .arg("-f")
+            .arg(format!("hold-chat --data-dir {}", data_dir.display()))
+            .status();
     }
 }
 

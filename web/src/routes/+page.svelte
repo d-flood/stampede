@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { version } from '$app/env';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
-	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.svelte.ts';
+	import { connect, type Attention, type Chat, type Project, type ServerMessage, type Terminal } from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -41,6 +41,7 @@
 	const device = connect();
 	let projects = $state<Project[]>([]);
 	let terminals = $state<Record<string, Terminal[]>>({});
+	let chats = $state<Record<string, Chat[]>>({});
 	let attentionList = $state<Attention[]>([]);
 	let visible = $state(document.visibilityState === 'visible');
 	let files = $state<Record<string, OpenFile[]>>(restored.files);
@@ -55,6 +56,7 @@
 	let section = $state<Section>(restored.sidebar?.section ?? 'files');
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
+	let closingChat = $state<Chat>();
 	let picking = $state(false);
 	let palette = $state<Scope>();
 	let unfocused = $state(false);
@@ -74,8 +76,13 @@
 	const projectLabels = $derived(labels(projects));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
 	const tabs = $derived((focused && terminals[focused.id]) || []);
+	const chatTabs = $derived((focused && chats[focused.id]) || []);
 	const fileTabs = $derived((focused && files[focused.id]) || []);
-	const tabIds = $derived([...tabs.map((tab) => tab.id), ...fileTabs.map((file) => file.id)]);
+	const tabIds = $derived([
+		...tabs.map((tab) => tab.id),
+		...chatTabs.map((chat) => chat.id),
+		...fileTabs.map((file) => file.id)
+	]);
 	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? '']) ?? tabIds.at(-1));
 	const whole = $derived({ tabs: tabIds, active: activeTab });
 	const layout = $derived(focused && arrange(splits[focused.id], tabIds, activeTab));
@@ -91,7 +98,9 @@
 		{ title: label ?? 'Tabs' },
 		{ title: sectionShowing(section, focused && git[focused.id]).label, sub: label }
 	]);
-	const deviceLayout = $derived(capture({ chosen, terminals, files, chosenTabs, splits, sidebar: { open: sidebar, section } }));
+	const deviceLayout = $derived(
+		capture({ chosen, terminals, chats, files, chosenTabs, splits, sidebar: { open: sidebar, section } })
+	);
 
 	$effect(() => device.send({ type: 'device.view', terminalIds: shown }));
 	$effect(() => saveLayout(deviceLayout));
@@ -124,6 +133,9 @@
 					if (terminal.owner !== 'drawer') (owned[terminal.owner.project] ??= []).push(terminal);
 				}
 				terminals = owned;
+				const chatsOwned: Record<string, Chat[]> = {};
+				for (const chat of message.chats) (chatsOwned[chat.projectId] ??= []).push(chat);
+				chats = chatsOwned;
 				for (const project of projects) invalidate(project.id);
 				device.send({ type: 'projects.list' });
 				device.send({ type: 'device.view', terminalIds: shown });
@@ -149,6 +161,18 @@
 				}
 				break;
 			}
+			case 'chats.changed':
+				chats[message.projectId] = message.chats;
+				break;
+			case 'chat.status':
+				for (const chat of Object.values(chats).flat()) {
+					if (chat.id === message.chatId) chat.status = message.status;
+				}
+				break;
+			case 'chat.created':
+				place(message.chat.projectId, message.chat.id);
+				choose(message.chat.projectId, message.chat.id);
+				break;
 			case 'terminal.title':
 				for (const terminal of Object.values(terminals).flat()) {
 					if (terminal.id === message.terminalId) terminal.label = message.label;
@@ -260,7 +284,8 @@
 	}
 
 	function closeProject(projectId: string, confirmed = false) {
-		if (!confirmed && terminals[projectId]?.some((terminal) => terminal.status === 'working')) {
+		const agents = [...(terminals[projectId] ?? []), ...(chats[projectId] ?? [])];
+		if (!confirmed && agents.some((agent) => agent.status === 'working')) {
 			closingProject = projectId;
 			return;
 		}
@@ -270,7 +295,11 @@
 
 	function newTab(projectId: string) {
 		const create = (rig?: string) => () => device.send({ type: 'terminal.create', projectId, rig });
-		const launchers = rigs().map((rig) => ({ label: rig.name, onselect: create(rig.name) }));
+		const chat = (rig: string) => () => device.send({ type: 'chat.create', projectId, rig });
+		const launchers = rigs().flatMap((rig) => [
+			{ label: rig.name, onselect: create(rig.name) },
+			...(rig.agent === 'claude-code' ? [{ label: `${rig.name} as Chat`, onselect: chat(rig.name) }] : [])
+		]);
 		const rest = [{ label: 'Terminal', onselect: create() }, { label: 'Open file', onselect: () => openPalette('files') }];
 		return launchers.length ? [{ heading: 'Rigs', items: launchers }, ...rest] : rest;
 	}
@@ -375,6 +404,16 @@
 	function closeTab(projectId: string, terminalId: string) {
 		leave(projectId, terminalId);
 		device.send({ type: 'terminal.close', terminalId });
+	}
+
+	function closeChat(chat: Chat, confirmed = false) {
+		if (!confirmed && chat.status === 'working') {
+			closingChat = chat;
+			return;
+		}
+		closingChat = undefined;
+		leave(chat.projectId, chat.id);
+		device.send({ type: 'chat.close', chatId: chat.id });
 	}
 
 	function resumable(terminal: Terminal) {
@@ -486,6 +525,7 @@
 						{@const projectId = focused.id}
 						{#each group.tabs as id (id)}
 							{@const tab = tabs.find((tab) => tab.id === id)}
+							{@const chat = chatTabs.find((chat) => chat.id === id)}
 							{@const file = fileTabs.find((file) => file.id === id)}
 							{#if tab}
 								<Menu context items={tabMenu(projectId, tab)}>
@@ -498,6 +538,23 @@
 											status={tab.status}
 											ended={tab.state === 'ended'}
 											label={tab.label}
+											active={id === group.active}
+											onclick={() => {
+												if (!dragged) choose(projectId, id);
+											}}
+										/>
+									{/snippet}
+								</Menu>
+							{:else if chat}
+								<Menu context items={[{ label: 'Close', onselect: () => closeChat(chat) }]}>
+									{#snippet trigger(props)}
+										<Tab
+											{...props}
+											data-tab={id}
+											variant="agent"
+											agent={chat.agent}
+											status={chat.status}
+											label={chat.rig}
 											active={id === group.active}
 											onclick={() => {
 												if (!dragged) choose(projectId, id);
@@ -588,6 +645,20 @@
 						{/if}
 					</div>
 				{/each}
+			{/each}
+			{#each Object.values(chats).flat() as chat (chat.id)}
+				<div
+					class="view"
+					hidden={!showing(chat.id)}
+					style:grid-column={column(chat.id)}
+					onfocusin={() => choose(chat.projectId, chat.id)}
+				>
+					{#if showing(chat.id) || warm()}
+						{#await import('#lib/chat/ChatView.svelte') then { default: ChatView }}
+							<ChatView {device} {chat} active={showing(chat.id)} />
+						{/await}
+					{/if}
+				</div>
 			{/each}
 			{#each Object.values(files) as open}
 				{#each open as file (file.id)}
@@ -740,6 +811,17 @@
 	{#snippet actions()}
 		<Button onclick={() => (closing = undefined)}>Cancel</Button>
 		<Button variant="primary" onclick={() => closing && closeFile(closing, true)}>Discard</Button>
+	{/snippet}
+</Dialog>
+
+<Dialog
+	bind:open={() => !!closingChat, (open) => !open && (closingChat = undefined)}
+	title="Close {closingChat?.rig}?"
+	description="Its Agent is working. Closing the Chat stops it."
+>
+	{#snippet actions()}
+		<Button onclick={() => (closingChat = undefined)}>Cancel</Button>
+		<Button variant="primary" onclick={() => closingChat && closeChat(closingChat, true)}>Close</Button>
 	{/snippet}
 </Dialog>
 

@@ -25,6 +25,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
+    chats::{self, Chats},
     config::Config,
     holder::Owner,
     language_servers::{self, Input, LanguageServers, Server, Switch},
@@ -56,6 +57,16 @@ enum Control {
     Focus { terminal_id: String },
     #[serde(rename = "terminal.detach")]
     Detach { channel: u32 },
+    #[serde(rename = "chat.create")]
+    CreateChat { project_id: String, rig: String },
+    #[serde(rename = "chat.send")]
+    SendChat { chat_id: String, text: String },
+    #[serde(rename = "chat.close")]
+    CloseChat { chat_id: String },
+    #[serde(rename = "chat.attach")]
+    AttachChat { chat_id: String },
+    #[serde(rename = "chat.detach")]
+    DetachChat { chat_id: String },
     #[serde(rename = "projects.list")]
     ListProjects {},
     #[serde(rename = "project.open")]
@@ -89,6 +100,8 @@ struct Device {
     browser: Option<String>,
     connection: Uuid,
     terminals: Arc<Terminals>,
+    chats: Arc<Chats>,
+    attached: HashMap<String, u64>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
     outgoing: mpsc::UnboundedSender<Message>,
@@ -102,7 +115,7 @@ struct Device {
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, projects, mut config, disk, git, languages, .. }: AppState,
+    AppState { terminals, chats, projects, mut config, disk, git, languages, .. }: AppState,
 ) {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = mpsc::unbounded_channel();
@@ -117,6 +130,7 @@ async fn connect(
     let mut changes = terminals.subscribe();
     let mut titles = terminals.subscribe_titles();
     let mut attention = terminals.subscribe_attention();
+    let mut chat_changes = chats.subscribe();
     let mut disk = disk.subscribe();
     let mut git = git.subscribe();
     let mut switches = languages.subscribe();
@@ -125,6 +139,8 @@ async fn connect(
         browser: None,
         connection: Uuid::new_v4(),
         terminals,
+        chats,
+        attached: HashMap::new(),
         projects,
         config: config.clone(),
         outgoing,
@@ -185,6 +201,26 @@ async fn connect(
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => break,
             },
+            changed = chat_changes.recv() => match changed {
+                Ok(chats::Change::Chats(project_id)) => device.chats_changed(&project_id),
+                Ok(chats::Change::Status(chat_id, status)) => {
+                    send(&device.outgoing, json!({ "type": "chat.status", "chatId": chat_id, "status": status }));
+                }
+                Ok(chats::Change::Item { chat_id, seq, index, item }) => {
+                    if device.attached.get(&chat_id).is_some_and(|&attached| seq > attached) {
+                        send(&device.outgoing, json!({ "type": "chat.item", "chatId": chat_id, "index": index, "item": item }));
+                    }
+                }
+                Err(RecvError::Lagged(_)) => {
+                    for project in device.projects.list().iter() {
+                        device.chats_changed(&project.id);
+                    }
+                    for chat_id in device.attached.keys().cloned().collect::<Vec<_>>() {
+                        device.attach_chat(chat_id);
+                    }
+                }
+                Err(RecvError::Closed) => break,
+            },
             Ok(()) = attention.changed() => {
                 let items = attention.borrow_and_update().clone();
                 device.attention_changed(&items);
@@ -216,6 +252,7 @@ impl Device {
                     "type": "hello",
                     "version": env!("CARGO_PKG_VERSION"),
                     "terminals": self.terminals.list(),
+                    "chats": self.chats.list(),
                 });
                 send(&self.outgoing, hello);
                 self.attention_changed(&self.terminals.attention());
@@ -260,6 +297,25 @@ impl Device {
                     attachment.abort();
                 }
             }
+            Control::CreateChat { project_id, rig } => {
+                let projects = self.projects.list();
+                let Some(project) = projects.iter().find(|project| project.id == project_id) else {
+                    return eprintln!("cannot create a chat in {project_id}: not open");
+                };
+                let Some(rig) = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned() else {
+                    return eprintln!("cannot launch rig {rig} as a chat: not in the config");
+                };
+                match self.chats.create(project, &rig).await {
+                    Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
+                    Err(error) => eprintln!("cannot create a chat: {error}"),
+                }
+            }
+            Control::SendChat { chat_id, text } => self.chats.send(&chat_id, &text),
+            Control::CloseChat { chat_id } => self.chats.close(&chat_id),
+            Control::AttachChat { chat_id } => self.attach_chat(chat_id),
+            Control::DetachChat { chat_id } => {
+                self.attached.remove(&chat_id);
+            }
             Control::ListProjects {} => {
                 let projects = self.projects.list();
                 send(&self.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
@@ -275,6 +331,9 @@ impl Device {
             Control::CloseProject { project_id } => {
                 for terminal in self.terminals.owned(&Owner::Project(project_id.clone())) {
                     self.terminals.close(&terminal.id);
+                }
+                for chat in self.chats.owned(&project_id) {
+                    self.chats.close(&chat.id);
                 }
                 self.projects.close(&project_id);
             }
@@ -468,6 +527,17 @@ impl Device {
             }),
         };
         send(&self.outgoing, changed);
+    }
+
+    fn attach_chat(&mut self, chat_id: String) {
+        let Some((seq, items)) = self.chats.attach(&chat_id) else { return };
+        send(&self.outgoing, json!({ "type": "chat.items", "chatId": chat_id, "items": items }));
+        self.attached.insert(chat_id, seq);
+    }
+
+    fn chats_changed(&self, project_id: &str) {
+        let chats = self.chats.owned(project_id);
+        send(&self.outgoing, json!({ "type": "chats.changed", "projectId": project_id, "chats": chats }));
     }
 
     fn attention_changed(&self, items: &[Attention]) {

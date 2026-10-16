@@ -1,4 +1,4 @@
-import { claimDeviceId, deviceId, type Terminal } from '#lib/device.svelte.ts';
+import { claimDeviceId, deviceId, type Chat, type Terminal } from '#lib/device.svelte.ts';
 import { OpenConfig, OpenDiff, OpenFile, type Layout as DiffMode } from '#lib/files.svelte.ts';
 import type { Commit } from '#lib/git.ts';
 import type { Section } from '#lib/shell/Sidebar.svelte';
@@ -6,6 +6,7 @@ import type { Split, TabGroup } from '#lib/split.ts';
 
 export type TabRef =
 	| { kind: 'terminal'; id: string }
+	| { kind: 'chat'; id: string }
 	| { kind: 'file'; path: string }
 	| { kind: 'config' }
 	| { kind: 'diff'; path: string; against: 'HEAD' | Commit; from?: string };
@@ -24,6 +25,7 @@ export type Layout = {
 export type Workspace = {
 	chosen?: string;
 	terminals: Record<string, Terminal[]>;
+	chats: Record<string, Chat[]>;
 	files: Record<string, OpenFile[]>;
 	chosenTabs: Record<string, string>;
 	splits: Record<string, Split>;
@@ -87,9 +89,11 @@ export function capture(workspace: Workspace): Layout {
 	for (const projectId of projectIds) {
 		const files = workspace.files[projectId] ?? [];
 		const terminals = workspace.terminals[projectId] ?? [];
+		const chats = workspace.chats[projectId] ?? [];
 		const find = (id: string): TabRef | null => {
 			const file = files.find((file) => file.id === id);
-			return file ? ref(file) : { kind: 'terminal', id };
+			if (file) return ref(file);
+			return chats.some((chat) => chat.id === id) ? { kind: 'chat', id } : { kind: 'terminal', id };
 		};
 		const half = ({ tabs, active }: TabGroup): Half => ({
 			tabs: tabs.flatMap((id) => find(id) ?? []),
@@ -100,6 +104,7 @@ export function capture(workspace: Workspace): Layout {
 		projects[projectId] = {
 			tabs: [
 				...terminals.map(({ id }): TabRef => ({ kind: 'terminal', id })),
+				...chats.map(({ id }): TabRef => ({ kind: 'chat', id })),
 				...files.flatMap((file) => ref(file) ?? [])
 			],
 			active: active ? find(active) : null,
@@ -115,7 +120,7 @@ export function restore() {
 	const chosenTabs: Workspace['chosenTabs'] = {};
 	const splits: Workspace['splits'] = {};
 	for (const [projectId, project] of Object.entries(saved?.projects ?? {})) {
-		const id = (ref: TabRef) => (ref.kind === 'terminal' ? ref.id : reopen(projectId, ref)!.id);
+		const id = (ref: TabRef) => (ref.kind === 'terminal' || ref.kind === 'chat' ? ref.id : reopen(projectId, ref)!.id);
 		const half = ({ tabs, active }: Half): TabGroup => ({ tabs: tabs.map(id), active: active ? id(active) : undefined });
 		files[projectId] = project.tabs.flatMap((ref) => reopen(projectId, ref) ?? []);
 		for (const file of files[projectId]) {

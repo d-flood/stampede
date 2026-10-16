@@ -1,3 +1,4 @@
+mod chats;
 mod config;
 mod device;
 mod files;
@@ -28,7 +29,9 @@ use rust_embed::RustEmbed;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, watch};
 
+use chats::Chats;
 use config::{Config, Editor, Font, Keybar, Rig};
+pub use chats::{HoldChatArgs, hold_chat};
 pub use holder::{HoldArgs, hold};
 pub use hooks::{HookArgs, hook};
 pub use install::{InstallArgs, UninstallArgs, install, uninstall};
@@ -61,6 +64,7 @@ pub(crate) fn home() -> PathBuf {
 #[derive(Clone)]
 struct AppState {
     terminals: Arc<Terminals>,
+    chats: Arc<Chats>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
     config_path: PathBuf,
@@ -112,6 +116,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let languages = Arc::new(LanguageServers::load(&args.data_dir)?);
     let layouts = Arc::new(Layouts::load(&args.data_dir)?);
     let hook_url = format!("http://{}/api/hook", listener.local_addr()?);
+    let chats = Arc::new(Chats::new(args.data_dir.clone()));
     let terminals = Arc::new(Terminals::new(args.data_dir, hook_url));
     terminals.restore().await?;
     terminals.scrollback(config.borrow().scrollback);
@@ -126,7 +131,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    let state = AppState { terminals, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts };
+    let state = AppState { terminals, chats, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts };
     axum::serve(listener, router(state)).await
 }
 

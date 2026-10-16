@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
 
+const fakes = fileURLToPath(new URL('../crates/oikonomos/tests/fake', import.meta.url));
 const port = process.env.OIKONOMOS_E2E_PORT;
 const root = process.env.OIKONOMOS_E2E_ROOT;
 if (!port || !root) throw new Error('Run Playwright through ./check e2e');
@@ -19,6 +21,7 @@ export default defineConfig({
 	],
 	webServer: {
 		command: `../target/release/oikonomos serve --port ${port} --data-dir "${root}/data" --config "${root}/config.toml"`,
-		url: `http://127.0.0.1:${port}/api/version`
+		url: `http://127.0.0.1:${port}/api/version`,
+		env: { PATH: `${fakes}:${process.env.PATH}` }
 	}
 });

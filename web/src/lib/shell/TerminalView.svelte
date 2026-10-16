@@ -367,7 +367,7 @@
 		{#if pasteFallback}
 			<p role="status">Clipboard access unavailable. Paste into Composer, then choose Insert.</p>
 		{/if}
-		<Composer bind:this={composer} {terminalId} disabled={!live} onsend={compose} />
+		<Composer bind:this={composer} id={terminalId} disabled={!live} onsend={compose} />
 	{/if}
 </div>
 
