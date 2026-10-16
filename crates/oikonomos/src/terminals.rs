@@ -37,7 +37,7 @@ pub struct Terminals {
     terminals: Mutex<Vec<(String, Slot)>>,
     changed: broadcast::Sender<Change>,
     titles: broadcast::Sender<(String, String)>,
-    views: Mutex<HashMap<Uuid, (Option<String>, String)>>,
+    views: Mutex<HashMap<Uuid, (Option<String>, Vec<String>)>>,
     attention: watch::Sender<Vec<Attention>>,
 }
 
@@ -379,24 +379,30 @@ impl Terminals {
         self.refresh_attention();
     }
 
-    pub fn view(&self, connection: Uuid, browser: Option<String>, terminal_id: Option<String>) {
-        let entry = terminal_id.as_deref().and_then(|id| self.get(id));
-        match terminal_id {
-            Some(id) => self.views.lock().unwrap().insert(connection, (browser, id)),
-            None => self.views.lock().unwrap().remove(&connection),
-        };
-        if entry.is_some_and(|entry| entry.view()) {
+    pub fn view(&self, connection: Uuid, browser: Option<String>, terminal_ids: Vec<String>) {
+        let entries: Vec<_> = terminal_ids.iter().filter_map(|id| self.get(id)).collect();
+        if terminal_ids.is_empty() {
+            self.views.lock().unwrap().remove(&connection);
+        } else {
+            self.views.lock().unwrap().insert(connection, (browser, terminal_ids));
+        }
+        let mut viewed = false;
+        for entry in entries {
+            viewed |= entry.view();
+        }
+        if viewed {
             self.refresh_attention();
         }
     }
 
     fn shown(&self, id: &str) -> bool {
-        self.views.lock().unwrap().values().any(|(_, shown)| shown == id)
+        self.views.lock().unwrap().values().any(|(_, shown)| shown.iter().any(|shown| shown == id))
     }
 
     pub fn showing(&self, id: &str) -> HashSet<String> {
         let views = self.views.lock().unwrap();
-        views.values().filter(|(_, shown)| shown == id).filter_map(|(browser, _)| browser.clone()).collect()
+        let showing = views.values().filter(|(_, shown)| shown.iter().any(|shown| shown == id));
+        showing.filter_map(|(browser, _)| browser.clone()).collect()
     }
 
     pub fn item(&self, id: &str) -> Option<Attention> {

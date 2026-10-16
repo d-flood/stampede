@@ -86,14 +86,14 @@ async fn recorded_hook_sequences_drive_agent_status() {
             .iter()
             .map(|name| events.iter().find(|(event, _)| event == name).unwrap())
             .collect();
-        let view = |terminal_id: Option<&str>| json!({ "type": "device.view", "terminalId": terminal_id });
-        control(&mut socket, view(Some(&terminal_id))).await;
+        let view = |terminal_ids: &[&str]| json!({ "type": "device.view", "terminalIds": terminal_ids });
+        control(&mut socket, view(&[&terminal_id])).await;
         let terminal = listed(&mut socket, &terminal_id).await;
         assert_eq!(terminal["needsAttention"], false, "{agent} {fixture}: viewed: {terminal}");
 
         for shown in [true, false] {
             if !shown {
-                control(&mut socket, view(None)).await;
+                control(&mut socket, view(&[])).await;
             }
             for (event, payload) in &turn {
                 hook(&url, &terminal_id, agent, event, payload).await;

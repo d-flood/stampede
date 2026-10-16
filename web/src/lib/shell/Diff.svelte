@@ -25,11 +25,12 @@
 		device: Device;
 		servers: LanguageServers;
 		active: boolean;
+		focused: boolean;
 		onshowdiff(disk: string, buffer: string): void;
 	};
 	type Shown = { b: EditorView; original: Text; editable: boolean; setOriginal(content: string): void; destroy(): void };
 
-	let { diff, device, servers, active, onshowdiff }: Props = $props();
+	let { diff, device, servers, active, focused, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let shown = $state.raw<Shown>();
@@ -77,7 +78,7 @@
 	});
 
 	$effect(() => {
-		if (active && shown && form() === 'desktop') shown.b.focus();
+		if (focused && shown && form() === 'desktop') shown.b.focus();
 	});
 
 	function sides(): Promise<[string, Contents]> | undefined {

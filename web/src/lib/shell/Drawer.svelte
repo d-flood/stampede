@@ -101,6 +101,7 @@
 				{device}
 				terminalId={terminal.id}
 				active={terminal.id === active?.id}
+				focused={terminal.id === active?.id}
 			/>
 		{/each}
 	</div>
