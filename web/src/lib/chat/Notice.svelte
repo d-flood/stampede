@@ -12,7 +12,8 @@
 		overflow-wrap: anywhere;
 	}
 
-	.compacted {
+	.compacted,
+	.interrupted {
 		display: flex;
 		align-items: center;
 		gap: var(--space-3);
@@ -20,7 +21,9 @@
 	}
 
 	.compacted::before,
-	.compacted::after {
+	.compacted::after,
+	.interrupted::before,
+	.interrupted::after {
 		content: '';
 		flex: 1;
 		border-top: var(--border-width) solid var(--border);

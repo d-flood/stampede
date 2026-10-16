@@ -21,8 +21,6 @@
 		flex: none;
 		align-items: center;
 		min-height: 16px;
-		padding: 0 var(--space-2) var(--space-2);
-		background: var(--surface-1);
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 	}

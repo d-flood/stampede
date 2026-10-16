@@ -66,7 +66,14 @@ enum Control {
     #[serde(rename = "sessions.list")]
     ListSessions { project_id: String },
     #[serde(rename = "chat.send")]
-    SendChat { chat_id: String, text: String },
+    SendChat {
+        chat_id: String,
+        text: String,
+        #[serde(default)]
+        queue: bool,
+    },
+    #[serde(rename = "chat.interrupt")]
+    InterruptChat { chat_id: String },
     #[serde(rename = "chat.close")]
     CloseChat { chat_id: String },
     #[serde(rename = "chat.attach")]
@@ -221,6 +228,9 @@ async fn connect(
                 Ok(chats::Change::Status(chat_id, status)) => {
                     send(&device.outgoing, json!({ "type": "chat.status", "chatId": chat_id, "status": status }));
                 }
+                Ok(chats::Change::Queued(chat_id, queued)) => {
+                    send(&device.outgoing, json!({ "type": "chat.queued", "chatId": chat_id, "queued": queued }));
+                }
                 Ok(chats::Change::Item { chat_id, seq, index, item }) => {
                     if device.attached.get(&chat_id).is_some_and(|&attached| seq > attached) {
                         send(&device.outgoing, json!({ "type": "chat.item", "chatId": chat_id, "index": index, "item": item }));
@@ -347,7 +357,8 @@ impl Device {
                 }
             }
             Control::ListSessions { project_id } => self.list_sessions(project_id),
-            Control::SendChat { chat_id, text } => self.chats.send(&chat_id, &text),
+            Control::SendChat { chat_id, text, queue } => self.chats.send(&chat_id, &text, queue),
+            Control::InterruptChat { chat_id } => self.chats.interrupt(&chat_id),
             Control::CloseChat { chat_id } => self.chats.close(&chat_id),
             Control::AttachChat { chat_id } => self.attach_chat(chat_id),
             Control::DetachChat { chat_id } => {

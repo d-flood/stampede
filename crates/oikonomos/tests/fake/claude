@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import select
 import sys
 import time
 from pathlib import Path
@@ -28,13 +29,32 @@ def fixture():
 
 
 def kind(message):
-    return message.get('type'), message.get('request', {}).get('subtype')
+    request = message.get('request', {})
+    return message.get('type'), request.get('subtype'), request.get('cancel_queued'), message.get('priority')
+
+
+def readline():
+    global pending
+    while b'\n' not in pending:
+        chunk = os.read(0, 65536)
+        if not chunk:
+            return None
+        pending += chunk
+    line, _, pending = pending.partition(b'\n')
+    return line
+
+
+def waiting():
+    global pending
+    if not pending and select.select([0], [], [], 0)[0]:
+        pending += os.read(0, 65536)
+    return bool(pending)
 
 
 def read(expected):
-    while received := sys.stdin.readline():
+    while (received := readline()) is not None:
         message = json.loads(received)
-        if kind(message) == ('control_request', 'get_usage') != kind(expected):
+        if kind(message)[:2] == ('control_request', 'get_usage') != kind(expected)[:2]:
             usage = json.loads((FIXTURES / 'usage.recorded.jsonl').read_text().splitlines()[1])['stdout']
             usage['response']['request_id'] = message['request_id']
             print(json.dumps(usage, ensure_ascii=False), flush=True)
@@ -81,6 +101,7 @@ for name, value in ENV.items():
 
 request_ids = {}
 uuids = {}
+pending = b''
 for line in fixture().read_text().splitlines():
     entry = json.loads(line)
     if 'stdin' in entry:
@@ -106,7 +127,9 @@ for line in fixture().read_text().splitlines():
         response = message.get('response', {})
         if message.get('type') == 'control_response' and response.get('request_id') in request_ids:
             response['request_id'] = request_ids[response['request_id']]
+        if message.get('type') == 'result' and waiting():
+            fail(f'read {pending!r} before the turn ended')
         print(remap(message), flush=True)
 
-for _ in sys.stdin:
+while readline() is not None:
     pass

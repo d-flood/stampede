@@ -33,12 +33,17 @@ pub struct Codex {
 
 enum Request {
     Send(String),
+    Interrupt,
     Close,
 }
 
 impl Driver for Codex {
     fn send(&self, text: &str) {
         let _ = self.requests.send(Request::Send(text.to_owned()));
+    }
+
+    fn interrupt(&self) {
+        let _ = self.requests.send(Request::Interrupt);
     }
 
     fn close(&self) {
@@ -123,12 +128,14 @@ fn run(mut connection: Connection, mut proxy: Child, mut transcript: Transcript)
             tokio::select! {
                 request = pending.recv() => match request {
                     Some(Request::Send(text)) => {
-                        let _ = transcript.events.send(Event::Status(Status::Working));
                         let input = json!([{ "type": "text", "text": text, "text_elements": [] }]);
-                        let turn = json!({ "threadId": transcript.thread, "input": input });
-                        match connection.request("turn/start", turn).await {
-                            Ok(id) => transcript.starting = Some(id),
-                            Err(_) => break,
+                        if connection.send(&mut transcript, input).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Request::Interrupt) => {
+                        if connection.interrupt(&mut transcript).await.is_err() {
+                            break;
                         }
                     }
                     Some(Request::Close) | None => {
@@ -137,7 +144,14 @@ fn run(mut connection: Connection, mut proxy: Child, mut transcript: Transcript)
                     }
                 },
                 message = connection.next() => match message {
-                    Some(message) => transcript.read(&message),
+                    Some(message) => {
+                        transcript.read(&message);
+                        if let Some(input) = transcript.unsteered.take()
+                            && connection.start(&mut transcript, input).await.is_err()
+                        {
+                            break;
+                        }
+                    }
                     None => break,
                 },
             }
@@ -234,10 +248,41 @@ impl Connection {
         None
     }
 
-    async fn close(&mut self, transcript: &mut Transcript) {
+    async fn started(&mut self, transcript: &mut Transcript) -> io::Result<()> {
         while transcript.starting.is_some() {
-            let Some(message) = self.next().await else { return };
+            let message = self.next().await.ok_or(io::ErrorKind::UnexpectedEof)?;
             transcript.read(&message);
+        }
+        Ok(())
+    }
+
+    async fn start(&mut self, transcript: &mut Transcript, input: Value) -> io::Result<()> {
+        let _ = transcript.events.send(Event::Status(Status::Working));
+        let id = self.request("turn/start", json!({ "threadId": transcript.thread, "input": input })).await?;
+        transcript.starting = Some(id);
+        Ok(())
+    }
+
+    async fn send(&mut self, transcript: &mut Transcript, input: Value) -> io::Result<()> {
+        self.started(transcript).await?;
+        let Some(turn) = &transcript.turn else { return self.start(transcript, input).await };
+        let steer = json!({ "threadId": transcript.thread, "input": input, "expectedTurnId": turn });
+        let id = self.request("turn/steer", steer).await?;
+        transcript.steering.insert(id, input);
+        Ok(())
+    }
+
+    async fn interrupt(&mut self, transcript: &mut Transcript) -> io::Result<()> {
+        self.started(transcript).await?;
+        if let Some(turn) = &transcript.turn {
+            self.request("turn/interrupt", json!({ "threadId": transcript.thread, "turnId": turn })).await?;
+        }
+        Ok(())
+    }
+
+    async fn close(&mut self, transcript: &mut Transcript) {
+        if self.started(transcript).await.is_err() {
+            return;
         }
         if let Some(turn) = transcript.turn.take() {
             let _ = self.call("turn/interrupt", json!({ "threadId": transcript.thread, "turnId": turn })).await;
@@ -263,6 +308,9 @@ struct Transcript {
     tools: Option<(usize, Vec<ToolCall>)>,
     commands: HashMap<String, usize>,
     previous: u64,
+    steering: HashMap<u64, Value>,
+    /// A steer that reached the daemon after its turn had ended, to start a turn with instead.
+    unsteered: Option<Value>,
 }
 
 impl Transcript {
@@ -277,6 +325,8 @@ impl Transcript {
             tools: None,
             commands: HashMap::new(),
             previous: 0,
+            steering: HashMap::new(),
+            unsteered: None,
         }
     }
 
@@ -321,6 +371,13 @@ impl Transcript {
             }
             return;
         }
+        if let Some(input) = response(message).and_then(|id| self.steering.remove(&id)) {
+            if message.get("error").is_some() {
+                eprintln!("codex turn/steer failed: {}", message["error"]);
+                self.unsteered = Some(input);
+            }
+            return;
+        }
         let params = &message["params"];
         if params.get("threadId").is_some_and(|thread| thread != self.thread.as_str()) {
             return;
@@ -337,8 +394,15 @@ impl Transcript {
             }
             Some("turn/completed") => {
                 self.turn = None;
+                // A message cut off by an interrupt or a steer never gets its item/completed.
+                for (_, (index, text)) in self.streaming.drain() {
+                    let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false }));
+                }
                 if params["turn"]["status"] == "failed" {
                     self.push(notice(&params["turn"]["error"]));
+                }
+                if params["turn"]["status"] == "interrupted" {
+                    self.push(Item::interrupted());
                 }
                 let _ = self.events.send(Event::Status(Status::Done));
             }

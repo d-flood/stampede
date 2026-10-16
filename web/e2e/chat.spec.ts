@@ -120,6 +120,64 @@ test('a Chat folds tools, thinking, commands and a long first prompt into lines 
 	await expect(tab).toHaveCount(0);
 });
 
+test('a working Chat steers, queues until its turn ends, and interrupts, with no KeyBar', async ({ page }, { project }) => {
+	const name = `steer-${project.name}`;
+	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	const keys = page.getByRole('toolbar', { name: 'Keys' });
+	if (project.name === 'pixel') {
+		await page.getByRole('button', { name: 'New Tab' }).click();
+		await page.getByRole('menuitem', { name: 'Terminal' }).click();
+		await page.locator('.terminal:visible canvas').click();
+		await expect(keys).toBeVisible();
+	}
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude (steer) as Chat' }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Claude \(steer\)/ });
+	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expect(tab.getByTitle('done')).toBeVisible();
+
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	const queued = panel.getByRole('list', { name: 'Queued' }).getByRole('listitem');
+	const sent = (text: string) => panel.locator('.user', { hasText: text });
+	const later = 'Count from 1 to 300, one number per line. Use no tools.';
+	await composer.click();
+	await expect(keys).toHaveCount(0);
+	await composer.fill('Count from 1 to 30, one number per line. Use no tools.');
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await expect(tab.getByTitle('working')).toBeVisible();
+	await expect(panel.getByRole('button', { name: 'Send' })).toHaveCount(0);
+
+	await composer.fill(later);
+	await panel.getByRole('button', { name: 'Queue' }).click();
+	await expect(queued).toHaveText([later]);
+	await expect(composer).toHaveValue('');
+	await expect(sent(later)).toHaveCount(0);
+	await composer.fill('Then also say banana.');
+	await panel.getByRole('button', { name: 'Steer' }).click();
+	await expect(sent('Then also say banana.')).toBeVisible();
+	await expect(panel.getByText('banana 🍌')).toBeVisible();
+	await expect(sent(later)).toBeVisible();
+	await expect(queued).toHaveCount(0);
+	await expect(tab.getByTitle('working')).toBeVisible();
+
+	await composer.fill('Never sent');
+	await panel.getByRole('button', { name: 'Queue' }).click();
+	await expect(queued).toHaveText(['Never sent']);
+	await panel.getByRole('button', { name: 'Interrupt' }).click();
+	await expect(panel.getByText('Interrupted', { exact: true })).toBeVisible();
+	await expect(tab.getByTitle('done')).toBeVisible();
+	await expect(queued).toHaveCount(0);
+	await expect(composer).toHaveValue('Never sent');
+	await expect(panel.getByRole('button', { name: 'Send' })).toBeVisible();
+	await expect(keys).toHaveCount(0);
+
+	await tab.click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await expect(tab).toHaveCount(0);
+});
+
 test('a Chat that finishes unseen needs attention and opens from the Attention list or a notification', async ({ page }, { project }) => {
 	const name = `attention-${project.name}`;
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });

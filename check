@@ -29,6 +29,12 @@ agent = "claude-code"
 command = "claude"
 env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
 shortcut = "c"
+
+[[rig]]
+name = "Fake Claude (steer)"
+agent = "claude-code"
+command = "claude"
+env = { OIKONOMOS_FAKE_FIXTURE = "steer-queue-interrupt" }
 EOF
 cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
 

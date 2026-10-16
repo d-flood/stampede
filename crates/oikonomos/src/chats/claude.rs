@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::{self, File},
     io::{self, BufRead, Read},
     path::{Path, PathBuf},
@@ -52,12 +52,17 @@ pub struct Claude {
 
 enum Command {
     Send(String),
+    Interrupt,
     Close,
 }
 
 impl Driver for Claude {
     fn send(&self, text: &str) {
         let _ = self.commands.send(Command::Send(text.to_owned()));
+    }
+
+    fn interrupt(&self) {
+        let _ = self.commands.send(Command::Interrupt);
     }
 
     fn close(&self) {
@@ -142,18 +147,31 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
             tokio::select! {
                 command = pending.recv() => match command {
                     Some(Command::Send(text)) => {
-                        let message = json!({
+                        let mut message = json!({
                             "type": "user",
                             "message": { "role": "user", "content": text },
                             "parent_tool_use_id": null,
                             "uuid": Uuid::new_v4().to_string(),
                         });
                         let idle = transcript.status == Status::Done;
+                        if !idle {
+                            message["priority"] = json!("next");
+                        }
                         transcript.sent(&message);
                         if idle && writer.write_all(&protocol::encode(&Message::Forget)).await.is_err() {
                             break;
                         }
                         if writer.write_all(&input(&message)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Command::Interrupt) => {
+                        let interrupt = json!({
+                            "type": "control_request",
+                            "request_id": Uuid::new_v4().to_string(),
+                            "request": { "subtype": "interrupt", "cancel_queued": true },
+                        });
+                        if transcript.status != Status::Done && writer.write_all(&input(&interrupt)).await.is_err() {
                             break;
                         }
                     }
@@ -307,6 +325,11 @@ fn input(message: &Value) -> Vec<u8> {
     protocol::encode(&Message::Input(message.to_string().into_bytes()))
 }
 
+fn interrupted(content: &Value) -> bool {
+    let mut blocks = content.as_array().into_iter().flatten();
+    blocks.any(|block| block["text"].as_str().is_some_and(|text| text.starts_with("[Request interrupted by user")))
+}
+
 struct Transcript {
     events: UnboundedSender<Event>,
     cwd: PathBuf,
@@ -320,6 +343,7 @@ struct Transcript {
     /// The model of the main loop's latest API call, and how many tokens it was sent.
     call: Option<(String, u64)>,
     window: Option<u64>,
+    steering: HashSet<String>,
 }
 
 impl Transcript {
@@ -336,6 +360,7 @@ impl Transcript {
             replaying: false,
             call: None,
             window: None,
+            steering: HashSet::new(),
         }
     }
 
@@ -357,6 +382,11 @@ impl Transcript {
     fn sent(&mut self, message: &Value) {
         if let Some(text) = message["message"]["content"].as_str() {
             self.push(Item::User { text: text.to_owned(), images: 0 });
+            if message.get("priority").is_some()
+                && let Some(uuid) = message["uuid"].as_str()
+            {
+                self.steering.insert(uuid.to_owned());
+            }
             self.report(Status::Working);
         }
     }
@@ -394,6 +424,11 @@ impl Transcript {
                     self.results(&entry["message"]["content"]);
                 }
             },
+            Some("attachment") if entry["attachment"]["type"] == "queued_command" => {
+                if let Some(text) = entry["attachment"]["prompt"].as_str() {
+                    self.push(Item::User { text: text.to_owned(), images: 0 });
+                }
+            }
             Some("assistant") => {
                 self.compact();
                 self.assistant(entry, &entry["thinkingDurationMs"], false);
@@ -422,9 +457,17 @@ impl Transcript {
             Some("stream_event") if top => self.stream(&message["event"]),
             Some("assistant") if top => self.assistant(message, &message["thinking_duration_ms"], true),
             Some("user") if top => self.results(&message["message"]["content"]),
+            Some("command_lifecycle") if message["state"] != "queued" => {
+                if let Some(uuid) = message["command_uuid"].as_str() {
+                    self.steering.remove(uuid);
+                }
+            }
             Some("result") => {
                 self.total(&message["modelUsage"]);
-                self.report(Status::Done);
+                // A steer Claude has not started yet runs as a turn of its own after this result.
+                if self.steering.is_empty() {
+                    self.report(Status::Done);
+                }
             }
             Some("rate_limit_event") if !self.replaying => {
                 let windows = &message["rate_limit_info"]["unifiedWindows"];
@@ -527,6 +570,9 @@ impl Transcript {
                 }
             };
             let _ = self.events.send(Event::Item(index, Item::Command { command, status, output }));
+        }
+        if interrupted(content) {
+            self.push(Item::interrupted());
         }
     }
 

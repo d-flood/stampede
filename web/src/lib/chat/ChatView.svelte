@@ -1,10 +1,11 @@
 <script lang="ts">
+	import ChatComposer from '#lib/chat/ChatComposer.svelte';
 	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import Meters from '#lib/chat/Meters.svelte';
+	import Queued from '#lib/chat/Queued.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import type { Chat, Device, Item, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import Composer from '#lib/shell/Composer.svelte';
 	import { onMount } from 'svelte';
 	import { on } from 'svelte/events';
 
@@ -36,12 +37,6 @@
 		}
 	}
 
-	function send(text: string) {
-		if (!live || !text.trim()) return false;
-		device.send({ type: 'chat.send', chatId: chat.id, text });
-		return true;
-	}
-
 	function follow(scroller: HTMLElement) {
 		let pinned = true;
 		const observer = new ResizeObserver(() => {
@@ -68,12 +63,15 @@
 	<div class="transcript" {@attach follow}>
 		<div class="column">
 			<Transcript {items} />
+			<Queued queued={chat.queued} />
 		</div>
 	</div>
-	<Composer id={chat.id} disabled={!live} insert={false} placeholder="Message {chat.rig}" onsend={send} />
-	{#if form() === 'desktop'}
-		<Meters {chat} />
-	{/if}
+	<div class="foot">
+		<ChatComposer {device} {chat} {live} />
+		{#if form() === 'desktop'}
+			<Meters {chat} />
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -112,8 +110,22 @@
 		line-height: 1.55;
 	}
 
+	.foot {
+		display: flex;
+		flex: none;
+		flex-direction: column;
+		gap: var(--space-2);
+		width: min(760px, 100% - 2 * var(--space-6));
+		margin: 0 auto var(--space-4);
+	}
+
 	.phone .transcript {
 		padding: var(--space-4);
+	}
+
+	.phone .foot {
+		width: auto;
+		margin: 0 var(--space-3) var(--space-3);
 	}
 
 	.phone .column {

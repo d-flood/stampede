@@ -70,11 +70,16 @@ pub enum Notice {
     Compacted,
     Error,
     Limit,
+    Interrupted,
 }
 
 impl Item {
     fn compacted() -> Self {
         Item::Notice { notice: Notice::Compacted, text: "Conversation compacted".to_owned() }
+    }
+
+    fn interrupted() -> Self {
+        Item::Notice { notice: Notice::Interrupted, text: "Interrupted".to_owned() }
     }
 }
 
@@ -106,7 +111,9 @@ pub enum Event {
 
 /// One Agent's wire protocol. A driver's events end when its Agent has stopped.
 pub trait Driver: Send + Sync {
+    /// Starts a turn, or steers the running one.
     fn send(&self, text: &str);
+    fn interrupt(&self);
     fn close(&self);
 }
 
@@ -129,6 +136,8 @@ pub struct Chat {
     pub tokens: Option<Tokens>,
     #[serde(default)]
     pub settings: AgentSettings,
+    #[serde(default)]
+    pub queued: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -169,6 +178,7 @@ pub async fn sessions(cwd: &Path, claude: &Rig, codex: &Rig) -> Vec<Session> {
 pub enum Change {
     Chats(String),
     Status(String, Status),
+    Queued(String, Vec<String>),
     Item { chat_id: String, seq: u64, index: usize, item: Item },
     Meters { chat_id: String, context: Option<Context>, tokens: Option<Tokens> },
 }
@@ -232,6 +242,7 @@ impl Chats {
             context: None,
             tokens: None,
             settings: rig.settings(),
+            queued: Vec::new(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
@@ -310,6 +321,12 @@ impl Chats {
                 }
                 Event::Status(status) => {
                     let mut chat = entry.chat.lock().unwrap();
+                    if status == Status::Done && !chat.queued.is_empty() {
+                        let text = chat.queued.remove(0);
+                        self.queued(&chat);
+                        entry.driver.send(&text);
+                        continue;
+                    }
                     if chat.status == status {
                         continue;
                     }
@@ -370,10 +387,34 @@ impl Chats {
         Some((transcript.seq, transcript.items.clone()))
     }
 
-    pub fn send(&self, id: &str, text: &str) {
-        if let Some(entry) = self.get(id) {
+    /// Sends `text` now, or with `queue` holds it until the running turn ends.
+    pub fn send(&self, id: &str, text: &str, queue: bool) {
+        let Some(entry) = self.get(id) else { return };
+        let mut chat = entry.chat.lock().unwrap();
+        if queue && chat.status != Status::Done {
+            chat.queued.push(text.to_owned());
+            self.queued(&chat);
+        } else {
+            drop(chat);
             entry.driver.send(text);
         }
+    }
+
+    /// Stops the running turn and drops what was queued behind it.
+    pub fn interrupt(&self, id: &str) {
+        let Some(entry) = self.get(id) else { return };
+        let mut chat = entry.chat.lock().unwrap();
+        if !chat.queued.is_empty() {
+            chat.queued.clear();
+            self.queued(&chat);
+        }
+        drop(chat);
+        entry.driver.interrupt();
+    }
+
+    fn queued(&self, chat: &Chat) {
+        self.save(chat);
+        let _ = self.changed.send(Change::Queued(chat.id.clone(), chat.queued.clone()));
     }
 
     pub fn close(&self, id: &str) {

@@ -25,7 +25,7 @@ export type Item =
 	| { kind: 'thinking'; seconds: number; text?: string }
 	| { kind: 'tools'; calls: ToolCall[] }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
-	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit'; text: string };
+	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted'; text: string };
 
 export type Context = { used: number; window: number };
 
@@ -40,6 +40,7 @@ export type Chat = {
 	agentSession?: string;
 	context: Context | null;
 	tokens: Tokens | null;
+	queued: string[];
 };
 
 export type Reading = { agent: Agent; window: 'five-hour' | 'weekly'; used: number; resetsAt?: number; readAt: number };
@@ -81,6 +82,7 @@ export type ServerMessage =
 	| { type: 'chat.status'; chatId: string; status: Status }
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
 	| { type: 'sessions.listed'; projectId: string; sessions: Session[] }
+	| { type: 'chat.queued'; chatId: string; queued: string[] }
 	| { type: 'config.changed' }
 	| { type: 'projects.changed'; projects: Project[] }
 	| { type: 'project.opened'; projectId: string }
@@ -110,8 +112,8 @@ export type ClientMessage =
 	| { type: 'chat.create'; projectId: string; rig: string }
 	| { type: 'chat.resume'; projectId: string; agent: Agent; sessionId: string }
 	| { type: 'sessions.list'; projectId: string }
-	| { type: 'chat.send'; chatId: string; text: string }
-	| { type: 'chat.close' | 'chat.attach' | 'chat.detach'; chatId: string }
+	| { type: 'chat.send'; chatId: string; text: string; queue: boolean }
+	| { type: 'chat.close' | 'chat.attach' | 'chat.detach' | 'chat.interrupt'; chatId: string }
 	| { type: 'projects.list' }
 	| { type: 'project.open'; path: string }
 	| { type: 'project.close'; projectId: string }

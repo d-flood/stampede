@@ -3,14 +3,16 @@ import base64
 import hashlib
 import json
 import os
+import select
 import sys
 import time
 from pathlib import Path
 
-stdin = sys.stdin.buffer
+stdin = sys.stdin.buffer.raw
 stdout = sys.stdout.buffer
 HERE = '/tmp/oikonomos-chat'
 INTERACTIVE = ['cli', 'vscode']
+buffered = b''
 
 
 def fail(reason):
@@ -66,9 +68,32 @@ def gate(name):
         time.sleep(0.02)
 
 
+def take(size):
+    global buffered
+    while len(buffered) < size and (chunk := stdin.read(65536)):
+        buffered += chunk
+    data, buffered = buffered[:size], buffered[size:]
+    return data
+
+
+def readline():
+    global buffered
+    while b'\n' not in buffered and (chunk := stdin.read(65536)):
+        buffered += chunk
+    line, newline, buffered = buffered.partition(b'\n')
+    return line + newline
+
+
+def waiting():
+    global buffered
+    if not buffered and select.select([stdin], [], [], 0)[0]:
+        buffered += stdin.read(65536)
+    return bool(buffered)
+
+
 def handshake():
     key = None
-    while line := stdin.readline().strip():
+    while line := readline().strip():
         name, _, value = line.decode().partition(':')
         if name.lower() == 'sec-websocket-key':
             key = value.strip()
@@ -80,12 +105,12 @@ def handshake():
 
 
 def receive():
-    while len(header := stdin.read(2)) == 2:
+    while len(header := take(2)) == 2:
         opcode, length = header[0] & 0x0F, header[1] & 0x7F
         if length > 125:
-            length = int.from_bytes(stdin.read(2 if length == 126 else 8), 'big')
-        mask = stdin.read(4) if header[1] & 0x80 else bytes(4)
-        payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(stdin.read(length)))
+            length = int.from_bytes(take(2 if length == 126 else 8), 'big')
+        mask = take(4) if header[1] & 0x80 else bytes(4)
+        payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(take(length)))
         if opcode == 8:
             break
         if opcode == 1:
@@ -180,6 +205,8 @@ def proxy():
                 message['id'] = ids[message['id']]
             if 'thread' in (message.get('result') or {}):
                 (threads() / message['result']['thread']['id']).write_text(str(index))
+            if message.get('method') == 'turn/completed' and waiting():
+                fail(f'read {buffered!r} before the turn ended')
             send(message)
         index += 1
     while read({}) is not None:
