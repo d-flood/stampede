@@ -16,7 +16,7 @@ use tokio::{
 };
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
-use super::{Chat, CommandStatus, Context, Driver, Event, Item, Notice, Tokens, ToolCall, ToolKind, seconds};
+use super::{Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind, seconds};
 use crate::{
     config::{Agent, AgentSettings, codex_policy},
     hooks::Status,
@@ -24,6 +24,8 @@ use crate::{
 };
 
 const CLOSING: Duration = Duration::from_secs(5);
+
+const SOURCES: [&str; 5] = ["cli", "vscode", "exec", "appServer", "unknown"];
 
 pub struct Codex {
     requests: UnboundedSender<Request>,
@@ -65,6 +67,31 @@ pub async fn resume(chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(
     let mut transcript = Transcript::new(thread, events);
     transcript.resumed(&resumed["thread"]["turns"]);
     Ok((run(connection, proxy, transcript), received))
+}
+
+/// This cwd's threads, non-interactive ones included.
+pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
+    let (mut connection, mut proxy) = connect(cwd, env).await?;
+    let mut sessions = Vec::new();
+    let mut cursor = Value::Null;
+    loop {
+        let params = json!({ "cwd": cwd, "sourceKinds": SOURCES, "sortKey": "updated_at", "cursor": cursor });
+        let listed = connection.call("thread/list", params).await?;
+        for thread in listed["data"].as_array().into_iter().flatten() {
+            if let (Some(id), Some(preview), Some(updated)) =
+                (thread["id"].as_str(), thread["preview"].as_str(), thread["updatedAt"].as_u64())
+                && !preview.is_empty()
+            {
+                sessions.push(Session::new(Agent::Codex, id, preview, updated * 1000));
+            }
+        }
+        cursor = listed["nextCursor"].clone();
+        if cursor.is_null() {
+            break;
+        }
+    }
+    let _ = proxy.kill().await;
+    Ok(sessions)
 }
 
 async fn connect(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Connection, Child)> {

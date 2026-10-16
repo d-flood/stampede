@@ -1,8 +1,10 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    fs, io,
+    fs::{self, File},
+    io::{self, BufRead, Read},
     path::{Path, PathBuf},
     process::Stdio,
+    time::UNIX_EPOCH,
 };
 
 use futures_util::StreamExt;
@@ -17,7 +19,7 @@ use toml::value::{Datetime, Offset};
 use uuid::Uuid;
 
 use super::{
-    Chat, CommandStatus, Context, Driver, Event, Item, Notice, Tokens, ToolCall, ToolKind,
+    Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     protocol::{self, Message},
     seconds,
@@ -41,6 +43,8 @@ const ARGS: [&str; 7] = [
 const SDK_ENV: [(&str, &str); 2] = [("CLAUDE_CODE_ENTRYPOINT", "sdk-ts"), ("CLAUDE_CODE_SDK_READS_SESSION_STATE", "1")];
 
 const WINDOWS: [(Window, &str); 2] = [(Window::FiveHour, "five_hour"), (Window::Weekly, "seven_day")];
+
+const HEAD: u64 = 1 << 20;
 
 pub struct Claude {
     commands: UnboundedSender<Command>,
@@ -67,10 +71,12 @@ pub async fn start(
     cwd: &Path,
     env: &BTreeMap<String, String>,
     settings: &AgentSettings,
+    session: Option<&str>,
 ) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
-    let env = env.iter().map(|(name, value)| (name.as_str(), value.as_str())).chain(SDK_ENV);
+    let variables = env.iter().map(|(name, value)| (name.as_str(), value.as_str())).chain(SDK_ENV);
     let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.flags(Agent::ClaudeCode));
-    holder::spawn(data_dir, id, cwd, env, command).await?;
+    let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
+    holder::spawn(data_dir, id, cwd, variables, command.chain(resume)).await?;
     let (frames, mut writer, _) = holder::connect(data_dir, id).await?;
     let initialize = json!({
         "type": "control_request",
@@ -79,7 +85,11 @@ pub async fn start(
     });
     writer.write_all(&input(&initialize)).await?;
     let (events, received) = mpsc::unbounded_channel();
-    Ok((drive(frames, writer, Transcript::new(events, cwd)), received))
+    let mut transcript = Transcript::new(events, cwd);
+    if let Some(session) = session {
+        transcript.history(env, session, None);
+    }
+    Ok((drive(frames, writer, transcript), received))
 }
 
 /// Rebuilds the transcript from the session file up to the holder's latest turn, then from the turn the holder replays.
@@ -102,18 +112,8 @@ pub async fn reattach(
     let mut transcript = Transcript::new(events, &chat.cwd);
     transcript.replaying = true;
     transcript.window = chat.context.map(|context| context.window);
-    if let Some(session) = &chat.agent_session
-        && let Some(contents) = session_file(env, session).and_then(|path| fs::read_to_string(path).ok())
-    {
-        for entry in contents.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
-            if turn.is_some() && entry["uuid"].as_str() == turn.as_deref() {
-                // A compaction recorded just before the replayed turn's prompt belongs to that turn, which replays it.
-                transcript.compacted = false;
-                break;
-            }
-            transcript.recorded(&entry);
-        }
-        transcript.compact();
+    if let Some(session) = &chat.agent_session {
+        transcript.history(env, session, turn.as_deref());
     }
     for message in replay {
         match message {
@@ -240,15 +240,67 @@ fn user(line: &[u8]) -> Option<Value> {
     serde_json::from_slice::<Value>(line).ok().filter(|message| message["type"] == "user")
 }
 
+/// The sessions Claude keeps for `cwd`, each with the first prompt found in its file's head.
+pub fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
+    let Some(config) = config_dir(env) else { return Ok(Vec::new()) };
+    let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let entries = match fs::read_dir(config.join("projects").join(name)) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        entries => entries?,
+    };
+    let mut sessions = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension() != Some("jsonl".as_ref()) {
+            continue;
+        }
+        let (Some(id), Some(prompt)) = (path.file_stem().and_then(|stem| stem.to_str()), first_prompt(&path)) else {
+            continue;
+        };
+        let Some(updated) = entry.metadata().and_then(|metadata| metadata.modified()).ok() else { continue };
+        let updated = updated.duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_millis() as u64;
+        sessions.push(Session::new(Agent::ClaudeCode, id, &prompt, updated));
+    }
+    Ok(sessions)
+}
+
+fn first_prompt(path: &Path) -> Option<String> {
+    let head = std::io::BufReader::new(File::open(path).ok()?.take(HEAD));
+    let entries = head.lines().map_while(Result::ok).filter_map(|line| serde_json::from_str::<Value>(&line).ok());
+    entries.filter(|entry| entry["type"] == "user" && entry["isMeta"] != true && entry["isSidechain"] != true).find_map(|entry| {
+        let text = match &entry["message"]["content"] {
+            Value::String(text) => text.clone(),
+            Value::Array(blocks) => blocks.iter().filter_map(|block| block["text"].as_str()).collect::<Vec<_>>().join("\n"),
+            _ => return None,
+        };
+        if text.starts_with("<command-message>") {
+            let args = tagged(&text, "command-args").unwrap_or_default();
+            return Some(format!("{} {args}", tagged(&text, "command-name")?).trim_end().to_owned());
+        }
+        // Local commands, their output, and notifications all arrive as user text wrapped in a tag.
+        (!text.is_empty() && !text.starts_with('<')).then_some(text)
+    })
+}
+
+fn tagged<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
+    let start = text.find(&format!("<{tag}>"))? + tag.len() + 2;
+    let end = start + text[start..].find(&format!("</{tag}>"))?;
+    Some(&text[start..end])
+}
+
 fn session_file(env: &BTreeMap<String, String>, session: &str) -> Option<PathBuf> {
-    let config = match env.get("CLAUDE_CONFIG_DIR") {
-        Some(dir) => PathBuf::from(dir),
+    let name = format!("{session}.jsonl");
+    let projects = fs::read_dir(config_dir(env)?.join("projects")).ok()?;
+    projects.flatten().map(|project| project.path().join(&name)).find(|path| path.is_file())
+}
+
+fn config_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
+    match env.get("CLAUDE_CONFIG_DIR") {
+        Some(dir) => Some(PathBuf::from(dir)),
         None => std::env::var_os("CLAUDE_CONFIG_DIR")
             .map(PathBuf::from)
-            .or_else(|| std::env::home_dir().map(|home| home.join(".claude")))?,
-    };
-    let name = format!("{session}.jsonl");
-    fs::read_dir(config.join("projects")).ok()?.flatten().map(|project| project.path().join(&name)).find(|path| path.is_file())
+            .or_else(|| std::env::home_dir().map(|home| home.join(".claude"))),
+    }
 }
 
 fn input(message: &Value) -> Vec<u8> {
@@ -307,6 +359,20 @@ impl Transcript {
             self.push(Item::User { text: text.to_owned(), images: 0 });
             self.report(Status::Working);
         }
+    }
+
+    /// Translates the session file's entries, up to the one whose uuid is `until`.
+    fn history(&mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>) {
+        let Some(contents) = session_file(env, session).and_then(|path| fs::read_to_string(path).ok()) else { return };
+        for entry in contents.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
+            if until.is_some() && entry["uuid"].as_str() == until {
+                // A compaction recorded just before the replayed turn's prompt belongs to that turn, which replays it.
+                self.compacted = false;
+                break;
+            }
+            self.recorded(&entry);
+        }
+        self.compact();
     }
 
     /// A compaction is recorded before the prompt that asked for it, so its notice waits for that prompt.

@@ -131,6 +131,40 @@ pub struct Chat {
     pub settings: AgentSettings,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Session {
+    pub agent: Agent,
+    pub session_id: String,
+    pub first_prompt: String,
+    pub updated_at: u64,
+}
+
+const PROMPT: usize = 200;
+
+impl Session {
+    fn new(agent: Agent, session_id: &str, prompt: &str, updated_at: u64) -> Self {
+        let first_prompt = prompt.chars().take(PROMPT).collect();
+        Self { agent, session_id: session_id.to_owned(), first_prompt, updated_at }
+    }
+}
+
+/// Both Agents' past sessions in `cwd`, newest first, found through each Agent's Rig.
+pub async fn sessions(cwd: &Path, claude: &Rig, codex: &Rig) -> Vec<Session> {
+    let mut sessions = Vec::new();
+    for (agent, listed) in [
+        (Agent::ClaudeCode, claude::sessions(cwd, &claude.env)),
+        (Agent::Codex, codex::sessions(cwd, &codex.env).await),
+    ] {
+        match listed {
+            Ok(listed) => sessions.extend(listed),
+            Err(error) => eprintln!("cannot list {} sessions: {error}", agent.name()),
+        }
+    }
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
+    sessions
+}
+
 #[derive(Clone)]
 pub enum Change {
     Chats(String),
@@ -184,7 +218,7 @@ impl Chats {
         self.list().into_iter().filter(|chat| chat.project_id == project_id).collect()
     }
 
-    pub async fn create(self: &Arc<Self>, project: &Project, rig: &Rig) -> io::Result<Chat> {
+    pub async fn create(self: &Arc<Self>, project: &Project, rig: &Rig, session: Option<&str>) -> io::Result<Chat> {
         let chat = Chat {
             id: format!("{:016x}", Uuid::new_v4().as_u64_pair().1),
             project_id: project.id.clone(),
@@ -192,7 +226,7 @@ impl Chats {
             agent: rig.agent,
             cwd: PathBuf::from(&project.path),
             created: SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_nanos(),
-            agent_session: None,
+            agent_session: session.map(str::to_owned),
             status: Status::Done,
             viewed_since_done: true,
             context: None,
@@ -202,7 +236,10 @@ impl Chats {
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
         let started = match rig.agent {
-            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env, &chat.settings)
+            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env, &chat.settings, session)
+                .await
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+            Agent::Codex if session.is_some() => codex::resume(&chat, &rig.env)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             Agent::Codex => codex::start(&chat.cwd, &rig.env, &chat.settings)

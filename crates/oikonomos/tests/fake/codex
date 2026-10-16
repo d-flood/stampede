@@ -9,6 +9,8 @@ from pathlib import Path
 
 stdin = sys.stdin.buffer
 stdout = sys.stdout.buffer
+HERE = '/tmp/oikonomos-chat'
+INTERACTIVE = ['cli', 'vscode']
 
 
 def fail(reason):
@@ -22,11 +24,15 @@ held = []
 logging = False
 
 
-def fixture():
-    name = os.environ.get('OIKONOMOS_FAKE_FIXTURE') or fail('OIKONOMOS_FAKE_FIXTURE is not set')
+def recorded(name, suffix):
     if '/' in name:
         return Path(name)
-    return FIXTURES / f'{name}.recorded.jsonl'
+    return FIXTURES / f'{name}.{suffix}'
+
+
+def fixture():
+    name = os.environ.get('OIKONOMOS_FAKE_FIXTURE') or fail('OIKONOMOS_FAKE_FIXTURE is not set')
+    return recorded(name, 'recorded.jsonl')
 
 
 def daemon():
@@ -106,8 +112,21 @@ def read(expected):
             usage = json.loads((FIXTURES / 'usage.recorded.jsonl').read_text().splitlines()[1])['stdout']
             send(dict(usage, id=message['id']))
             continue
+        if message.get('method') == 'thread/list' != expected.get('method'):
+            list_threads(message)
+            continue
         return message
     return None
+
+
+def list_threads(message):
+    params = message.get('params') or {}
+    name = os.environ.get('OIKONOMOS_FAKE_THREADS')
+    listed = json.loads(recorded(name, 'recorded.json').read_text().replace(HERE, os.getcwd())) if name else []
+    cwds = [params['cwd']] if isinstance(params.get('cwd'), str) else params.get('cwd')
+    kinds = params.get('sourceKinds') or INTERACTIVE
+    data = [thread for thread in listed if (cwds is None or thread['cwd'] in cwds) and thread['source'] in kinds]
+    send({'id': message['id'], 'result': {'data': data, 'nextCursor': None, 'backwardsCursor': None}})
 
 
 def send(message):
@@ -147,7 +166,7 @@ def proxy():
             message = read(entry['stdin'])
             if message is None:
                 sys.exit(0)
-            if message.get('method') == 'thread/resume':
+            if message.get('method') == 'thread/resume' and entry['stdin'].get('method') != 'thread/resume':
                 index = resume(entries, message['params']['threadId'])
                 entry = entries[index]
             check(message, entry['stdin'])
@@ -163,7 +182,7 @@ def proxy():
                 (threads() / message['result']['thread']['id']).write_text(str(index))
             send(message)
         index += 1
-    while receive() is not None:
+    while read({}) is not None:
         pass
 
 

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { ContextMenu, DropdownMenu } from 'bits-ui';
-	import type { Snippet } from 'svelte';
+	import type { Component, Snippet } from 'svelte';
 
-	type Item = { label: string; onselect: () => void; disabled?: boolean };
+	type Item = { label: string; onselect: () => void; disabled?: boolean; icon?: Component; hint?: string };
 	type Group = { heading: string; items: Item[] };
 	type Layer = { wrapperProps: Record<string, unknown>; props: Record<string, unknown> };
 
@@ -11,10 +11,14 @@
 	let { items, context = false, trigger, open = $bindable(false) }: Props = $props();
 </script>
 
-{#snippet item({ label, onselect, disabled }: Item)}
+{#snippet item({ label, onselect, disabled, icon: Icon, hint }: Item)}
 	<DropdownMenu.Item onSelect={onselect} {disabled}>
 		{#snippet child({ props })}
-			<div {...props} class="item">{label}</div>
+			<div {...props} class="item">
+				{#if Icon}<Icon />{/if}
+				<span class="label">{label}</span>
+				{#if hint}<span class="hint">{hint}</span>{/if}
+			</div>
 		{/snippet}
 	</DropdownMenu.Item>
 {/snippet}
@@ -23,6 +27,13 @@
 	<div {...wrapperProps}>
 		<div {...props} class="menu">
 			{#each items as entry, index}
+				{#if index > 0 && ('heading' in entry || 'heading' in items[index - 1])}
+					<DropdownMenu.Separator>
+						{#snippet child({ props })}
+							<div {...props} class="separator"></div>
+						{/snippet}
+					</DropdownMenu.Separator>
+				{/if}
 				{#if 'heading' in entry}
 					<DropdownMenu.Group>
 						<DropdownMenu.GroupHeading>
@@ -30,17 +41,10 @@
 								<div {...props} class="heading">{entry.heading}</div>
 							{/snippet}
 						</DropdownMenu.GroupHeading>
-						{#each entry.items as grouped (grouped.label)}
+						{#each entry.items as grouped}
 							{@render item(grouped)}
 						{/each}
 					</DropdownMenu.Group>
-					{#if index < items.length - 1}
-						<DropdownMenu.Separator>
-							{#snippet child({ props })}
-								<div {...props} class="separator"></div>
-							{/snippet}
-						</DropdownMenu.Separator>
-					{/if}
 				{:else}
 					{@render item(entry)}
 				{/if}
@@ -76,6 +80,7 @@
 <style>
 	.menu {
 		min-width: 10rem;
+		max-width: min(24rem, 100vw - 2 * var(--space-2));
 		padding: var(--space-1);
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-md);
@@ -90,11 +95,30 @@
 	.item {
 		display: flex;
 		align-items: center;
+		gap: var(--space-2);
 		min-height: var(--target-min);
 		padding: 0 var(--space-2);
 		border-radius: var(--radius-sm);
 		cursor: pointer;
 		outline: none;
+	}
+
+	.item :global(svg) {
+		flex: none;
+	}
+
+	.label {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.hint {
+		flex: none;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
 	}
 
 	.heading {

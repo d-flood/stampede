@@ -1,0 +1,126 @@
+[
+ {
+  "id": "01a1466c-11c9-7151-ac0b-539796acb463",
+  "environments": null,
+  "extra": null,
+  "sessionId": "01a1466c-11c9-7151-ac0b-539796acb463",
+  "forkedFromId": null,
+  "parentThreadId": null,
+  "preview": "Reply with exactly: ok",
+  "ephemeral": false,
+  "section": null,
+  "sectionEnteredAt": null,
+  "projectId": null,
+  "historyMode": "paginated",
+  "modelProvider": "openai",
+  "model": "gpt-6.1-sol",
+  "reasoningEffort": "high",
+  "createdAt": 1792182849,
+  "updatedAt": 1792182853,
+  "recencyAt": 1792182850,
+  "status": {
+   "type": "notLoaded"
+  },
+  "path": "/home/user/.codex/sessions/2026/10/16/rollout-2026-10-16T15-34-09-01a1466c-11c9-7151-ac0b-539796acb463.jsonl",
+  "cwd": "/tmp/oikonomos-chat",
+  "cliVersion": "0.163.0",
+  "originator": "codex_exec",
+  "source": "exec",
+  "canAcceptDirectInput": null,
+  "threadSource": null,
+  "agentNickname": null,
+  "agentRole": null,
+  "gitInfo": null,
+  "name": null,
+  "daybreakEnabled": null,
+  "turns": []
+ },
+ {
+  "id": "01a1466b-fe86-7280-931d-fb5403fa449b",
+  "environments": [
+   {
+    "environmentId": "local",
+    "cwd": "/tmp/oikonomos-chat",
+    "runtimeWorkspaceRoots": [
+     "/tmp/oikonomos-chat"
+    ]
+   }
+  ],
+  "extra": null,
+  "sessionId": "01a1466b-fe86-7280-931d-fb5403fa449b",
+  "forkedFromId": null,
+  "parentThreadId": null,
+  "preview": "Say hi in three words.",
+  "ephemeral": false,
+  "section": null,
+  "sectionEnteredAt": null,
+  "projectId": null,
+  "historyMode": "paginated",
+  "modelProvider": "openai",
+  "model": "gpt-6.1-sol",
+  "reasoningEffort": "high",
+  "createdAt": 1792182845,
+  "updatedAt": 1792182848,
+  "recencyAt": 1792182845,
+  "status": {
+   "type": "idle"
+  },
+  "path": "/home/user/.codex/sessions/2026/10/16/rollout-2026-10-16T15-34-05-01a1466b-fe86-7280-931d-fb5403fa449b.jsonl",
+  "cwd": "/tmp/oikonomos-chat",
+  "cliVersion": "0.163.0",
+  "originator": "codex-tui",
+  "source": "vscode",
+  "canAcceptDirectInput": null,
+  "threadSource": null,
+  "agentNickname": null,
+  "agentRole": null,
+  "gitInfo": null,
+  "name": null,
+  "daybreakEnabled": null,
+  "turns": []
+ },
+ {
+  "id": "01a1466c-28a7-7c02-ae31-c23a08149520",
+  "environments": [
+   {
+    "environmentId": "local",
+    "cwd": "/tmp/oikonomos-elsewhere",
+    "runtimeWorkspaceRoots": [
+     "/tmp/oikonomos-elsewhere"
+    ]
+   }
+  ],
+  "extra": null,
+  "sessionId": "01a1466c-28a7-7c02-ae31-c23a08149520",
+  "forkedFromId": null,
+  "parentThreadId": null,
+  "preview": "Reply with exactly: elsewhere",
+  "ephemeral": false,
+  "section": null,
+  "sectionEnteredAt": null,
+  "projectId": null,
+  "historyMode": "paginated",
+  "modelProvider": "openai",
+  "model": "gpt-6.1-sol",
+  "reasoningEffort": "high",
+  "createdAt": 1792182855,
+  "updatedAt": 1792182858,
+  "recencyAt": 1792182855,
+  "status": {
+   "type": "idle"
+  },
+  "path": "/home/user/.codex/sessions/2026/10/16/rollout-2026-10-16T15-34-15-01a1466c-28a7-7c02-ae31-c23a08149520.jsonl",
+  "cwd": "/tmp/oikonomos-elsewhere",
+  "cliVersion": "0.163.0",
+  "originator": "codex-tui",
+  "source": "vscode",
+  "canAcceptDirectInput": null,
+  "threadSource": null,
+  "agentNickname": null,
+  "agentRole": null,
+  "gitInfo": null,
+  "name": null,
+  "daybreakEnabled": null,
+  "turns": []
+ }
+]

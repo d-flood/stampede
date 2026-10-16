@@ -1,15 +1,17 @@
 <script lang="ts" module>
-	export type Scope = 'all' | 'files';
+	export type Scope = 'all' | 'files' | 'sessions';
 	export type Action = { label: string; run(): void };
 </script>
 
 <script lang="ts">
+	import { ago, logos } from '#lib/chat/sessions.ts';
 	import { launchers, rigs, type Launcher } from '#lib/config.svelte.ts';
-	import type { Project } from '#lib/device.svelte.ts';
+	import type { Project, Session } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { split } from '#lib/git.ts';
 	import { Command } from 'bits-ui';
 	import fuzzysort, { type Key } from 'fuzzysort';
+	import type { Component } from 'svelte';
 
 	type Props = {
 		scope: Scope;
@@ -17,13 +19,15 @@
 		labels: Map<string, string>;
 		focused?: Project;
 		actions?: Action[];
+		sessions?: Session[];
 		onproject(projectId: string): void;
 		onrig(launcher: Launcher): void;
 		onfile(path: string): void;
+		onsession(session: Session): void;
 	};
-	type Entry = { value: string; label: string; parent?: string; onselect(): void };
+	type Entry = { value: string; label: string; parent?: string; icon?: Component; hint?: string; onselect(): void };
 
-	let { scope, projects, labels, focused, actions = [], onproject, onrig, onfile }: Props = $props();
+	let { scope, projects, labels, focused, actions = [], sessions = [], onproject, onrig, onfile, onsession }: Props = $props();
 
 	let query = $state('');
 
@@ -57,6 +61,16 @@
 		},
 		{ heading: 'Files', entries: files },
 		{
+			heading: 'Sessions',
+			entries: find(scope === 'sessions' ? sessions : [], (session) => session.firstPrompt).map((session) => ({
+				value: `session:${session.sessionId}`,
+				label: session.firstPrompt,
+				icon: logos[session.agent],
+				hint: ago(session.updatedAt),
+				onselect: () => onsession(session)
+			}))
+		},
+		{
 			heading: 'Commands',
 			entries: find(all ? actions : [], (action) => action.label).map((action) => ({
 				value: `command:${action.label}`,
@@ -71,9 +85,9 @@
 	}
 </script>
 
-<Command.Root label={all ? 'Command Palette' : 'Open File'} shouldFilter={false} loop>
+<Command.Root label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions' }[scope]} shouldFilter={false} loop>
 	<Command.Input
-		placeholder={all ? 'Switch Project, launch a Rig, or open a file' : 'Find a file'}
+		placeholder={{ all: 'Switch Project, launch a Rig, or open a file', files: 'Find a file', sessions: 'Find a session by its first prompt' }[scope]}
 		autocomplete="off"
 		spellcheck={false}
 	>
@@ -94,12 +108,14 @@
 									{/snippet}
 								</Command.GroupHeading>
 								<Command.GroupItems>
-									{#each entries as { value, label, parent, onselect } (value)}
+									{#each entries as { value, label, parent, icon: Icon, hint, onselect } (value)}
 										<Command.Item {value} onSelect={onselect}>
 											{#snippet child({ props })}
 												<div {...props} class="item">
+													{#if Icon}<Icon />{/if}
 													{#if parent === undefined}
-														{label}
+														<span class="label">{label}</span>
+														{#if hint}<span class="hint">{hint}</span>{/if}
 													{:else}
 														<span class="path"><span class="parent">{parent}</span><span class="name">{label}</span></span>
 													{/if}
@@ -112,7 +128,7 @@
 						{/if}
 					{/each}
 					{#if groups.every(({ entries }) => !entries.length)}
-						<p class="empty">{query ? 'No matches' : 'Type to find a file'}</p>
+						<p class="empty">{query ? 'No matches' : scope === 'sessions' ? 'No past sessions' : 'Type to find a file'}</p>
 					{/if}
 				</Command.Viewport>
 			</div>
@@ -156,11 +172,29 @@
 	.item {
 		display: flex;
 		align-items: center;
+		gap: var(--space-2);
 		min-height: var(--target-min);
 		padding: 0 var(--space-2);
 		border-radius: var(--radius-sm);
 		cursor: pointer;
 		white-space: nowrap;
+	}
+
+	.item :global(svg) {
+		flex: none;
+	}
+
+	.label {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.hint {
+		flex: none;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
 	}
 
 	.item[data-selected] {

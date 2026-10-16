@@ -44,6 +44,8 @@ export type Chat = {
 
 export type Reading = { agent: Agent; window: 'five-hour' | 'weekly'; used: number; resetsAt?: number; readAt: number };
 
+export type Session = { agent: Agent; sessionId: string; firstPrompt: string; updatedAt: number };
+
 export type Attention = { projectId: string; label: string; status: Status } & ({ terminalId: string } | { chatId: string });
 
 export function tabOf(item: Attention): string {
@@ -78,6 +80,7 @@ export type ServerMessage =
 	| { type: 'chat.item'; chatId: string; index: number; item: Item }
 	| { type: 'chat.status'; chatId: string; status: Status }
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
+	| { type: 'sessions.listed'; projectId: string; sessions: Session[] }
 	| { type: 'config.changed' }
 	| { type: 'projects.changed'; projects: Project[] }
 	| { type: 'project.opened'; projectId: string }
@@ -105,6 +108,8 @@ export type ClientMessage =
 	| { type: 'terminal.focus'; terminalId: string }
 	| { type: 'terminal.detach'; channel: number }
 	| { type: 'chat.create'; projectId: string; rig: string }
+	| { type: 'chat.resume'; projectId: string; agent: Agent; sessionId: string }
+	| { type: 'sessions.list'; projectId: string }
 	| { type: 'chat.send'; chatId: string; text: string }
 	| { type: 'chat.close' | 'chat.attach' | 'chat.detach'; chatId: string }
 	| { type: 'projects.list' }

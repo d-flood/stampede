@@ -1,6 +1,7 @@
 import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test, type Locator } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, utimesSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { openProject, showSidebar } from './shell.ts';
 
 test('a Claude Code Chat streams its reply, shows done, and asks before closing while working', async ({ page }, { project }) => {
@@ -231,6 +232,46 @@ test('each Rig launches as a TUI or a Chat, the Chat first on the phone and the 
 	await page.keyboard.press('c');
 	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveAttribute('aria-selected', 'true');
 	expect(created).toEqual([phone ? 'chat.create' : 'terminal.create']);
+});
+
+test('past sessions of both Agents are listed newest first, searchable, and reopen as a Chat', async ({ page }, { project }) => {
+	const name = `sessions-${project.name}`;
+	const root = process.env.OIKONOMOS_E2E_ROOT;
+	const path = `${root}/projects/${name}`;
+	mkdirSync(path, { recursive: true });
+	const sessions = `${root}/claude/projects/${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+	mkdirSync(sessions, { recursive: true });
+	const session = '9afa077a-3173-4e49-9197-7ed54344b24e';
+	const fixture = new URL(`../../crates/oikonomos/tests/fixtures/chats/claude-code/sessions/${session}.jsonl`, import.meta.url);
+	copyFileSync(fileURLToPath(fixture), `${sessions}/${session}.jsonl`);
+	utimesSync(`${sessions}/${session}.jsonl`, new Date(), new Date());
+	await openProject(page, name);
+
+	const newTab = page.getByRole('button', { name: 'New Tab' });
+	const listed = page.getByRole('group', { name: 'Sessions' }).getByRole('menuitem');
+	await newTab.click();
+	await expect(listed).toHaveText([/Name a color in one word\./, /Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
+	await listed.getByText('Search sessions…').click();
+	const palette = page.getByRole('dialog', { name: 'Past Sessions' });
+	await palette.getByPlaceholder('Find a session by its first prompt').fill('three');
+	await expect(palette.getByRole('option')).toHaveText([/Say hi in three words\./]);
+	await page.keyboard.press('Escape');
+	await expect(palette).toBeHidden();
+
+	await newTab.click();
+	await listed.filter({ hasText: 'Name a color in one word.' }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await expect(panel.getByText('Name a color in one word.')).toBeVisible();
+	await expect(panel.getByText('Crimson')).toBeVisible();
+
+	await newTab.click();
+	await expect(listed).toHaveText([/Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
+	await page.keyboard.press('Escape');
+	await tab.click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await expect(tab).toHaveCount(0);
 });
 
 /** Runs a Chat's turn to done from a second Device that shows nothing. */

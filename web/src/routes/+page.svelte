@@ -1,7 +1,18 @@
 <script lang="ts">
 	import { version } from '$app/env';
+	import { ago, logos } from '#lib/chat/sessions.ts';
 	import { launchers, rigs, type Launcher } from '#lib/config.svelte.ts';
-	import { connect, tabOf, type Attention, type Chat, type Project, type Reading, type ServerMessage, type Terminal } from '#lib/device.svelte.ts';
+	import {
+		connect,
+		tabOf,
+		type Attention,
+		type Chat,
+		type Project,
+		type Reading,
+		type ServerMessage,
+		type Session,
+		type Terminal
+	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -36,6 +47,7 @@
 	import TerminalWindow from '~icons/ph/terminal-window';
 	import WifiSlash from '~icons/ph/wifi-slash';
 
+	const RECENT = 5;
 	const editor = () => import('#lib/shell/Editor.svelte');
 	afterPaint(editor);
 	const restored = restore();
@@ -43,6 +55,7 @@
 	let projects = $state<Project[]>([]);
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let chats = $state<Record<string, Chat[]>>({});
+	let sessions = $state<Record<string, Session[]>>({});
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
 	let visible = $state(document.visibilityState === 'visible');
@@ -186,6 +199,9 @@
 				place(message.chat.projectId, message.chat.id);
 				choose(message.chat.projectId, message.chat.id);
 				break;
+			case 'sessions.listed':
+				sessions[message.projectId] = message.sessions;
+				break;
 			case 'terminal.title':
 				for (const terminal of Object.values(terminals).flat()) {
 					if (terminal.id === message.terminalId) terminal.label = message.label;
@@ -312,7 +328,20 @@
 			.map((launcher) => ({ label: launcher.label, onselect: () => launch(launcher, projectId) }));
 		const terminal = () => device.send({ type: 'terminal.create', projectId });
 		const rest = [{ label: 'Terminal', onselect: terminal }, { label: 'Open file', onselect: () => openPalette('files') }];
-		return items.length ? [{ heading: 'Rigs', items }, ...rest] : rest;
+		const recent = (sessions[projectId] ?? []).slice(0, RECENT).map((session) => ({
+			label: session.firstPrompt,
+			icon: logos[session.agent],
+			hint: ago(session.updatedAt),
+			onselect: () => reopen(projectId, session)
+		}));
+		const past = recent.length
+			? [{ heading: 'Sessions', items: [...recent, { label: 'Search sessions…', onselect: () => (palette = 'sessions') }] }]
+			: [];
+		return [...(items.length ? [{ heading: 'Rigs', items }] : []), ...rest, ...past];
+	}
+
+	function reopen(projectId: string, { agent, sessionId }: Session) {
+		device.send({ type: 'chat.resume', projectId, agent, sessionId });
 	}
 
 	function launch({ rig, chat }: Launcher, projectId = focused?.id) {
@@ -600,7 +629,8 @@
 					{/if}
 				</div>
 				{#if focused}
-					<Menu items={newTab(focused.id)}>
+					{@const projectId = focused.id}
+					<Menu items={newTab(projectId)} onopen={() => device.send({ type: 'sessions.list', projectId })}>
 						{#snippet trigger(props)}
 							<IconButton {...props} label="New Tab"><Plus /></IconButton>
 						{/snippet}
@@ -788,7 +818,7 @@
 
 <Dialog
 	bind:open={() => !!palette, (open) => !open && (palette = undefined)}
-	title={palette === 'files' ? 'Open File' : 'Command Palette'}
+	title={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions' }[palette ?? 'all']}
 >
 	{#if palette}
 		{#await import('#lib/shell/Palette.svelte') then { default: Palette }}
@@ -798,9 +828,11 @@
 				labels={projectLabels}
 				{focused}
 				actions={[{ label: 'Open config', run: openConfig }]}
+				sessions={focused && sessions[focused.id]}
 				onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
 				onrig={(launcher) => (launch(launcher), (palette = undefined))}
 				onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
+				onsession={(session) => focused && (reopen(focused.id, session), (palette = undefined))}
 			/>
 		{/await}
 	{/if}

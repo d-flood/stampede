@@ -21,13 +21,13 @@ done
 "${alpha[@]}" add .
 "${alpha[@]}" commit -qm "Initial commit"
 echo "roots = [\"$OIKONOMOS_E2E_ROOT/projects\"]" > "$OIKONOMOS_E2E_ROOT/config.toml"
-cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<'EOF'
+cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
 
 [[rig]]
 name = "Fake Claude"
 agent = "claude-code"
 command = "claude"
-env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn" }
+env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
 shortcut = "c"
 EOF
 cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
@@ -36,7 +36,7 @@ cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
 name = "Fake Codex"
 agent = "codex"
 command = "codex"
-env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
+env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn", OIKONOMOS_FAKE_THREADS = "threads", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
 
 [[rig]]
 name = "Fake Claude Tools"

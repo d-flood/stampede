@@ -282,6 +282,29 @@ impl Config {
         })
     }
 
+    /// The first Rig for an Agent, or the Agent's defaults when no Rig runs it.
+    pub fn rig_for(&self, agent: Agent) -> Rig {
+        if let Some(rig) = self.rigs.iter().find(|rig| rig.agent == agent) {
+            return rig.clone();
+        }
+        let (name, command) = match agent {
+            Agent::ClaudeCode => ("Claude Code", "claude"),
+            Agent::Codex => ("Codex", "codex"),
+        };
+        Rig {
+            name: name.to_owned(),
+            agent,
+            command: command.to_owned(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            resume: None,
+            shortcut: None,
+            model: None,
+            effort: None,
+            mode: None,
+        }
+    }
+
     fn load(path: &Path) -> Result<Self, Error> {
         let text = match fs::read_to_string(path) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),

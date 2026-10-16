@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         Arc,
@@ -27,13 +27,13 @@ use crate::{
     AppState,
     attention::{Attention, Feed},
     chats::{self, Chats},
-    config::Config,
+    config::{Agent, Config},
     holder::Owner,
     language_servers::{self, Input, LanguageServers, Server, Switch},
     projects::{self, Projects},
     protocol::Size,
     search,
-    terminals::{Attachment, Change, Terminals},
+    terminals::{self, Attachment, Change, Terminals},
     usage::{Reading, Usage},
 };
 
@@ -61,6 +61,10 @@ enum Control {
     Detach { channel: u32 },
     #[serde(rename = "chat.create")]
     CreateChat { project_id: String, rig: String },
+    #[serde(rename = "chat.resume")]
+    ResumeChat { project_id: String, agent: Agent, session_id: String },
+    #[serde(rename = "sessions.list")]
+    ListSessions { project_id: String },
     #[serde(rename = "chat.send")]
     SendChat { chat_id: String, text: String },
     #[serde(rename = "chat.close")]
@@ -326,11 +330,23 @@ impl Device {
                 let Some(rig) = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned() else {
                     return eprintln!("cannot launch rig {rig} as a chat: not in the config");
                 };
-                match self.chats.create(project, &rig).await {
+                match self.chats.create(project, &rig, None).await {
                     Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
                     Err(error) => eprintln!("cannot create a chat: {error}"),
                 }
             }
+            Control::ResumeChat { project_id, agent, session_id } => {
+                let projects = self.projects.list();
+                let Some(project) = projects.iter().find(|project| project.id == project_id) else {
+                    return eprintln!("cannot resume a chat in {project_id}: not open");
+                };
+                let rig = self.config.borrow().rig_for(agent);
+                match self.chats.create(project, &rig, Some(&session_id)).await {
+                    Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
+                    Err(error) => eprintln!("cannot resume session {session_id}: {error}"),
+                }
+            }
+            Control::ListSessions { project_id } => self.list_sessions(project_id),
             Control::SendChat { chat_id, text } => self.chats.send(&chat_id, &text),
             Control::CloseChat { chat_id } => self.chats.close(&chat_id),
             Control::AttachChat { chat_id } => self.attach_chat(chat_id),
@@ -555,6 +571,27 @@ impl Device {
         let Some((seq, items)) = self.chats.attach(&chat_id) else { return };
         send(&self.outgoing, json!({ "type": "chat.items", "chatId": chat_id, "items": items }));
         self.attached.insert(chat_id, seq);
+    }
+
+    /// Lists the Project's past sessions, leaving out those live in a Chat or a TUI.
+    fn list_sessions(&self, project_id: String) {
+        let projects = self.projects.list();
+        let Some(project) = projects.iter().find(|project| project.id == project_id) else {
+            return eprintln!("cannot list sessions in {project_id}: not open");
+        };
+        let cwd = PathBuf::from(&project.path);
+        let config = self.config.borrow();
+        let (claude, codex) = (config.rig_for(Agent::ClaudeCode), config.rig_for(Agent::Codex));
+        drop(config);
+        let tuis = self.terminals.list().into_iter().filter(|terminal| terminal.state == terminals::State::Live);
+        let chats = self.chats.list().into_iter().map(|chat| chat.agent_session);
+        let live: HashSet<String> = chats.chain(tuis.map(|tui| tui.agent_session)).flatten().collect();
+        let outgoing = self.outgoing.clone();
+        tokio::spawn(async move {
+            let mut sessions = chats::sessions(&cwd, &claude, &codex).await;
+            sessions.retain(|session| !live.contains(&session.session_id));
+            send(&outgoing, json!({ "type": "sessions.listed", "projectId": project_id, "sessions": sessions }));
+        });
     }
 
     fn chats_changed(&self, project_id: &str) {
