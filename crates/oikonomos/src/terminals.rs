@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs, io,
     path::{Path, PathBuf},
     process::Stdio,
@@ -37,7 +37,7 @@ pub struct Terminals {
     terminals: Mutex<Vec<(String, Slot)>>,
     changed: broadcast::Sender<Change>,
     titles: broadcast::Sender<(String, String)>,
-    views: Mutex<HashMap<Uuid, String>>,
+    views: Mutex<HashMap<Uuid, (Option<String>, String)>>,
     attention: watch::Sender<Vec<Attention>>,
 }
 
@@ -379,10 +379,10 @@ impl Terminals {
         self.refresh_attention();
     }
 
-    pub fn view(&self, connection: Uuid, terminal_id: Option<String>) {
+    pub fn view(&self, connection: Uuid, browser: Option<String>, terminal_id: Option<String>) {
         let entry = terminal_id.as_deref().and_then(|id| self.get(id));
         match terminal_id {
-            Some(id) => self.views.lock().unwrap().insert(connection, id),
+            Some(id) => self.views.lock().unwrap().insert(connection, (browser, id)),
             None => self.views.lock().unwrap().remove(&connection),
         };
         if entry.is_some_and(|entry| entry.view()) {
@@ -391,7 +391,17 @@ impl Terminals {
     }
 
     fn shown(&self, id: &str) -> bool {
-        self.views.lock().unwrap().values().any(|shown| shown == id)
+        self.views.lock().unwrap().values().any(|(_, shown)| shown == id)
+    }
+
+    pub fn showing(&self, id: &str) -> HashSet<String> {
+        let views = self.views.lock().unwrap();
+        views.values().filter(|(_, shown)| shown == id).filter_map(|(browser, _)| browser.clone()).collect()
+    }
+
+    pub fn item(&self, id: &str) -> Option<Attention> {
+        let terminal = self.get(id)?.terminal.lock().unwrap().clone();
+        Attention::of(Terminal { needs_attention: true, ..terminal })
     }
 
     fn refresh_attention(&self) {

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Attention } from '#lib/device.ts';
+	import { enable, notifications, type Notifications } from '#lib/push.ts';
 	import Badge from '#lib/ui/Badge.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import { DropdownMenu } from 'bits-ui';
@@ -8,6 +9,15 @@
 	type Props = { items: Attention[]; projects: Map<string, string>; onselect(item: Attention): void };
 
 	let { items, projects, onselect }: Props = $props();
+
+	const labels = { off: 'Enable notifications', on: 'Notifications on', blocked: 'Notifications blocked' };
+
+	let push = $state<Notifications>('unsupported');
+	notifications().then((state) => (push = state));
+
+	async function notify() {
+		push = await enable();
+	}
 </script>
 
 <DropdownMenu.Root>
@@ -46,6 +56,19 @@
 								<div class="empty">Nothing needs attention</div>
 							{/each}
 						</DropdownMenu.Group>
+						{#if push !== 'unsupported'}
+							{@const label = labels[push]}
+							<DropdownMenu.Separator>
+								{#snippet child({ props })}
+									<div {...props} class="separator"></div>
+								{/snippet}
+							</DropdownMenu.Separator>
+							<DropdownMenu.Item disabled={push !== 'off'} onSelect={notify}>
+								{#snippet child({ props })}
+									<div {...props} class="item">{label}</div>
+								{/snippet}
+							</DropdownMenu.Item>
+						{/if}
 					</div>
 				</div>
 			{/snippet}
@@ -104,6 +127,16 @@
 
 	.item[data-highlighted] {
 		background: var(--hover);
+	}
+
+	.item[data-disabled] {
+		color: var(--muted-fg);
+		cursor: default;
+	}
+
+	.separator {
+		margin: var(--space-1) 0;
+		border-top: var(--border-width) solid var(--border);
 	}
 
 	.label {

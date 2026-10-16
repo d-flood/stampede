@@ -32,7 +32,7 @@ const INPUT: u8 = 2;
 #[serde(tag = "type", rename_all_fields = "camelCase")]
 enum Control {
     #[serde(rename = "hello")]
-    Hello { device_id: String },
+    Hello { device_id: String, browser_id: Option<String> },
     #[serde(rename = "terminal.create")]
     Create { project_id: Option<String>, owner: Option<Owner>, rig: Option<String> },
     #[serde(rename = "terminal.close")]
@@ -67,6 +67,7 @@ pub async fn upgrade(State(state): State<AppState>, upgrade: WebSocketUpgrade) -
 
 struct Device {
     id: String,
+    browser: Option<String>,
     connection: Uuid,
     terminals: Arc<Terminals>,
     projects: Arc<Projects>,
@@ -77,7 +78,7 @@ struct Device {
     attachments: JoinSet<()>,
 }
 
-async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, disk, git }: AppState) {
+async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, disk, git, .. }: AppState) {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = mpsc::unbounded_channel();
     let writer = tokio::spawn(async move {
@@ -95,6 +96,7 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
     let mut git = git.subscribe();
     let mut device = Device {
         id: Uuid::new_v4().to_string(),
+        browser: None,
         connection: Uuid::new_v4(),
         terminals,
         projects,
@@ -164,15 +166,16 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config, 
             },
         }
     }
-    device.terminals.view(device.connection, None);
+    device.terminals.view(device.connection, None, None);
     writer.abort();
 }
 
 impl Device {
     async fn control(&mut self, control: Control) {
         match control {
-            Control::Hello { device_id } => {
+            Control::Hello { device_id, browser_id } => {
                 self.id = device_id;
+                self.browser = browser_id;
                 let hello = json!({
                     "type": "hello",
                     "version": env!("CARGO_PKG_VERSION"),
@@ -244,7 +247,9 @@ impl Device {
                 let directories = projects::directories(&roots);
                 send(&self.outgoing, json!({ "type": "picker.listed", "directories": directories }));
             }
-            Control::View { terminal_id } => self.terminals.view(self.connection, terminal_id),
+            Control::View { terminal_id } => {
+                self.terminals.view(self.connection, self.browser.clone(), terminal_id)
+            }
         }
     }
 

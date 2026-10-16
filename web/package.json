@@ -10,7 +10,7 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc -p src/service-worker"
 	},
 	"devDependencies": {
 		"@codemirror/commands": "^6.11.1",

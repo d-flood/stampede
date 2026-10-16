@@ -35,7 +35,7 @@ export type ServerMessage =
 	| { type: 'git.changed'; projectId: string };
 
 export type ClientMessage =
-	| { type: 'hello'; deviceId: string }
+	| { type: 'hello'; deviceId: string; browserId: string }
 	| { type: 'terminal.create'; projectId: string; rig?: string }
 	| { type: 'terminal.create'; owner: 'drawer' }
 	| { type: 'terminal.close'; terminalId: string }
@@ -75,6 +75,15 @@ function deviceId(): string {
 	return id;
 }
 
+export function browserId(): string {
+	let id = localStorage.getItem('browserId');
+	if (!id) {
+		id = crypto.randomUUID();
+		localStorage.setItem('browserId', id);
+	}
+	return id;
+}
+
 export function connect(): Device {
 	const id = deviceId();
 	const listeners = new Set<Listener>();
@@ -84,7 +93,7 @@ export function connect(): Device {
 	function open() {
 		socket = new WebSocket(new URL('/ws', location.href.replace(/^http/, 'ws')));
 		socket.binaryType = 'arraybuffer';
-		socket.onopen = () => send({ type: 'hello', deviceId: id });
+		socket.onopen = () => send({ type: 'hello', deviceId: id, browserId: browserId() });
 		socket.onmessage = ({ data }) => {
 			if (typeof data === 'string') {
 				const message: ServerMessage = JSON.parse(data);

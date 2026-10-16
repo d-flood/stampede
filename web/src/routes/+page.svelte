@@ -50,10 +50,17 @@
 
 	$effect(() => device.send({ type: 'device.view', terminalId: shown }));
 
+	const query = new URLSearchParams(location.search);
+	const [queryProject, queryTerminal] = [query.get('project'), query.get('terminal')];
+	if (queryProject && queryTerminal) attend({ projectId: queryProject, terminalId: queryTerminal });
+
 	onMount(() => {
 		const unlisten = device.listen({ message });
+		const notified = ({ data }: MessageEvent<Attention>) => attend(data);
+		navigator.serviceWorker?.addEventListener('message', notified);
 		return () => {
 			unlisten();
+			navigator.serviceWorker?.removeEventListener('message', notified);
 			device.close();
 		};
 	});
@@ -117,7 +124,7 @@
 		}
 	}
 
-	function attend({ projectId, terminalId }: Attention) {
+	function attend({ projectId, terminalId }: Pick<Attention, 'projectId' | 'terminalId'>) {
 		chosen = projectId;
 		chosenTabs[projectId] = terminalId;
 	}
