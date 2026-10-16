@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::{self, Sender},
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use libghostty_vt::{
@@ -25,10 +25,14 @@ use nix::{
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{self, Hello, Message, Size};
+use crate::{
+    config::Agent,
+    protocol::{self, Foreground, Hello, Message, Size},
+};
 
 const SCROLLBACK_LINES: usize = 10_000;
 const MAX_CONTINUATION: usize = 1 << 20;
+const FOREGROUND_POLL: Duration = Duration::from_millis(100);
 
 #[derive(clap::Args)]
 pub struct HoldArgs {
@@ -40,6 +44,10 @@ pub struct HoldArgs {
     pub cwd: Option<PathBuf>,
     #[arg(long)]
     pub project: Option<String>,
+    #[arg(long, requires = "agent")]
+    pub rig: Option<String>,
+    #[arg(long, requires = "rig")]
+    pub agent: Option<Agent>,
     #[arg(last = true, required = true)]
     pub command: Vec<String>,
 }
@@ -59,6 +67,10 @@ pub struct Record {
     pub owner: Owner,
     #[serde(default)]
     pub created: u128,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rig: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<Agent>,
     pub cwd: PathBuf,
     pub command: Vec<String>,
     pub size: Size,
@@ -108,6 +120,8 @@ pub fn hold(args: HoldArgs) -> Result<(), Box<dyn Error>> {
         id: args.id,
         owner: args.project.map_or(Owner::Drawer, Owner::Project),
         created: SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
+        rig: args.rig,
+        agent: args.agent,
         command: args.command,
         size: Size { cols: 80, rows: 24 },
         protocol: protocol::VERSION,
@@ -128,6 +142,7 @@ enum Event {
     Connected(UnixStream),
     Received(u64, Message),
     Closed(u64),
+    Tick,
 }
 
 struct Conn {
@@ -165,6 +180,12 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
     });
     let tx = events.clone();
     thread::spawn(move || {
+        while tx.send(Event::Tick).is_ok() {
+            thread::sleep(FOREGROUND_POLL);
+        }
+    });
+    let tx = events.clone();
+    thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             if tx.send(Event::Connected(stream)).is_err() {
                 break;
@@ -192,6 +213,12 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
             }
         })?;
 
+    let launching = [
+        record.command.iter().flat_map(|arg| arg.bytes().chain([0])).collect(),
+        fs::read("/proc/self/cmdline")?,
+        Vec::new(),
+    ];
+    let mut is_root_shell = record.rig.is_none();
     let mut conns: HashMap<u64, Conn> = HashMap::new();
     let mut next_id = 0;
     for event in received {
@@ -207,6 +234,8 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
             Event::Connected(stream) => {
                 next_id += 1;
                 if let Ok(conn) = connect(next_id, stream, events.clone()) {
+                    let foreground = Message::ForegroundChanged(Foreground { is_root_shell });
+                    let _ = conn.frames.send(protocol::encode(&foreground));
                     conns.insert(next_id, conn);
                 }
             }
@@ -240,6 +269,29 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
             Event::Received(..) => {}
             Event::Closed(id) => {
                 conns.remove(&id);
+            }
+            Event::Tick => {
+                let Some(leader) = pty.master.process_group_leader() else { continue };
+                let root = pid.is_some_and(|pid| pid as i32 == leader);
+                // The Agent has exited only once the launch shell execs the interactive one; until
+                // then its argv is the launch command, this holder's (pre-exec), or empty (mid-exec).
+                if root
+                    && record.rig.is_some()
+                    && fs::read(format!("/proc/{leader}/cmdline"))
+                        .is_ok_and(|argv| !launching.contains(&argv))
+                {
+                    record.rig = None;
+                    record.agent = None;
+                    let _ = files.write_record(record);
+                }
+                let now = root && record.rig.is_none();
+                if now != is_root_shell {
+                    is_root_shell = now;
+                    let frame = protocol::encode(&Message::ForegroundChanged(Foreground { is_root_shell }));
+                    for conn in conns.values() {
+                        let _ = conn.frames.send(frame.clone());
+                    }
+                }
             }
         }
     }

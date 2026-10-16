@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -20,11 +21,12 @@ struct Settings {
     roots: Vec<PathBuf>,
     theme: Option<String>,
     font: Fonts,
+    rig: Vec<Rig>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { roots: vec!["~/repos".into()], theme: None, font: Fonts::default() }
+        Self { roots: vec!["~/repos".into()], theme: None, font: Fonts::default(), rig: Vec::new() }
     }
 }
 
@@ -47,11 +49,40 @@ impl Default for Mono {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Rig {
+    pub name: String,
+    pub agent: Agent,
+    #[serde(skip_serializing)]
+    pub command: String,
+    #[serde(default, skip_serializing)]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing)]
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum Agent {
+    ClaudeCode,
+    Codex,
+}
+
+impl Agent {
+    pub fn name(self) -> &'static str {
+        match self {
+            Agent::ClaudeCode => "claude-code",
+            Agent::Codex => "codex",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub roots: Vec<PathBuf>,
     pub theme: Theme,
     pub font: Font,
+    pub rigs: Vec<Rig>,
 }
 
 impl Default for Config {
@@ -60,6 +91,7 @@ impl Default for Config {
             roots: Settings::default().roots.into_iter().map(expand).collect(),
             theme: Theme::default(),
             font: Font::default(),
+            rigs: Vec::new(),
         }
     }
 }
@@ -91,12 +123,17 @@ impl Config {
             Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
             text => text?,
         };
-        let Settings { roots, theme, font: Fonts { mono } } = toml::from_str(&text)?;
+        let Settings { roots, theme, font: Fonts { mono }, rig: rigs } = toml::from_str(&text)?;
         let faces = mono.files.into_iter().enumerate().map(face).collect::<Result<_, _>>()?;
+        let mut names = HashSet::new();
+        if let Some(rig) = rigs.iter().find(|rig| !names.insert(&rig.name)) {
+            return Err(format!("more than one rig is named {:?}", rig.name).into());
+        }
         Ok(Self {
             roots: roots.into_iter().map(expand).collect(),
             theme: Theme::resolve(theme.as_deref())?,
             font: Font { family: mono.family, faces },
+            rigs,
         })
     }
 }

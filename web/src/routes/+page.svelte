@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { rigs } from '#lib/config.svelte.ts';
 	import { connect, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
 	import { form } from '#lib/form.ts';
 	import { labels } from '#lib/projects.ts';
@@ -89,6 +90,13 @@
 		device.send({ type: 'project.reorder', order });
 	}
 
+	function newTab(projectId: string) {
+		const create = (rig?: string) => () => device.send({ type: 'terminal.create', projectId, rig });
+		const launchers = rigs().map((rig) => ({ label: rig.name, onselect: create(rig.name) }));
+		const terminal = { label: 'Terminal', onselect: create() };
+		return launchers.length ? [{ heading: 'Rigs', items: launchers }, terminal] : [terminal];
+	}
+
 	function closeTab(projectId: string, terminalId: string) {
 		if (terminalId === activeTab?.id) {
 			const index = tabs.findIndex((tab) => tab.id === terminalId);
@@ -131,8 +139,9 @@
 							{#snippet trigger(props)}
 								<Tab
 									{...props}
-									variant="terminal"
-									label="Terminal"
+									variant={tab.agent ? 'agent' : 'terminal'}
+									agent={tab.agent}
+									label={tab.rig ?? 'Terminal'}
 									active={tab.id === activeTab?.id}
 									onclick={() => (chosenTabs[projectId] = tab.id)}
 								/>
@@ -142,8 +151,7 @@
 				{/if}
 			</div>
 			{#if focused}
-				{@const projectId = focused.id}
-				<Menu items={[{ label: 'Terminal', onselect: () => device.send({ type: 'terminal.create', projectId }) }]}>
+				<Menu items={newTab(focused.id)}>
 					{#snippet trigger(props)}
 						<IconButton {...props} label="New Tab"><Plus /></IconButton>
 					{/snippet}

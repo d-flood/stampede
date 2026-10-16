@@ -1,8 +1,8 @@
-import { loadConfig } from '#lib/config.svelte.ts';
+import { loadConfig, type Agent } from '#lib/config.svelte.ts';
 
 export type Project = { id: string; path: string };
 
-export type Terminal = { id: string; owner: { project: string } | 'drawer' };
+export type Terminal = { id: string; owner: { project: string } | 'drawer'; rig?: string; agent?: Agent };
 
 export type ServerMessage =
 	| { type: 'hello'; version: string; terminals: Terminal[] }
@@ -18,7 +18,7 @@ export type ServerMessage =
 
 export type ClientMessage =
 	| { type: 'hello'; deviceId: string }
-	| { type: 'terminal.create'; projectId: string }
+	| { type: 'terminal.create'; projectId: string; rig?: string }
 	| { type: 'terminal.create'; owner: 'drawer' }
 	| { type: 'terminal.close'; terminalId: string }
 	| { type: 'terminal.attach'; terminalId: string }

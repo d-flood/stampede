@@ -20,9 +20,10 @@ use tokio::{
 use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
 
 use crate::{
+    config::{Agent, Rig},
     holder::{self, Owner, Record},
     projects::Project,
-    protocol::{self, Message, Size},
+    protocol::{self, Foreground, Message, Size},
 };
 
 type Frames = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
@@ -37,10 +38,14 @@ pub struct Terminals {
 pub struct Terminal {
     pub id: String,
     pub owner: Owner,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rig: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<Agent>,
 }
 
 struct Entry {
-    owner: Owner,
+    terminal: Mutex<Terminal>,
     control: mpsc::UnboundedSender<Message>,
     size: watch::Sender<Size>,
     lead: Mutex<Lead>,
@@ -104,7 +109,7 @@ impl Terminals {
         for (path, record) in records {
             let id = record.id.clone();
             match self.open(record).await {
-                Ok(()) => {}
+                Ok(_) => {}
                 Err(error)
                     if matches!(
                         error.kind(),
@@ -126,10 +131,7 @@ impl Terminals {
 
     pub fn list(&self) -> Vec<Terminal> {
         let terminals = self.terminals.lock().unwrap();
-        terminals
-            .iter()
-            .map(|(id, entry)| Terminal { id: id.clone(), owner: entry.owner.clone() })
-            .collect()
+        terminals.iter().map(|(_, entry)| entry.terminal.lock().unwrap().clone()).collect()
     }
 
     pub fn owned(&self, owner: &Owner) -> Vec<Terminal> {
@@ -139,6 +141,7 @@ impl Terminals {
     pub async fn create(
         self: &Arc<Self>,
         project: Option<&Project>,
+        rig: Option<&Rig>,
         device: &str,
     ) -> io::Result<Terminal> {
         let id = format!("{:016x}", uuid::Uuid::new_v4().as_u64_pair().1);
@@ -149,10 +152,15 @@ impl Terminals {
             Some(project) => command.arg("--cwd").arg(&project.path).arg("--project").arg(&project.id),
             None => command.arg("--cwd").arg(crate::home()),
         };
+        if let Some(rig) = rig {
+            command.arg("--rig").arg(&rig.name).arg("--agent").arg(rig.agent.name()).envs(&rig.env);
+        }
+        command.arg("--").arg(&shell);
+        match rig {
+            Some(rig) => command.args(["-l", "-i", "-c"]).arg(launch(rig, &shell.to_string_lossy())),
+            None => command.arg("-l"),
+        };
         let status = command
-            .arg("--")
-            .arg(shell)
-            .arg("-l")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -162,26 +170,30 @@ impl Terminals {
             return Err(io::Error::other(format!("holder {status}")));
         }
         let record = read_record(&holder::record_path(&self.data_dir, &id))?;
-        let owner = record.owner.clone();
-        self.open(record).await?;
+        let terminal = self.open(record).await?;
         self.lead(&id, device);
-        Ok(Terminal { id, owner })
+        Ok(terminal)
     }
 
-    async fn open(self: &Arc<Self>, record: Record) -> io::Result<()> {
+    async fn open(self: &Arc<Self>, record: Record) -> io::Result<Terminal> {
         let (mut frames, mut writer) = connect(&self.data_dir, &record.id).await?;
         let (control, mut pending) = mpsc::unbounded_channel();
-        let owner = record.owner;
-        let entry = Entry {
-            owner: owner.clone(),
+        let terminal = Terminal {
+            id: record.id,
+            owner: record.owner,
+            rig: record.rig,
+            agent: record.agent,
+        };
+        let entry = Arc::new(Entry {
+            terminal: Mutex::new(terminal.clone()),
             control,
             size: watch::Sender::new(record.size),
             lead: Mutex::default(),
-        };
-        self.terminals.lock().unwrap().push((record.id.clone(), Arc::new(entry)));
-        let _ = self.changed.send(owner.clone());
+        });
+        self.terminals.lock().unwrap().push((terminal.id.clone(), Arc::clone(&entry)));
+        let _ = self.changed.send(terminal.owner.clone());
         let terminals = Arc::clone(self);
-        let id = record.id;
+        let (id, owner) = (terminal.id.clone(), terminal.owner.clone());
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -191,8 +203,12 @@ impl Terminals {
                         }
                     }
                     frame = frames.next() => {
-                        if !matches!(frame, Some(Ok(_))) {
-                            break;
+                        let Some(Ok(frame)) = frame else { break };
+                        if let Ok(Some(Message::ForegroundChanged(Foreground { is_root_shell: true }))) =
+                            protocol::decode(&frame)
+                            && entry.agent_exited()
+                        {
+                            let _ = terminals.changed.send(owner.clone());
                         }
                     }
                 }
@@ -200,7 +216,7 @@ impl Terminals {
             terminals.terminals.lock().unwrap().retain(|(other, _)| *other != id);
             let _ = terminals.changed.send(owner);
         });
-        Ok(())
+        Ok(terminal)
     }
 
     pub async fn attach(&self, id: &str) -> io::Result<Attachment> {
@@ -256,12 +272,28 @@ impl Terminals {
 }
 
 impl Entry {
+    /// The holder reports the root shell in the foreground only once a Rig's Agent has exited.
+    fn agent_exited(&self) -> bool {
+        let mut terminal = self.terminal.lock().unwrap();
+        terminal.agent = None;
+        terminal.rig.take().is_some()
+    }
+
     fn apply(&self, size: Size) {
         if size.cols > 0 && size.rows > 0 && *self.size.borrow() != size {
             let _ = self.control.send(Message::Resize(size));
             self.size.send_replace(size);
         }
     }
+}
+
+fn launch(rig: &Rig, shell: &str) -> String {
+    let args: String = rig.args.iter().map(|arg| format!(" {}", quote(arg))).collect();
+    format!("{}{args}; exec {} -l -i", rig.command, quote(shell))
+}
+
+fn quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', r"'\''"))
 }
 
 fn read_record(path: &Path) -> io::Result<Record> {

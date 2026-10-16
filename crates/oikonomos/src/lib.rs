@@ -20,7 +20,7 @@ use rust_embed::RustEmbed;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
-use config::{Config, Font};
+use config::{Config, Font, Rig};
 pub use holder::{HoldArgs, hold};
 pub use install::{InstallArgs, UninstallArgs, install, uninstall};
 use projects::Projects;
@@ -58,6 +58,7 @@ fn router(state: AppState) -> Router {
         .route("/api/version", get(version))
         .route("/api/theme", get(theme))
         .route("/api/font", get(font))
+        .route("/api/rigs", get(rigs))
         .route("/fonts/host/{index}", get(host_font))
         .route("/ws", get(device::upgrade))
         .fallback(spa)
@@ -84,6 +85,10 @@ async fn theme(State(state): State<AppState>) -> Json<Theme> {
 
 async fn font(State(state): State<AppState>) -> Json<Font> {
     Json(state.config.borrow().font.clone())
+}
+
+async fn rigs(State(state): State<AppState>) -> Json<Vec<Rig>> {
+    Json(state.config.borrow().rigs.clone())
 }
 
 async fn host_font(State(state): State<AppState>, Path(index): Path<usize>) -> Response {

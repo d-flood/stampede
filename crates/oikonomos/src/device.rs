@@ -33,7 +33,7 @@ enum Control {
     #[serde(rename = "hello")]
     Hello { device_id: String },
     #[serde(rename = "terminal.create")]
-    Create { project_id: Option<String>, owner: Option<Owner> },
+    Create { project_id: Option<String>, owner: Option<Owner>, rig: Option<String> },
     #[serde(rename = "terminal.close")]
     Close { terminal_id: String },
     #[serde(rename = "terminal.attach")]
@@ -141,7 +141,7 @@ impl Device {
                 });
                 send(&self.outgoing, hello);
             }
-            Control::Create { project_id, owner } => {
+            Control::Create { project_id, owner, rig } => {
                 let projects = self.projects.list();
                 let project = match (project_id, owner) {
                     (Some(project_id), None) => {
@@ -153,7 +153,14 @@ impl Device {
                     (None, Some(Owner::Drawer)) => None,
                     _ => return eprintln!("terminal.create needs a projectId or owner \"drawer\""),
                 };
-                match self.terminals.create(project, &self.id).await {
+                let rig = match rig {
+                    Some(name) => match self.config.borrow().rigs.iter().find(|rig| rig.name == name) {
+                        Some(rig) => Some(rig.clone()),
+                        None => return eprintln!("cannot launch rig {name}: not in the config"),
+                    },
+                    None => None,
+                };
+                match self.terminals.create(project, rig.as_ref(), &self.id).await {
                     Ok(terminal) => {
                         send(&self.outgoing, json!({ "type": "terminal.created", "terminal": terminal }))
                     }

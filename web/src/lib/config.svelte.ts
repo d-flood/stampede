@@ -14,10 +14,13 @@ type ThemeResponse = { light: Palette; dark: Palette };
 type Font = { family: string; faces: { url: string; weight: string; style: string }[] };
 
 export type Appearance = { theme: ITheme; fontFamily: string };
+export type Agent = 'claude-code' | 'codex';
+export type Rig = { name: string; agent: Agent };
 
 const dark = new MediaQuery('(prefers-color-scheme: dark)');
 let revision = $state(0);
 let faces: FontFace[] = [];
+let configured = $state.raw<Rig[]>([]);
 
 async function get<T>(path: string): Promise<T> {
 	const response = await fetch(path);
@@ -26,7 +29,11 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export async function loadConfig() {
-	const [theme, font] = await Promise.all([get<ThemeResponse>('/api/theme'), get<Font>('/api/font')]);
+	const [theme, font, rigs] = await Promise.all([
+		get<ThemeResponse>('/api/theme'),
+		get<Font>('/api/font'),
+		get<Rig[]>('/api/rigs')
+	]);
 	const style = document.documentElement.style;
 	for (const scheme of ['light', 'dark'] as const) {
 		const palette = theme[scheme];
@@ -41,7 +48,12 @@ export async function loadConfig() {
 	faces = font.faces.map(({ url, weight, style }) => new FontFace(font.family, `url("${url}")`, { weight, style }));
 	for (const face of faces) document.fonts.add(face);
 	style.setProperty('--font-mono', `"${font.family}", "Symbols Nerd Font Mono", monospace`);
+	configured = rigs;
 	revision++;
+}
+
+export function rigs(): Rig[] {
+	return configured;
 }
 
 export function appearance(): Appearance {
