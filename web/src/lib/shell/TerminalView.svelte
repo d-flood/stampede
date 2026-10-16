@@ -10,13 +10,14 @@
 		device: Device;
 		terminalId: string;
 		active: boolean;
+		focused: boolean;
 		ended?: boolean;
 		project?: Project;
 		onopen?(path: string, cursor?: Cursor): void;
 		children?: Snippet;
 	};
 
-	let { device, terminalId, active, ended = false, project, onopen, children }: Props = $props();
+	let { device, terminalId, active, focused, ended = false, project, onopen, children }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<Terminal>();
@@ -62,7 +63,7 @@
 	});
 
 	$effect(() => {
-		if (!active || !view) return;
+		if (!focused || !view) return;
 		window.terminal = view;
 		view.focus();
 	});

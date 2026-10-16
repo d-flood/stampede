@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { leader, rigs, type Rig } from '#lib/config.svelte.ts';
+	import { form } from '#lib/form.ts';
 
-	type Props = { ontab(index: number): void; onpalette(): void; onrig(rig: Rig): void };
+	type Props = { ontab(index: number): void; onpalette(): void; onrig(rig: Rig): void; onsplit(): void };
 
-	let { ontab, onpalette, onrig }: Props = $props();
+	let { ontab, onpalette, onrig, onsplit }: Props = $props();
 
 	const modifiers = ['Control', 'Shift', 'Alt', 'AltGraph', 'Meta'];
 	let pending = $state<'leader' | 'rig'>();
@@ -38,6 +39,7 @@
 			if (rig) onrig(rig);
 		} else if (/^[1-9]$/.test(key)) ontab(Number(key) - 1);
 		else if (key === 'p') onpalette();
+		else if (key === 's' && form() === 'desktop') onsplit();
 		else if (key === 'r' && shortcuts.length) pending = 'rig';
 	}
 </script>
@@ -49,6 +51,7 @@
 		{#if pending === 'leader'}
 			<span><kbd>1</kbd>–<kbd>9</kbd> Tab</span>
 			<span><kbd>p</kbd> Palette</span>
+			{#if form() === 'desktop'}<span><kbd>s</kbd> Split</span>{/if}
 			{#if shortcuts.length}<span><kbd>r</kbd> Rig</span>{/if}
 		{:else}
 			{#each shortcuts as rig (rig.name)}

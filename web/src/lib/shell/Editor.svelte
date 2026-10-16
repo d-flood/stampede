@@ -25,10 +25,11 @@
 		servers: LanguageServers;
 		git?: Git;
 		active: boolean;
+		focused: boolean;
 		onshowdiff(disk: string, buffer: string): void;
 	};
 
-	let { file, device, servers, git, active, onshowdiff }: Props = $props();
+	let { file, device, servers, git, active, focused, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<EditorView>();
@@ -98,7 +99,7 @@
 	});
 
 	$effect(() => {
-		if (active && view && form() === 'desktop') view.focus();
+		if (focused && view && form() === 'desktop') view.focus();
 	});
 
 	$effect(() => {

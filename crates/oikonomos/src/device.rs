@@ -67,7 +67,7 @@ enum Control {
     #[serde(rename = "picker.list")]
     ListPicker {},
     #[serde(rename = "device.view")]
-    View { terminal_id: Option<String> },
+    View { terminal_ids: Vec<String> },
     #[serde(rename = "search.start")]
     Search(search::Query),
     #[serde(rename = "lsp.switch")]
@@ -201,7 +201,7 @@ async fn connect(
             },
         }
     }
-    device.terminals.view(device.connection, None, None);
+    device.terminals.view(device.connection, None, Vec::new());
     device.cancel_search();
     writer.abort();
 }
@@ -284,8 +284,8 @@ impl Device {
                 let directories = projects::directories(&roots);
                 send(&self.outgoing, json!({ "type": "picker.listed", "directories": directories }));
             }
-            Control::View { terminal_id } => {
-                self.terminals.view(self.connection, self.browser.clone(), terminal_id)
+            Control::View { terminal_ids } => {
+                self.terminals.view(self.connection, self.browser.clone(), terminal_ids)
             }
             Control::Search(query) => self.search(query),
             Control::Switch { project_id, on } => self.languages.switch(&project_id, on),

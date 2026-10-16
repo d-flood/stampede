@@ -69,7 +69,7 @@ export type ClientMessage =
 	| { type: 'project.close'; projectId: string }
 	| { type: 'project.reorder'; order: string[] }
 	| { type: 'picker.list' }
-	| { type: 'device.view'; terminalId: string | null }
+	| { type: 'device.view'; terminalIds: string[] }
 	| ({ type: 'search.start' } & Search)
 	| { type: 'lsp.switch'; projectId: string; on: boolean }
 	| { type: 'lsp.open' | 'lsp.close'; channel: string }
