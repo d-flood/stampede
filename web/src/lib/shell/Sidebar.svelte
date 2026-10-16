@@ -1,11 +1,29 @@
 <script lang="ts" module>
+	import type { Git } from '#lib/git.ts';
+
 	export type Section = 'files' | 'changes' | 'history' | 'search';
+
+	const sections: { id: Section; label: string }[] = [
+		{ id: 'files', label: 'Files' },
+		{ id: 'changes', label: 'Changes' },
+		{ id: 'history', label: 'History' },
+		{ id: 'search', label: 'Search' }
+	];
+
+	export function available(git?: Git) {
+		return sections.filter(({ id }) => (id !== 'changes' && id !== 'history') || git?.isRepo);
+	}
+
+	export function showing(section: Section, git?: Git) {
+		return available(git).find(({ id }) => id === section) ?? sections[0];
+	}
 </script>
 
 <script lang="ts">
 	import type { Device, Project } from '#lib/device.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
-	import type { Change, Commit, Git } from '#lib/git.ts';
+	import { form } from '#lib/form.ts';
+	import type { Change, Commit } from '#lib/git.ts';
 	import Changes from '#lib/shell/Changes.svelte';
 	import Files from '#lib/shell/Files.svelte';
 	import History from '#lib/shell/History.svelte';
@@ -24,20 +42,13 @@
 
 	let { open, project, label, git, device, section = $bindable(), onopen, ondiff }: Props = $props();
 
-	const sections: { id: Section; label: string }[] = [
-		{ id: 'files', label: 'Files' },
-		{ id: 'changes', label: 'Changes' },
-		{ id: 'history', label: 'History' },
-		{ id: 'search', label: 'Search' }
-	];
-
-	const shown = $derived(sections.filter(({ id }) => (id !== 'changes' && id !== 'history') || git?.isRepo));
-	const current = $derived(shown.some(({ id }) => id === section) ? section : 'files');
+	const shown = $derived(available(git));
+	const current = $derived(showing(section, git).id);
 </script>
 
-<aside aria-label="Sidebar" hidden={!open}>
+<aside aria-label="Sidebar" hidden={!open} class:phone={form() === 'phone'}>
 	{#if project}
-		<h1 title={project.path}>{label}</h1>
+		{#if form() === 'desktop'}<h1 title={project.path}>{label}</h1>{/if}
 		<div class="sections" role="group" aria-label="Sections">
 			{#each shown as { id, label } (id)}
 				<button aria-pressed={current === id} onclick={() => (section = id)}>{label}</button>
@@ -73,6 +84,14 @@
 
 	aside[hidden] {
 		display: none;
+	}
+
+	.phone {
+		flex: 1;
+		width: auto;
+		min-height: 0;
+		padding-top: var(--space-2);
+		border-right: none;
 	}
 
 	h1 {
