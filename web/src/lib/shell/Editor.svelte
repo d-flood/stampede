@@ -3,12 +3,14 @@
 	import type { Device } from '#lib/device.ts';
 	import { changeMarkers, setBaseline } from '#lib/editor/changes.ts';
 	import { language } from '#lib/editor/languages.ts';
+	import { languageServer, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { theme } from '#lib/editor/theme.ts';
 	import { read, type OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { baseline, type Git } from '#lib/git.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
+	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import { Compartment, EditorState, type Extension } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
@@ -16,9 +18,16 @@
 	import { onMount } from 'svelte';
 	import FloppyDisk from '~icons/ph/floppy-disk';
 
-	type Props = { file: OpenFile; device: Device; git?: Git; active: boolean; onshowdiff(disk: string, buffer: string): void };
+	type Props = {
+		file: OpenFile;
+		device: Device;
+		servers: LanguageServers;
+		git?: Git;
+		active: boolean;
+		onshowdiff(disk: string, buffer: string): void;
+	};
 
-	let { file, device, git, active, onshowdiff }: Props = $props();
+	let { file, device, servers, git, active, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<EditorView>();
@@ -46,7 +55,8 @@
 							changeMarkers,
 							syntax,
 							theme,
-							sync.listener
+							sync.listener,
+							languageServer(servers, file.projectId, file.path, true)
 						]
 					})
 				});
@@ -109,6 +119,7 @@
 	<div class="toolbar">
 		<span class="path" title={file.path}>{file.path}</span>
 		{#if file.deleted}<span class="deleted">deleted on disk</span>{/if}
+		<ServerSwitch {servers} projectId={file.projectId} path={file.path} attached />
 		{#if form() === 'phone' && view}
 			<Button onclick={() => sync.write()} disabled={!file.dirty}><FloppyDisk /> Save</Button>
 		{/if}

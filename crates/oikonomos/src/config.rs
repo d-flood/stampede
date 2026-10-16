@@ -25,6 +25,7 @@ struct Settings {
     font: Fonts,
     rig: Vec<Rig>,
     editor: Editor,
+    language_servers: LanguageServers,
 }
 
 impl Default for Settings {
@@ -37,6 +38,7 @@ impl Default for Settings {
             font: Fonts::default(),
             rig: Vec::new(),
             editor: Editor::default(),
+            language_servers: LanguageServers::default(),
         }
     }
 }
@@ -106,6 +108,12 @@ pub enum Keymap {
     Vim,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct LanguageServers {
+    pub pins: BTreeMap<String, String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub roots: Vec<PathBuf>,
@@ -115,6 +123,7 @@ pub struct Config {
     pub font: Font,
     pub rigs: Vec<Rig>,
     pub editor: Editor,
+    pub language_servers: LanguageServers,
 }
 
 impl Default for Config {
@@ -127,6 +136,7 @@ impl Default for Config {
             font: Font::default(),
             rigs: Vec::new(),
             editor: Editor::default(),
+            language_servers: LanguageServers::default(),
         }
     }
 }
@@ -158,7 +168,7 @@ impl Config {
             Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
             text => text?,
         };
-        let Settings { roots, leader, scrollback, theme, font: Fonts { mono }, rig: rigs, editor } =
+        let Settings { roots, leader, scrollback, theme, font: Fonts { mono }, rig: rigs, editor, language_servers } =
             toml::from_str(&text)?;
         let faces = mono.files.into_iter().enumerate().map(face).collect::<Result<_, _>>()?;
         let mut names = HashSet::new();
@@ -173,6 +183,7 @@ impl Config {
             font: Font { family: mono.family, faces },
             rigs,
             editor,
+            language_servers,
         })
     }
 }

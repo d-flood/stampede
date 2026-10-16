@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
 use std::{
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     net::TcpListener,
     path::{Path, PathBuf},
     process::Stdio,
@@ -57,6 +59,7 @@ fn format(terminal: &Terminal, format: Format) -> String {
 pub struct Server {
     pub port: u16,
     pub root: TempDir,
+    env: Vec<(&'static str, OsString)>,
     child: Child,
 }
 
@@ -66,22 +69,26 @@ impl Server {
     }
 
     pub async fn with_config(prefix: &str, config: &str) -> Self {
+        Self::with_env(prefix, config, Vec::new()).await
+    }
+
+    pub async fn with_env(prefix: &str, config: &str, env: Vec<(&'static str, OsString)>) -> Self {
         let parent = env::var_os("OIKONOMOS_E2E_ROOT").map_or_else(env::temp_dir, PathBuf::from);
         let root = tempfile::Builder::new().prefix(prefix).tempdir_in(parent).unwrap();
         fs::create_dir(root.path().join("home")).unwrap();
         fs::write(root.path().join("config.toml"), config).unwrap();
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let child = spawn(root.path(), port).await;
-        Self { port, root, child }
+        let child = spawn(root.path(), port, &env).await;
+        Self { port, root, env, child }
     }
 
     pub async fn restart(&mut self) {
         self.child.kill().await.unwrap();
-        self.child = spawn(self.root.path(), self.port).await;
+        self.child = spawn(self.root.path(), self.port, &self.env).await;
     }
 }
 
-async fn spawn(root: &Path, port: u16) -> Child {
+async fn spawn(root: &Path, port: u16, env: &[(&str, OsString)]) -> Child {
     let child = Command::new(env!("CARGO_BIN_EXE_oikonomos"))
         .args(["serve", "--port", &port.to_string(), "--data-dir"])
         .arg(root.join("data"))
@@ -89,6 +96,7 @@ async fn spawn(root: &Path, port: u16) -> Child {
         .arg(root.join("config.toml"))
         .env("SHELL", "/bin/bash")
         .env("HOME", root.join("home"))
+        .envs(env.iter().map(|(name, value)| (name, value)))
         .stdout(Stdio::null())
         .kill_on_drop(true)
         .spawn()

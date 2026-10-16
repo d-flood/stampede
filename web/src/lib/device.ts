@@ -1,4 +1,5 @@
 import { loadConfig, type Agent } from '#lib/config.svelte.ts';
+import type { State } from '#lib/editor/lsp.svelte.ts';
 
 export type Project = { id: string; path: string };
 
@@ -48,7 +49,10 @@ export type ServerMessage =
 	| { type: 'git.changed'; projectId: string }
 	| { type: 'search.started'; searchId: string }
 	| { type: 'search.results'; searchId: string; file: string; matches: Found[] }
-	| { type: 'search.done'; searchId: string; truncated: boolean; error?: string };
+	| { type: 'search.done'; searchId: string; truncated: boolean; error?: string }
+	| { type: 'lsp.switch'; projectId: string; on: boolean }
+	| { type: 'lsp.state'; channel: string; state: State }
+	| { type: 'lsp'; channel: string; message: string };
 
 export type ClientMessage =
 	| { type: 'hello'; deviceId: string; browserId: string }
@@ -66,7 +70,10 @@ export type ClientMessage =
 	| { type: 'project.reorder'; order: string[] }
 	| { type: 'picker.list' }
 	| { type: 'device.view'; terminalId: string | null }
-	| ({ type: 'search.start' } & Search);
+	| ({ type: 'search.start' } & Search)
+	| { type: 'lsp.switch'; projectId: string; on: boolean }
+	| { type: 'lsp.open' | 'lsp.close'; channel: string }
+	| { type: 'lsp'; channel: string; message: string };
 
 type Listener = {
 	message?(message: ServerMessage): void;

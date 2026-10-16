@@ -1,12 +1,14 @@
 <script lang="ts">
 	import type { Device, ServerMessage } from '#lib/device.ts';
 	import { language } from '#lib/editor/languages.ts';
+	import { languageServer, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
 	import { read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { head, show } from '#lib/git.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
+	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import { getOriginalDoc, MergeView, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
@@ -18,10 +20,16 @@
 	import FloppyDisk from '~icons/ph/floppy-disk';
 	import Rows from '~icons/ph/rows';
 
-	type Props = { diff: OpenDiff; device: Device; active: boolean; onshowdiff(disk: string, buffer: string): void };
+	type Props = {
+		diff: OpenDiff;
+		device: Device;
+		servers: LanguageServers;
+		active: boolean;
+		onshowdiff(disk: string, buffer: string): void;
+	};
 	type Shown = { b: EditorView; original: Text; editable: boolean; setOriginal(content: string): void; destroy(): void };
 
-	let { diff, device, active, onshowdiff }: Props = $props();
+	let { diff, device, servers, active, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let shown = $state.raw<Shown>();
@@ -120,7 +128,8 @@
 			keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 			shared,
 			EditorState.readOnly.of(!editable),
-			sync.listener
+			sync.listener,
+			diff.against === 'HEAD' ? languageServer(servers, diff.projectId, diff.path, false) : []
 		];
 		if (diff.layout === 'split') {
 			const view = new MergeView({
@@ -180,6 +189,7 @@
 			<span class="sides" title={diff.against.subject}>{diff.against.short}^ ↔ {diff.against.short}</span>
 		{/if}
 		{#if diff.deleted}<span class="deleted">deleted on disk</span>{/if}
+		<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} attached={diff.against === 'HEAD'} />
 		{#if shown}
 			{#if diff.layout === 'split'}
 				<IconButton label="Single column" title="Single column" onclick={toggle}><Rows /></IconButton>
