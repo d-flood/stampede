@@ -309,14 +309,14 @@ impl Device {
         {
             return server.send(Input::Shown);
         }
-        let Some((project_id, language)) = language_servers::parse(&channel) else { return };
+        let Some((project_id, _)) = language_servers::parse(&channel) else { return };
         if !self.languages.is_on(project_id) {
             return;
         }
         let projects = self.projects.list();
         let Some(project) = projects.iter().find(|project| project.id == project_id) else { return };
-        let version = self.config.borrow().language_servers.pins.get(language).cloned();
-        match self.languages.start(&channel, &project.path, version, self.outgoing.clone()) {
+        let pins = self.config.borrow().language_servers.pins.clone();
+        match self.languages.start(&channel, &project.path, pins, self.outgoing.clone()) {
             Some(server) => {
                 self.servers.insert(channel, server);
             }

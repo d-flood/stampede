@@ -32,7 +32,9 @@ const languages: Record<string, [server: string, languageId: string]> = {
 	js: ['typescript', 'javascript'],
 	mjs: ['typescript', 'javascript'],
 	cjs: ['typescript', 'javascript'],
-	jsx: ['typescript', 'javascriptreact']
+	jsx: ['typescript', 'javascriptreact'],
+	svelte: ['svelte', 'svelte'],
+	py: ['python', 'python']
 };
 
 const severities = ['error', 'error', 'warning', 'info', 'hint'] as const;

@@ -1,0 +1,7 @@
+{
+	"private": true,
+	"dependencies": {
+		"svelte-language-server": "0.18.4",
+		"typescript": "6.0.3"
+	}
+}
