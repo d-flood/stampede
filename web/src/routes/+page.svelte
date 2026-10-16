@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { rigs } from '#lib/config.svelte.ts';
 	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
-	import { OpenFile } from '#lib/files.svelte.ts';
+	import { OpenDiff, OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { status, type Git } from '#lib/git.ts';
+	import { status, type Change, type Git } from '#lib/git.ts';
 	import { labels } from '#lib/projects.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
+	import Diff from '#lib/shell/Diff.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Editor from '#lib/shell/Editor.svelte';
 	import Picker from '#lib/shell/Picker.svelte';
@@ -194,15 +195,26 @@
 		return [...resuming, { label: 'Dismiss', onselect: close }];
 	}
 
-	function openFile(projectId: string, path: string) {
-		files[projectId] ??= [];
-		let file = files[projectId].find((file) => file.path === path);
-		if (!file) {
-			file = new OpenFile(projectId, path);
-			files[projectId].push(file);
-		}
-		chosenTabs[projectId] = file.id;
+	function openTab<T extends OpenFile>(tab: T): T {
+		files[tab.projectId] ??= [];
+		const open = files[tab.projectId];
+		const existing = open.find((file) => file.id === tab.id) as T | undefined;
+		if (!existing) open.push(tab);
+		chosenTabs[tab.projectId] = tab.id;
 		if (form() === 'phone') sidebar = false;
+		return existing ?? tab;
+	}
+
+	function openFile(projectId: string, path: string) {
+		openTab(new OpenFile(projectId, path));
+	}
+
+	function openDiff(projectId: string, { path, from }: Change) {
+		openTab(new OpenDiff(projectId, path, 'HEAD', from));
+	}
+
+	function showDiff(file: OpenFile, disk: string, buffer: string) {
+		openTab(new OpenDiff(file.projectId, file.path, 'disk')).snapshot = { disk, buffer };
 	}
 
 	function closeFile(file: OpenFile, discard = false) {
@@ -245,6 +257,7 @@
 		{device}
 		bind:section
 		onopen={(path) => focused && openFile(focused.id, path)}
+		ondiff={(change) => focused && openDiff(focused.id, change)}
 	/>
 
 	<main>
@@ -276,7 +289,8 @@
 							{#snippet trigger(props)}
 								<Tab
 									{...props}
-									variant="editor"
+									variant={file instanceof OpenDiff ? 'diff' : 'editor'}
+									against={file instanceof OpenDiff ? file.against : undefined}
 									label={file.name}
 									title={file.deleted ? `${file.path} (deleted on disk)` : file.path}
 									dirty={file.dirty}
@@ -318,7 +332,12 @@
 			{/each}
 			{#each Object.values(files) as open}
 				{#each open as file (file.id)}
-					<Editor {file} {device} active={file.id === activeTab} />
+					{@const onshowdiff = (disk: string, buffer: string) => showDiff(file, disk, buffer)}
+					{#if file instanceof OpenDiff}
+						<Diff diff={file} {device} active={file.id === activeTab} {onshowdiff} />
+					{:else}
+						<Editor {file} {device} active={file.id === activeTab} {onshowdiff} />
+					{/if}
 				{/each}
 			{/each}
 			{#if !focused}

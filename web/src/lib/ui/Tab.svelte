@@ -13,6 +13,7 @@
 		variant: 'agent' | 'terminal' | 'editor' | 'diff';
 		label: string;
 		agent?: 'claude-code' | 'codex';
+		against?: string;
 		status?: 'working' | 'waiting' | 'done';
 		active?: boolean;
 		dirty?: boolean;
@@ -24,6 +25,7 @@
 		variant,
 		label,
 		agent = 'claude-code',
+		against = 'HEAD',
 		status,
 		active = false,
 		dirty = false,
@@ -42,7 +44,7 @@
 <button role="tab" aria-selected={active} class="{variant} {status ?? ''}" class:active class:deleted class:ended {...rest}>
 	<Icon />
 	<span class="label">{label}</span>
-	{#if variant === 'diff'}<span class="vs">↔ HEAD</span>{/if}
+	{#if variant === 'diff'}<span class="vs">↔ {against}</span>{/if}
 	{#if Mark}<span class="mark" title={status}><Mark /></span>{/if}
 	{#if dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
 </button>

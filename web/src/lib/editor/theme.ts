@@ -66,3 +66,32 @@ const highlight = HighlightStyle.define([
 ]);
 
 export const theme = [chrome, syntaxHighlighting(highlight)];
+
+const removed = (percent: number) => `color-mix(in oklab, var(--git-deleted) ${percent}%, transparent)`;
+const added = (percent: number) => `color-mix(in oklab, var(--git-added) ${percent}%, transparent)`;
+
+export const diffTheme = EditorView.theme({
+	'&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': { backgroundColor: removed(12) },
+	'&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': { backgroundColor: added(12) },
+	'&.cm-merge-a .cm-changedText, & .cm-deletedChunk .cm-deletedText, &.cm-merge-b .cm-deletedText': {
+		background: removed(30)
+	},
+	'&.cm-merge-b .cm-changedText': { background: added(30) },
+	'&.cm-merge-a .cm-changedLineGutter, & .cm-deletedLineGutter': { background: 'var(--git-deleted)' },
+	'&.cm-merge-b .cm-changedLineGutter': { background: 'var(--git-added)' },
+	'& .cm-inlineChangedLineGutter': { background: 'var(--git-modified)' },
+	'& .cm-collapsedLines': { background: 'var(--surface-1)', color: 'var(--muted-fg)', fontFamily: 'var(--font-ui)' },
+	'.cm-deletedChunk .cm-chunkButtons': { insetInlineEnd: 'var(--space-2)', zIndex: 1 },
+	'.cm-deletedChunk .cm-chunkButtons button': {
+		minHeight: 'var(--target-min)',
+		padding: '0 var(--space-3)',
+		border: 'var(--border-width) solid var(--border)',
+		borderRadius: 'var(--radius-md)',
+		background: 'var(--surface-2)',
+		color: 'var(--color-fg)',
+		font: 'inherit',
+		fontFamily: 'var(--font-ui)',
+		fontSize: 'var(--font-size-sm)'
+	},
+	'.cm-deletedChunk .cm-chunkButtons button:hover': { background: 'var(--hover)' }
+});
