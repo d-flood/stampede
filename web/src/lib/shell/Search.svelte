@@ -20,7 +20,6 @@
 	let done = $state<{ truncated: boolean; error?: string }>();
 	let input: HTMLInputElement;
 	let current: string | undefined;
-	let pending = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	const total = $derived(results.reduce((sum, { matches }) => sum + matches.length, 0));
@@ -46,21 +45,18 @@
 	function message(message: ServerMessage) {
 		switch (message.type) {
 			case 'hello':
-				pending = 0;
 				if (query) run();
 				break;
 			case 'search.started':
-				pending = Math.max(0, pending - 1);
-				if (pending) break;
-				current = message.searchId;
+				if (message.searchId !== current) break;
 				results = [];
 				done = undefined;
 				break;
 			case 'search.results':
-				if (!pending && message.searchId === current) results = [...results, { file: message.file, matches: message.matches }];
+				if (message.searchId === current) results = [...results, { file: message.file, matches: message.matches }];
 				break;
 			case 'search.done':
-				if (!pending && message.searchId === current) done = message;
+				if (message.searchId === current) done = message;
 				break;
 		}
 	}
@@ -71,8 +67,8 @@
 		done = undefined;
 		current = undefined;
 		if (!query) return;
-		pending++;
-		device.send({ type: 'search.start', projectId, query, include: globs(include), exclude: globs(exclude), ...toggles });
+		current = crypto.randomUUID();
+		device.send({ type: 'search.start', searchId: current, projectId, query, include: globs(include), exclude: globs(exclude), ...toggles });
 	}
 
 	function flip(toggle: keyof typeof toggles) {

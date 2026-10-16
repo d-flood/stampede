@@ -8,7 +8,7 @@
 	import { read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
-	import { head, show } from '#lib/git.ts';
+	import { head, show, status } from '#lib/git.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
@@ -98,7 +98,9 @@
 		if (diff.against !== 'disk') return committed(diff.against.sha);
 	}
 
-	function headContent() {
+	async function headContent() {
+		const git = await status(diff.projectId);
+		diff.from = git.changes.find((change) => change.path === diff.path)?.from;
 		return head(diff.projectId, diff.from ?? diff.path);
 	}
 

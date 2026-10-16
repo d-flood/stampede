@@ -22,6 +22,7 @@ export type Attention = { projectId: string; terminalId: string; label: string; 
 export type Found = { line: number; column: number; preview: string };
 
 export type Search = {
+	searchId: string;
 	projectId: string;
 	query: string;
 	regex: boolean;

@@ -351,7 +351,7 @@ impl Device {
         self.cancel_search();
         let cancelled = Arc::new(AtomicBool::new(false));
         self.search = Some(Arc::clone(&cancelled));
-        let search_id = Uuid::new_v4().to_string();
+        let search_id = query.search_id.clone();
         send(&self.outgoing, json!({ "type": "search.started", "searchId": search_id }));
         let projects = self.projects.list();
         let Some(project) = projects.iter().find(|project| project.id == query.project_id) else {

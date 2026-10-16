@@ -16,6 +16,7 @@ const PREVIEW: usize = 200;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Query {
+    pub search_id: String,
     pub project_id: String,
     query: String,
     regex: bool,

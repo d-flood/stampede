@@ -69,7 +69,7 @@ export type Layout = 'split' | 'unified';
 
 export class OpenDiff extends OpenFile {
 	against: 'HEAD' | 'disk' | Commit;
-	from?: string;
+	from = $state<string>();
 	snapshot = $state.raw<{ disk: string; buffer: string }>();
 	layout = $state<Layout>(form() === 'phone' ? 'unified' : 'split');
 
