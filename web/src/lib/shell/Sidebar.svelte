@@ -4,7 +4,7 @@
 
 <script lang="ts">
 	import type { Device, Project } from '#lib/device.ts';
-	import type { Git } from '#lib/git.ts';
+	import type { Change, Git } from '#lib/git.ts';
 	import Changes from '#lib/shell/Changes.svelte';
 	import Files from '#lib/shell/Files.svelte';
 
@@ -16,9 +16,10 @@
 		device: Device;
 		section: Section;
 		onopen(path: string): void;
+		ondiff(change: Change): void;
 	};
 
-	let { open, project, label, git, device, section = $bindable(), onopen }: Props = $props();
+	let { open, project, label, git, device, section = $bindable(), onopen, ondiff }: Props = $props();
 
 	const sections: { id: Section; label: string }[] = [
 		{ id: 'files', label: 'Files' },
@@ -44,7 +45,7 @@
 				<Files projectId={project.id} {device} changes={git?.changes ?? []} {onopen} />
 			{/key}
 		{:else if current === 'changes'}
-			<Changes changes={git?.changes ?? []} {onopen} />
+			<Changes changes={git?.changes ?? []} onopen={ondiff} />
 		{/if}
 	{/if}
 </aside>

@@ -10,7 +10,8 @@ mkdir "$OIKONOMOS_E2E_ROOT/projects/alpha" "$OIKONOMOS_E2E_ROOT/projects/beta"
 alpha=(git -C "$OIKONOMOS_E2E_ROOT/projects/alpha" -c init.defaultBranch=main -c user.name=oikonomos -c user.email=e2e@oikonomos.invalid -c commit.gpgsign=false)
 "${alpha[@]}" init -q
 echo "# alpha" > "$OIKONOMOS_E2E_ROOT/projects/alpha/README.md"
-"${alpha[@]}" add README.md
+echo 'export const greeting = "hello";' > "$OIKONOMOS_E2E_ROOT/projects/alpha/greeting.ts"
+"${alpha[@]}" add README.md greeting.ts
 "${alpha[@]}" commit -qm "Initial commit"
 echo "roots = [\"$OIKONOMOS_E2E_ROOT/projects\"]" > "$OIKONOMOS_E2E_ROOT/config.toml"
 

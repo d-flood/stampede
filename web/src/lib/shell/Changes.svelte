@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { kinds, type Change } from '#lib/git.ts';
 
-	let { changes, onopen }: { changes: Change[]; onopen(path: string): void } = $props();
+	let { changes, onopen }: { changes: Change[]; onopen(change: Change): void } = $props();
 
 	const groups = $derived(
 		kinds
@@ -27,7 +27,7 @@
 							class:deleted={kind === 'deleted'}
 							style:--git="var(--git-{kind})"
 							title={change.from ? `${change.from} → ${change.path}` : change.path}
-							onclick={() => onopen(change.path)}
+							onclick={() => onopen(change)}
 						>
 							<span class="letter" aria-hidden="true">{letter}</span>
 							<span class="name">{name}</span>
