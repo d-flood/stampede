@@ -241,6 +241,9 @@ pub enum Event {
     Request(Request),
     Resolved(String),
     Todos(Vec<Todo>),
+    Reset,
+    Settings(Settings),
+    Capabilities(Capabilities),
 }
 
 /// One Agent's wire protocol. A driver's events end when its Agent has stopped.
@@ -249,7 +252,93 @@ pub trait Driver: Send + Sync {
     fn send(&self, text: &str);
     fn interrupt(&self);
     fn answer(&self, request_id: &str, answer: Answer);
+    fn run(&self, builtin: Builtin);
     fn close(&self);
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Capabilities {
+    pub models: Vec<String>,
+    pub efforts: Vec<String>,
+    pub modes: Vec<Choice>,
+    pub commands: Vec<AgentCommand>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Choice {
+    pub value: String,
+    pub label: String,
+}
+
+impl Choice {
+    pub fn mode(value: &str) -> Self {
+        let mut label = String::new();
+        for character in value.chars() {
+            match character {
+                '-' => label.push(' '),
+                upper if upper.is_ascii_uppercase() => label.extend([' ', upper.to_ascii_lowercase()]),
+                other => label.push(other),
+            }
+        }
+        Self { value: value.to_owned(), label }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AgentCommand {
+    pub name: String,
+    pub description: String,
+    pub hint: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Settings {
+    #[serde(flatten)]
+    pub chosen: AgentSettings,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending: Vec<Setting>,
+}
+
+impl Settings {
+    pub fn get(&self, setting: Setting) -> &Option<String> {
+        match setting {
+            Setting::Model => &self.chosen.model,
+            Setting::Effort => &self.chosen.effort,
+            Setting::Mode => &self.chosen.mode,
+        }
+    }
+
+    pub fn get_mut(&mut self, setting: Setting) -> &mut Option<String> {
+        match setting {
+            Setting::Model => &mut self.chosen.model,
+            Setting::Effort => &mut self.chosen.effort,
+            Setting::Mode => &mut self.chosen.mode,
+        }
+    }
+
+    pub fn mark_pending(&mut self, setting: Setting) {
+        if !self.pending.contains(&setting) {
+            self.pending.push(setting);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Setting {
+    Model,
+    Effort,
+    Mode,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "command", content = "value", rename_all = "lowercase")]
+pub enum Builtin {
+    Model(String),
+    Effort(String),
+    Mode(String),
+    Compact,
+    Clear,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -270,7 +359,7 @@ pub struct Chat {
     #[serde(default)]
     pub tokens: Option<Tokens>,
     #[serde(default)]
-    pub settings: AgentSettings,
+    pub settings: Settings,
     #[serde(default)]
     pub queued: Vec<String>,
     #[serde(default)]
@@ -322,6 +411,8 @@ pub enum Change {
     Request { chat_id: String, seq: u64, request: Request },
     Resolved { chat_id: String, seq: u64, request_id: String },
     Todos { chat_id: String, todos: Vec<Todo> },
+    Settings(String, Settings),
+    Capabilities(String, Capabilities),
 }
 
 pub struct Chats {
@@ -336,6 +427,7 @@ pub struct Chats {
 struct Entry {
     chat: Mutex<Chat>,
     transcript: Mutex<Transcript>,
+    capabilities: Mutex<Capabilities>,
     driver: Box<dyn Driver>,
 }
 
@@ -383,20 +475,20 @@ impl Chats {
             viewed_since_done: true,
             context: None,
             tokens: None,
-            settings: rig.settings(),
+            settings: Settings { chosen: rig.settings(), pending: Vec::new() },
             queued: Vec::new(),
             todos: Vec::new(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
         let started = match rig.agent {
-            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env, &chat.settings, session)
+            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env, &chat.settings.chosen, session)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             Agent::Codex if session.is_some() => codex::resume(&chat, &rig.env)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-            Agent::Codex => codex::start(&chat.cwd, &rig.env, &chat.settings)
+            Agent::Codex => codex::start(&chat.cwd, &rig.env, &chat.settings.chosen)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
         };
@@ -452,7 +544,12 @@ impl Chats {
 
     fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>) {
         let transcript = Transcript { seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status };
-        let entry = Arc::new(Entry { chat: Mutex::new(chat), transcript: Mutex::new(transcript), driver });
+        let entry = Arc::new(Entry {
+            chat: Mutex::new(chat),
+            transcript: Mutex::new(transcript),
+            capabilities: Mutex::default(),
+            driver,
+        });
         self.chats.lock().unwrap().push(Arc::clone(&entry));
         tokio::spawn(Arc::clone(self).follow(entry, events));
     }
@@ -547,6 +644,29 @@ impl Chats {
                     transcript.seq += 1;
                     let _ = self.changed.send(Change::Truncated(id.clone()));
                 }
+                Event::Reset => {
+                    let mut chat = entry.chat.lock().unwrap();
+                    chat.context = None;
+                    chat.tokens = None;
+                    chat.queued.clear();
+                    chat.todos.clear();
+                    self.queued(&chat);
+                    let _ = self.changed.send(Change::Todos { chat_id: id.clone(), todos: Vec::new() });
+                    let _ = self.changed.send(Change::Meters { chat_id: id.clone(), context: None, tokens: None });
+                }
+                Event::Settings(settings) => {
+                    let mut chat = entry.chat.lock().unwrap();
+                    if chat.settings == settings {
+                        continue;
+                    }
+                    chat.settings = settings.clone();
+                    self.save(&chat);
+                    let _ = self.changed.send(Change::Settings(id.clone(), settings));
+                }
+                Event::Capabilities(capabilities) => {
+                    *entry.capabilities.lock().unwrap() = capabilities.clone();
+                    let _ = self.changed.send(Change::Capabilities(id.clone(), capabilities));
+                }
             }
         }
         self.chats.lock().unwrap().retain(|other| !Arc::ptr_eq(other, &entry));
@@ -600,6 +720,10 @@ impl Chats {
         Some((transcript.seq, transcript.items.clone(), transcript.requests.clone()))
     }
 
+    pub fn capabilities(&self, id: &str) -> Option<Capabilities> {
+        Some(self.get(id)?.capabilities.lock().unwrap().clone())
+    }
+
     /// Sends `text` now, or with `queue` holds it until the running turn ends.
     pub fn send(&self, id: &str, text: &str, queue: bool) {
         let Some(entry) = self.get(id) else { return };
@@ -636,6 +760,12 @@ impl Chats {
         if self.resolve(&mut transcript, id, request_id) {
             entry.driver.answer(request_id, answer);
             self.settle(&entry, &transcript);
+        }
+    }
+
+    pub fn run(&self, id: &str, builtin: Builtin) {
+        if let Some(entry) = self.get(id) {
+            entry.driver.run(builtin);
         }
     }
 

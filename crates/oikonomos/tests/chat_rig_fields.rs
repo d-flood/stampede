@@ -84,7 +84,7 @@ async fn a_codex_chat_starts_its_thread_with_its_rigs_model_effort_and_mode() {
     let log = fs::read_to_string(server.root.path().join("home/.codex/fake-daemon/received.jsonl")).unwrap();
     let received: Vec<Value> = log.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     let methods: Vec<&Value> = received.iter().map(|message| &message["method"]).collect();
-    assert_eq!(methods, ["initialize", "initialized", "thread/start", "thread/unsubscribe"]);
+    assert_eq!(methods, ["initialize", "initialized", "thread/start", "model/list", "skills/list", "thread/unsubscribe"]);
     assert_eq!(
         received[2]["params"],
         json!({

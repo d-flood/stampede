@@ -96,6 +96,8 @@ async fn a_codex_chat_steers_mid_turn_queues_for_the_next_and_interrupts() {
             "initialize",
             "initialized",
             "thread/start",
+            "model/list",
+            "skills/list",
             "turn/start",
             "turn/steer",
             "turn/start",
@@ -106,12 +108,12 @@ async fn a_codex_chat_steers_mid_turn_queues_for_the_next_and_interrupts() {
     let thread = "01a14671-e0ff-7190-bdcf-13fce013710f";
     let input = |text: &str| json!([{ "type": "text", "text": text, "text_elements": [] }]);
     assert_eq!(
-        received[4]["params"],
+        received[6]["params"],
         json!({ "threadId": thread, "input": input(steer), "expectedTurnId": "01a14671-e17e-7fe0-9319-de9ae90d79be" })
     );
-    assert_eq!(received[5]["params"], json!({ "threadId": thread, "input": input(queued) }));
+    assert_eq!(received[7]["params"], json!({ "threadId": thread, "input": input(queued) }));
     assert_eq!(
-        received[6]["params"],
+        received[8]["params"],
         json!({ "threadId": thread, "turnId": "01a14671-f13a-7471-a47e-3a969b05eea6" })
     );
 }

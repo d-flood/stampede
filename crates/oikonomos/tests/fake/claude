@@ -28,6 +28,27 @@ def fixture():
     return FIXTURES / f'{name}.recorded.jsonl'
 
 
+def config():
+    return Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')
+
+
+def answers():
+    recorded = {}
+    for line in (FIXTURES / 'answers.recorded.jsonl').read_text().splitlines():
+        entry = json.loads(line)
+        if 'stdin' in entry:
+            outputs = recorded.setdefault(kind(entry['stdin']), [])
+        else:
+            outputs.append(entry['stdout'])
+    return recorded
+
+
+def answer(message):
+    for output in answers()[kind(message)]:
+        output['response']['request_id'] = message['request_id']
+        print(json.dumps(output, ensure_ascii=False), flush=True)
+
+
 def kind(message):
     request = message.get('request', {})
     return message.get('type'), request.get('subtype'), request.get('cancel_queued'), message.get('priority')
@@ -50,9 +71,25 @@ def readline():
 
 def waiting():
     global pending
-    if not pending and select.select([0], [], [], 0)[0]:
-        pending += os.read(0, 65536)
-    return bool(pending)
+    while True:
+        if not pending and select.select([0], [], [], 0)[0]:
+            pending += os.read(0, 65536)
+        line, separator, rest = pending.partition(b'\n')
+        if not separator:
+            return bool(pending)
+        message = json.loads(line)
+        if kind(message)[:2] not in [('control_request', 'initialize'), ('control_request', 'get_settings')]:
+            return True
+        pending = rest
+        log(line)
+        answer(message)
+
+
+def log(received):
+    if 'CLAUDE_CONFIG_DIR' in os.environ:
+        config().mkdir(parents=True, exist_ok=True)
+        with open(config() / 'fake-received.jsonl', 'a') as file:
+            file.write(received.decode() + "\n")
 
 
 def read(expected):
@@ -64,6 +101,10 @@ def read(expected):
             usage = json.loads((FIXTURES / 'usage.recorded.jsonl').read_text().splitlines()[1])['stdout']
             usage['response']['request_id'] = message['request_id']
             print(json.dumps(usage, ensure_ascii=False), flush=True)
+            continue
+        log(received)
+        if kind(message) != kind(expected) and kind(message) in answers():
+            answer(message)
             continue
         return message
     return None
@@ -77,8 +118,7 @@ def remap(message):
 
 
 def record(entry):
-    config = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')
-    project = config / 'projects' / re.sub(r'[^a-zA-Z0-9]', '-', os.getcwd())
+    project = config() / 'projects' / re.sub(r'[^a-zA-Z0-9]', '-', os.getcwd())
     path = project / f'{entry["sessionId"]}.jsonl'
     if entry.get('isSidechain'):
         path = project / entry['sessionId'] / 'subagents' / f'agent-{entry["agentId"]}.jsonl'
@@ -147,5 +187,5 @@ for entry in entries[start:]:
             fail(f'read {pending!r} before the turn ended')
         print(remap(message), flush=True)
 
-while readline() is not None:
+while read({}) is not None:
     pass

@@ -26,7 +26,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     attention::{Attention, Feed},
-    chats::{self, Chats},
+    chats::{self, Builtin, Chats},
     config::{Agent, Config},
     holder::Owner,
     language_servers::{self, Input, LanguageServers, Server, Switch},
@@ -76,6 +76,12 @@ enum Control {
     InterruptChat { chat_id: String },
     #[serde(rename = "chat.answer")]
     AnswerChat { chat_id: String, request_id: String, answer: chats::Answer },
+    #[serde(rename = "chat.run")]
+    RunChat {
+        chat_id: String,
+        #[serde(flatten)]
+        builtin: Builtin,
+    },
     #[serde(rename = "chat.close")]
     CloseChat { chat_id: String },
     #[serde(rename = "chat.attach")]
@@ -260,6 +266,15 @@ async fn connect(
                 Ok(chats::Change::Todos { chat_id, todos }) => {
                     send(&device.outgoing, json!({ "type": "chat.todos", "chatId": chat_id, "todos": todos }));
                 }
+                Ok(chats::Change::Settings(chat_id, settings)) => {
+                    send(&device.outgoing, json!({ "type": "chat.settings", "chatId": chat_id, "settings": settings }));
+                }
+                Ok(chats::Change::Capabilities(chat_id, capabilities)) => {
+                    if device.attached.contains_key(&chat_id) {
+                        let message = json!({ "type": "chat.capabilities", "chatId": chat_id, "capabilities": capabilities });
+                        send(&device.outgoing, message);
+                    }
+                }
                 Err(RecvError::Lagged(_)) => {
                     for project in device.projects.list().iter() {
                         device.chats_changed(&project.id);
@@ -380,6 +395,7 @@ impl Device {
             Control::SendChat { chat_id, text, queue } => self.chats.send(&chat_id, &text, queue),
             Control::InterruptChat { chat_id } => self.chats.interrupt(&chat_id),
             Control::AnswerChat { chat_id, request_id, answer } => self.chats.answer(&chat_id, &request_id, answer),
+            Control::RunChat { chat_id, builtin } => self.chats.run(&chat_id, builtin),
             Control::CloseChat { chat_id } => self.chats.close(&chat_id),
             Control::AttachChat { chat_id } => self.attach_chat(chat_id),
             Control::DetachChat { chat_id } => {
@@ -605,6 +621,8 @@ impl Device {
         for request in requests {
             send(&self.outgoing, json!({ "type": "chat.request", "chatId": chat_id, "request": request }));
         }
+        let capabilities = self.chats.capabilities(&chat_id).unwrap_or_default();
+        send(&self.outgoing, json!({ "type": "chat.capabilities", "chatId": chat_id, "capabilities": capabilities }));
         self.attached.insert(chat_id, seq);
     }
 

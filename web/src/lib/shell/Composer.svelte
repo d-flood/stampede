@@ -7,12 +7,14 @@
 		id: string;
 		disabled?: boolean;
 		placeholder?: string;
+		menu?: Snippet<[string, (text: string) => void]>;
+		onkeydown?: (event: KeyboardEvent) => void;
 		onsend?(text: string, enter: boolean): boolean;
 		/** Replaces Insert and Send, and boxes the Composer in a Chat's column. */
 		actions?: Snippet<[text: string, clear: () => void]>;
 	};
 
-	let { id, disabled = false, placeholder, onsend, actions }: Props = $props();
+	let { id, disabled = false, placeholder, onsend, actions, menu, onkeydown }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? '');
@@ -34,6 +36,12 @@
 		if (onsend?.(text, enter)) clear();
 	}
 
+	function replace(next: string) {
+		text = next;
+		keep();
+		box.focus();
+	}
+
 	export function focus() {
 		box.focus();
 	}
@@ -45,10 +53,12 @@
 </script>
 
 <div class="composer" class:boxed={actions} class:phone>
+	{@render menu?.(text, replace)}
 	<textarea
 		bind:this={box}
 		bind:value={text}
 		oninput={keep}
+		{onkeydown}
 		aria-label="Composer"
 		{placeholder}
 		rows={actions ? (phone ? 2 : 1) : 3}
@@ -77,6 +87,7 @@
 
 <style>
 	.composer {
+		position: relative;
 		display: flex;
 		flex: none;
 		flex-direction: column;

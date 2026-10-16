@@ -19,7 +19,8 @@ use toml::value::{Datetime, Offset};
 use uuid::Uuid;
 
 use super::{
-    Answer, Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
+    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Setting,
+    Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     protocol::{self, Message},
     Request, diff, seconds, unified, words,
@@ -47,6 +48,11 @@ const WINDOWS: [(Window, &str); 2] = [(Window::FiveHour, "five_hour"), (Window::
 const HEAD: u64 = 1 << 20;
 const DENIED: &str = "The user denied this request.";
 
+const MANAGEMENT: &[&str] = &[
+    "mcp", "hooks", "memory", "permissions", "plugin", "plugins", "statusline", "theme", "export", "add-dir",
+    "agents", "login", "logout", "config", "heapdump",
+];
+
 pub struct Claude {
     commands: UnboundedSender<Command>,
 }
@@ -55,6 +61,7 @@ enum Command {
     Send(String),
     Interrupt,
     Answer(String, Answer),
+    Run(Builtin),
     Close,
 }
 
@@ -69,6 +76,10 @@ impl Driver for Claude {
 
     fn answer(&self, request_id: &str, answer: Answer) {
         let _ = self.commands.send(Command::Answer(request_id.to_owned(), answer));
+    }
+
+    fn run(&self, builtin: Builtin) {
+        let _ = self.commands.send(Command::Run(builtin));
     }
 
     fn close(&self) {
@@ -96,7 +107,7 @@ pub async fn resume(
     let _ = fs::remove_file(holder::socket_path(data_dir, &chat.id));
     let session = chat.agent_session.as_deref();
     let (frames, writer, mut transcript, received) =
-        launch(data_dir, &chat.id, &chat.cwd, env, &chat.settings, session).await?;
+        launch(data_dir, &chat.id, &chat.cwd, env, &chat.settings.chosen, session).await?;
     transcript.window = chat.context.map(|context| context.window);
     if chat.status != Status::Done {
         transcript.push(Item::interrupted());
@@ -120,17 +131,13 @@ async fn launch(
     let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
     holder::spawn(data_dir, id, cwd, variables, command.chain(resume)).await?;
     let (frames, mut writer, _) = holder::connect(data_dir, id).await?;
-    let initialize = json!({
-        "type": "control_request",
-        "request_id": Uuid::new_v4().to_string(),
-        "request": { "subtype": "initialize" },
-    });
-    writer.write_all(&input(&initialize)).await?;
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(events, cwd);
     if let Some(session) = session {
         transcript.history(env, session, None);
     }
+    transcript.settings.chosen = settings.clone();
+    transcript.discover(&mut writer).await?;
     Ok((frames, writer, transcript, received))
 }
 
@@ -140,7 +147,7 @@ pub async fn reattach(
     chat: &Chat,
     env: &BTreeMap<String, String>,
 ) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
-    let (mut frames, writer, buffered) = holder::connect(data_dir, &chat.id).await?;
+    let (mut frames, mut writer, buffered) = holder::connect(data_dir, &chat.id).await?;
     let mut replay = Vec::with_capacity(buffered);
     for _ in 0..buffered {
         let frame = frames.next().await.ok_or(io::ErrorKind::UnexpectedEof)??;
@@ -154,6 +161,7 @@ pub async fn reattach(
     let mut transcript = Transcript::new(events, &chat.cwd);
     transcript.replaying = true;
     transcript.window = chat.context.map(|context| context.window);
+    transcript.settings.chosen = chat.settings.chosen.clone();
     if let Some(session) = &chat.agent_session {
         transcript.history(env, session, turn.as_deref());
     }
@@ -185,6 +193,7 @@ pub async fn reattach(
     if transcript.todos_held {
         transcript.report_todos();
     }
+    transcript.discover(&mut writer).await?;
     Ok((drive(frames, writer, transcript), received))
 }
 
@@ -195,21 +204,12 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
             tokio::select! {
                 command = pending.recv() => match command {
                     Some(Command::Send(text)) => {
-                        let mut message = json!({
-                            "type": "user",
-                            "message": { "role": "user", "content": text },
-                            "parent_tool_use_id": null,
-                            "uuid": Uuid::new_v4().to_string(),
-                        });
-                        let idle = transcript.status == Status::Done;
-                        if !idle {
-                            message["priority"] = json!("next");
-                        }
-                        transcript.sent(&message);
-                        if idle && writer.write_all(&protocol::encode(&Message::Forget)).await.is_err() {
+                        if send(&mut writer, &mut transcript, &text).await.is_err() {
                             break;
                         }
-                        if writer.write_all(&input(&message)).await.is_err() {
+                    }
+                    Some(Command::Run(builtin)) => {
+                        if run(&mut writer, &mut transcript, builtin).await.is_err() {
                             break;
                         }
                     }
@@ -314,6 +314,42 @@ fn epoch_ms(time: &str) -> Option<u64> {
     let minutes = (days * 24 + i64::from(clock.hour)) * 60 + i64::from(clock.minute) - offset;
     let seconds = minutes * 60 + i64::from(clock.second.unwrap_or(0));
     u64::try_from(seconds * 1000 + i64::from(clock.nanosecond.unwrap_or(0) / 1_000_000)).ok()
+}
+
+async fn send(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, text: &str) -> io::Result<()> {
+    let mut message = json!({
+        "type": "user",
+        "message": { "role": "user", "content": text },
+        "parent_tool_use_id": null,
+        "uuid": Uuid::new_v4().to_string(),
+    });
+    let idle = transcript.status == Status::Done;
+    if !idle {
+        message["priority"] = json!("next");
+    }
+    transcript.sent(&message);
+    if idle {
+        writer.write_all(&protocol::encode(&Message::Forget)).await?;
+    }
+    writer.write_all(&input(&message)).await
+}
+
+async fn run(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, builtin: Builtin) -> io::Result<()> {
+    let (setting, request, value) = match builtin {
+        Builtin::Compact => return send(writer, transcript, "/compact").await,
+        Builtin::Clear => return send(writer, transcript, "/clear").await,
+        Builtin::Model(model) => (Setting::Model, json!({ "subtype": "set_model", "model": model }), model),
+        Builtin::Effort(effort) => {
+            let request = json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": effort } });
+            (Setting::Effort, request, effort)
+        }
+        Builtin::Mode(mode) => (Setting::Mode, json!({ "subtype": "set_permission_mode", "mode": mode }), mode),
+    };
+    *transcript.settings.get_mut(setting) = Some(value.clone());
+    transcript.settings.mark_pending(setting);
+    transcript.changed(setting);
+    let request = transcript.request(request, Asked::Set(setting, value));
+    writer.write_all(&request).await
 }
 
 fn user(line: &[u8]) -> Option<Value> {
@@ -433,6 +469,17 @@ struct Transcript {
     call: Option<(String, u64)>,
     window: Option<u64>,
     steering: HashSet<String>,
+    asked: HashMap<String, Asked>,
+    models: Vec<Value>,
+    slash_commands: Vec<AgentCommand>,
+    settings: Settings,
+    applied: AgentSettings,
+}
+
+enum Asked {
+    Initialize,
+    Settings,
+    Set(Setting, String),
 }
 
 impl Transcript {
@@ -458,6 +505,126 @@ impl Transcript {
             call: None,
             window: None,
             steering: HashSet::new(),
+            asked: HashMap::new(),
+            models: Vec::new(),
+            slash_commands: Vec::new(),
+            settings: Settings::default(),
+            applied: AgentSettings::default(),
+        }
+    }
+
+    /// Asks for the commands, models and settings, which a restarted server has to ask for again.
+    async fn discover(&mut self, writer: &mut OwnedWriteHalf) -> io::Result<()> {
+        writer.write_all(&self.request(json!({ "subtype": "initialize" }), Asked::Initialize)).await?;
+        writer.write_all(&self.request(json!({ "subtype": "get_settings" }), Asked::Settings)).await
+    }
+
+    fn request(&mut self, request: Value, asked: Asked) -> Vec<u8> {
+        let id = Uuid::new_v4().to_string();
+        let message = json!({ "type": "control_request", "request_id": id, "request": request });
+        self.asked.insert(id, asked);
+        input(&message)
+    }
+
+    fn answered(&mut self, response: &Value) {
+        let Some(asked) = response["request_id"].as_str().and_then(|id| self.asked.remove(id)) else { return };
+        let success = response["subtype"] == "success";
+        let body = &response["response"];
+        match asked {
+            Asked::Initialize if success => {
+                self.models = body["models"].as_array().cloned().unwrap_or_default();
+                let commands = body["commands"].as_array().into_iter().flatten().filter(|command| {
+                    let name = command["name"].as_str().unwrap_or_default();
+                    !name.starts_with("__") && !MANAGEMENT.contains(&name)
+                });
+                self.slash_commands = commands
+                    .map(|command| AgentCommand {
+                        name: command["name"].as_str().unwrap_or_default().to_owned(),
+                        description: command["description"].as_str().unwrap_or_default().to_owned(),
+                        hint: command["argumentHint"].as_str().unwrap_or_default().to_owned(),
+                    })
+                    .collect();
+                let model = self.settings.chosen.model.take().map(|model| self.alias(&model));
+                self.settings.chosen.model = model;
+                if let Some(mode) = body["current_permission_mode"].as_str() {
+                    self.settings.chosen.mode = Some(mode.to_owned());
+                }
+                self.declare();
+                self.report_settings();
+            }
+            Asked::Settings if success => {
+                let applied = &body["applied"];
+                self.settings.chosen.model = applied["model"].as_str().map(|model| self.alias(model));
+                self.settings.chosen.effort = applied["effort"].as_str().map(str::to_owned);
+                self.applied = self.settings.chosen.clone();
+                self.declare();
+                self.report_settings();
+            }
+            Asked::Set(setting, value) => {
+                if success {
+                    let applied = match setting {
+                        Setting::Model => &mut self.applied.model,
+                        Setting::Effort => &mut self.applied.effort,
+                        Setting::Mode => &mut self.applied.mode,
+                    };
+                    *applied = Some(value.clone());
+                }
+                let waiting = self.asked.values().any(|asked| matches!(asked, Asked::Set(other, _) if *other == setting));
+                if !waiting && self.settings.get(setting).as_deref() == Some(value.as_str()) {
+                    self.settings.pending.retain(|pending| *pending != setting);
+                    if !success {
+                        let applied = match setting {
+                            Setting::Model => &self.applied.model,
+                            Setting::Effort => &self.applied.effort,
+                            Setting::Mode => &self.applied.mode,
+                        };
+                        *self.settings.get_mut(setting) = applied.clone();
+                    }
+                    self.changed(setting);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn alias(&self, model: &str) -> String {
+        let listed = self.models.iter().find(|listed| listed["value"] == model);
+        let resolved = || {
+            let mut aliases = self.models.iter().filter(|listed| listed["value"] != "default");
+            aliases.find(|listed| listed["resolvedModel"] == model)
+        };
+        listed.or_else(resolved).and_then(|listed| listed["value"].as_str()).unwrap_or(model).to_owned()
+    }
+
+    fn changed(&self, setting: Setting) {
+        if setting == Setting::Model {
+            self.declare();
+        }
+        self.report_settings();
+    }
+
+    fn declare(&self) {
+        let model = self.settings.chosen.model.as_deref().unwrap_or("default");
+        let listed = self.models.iter().find(|listed| listed["value"] == model);
+        let efforts = listed.and_then(|listed| listed["supportedEffortLevels"].as_array()).into_iter().flatten();
+        let capabilities = Capabilities {
+            models: self.models.iter().filter_map(|model| model["value"].as_str()).map(str::to_owned).collect(),
+            efforts: efforts.filter_map(Value::as_str).map(str::to_owned).collect(),
+            modes: Agent::ClaudeCode.modes().iter().map(|mode| Choice::mode(mode)).collect(),
+            commands: self.slash_commands.clone(),
+        };
+        let _ = self.events.send(Event::Capabilities(capabilities));
+    }
+
+    fn report_settings(&self) {
+        let _ = self.events.send(Event::Settings(self.settings.clone()));
+    }
+
+    fn observe(&mut self, mode: &str) {
+        if !self.settings.pending.contains(&Setting::Mode) && self.settings.chosen.mode.as_deref() != Some(mode) {
+            self.settings.chosen.mode = Some(mode.to_owned());
+            self.applied.mode = Some(mode.to_owned());
+            self.report_settings();
         }
     }
 
@@ -570,11 +737,6 @@ impl Transcript {
     fn read(&mut self, message: &Value) {
         let top = message["parent_tool_use_id"].is_null();
         match message["type"].as_str() {
-            Some("system") if message["subtype"] == "init" => {
-                if let Some(session) = message["session_id"].as_str() {
-                    let _ = self.events.send(Event::Session(session.to_owned()));
-                }
-            }
             Some("system") if message["subtype"] == "task_started" => {
                 if let (Some(task), Some(tool)) = (message["task_id"].as_str(), message["tool_use_id"].as_str()) {
                     self.tasks.insert(task.to_owned(), tool.to_owned());
@@ -592,6 +754,16 @@ impl Transcript {
             }
             Some("system") if message["subtype"] == "compact_boundary" => {
                 self.push(Item::compacted());
+            }
+            Some("system") => {
+                if message["subtype"] == "init"
+                    && let Some(session) = message["session_id"].as_str()
+                {
+                    let _ = self.events.send(Event::Session(session.to_owned()));
+                }
+                if let Some(mode) = message["permissionMode"].as_str() {
+                    self.observe(mode);
+                }
             }
             Some("stream_event") if top => self.stream(&message["event"]),
             Some("assistant") if top => self.assistant(message, &message["thinking_duration_ms"], true),
@@ -632,6 +804,25 @@ impl Transcript {
                     Some(Reading::new(Agent::ClaudeCode, window, used, resets_at))
                 });
                 let _ = self.events.send(Event::Usage(readings.collect()));
+            }
+            Some("control_response") => self.answered(&message["response"]),
+            Some("conversation_reset") => {
+                self.call = None;
+                self.window = None;
+                self.len = 0;
+                self.streaming.clear();
+                self.tools = None;
+                self.commands.clear();
+                self.edits.clear();
+                self.subagents.clear();
+                self.todos.clear();
+                self.creating.clear();
+                self.tasks.clear();
+                self.todos_held = false;
+                self.pending.clear();
+                self.steering.clear();
+                let _ = self.events.send(Event::Reset);
+                let _ = self.events.send(Event::Truncate(0));
             }
             _ => {}
         }

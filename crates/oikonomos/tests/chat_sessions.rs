@@ -117,7 +117,7 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
     close_chat(&mut socket, server.root.path(), chat_id).await;
     let received = received(&server);
     let methods: Vec<Value> = received.iter().map(|message| message["method"].clone()).collect();
-    assert_eq!(methods, ["initialize", "initialized", "thread/resume", "turn/start", "thread/unsubscribe"]);
+    assert_eq!(methods, ["initialize", "initialized", "thread/resume", "model/list", "skills/list", "turn/start", "thread/unsubscribe"]);
     assert_eq!(received[2]["params"], json!({ "threadId": THREAD }));
 }
 

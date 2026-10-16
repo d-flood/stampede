@@ -18,6 +18,7 @@ type Keybar = { extra: string[] };
 
 export type Appearance = { theme: ITheme; fontFamily: string; scrollback: number };
 export type Agent = 'claude-code' | 'codex';
+export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 export type Rig = { name: string; agent: Agent; shortcut?: string };
 export type Launcher = { rig: Rig; chat: boolean; label: string };
 

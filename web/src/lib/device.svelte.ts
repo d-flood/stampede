@@ -41,6 +41,21 @@ export type Context = { used: number; window: number };
 
 export type Tokens = { input: number; output: number };
 
+export type Setting = 'model' | 'effort' | 'mode';
+
+export type Settings = Partial<Record<Setting, string>> & { pending?: Setting[] };
+
+export type Choice = { value: string; label: string };
+
+export type Capabilities = {
+	models: string[];
+	efforts: string[];
+	modes: Choice[];
+	commands: { name: string; description: string; hint: string }[];
+};
+
+export type Builtin = Setting | 'compact' | 'clear';
+
 export type Chat = {
 	id: string;
 	projectId: string;
@@ -52,6 +67,7 @@ export type Chat = {
 	tokens: Tokens | null;
 	queued: string[];
 	todos: Todo[];
+	settings: Settings;
 };
 
 export type Reading = { agent: Agent; window: 'five-hour' | 'weekly'; used: number; resetsAt?: number; readAt: number };
@@ -97,6 +113,8 @@ export type ServerMessage =
 	| { type: 'chat.queued'; chatId: string; queued: string[] }
 	| { type: 'chat.request'; chatId: string; request: Request }
 	| { type: 'chat.resolved'; chatId: string; requestId: string }
+	| { type: 'chat.settings'; chatId: string; settings: Settings }
+	| { type: 'chat.capabilities'; chatId: string; capabilities: Capabilities }
 	| { type: 'config.changed' }
 	| { type: 'projects.changed'; projects: Project[] }
 	| { type: 'project.opened'; projectId: string }
@@ -129,6 +147,7 @@ export type ClientMessage =
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean }
 	| { type: 'chat.close' | 'chat.attach' | 'chat.detach' | 'chat.interrupt'; chatId: string }
 	| { type: 'chat.answer'; chatId: string; requestId: string; answer: Answer }
+	| { type: 'chat.run'; chatId: string; command: Builtin; value?: string }
 	| { type: 'projects.list' }
 	| { type: 'project.open'; path: string }
 	| { type: 'project.close'; projectId: string }

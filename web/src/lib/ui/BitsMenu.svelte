@@ -2,7 +2,7 @@
 	import { ContextMenu, DropdownMenu } from 'bits-ui';
 	import type { Component, Snippet } from 'svelte';
 
-	type Item = { label: string; onselect: () => void; disabled?: boolean; icon?: Component; hint?: string };
+	type Item = { label: string; onselect: () => void; disabled?: boolean; icon?: Component; hint?: string; checked?: boolean };
 	type Group = { heading: string; items: Item[] };
 	type Layer = { wrapperProps: Record<string, unknown>; props: Record<string, unknown> };
 
@@ -11,16 +11,28 @@
 	let { items, context = false, trigger, open = $bindable(false) }: Props = $props();
 </script>
 
-{#snippet item({ label, onselect, disabled, icon: Icon, hint }: Item)}
-	<DropdownMenu.Item onSelect={onselect} {disabled}>
-		{#snippet child({ props })}
-			<div {...props} class="item">
-				{#if Icon}<Icon />{/if}
-				<span class="label">{label}</span>
-				{#if hint}<span class="hint">{hint}</span>{/if}
-			</div>
-		{/snippet}
-	</DropdownMenu.Item>
+{#snippet item({ label, onselect, disabled, checked, icon: Icon, hint }: Item)}
+	{#if checked === undefined}
+		<DropdownMenu.Item onSelect={onselect} {disabled}>
+			{#snippet child({ props })}
+				<div {...props} class="item">
+					{#if Icon}<Icon />{/if}
+					<span class="label">{label}</span>
+					{#if hint}<span class="hint">{hint}</span>{/if}
+				</div>
+			{/snippet}
+		</DropdownMenu.Item>
+	{:else}
+		<DropdownMenu.CheckboxItem {checked} onSelect={onselect} {disabled}>
+			{#snippet child({ props })}
+				<div {...props} class="item">
+					{#if Icon}<Icon />{/if}
+					<span class="label">{label}</span>
+					{#if hint}<span class="hint">{hint}</span>{/if}
+				</div>
+			{/snippet}
+		</DropdownMenu.CheckboxItem>
+	{/if}
 {/snippet}
 
 {#snippet content({ wrapperProps, props }: Layer)}
@@ -140,6 +152,16 @@
 
 	.item[data-highlighted] {
 		background: var(--hover);
+	}
+
+	.item[aria-checked='true'] {
+		font-weight: 600;
+	}
+
+	.item[aria-checked='true']::after {
+		content: '✓';
+		margin-left: auto;
+		padding-left: var(--space-4);
 	}
 
 	.item[data-disabled] {

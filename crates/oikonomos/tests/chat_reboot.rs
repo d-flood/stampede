@@ -102,7 +102,7 @@ async fn a_codex_chat_whose_daemon_restarts_mid_turn_is_interrupted() {
     let item = json!({ "projectId": project_id, "chatId": chat_id, "label": "codex", "status": "done" });
     assert_eq!(pushed(&mut pushes).await, ("away".into(), item));
 
-    said(&mut socket, &server, &chat_id, &mut view).await;
+    said(&mut socket, &server, &chat_id, &mut view, false).await;
 }
 
 #[tokio::test]
@@ -125,7 +125,7 @@ async fn a_codex_chat_whose_daemon_forgot_its_turn_across_a_reboot_is_interrupte
     assert_eq!(pushed(&mut pushes).await, ("away".into(), item));
     assert_eq!(record(&server, &chat_id)["viewedSinceDone"], false);
 
-    said(&mut socket, &server, &chat_id, &mut view).await;
+    said(&mut socket, &server, &chat_id, &mut view, true).await;
 }
 
 async fn start() -> (Server, tempfile::TempDir, UnboundedReceiver<(String, Value)>) {
@@ -180,7 +180,7 @@ fn interrupted_count() -> [Value; 2] {
     ]
 }
 
-async fn said(socket: &mut Socket, server: &Server, chat_id: &str, view: &mut View) {
+async fn said(socket: &mut Socket, server: &Server, chat_id: &str, view: &mut View, restored: bool) {
     assert_eq!(record(server, chat_id)["queued"], json!(["Leave this queued"]));
     control(socket, json!({ "type": "chat.interrupt", "chatId": chat_id })).await;
     assert_eq!(next_control(socket, "chat.queued").await["queued"], json!([]));
@@ -195,20 +195,23 @@ async fn said(socket: &mut Socket, server: &Server, chat_id: &str, view: &mut Vi
     let log = fs::read_to_string(server.root.path().join("home/.codex/fake-daemon/received.jsonl")).unwrap();
     let methods: Vec<Value> =
         log.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()["method"].clone()).collect();
-    assert_eq!(
-        methods,
-        [
+    let mut expected = vec![
             "initialize",
             "initialized",
             "thread/start",
+            "model/list",
+            "skills/list",
             "turn/start",
             "initialize",
             "initialized",
             "thread/resume",
             "turn/start",
             "thread/unsubscribe",
-        ]
-    );
+    ];
+    if restored {
+        expected.splice(9..9, ["model/list", "skills/list"]);
+    }
+    assert_eq!(methods, expected);
 }
 
 fn record(server: &Server, chat_id: &str) -> Value {

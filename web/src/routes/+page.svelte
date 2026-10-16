@@ -205,6 +205,11 @@
 					if (chat.id === message.chatId) chat.queued = message.queued;
 				}
 				break;
+			case 'chat.settings':
+				for (const chat of Object.values(chats).flat()) {
+					if (chat.id === message.chatId) chat.settings = message.settings;
+				}
+				break;
 			case 'chat.created':
 				place(message.chat.projectId, message.chat.id);
 				choose(message.chat.projectId, message.chat.id);

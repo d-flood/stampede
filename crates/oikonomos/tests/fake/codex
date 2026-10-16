@@ -37,6 +37,23 @@ def fixture():
     return recorded(name, 'recorded.jsonl')
 
 
+def answers():
+    recorded = {}
+    for line in (FIXTURES / 'answers.recorded.jsonl').read_text().splitlines():
+        entry = json.loads(line)
+        if 'stdin' in entry:
+            outputs = recorded.setdefault(entry['stdin']['method'], [])
+        else:
+            outputs.append(entry['stdout'])
+    return recorded
+
+
+def answer(message):
+    for output in answers()[message['method']]:
+        output['id'] = message['id']
+        send(output)
+
+
 def daemon():
     return Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'fake-daemon'
 
@@ -89,14 +106,36 @@ def waiting():
     while True:
         if select.select([stdin], [], [], 0)[0]:
             buffered += stdin.read(65536)
-        if not buffered or buffered[0] & 0x0F not in (9, 10):
-            return bool(buffered)
+        if not buffered:
+            return False
         if len(buffered) < 2:
             return False
-        size = 2 + (4 if buffered[1] & 0x80 else 0) + (buffered[1] & 0x7F)
-        if len(buffered) < size:
+        opcode, size = buffered[0] & 0x0F, buffered[1] & 0x7F
+        start = 2
+        if size > 125:
+            width = 2 if size == 126 else 8
+            if len(buffered) < start + width:
+                return False
+            size = int.from_bytes(buffered[start:start + width], 'big')
+            start += width
+        masked = bool(buffered[1] & 0x80)
+        end = start + (4 if masked else 0) + size
+        if len(buffered) < end:
             return False
-        buffered = buffered[size:]
+        if opcode in (9, 10):
+            buffered = buffered[end:]
+            continue
+        if opcode != 1:
+            return True
+        mask = buffered[start:start + 4] if masked else bytes(4)
+        start += 4 if masked else 0
+        payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(buffered[start:end]))
+        message = json.loads(payload)
+        if message.get('method') not in ('model/list', 'skills/list'):
+            return True
+        buffered = buffered[end:]
+        log(message, payload)
+        answer(message)
 
 
 def handshake():
@@ -147,6 +186,9 @@ def read(expected):
             continue
         if message.get('method') == 'thread/list' != expected.get('method'):
             list_threads(message)
+            continue
+        if message.get('method') != expected.get('method') and message.get('method') in answers():
+            answer(message)
             continue
         return message
     return None

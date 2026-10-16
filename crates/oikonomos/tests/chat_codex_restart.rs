@@ -111,19 +111,25 @@ async fn a_codex_chat_resumes_its_thread_through_server_restarts() {
             "initialize",
             "initialized",
             "thread/start",
+            "model/list",
+            "skills/list",
             "turn/start",
             "initialize",
             "initialized",
             "thread/resume",
+            "model/list",
+            "skills/list",
             "turn/start",
             "initialize",
             "initialized",
             "thread/resume",
+            "model/list",
+            "skills/list",
             "thread/unsubscribe",
         ]
     );
-    assert_eq!(received[6]["params"], json!({ "threadId": THREAD }));
-    assert_eq!(received[10]["params"], json!({ "threadId": THREAD }));
+    assert_eq!(received[8]["params"], json!({ "threadId": THREAD }));
+    assert_eq!(received[14]["params"], json!({ "threadId": THREAD }));
 }
 
 fn counted(numbers: RangeInclusive<u32>) -> String {

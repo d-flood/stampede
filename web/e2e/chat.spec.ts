@@ -178,6 +178,37 @@ test('a working Chat steers, queues until its turn ends, and interrupts, with no
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
 	await expect(tab).toHaveCount(0);
 });
+const slashed = [
+	{ agent: 'claude', rig: 'Fake Claude', command: '/code-review', before: 'Effort: xhigh', after: 'Effort: low' },
+	{ agent: 'codex', rig: 'Fake Codex', command: '/openai-docs', before: 'Effort: high', after: 'Effort: low, next turn' }
+];
+
+for (const { agent, rig, command, before, after } of slashed) {
+	test(`/effort from the slash menu updates the effort chip of a ${rig} Chat`, async ({ page }, { project }) => {
+		const name = `slash-${agent}-${project.name}`;
+		mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+		await openProject(page, name);
+		await page.getByRole('button', { name: 'New Tab' }).click();
+		await page.getByRole('menuitem', { name: `${rig} as Chat` }).click();
+		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+		await expect(panel.getByRole('button', { name: before, exact: true })).toBeVisible();
+
+		const composer = panel.getByRole('textbox', { name: 'Composer' });
+		await composer.fill('/');
+		const menu = panel.getByRole('region', { name: 'Commands' });
+		await expect(menu.getByRole('button', { name: new RegExp(`^${command}`) })).toBeVisible();
+		await menu.getByRole('button', { name: /^\/effort/ }).click();
+		await expect(composer).toHaveValue('/effort ');
+		await menu.getByRole('button', { name: 'low', exact: true }).click();
+		await expect(panel.getByRole('button', { name: after, exact: true })).toBeVisible();
+		await expect(composer).toHaveValue('');
+		await expect(menu).toHaveCount(0);
+
+		await panel.getByRole('button', { name: after, exact: true }).click();
+		await expect(page.getByRole('menuitemcheckbox', { name: 'low' })).toHaveAttribute('aria-checked', 'true');
+		await page.keyboard.press('Escape');
+	});
+}
 
 for (const agent of ['Claude', 'Codex']) {
 	test(`a ${agent} edit is a card that opens its file in a Diff tab`, async ({ page }, { project }) => {

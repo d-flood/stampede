@@ -38,10 +38,14 @@ for (const agent of ['Claude', 'Codex']) {
 test('sending from the Composer while a card is up denies the request instead', async ({ page }, { project }) => {
 	const { tab, panel, composer, card } = await launch(page, 'Claude Approval', `requests-deny-${project.name}`);
 	await expect(card).toBeVisible();
-	await composer.fill('Make a directory called elsewhere instead');
+	await composer.fill('/');
+	const menu = panel.getByRole('region', { name: 'Commands' });
+	await expect(menu.getByRole('button', { name: /^\/clear/ })).toBeDisabled();
+	await expect(menu.getByRole('button', { name: /^\/compact/ })).toBeDisabled();
+	await composer.fill('/effort low');
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(card).toHaveCount(0);
 	await expect(composer).toHaveValue('');
 	await expect(tab.getByTitle('done')).toBeVisible();
-	await expect(panel.getByText('Make a directory called elsewhere instead')).toHaveCount(0);
+	await expect(panel.getByText('/effort low', { exact: true })).toHaveCount(0);
 });

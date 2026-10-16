@@ -39,7 +39,10 @@ async fn a_codex_chat_streams_a_turn_and_closing_stops_its_proxy() {
 
     close_chat(&mut socket, server.root.path(), chat_id).await;
     let methods: Vec<Value> = received(&server).iter().map(|message| message["method"].clone()).collect();
-    assert_eq!(methods, ["initialize", "initialized", "thread/start", "turn/start", "thread/unsubscribe"]);
+    assert_eq!(
+        methods,
+        ["initialize", "initialized", "thread/start", "model/list", "skills/list", "turn/start", "thread/unsubscribe"]
+    );
 }
 
 #[tokio::test]
@@ -60,10 +63,19 @@ async fn closing_a_working_codex_chat_interrupts_its_turn() {
     let methods: Vec<Value> = received.iter().map(|message| message["method"].clone()).collect();
     assert_eq!(
         methods,
-        ["initialize", "initialized", "thread/start", "turn/start", "turn/interrupt", "thread/unsubscribe"]
+        [
+            "initialize",
+            "initialized",
+            "thread/start",
+            "model/list",
+            "skills/list",
+            "turn/start",
+            "turn/interrupt",
+            "thread/unsubscribe"
+        ]
     );
     assert_eq!(
-        received[4]["params"],
+        received[6]["params"],
         json!({ "threadId": "01a1464b-f380-7053-b351-54717787b916", "turnId": "01a1464b-f40b-7c53-af63-840ce5e8a92b" })
     );
 }

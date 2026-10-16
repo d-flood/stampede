@@ -17,8 +17,8 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
 use super::{
-    Answer, Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, diff, relative,
-    seconds, unified, words,
+    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Setting,
+    Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, diff, relative, seconds, unified, words,
 };
 use crate::{
     config::{Agent, AgentSettings, codex_policy},
@@ -41,6 +41,7 @@ enum Request {
     Send(String),
     Interrupt,
     Answer(String, Answer),
+    Run(Builtin),
     Close,
 }
 
@@ -55,6 +56,10 @@ impl Driver for Codex {
 
     fn answer(&self, request_id: &str, answer: Answer) {
         let _ = self.requests.send(Request::Answer(request_id.to_owned(), answer));
+    }
+
+    fn run(&self, builtin: Builtin) {
+        let _ = self.requests.send(Request::Run(builtin));
     }
 
     fn close(&self) {
@@ -72,7 +77,9 @@ pub async fn start(
     let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
     let _ = events.send(Event::Session(thread.to_owned()));
-    Ok((run(connection, proxy, Transcript::new(thread, cwd, events), cwd, env), received))
+    let mut transcript = Transcript::new(thread, cwd, events);
+    transcript.settings = current(&started);
+    Ok((run(connection, proxy, transcript, cwd, env), received))
 }
 
 pub async fn resume(chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
@@ -80,6 +87,7 @@ pub async fn resume(chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(thread, &chat.cwd, events);
     transcript.status = chat.status;
+    transcript.settings = chat.settings.clone();
     let (connection, proxy) = rejoin(&chat.cwd, env, &mut transcript).await?;
     Ok((run(connection, proxy, transcript, &chat.cwd, env), received))
 }
@@ -104,6 +112,13 @@ async fn rejoin(
             replay.push(message);
         }
     };
+    let pending = transcript.settings.clone();
+    transcript.settings = current(&resumed);
+    for &setting in &pending.pending {
+        *transcript.settings.get_mut(setting) = pending.get(setting).clone();
+        transcript.settings.mark_pending(setting);
+    }
+    transcript.report_settings();
     let status = transcript.resumed(&resumed["thread"]["turns"]);
     transcript.status = status;
     for message in replay {
@@ -207,12 +222,21 @@ fn run(
     tokio::spawn(async move {
         // The proxy outlives a daemon that has gone until it next relays something.
         let mut heartbeat = interval(HEARTBEAT);
+        transcript.report_settings();
+        transcript.declare();
+        let lists = [("model/list", json!({}), List::Models), ("skills/list", json!({ "cwds": [cwd] }), List::Skills)];
+        for (method, params, list) in lists {
+            if let Ok(id) = connection.request(method, params).await {
+                transcript.lists.insert(id, list);
+            }
+        }
         loop {
             tokio::select! {
                 request = pending.recv() => match request {
                     Some(Request::Send(text)) => {
-                        let input = json!([{ "type": "text", "text": text, "text_elements": [] }]);
-                        let _ = connection.send(&mut transcript, input).await;
+                        let mut input = vec![json!({ "type": "text", "text": text, "text_elements": [] })];
+                        input.extend(transcript.skill(&text));
+                        let _ = connection.send(&mut transcript, Value::Array(input)).await;
                     }
                     Some(Request::Interrupt) => {
                         let _ = connection.interrupt(&mut transcript).await;
@@ -233,6 +257,28 @@ fn run(
                         let input = json!([{ "type": "text", "text": text, "text_elements": [] }]);
                         let _ = connection.send(&mut transcript, input).await;
                     }
+                    Some(Request::Run(Builtin::Compact)) if transcript.idle() => {
+                        transcript.report(Status::Working);
+                        let compact = json!({ "threadId": transcript.thread });
+                        match connection.request("thread/compact/start", compact).await {
+                            Ok(id) => transcript.compacting = Some(id),
+                            Err(_) => break,
+                        }
+                    }
+                    Some(Request::Run(Builtin::Clear)) if transcript.idle() => {
+                        match connection.call("thread/start", thread(&cwd, &AgentSettings::default())).await {
+                            Ok(started) => {
+                                let previous = json!({ "threadId": transcript.thread });
+                                let _ = connection.call("thread/unsubscribe", previous).await;
+                                transcript.restart(&started);
+                            }
+                            Err(error) => eprintln!("codex /clear: {error}"),
+                        }
+                    }
+                    Some(Request::Run(Builtin::Model(model))) => transcript.choose(Setting::Model, model),
+                    Some(Request::Run(Builtin::Effort(effort))) => transcript.choose(Setting::Effort, effort),
+                    Some(Request::Run(Builtin::Mode(mode))) => transcript.choose(Setting::Mode, mode),
+                    Some(Request::Run(_)) => {}
                     Some(Request::Close) | None => {
                         let _ = timeout(CLOSING, connection.close(&mut transcript)).await;
                         break;
@@ -364,7 +410,9 @@ impl Connection {
 
     async fn start(&mut self, transcript: &mut Transcript, input: Value) -> io::Result<()> {
         transcript.report(Status::Working);
-        let id = self.request("turn/start", json!({ "threadId": transcript.thread, "input": input })).await?;
+        let mut turn = json!({ "threadId": transcript.thread, "input": input });
+        transcript.overrides(&mut turn);
+        let id = self.request("turn/start", turn).await?;
         transcript.starting = Some(id);
         Ok(())
     }
@@ -423,6 +471,47 @@ struct Transcript {
     status: Status,
     asked: HashMap<String, (Value, Option<Value>, Option<String>)>,
     edits: HashMap<String, Value>,
+    settings: Settings,
+    models: Vec<Value>,
+    skills: Vec<Value>,
+    compacting: Option<u64>,
+    applying: Vec<(Setting, Option<String>)>,
+    lists: HashMap<u64, List>,
+}
+
+enum List {
+    Models,
+    Skills,
+}
+
+fn enabled(skills: &Value) -> Vec<Value> {
+    let listed = skills["data"].as_array().into_iter().flatten();
+    let skills = listed.flat_map(|listed| listed["skills"].as_array()).flatten();
+    skills.filter(|skill| skill["enabled"] != false).cloned().collect()
+}
+
+fn current(thread: &Value) -> Settings {
+    let policy = |mode: &&str| {
+        let (approval, sandbox) = codex_policy(mode).unwrap();
+        thread["approvalPolicy"] == approval && thread["sandbox"]["type"] == policy_type(sandbox)
+    };
+    let mode = match thread["collaborationMode"]["mode"] == "plan" {
+        true => Some("plan"),
+        false => Agent::Codex.modes().iter().copied().find(policy),
+    };
+    let chosen = AgentSettings {
+        model: thread["model"].as_str().map(str::to_owned),
+        effort: thread["reasoningEffort"].as_str().map(str::to_owned),
+        mode: mode.map(str::to_owned),
+    };
+    Settings { chosen, pending: Vec::new() }
+}
+
+/// The type of a sandbox policy, as `turn/start` takes it, from the sandbox mode its `thread/start` takes.
+fn policy_type(sandbox: &str) -> String {
+    let mut words = sandbox.split('-');
+    let first = words.next().unwrap_or_default().to_owned();
+    words.fold(first, |camel, word| camel + &word[..1].to_uppercase() + &word[1..])
 }
 
 impl Transcript {
@@ -445,7 +534,119 @@ impl Transcript {
             status: Status::Done,
             asked: HashMap::new(),
             edits: HashMap::new(),
+            settings: Settings::default(),
+            models: Vec::new(),
+            skills: Vec::new(),
+            compacting: None,
+            applying: Vec::new(),
+            lists: HashMap::new(),
         }
+    }
+
+    fn idle(&self) -> bool {
+        self.starting.is_none() && self.turn.is_none() && self.compacting.is_none()
+    }
+
+    fn listed(&self) -> Option<&Value> {
+        self.models.iter().find(|listed| listed["model"].as_str() == self.settings.chosen.model.as_deref())
+    }
+
+    fn efforts(&self) -> Vec<String> {
+        let efforts = self.listed().and_then(|listed| listed["supportedReasoningEfforts"].as_array());
+        let efforts = efforts.into_iter().flatten().filter_map(|effort| effort["reasoningEffort"].as_str());
+        efforts.map(str::to_owned).collect()
+    }
+
+    fn declare(&self) {
+        let mut modes: Vec<Choice> = Agent::Codex.modes().iter().map(|mode| Choice::mode(mode)).collect();
+        modes.push(Choice::mode("plan"));
+        let commands = self.skills.iter().map(|skill| {
+            let short = skill["interface"]["shortDescription"].as_str().or(skill["shortDescription"].as_str());
+            AgentCommand {
+                name: skill["name"].as_str().unwrap_or_default().to_owned(),
+                description: short.or(skill["description"].as_str()).unwrap_or_default().to_owned(),
+                hint: String::new(),
+            }
+        });
+        let capabilities = Capabilities {
+            models: self.models.iter().filter_map(|model| model["model"].as_str()).map(str::to_owned).collect(),
+            efforts: self.efforts(),
+            modes,
+            commands: commands.collect(),
+        };
+        let _ = self.events.send(Event::Capabilities(capabilities));
+    }
+
+    fn report_settings(&self) {
+        let _ = self.events.send(Event::Settings(self.settings.clone()));
+    }
+
+    fn choose(&mut self, setting: Setting, value: String) {
+        *self.settings.get_mut(setting) = Some(value);
+        self.settings.mark_pending(setting);
+        if setting == Setting::Model {
+            let efforts = self.efforts();
+            if self.settings.chosen.effort.as_ref().is_some_and(|effort| !efforts.contains(effort)) {
+                let fallback = self.listed().and_then(|listed| listed["defaultReasoningEffort"].as_str());
+                self.settings.chosen.effort = fallback.map(str::to_owned);
+                self.settings.mark_pending(Setting::Effort);
+            }
+            self.declare();
+        }
+        self.report_settings();
+    }
+
+    fn overrides(&mut self, turn: &mut Value) {
+        if self.settings.pending.is_empty() {
+            return;
+        }
+        let Settings { chosen: AgentSettings { model, effort, mode }, pending } = &self.settings;
+        turn["model"] = json!(model);
+        turn["effort"] = json!(effort);
+        let collaboration = if mode.as_deref() == Some("plan") { "plan" } else { "default" };
+        let settings = json!({ "model": model, "reasoning_effort": effort, "developer_instructions": null });
+        turn["collaborationMode"] = json!({ "mode": collaboration, "settings": settings });
+        if let Some((approval, sandbox)) = mode.as_deref().and_then(codex_policy) {
+            turn["approvalPolicy"] = json!(approval);
+            turn["sandboxPolicy"] = json!({ "type": policy_type(sandbox) });
+        }
+        self.applying = pending.iter().map(|&setting| (setting, self.settings.get(setting).clone())).collect();
+    }
+
+    fn skill(&self, text: &str) -> Option<Value> {
+        let name = text.strip_prefix('/')?.split_whitespace().next()?;
+        let skill = self.skills.iter().find(|skill| skill["name"] == name)?;
+        Some(json!({ "type": "skill", "name": name, "path": skill["path"] }))
+    }
+
+    /// Moves to the new thread `/clear` started, keeping the chosen settings for its first turn.
+    fn restart(&mut self, started: &Value) {
+        let Some(thread) = started["thread"]["id"].as_str() else { return };
+        self.thread = thread.to_owned();
+        self.len = 0;
+        self.streaming.clear();
+        self.tools = None;
+        self.commands.clear();
+        self.subagents.clear();
+        self.reading.clear();
+        self.asked.clear();
+        self.edits.clear();
+        self.steering.clear();
+        self.unsteered = None;
+        self.applying.clear();
+        self.previous = 0;
+        let _ = self.events.send(Event::Session(self.thread.clone()));
+        let _ = self.events.send(Event::Reset);
+        let _ = self.events.send(Event::Truncate(0));
+        let fresh = current(started);
+        for setting in [Setting::Model, Setting::Effort, Setting::Mode] {
+            match self.settings.get(setting) {
+                None => *self.settings.get_mut(setting) = fresh.get(setting).clone(),
+                chosen if chosen != fresh.get(setting) => self.settings.mark_pending(setting),
+                _ => {}
+            }
+        }
+        self.report_settings();
     }
 
     fn report(&mut self, status: Status) {
@@ -534,10 +735,28 @@ impl Transcript {
     }
 
     fn read(&mut self, message: &Value) {
+        if let Some(list) = response(message).and_then(|id| self.lists.remove(&id)) {
+            match list {
+                List::Models => self.models = message["result"]["data"].as_array().cloned().unwrap_or_default(),
+                List::Skills => self.skills = enabled(&message["result"]),
+            }
+            return self.declare();
+        }
         if self.starting.is_some() && response(message) == self.starting {
             self.starting = None;
+            let applying = std::mem::take(&mut self.applying);
             match message["result"]["turn"]["id"].as_str() {
-                Some(turn) => self.turn = Some(turn.to_owned()),
+                Some(turn) => {
+                    self.turn = Some(turn.to_owned());
+                    if !applying.is_empty() {
+                        for (setting, value) in applying {
+                            if self.settings.get(setting) == &value {
+                                self.settings.pending.retain(|pending| *pending != setting);
+                            }
+                        }
+                        self.report_settings();
+                    }
+                }
                 None => {
                     eprintln!("codex turn/start failed: {}", message["error"]);
                     self.report(Status::Done);
@@ -549,6 +768,14 @@ impl Transcript {
             if message.get("error").is_some() {
                 eprintln!("codex turn/steer failed: {}", message["error"]);
                 self.unsteered = Some(input);
+            }
+            return;
+        }
+        if self.compacting.is_some() && response(message) == self.compacting {
+            self.compacting = None;
+            if let Some(error) = message.get("error") {
+                eprintln!("codex thread/compact/start failed: {error}");
+                self.report(Status::Done);
             }
             return;
         }
@@ -649,6 +876,7 @@ impl Transcript {
                 });
                 let _ = self.events.send(Event::Todos(todos.collect()));
             }
+            Some("turn/started") => self.turn = params["turn"]["id"].as_str().map(str::to_owned),
             Some("turn/completed") => {
                 self.turn = None;
                 // A message cut off by an interrupt or a steer never gets its item/completed.

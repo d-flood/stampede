@@ -5,8 +5,9 @@
 	import Queued from '#lib/chat/Queued.svelte';
 	import RequestCard from '#lib/chat/RequestCard.svelte';
 	import Todos from '#lib/chat/Todos.svelte';
+	import Chips from '#lib/chat/Chips.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
-	import type { Answer, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
+	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { onMount } from 'svelte';
 	import { on } from 'svelte/events';
@@ -19,6 +20,12 @@
 	const request = $derived(requests[0]);
 	const live = $derived(device.connection === 'connected');
 	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
+	let capabilities = $state<Capabilities>({ models: [], efforts: [], modes: [], commands: [] });
+	const choices = $derived({
+		model: capabilities.models.map((value) => ({ value, label: value })),
+		effort: capabilities.efforts.map((value) => ({ value, label: value })),
+		mode: capabilities.modes
+	});
 
 	onMount(() => {
 		device.send({ type: 'chat.attach', chatId: chat.id });
@@ -49,11 +56,18 @@
 			case 'chat.resolved':
 				if (message.chatId === chat.id) requests = requests.filter(({ id }) => id !== message.requestId);
 				break;
+			case 'chat.capabilities':
+				if (message.chatId === chat.id) capabilities = message.capabilities;
+				break;
 		}
 	}
 
 	function answer(request: Request, answer: Answer) {
 		device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer });
+	}
+
+	function run(command: Builtin, value?: string) {
+		device.send({ type: 'chat.run', chatId: chat.id, command, value });
 	}
 
 	function follow(scroller: HTMLElement) {
@@ -74,11 +88,11 @@
 </script>
 
 <div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active}>
-	{#if form() === 'phone' && chat.context}
-		<div class="chips">
+	<Chips agent={chat.agent} settings={chat.settings} {choices} onrun={run}>
+		{#if form() === 'phone' && chat.context}
 			<ContextBar context={chat.context} compact />
-		</div>
-	{/if}
+		{/if}
+	</Chips>
 	<Todos todos={chat.todos} working={chat.status === 'working'} />
 	<div class="transcript" {@attach follow}>
 		<div class="column">
@@ -92,7 +106,7 @@
 				<RequestCard {request} {agent} disabled={!live} onanswer={(chosen) => answer(request, chosen)} />
 			{/key}
 		{/if}
-		<ChatComposer {device} {chat} {live} {request} />
+		<ChatComposer {device} {chat} {live} {request} {capabilities} {choices} onrun={run} />
 		{#if form() === 'desktop'}
 			<Meters {chat} />
 		{/if}
@@ -108,15 +122,6 @@
 
 	.panel[hidden] {
 		display: none;
-	}
-
-	.chips {
-		display: flex;
-		flex: none;
-		align-items: center;
-		justify-content: flex-end;
-		padding: var(--space-2) var(--space-4);
-		border-bottom: var(--border-width) solid var(--border);
 	}
 
 	.transcript {
