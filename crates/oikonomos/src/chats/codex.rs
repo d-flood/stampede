@@ -10,13 +10,13 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::{
     io::Join,
-    process::{ChildStdin, ChildStdout, Command},
+    process::{Child, ChildStdin, ChildStdout, Command},
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     time::timeout,
 };
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
-use super::{Driver, Event, Item};
+use super::{Chat, Driver, Event, Item};
 use crate::hooks::Status;
 
 const CLOSING: Duration = Duration::from_secs(5);
@@ -41,6 +41,25 @@ impl Driver for Codex {
 }
 
 pub async fn start(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
+    let (mut connection, proxy) = connect(cwd, env).await?;
+    let started = connection.call("thread/start", json!({ "cwd": cwd })).await?;
+    let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?;
+    let (events, received) = mpsc::unbounded_channel();
+    let _ = events.send(Event::Session(thread.to_owned()));
+    Ok((run(connection, proxy, Transcript::new(thread, events)), received))
+}
+
+pub async fn resume(chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
+    let thread = chat.agent_session.as_deref().ok_or_else(|| io::Error::other("the chat has no thread"))?;
+    let (mut connection, proxy) = connect(&chat.cwd, env).await?;
+    let resumed = connection.call("thread/resume", json!({ "threadId": thread })).await?;
+    let (events, received) = mpsc::unbounded_channel();
+    let mut transcript = Transcript::new(thread, events);
+    transcript.resumed(&resumed["thread"]["turns"]);
+    Ok((run(connection, proxy, transcript), received))
+}
+
+async fn connect(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Connection, Child)> {
     let daemon = codex(cwd, env).args(["app-server", "daemon", "start"]).stdout(Stdio::null()).status().await?;
     if !daemon.success() {
         return Err(io::Error::other(format!("codex app-server daemon start: {daemon}")));
@@ -59,14 +78,12 @@ pub async fn start(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Co
     let initialize = json!({ "clientInfo": client, "capabilities": { "experimentalApi": true } });
     connection.call("initialize", initialize).await?;
     connection.write(json!({ "method": "initialized" })).await?;
-    let started = connection.call("thread/start", json!({ "cwd": cwd })).await?;
-    let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?;
-    let thread = thread.to_owned();
+    Ok((connection, proxy))
+}
+
+fn run(mut connection: Connection, mut proxy: Child, mut transcript: Transcript) -> Codex {
     let (requests, mut pending) = mpsc::unbounded_channel();
-    let (events, received) = mpsc::unbounded_channel();
-    let _ = events.send(Event::Session(thread.clone()));
     tokio::spawn(async move {
-        let mut transcript = Transcript { thread, events, len: 0, starting: None, turn: None, streaming: HashMap::new() };
         loop {
             tokio::select! {
                 request = pending.recv() => match request {
@@ -92,7 +109,7 @@ pub async fn start(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Co
         }
         let _ = proxy.kill().await;
     });
-    Ok((Codex { requests }, received))
+    Codex { requests }
 }
 
 fn codex(cwd: &Path, env: &BTreeMap<String, String>) -> Command {
@@ -171,11 +188,36 @@ struct Transcript {
 }
 
 impl Transcript {
+    fn new(thread: &str, events: UnboundedSender<Event>) -> Self {
+        Self { thread: thread.to_owned(), events, len: 0, starting: None, turn: None, streaming: HashMap::new() }
+    }
+
     fn push(&mut self, item: Item) -> usize {
         let index = self.len;
         self.len += 1;
         let _ = self.events.send(Event::Item(index, item));
         index
+    }
+
+    fn stream(&mut self, id: &str, text: &str) {
+        let index = self.push(Item::Text { text: text.to_owned(), streaming: true });
+        self.streaming.insert(id.to_owned(), (index, text.to_owned()));
+    }
+
+    fn resumed(&mut self, turns: &Value) {
+        let turns = turns.as_array().map(Vec::as_slice).unwrap_or_default();
+        for item in turns.iter().flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
+            let item = match item["type"].as_str() {
+                Some("userMessage") => user(item),
+                Some("agentMessage") => agent(item),
+                _ => continue,
+            };
+            self.push(item);
+        }
+        let running = turns.last().filter(|turn| turn["status"] == "inProgress");
+        self.turn = running.and_then(|turn| turn["id"].as_str()).map(str::to_owned);
+        let status = if self.turn.is_some() { Status::Working } else { Status::Done };
+        let _ = self.events.send(Event::Status(status));
     }
 
     fn read(&mut self, message: &Value) {
@@ -201,28 +243,47 @@ impl Transcript {
                 let _ = self.events.send(Event::Status(Status::Done));
             }
             Some("item/started") if item["type"] == "userMessage" => {
-                let content = item["content"].as_array().into_iter().flatten();
-                let text: Vec<&str> = content.filter_map(|input| input["text"].as_str()).collect();
-                self.push(Item::User { text: text.join("\n"), images: 0 });
+                self.push(user(item));
             }
             Some("item/started") if item["type"] == "agentMessage" => {
                 let (Some(id), Some(text)) = (item["id"].as_str(), item["text"].as_str()) else { return };
-                let index = self.push(Item::Text { text: text.to_owned(), streaming: true });
-                self.streaming.insert(id.to_owned(), (index, text.to_owned()));
+                self.stream(id, text);
             }
             Some("item/agentMessage/delta") => {
-                let Some((index, text)) = params["itemId"].as_str().and_then(|id| self.streaming.get_mut(id)) else {
-                    return;
-                };
-                text.push_str(params["delta"].as_str().unwrap_or_default());
-                let _ = self.events.send(Event::Item(*index, Item::Text { text: text.clone(), streaming: true }));
+                let Some(id) = params["itemId"].as_str() else { return };
+                let delta = params["delta"].as_str().unwrap_or_default();
+                match self.streaming.get_mut(id) {
+                    Some((index, text)) => {
+                        text.push_str(delta);
+                        let item = Item::Text { text: text.clone(), streaming: true };
+                        let _ = self.events.send(Event::Item(*index, item));
+                    }
+                    // A resume rejoins a streaming message without its item/started or its text so far.
+                    None => self.stream(id, delta),
+                }
             }
             Some("item/completed") if item["type"] == "agentMessage" => {
-                let Some((index, _)) = item["id"].as_str().and_then(|id| self.streaming.remove(id)) else { return };
-                let text = item["text"].as_str().unwrap_or_default().to_owned();
-                let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false }));
+                let Some(id) = item["id"].as_str() else { return };
+                match self.streaming.remove(id) {
+                    Some((index, _)) => {
+                        let _ = self.events.send(Event::Item(index, agent(item)));
+                    }
+                    None => {
+                        self.push(agent(item));
+                    }
+                }
             }
             _ => {}
         }
     }
+}
+
+fn user(item: &Value) -> Item {
+    let content = item["content"].as_array().into_iter().flatten();
+    let text: Vec<&str> = content.filter_map(|input| input["text"].as_str()).collect();
+    Item::User { text: text.join("\n"), images: 0 }
+}
+
+fn agent(item: &Value) -> Item {
+    Item::Text { text: item["text"].as_str().unwrap_or_default().to_owned(), streaming: false }
 }

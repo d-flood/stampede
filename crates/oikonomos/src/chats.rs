@@ -161,7 +161,9 @@ impl Chats {
                 Agent::ClaudeCode => claude::reattach(&self.data_dir, &chat, &env)
                     .await
                     .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-                Agent::Codex => Err(io::Error::new(io::ErrorKind::Unsupported, "Codex Chats cannot be restored yet")),
+                Agent::Codex => codex::resume(&chat, &env)
+                    .await
+                    .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             };
             match reattached {
                 Ok((driver, events)) => self.adopt(chat, driver, events),

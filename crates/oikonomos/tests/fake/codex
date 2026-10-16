@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 stdin = sys.stdin.buffer
@@ -24,6 +25,33 @@ def fixture():
 
 def daemon():
     return Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'fake-daemon'
+
+
+def threads():
+    path = daemon() / 'threads'
+    path.mkdir(exist_ok=True)
+    return path
+
+
+def resume(entries, thread):
+    path = threads() / thread
+    if not path.exists():
+        fail(f'thread {thread} was never started')
+    after = int(path.read_text())
+    for index in range(after + 1, len(entries)):
+        if entries[index].get('stdin', {}).get('method') == 'thread/resume':
+            return index
+    fail(f'nothing resumes thread {thread} after line {after + 1}')
+
+
+def gate(name):
+    gates = os.environ.get('OIKONOMOS_FAKE_GATES')
+    if not gates:
+        return
+    path = Path(gates) / name
+    path.touch()
+    while path.exists():
+        time.sleep(0.02)
 
 
 def handshake():
@@ -83,21 +111,31 @@ def proxy():
     if not daemon().is_dir():
         fail('no daemon is running')
     handshake()
+    entries = [json.loads(line) for line in fixture().read_text().splitlines()]
     ids = {}
-    for line in fixture().read_text().splitlines():
-        entry = json.loads(line)
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
         if 'stdin' in entry:
             message = receive()
             if message is None:
                 sys.exit(0)
+            if message.get('method') == 'thread/resume':
+                index = resume(entries, message['params']['threadId'])
+                entry = entries[index]
             check(message, entry['stdin'])
             if 'id' in message:
                 ids[entry['stdin']['id']] = message['id']
+        elif 'gate' in entry:
+            gate(entry['gate'])
         else:
             message = entry['stdout']
             if 'method' not in message and message.get('id') in ids:
                 message['id'] = ids[message['id']]
+            if 'thread' in (message.get('result') or {}):
+                (threads() / message['result']['thread']['id']).write_text(str(index))
             send(message)
+        index += 1
     while receive() is not None:
         pass
 
