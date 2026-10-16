@@ -1,12 +1,10 @@
 import { expect, test } from '@playwright/test';
+import { openProject, showSidebar } from './shell.ts';
 
 test('a saved edit to a tracked file shows a Change marker on that line', async ({ page }, { project }) => {
 	const file = `${project.name}.txt`;
-	await page.goto('/');
-	await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Open Project' }).click();
-	await page.getByRole('option', { name: /\/alpha$/ }).click();
-	const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
-	if (!(await sidebar.isVisible())) await page.getByRole('button', { name: 'Sidebar' }).click();
+	await openProject(page, 'alpha');
+	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: file }).click();
 
 	const line = page.locator('.cm-line', { hasText: 'two' });

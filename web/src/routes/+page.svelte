@@ -13,8 +13,9 @@
 	import Leader from '#lib/shell/Leader.svelte';
 	import Palette, { type Scope } from '#lib/shell/Palette.svelte';
 	import Picker from '#lib/shell/Picker.svelte';
+	import Projects from '#lib/shell/Projects.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
-	import Sidebar, { type Section } from '#lib/shell/Sidebar.svelte';
+	import Sidebar, { showing, type Section } from '#lib/shell/Sidebar.svelte';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
@@ -23,9 +24,13 @@
 	import Menu from '#lib/ui/Menu.svelte';
 	import Tab from '#lib/ui/Tab.svelte';
 	import { onMount } from 'svelte';
+	import { on } from 'svelte/events';
+	import CaretLeft from '~icons/ph/caret-left';
+	import CaretRight from '~icons/ph/caret-right';
 	import Plus from '~icons/ph/plus';
 	import Power from '~icons/ph/power';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
+	import TerminalWindow from '~icons/ph/terminal-window';
 
 	const device = connect();
 	let projects = $state<Project[]>([]);
@@ -44,6 +49,10 @@
 	let palette = $state<Scope>();
 	let unfocused = $state(false);
 	let directories = $state<string[]>([]);
+	let screen = $state(1);
+	let screens: HTMLElement | undefined;
+	let held = $state(false);
+	let drawer: Drawer;
 	let settle: ((error?: string) => void) | undefined;
 	const servers = new LanguageServers(
 		device,
@@ -58,6 +67,13 @@
 	const tabIds = $derived([...tabs.map((tab) => tab.id), ...fileTabs.map((file) => file.id)]);
 	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? '']) ?? tabIds.at(-1));
 	const shown = $derived((visible && tabs.find((tab) => tab.id === activeTab)?.id) || null);
+	const phone = $derived(form() === 'phone');
+	const label = $derived(focused && projectLabels.get(focused.id));
+	const titles = $derived([
+		{ title: 'Projects' },
+		{ title: label ?? 'Tabs' },
+		{ title: showing(section, focused && git[focused.id]).label, sub: label }
+	]);
 
 	$effect(() => device.send({ type: 'device.view', terminalId: shown }));
 
@@ -129,7 +145,7 @@
 				directories = message.directories;
 				break;
 			case 'project.opened':
-				chosen = message.projectId;
+				choose(message.projectId);
 				picking = false;
 				settle?.();
 				break;
@@ -140,8 +156,48 @@
 	}
 
 	function attend({ projectId, terminalId }: Pick<Attention, 'projectId' | 'terminalId'>) {
-		chosen = projectId;
+		choose(projectId);
 		chosenTabs[projectId] = terminalId;
+	}
+
+	function choose(projectId: string) {
+		chosen = projectId;
+		show(1);
+	}
+
+	function show(index: number) {
+		screen = index;
+		screens?.scrollTo({ left: index * screens.clientWidth });
+	}
+
+	function swipeable(element: HTMLElement) {
+		screens = element;
+		screen = 1;
+		element.scrollTo({ left: element.clientWidth, behavior: 'instant' });
+		const release = () => (held = false);
+		const off = [
+			on(element, 'touchstart', hold, { passive: true }),
+			on(element, 'touchend', release),
+			on(element, 'touchcancel', release)
+		];
+		return () => {
+			off.forEach((listener) => listener());
+			screens = undefined;
+		};
+	}
+
+	// overscroll-behavior would also trap swipes on scrollers that fit, so the screens stop scrolling instead.
+	function hold({ target }: TouchEvent) {
+		for (let element = target as Element | null; element && element !== screens; element = element.parentElement) {
+			if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) {
+				held = true;
+				return;
+			}
+		}
+	}
+
+	function landed() {
+		if (screens) screen = Math.round(screens.scrollLeft / screens.clientWidth);
 	}
 
 	async function loadGit(projectId: string) {
@@ -228,7 +284,7 @@
 		const existing = open.find((file) => file.id === tab.id) as T | undefined;
 		if (!existing) open.push(tab);
 		chosenTabs[tab.projectId] = tab.id;
-		if (form() === 'phone') sidebar = false;
+		show(1);
 		return existing ?? tab;
 	}
 
@@ -264,41 +320,36 @@
 
 <svelte:document onvisibilitychange={() => (visible = document.visibilityState === 'visible')} />
 
-<div class="shell">
-	<Rail
-		{projects}
-		labels={projectLabels}
-		focused={focused?.id}
-		onfocus={(id) => (chosen = id)}
-		onreorder={reorder}
-		onclose={(projectId) => closeProject(projectId)}
-		onpick={pick}
-	>
-		{#snippet badge(project)}
-			{@const count = attentionList.filter((item) => item.projectId === project.id).length}
-			{#if count}<Badge tone="waiting">{count}</Badge>{/if}
-		{/snippet}
-		{#snippet attention()}
-			<AttentionList items={attentionList} projects={projectLabels} onselect={attend} />
-		{/snippet}
-	</Rail>
+{#snippet badge(project: Project)}
+	{@const count = attentionList.filter((item) => item.projectId === project.id).length}
+	{#if count}<Badge tone="waiting">{count}</Badge>{/if}
+{/snippet}
 
+{#snippet attention()}
+	<AttentionList items={attentionList} projects={projectLabels} onselect={attend} />
+{/snippet}
+
+{#snippet sidebarPanel()}
 	<Sidebar
-		open={sidebar}
+		open={phone || sidebar}
 		project={focused}
-		label={focused && projectLabels.get(focused.id)}
+		{label}
 		git={focused && git[focused.id]}
 		{device}
 		bind:section
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		ondiff={(change, commit) => focused && openDiff(focused.id, change, commit)}
 	/>
+{/snippet}
 
+{#snippet workspace()}
 	<main>
 		<div class="strip">
-			<IconButton label="Sidebar" aria-expanded={sidebar} onclick={() => (sidebar = !sidebar)}>
-				<SidebarSimple />
-			</IconButton>
+			{#if !phone}
+				<IconButton label="Sidebar" aria-expanded={sidebar} onclick={() => (sidebar = !sidebar)}>
+					<SidebarSimple />
+				</IconButton>
+			{/if}
 			<div role="tablist" aria-label="Tabs">
 				{#if focused}
 					{@const projectId = focused.id}
@@ -390,9 +441,57 @@
 			{/if}
 		</div>
 	</main>
-</div>
+{/snippet}
 
-<Drawer {device} />
+{#if phone}
+	{@const { title, sub } = titles[screen]}
+	<div class="phone">
+		<header>
+			<IconButton label="Previous screen" disabled={screen === 0} onclick={() => show(screen - 1)}>
+				<CaretLeft />
+			</IconButton>
+			<h1>{title}{#if sub}{' '}<span class="sub">{sub}</span>{/if}</h1>
+			{@render attention()}
+			<IconButton label="Drawer" onclick={() => drawer.toggle()}><TerminalWindow /></IconButton>
+			<IconButton label="Next screen" disabled={screen === titles.length - 1} onclick={() => show(screen + 1)}>
+				<CaretRight />
+			</IconButton>
+		</header>
+		<div class="screens" class:held {@attach swipeable} onscrollend={landed}>
+			<div class="screen" inert={screen !== 0}>
+				<Projects
+					{projects}
+					labels={projectLabels}
+					focused={focused?.id}
+					onfocus={choose}
+					onclose={(projectId) => closeProject(projectId)}
+					onpick={pick}
+					{badge}
+				/>
+			</div>
+			<div class="screen" inert={screen !== 1}>{@render workspace()}</div>
+			<div class="screen" inert={screen !== 2}>{@render sidebarPanel()}</div>
+		</div>
+	</div>
+{:else}
+	<div class="shell">
+		<Rail
+			{projects}
+			labels={projectLabels}
+			focused={focused?.id}
+			onfocus={(id) => (chosen = id)}
+			onreorder={reorder}
+			onclose={(projectId) => closeProject(projectId)}
+			onpick={pick}
+			{badge}
+			{attention}
+		/>
+		{@render sidebarPanel()}
+		{@render workspace()}
+	</div>
+{/if}
+
+<Drawer bind:this={drawer} {device} />
 
 <Leader ontab={jump} onpalette={() => openPalette('all')} onrig={launch} />
 
@@ -420,7 +519,7 @@
 	{/snippet}
 </Dialog>
 
-<Dialog bind:open={picking} title="Open Project">
+<Dialog bind:open={picking} full={phone} title="Open Project">
 	<Picker {directories} onopen={open} />
 </Dialog>
 
@@ -452,11 +551,75 @@
 		height: 100dvh;
 	}
 
+	.phone {
+		display: flex;
+		flex-direction: column;
+		height: 100dvh;
+	}
+
+	header {
+		display: flex;
+		flex: none;
+		align-items: center;
+		gap: var(--space-1);
+		padding: var(--space-1);
+		border-bottom: var(--border-width) solid var(--border);
+	}
+
+	h1 {
+		flex: 1;
+		min-width: 0;
+		margin: 0;
+		overflow: hidden;
+		font-size: var(--font-size-lg);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.sub {
+		margin-left: var(--space-1);
+		color: var(--muted-fg);
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		font-weight: 400;
+	}
+
+	.screens {
+		display: flex;
+		flex: 1;
+		min-height: 0;
+		overflow-x: auto;
+		overflow-y: hidden;
+		overscroll-behavior-x: contain;
+		scroll-snap-type: x mandatory;
+		scrollbar-width: none;
+	}
+
+	.held {
+		overflow-x: hidden;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.screens {
+			scroll-behavior: smooth;
+		}
+	}
+
+	.screen {
+		display: flex;
+		flex: none;
+		flex-direction: column;
+		width: 100%;
+		scroll-snap-align: start;
+		scroll-snap-stop: always;
+	}
+
 	main {
 		display: flex;
 		flex: 1;
 		flex-direction: column;
 		min-width: 0;
+		min-height: 0;
 	}
 
 	.strip {
@@ -472,6 +635,11 @@
 		align-self: stretch;
 		min-width: 0;
 		min-height: calc(var(--target-min) + var(--space-2));
+	}
+
+	.phone [role='tablist'] {
+		overflow-x: auto;
+		scrollbar-width: none;
 	}
 
 	.tabs {

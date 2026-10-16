@@ -1,11 +1,13 @@
 <script lang="ts">
 	import type { Device, ServerMessage, Terminal } from '#lib/device.ts';
+	import { form } from '#lib/form.ts';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import Tab from '#lib/ui/Tab.svelte';
 	import { onMount, tick } from 'svelte';
 	import Plus from '~icons/ph/plus';
+	import X from '~icons/ph/x';
 
 	let { device }: { device: Device } = $props();
 
@@ -39,7 +41,7 @@
 		}
 	}
 
-	async function toggle() {
+	export async function toggle() {
 		if (open) {
 			if (panel.contains(document.activeElement)) returnTo?.focus();
 			open = false;
@@ -71,7 +73,7 @@
 
 <svelte:window onkeydowncapture={keydown} />
 
-<section aria-label="Drawer" tabindex="-1" class:open inert={!open} bind:this={panel}>
+<section aria-label="Drawer" tabindex="-1" class:open class:phone={form() === 'phone'} inert={!open} bind:this={panel}>
 	<div class="strip">
 		<div role="tablist" aria-label="Drawer Tabs">
 			{#each terminals as tab (tab.id)}
@@ -93,6 +95,9 @@
 				<IconButton {...props} label="New Drawer Tab"><Plus /></IconButton>
 			{/snippet}
 		</Menu>
+		{#if form() === 'phone'}
+			<IconButton label="Close Drawer" onclick={toggle}><X /></IconButton>
+		{/if}
 	</div>
 	<div class="tabs">
 		{#each terminals as terminal (terminal.id)}
@@ -129,6 +134,10 @@
 		transform: none;
 	}
 
+	.phone {
+		height: 100dvh;
+	}
+
 	.strip {
 		display: flex;
 		align-items: center;
@@ -142,6 +151,11 @@
 		align-self: stretch;
 		min-width: 0;
 		min-height: calc(var(--target-min) + var(--space-2));
+	}
+
+	.phone [role='tablist'] {
+		overflow-x: auto;
+		scrollbar-width: none;
 	}
 
 	.tabs {

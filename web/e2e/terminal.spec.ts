@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openProject } from './shell.ts';
 
 function screen(page: Page) {
 	return page.evaluate(() => {
@@ -11,9 +12,7 @@ function screen(page: Page) {
 
 test('a Terminal tab in a Project runs echo hi', async ({ page }, { project }) => {
 	const fixture = project.name === 'desktop' ? 'alpha' : 'beta';
-	await page.goto('/');
-	await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Open Project' }).click();
-	await page.getByRole('option', { name: new RegExp(`/${fixture}$`) }).click();
+	await openProject(page, fixture);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal' }).click();
 	await expect(page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab')).toHaveAttribute('aria-selected', 'true');
