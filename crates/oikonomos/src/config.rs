@@ -22,11 +22,18 @@ struct Settings {
     theme: Option<String>,
     font: Fonts,
     rig: Vec<Rig>,
+    editor: Editor,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { roots: vec!["~/repos".into()], theme: None, font: Fonts::default(), rig: Vec::new() }
+        Self {
+            roots: vec!["~/repos".into()],
+            theme: None,
+            font: Fonts::default(),
+            rig: Vec::new(),
+            editor: Editor::default(),
+        }
     }
 }
 
@@ -77,12 +84,27 @@ impl Agent {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Editor {
+    pub keymap: Keymap,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Keymap {
+    #[default]
+    Standard,
+    Vim,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub roots: Vec<PathBuf>,
     pub theme: Theme,
     pub font: Font,
     pub rigs: Vec<Rig>,
+    pub editor: Editor,
 }
 
 impl Default for Config {
@@ -92,6 +114,7 @@ impl Default for Config {
             theme: Theme::default(),
             font: Font::default(),
             rigs: Vec::new(),
+            editor: Editor::default(),
         }
     }
 }
@@ -123,7 +146,7 @@ impl Config {
             Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
             text => text?,
         };
-        let Settings { roots, theme, font: Fonts { mono }, rig: rigs } = toml::from_str(&text)?;
+        let Settings { roots, theme, font: Fonts { mono }, rig: rigs, editor } = toml::from_str(&text)?;
         let faces = mono.files.into_iter().enumerate().map(face).collect::<Result<_, _>>()?;
         let mut names = HashSet::new();
         if let Some(rig) = rigs.iter().find(|rig| !names.insert(&rig.name)) {
@@ -134,6 +157,7 @@ impl Config {
             theme: Theme::resolve(theme.as_deref())?,
             font: Font { family: mono.family, faces },
             rigs,
+            editor,
         })
     }
 }

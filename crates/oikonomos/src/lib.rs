@@ -1,5 +1,6 @@
 mod config;
 mod device;
+mod files;
 mod holder;
 mod install;
 mod projects;
@@ -20,7 +21,7 @@ use rust_embed::RustEmbed;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
-use config::{Config, Font, Rig};
+use config::{Config, Editor, Font, Rig};
 pub use holder::{HoldArgs, hold};
 pub use install::{InstallArgs, UninstallArgs, install, uninstall};
 use projects::Projects;
@@ -59,6 +60,9 @@ fn router(state: AppState) -> Router {
         .route("/api/theme", get(theme))
         .route("/api/font", get(font))
         .route("/api/rigs", get(rigs))
+        .route("/api/editor", get(editor))
+        .route("/api/projects/{id}/tree", get(files::tree))
+        .route("/api/projects/{id}/file", get(files::read).put(files::write))
         .route("/fonts/host/{index}", get(host_font))
         .route("/ws", get(device::upgrade))
         .fallback(spa)
@@ -89,6 +93,10 @@ async fn font(State(state): State<AppState>) -> Json<Font> {
 
 async fn rigs(State(state): State<AppState>) -> Json<Vec<Rig>> {
     Json(state.config.borrow().rigs.clone())
+}
+
+async fn editor(State(state): State<AppState>) -> Json<Editor> {
+    Json(state.config.borrow().editor.clone())
 }
 
 async fn host_font(State(state): State<AppState>, Path(index): Path<usize>) -> Response {
