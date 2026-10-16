@@ -13,12 +13,13 @@
 
 	type Props = {
 		ctrl: boolean;
+		disabled: boolean;
 		application(): boolean;
 		onkey(data: string): void;
 		oncopy(): void;
 	};
 
-	let { ctrl = $bindable(), application, onkey, oncopy }: Props = $props();
+	let { ctrl = $bindable(), disabled, application, onkey, oncopy }: Props = $props();
 
 	const arrows = [
 		['←', 'Left', 'D'],
@@ -28,6 +29,10 @@
 	];
 
 	let below = $state(0);
+
+	function press(data: string) {
+		if (!disabled) onkey(data);
+	}
 
 	function dock(bar: HTMLElement) {
 		const viewport = window.visualViewport;
@@ -51,15 +56,17 @@
 	onmousedown={(event) => event.preventDefault()}
 	{@attach dock}
 >
-	<button onclick={() => onkey('\x1b')}>Esc</button>
-	<button aria-pressed={ctrl} onclick={() => (ctrl = !ctrl)}>Ctrl</button>
-	<button onclick={() => onkey('\t')}>Tab</button>
-	<button aria-label="Shift Tab" onclick={() => onkey('\x1b[Z')}>⇧Tab</button>
+	<button aria-disabled={disabled} onclick={() => press('\x1b')}>Esc</button>
+	<button aria-disabled={disabled} aria-pressed={ctrl} onclick={() => !disabled && (ctrl = !ctrl)}>Ctrl</button>
+	<button aria-disabled={disabled} onclick={() => press('\t')}>Tab</button>
+	<button aria-disabled={disabled} aria-label="Shift Tab" onclick={() => press('\x1b[Z')}>⇧Tab</button>
 	{#each arrows as [label, name, final] (name)}
-		<button aria-label={name} onclick={() => onkey(`\x1b${application() ? 'O' : '['}${final}`)}>{label}</button>
+		<button aria-disabled={disabled} aria-label={name} onclick={() => press(`\x1b${application() ? 'O' : '['}${final}`)}>
+			{label}
+		</button>
 	{/each}
 	{#each keybarExtras() as extra, index (index)}
-		<button onclick={() => onkey(extra)}>{extra}</button>
+		<button aria-disabled={disabled} onclick={() => press(extra)}>{extra}</button>
 	{/each}
 	<button aria-label="Copy mode" onclick={oncopy}><Copy /></button>
 </div>
@@ -97,6 +104,11 @@
 
 	button:active {
 		background: var(--hover);
+	}
+
+	button[aria-disabled='true'] {
+		color: var(--muted-fg);
+		cursor: default;
 	}
 
 	button[aria-pressed='true'] {

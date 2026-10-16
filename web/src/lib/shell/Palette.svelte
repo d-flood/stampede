@@ -5,7 +5,7 @@
 
 <script lang="ts">
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
-	import type { Project } from '#lib/device.ts';
+	import type { Project } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { Command } from 'bits-ui';
 	import fuzzysort, { type Key } from 'fuzzysort';

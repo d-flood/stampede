@@ -1,4 +1,4 @@
-import { deviceId, type Terminal } from '#lib/device.ts';
+import { deviceId, type Terminal } from '#lib/device.svelte.ts';
 import { OpenConfig, OpenDiff, OpenFile, type Layout as DiffMode } from '#lib/files.svelte.ts';
 import type { Commit } from '#lib/git.ts';
 import type { Section } from '#lib/shell/Sidebar.svelte';

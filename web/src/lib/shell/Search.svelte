@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Device, Found, ServerMessage } from '#lib/device.ts';
+	import type { Device, Found, ServerMessage } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Badge from '#lib/ui/Badge.svelte';

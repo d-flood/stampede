@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Attention } from '#lib/device.ts';
+	import type { Attention } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { enable, notifications, type Notifications } from '#lib/push.ts';
 	import Badge from '#lib/ui/Badge.svelte';

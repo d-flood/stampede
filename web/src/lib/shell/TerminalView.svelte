@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { appearance, type Appearance } from '#lib/config.svelte.ts';
-	import type { Device, Project, ServerMessage } from '#lib/device.ts';
+	import type { Device, Project, ServerMessage } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { linkify } from '#lib/links.ts';
@@ -37,6 +37,7 @@
 	let copying = $state<string>();
 	let composing = $state(false);
 	let composer = $state<Composer>();
+	const live = $derived(device.connection === 'connected');
 
 	onMount(() => {
 		let disposed = false;
@@ -146,7 +147,7 @@
 			ctrl = false;
 			data = control(data);
 		}
-		if (channel !== undefined) device.input(channel, data);
+		if (channel !== undefined && live) device.input(channel, data);
 	}
 
 	function blur({ relatedTarget }: FocusEvent) {
@@ -168,7 +169,7 @@
 	}
 
 	function compose(text: string, enter: boolean) {
-		if (channel === undefined || !view) return false;
+		if (channel === undefined || !view || !live) return false;
 		const pasted = view.hasBracketedPaste() ? `\x1b[200~${text}\x1b[201~` : text.replaceAll('\n', '\r');
 		device.input(channel, enter ? `${pasted}\r` : pasted);
 		return true;
@@ -199,10 +200,10 @@
 	{@render children?.()}
 	<div class="terminal" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
 	{#if typing && !ended && form() === 'phone'}
-		<KeyBar bind:ctrl application={() => !!view?.getMode(1)} onkey={send} oncopy={copy} />
+		<KeyBar bind:ctrl disabled={!live} application={() => !!view?.getMode(1)} onkey={send} oncopy={copy} />
 	{/if}
 	{#if composing && !ended}
-		<Composer bind:this={composer} {terminalId} onsend={compose} />
+		<Composer bind:this={composer} {terminalId} disabled={!live} onsend={compose} />
 	{/if}
 </div>
 

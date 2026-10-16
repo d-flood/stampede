@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Device, ServerMessage } from '#lib/device.ts';
+	import type { Device, ServerMessage } from '#lib/device.svelte.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { languageServer, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
@@ -107,7 +107,7 @@
 	}
 
 	function message(message: ServerMessage) {
-		if (message.type === 'git.changed' && message.projectId === diff.projectId) refreshHead();
+		if (message.type === 'hello' || (message.type === 'git.changed' && message.projectId === diff.projectId)) refreshHead();
 	}
 
 	async function refreshHead() {

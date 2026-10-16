@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { connect } from '#lib/device.ts';
+	import { connect } from '#lib/device.svelte.ts';
 	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';

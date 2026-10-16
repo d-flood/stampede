@@ -3,10 +3,11 @@
 
 	type Props = {
 		terminalId: string;
+		disabled: boolean;
 		onsend(text: string, enter: boolean): boolean;
 	};
 
-	let { terminalId, onsend }: Props = $props();
+	let { terminalId, disabled, onsend }: Props = $props();
 
 	const key = $derived(`composer:${terminalId}`);
 	let text = $derived(localStorage.getItem(key) ?? '');
@@ -41,12 +42,12 @@
 		spellcheck="true"
 	></textarea>
 	<div class="actions">
-		<Button disabled={!text} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
+		<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
 			Insert
 		</Button>
 		<Button
 			variant="primary"
-			disabled={!text}
+			disabled={!text || disabled}
 			onmousedown={(event) => event.preventDefault()}
 			onclick={() => submit(true)}
 		>

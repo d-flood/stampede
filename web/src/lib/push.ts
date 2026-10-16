@@ -1,4 +1,4 @@
-import { browserId } from '#lib/device.ts';
+import { browserId } from '#lib/device.svelte.ts';
 
 export type Notifications = 'unsupported' | 'blocked' | 'off' | 'on';
 

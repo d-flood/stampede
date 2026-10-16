@@ -1,4 +1,4 @@
-import type { Project } from '#lib/device.ts';
+import type { Project } from '#lib/device.svelte.ts';
 
 function segments(path: string): string[] {
 	return path.split('/').filter(Boolean);

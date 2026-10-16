@@ -20,7 +20,7 @@
 </script>
 
 <script lang="ts">
-	import type { Device, Project } from '#lib/device.ts';
+	import type { Device, Project } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import type { Change, Commit } from '#lib/git.ts';

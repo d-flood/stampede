@@ -1,5 +1,6 @@
 import { loadConfig, type Agent } from '#lib/config.svelte.ts';
 import type { State } from '#lib/editor/lsp.svelte.ts';
+import { on } from 'svelte/events';
 
 export type Project = { id: string; path: string };
 
@@ -80,7 +81,10 @@ type Listener = {
 	output?(channel: number, bytes: Uint8Array): void;
 };
 
+export type Connection = 'connected' | 'reconnecting';
+
 export type Device = {
+	readonly connection: Connection;
 	send(message: ClientMessage): void;
 	input(channel: number, data: string): void;
 	listen(listener: Listener): () => void;
@@ -89,6 +93,8 @@ export type Device = {
 
 const OUTPUT = 1;
 const INPUT = 2;
+const FIRST_RETRY = 500;
+const LAST_RETRY = 5000;
 
 export function deviceId(): string {
 	let id = sessionStorage.getItem('deviceId');
@@ -112,15 +118,22 @@ export function connect(): Device {
 	const id = deviceId();
 	const listeners = new Set<Listener>();
 	let socket: WebSocket;
-	let closed = false;
+	let connection = $state<Connection>('connected');
+	let delay = FIRST_RETRY;
+	let retry: ReturnType<typeof setTimeout> | undefined;
 
 	function open() {
+		clearTimeout(retry);
 		socket = new WebSocket(new URL('/ws', location.href.replace(/^http/, 'ws')));
 		socket.binaryType = 'arraybuffer';
 		socket.onopen = () => send({ type: 'hello', deviceId: id, browserId: browserId() });
 		socket.onmessage = ({ data }) => {
 			if (typeof data === 'string') {
 				const message: ServerMessage = JSON.parse(data);
+				if (message.type === 'hello') {
+					connection = 'connected';
+					delay = FIRST_RETRY;
+				}
 				if (message.type === 'config.changed') loadConfig();
 				for (const listener of listeners) listener.message?.(message);
 				return;
@@ -130,9 +143,23 @@ export function connect(): Device {
 			const bytes = new Uint8Array(data, 5);
 			for (const listener of listeners) listener.output?.(view.getUint32(1), bytes);
 		};
-		socket.onclose = () => {
-			if (!closed) setTimeout(open, 1000);
-		};
+		socket.onclose = drop;
+	}
+
+	function drop() {
+		socket.onclose = null;
+		socket.close();
+		connection = 'reconnecting';
+		clearTimeout(retry);
+		retry = setTimeout(open, delay);
+		delay = Math.min(delay * 2, LAST_RETRY);
+	}
+
+	function wake() {
+		if (connection === 'connected' || socket.readyState === WebSocket.OPEN) return;
+		socket.onclose = null;
+		socket.close();
+		open();
 	}
 
 	function send(message: ClientMessage) {
@@ -155,10 +182,26 @@ export function connect(): Device {
 	}
 
 	function close() {
-		closed = true;
+		off.forEach((listener) => listener());
+		clearTimeout(retry);
+		socket.onclose = null;
 		socket.close();
 	}
 
 	open();
-	return { send, input, listen, close };
+	const off = [
+		// A socket can outlive its network for minutes, so going offline drops it at once.
+		on(window, 'offline', drop),
+		on(window, 'online', wake),
+		on(document, 'visibilitychange', () => document.visibilityState === 'visible' && wake())
+	];
+	return {
+		get connection() {
+			return connection;
+		},
+		send,
+		input,
+		listen,
+		close
+	};
 }

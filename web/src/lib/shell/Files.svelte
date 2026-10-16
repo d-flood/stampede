@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Device } from '#lib/device.ts';
+	import type { Device } from '#lib/device.svelte.ts';
 	import { list, type Entry } from '#lib/files.svelte.ts';
 	import { letters, type Change } from '#lib/git.ts';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -23,6 +23,7 @@
 		load('');
 		return device.listen({
 			message(message) {
+				if (message.type === 'hello') return reload();
 				if (message.type !== 'fs.changed' || message.projectId !== projectId) return;
 				const dirs = new Set(message.paths.map((path) => path.slice(0, Math.max(path.lastIndexOf('/'), 0))));
 				for (const dir of dirs) if (dir === '' || expanded.has(dir)) load(dir);
@@ -45,9 +46,13 @@
 		load(path);
 	}
 
+	function reload() {
+		for (const path of ['', ...expanded]) load(path);
+	}
+
 	function showIgnored() {
 		includeIgnored = !includeIgnored;
-		for (const path of ['', ...expanded]) load(path);
+		reload();
 	}
 </script>
 

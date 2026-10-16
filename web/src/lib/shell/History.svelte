@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Device } from '#lib/device.ts';
+	import type { Device } from '#lib/device.svelte.ts';
 	import { commitFiles, letters, log, split, type Change, type Commit } from '#lib/git.ts';
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -20,7 +20,7 @@
 		refresh();
 		return device.listen({
 			message(message) {
-				if (message.type === 'git.changed' && message.projectId === projectId) refresh();
+				if (message.type === 'hello' || (message.type === 'git.changed' && message.projectId === projectId)) refresh();
 			}
 		});
 	});

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Project } from '#lib/device.ts';
+	import type { Project } from '#lib/device.svelte.ts';
 	import { monogram } from '#lib/projects.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Menu from '#lib/ui/Menu.svelte';

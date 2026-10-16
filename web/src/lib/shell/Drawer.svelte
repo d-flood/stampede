@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Device, ServerMessage, Terminal } from '#lib/device.ts';
+	import type { Device, ServerMessage, Terminal } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';

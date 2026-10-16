@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { version } from '$app/env';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
-	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
+	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -34,6 +34,7 @@
 	import Power from '~icons/ph/power';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
 	import TerminalWindow from '~icons/ph/terminal-window';
+	import WifiSlash from '~icons/ph/wifi-slash';
 
 	const restored = restore();
 	const device = connect();
@@ -120,6 +121,7 @@
 					if (terminal.owner !== 'drawer') (owned[terminal.owner.project] ??= []).push(terminal);
 				}
 				terminals = owned;
+				for (const project of projects) invalidate(project.id);
 				device.send({ type: 'projects.list' });
 				device.send({ type: 'device.view', terminalIds: shown });
 				break;
@@ -672,6 +674,10 @@
 
 <Drawer bind:this={drawer} {device} />
 
+{#if device.connection === 'reconnecting'}
+	<div class="reconnecting" role="status"><WifiSlash /> Reconnecting…</div>
+{/if}
+
 <Leader
 	ontab={jump}
 	onpalette={() => openPalette('all')}
@@ -898,6 +904,28 @@
 
 	.empty p {
 		margin: 0;
+	}
+
+	.reconnecting {
+		position: fixed;
+		top: var(--space-2);
+		left: 50%;
+		z-index: 55;
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-2) var(--space-3);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-lg);
+		background: color-mix(in oklab, var(--status-waiting) 16%, var(--color-bg));
+		box-shadow: var(--shadow-float);
+		white-space: nowrap;
+		pointer-events: none;
+		translate: -50%;
+	}
+
+	.reconnecting :global(svg) {
+		color: var(--status-waiting);
 	}
 
 	.ended {

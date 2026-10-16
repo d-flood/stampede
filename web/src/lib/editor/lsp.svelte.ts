@@ -1,4 +1,4 @@
-import type { ClientMessage, Device, ServerMessage } from '#lib/device.ts';
+import type { ClientMessage, Device, ServerMessage } from '#lib/device.svelte.ts';
 import { setDiagnostics } from '@codemirror/lint';
 import {
 	hoverTooltips,

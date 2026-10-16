@@ -1,5 +1,5 @@
-import type { Device } from '#lib/device.ts';
-import { RequestError, type OpenFile } from '#lib/files.svelte.ts';
+import type { Device } from '#lib/device.svelte.ts';
+import { OpenConfig, RequestError, type OpenFile } from '#lib/files.svelte.ts';
 import { Text } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 
@@ -9,10 +9,12 @@ export class Sync {
 	conflict = $state<Disk>();
 	#file: () => OpenFile;
 	#view: () => EditorView | undefined;
+	#device?: Device;
 	#hash = '';
 	#saved = Text.empty;
 	#saving = false;
 	#stale = false;
+	#queued = false;
 	#generation = 0;
 
 	constructor(file: () => OpenFile, view: () => EditorView | undefined) {
@@ -30,10 +32,12 @@ export class Sync {
 	}
 
 	listen(device: Device) {
+		this.#device = device;
 		return device.listen({
 			message: (message) => {
 				const file = this.#file();
-				if (message.type !== 'fs.changed' || message.projectId !== file.projectId) return;
+				if (message.type === 'hello') return this.#resync();
+				if (message.type !== 'fs.changed' || message.projectId !== file.projectId || file instanceof OpenConfig) return;
 				if (message.paths.some((path) => file.path === path || file.path.startsWith(`${path}/`))) this.refresh();
 			}
 		});
@@ -43,6 +47,10 @@ export class Sync {
 		const file = this.#file();
 		const view = this.#view();
 		if (!view || !file.dirty || this.#saving) return;
+		if (this.#device?.connection === 'reconnecting') {
+			this.#queued = true;
+			return;
+		}
 		const doc = view.state.doc;
 		this.#saving = true;
 		this.#generation++;
@@ -63,6 +71,14 @@ export class Sync {
 				this.refresh();
 			}
 		}
+	}
+
+	#resync() {
+		if (this.#queued) {
+			this.#queued = false;
+			this.write();
+		}
+		this.refresh();
 	}
 
 	async refresh() {

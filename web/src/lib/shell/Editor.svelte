@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { editor as settings } from '#lib/config.svelte.ts';
-	import type { Device } from '#lib/device.ts';
+	import type { Device } from '#lib/device.svelte.ts';
 	import { changeMarkers, setBaseline } from '#lib/editor/changes.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { languageServer, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
@@ -66,10 +66,10 @@
 			},
 			(error: Error) => (note = error.message)
 		);
-		const unlisten = file instanceof OpenConfig ? undefined : sync.listen(device);
+		const unlisten = sync.listen(device);
 		return () => {
 			disposed = true;
-			unlisten?.();
+			unlisten();
 			view?.destroy();
 		};
 	});

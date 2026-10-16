@@ -1,4 +1,4 @@
-import type { Project } from '#lib/device.ts';
+import type { Project } from '#lib/device.svelte.ts';
 import type { Cursor } from '#lib/files.svelte.ts';
 import { OSC8LinkProvider, type ILink, type Terminal } from 'ghostty-web';
 
