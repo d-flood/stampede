@@ -311,7 +311,7 @@
 			{/each}
 			{#each Object.values(files) as open}
 				{#each open as file (file.id)}
-					<Editor {file} {device} active={file.id === activeTab} />
+					<Editor {file} {device} git={git[file.projectId]} active={file.id === activeTab} />
 				{/each}
 			{/each}
 			{#if !focused}

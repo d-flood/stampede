@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { editor as settings } from '#lib/config.svelte.ts';
 	import type { Device } from '#lib/device.ts';
+	import { changeMarkers, setBaseline } from '#lib/editor/changes.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { theme } from '#lib/editor/theme.ts';
 	import { read, RequestError, save, type OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { baseline, type Git } from '#lib/git.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import { Compartment, EditorState, type Extension, type Text } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
@@ -15,7 +17,7 @@
 
 	type Disk = { content: string; hash: string };
 
-	let { file, device, active }: { file: OpenFile; device: Device; active: boolean } = $props();
+	let { file, device, git, active }: { file: OpenFile; device: Device; git?: Git; active: boolean } = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<EditorView>();
@@ -46,6 +48,7 @@
 							keys.of([]),
 							keymap.of([{ key: 'Mod-s', run: () => (write(), true) }]),
 							basicSetup,
+							changeMarkers,
 							syntax,
 							theme,
 							EditorView.updateListener.of((update) => {
@@ -77,6 +80,18 @@
 		let stale = false;
 		keybindings(settings.keymap).then((extension) => {
 			if (!stale) current.dispatch({ effects: keys.reconfigure(extension) });
+		});
+		return () => {
+			stale = true;
+		};
+	});
+
+	$effect(() => {
+		const current = view;
+		if (!current) return;
+		let stale = false;
+		baseline(file.projectId, file.path, git).then((content) => {
+			if (!stale) current.dispatch({ effects: setBaseline.of(content === null ? null : current.state.toText(content)) });
 		});
 		return () => {
 			stale = true;
