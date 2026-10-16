@@ -28,6 +28,13 @@ export type Item =
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted'; text: string };
 
+export type Request =
+	| { kind: 'command'; id: string; words: string[][] }
+	| { kind: 'edit'; id: string; path: string; diff: string }
+	| { kind: 'other'; id: string; title: string; detail: string };
+
+export type Answer = { allow: true } | { allow: false; instead?: string };
+
 export type Context = { used: number; window: number };
 
 export type Tokens = { input: number; output: number };
@@ -84,6 +91,8 @@ export type ServerMessage =
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
 	| { type: 'sessions.listed'; projectId: string; sessions: Session[] }
 	| { type: 'chat.queued'; chatId: string; queued: string[] }
+	| { type: 'chat.request'; chatId: string; request: Request }
+	| { type: 'chat.resolved'; chatId: string; requestId: string }
 	| { type: 'config.changed' }
 	| { type: 'projects.changed'; projects: Project[] }
 	| { type: 'project.opened'; projectId: string }
@@ -115,6 +124,7 @@ export type ClientMessage =
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean }
 	| { type: 'chat.close' | 'chat.attach' | 'chat.detach' | 'chat.interrupt'; chatId: string }
+	| { type: 'chat.answer'; chatId: string; requestId: string; answer: Answer }
 	| { type: 'projects.list' }
 	| { type: 'project.open'; path: string }
 	| { type: 'project.close'; projectId: string }

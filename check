@@ -61,6 +61,18 @@ name = "Fake Codex Edits"
 agent = "codex"
 command = "codex"
 env = { OIKONOMOS_FAKE_FIXTURE = "edits", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
+
+[[rig]]
+name = "Claude Approval"
+agent = "claude-code"
+command = "claude"
+env = { OIKONOMOS_FAKE_FIXTURE = "approval", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
+
+[[rig]]
+name = "Codex Approval"
+agent = "codex"
+command = "codex"
+env = { OIKONOMOS_FAKE_FIXTURE = "approval", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
 EOF
 
 cleanup() {

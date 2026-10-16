@@ -41,6 +41,10 @@ def readline():
             return None
         pending += chunk
     line, _, pending = pending.partition(b'\n')
+    received = os.environ.get('OIKONOMOS_FAKE_RECEIVED')
+    if received:
+        with open(received, 'ab') as log:
+            log.write(line + b'\n')
     return line
 
 

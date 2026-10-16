@@ -74,6 +74,8 @@ enum Control {
     },
     #[serde(rename = "chat.interrupt")]
     InterruptChat { chat_id: String },
+    #[serde(rename = "chat.answer")]
+    AnswerChat { chat_id: String, request_id: String, answer: chats::Answer },
     #[serde(rename = "chat.close")]
     CloseChat { chat_id: String },
     #[serde(rename = "chat.attach")]
@@ -241,6 +243,16 @@ async fn connect(
                         send(&device.outgoing, json!({ "type": "chat.item", "chatId": chat_id, "index": index, "item": item }));
                     }
                 }
+                Ok(chats::Change::Request { chat_id, seq, request }) => {
+                    if device.attached.get(&chat_id).is_some_and(|&attached| seq > attached) {
+                        send(&device.outgoing, json!({ "type": "chat.request", "chatId": chat_id, "request": request }));
+                    }
+                }
+                Ok(chats::Change::Resolved { chat_id, seq, request_id }) => {
+                    if device.attached.get(&chat_id).is_some_and(|&attached| seq > attached) {
+                        send(&device.outgoing, json!({ "type": "chat.resolved", "chatId": chat_id, "requestId": request_id }));
+                    }
+                }
                 Ok(chats::Change::Meters { chat_id, context, tokens }) => {
                     let meters = json!({ "type": "chat.meters", "chatId": chat_id, "context": context, "tokens": tokens });
                     send(&device.outgoing, meters);
@@ -364,6 +376,7 @@ impl Device {
             Control::ListSessions { project_id } => self.list_sessions(project_id),
             Control::SendChat { chat_id, text, queue } => self.chats.send(&chat_id, &text, queue),
             Control::InterruptChat { chat_id } => self.chats.interrupt(&chat_id),
+            Control::AnswerChat { chat_id, request_id, answer } => self.chats.answer(&chat_id, &request_id, answer),
             Control::CloseChat { chat_id } => self.chats.close(&chat_id),
             Control::AttachChat { chat_id } => self.attach_chat(chat_id),
             Control::DetachChat { chat_id } => {
@@ -584,8 +597,11 @@ impl Device {
     }
 
     fn attach_chat(&mut self, chat_id: String) {
-        let Some((seq, items)) = self.chats.attach(&chat_id) else { return };
+        let Some((seq, items, requests)) = self.chats.attach(&chat_id) else { return };
         send(&self.outgoing, json!({ "type": "chat.items", "chatId": chat_id, "items": items }));
+        for request in requests {
+            send(&self.outgoing, json!({ "type": "chat.request", "chatId": chat_id, "request": request }));
+        }
         self.attached.insert(chat_id, seq);
     }
 

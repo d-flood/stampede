@@ -353,6 +353,9 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 	const listed = page.getByRole('group', { name: 'Sessions' }).getByRole('menuitem');
 	await newTab.click();
 	await expect(listed).toHaveText([/Name a color in one word\./, /Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
+	await expect
+		.poll(() => page.getByRole('menu').evaluate((menu) => menu.getBoundingClientRect().bottom <= window.innerHeight))
+		.toBe(true);
 	await listed.getByText('Search sessions…').click();
 	const palette = page.getByRole('dialog', { name: 'Past Sessions' });
 	await palette.getByPlaceholder('Find a session by its first prompt').fill('three');

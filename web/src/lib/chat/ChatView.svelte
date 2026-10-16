@@ -3,8 +3,9 @@
 	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import Meters from '#lib/chat/Meters.svelte';
 	import Queued from '#lib/chat/Queued.svelte';
+	import RequestCard from '#lib/chat/RequestCard.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
-	import type { Chat, Device, Item, ServerMessage } from '#lib/device.svelte.ts';
+	import type { Answer, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { onMount } from 'svelte';
 	import { on } from 'svelte/events';
@@ -13,7 +14,10 @@
 		$props();
 
 	let items = $state<Item[]>([]);
+	let requests = $state<Request[]>([]);
+	const request = $derived(requests[0]);
 	const live = $derived(device.connection === 'connected');
+	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
 
 	onMount(() => {
 		device.send({ type: 'chat.attach', chatId: chat.id });
@@ -30,12 +34,25 @@
 				device.send({ type: 'chat.attach', chatId: chat.id });
 				break;
 			case 'chat.items':
-				if (message.chatId === chat.id) items = message.items;
+				if (message.chatId !== chat.id) break;
+				items = message.items;
+				requests = [];
 				break;
 			case 'chat.item':
 				if (message.chatId === chat.id) items[message.index] = message.item;
 				break;
+			case 'chat.request':
+				if (message.chatId !== chat.id) break;
+				requests = [...requests.filter(({ id }) => id !== message.request.id), message.request];
+				break;
+			case 'chat.resolved':
+				if (message.chatId === chat.id) requests = requests.filter(({ id }) => id !== message.requestId);
+				break;
 		}
+	}
+
+	function answer(request: Request, answer: Answer) {
+		device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer });
 	}
 
 	function follow(scroller: HTMLElement) {
@@ -68,7 +85,12 @@
 		</div>
 	</div>
 	<div class="foot">
-		<ChatComposer {device} {chat} {live} />
+		{#if request}
+			{#key request.id}
+				<RequestCard {request} {agent} disabled={!live} onanswer={(chosen) => answer(request, chosen)} />
+			{/key}
+		{/if}
+		<ChatComposer {device} {chat} {live} {request} />
 		{#if form() === 'desktop'}
 			<Meters {chat} />
 		{/if}

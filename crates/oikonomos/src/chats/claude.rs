@@ -19,10 +19,10 @@ use toml::value::{Datetime, Offset};
 use uuid::Uuid;
 
 use super::{
-    Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind,
+    Answer, Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     protocol::{self, Message},
-    seconds, unified,
+    Request, diff, seconds, unified, words,
 };
 use crate::{
     config::{Agent, AgentSettings},
@@ -45,6 +45,7 @@ const SDK_ENV: [(&str, &str); 2] = [("CLAUDE_CODE_ENTRYPOINT", "sdk-ts"), ("CLAU
 const WINDOWS: [(Window, &str); 2] = [(Window::FiveHour, "five_hour"), (Window::Weekly, "seven_day")];
 
 const HEAD: u64 = 1 << 20;
+const DENIED: &str = "The user denied this request.";
 
 pub struct Claude {
     commands: UnboundedSender<Command>,
@@ -53,6 +54,7 @@ pub struct Claude {
 enum Command {
     Send(String),
     Interrupt,
+    Answer(String, Answer),
     Close,
 }
 
@@ -63,6 +65,10 @@ impl Driver for Claude {
 
     fn interrupt(&self) {
         let _ = self.commands.send(Command::Interrupt);
+    }
+
+    fn answer(&self, request_id: &str, answer: Answer) {
+        let _ = self.commands.send(Command::Answer(request_id.to_owned(), answer));
     }
 
     fn close(&self) {
@@ -157,14 +163,22 @@ pub async fn reattach(
                 }
             }
             Message::Input(line) => {
-                if let Some(message) = user(&line) {
-                    transcript.sent(&message);
+                let Ok(message) = serde_json::from_slice::<Value>(&line) else { continue };
+                match message["type"].as_str() {
+                    Some("user") => transcript.sent(&message),
+                    Some("control_response") => {
+                        transcript.resolve(message["response"]["request_id"].as_str().unwrap_or_default())
+                    }
+                    _ => {}
                 }
             }
             _ => {}
         }
     }
     transcript.replaying = false;
+    for request in std::mem::take(&mut transcript.pending) {
+        let _ = transcript.events.send(Event::Request(request));
+    }
     let _ = transcript.events.send(Event::Status(transcript.status));
     Ok((drive(frames, writer, transcript), received))
 }
@@ -201,6 +215,20 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                             "request": { "subtype": "interrupt", "cancel_queued": true },
                         });
                         if transcript.status != Status::Done && writer.write_all(&input(&interrupt)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Command::Answer(id, answer)) => {
+                        let response = match answer {
+                            Answer::Allow => json!({ "behavior": "allow" }),
+                            Answer::Deny { instead: Some(instead) } => json!({ "behavior": "deny", "message": instead }),
+                            Answer::Deny { instead: None } => json!({ "behavior": "deny", "message": DENIED, "interrupt": true }),
+                        };
+                        let response = json!({
+                            "type": "control_response",
+                            "response": { "subtype": "success", "request_id": id, "response": response },
+                        });
+                        if writer.write_all(&input(&response)).await.is_err() {
                             break;
                         }
                     }
@@ -350,6 +378,25 @@ fn config_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
     }
 }
 
+fn request(id: &str, request: &Value) -> Request {
+    let id = id.to_owned();
+    let input = &request["input"];
+    let text = |field: &str| input[field].as_str().unwrap_or_default().to_owned();
+    match request["tool_name"].as_str() {
+        Some("Bash") => Request::Command { id, words: words(&text("command")) },
+        Some("Edit") => {
+            let diff = diff(&text("old_string"), &text("new_string"));
+            Request::Edit { id, path: text("file_path"), diff }
+        }
+        Some("Write") => Request::Edit { id, path: text("file_path"), diff: diff("", &text("content")) },
+        tool => {
+            let name = request["display_name"].as_str().or(tool).unwrap_or("a tool");
+            let title = request["title"].as_str().map_or_else(|| format!("Claude wants to use {name}"), str::to_owned);
+            Request::Other { id, title, detail: serde_json::to_string_pretty(input).unwrap_or_default() }
+        }
+    }
+}
+
 fn input(message: &Value) -> Vec<u8> {
     protocol::encode(&Message::Input(message.to_string().into_bytes()))
 }
@@ -370,6 +417,7 @@ struct Transcript {
     compacted: bool,
     status: Status,
     replaying: bool,
+    pending: Vec<Request>,
     /// The model of the main loop's latest API call, and how many tokens it was sent.
     call: Option<(String, u64)>,
     window: Option<u64>,
@@ -389,6 +437,7 @@ impl Transcript {
             compacted: false,
             status: Status::Done,
             replaying: false,
+            pending: Vec::new(),
             call: None,
             window: None,
             steering: HashSet::new(),
@@ -407,6 +456,22 @@ impl Transcript {
         self.status = status;
         if !self.replaying {
             let _ = self.events.send(Event::Status(status));
+        }
+    }
+
+    fn ask(&mut self, request: Request) {
+        if self.replaying {
+            self.pending.push(request);
+        } else {
+            let _ = self.events.send(Event::Request(request));
+        }
+    }
+
+    fn resolve(&mut self, id: &str) {
+        if self.replaying {
+            self.pending.retain(|request| request.id() != id);
+        } else {
+            let _ = self.events.send(Event::Resolved(id.to_owned()));
         }
     }
 
@@ -493,6 +558,12 @@ impl Transcript {
                     self.steering.remove(uuid);
                 }
             }
+            Some("control_request") if message["request"]["subtype"] == "can_use_tool" => {
+                if let Some(id) = message["request_id"].as_str() {
+                    self.ask(request(id, &message["request"]));
+                }
+            }
+            Some("control_cancel_request") => self.resolve(message["request_id"].as_str().unwrap_or_default()),
             Some("result") => {
                 self.total(&message["modelUsage"]);
                 // A steer Claude has not started yet runs as a turn of its own after this result.

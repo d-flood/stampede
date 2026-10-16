@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	let { variant = 'default', children, ...rest }: HTMLButtonAttributes & { variant?: 'default' | 'primary' } =
+	let { variant = 'default', children, ...rest }: HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'danger' } =
 		$props();
 </script>
 
@@ -46,5 +46,9 @@
 
 	.primary:hover:not(:disabled) {
 		background: color-mix(in oklab, var(--status-working) 85%, var(--color-fg));
+	}
+
+	.danger:not(:disabled) {
+		color: var(--ansi-1);
 	}
 </style>

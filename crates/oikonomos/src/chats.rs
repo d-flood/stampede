@@ -135,6 +135,42 @@ pub struct Tokens {
     pub output: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Request {
+    Command { id: String, words: Vec<Vec<String>> },
+    Edit { id: String, path: String, diff: String },
+    Other { id: String, title: String, detail: String },
+}
+
+impl Request {
+    pub fn id(&self) -> &str {
+        match self {
+            Request::Command { id, .. } | Request::Edit { id, .. } | Request::Other { id, .. } => id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(from = "Decision")]
+pub enum Answer {
+    Allow,
+    Deny { instead: Option<String> },
+}
+
+#[derive(Deserialize)]
+struct Decision {
+    allow: bool,
+    #[serde(default)]
+    instead: Option<String>,
+}
+
+impl From<Decision> for Answer {
+    fn from(Decision { allow, instead }: Decision) -> Self {
+        if allow { Answer::Allow } else { Answer::Deny { instead } }
+    }
+}
+
 pub enum Event {
     Session(String),
     Status(Status),
@@ -144,6 +180,8 @@ pub enum Event {
     Meters(Option<Context>, Option<Tokens>),
     Usage(Vec<Reading>),
     Truncate(usize),
+    Request(Request),
+    Resolved(String),
 }
 
 /// One Agent's wire protocol. A driver's events end when its Agent has stopped.
@@ -151,6 +189,7 @@ pub trait Driver: Send + Sync {
     /// Starts a turn, or steers the running one.
     fn send(&self, text: &str);
     fn interrupt(&self);
+    fn answer(&self, request_id: &str, answer: Answer);
     fn close(&self);
 }
 
@@ -219,6 +258,8 @@ pub enum Change {
     Truncated(String),
     Item { chat_id: String, seq: u64, index: usize, item: Item },
     Meters { chat_id: String, context: Option<Context>, tokens: Option<Tokens> },
+    Request { chat_id: String, seq: u64, request: Request },
+    Resolved { chat_id: String, seq: u64, request_id: String },
 }
 
 pub struct Chats {
@@ -236,10 +277,11 @@ struct Entry {
     driver: Box<dyn Driver>,
 }
 
-#[derive(Default)]
 struct Transcript {
     seq: u64,
     items: Vec<Item>,
+    requests: Vec<Request>,
+    reported: Status,
 }
 
 impl Chats {
@@ -346,7 +388,8 @@ impl Chats {
     }
 
     fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>) {
-        let entry = Arc::new(Entry { chat: Mutex::new(chat), transcript: Mutex::default(), driver });
+        let transcript = Transcript { seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status };
+        let entry = Arc::new(Entry { chat: Mutex::new(chat), transcript: Mutex::new(transcript), driver });
         self.chats.lock().unwrap().push(Arc::clone(&entry));
         tokio::spawn(Arc::clone(self).follow(entry, events));
     }
@@ -375,20 +418,31 @@ impl Chats {
                         entry.driver.send(&text);
                         continue;
                     }
-                    if chat.status == status {
-                        continue;
-                    }
-                    chat.status = status;
-                    if status == Status::Done {
-                        chat.viewed_since_done = self.shown(&id);
-                    }
-                    self.save(&chat);
-                    let item = chat.attention();
                     drop(chat);
-                    let _ = self.changed.send(Change::Status(id.clone(), status));
-                    self.refresh_attention();
-                    if status != Status::Working {
-                        self.attention.call(item, self.showing(&id));
+                    let mut transcript = entry.transcript.lock().unwrap();
+                    transcript.reported = status;
+                    if status == Status::Done {
+                        let pending: Vec<_> =
+                            transcript.requests.iter().map(|request| request.id().to_owned()).collect();
+                        for request_id in pending {
+                            self.resolve(&mut transcript, &id, &request_id);
+                        }
+                    }
+                    self.settle(&entry, &transcript);
+                }
+                Event::Request(request) => {
+                    let mut transcript = entry.transcript.lock().unwrap();
+                    transcript.requests.retain(|other| other.id() != request.id());
+                    transcript.requests.push(request.clone());
+                    transcript.seq += 1;
+                    let seq = transcript.seq;
+                    let _ = self.changed.send(Change::Request { chat_id: id.clone(), seq, request });
+                    self.settle(&entry, &transcript);
+                }
+                Event::Resolved(request_id) => {
+                    let mut transcript = entry.transcript.lock().unwrap();
+                    if self.resolve(&mut transcript, &id, &request_id) {
+                        self.settle(&entry, &transcript);
                     }
                 }
                 Event::Meters(context, tokens) => {
@@ -417,6 +471,7 @@ impl Chats {
                 Event::Truncate(len) => {
                     let mut transcript = entry.transcript.lock().unwrap();
                     transcript.items.truncate(len);
+                    transcript.requests.clear();
                     transcript.seq += 1;
                     let _ = self.changed.send(Change::Truncated(id.clone()));
                 }
@@ -428,17 +483,49 @@ impl Chats {
         self.refresh_attention();
     }
 
+    fn settle(&self, entry: &Entry, transcript: &Transcript) {
+        let status = if transcript.requests.is_empty() { transcript.reported } else { Status::Waiting };
+        let mut chat = entry.chat.lock().unwrap();
+        if chat.status == status {
+            return;
+        }
+        chat.status = status;
+        let id = chat.id.clone();
+        if status == Status::Done {
+            chat.viewed_since_done = self.shown(&id);
+        }
+        self.save(&chat);
+        let item = chat.attention();
+        drop(chat);
+        let _ = self.changed.send(Change::Status(id.clone(), status));
+        self.refresh_attention();
+        if status != Status::Working {
+            self.attention.call(item, self.showing(&id));
+        }
+    }
+
+    fn resolve(&self, transcript: &mut Transcript, chat_id: &str, request_id: &str) -> bool {
+        let pending = transcript.requests.len();
+        transcript.requests.retain(|request| request.id() != request_id);
+        if transcript.requests.len() == pending {
+            return false;
+        }
+        transcript.seq += 1;
+        let (chat_id, seq, request_id) = (chat_id.to_owned(), transcript.seq, request_id.to_owned());
+        let _ = self.changed.send(Change::Resolved { chat_id, seq, request_id });
+        true
+    }
+
     fn save(&self, chat: &Chat) {
         if let Err(error) = write_record(&self.data_dir, chat) {
             eprintln!("cannot save chat {}: {error}", chat.id);
         }
     }
 
-    /// The transcript so far, and the sequence number of the last change it includes.
-    pub fn attach(&self, id: &str) -> Option<(u64, Vec<Item>)> {
+    pub fn attach(&self, id: &str) -> Option<(u64, Vec<Item>, Vec<Request>)> {
         let transcript = self.get(id)?;
         let transcript = transcript.transcript.lock().unwrap();
-        Some((transcript.seq, transcript.items.clone()))
+        Some((transcript.seq, transcript.items.clone(), transcript.requests.clone()))
     }
 
     /// Sends `text` now, or with `queue` holds it until the running turn ends.
@@ -469,6 +556,15 @@ impl Chats {
     fn queued(&self, chat: &Chat) {
         self.save(chat);
         let _ = self.changed.send(Change::Queued(chat.id.clone(), chat.queued.clone()));
+    }
+
+    pub fn answer(&self, id: &str, request_id: &str, answer: Answer) {
+        let Some(entry) = self.get(id) else { return };
+        let mut transcript = entry.transcript.lock().unwrap();
+        if self.resolve(&mut transcript, id, request_id) {
+            entry.driver.answer(request_id, answer);
+            self.settle(&entry, &transcript);
+        }
     }
 
     pub fn close(&self, id: &str) {
@@ -559,4 +655,54 @@ fn write_record(data_dir: &Path, chat: &Chat) -> io::Result<()> {
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, serde_json::to_vec(chat)?)?;
     fs::rename(tmp, path)
+}
+
+fn words(command: &str) -> Vec<Vec<String>> {
+    let mut parts = vec![Vec::new()];
+    let mut word: Option<String> = None;
+    let mut chars = command.chars().peekable();
+    while let Some(char) = chars.next() {
+        match char {
+            '\'' => {
+                let word = word.get_or_insert_default();
+                word.extend(chars.by_ref().take_while(|&char| char != '\''));
+            }
+            '"' => {
+                let word = word.get_or_insert_default();
+                while let Some(char) = chars.next() {
+                    match char {
+                        '"' => break,
+                        '\\' if matches!(chars.peek(), Some('"' | '\\' | '$' | '`')) => word.extend(chars.next()),
+                        char => word.push(char),
+                    }
+                }
+            }
+            '\\' => match chars.next() {
+                Some('\n') | None => {}
+                Some(char) => word.get_or_insert_default().push(char),
+            },
+            // `2>&1` and `&>` redirect rather than separate.
+            '&' if word.as_ref().is_some_and(|word| word.ends_with(['>', '<'])) || chars.peek() == Some(&'>') => {
+                word.get_or_insert_default().push(char);
+            }
+            ';' | '&' | '|' | '\n' => {
+                parts.last_mut().unwrap().extend(word.take());
+                while chars.next_if(|char| matches!(char, '&' | '|')).is_some() {}
+                if !parts.last().unwrap().is_empty() {
+                    parts.push(Vec::new());
+                }
+            }
+            char if char.is_whitespace() => parts.last_mut().unwrap().extend(word.take()),
+            char => word.get_or_insert_default().push(char),
+        }
+    }
+    parts.last_mut().unwrap().extend(word);
+    parts.retain(|part| !part.is_empty());
+    parts
+}
+
+fn diff(old: &str, new: &str) -> String {
+    let removed = old.lines().map(|line| format!("-{line}\n"));
+    let added = new.lines().map(|line| format!("+{line}\n"));
+    removed.chain(added).collect()
 }

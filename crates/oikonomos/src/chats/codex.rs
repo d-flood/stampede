@@ -16,7 +16,10 @@ use tokio::{
 };
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
-use super::{Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind, relative, seconds, unified};
+use super::{
+    Answer, Chat, CommandStatus, Context, Driver, Event, Item, Notice, Session, Tokens, ToolCall, ToolKind, diff, relative,
+    seconds, unified, words,
+};
 use crate::{
     config::{Agent, AgentSettings, codex_policy},
     hooks::Status,
@@ -26,6 +29,7 @@ use crate::{
 const CLOSING: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(5);
 const RECONNECTING: Duration = Duration::from_secs(30);
+const REPLAY: Duration = Duration::from_secs(5);
 
 const SOURCES: [&str; 5] = ["cli", "vscode", "exec", "appServer", "unknown"];
 
@@ -36,6 +40,7 @@ pub struct Codex {
 enum Request {
     Send(String),
     Interrupt,
+    Answer(String, Answer),
     Close,
 }
 
@@ -46,6 +51,10 @@ impl Driver for Codex {
 
     fn interrupt(&self) {
         let _ = self.requests.send(Request::Interrupt);
+    }
+
+    fn answer(&self, request_id: &str, answer: Answer) {
+        let _ = self.requests.send(Request::Answer(request_id.to_owned(), answer));
     }
 
     fn close(&self) {
@@ -81,8 +90,39 @@ async fn rejoin(
     transcript: &mut Transcript,
 ) -> io::Result<(Connection, Child)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let resumed = connection.call("thread/resume", json!({ "threadId": transcript.thread })).await?;
-    transcript.resumed(&resumed["thread"]["turns"]);
+    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread })).await?;
+    let mut replay = Vec::new();
+    let resumed = loop {
+        let message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;
+        if response(&message) == Some(id) {
+            if let Some(error) = message.get("error") {
+                return Err(io::Error::other(format!("thread/resume: {error}")));
+            }
+            break message["result"].clone();
+        }
+        if message.get("method").is_some() && message.get("id").is_some() {
+            replay.push(message);
+        }
+    };
+    let status = transcript.resumed(&resumed["thread"]["turns"]);
+    transcript.status = status;
+    for message in replay {
+        transcript.read(&message);
+    }
+    if resumed["thread"]["status"]["activeFlags"].as_array().is_some_and(|flags| !flags.is_empty())
+        && transcript.asked.is_empty()
+    {
+        let _ = timeout(REPLAY, async {
+            while let Some(message) = connection.next().await {
+                transcript.read(&message);
+                if !transcript.asked.is_empty() || transcript.turn.is_none() {
+                    break;
+                }
+            }
+        })
+        .await;
+    }
+    transcript.report(transcript.status);
     Ok((connection, proxy))
 }
 
@@ -172,6 +212,22 @@ fn run(
                     }
                     Some(Request::Interrupt) => {
                         let _ = connection.interrupt(&mut transcript).await;
+                    }
+                    Some(Request::Answer(id, answer)) => {
+                        let Some((rpc, grant)) = transcript.asked.remove(&id) else { continue };
+                        let result = match (&answer, grant) {
+                            (Answer::Allow, Some(permissions)) => json!({ "permissions": permissions, "scope": "turn" }),
+                            (Answer::Deny { .. }, Some(_)) => json!({ "permissions": {}, "scope": "turn" }),
+                            (Answer::Allow, None) => json!({ "decision": "accept" }),
+                            (Answer::Deny { instead: None }, None) => json!({ "decision": "cancel" }),
+                            (Answer::Deny { instead: Some(_) }, None) => json!({ "decision": "decline" }),
+                        };
+                        if connection.write(json!({ "id": rpc, "result": result })).await.is_err() {
+                            continue;
+                        }
+                        let Answer::Deny { instead: Some(text) } = answer else { continue };
+                        let input = json!([{ "type": "text", "text": text, "text_elements": [] }]);
+                        let _ = connection.send(&mut transcript, input).await;
                     }
                     Some(Request::Close) | None => {
                         let _ = timeout(CLOSING, connection.close(&mut transcript)).await;
@@ -359,6 +415,8 @@ struct Transcript {
     /// A steer that reached the daemon after its turn had ended, to start a turn with instead.
     unsteered: Option<Value>,
     status: Status,
+    asked: HashMap<String, (Value, Option<Value>)>,
+    edits: HashMap<String, Value>,
 }
 
 impl Transcript {
@@ -377,6 +435,8 @@ impl Transcript {
             steering: HashMap::new(),
             unsteered: None,
             status: Status::Done,
+            asked: HashMap::new(),
+            edits: HashMap::new(),
         }
     }
 
@@ -398,7 +458,7 @@ impl Transcript {
         self.streaming.insert(id.to_owned(), (index, text.to_owned()));
     }
 
-    fn resumed(&mut self, turns: &Value) {
+    fn resumed(&mut self, turns: &Value) -> Status {
         let turns = turns.as_array().map(Vec::as_slice).unwrap_or_default();
         let _ = self.events.send(Event::Truncate(0));
         self.len = 0;
@@ -408,11 +468,14 @@ impl Transcript {
         self.commands.clear();
         self.steering.clear();
         self.unsteered = None;
+        self.asked.clear();
+        self.edits.clear();
         for item in turns.iter().flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
             match item["type"].as_str() {
                 Some("userMessage") => {
                     self.push(user(item));
                 }
+                Some("fileChange") if item["status"] == "inProgress" => self.edited(item),
                 _ => self.completed(item, 0),
             }
         }
@@ -422,7 +485,19 @@ impl Transcript {
         if self.status != Status::Done && running.is_none() && !last.is_some_and(|turn| turn["status"] == "completed") {
             self.push(Item::interrupted());
         }
-        self.report(if self.turn.is_some() { Status::Working } else { Status::Done });
+        if self.turn.is_some() { Status::Working } else { Status::Done }
+    }
+
+    fn edited(&mut self, item: &Value) {
+        if let Some(id) = item["id"].as_str() {
+            self.edits.insert(id.to_owned(), item["changes"].clone());
+        }
+    }
+
+    fn ask(&mut self, message: &Value, grant: Option<Value>) -> String {
+        let id = key(&message["id"]);
+        self.asked.insert(id.clone(), (message["id"].clone(), grant));
+        id
     }
 
     fn read(&mut self, message: &Value) {
@@ -457,6 +532,43 @@ impl Transcript {
                 let (input, output) = (usage["total"]["inputTokens"].as_u64(), usage["total"]["outputTokens"].as_u64());
                 let tokens = input.zip(output).map(|(input, output)| Tokens { input, output });
                 let _ = self.events.send(Event::Meters(context, tokens));
+            }
+            Some("item/started") if item["type"] == "fileChange" => self.edited(item),
+            Some("item/commandExecution/requestApproval") => {
+                let actions = params["commandActions"].as_array().into_iter().flatten();
+                let actions: Vec<&str> = actions.filter_map(|action| action["command"].as_str()).collect();
+                let words = match actions.as_slice() {
+                    [] => words(params["command"].as_str().unwrap_or_default()),
+                    actions => actions.iter().flat_map(|action| words(action)).collect(),
+                };
+                let id = self.ask(message, None);
+                let _ = self.events.send(Event::Request(super::Request::Command { id, words }));
+            }
+            Some("item/fileChange/requestApproval") => {
+                let id = self.ask(message, None);
+                let request = match self.edits.get(params["itemId"].as_str().unwrap_or_default()) {
+                    Some(changes) => edit(id, changes),
+                    None => {
+                        let detail = params["reason"].as_str().unwrap_or_default().to_owned();
+                        super::Request::Other { id, title: "Codex wants to edit files".into(), detail }
+                    }
+                };
+                let _ = self.events.send(Event::Request(request));
+            }
+            Some("item/permissions/requestApproval") => {
+                let permissions = &params["permissions"];
+                let id = self.ask(message, Some(permissions.clone()));
+                let reason = params["reason"].as_str().unwrap_or_default();
+                let detail = format!("{reason}\n{}", serde_json::to_string_pretty(permissions).unwrap_or_default());
+                let title = "Codex wants more permissions".into();
+                let request = super::Request::Other { id, title, detail: detail.trim().to_owned() };
+                let _ = self.events.send(Event::Request(request));
+            }
+            Some("serverRequest/resolved") => {
+                let id = key(&params["requestId"]);
+                if self.asked.remove(&id).is_some() {
+                    let _ = self.events.send(Event::Resolved(id));
+                }
             }
             Some("turn/completed") => {
                 self.turn = None;
@@ -512,6 +624,9 @@ impl Transcript {
 
     /// Codex announces reasoning once it is done, so its duration runs from the item before.
     fn completed(&mut self, item: &Value, elapsed: u64) {
+        if item["type"] == "fileChange" {
+            self.edits.remove(item["id"].as_str().unwrap_or_default());
+        }
         let text = |key: &str| item[key].as_str().unwrap_or_default().to_owned();
         match item["type"].as_str() {
             Some("agentMessage") => match item["id"].as_str().and_then(|id| self.streaming.remove(id)) {
@@ -618,4 +733,26 @@ fn user(item: &Value) -> Item {
 
 fn agent(item: &Value) -> Item {
     Item::Text { text: item["text"].as_str().unwrap_or_default().to_owned(), streaming: false }
+}
+
+fn key(id: &Value) -> String {
+    id.as_str().map_or_else(|| id.to_string(), str::to_owned)
+}
+
+fn edit(id: String, changes: &Value) -> super::Request {
+    let changes = changes.as_array().map(Vec::as_slice).unwrap_or_default();
+    let paths: Vec<&str> = changes.iter().filter_map(|change| change["path"].as_str()).collect();
+    let path = paths.join(", ");
+    let diff: String = changes
+        .iter()
+        .map(|change| {
+            let text = change["diff"].as_str().unwrap_or_default();
+            match change["kind"]["type"].as_str() {
+                Some("add") => diff("", text),
+                Some("delete") => diff(text, ""),
+                _ => text.to_owned(),
+            }
+        })
+        .collect();
+    super::Request::Edit { id, path, diff }
 }

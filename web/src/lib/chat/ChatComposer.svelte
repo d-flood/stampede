@@ -1,17 +1,19 @@
 <script lang="ts">
-	import type { Chat, Device } from '#lib/device.svelte.ts';
+	import type { Chat, Device, Request } from '#lib/device.svelte.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Stop from '~icons/ph/stop-fill';
 
-	let { device, chat, live }: { device: Device; chat: Chat; live: boolean } = $props();
+	let { device, chat, live, request }: { device: Device; chat: Chat; live: boolean; request?: Request } = $props();
 
 	let composer: Composer;
-	const working = $derived(chat.status !== 'done');
+	const working = $derived(chat.status !== 'done' && !request);
+	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
 
 	function send(text: string, queue: boolean) {
 		if (!live || !text.trim()) return false;
-		device.send({ type: 'chat.send', chatId: chat.id, text, queue });
+		if (request) device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer: { allow: false, instead: text } });
+		else device.send({ type: 'chat.send', chatId: chat.id, text, queue });
 		return true;
 	}
 
@@ -25,7 +27,7 @@
 	}
 </script>
 
-<Composer bind:this={composer} id={chat.id} placeholder="Message {chat.rig}">
+<Composer bind:this={composer} id={chat.id} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`}>
 	{#snippet actions(text: string, clear: () => void)}
 		{#if working}
 			<Button aria-label="Interrupt" title="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>

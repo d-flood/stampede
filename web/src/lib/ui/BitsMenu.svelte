@@ -79,6 +79,7 @@
 
 <style>
 	.menu {
+		box-sizing: border-box;
 		min-width: 10rem;
 		max-width: min(24rem, 100vw - 2 * var(--space-2));
 		max-height: min(var(--bits-floating-available-height), 100dvh - 2 * var(--space-2));
