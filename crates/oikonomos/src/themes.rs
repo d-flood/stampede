@@ -1,4 +1,4 @@
-use std::{fs, io};
+use std::{collections::BTreeSet, fs, io};
 
 use rust_embed::RustEmbed;
 use serde::Serialize;
@@ -23,16 +23,18 @@ pub struct Palette {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Theme {
+    pub name: Option<String>,
     pub light: Palette,
     pub dark: Palette,
 }
 
 impl Theme {
     pub fn resolve(spec: &str) -> Result<Self, Error> {
+        let name = Some(spec.to_owned());
         let pair: Option<Vec<_>> = spec.split(',').map(|part| part.split_once(':')).collect();
         let Some(pair) = pair else {
             let palette = lookup(spec.trim())?;
-            return Ok(Self { light: palette.clone(), dark: palette });
+            return Ok(Self { name, light: palette.clone(), dark: palette });
         };
         let named = |scheme: &str| {
             pair.iter()
@@ -40,15 +42,35 @@ impl Theme {
                 .map(|(_, name)| lookup(name.trim()))
                 .ok_or_else(|| format!("theme {spec:?} names no {scheme} theme"))
         };
-        Ok(Self { light: named("light")??, dark: named("dark")?? })
+        Ok(Self { name, light: named("light")??, dark: named("dark")?? })
     }
 }
 
 impl Default for Theme {
     fn default() -> Self {
         let palette = parse("").unwrap();
-        Self { light: palette.clone(), dark: palette }
+        Self { name: None, light: palette.clone(), dark: palette }
     }
+}
+
+pub fn names() -> io::Result<Vec<String>> {
+    let mut names: BTreeSet<_> = Bundled::iter().map(|name| name.into_owned()).collect();
+    let user = crate::home().join(".config/ghostty/themes");
+    match fs::read_dir(user) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry?;
+                if entry.path().is_file() {
+                    if let Some(name) = entry.file_name().to_str().filter(|name| !name.starts_with('.')) {
+                        names.insert(name.to_owned());
+                    }
+                }
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(names.into_iter().collect())
 }
 
 fn lookup(name: &str) -> Result<Palette, Error> {

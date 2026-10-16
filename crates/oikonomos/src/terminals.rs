@@ -232,7 +232,7 @@ impl Terminals {
         let id = format!("{:016x}", Uuid::new_v4().as_u64_pair().1);
         let shell = env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
         let exe = env::current_exe()?;
-        let mut command = Command::new(&exe);
+        let mut command = Command::new("/proc/self/exe");
         command.env("OIKONOMOS_HOOK_URL", &self.hook_url);
         command.arg("hold").arg("--data-dir").arg(&self.data_dir).arg("--id").arg(&id);
         command.arg("--scrollback").arg(scrollback.to_string());

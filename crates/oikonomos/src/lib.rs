@@ -75,7 +75,8 @@ struct AppState {
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/version", get(version))
-        .route("/api/theme", get(theme))
+        .route("/api/theme", get(theme).put(set_theme))
+        .route("/api/themes", get(theme_names))
         .route("/api/font", get(font))
         .route("/api/rigs", get(rigs))
         .route("/api/editor", get(editor))
@@ -135,6 +136,22 @@ async fn version() -> Json<Value> {
 
 async fn theme(State(state): State<AppState>) -> Json<Theme> {
     Json(state.config.borrow().theme.clone())
+}
+
+async fn theme_names() -> Result<Json<Vec<String>>, files::Failure> {
+    tokio::task::spawn_blocking(themes::names)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+
+async fn set_theme(State(state): State<AppState>, Json(name): Json<String>) -> Result<Json<Theme>, files::Failure> {
+    tokio::task::spawn_blocking(move || config::write_theme(&state.config_path, &name))
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
 }
 
 async fn font(State(state): State<AppState>) -> Json<Font> {

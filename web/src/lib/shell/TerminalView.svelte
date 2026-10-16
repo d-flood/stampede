@@ -17,6 +17,8 @@
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import { FitAddon, Terminal } from 'ghostty-web';
 	import { onMount, type Snippet } from 'svelte';
+	import ArrowElbowDownLeft from '~icons/ph/arrow-elbow-down-left';
+	import Clipboard from '~icons/ph/clipboard';
 	import Copy from '~icons/ph/copy';
 	import NotePencil from '~icons/ph/note-pencil';
 
@@ -46,6 +48,7 @@
 	let ctrl = $state(false);
 	let copying = $state<string>();
 	let composing = $state(false);
+	let pasteFallback = $state(false);
 	let composer = $state<Composer>();
 	let dragged = $state<number>();
 	let wheeled = 0;
@@ -57,7 +60,11 @@
 		const unlisten = device.listen({ message, output });
 		container.addEventListener('focusin', lead);
 		container.addEventListener('pointerdown', lead);
+		container.addEventListener('keydown', keydown, true);
+		container.addEventListener('paste', paste, true);
 		return () => {
+			container.removeEventListener('keydown', keydown, true);
+			container.removeEventListener('paste', paste, true);
 			observer.disconnect();
 			unlisten();
 			if (channel !== undefined) device.send({ type: 'terminal.detach', channel });
@@ -264,10 +271,50 @@
 	}
 
 	function compose(text: string, enter: boolean) {
-		if (channel === undefined || !view || !live) return false;
+		if (channel === undefined || !view || !live || ended) return false;
+		text = text.replace(/\r\n?/g, '\n');
 		const pasted = view.hasBracketedPaste() ? `\x1b[200~${text}\x1b[201~` : text.replaceAll('\n', '\r');
 		device.input(channel, enter ? `${pasted}\r` : pasted);
 		return true;
+	}
+
+	function paste(event: ClipboardEvent) {
+		event.preventDefault();
+		event.stopPropagation();
+		const text = event.clipboardData?.getData('text/plain');
+		if (text) compose(text, false);
+	}
+
+	async function pasteClipboard() {
+		try {
+			if (compose(await navigator.clipboard.readText(), false)) {
+				pasteFallback = false;
+				view?.textarea?.focus();
+			}
+		} catch {
+			pasteFallback = true;
+			composing = true;
+			composer?.focus();
+		}
+	}
+
+	function newline() {
+		if (ended) return;
+		if (view?.hasBracketedPaste()) compose('\n', false);
+		else input('\x1b[13;2u');
+		view?.textarea?.focus();
+	}
+
+	function keydown(event: KeyboardEvent) {
+		if (event.isComposing || ended) return;
+		if (event.key.toLowerCase() === 'v' && (event.ctrlKey || event.metaKey) && !event.altKey) {
+			event.stopPropagation();
+			view?.textarea?.focus();
+		} else if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+			event.preventDefault();
+			event.stopPropagation();
+			newline();
+		}
 	}
 
 	function propose() {
@@ -287,6 +334,10 @@
 <div class="panel" role="tabpanel" hidden={!active}>
 	<div class="toolbar">
 		{#if !ended}
+			<IconButton label="Paste" title="Paste" disabled={!live} onclick={pasteClipboard}><Clipboard /></IconButton>
+			<IconButton label="Newline" title="Insert newline (Shift+Enter)" disabled={!live} onclick={newline}>
+				<ArrowElbowDownLeft />
+			</IconButton>
 			<IconButton label="Composer" aria-pressed={composing} onclick={() => (composing = !composing)}>
 				<NotePencil />
 			</IconButton>
@@ -313,6 +364,9 @@
 		<KeyBar bind:ctrl disabled={!live} application={() => !!view?.getMode(1)} onkey={send} oncopy={copy} />
 	{/if}
 	{#if composing && !ended}
+		{#if pasteFallback}
+			<p role="status">Clipboard access unavailable. Paste into Composer, then choose Insert.</p>
+		{/if}
 		<Composer bind:this={composer} {terminalId} disabled={!live} onsend={compose} />
 	{/if}
 </div>

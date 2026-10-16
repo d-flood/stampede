@@ -10,7 +10,7 @@ type Palette = {
 	selectionBackground: string;
 	selectionForeground: string;
 };
-type ThemeResponse = { light: Palette; dark: Palette };
+type ThemeResponse = { name: string | null; light: Palette; dark: Palette };
 type Font = { family: string; faces: { url: string; weight: string; style: string }[] };
 type EditorSettings = { keymap: 'standard' | 'vim' };
 type Keybar = { extra: string[] };
@@ -28,6 +28,7 @@ let extras = $state.raw<string[]>([]);
 let scrollback = $state(10_000);
 
 export const editor = $state<EditorSettings>({ keymap: 'standard' });
+export const selectedTheme = $state<{ name: string | null }>({ name: null });
 
 async function get<T>(path: string): Promise<T> {
 	const response = await fetch(path);
@@ -49,6 +50,18 @@ export async function loadConfig() {
 	chord = leaderKey;
 	extras = keys.extra;
 	scrollback = lines;
+	applyTheme(theme);
+	const style = document.documentElement.style;
+	for (const face of faces) document.fonts.delete(face);
+	faces = font.faces.map(({ url, weight, style }) => new FontFace(font.family, `url("${url}")`, { weight, style }));
+	for (const face of faces) document.fonts.add(face);
+	style.setProperty('--font-mono', `"${font.family}", "Symbols Nerd Font Mono", monospace`);
+	configured = rigs;
+	revision++;
+}
+
+function applyTheme(theme: ThemeResponse) {
+	selectedTheme.name = theme.name;
 	const style = document.documentElement.style;
 	for (const scheme of ['light', 'dark'] as const) {
 		const palette = theme[scheme];
@@ -59,12 +72,17 @@ export async function loadConfig() {
 		style.setProperty(`--${scheme}-selection-bg`, palette.selectionBackground);
 		style.setProperty(`--${scheme}-selection-fg`, palette.selectionForeground);
 	}
-	for (const face of faces) document.fonts.delete(face);
-	faces = font.faces.map(({ url, weight, style }) => new FontFace(font.family, `url("${url}")`, { weight, style }));
-	for (const face of faces) document.fonts.add(face);
-	style.setProperty('--font-mono', `"${font.family}", "Symbols Nerd Font Mono", monospace`);
-	configured = rigs;
 	revision++;
+}
+
+export async function selectTheme(name: string) {
+	const response = await fetch('/api/theme', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(name)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	applyTheme(await response.json());
 }
 
 export function rigs(): Rig[] {

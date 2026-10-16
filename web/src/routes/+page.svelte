@@ -10,6 +10,7 @@
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { labels } from '#lib/projects.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
+	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
 	import type { Scope } from '#lib/shell/Palette.svelte';
@@ -444,6 +445,7 @@
 {/snippet}
 
 {#snippet attention()}
+	<ThemeSwitcher />
 	<AttentionList items={attentionList} projects={projectLabels} onselect={attend} />
 {/snippet}
 

@@ -229,6 +229,33 @@ pub fn check(text: &str) -> Option<Invalid> {
     Some(Invalid { line, message: error.message().to_owned() })
 }
 
+pub fn write_theme(path: &Path, name: &str) -> Result<Theme, Error> {
+    let theme = Theme::resolve(name)?;
+    let text = match fs::read_to_string(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        text => text?,
+    };
+    let text = with_theme(text, name)?;
+    fs::write(path, text)?;
+    Ok(theme)
+}
+
+fn with_theme(mut text: String, name: &str) -> Result<String, Error> {
+    #[derive(Deserialize)]
+    struct Setting {
+        theme: Option<toml::Spanned<String>>,
+    }
+
+    let setting: Setting = toml::from_str(&text)?;
+    let value = toml::Value::String(name.to_owned()).to_string();
+    match setting.theme {
+        Some(theme) => text.replace_range(theme.span(), &value),
+        None => text.insert_str(0, &format!("theme = {value}\n")),
+    }
+    Config::parse(&text)?;
+    Ok(text)
+}
+
 fn theme<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Theme, D::Error> {
     Theme::resolve(&String::deserialize(deserializer)?).map_err(D::Error::custom)
 }
