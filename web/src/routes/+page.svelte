@@ -299,7 +299,7 @@
 		const chat = (rig: string) => () => device.send({ type: 'chat.create', projectId, rig });
 		const launchers = rigs().flatMap((rig) => [
 			{ label: rig.name, onselect: create(rig.name) },
-			...(rig.agent === 'claude-code' ? [{ label: `${rig.name} as Chat`, onselect: chat(rig.name) }] : [])
+			{ label: `${rig.name} as Chat`, onselect: chat(rig.name) }
 		]);
 		const rest = [{ label: 'Terminal', onselect: create() }, { label: 'Open file', onselect: () => openPalette('files') }];
 		return launchers.length ? [{ heading: 'Rigs', items: launchers }, ...rest] : rest;

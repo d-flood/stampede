@@ -1,4 +1,5 @@
 mod claude;
+mod codex;
 mod holder;
 mod protocol;
 
@@ -125,7 +126,9 @@ impl Chats {
             Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-            Agent::Codex => Err(io::Error::new(io::ErrorKind::Unsupported, "Codex Chats are not supported yet")),
+            Agent::Codex => codex::start(&chat.cwd, &rig.env)
+                .await
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
         };
         let (driver, events) = started.inspect_err(|_| {
             let _ = fs::remove_file(record_path(&self.data_dir, &chat.id));

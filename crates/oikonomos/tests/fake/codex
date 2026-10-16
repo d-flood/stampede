@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+import base64
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+stdin = sys.stdin.buffer
+stdout = sys.stdout.buffer
+
+
+def fail(reason):
+    print(f'fake codex: {reason}', file=sys.stderr)
+    sys.exit(2)
+
+
+def fixture():
+    name = os.environ.get('OIKONOMOS_FAKE_FIXTURE') or fail('OIKONOMOS_FAKE_FIXTURE is not set')
+    if '/' in name:
+        return Path(name)
+    return Path(__file__).resolve().parent.parent / 'fixtures/chats/codex' / f'{name}.recorded.jsonl'
+
+
+def daemon():
+    return Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'fake-daemon'
+
+
+def handshake():
+    key = None
+    while line := stdin.readline().strip():
+        name, _, value = line.decode().partition(':')
+        if name.lower() == 'sec-websocket-key':
+            key = value.strip()
+    if key is None:
+        fail('no WebSocket handshake')
+    accept = base64.b64encode(hashlib.sha1(f'{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11'.encode()).digest()).decode()
+    stdout.write(f'HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {accept}\r\n\r\n'.encode())
+    stdout.flush()
+
+
+def receive():
+    while len(header := stdin.read(2)) == 2:
+        opcode, length = header[0] & 0x0F, header[1] & 0x7F
+        if length > 125:
+            length = int.from_bytes(stdin.read(2 if length == 126 else 8), 'big')
+        mask = stdin.read(4) if header[1] & 0x80 else bytes(4)
+        payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(stdin.read(length)))
+        if opcode == 8:
+            break
+        if opcode == 1:
+            with open(daemon() / 'received.jsonl', 'a') as log:
+                log.write(payload.decode() + '\n')
+            return json.loads(payload)
+    return None
+
+
+def send(message):
+    payload = json.dumps(message, ensure_ascii=False).encode()
+    length = len(payload)
+    if length < 126:
+        header = bytes([0x81, length])
+    elif length < 65536:
+        header = bytes([0x81, 126]) + length.to_bytes(2, 'big')
+    else:
+        header = bytes([0x81, 127]) + length.to_bytes(8, 'big')
+    stdout.write(header + payload)
+    stdout.flush()
+
+
+def check(message, recorded):
+    method = message.get('method')
+    if method != recorded.get('method'):
+        fail(f'expected {recorded.get("method")} but read {method}')
+    params = message.get('params') or {}
+    if method == 'initialize' and params.get('capabilities', {}).get('experimentalApi') is not True:
+        fail(f'initialize without capabilities.experimentalApi: {params}')
+    if method == 'thread/start' and os.path.realpath(params.get('cwd') or '') != os.path.realpath(os.getcwd()):
+        fail(f'thread/start cwd {params.get("cwd")} is not the proxy cwd {os.getcwd()}')
+
+
+def proxy():
+    if not daemon().is_dir():
+        fail('no daemon is running')
+    handshake()
+    ids = {}
+    for line in fixture().read_text().splitlines():
+        entry = json.loads(line)
+        if 'stdin' in entry:
+            message = receive()
+            if message is None:
+                sys.exit(0)
+            check(message, entry['stdin'])
+            if 'id' in message:
+                ids[entry['stdin']['id']] = message['id']
+        else:
+            message = entry['stdout']
+            if 'method' not in message and message.get('id') in ids:
+                message['id'] = ids[message['id']]
+            send(message)
+    while receive() is not None:
+        pass
+
+
+args = sys.argv[1:]
+if args == ['app-server', 'daemon', 'start']:
+    daemon().mkdir(parents=True, exist_ok=True)
+elif args == ['app-server', 'proxy']:
+    proxy()
+else:
+    fail(f'unexpected arguments {args}')

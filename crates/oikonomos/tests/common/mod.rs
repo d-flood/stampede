@@ -231,3 +231,87 @@ pub async fn next_control(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>
         }
     }
 }
+
+pub async fn next(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>) -> Value {
+    loop {
+        if let Message::Text(text) = socket.next().await.unwrap().unwrap() {
+            return serde_json::from_str(&text).unwrap();
+        }
+    }
+}
+
+/// Sends `text` to a Chat whose status is `status`, and gathers its statuses and items until it is done again.
+pub async fn chat_turn(
+    socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    chat_id: &str,
+    status: &Value,
+    text: &str,
+) -> (Vec<Value>, Vec<Value>) {
+    control(socket, json!({ "type": "chat.send", "chatId": chat_id, "text": text })).await;
+    let mut statuses = vec![status.clone()];
+    let mut items: Vec<Value> = Vec::new();
+    timeout(Duration::from_secs(20), async {
+        while statuses.len() < 2 || statuses.last().unwrap() != "done" {
+            let message = next(socket).await;
+            if message["chatId"] != chat_id {
+                continue;
+            }
+            match message["type"].as_str().unwrap() {
+                "chat.status" => statuses.push(message["status"].clone()),
+                "chat.item" => {
+                    let index = message["index"].as_u64().unwrap() as usize;
+                    assert!(index <= items.len(), "{message}");
+                    match items.get_mut(index) {
+                        Some(item) => *item = message["item"].clone(),
+                        None => items.push(message["item"].clone()),
+                    }
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the turn never ended: {statuses:?} {items:?}"));
+    (statuses, items)
+}
+
+/// Closes a Chat and waits until it is unlisted, its record is gone, and nothing it ran is left.
+pub async fn close_chat(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, root: &Path, chat_id: &str) {
+    control(socket, json!({ "type": "chat.close", "chatId": chat_id })).await;
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let changed = next_control(socket, "chats.changed").await;
+            if !changed["chats"].as_array().unwrap().iter().any(|chat| chat["id"] == chat_id) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the chat never closed; running: {:?}", leftovers(root)));
+    assert!(!root.join(format!("data/chats/{chat_id}.json")).exists());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let running = leftovers(root);
+        if running.is_empty() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "left running: {running:?}");
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Every process but the server that names the test's root in its command line or runs inside it.
+pub fn leftovers(root: &Path) -> Vec<String> {
+    let canonical = fs::canonicalize(root).unwrap();
+    let root = root.to_str().unwrap();
+    fs::read_dir("/proc")
+        .unwrap()
+        .flatten()
+        .filter_map(|entry| {
+            entry.file_name().to_str()?.parse::<u32>().ok()?;
+            let cmdline = String::from_utf8_lossy(&fs::read(entry.path().join("cmdline")).ok()?).replace('\0', " ");
+            let inside = fs::read_link(entry.path().join("cwd")).is_ok_and(|cwd| cwd.starts_with(&canonical));
+            ((cmdline.contains(root) || inside) && !cmdline.contains(" serve ")).then_some(cmdline)
+        })
+        .collect()
+}

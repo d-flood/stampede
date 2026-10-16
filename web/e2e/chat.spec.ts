@@ -33,6 +33,30 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await expect(tab).toHaveCount(0);
 });
 
+test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, { project }) => {
+	const name = `codex-chat-${project.name}`;
+	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Codex as Chat' }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Codex/ });
+	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expect(tab.getByTitle('done')).toBeVisible();
+
+	const prompt = 'Greet the reader in one short sentence with one word in **bold**. Use no names and no tools.';
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await panel.getByRole('textbox', { name: 'Composer' }).fill(prompt);
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await expect(panel.getByText(prompt)).toBeVisible();
+	await expect(panel.locator('strong', { hasText: 'glad' })).toBeVisible();
+	await expect(panel.getByText('Welcome—glad you’re here.')).toBeVisible();
+	await expect(tab.getByTitle('done')).toBeVisible();
+
+	await tab.click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await expect(tab).toHaveCount(0);
+});
+
 test('a Chat that finishes unseen needs attention and opens from the Attention list or a notification', async ({ page }, { project }) => {
 	const name = `attention-${project.name}`;
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });

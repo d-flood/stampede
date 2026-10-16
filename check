@@ -29,6 +29,14 @@ agent = "claude-code"
 command = "claude"
 env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn" }
 EOF
+cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
+
+[[rig]]
+name = "Fake Codex"
+agent = "codex"
+command = "codex"
+env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
+EOF
 
 cleanup() {
 	pkill -f -- "${OIKONOMOS_E2E_ROOT//./\\.}" || true

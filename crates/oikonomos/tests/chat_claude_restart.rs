@@ -2,14 +2,13 @@ mod common;
 
 use std::{env, fs, path::Path, time::Duration};
 
-use common::{Server, control, next_control};
-use futures_util::StreamExt;
+use common::{Server, control, next, next_control};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
     time::{Instant, sleep, timeout},
 };
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 const CONFIG: &str = r#"
 [[rig]]
@@ -142,13 +141,5 @@ async fn gated(gates: &Path, name: &str) {
     while !gates.join(name).exists() {
         assert!(Instant::now() < deadline, "the fake never reached gate {name}");
         sleep(Duration::from_millis(20)).await;
-    }
-}
-
-async fn next(socket: &mut Socket) -> Value {
-    loop {
-        if let Message::Text(text) = socket.next().await.unwrap().unwrap() {
-            return serde_json::from_str(&text).unwrap();
-        }
     }
 }
