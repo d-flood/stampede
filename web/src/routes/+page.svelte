@@ -7,14 +7,12 @@
 	import { form } from '#lib/form.ts';
 	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
+	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { labels } from '#lib/projects.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
-	import Diff from '#lib/shell/Diff.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
-	import Editor from '#lib/shell/Editor.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
-	import Palette, { type Scope } from '#lib/shell/Palette.svelte';
-	import Picker from '#lib/shell/Picker.svelte';
+	import type { Scope } from '#lib/shell/Palette.svelte';
 	import Projects from '#lib/shell/Projects.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
 	import Sidebar, { showing as sectionShowing, type Section } from '#lib/shell/Sidebar.svelte';
@@ -35,6 +33,8 @@
 	import SidebarSimple from '~icons/ph/sidebar-simple';
 	import TerminalWindow from '~icons/ph/terminal-window';
 
+	const editor = () => import('#lib/shell/Editor.svelte');
+	afterPaint(editor);
 	const restored = restore();
 	const device = connect();
 	let projects = $state<Project[]>([]);
@@ -164,6 +164,7 @@
 					if (!projects.some((project) => project.id === projectId)) delete chosenTabs[projectId];
 				}
 				for (const project of projects) loadGit(project.id);
+				if (!activeTab) warmUp();
 				break;
 			case 'git.changed':
 				loadGit(message.projectId);
@@ -555,27 +556,29 @@
 						style:grid-column={column(terminal.id)}
 						onfocusin={() => choose(projectId, terminal.id)}
 					>
-						<TerminalView
-							{device}
-							terminalId={terminal.id}
-							active={showing(terminal.id)}
-							focused={terminal.id === activeTab}
-							{ended}
-							{project}
-							onopen={(path, cursor) => openFile(projectId, path, cursor)}
-						>
-							{#if ended}
-								<div class="ended" role="status">
-									<span class="message"><Power /> Lost to a Host reboot; showing its last output.</span>
-									<div class="choices">
-										{#if resumable(terminal)}
-											<Button variant="primary" onclick={() => resume(terminal.id)}>Resume</Button>
-										{/if}
-										<Button onclick={() => closeTab(projectId, terminal.id)}>Dismiss</Button>
+						{#if showing(terminal.id) || warm()}
+							<TerminalView
+								{device}
+								terminalId={terminal.id}
+								active={showing(terminal.id)}
+								focused={terminal.id === activeTab}
+								{ended}
+								{project}
+								onopen={(path, cursor) => openFile(projectId, path, cursor)}
+							>
+								{#if ended}
+									<div class="ended" role="status">
+										<span class="message"><Power /> Lost to a Host reboot; showing its last output.</span>
+										<div class="choices">
+											{#if resumable(terminal)}
+												<Button variant="primary" onclick={() => resume(terminal.id)}>Resume</Button>
+											{/if}
+											<Button onclick={() => closeTab(projectId, terminal.id)}>Dismiss</Button>
+										</div>
 									</div>
-								</div>
-							{/if}
-						</TerminalView>
+								{/if}
+							</TerminalView>
+						{/if}
 					</div>
 				{/each}
 			{/each}
@@ -589,18 +592,24 @@
 						style:grid-column={column(file.id)}
 						onfocusin={() => choose(file.projectId, file.id)}
 					>
-						{#if file instanceof OpenDiff}
-							<Diff diff={file} {device} {servers} {active} focused={file.id === activeTab} {onshowdiff} />
-						{:else}
-							<Editor
-								{file}
-								{device}
-								{servers}
-								git={git[file.projectId]}
-								{active}
-								focused={file.id === activeTab}
-								{onshowdiff}
-							/>
+						{#if active || warm()}
+							{#if file instanceof OpenDiff}
+								{#await import('#lib/shell/Diff.svelte') then { default: Diff }}
+									<Diff diff={file} {device} {servers} {active} focused={file.id === activeTab} {onshowdiff} />
+								{/await}
+							{:else}
+								{#await editor() then { default: Editor }}
+									<Editor
+										{file}
+										{device}
+										{servers}
+										git={git[file.projectId]}
+										{active}
+										focused={file.id === activeTab}
+										{onshowdiff}
+									/>
+								{/await}
+							{/if}
 						{/if}
 					</div>
 				{/each}
@@ -684,16 +693,18 @@
 	title={palette === 'files' ? 'Open File' : 'Command Palette'}
 >
 	{#if palette}
-		<Palette
-			scope={palette}
-			{projects}
-			labels={projectLabels}
-			{focused}
-			actions={[{ label: 'Open config', run: openConfig }]}
-			onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
-			onrig={(rig) => (launch(rig), (palette = undefined))}
-			onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
-		/>
+		{#await import('#lib/shell/Palette.svelte') then { default: Palette }}
+			<Palette
+				scope={palette}
+				{projects}
+				labels={projectLabels}
+				{focused}
+				actions={[{ label: 'Open config', run: openConfig }]}
+				onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
+				onrig={(rig) => (launch(rig), (palette = undefined))}
+				onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
+			/>
+		{/await}
 	{/if}
 </Dialog>
 
@@ -704,7 +715,9 @@
 </Dialog>
 
 <Dialog bind:open={picking} full={phone} title="Open Project">
-	<Picker {directories} onopen={open} />
+	{#await import('#lib/shell/Picker.svelte') then { default: Picker }}
+		<Picker {directories} onopen={open} />
+	{/await}
 </Dialog>
 
 <Dialog

@@ -18,3 +18,12 @@ export async function showSidebar(page: Page) {
 	else if (!(await sidebar.isVisible())) await page.getByRole('button', { name: 'Sidebar' }).click();
 	return sidebar;
 }
+
+export function screen(page: Page) {
+	return page.evaluate(() => {
+		const buffer = window.terminal?.buffer.active;
+		if (!buffer) return '';
+		const lines = Array.from({ length: buffer.length }, (_, y) => buffer.getLine(y));
+		return lines.map((line) => line?.translateToString(true) ?? '').join('\n');
+	});
+}

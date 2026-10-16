@@ -3,12 +3,14 @@
 	import type { Device } from '#lib/device.ts';
 	import { changeMarkers, setBaseline } from '#lib/editor/changes.ts';
 	import { language } from '#lib/editor/languages.ts';
-	import { languageServer, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
+	import { languageServer } from '#lib/editor/lsp-editor.ts';
+	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { theme } from '#lib/editor/theme.ts';
 	import { OpenConfig, type OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { baseline, type Git } from '#lib/git.ts';
+	import { painted } from '#lib/paint.svelte.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
@@ -96,6 +98,10 @@
 		return () => {
 			stale = true;
 		};
+	});
+
+	$effect(() => {
+		if (active && (view || note)) painted(file.id);
 	});
 
 	$effect(() => {
