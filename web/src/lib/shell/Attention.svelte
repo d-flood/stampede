@@ -1,3 +1,9 @@
+<script lang="ts" module>
+	import { lazy, warmUp } from '#lib/paint.svelte.ts';
+
+	const dropdown = lazy(() => import('#lib/shell/AttentionMenu.svelte'));
+</script>
+
 <script lang="ts">
 	import type { Attention } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -6,7 +12,6 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
-	import { DropdownMenu } from 'bits-ui';
 	import Bell from '~icons/ph/bell';
 
 	type Props = { items: Attention[]; projects: Map<string, string>; onselect(item: Attention): void };
@@ -17,6 +22,8 @@
 
 	let push = $state<Notifications>('unsupported');
 	let sheet = $state(false);
+	let open = $state(false);
+	const Dropdown = $derived(dropdown());
 	notifications().then((state) => (push = state));
 
 	async function notify() {
@@ -55,53 +62,17 @@
 			<Button disabled={push !== 'off'} onclick={notify}>{labels[push]}</Button>
 		{/if}
 	</Dialog>
+{:else if Dropdown}
+	<Dropdown
+		{items}
+		push={push === 'unsupported' ? undefined : { label: labels[push], disabled: push !== 'off', onselect: notify }}
+		bind:open
+		{trigger}
+		{entry}
+		{onselect}
+	/>
 {:else}
-	<DropdownMenu.Root>
-		<DropdownMenu.Trigger>
-			{#snippet child({ props })}
-				{@render trigger(props)}
-			{/snippet}
-		</DropdownMenu.Trigger>
-		<DropdownMenu.Portal>
-			<DropdownMenu.Content side="right" align="end" sideOffset={4}>
-				{#snippet child({ wrapperProps, props })}
-					<div {...wrapperProps}>
-						<div {...props} class="menu">
-							<DropdownMenu.Group>
-								<DropdownMenu.GroupHeading>
-									{#snippet child({ props })}
-										<div {...props} class="heading">Needs attention</div>
-									{/snippet}
-								</DropdownMenu.GroupHeading>
-								{#each items as item (item.terminalId)}
-									<DropdownMenu.Item onSelect={() => onselect(item)}>
-										{#snippet child({ props })}
-											<div {...props} class="item">{@render entry(item)}</div>
-										{/snippet}
-									</DropdownMenu.Item>
-								{:else}
-									<div class="empty">Nothing needs attention</div>
-								{/each}
-							</DropdownMenu.Group>
-							{#if push !== 'unsupported'}
-								{@const label = labels[push]}
-								<DropdownMenu.Separator>
-									{#snippet child({ props })}
-										<div {...props} class="separator"></div>
-									{/snippet}
-								</DropdownMenu.Separator>
-								<DropdownMenu.Item disabled={push !== 'off'} onSelect={notify}>
-									{#snippet child({ props })}
-										<div {...props} class="item">{label}</div>
-									{/snippet}
-								</DropdownMenu.Item>
-							{/if}
-						</div>
-					</div>
-				{/snippet}
-			</DropdownMenu.Content>
-		</DropdownMenu.Portal>
-	</DropdownMenu.Root>
+	{@render trigger({ onclick: () => ((open = true), warmUp()) })}
 {/if}
 
 <style>
@@ -117,22 +88,6 @@
 		pointer-events: none;
 	}
 
-	.menu {
-		width: max-content;
-		min-width: 14rem;
-		max-width: min(24rem, calc(100vw - 2 * var(--space-4)));
-		padding: var(--space-1);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-2);
-		box-shadow: var(--shadow-float);
-		color: var(--color-fg);
-		font-family: var(--font-ui);
-		font-size: var(--font-size-md);
-		outline: none;
-	}
-
-	.heading,
 	.empty {
 		display: flex;
 		align-items: center;
@@ -169,19 +124,8 @@
 		text-align: start;
 	}
 
-	.item[data-highlighted],
 	.sheet .item:hover {
 		background: var(--hover);
-	}
-
-	.item[data-disabled] {
-		color: var(--muted-fg);
-		cursor: default;
-	}
-
-	.separator {
-		margin: var(--space-1) 0;
-		border-top: var(--border-width) solid var(--border);
 	}
 
 	.label {

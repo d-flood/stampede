@@ -1,14 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
-import { openProject } from './shell.ts';
-
-function screen(page: Page) {
-	return page.evaluate(() => {
-		const buffer = window.terminal?.buffer.active;
-		if (!buffer) return '';
-		const lines = Array.from({ length: buffer.length }, (_, y) => buffer.getLine(y));
-		return lines.map((line) => line?.translateToString(true) ?? '').join('\n');
-	});
-}
+import { expect, test } from '@playwright/test';
+import { openProject, screen } from './shell.ts';
 
 test('a Terminal tab in a Project runs echo hi', async ({ page }, { project }) => {
 	const fixture = project.name === 'desktop' ? 'alpha' : 'beta';

@@ -1,11 +1,13 @@
 <script lang="ts">
 	import type { Device, ServerMessage } from '#lib/device.svelte.ts';
 	import { language } from '#lib/editor/languages.ts';
-	import { languageServer, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
+	import { languageServer } from '#lib/editor/lsp-editor.ts';
+	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
 	import { read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { painted } from '#lib/paint.svelte.ts';
 	import { head, show } from '#lib/git.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
@@ -75,6 +77,10 @@
 		untrack(() => {
 			if (shown && shown.editable !== now) build(shown.original, shown.b.state.doc);
 		});
+	});
+
+	$effect(() => {
+		if (active && (shown || note)) painted(diff.id);
 	});
 
 	$effect(() => {

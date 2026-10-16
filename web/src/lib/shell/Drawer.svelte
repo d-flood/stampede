@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Device, ServerMessage, Terminal } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { warm } from '#lib/paint.svelte.ts';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
@@ -100,15 +101,17 @@
 		{/if}
 	</div>
 	<div class="tabs">
-		{#each terminals as terminal (terminal.id)}
-			<TerminalView
-				bind:this={views[terminal.id]}
-				{device}
-				terminalId={terminal.id}
-				active={terminal.id === active?.id}
-				focused={terminal.id === active?.id}
-			/>
-		{/each}
+		{#if open || warm()}
+			{#each terminals as terminal (terminal.id)}
+				<TerminalView
+					bind:this={views[terminal.id]}
+					{device}
+					terminalId={terminal.id}
+					active={terminal.id === active?.id}
+					focused={terminal.id === active?.id}
+				/>
+			{/each}
+		{/if}
 	</div>
 </section>
 

@@ -1,14 +1,21 @@
+<script lang="ts" module>
+	import { init } from 'ghostty-web';
+
+	const ghostty = init();
+</script>
+
 <script lang="ts">
 	import { appearance, type Appearance } from '#lib/config.svelte.ts';
 	import type { Device, Project, ServerMessage } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { linkify } from '#lib/links.ts';
+	import { painted } from '#lib/paint.svelte.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import CopyMode from '#lib/shell/CopyMode.svelte';
 	import KeyBar, { control } from '#lib/shell/KeyBar.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
-	import { FitAddon, Terminal, init } from 'ghostty-web';
+	import { FitAddon, Terminal } from 'ghostty-web';
 	import { onMount, type Snippet } from 'svelte';
 	import NotePencil from '~icons/ph/note-pencil';
 
@@ -29,8 +36,10 @@
 	let view = $state.raw<Terminal>();
 	let fit: FitAddon | undefined;
 	let channel: number | undefined;
+	let size: { cols: number; rows: number } | undefined;
+	let early: Uint8Array[] = [];
 	let writing = false;
-	let ready = $state(false);
+	let filled = $state(false);
 	let shown = '';
 	let typing = $state(false);
 	let ctrl = $state(false);
@@ -38,19 +47,14 @@
 	let composing = $state(false);
 	let composer = $state<Composer>();
 	const live = $derived(device.connection === 'connected');
+	const observer = new ResizeObserver(propose);
 
 	onMount(() => {
-		let disposed = false;
-		init().then(() => {
-			if (!disposed) ready = true;
-		});
+		device.send({ type: 'terminal.attach', terminalId });
 		const unlisten = device.listen({ message, output });
 		container.addEventListener('focusin', lead);
 		container.addEventListener('pointerdown', lead);
-		const observer = new ResizeObserver(propose);
-		observer.observe(container);
 		return () => {
-			disposed = true;
 			observer.disconnect();
 			unlisten();
 			if (channel !== undefined) device.send({ type: 'terminal.detach', channel });
@@ -59,12 +63,11 @@
 	});
 
 	$effect(() => {
-		if (!ready) return;
 		const next = appearance();
 		const key = JSON.stringify(next);
 		if (key === shown) return;
 		let stale = false;
-		document.fonts.load(`15px ${next.fontFamily}`).then(() => {
+		Promise.all([ghostty, document.fonts.load(`15px ${next.fontFamily}`)]).then(() => {
 			if (stale) return;
 			shown = key;
 			open(next);
@@ -72,6 +75,10 @@
 		return () => {
 			stale = true;
 		};
+	});
+
+	$effect(() => {
+		if (active && filled) painted(terminalId);
 	});
 
 	$effect(() => {
@@ -84,14 +91,17 @@
 	// ghostty-web can't change its theme after open(), so a new look gets a
 	// new view, re-attached for a fresh snapshot.
 	function open({ theme, fontFamily }: Appearance) {
-		view?.dispose();
+		const replaced = view;
+		replaced?.dispose();
 		const element = document.createElement('div');
 		container.replaceChildren(element);
 		// ghostty-web's scrollback is a byte budget; 4 KB a row keeps Copy mode's 2,000 rows up to about 300 columns.
-		const next = new Terminal({ theme, fontFamily, disableStdin: ended, scrollback: 2000 * 4096 });
+		const next = new Terminal({ ...size, theme, fontFamily, disableStdin: ended, scrollback: 2000 * 4096 });
 		fit = new FitAddon();
 		next.loadAddon(fit);
 		next.open(element);
+		observer.disconnect();
+		observer.observe(element);
 		for (const input of [element, next.textarea]) {
 			for (const name of ['autocomplete', 'autocorrect', 'autocapitalize']) input?.setAttribute(name, 'off');
 			input?.setAttribute('spellcheck', 'false');
@@ -105,6 +115,11 @@
 			if (!writing) send(data);
 		});
 		view = next;
+		filled = false;
+		if (!replaced) {
+			early.splice(0).forEach(fill);
+			return;
+		}
 		if (channel !== undefined) device.send({ type: 'terminal.detach', channel });
 		channel = undefined;
 		device.send({ type: 'terminal.attach', terminalId });
@@ -114,24 +129,37 @@
 		switch (message.type) {
 			case 'hello':
 				channel = undefined;
-				if (view) device.send({ type: 'terminal.attach', terminalId });
+				early = [];
+				device.send({ type: 'terminal.attach', terminalId });
 				break;
 			case 'terminal.attached':
 				if (message.terminalId !== terminalId) break;
 				if (channel !== undefined) device.send({ type: 'terminal.detach', channel });
 				channel = message.channel;
-				view?.resize(message.cols, message.rows);
+				size = { cols: message.cols, rows: message.rows };
+				early = [];
+				if (!view) break;
+				view.resize(message.cols, message.rows);
 				write('\x1bc');
 				propose();
 				break;
 			case 'terminal.resized':
-				if (message.terminalId === terminalId) view?.resize(message.cols, message.rows);
+				if (message.terminalId !== terminalId) break;
+				size = { cols: message.cols, rows: message.rows };
+				view?.resize(message.cols, message.rows);
 				break;
 		}
 	}
 
 	function output(from: number, bytes: Uint8Array) {
-		if (from === channel) write(bytes);
+		if (from !== channel) return;
+		if (view) fill(bytes);
+		else early.push(bytes);
+	}
+
+	function fill(bytes: Uint8Array) {
+		write(bytes);
+		filled = true;
 	}
 
 	// Query responses come from the holder; ghostty-web's own ones are
