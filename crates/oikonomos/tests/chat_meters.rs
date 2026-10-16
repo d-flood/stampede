@@ -1,8 +1,15 @@
 mod common;
 
-use std::{env, ffi::OsString, fs, path::Path, time::Duration};
+use std::{
+    collections::BTreeMap,
+    env,
+    ffi::OsString,
+    fs,
+    path::Path,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
-use common::{Server, control, next, next_control};
+use common::{Server, chat_turn, control, leftovers, next, next_control};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
@@ -11,6 +18,21 @@ use tokio::{
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type Windows = BTreeMap<(String, String), (f64, u64)>;
+
+const USAGE: &str = r#"
+[[rig]]
+name = "claude"
+agent = "claude-code"
+command = "claude"
+env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn" }
+
+[[rig]]
+name = "codex"
+agent = "codex"
+command = "codex"
+env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn" }
+"#;
 
 #[tokio::test]
 async fn a_claude_chat_reports_its_context_and_tokens() {
@@ -108,6 +130,63 @@ async fn a_codex_chat_keeps_its_meters_through_restarts() {
     fs::remove_file(gates.path().join("stop again")).unwrap();
     server.restart().await;
     assert_eq!(reconnect(server.port, chat_id).await.1, counted);
+}
+
+#[tokio::test]
+async fn devices_receive_the_four_usage_windows_and_an_update_replaces_a_reading() {
+    let started = now();
+    let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
+    let server = Server::with_env("meters", USAGE, vec![("PATH", path.into())]).await;
+    let mut watcher = device(server.port).await;
+    let mut socket = device(server.port).await;
+
+    let polled = windows(&mut watcher, |windows| windows.len() == 4).await;
+    assert_eq!(
+        polled,
+        table([
+            ("claude-code", "five-hour", 0.14, 1792200599951),
+            ("claude-code", "weekly", 0.7, 1792213199951),
+            ("codex", "five-hour", 0.91, 1792195200000),
+            ("codex", "weekly", 0.24, 1792664113000),
+        ])
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !leftovers(server.root.path()).is_empty() {
+        assert!(Instant::now() < deadline, "left running: {:?}", leftovers(server.root.path()));
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    control(&mut socket, json!({ "type": "project.open", "path": "~" })).await;
+    let project_id = next_control(&mut socket, "project.opened").await["projectId"].clone();
+    finish_a_turn(&mut socket, &project_id, "claude").await;
+    let claude = windows(&mut watcher, |windows| windows[&key("claude-code", "five-hour")].0 != 0.14).await;
+    assert_eq!(
+        claude,
+        table([
+            ("claude-code", "five-hour", 0.11, 1792182600000),
+            ("claude-code", "weekly", 0.63, 1792213200000),
+            ("codex", "five-hour", 0.91, 1792195200000),
+            ("codex", "weekly", 0.24, 1792664113000),
+        ])
+    );
+
+    finish_a_turn(&mut socket, &project_id, "codex").await;
+    let codex = windows(&mut watcher, |windows| windows[&key("codex", "weekly")].0 != 0.24).await;
+    assert_eq!(
+        codex,
+        table([
+            ("claude-code", "five-hour", 0.11, 1792182600000),
+            ("claude-code", "weekly", 0.63, 1792213200000),
+            ("codex", "five-hour", 0.91, 1792195200000),
+            ("codex", "weekly", 0.26, 1792664113000),
+        ])
+    );
+
+    let mut late = device(server.port).await;
+    let latest = timeout(Duration::from_secs(5), next_control(&mut late, "usage.changed")).await.expect("no windows on hello");
+    assert_eq!(parse(&latest), codex);
+    let read: Vec<u64> = latest["readings"].as_array().unwrap().iter().map(|reading| reading["readAt"].as_u64().unwrap()).collect();
+    assert!(read.iter().all(|&read| (started..=now()).contains(&read)), "{latest}");
 }
 
 /// The recorded `long-turn`, gated before its second turn's API call and after its 20th delta instead of its 8th.
@@ -215,4 +294,60 @@ async fn reached(gates: &Path, name: &str) {
         assert!(Instant::now() < deadline, "the fake never reached gate {name}");
         sleep(Duration::from_millis(20)).await;
     }
+}
+
+async fn device(port: u16) -> Socket {
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    socket
+}
+
+async fn finish_a_turn(socket: &mut Socket, project_id: &Value, rig: &str) {
+    control(socket, json!({ "type": "chat.create", "projectId": project_id, "rig": rig })).await;
+    let chat = timeout(Duration::from_secs(10), next_control(socket, "chat.created")).await.unwrap()["chat"].clone();
+    let (statuses, _) = chat_turn(socket, chat["id"].as_str().unwrap(), &chat["status"], "Greet the reader").await;
+    assert_eq!(statuses, ["done", "working", "done"]);
+}
+
+/// Each window's share used and reset time, from the first `usage.changed` that satisfies `until`.
+async fn windows(socket: &mut Socket, until: impl Fn(&Windows) -> bool) -> Windows {
+    timeout(Duration::from_secs(20), async {
+        loop {
+            let message = next(socket).await;
+            if message["type"] == "usage.changed" {
+                let windows = parse(&message);
+                if until(&windows) {
+                    return windows;
+                }
+            }
+        }
+    })
+    .await
+    .expect("the windows never arrived")
+}
+
+fn parse(message: &Value) -> Windows {
+    let readings = message["readings"].as_array().unwrap();
+    let windows: Windows = readings
+        .iter()
+        .map(|reading| {
+            let key = key(reading["agent"].as_str().unwrap(), reading["window"].as_str().unwrap());
+            (key, (reading["used"].as_f64().unwrap(), reading["resetsAt"].as_u64().unwrap()))
+        })
+        .collect();
+    assert_eq!(windows.len(), readings.len(), "a window was read twice: {message}");
+    windows
+}
+
+fn table(windows: [(&str, &str, f64, u64); 4]) -> Windows {
+    windows.into_iter().map(|(agent, window, used, resets_at)| (key(agent, window), (used, resets_at))).collect()
+}
+
+fn key(agent: &str, window: &str) -> (String, String) {
+    (agent.to_owned(), window.to_owned())
+}
+
+fn now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
 }

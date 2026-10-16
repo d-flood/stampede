@@ -2,15 +2,18 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs, io,
     path::{Path, PathBuf},
+    process::Stdio,
 };
 
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::unix::OwnedWriteHalf,
+    process,
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
 };
+use toml::value::{Datetime, Offset};
 use uuid::Uuid;
 
 use super::{
@@ -19,7 +22,11 @@ use super::{
     protocol::{self, Message},
     seconds,
 };
-use crate::hooks::Status;
+use crate::{
+    config::Agent,
+    hooks::Status,
+    usage::{Reading, Window},
+};
 
 const ARGS: [&str; 7] = [
     "--input-format",
@@ -32,6 +39,8 @@ const ARGS: [&str; 7] = [
 ];
 
 const SDK_ENV: [(&str, &str); 2] = [("CLAUDE_CODE_ENTRYPOINT", "sdk-ts"), ("CLAUDE_CODE_SDK_READS_SESSION_STATE", "1")];
+
+const WINDOWS: [(Window, &str); 2] = [(Window::FiveHour, "five_hour"), (Window::Weekly, "seven_day")];
 
 pub struct Claude {
     commands: UnboundedSender<Command>,
@@ -165,6 +174,66 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
     Claude { commands }
 }
 
+/// Asks a fresh `claude` for the plan's windows with the `get_usage` control request, which makes no model call.
+pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
+    let mut claude = process::Command::new("claude")
+        .args(ARGS)
+        .envs(env)
+        .envs(SDK_ENV)
+        .current_dir(crate::home())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()?;
+    let mut stdin = claude.stdin.take().unwrap();
+    let id = Uuid::new_v4().to_string();
+    let request = json!({
+        "type": "control_request",
+        "request_id": id,
+        "request": { "subtype": "get_usage", "skip_behaviors": true },
+    });
+    stdin.write_all(format!("{request}\n").as_bytes()).await?;
+    let mut lines = BufReader::new(claude.stdout.take().unwrap()).lines();
+    while let Some(line) = lines.next_line().await? {
+        let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
+        let response = &message["response"];
+        if message["type"] != "control_response" || response["request_id"] != id {
+            continue;
+        }
+        drop(stdin);
+        claude.wait().await?;
+        if response["subtype"] != "success" {
+            return Err(io::Error::other(format!("get_usage: {}", response["error"])));
+        }
+        let limits = &response["response"]["rate_limits"];
+        let readings = WINDOWS.into_iter().filter_map(|(window, name)| {
+            let used = limits[name]["utilization"].as_f64()? / 100.0;
+            Some(Reading::new(Agent::ClaudeCode, window, used, limits[name]["resets_at"].as_str().and_then(epoch_ms)))
+        });
+        return Ok(readings.collect());
+    }
+    Err(io::Error::other("claude ended without answering get_usage"))
+}
+
+fn epoch_ms(time: &str) -> Option<u64> {
+    let time: Datetime = time.parse().ok()?;
+    let (date, clock) = (time.date?, time.time?);
+    let offset = match time.offset? {
+        Offset::Z => 0,
+        Offset::Custom { minutes } => i64::from(minutes),
+    };
+    let (month, day) = (i64::from(date.month), i64::from(date.day));
+    let year = i64::from(date.year) - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let of_era = year - era * 400;
+    let of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let days = era * 146_097 + of_era * 365 + of_era / 4 - of_era / 100 + of_year - 719_468;
+    let minutes = (days * 24 + i64::from(clock.hour)) * 60 + i64::from(clock.minute) - offset;
+    let seconds = minutes * 60 + i64::from(clock.second.unwrap_or(0));
+    u64::try_from(seconds * 1000 + i64::from(clock.nanosecond.unwrap_or(0) / 1_000_000)).ok()
+}
+
 fn user(line: &[u8]) -> Option<Value> {
     serde_json::from_slice::<Value>(line).ok().filter(|message| message["type"] == "user")
 }
@@ -288,6 +357,15 @@ impl Transcript {
             Some("result") => {
                 self.total(&message["modelUsage"]);
                 self.report(Status::Done);
+            }
+            Some("rate_limit_event") if !self.replaying => {
+                let windows = &message["rate_limit_info"]["unifiedWindows"];
+                let readings = WINDOWS.into_iter().filter_map(|(window, name)| {
+                    let used = windows[name]["utilization"].as_f64()?;
+                    let resets_at = windows[name]["resetsAt"].as_u64().map(|seconds| seconds * 1000);
+                    Some(Reading::new(Agent::ClaudeCode, window, used, resets_at))
+                });
+                let _ = self.events.send(Event::Usage(readings.collect()));
             }
             _ => {}
         }

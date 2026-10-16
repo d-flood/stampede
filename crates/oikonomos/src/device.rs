@@ -34,6 +34,7 @@ use crate::{
     protocol::Size,
     search,
     terminals::{Attachment, Change, Terminals},
+    usage::{Reading, Usage},
 };
 
 const OUTPUT: u8 = 1;
@@ -108,6 +109,7 @@ struct Device {
     chats: Arc<Chats>,
     attached: HashMap<String, u64>,
     attention: Arc<Feed>,
+    usage: Arc<Usage>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
     outgoing: mpsc::UnboundedSender<Message>,
@@ -121,7 +123,7 @@ struct Device {
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, chats, attention, projects, mut config, disk, git, languages, .. }: AppState,
+    AppState { terminals, chats, attention, usage, projects, mut config, disk, git, languages, .. }: AppState,
 ) {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = mpsc::unbounded_channel();
@@ -137,6 +139,7 @@ async fn connect(
     let mut titles = terminals.subscribe_titles();
     let mut chat_changes = chats.subscribe();
     let mut attention_changes = attention.subscribe();
+    let mut usage_changes = usage.subscribe();
     let mut disk = disk.subscribe();
     let mut git = git.subscribe();
     let mut switches = languages.subscribe();
@@ -148,6 +151,7 @@ async fn connect(
         chats,
         attached: HashMap::new(),
         attention,
+        usage,
         projects,
         config: config.clone(),
         outgoing,
@@ -236,6 +240,10 @@ async fn connect(
                 let items = attention_changes.borrow_and_update().clone();
                 device.attention_changed(&items);
             }
+            Ok(()) = usage_changes.changed() => {
+                let readings = usage_changes.borrow_and_update().clone();
+                device.usage_changed(&readings);
+            }
             changed = git.recv() => match changed {
                 Ok(changed) => send(&device.outgoing, json!(changed)),
                 Err(RecvError::Lagged(_)) => {}
@@ -268,6 +276,7 @@ impl Device {
                 });
                 send(&self.outgoing, hello);
                 self.attention_changed(&self.attention.items());
+                self.usage_changed(&self.usage.readings());
                 self.send_switches();
             }
             Control::Create { project_id, owner, rig } => {
@@ -555,6 +564,10 @@ impl Device {
 
     fn attention_changed(&self, items: &[Attention]) {
         send(&self.outgoing, json!({ "type": "attention.changed", "items": items }));
+    }
+
+    fn usage_changed(&self, readings: &[Reading]) {
+        send(&self.outgoing, json!({ "type": "usage.changed", "readings": readings }));
     }
 
     fn retitle(&self, terminal_id: &str, label: &str) {

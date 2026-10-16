@@ -16,11 +16,17 @@ def fail(reason):
     sys.exit(2)
 
 
+FIXTURES = Path(__file__).resolve().parent.parent / 'fixtures/chats/codex'
+QUIET = ('initialize', 'initialized', 'account/rateLimits/read')
+held = []
+logging = False
+
+
 def fixture():
     name = os.environ.get('OIKONOMOS_FAKE_FIXTURE') or fail('OIKONOMOS_FAKE_FIXTURE is not set')
     if '/' in name:
         return Path(name)
-    return Path(__file__).resolve().parent.parent / 'fixtures/chats/codex' / f'{name}.recorded.jsonl'
+    return FIXTURES / f'{name}.recorded.jsonl'
 
 
 def daemon():
@@ -77,9 +83,30 @@ def receive():
         if opcode == 8:
             break
         if opcode == 1:
-            with open(daemon() / 'received.jsonl', 'a') as log:
-                log.write(payload.decode() + '\n')
-            return json.loads(payload)
+            message = json.loads(payload)
+            log(message, payload)
+            return message
+    return None
+
+
+# A connection that only reads rate limits, as the server's usage poll does, stays out of the log.
+def log(message, payload):
+    global logging
+    held.append(payload.decode() + '\n')
+    logging = logging or message.get('method') not in QUIET
+    if logging:
+        with open(daemon() / 'received.jsonl', 'a') as file:
+            file.writelines(held)
+        held.clear()
+
+
+def read(expected):
+    while (message := receive()) is not None:
+        if message.get('method') == 'account/rateLimits/read' != expected.get('method'):
+            usage = json.loads((FIXTURES / 'usage.recorded.jsonl').read_text().splitlines()[1])['stdout']
+            send(dict(usage, id=message['id']))
+            continue
+        return message
     return None
 
 
@@ -117,7 +144,7 @@ def proxy():
     while index < len(entries):
         entry = entries[index]
         if 'stdin' in entry:
-            message = receive()
+            message = read(entry['stdin'])
             if message is None:
                 sys.exit(0)
             if message.get('method') == 'thread/resume':

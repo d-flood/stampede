@@ -20,6 +20,7 @@ use crate::{
     config::{Agent, Rig},
     hooks::Status,
     projects::Project,
+    usage::{Reading, Usage},
 };
 pub use holder::{HoldChatArgs, hold_chat};
 
@@ -100,6 +101,7 @@ pub enum Event {
     Item(usize, Item),
     /// Replaces whichever of the Chat's context fill and token counts it carries.
     Meters(Option<Context>, Option<Tokens>),
+    Usage(Vec<Reading>),
 }
 
 /// One Agent's wire protocol. A driver's events end when its Agent has stopped.
@@ -141,6 +143,7 @@ pub struct Chats {
     changed: broadcast::Sender<Change>,
     views: Mutex<HashMap<Uuid, (Option<String>, Vec<String>)>>,
     attention: Arc<Feed>,
+    usage: Arc<Usage>,
 }
 
 struct Entry {
@@ -156,13 +159,14 @@ struct Transcript {
 }
 
 impl Chats {
-    pub fn new(data_dir: PathBuf, attention: Arc<Feed>) -> Self {
+    pub fn new(data_dir: PathBuf, attention: Arc<Feed>, usage: Arc<Usage>) -> Self {
         Self {
             data_dir,
             chats: Mutex::default(),
             changed: broadcast::Sender::new(1024),
             views: Mutex::default(),
             attention,
+            usage,
         }
     }
 
@@ -304,6 +308,7 @@ impl Chats {
                     let seq = transcript.seq;
                     let _ = self.changed.send(Change::Item { chat_id: id.clone(), seq, index, item });
                 }
+                Event::Usage(readings) => self.usage.record(readings),
             }
         }
         self.chats.lock().unwrap().retain(|other| !Arc::ptr_eq(other, &entry));
@@ -376,6 +381,14 @@ impl Chats {
     fn get(&self, id: &str) -> Option<Arc<Entry>> {
         let chats = self.chats.lock().unwrap();
         chats.iter().find(|entry| entry.chat.lock().unwrap().id == id).cloned()
+    }
+}
+
+/// The Agent's Usage windows, read without a model call.
+pub async fn usage(rig: &Rig) -> io::Result<Vec<Reading>> {
+    match rig.agent {
+        Agent::ClaudeCode => claude::usage(&rig.env).await,
+        Agent::Codex => codex::usage(&rig.env).await,
     }
 }
 

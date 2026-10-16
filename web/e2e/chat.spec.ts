@@ -1,7 +1,7 @@
 import type { ServerMessage } from '#lib/device.svelte.ts';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { openProject } from './shell.ts';
+import { openProject, showSidebar } from './shell.ts';
 
 test('a Claude Code Chat streams its reply, shows done, and asks before closing while working', async ({ page }, { project }) => {
 	const name = `chat-${project.name}`;
@@ -165,6 +165,40 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 	await page.goto(`/?${new URLSearchParams({ project: projectId, tab: chatId })}`);
 	await expect(chatTab).toHaveAttribute('aria-selected', 'true');
 });
+
+test('four Usage window meters show their readings and turn amber from 90%', async ({ page }, { project }) => {
+	await page.goto('/');
+	let usage = page.getByRole('region', { name: 'Usage windows' });
+	if (project.name === 'pixel') {
+		await page.getByRole('button', { name: 'Previous screen' }).click();
+		await expect(page.getByRole('navigation', { name: 'Projects' })).toBeInViewport();
+	} else {
+		await expect(page.getByRole('button', { name: 'Sidebar' })).toBeVisible();
+		usage = (await showSidebar(page)).getByRole('region', { name: 'Usage windows' });
+	}
+	await expect(usage).toBeInViewport();
+
+	await expect(usage.getByRole('meter')).toHaveCount(4);
+	for (const name of ['Claude · 5h', 'Claude · week', 'Codex · 5h', 'Codex · week']) {
+		await expect(usage.getByRole('meter', { name })).toBeVisible();
+	}
+	const high = usage.getByRole('meter', { name: 'Codex · 5h' });
+	await expect(high).toHaveAttribute('aria-valuenow', '91');
+	await expect(usage.getByText('91%')).toBeVisible();
+	await expect.poll(() => filledWith(high, '--ansi-3')).toBe(true);
+	await expect.poll(() => filledWith(usage.getByRole('meter', { name: 'Claude · week' }), '--ansi-4')).toBe(true);
+	await expect(usage.getByText(/^(now|\d+[mhd])$/)).toHaveCount(4);
+});
+
+function filledWith(meter: Locator, token: string) {
+	return meter.evaluate((element, token) => {
+		const probe = document.body.appendChild(document.createElement('i'));
+		probe.style.color = `var(${token})`;
+		const color = getComputedStyle(probe).color;
+		probe.remove();
+		return getComputedStyle(element.firstElementChild!).backgroundColor === color;
+	}, token);
+}
 
 /** Runs a Chat's turn to done from a second Device that shows nothing. */
 async function finishElsewhere(name: string) {

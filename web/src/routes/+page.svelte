@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { version } from '$app/env';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
-	import { connect, tabOf, type Attention, type Chat, type Project, type ServerMessage, type Terminal } from '#lib/device.svelte.ts';
+	import { connect, tabOf, type Attention, type Chat, type Project, type Reading, type ServerMessage, type Terminal } from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -18,6 +18,7 @@
 	import Rail from '#lib/shell/Rail.svelte';
 	import Sidebar, { showing as sectionShowing, type Section } from '#lib/shell/Sidebar.svelte';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
+	import Usage from '#lib/shell/Usage.svelte';
 	import { arrange, neighbor, type Side, type Split } from '#lib/split.ts';
 	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
@@ -43,6 +44,7 @@
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let chats = $state<Record<string, Chat[]>>({});
 	let attentionList = $state<Attention[]>([]);
+	let usage = $state<Reading[]>([]);
 	let visible = $state(document.visibilityState === 'visible');
 	let files = $state<Record<string, OpenFile[]>>(restored.files);
 	let git = $state<Record<string, Git>>({});
@@ -144,6 +146,9 @@
 			}
 			case 'attention.changed':
 				attentionList = message.items;
+				break;
+			case 'usage.changed':
+				usage = message.readings;
 				break;
 			case 'terminals.changed':
 				if (message.projectId) terminals[message.projectId] = message.terminals;
@@ -504,6 +509,7 @@
 		git={focused && git[focused.id]}
 		{device}
 		bind:section
+		{usage}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		ondiff={(change, commit) => focused && openDiff(focused.id, change, commit)}
 	/>
@@ -734,6 +740,7 @@
 		</header>
 		<div class="screens" class:held {@attach swipeable} onscrollend={landed}>
 			<div class="screen" inert={screen !== 0}>
+				<Usage readings={usage} />
 				<Projects
 					{projects}
 					labels={projectLabels}

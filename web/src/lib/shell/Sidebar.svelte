@@ -20,7 +20,7 @@
 </script>
 
 <script lang="ts">
-	import type { Device, Project } from '#lib/device.svelte.ts';
+	import type { Device, Project, Reading } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import type { Change, Commit } from '#lib/git.ts';
@@ -28,6 +28,7 @@
 	import Files from '#lib/shell/Files.svelte';
 	import History from '#lib/shell/History.svelte';
 	import Search from '#lib/shell/Search.svelte';
+	import Usage from '#lib/shell/Usage.svelte';
 
 	type Props = {
 		open: boolean;
@@ -36,11 +37,12 @@
 		git?: Git;
 		device: Device;
 		section: Section;
+		usage: Reading[];
 		onopen(path: string, cursor?: Cursor): void;
 		ondiff(change: Change, commit?: Commit): void;
 	};
 
-	let { open, project, label, git, device, section = $bindable(), onopen, ondiff }: Props = $props();
+	let { open, project, label, git, device, section = $bindable(), usage, onopen, ondiff }: Props = $props();
 
 	const shown = $derived(available(git));
 	const current = $derived(showing(section, git).id);
@@ -69,6 +71,7 @@
 			<Search projectId={project.id} {device} hidden={current !== 'search'} {onopen} />
 		{/key}
 	{/if}
+	{#if form() === 'desktop'}<Usage readings={usage} />{/if}
 </aside>
 
 <style>

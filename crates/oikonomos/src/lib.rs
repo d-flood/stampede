@@ -15,6 +15,7 @@ mod push;
 mod search;
 mod terminals;
 mod themes;
+mod usage;
 mod watcher;
 
 use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
@@ -43,6 +44,7 @@ use projects::Projects;
 use push::Push;
 use terminals::Terminals;
 use themes::Theme;
+use usage::Usage;
 
 #[derive(RustEmbed)]
 #[folder = "../../web/build"]
@@ -68,6 +70,7 @@ struct AppState {
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
     attention: Arc<Feed>,
+    usage: Arc<Usage>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
     config_path: PathBuf,
@@ -120,9 +123,11 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let layouts = Arc::new(Layouts::load(&args.data_dir)?);
     let hook_url = format!("http://{}/api/hook", listener.local_addr()?);
     let attention = Arc::new(Feed::default());
-    let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention)));
+    let usage = Arc::new(Usage::default());
+    let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage)));
     let rigs = config.borrow().rigs.clone();
     chats.restore(&rigs).await?;
+    usage::spawn(Arc::clone(&usage), config.clone());
     let terminals = Arc::new(Terminals::new(args.data_dir, hook_url, Arc::clone(&attention)));
     terminals.restore().await?;
     terminals.scrollback(config.borrow().scrollback);
@@ -137,7 +142,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    let state = AppState { terminals, chats, attention, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts };
+    let state = AppState { terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts };
     axum::serve(listener, router(state)).await
 }
 

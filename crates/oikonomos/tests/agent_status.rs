@@ -1,6 +1,6 @@
 mod common;
 
-use std::{fs, process::Stdio, time::Duration};
+use std::{env, fs, process::Stdio, time::Duration};
 
 use common::{Server, control, next_control};
 use serde_json::{Value, json};
@@ -37,7 +37,8 @@ const SEQUENCES: [(&str, &str, &str, &str); 7] = [
 
 #[tokio::test]
 async fn recorded_hook_sequences_drive_agent_status() {
-    let mut server = Server::with_config("status", CONFIG).await;
+    let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
+    let mut server = Server::with_env("status", CONFIG, vec![("PATH", path.into())]).await;
     let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
     control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
     next_control(&mut socket, "hello").await;

@@ -17,15 +17,30 @@ def fail(reason):
     sys.exit(2)
 
 
+FIXTURES = Path(__file__).resolve().parent.parent / 'fixtures/chats/claude-code'
+
+
 def fixture():
     name = os.environ.get('OIKONOMOS_FAKE_FIXTURE') or fail('OIKONOMOS_FAKE_FIXTURE is not set')
     if '/' in name:
         return Path(name)
-    return Path(__file__).resolve().parent.parent / 'fixtures/chats/claude-code' / f'{name}.recorded.jsonl'
+    return FIXTURES / f'{name}.recorded.jsonl'
 
 
 def kind(message):
     return message.get('type'), message.get('request', {}).get('subtype')
+
+
+def read(expected):
+    while received := sys.stdin.readline():
+        message = json.loads(received)
+        if kind(message) == ('control_request', 'get_usage') != kind(expected):
+            usage = json.loads((FIXTURES / 'usage.recorded.jsonl').read_text().splitlines()[1])['stdout']
+            usage['response']['request_id'] = message['request_id']
+            print(json.dumps(usage, ensure_ascii=False), flush=True)
+            continue
+        return message
+    return None
 
 
 def remap(message):
@@ -69,10 +84,9 @@ uuids = {}
 for line in fixture().read_text().splitlines():
     entry = json.loads(line)
     if 'stdin' in entry:
-        received = sys.stdin.readline()
-        if not received:
+        message = read(entry['stdin'])
+        if message is None:
             sys.exit(0)
-        message = json.loads(received)
         if kind(message) != kind(entry['stdin']):
             fail(f'expected {kind(entry["stdin"])} but read {kind(message)}')
         if 'request_id' in message:

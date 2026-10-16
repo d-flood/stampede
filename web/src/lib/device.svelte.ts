@@ -42,6 +42,8 @@ export type Chat = {
 	tokens: Tokens | null;
 };
 
+export type Reading = { agent: Agent; window: 'five-hour' | 'weekly'; used: number; resetsAt?: number; readAt: number };
+
 export type Attention = { projectId: string; label: string; status: Status } & ({ terminalId: string } | { chatId: string });
 
 export function tabOf(item: Attention): string {
@@ -83,6 +85,7 @@ export type ServerMessage =
 	| { type: 'picker.listed'; directories: string[] }
 	| { type: 'fs.changed'; projectId: string; paths: string[]; git?: true }
 	| { type: 'attention.changed'; items: Attention[] }
+	| { type: 'usage.changed'; readings: Reading[] }
 	| { type: 'git.changed'; projectId: string }
 	| { type: 'search.started'; searchId: string }
 	| { type: 'search.results'; searchId: string; file: string; matches: Found[] }

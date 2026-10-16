@@ -17,7 +17,11 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
 use super::{Chat, CommandStatus, Context, Driver, Event, Item, Notice, Tokens, ToolCall, ToolKind, seconds};
-use crate::hooks::Status;
+use crate::{
+    config::Agent,
+    hooks::Status,
+    usage::{Reading, Window},
+};
 
 const CLOSING: Duration = Duration::from_secs(5);
 
@@ -110,6 +114,31 @@ fn run(mut connection: Connection, mut proxy: Child, mut transcript: Transcript)
         let _ = proxy.kill().await;
     });
     Codex { requests }
+}
+
+/// Reads the account's windows from the daemon, which answers without a thread.
+pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
+    let (mut connection, mut proxy) = connect(&crate::home(), env).await?;
+    let read = connection.call("account/rateLimits/read", json!({ "excludeResetCreditDetails": true })).await;
+    let _ = proxy.kill().await;
+    Ok(readings(&read?["rateLimits"]))
+}
+
+/// The windows of a rate-limit snapshot, which may come from another metered limit than Codex's own.
+fn readings(snapshot: &Value) -> Vec<Reading> {
+    if !(snapshot["limitId"].is_null() || snapshot["limitId"] == "codex") {
+        return Vec::new();
+    }
+    let windows = [&snapshot["primary"], &snapshot["secondary"]].into_iter().filter_map(|window| {
+        let kind = match window["windowDurationMins"].as_u64()? {
+            300 => Window::FiveHour,
+            10_080 => Window::Weekly,
+            _ => return None,
+        };
+        let used = window["usedPercent"].as_f64()? / 100.0;
+        Some(Reading::new(Agent::Codex, kind, used, window["resetsAt"].as_u64().map(|seconds| seconds * 1000)))
+    });
+    windows.collect()
 }
 
 fn codex(cwd: &Path, env: &BTreeMap<String, String>) -> Command {
@@ -297,6 +326,9 @@ impl Transcript {
                 let at = params["completedAtMs"].as_u64().unwrap_or_default();
                 let since = std::mem::replace(&mut self.previous, at);
                 self.completed(item, if since == 0 { 0 } else { at.saturating_sub(since) });
+            }
+            Some("account/rateLimits/updated") => {
+                let _ = self.events.send(Event::Usage(readings(&params["rateLimits"])));
             }
             _ => {}
         }
