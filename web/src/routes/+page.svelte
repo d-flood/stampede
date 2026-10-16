@@ -3,7 +3,7 @@
 	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
 	import { OpenDiff, OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { status, type Change, type Git } from '#lib/git.ts';
+	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
 	import { labels } from '#lib/projects.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
 	import Diff from '#lib/shell/Diff.svelte';
@@ -209,8 +209,8 @@
 		openTab(new OpenFile(projectId, path));
 	}
 
-	function openDiff(projectId: string, { path, from }: Change) {
-		openTab(new OpenDiff(projectId, path, 'HEAD', from));
+	function openDiff(projectId: string, { path, from }: Change, against: 'HEAD' | Commit = 'HEAD') {
+		openTab(new OpenDiff(projectId, path, against, from));
 	}
 
 	function showDiff(file: OpenFile, disk: string, buffer: string) {
@@ -257,7 +257,7 @@
 		{device}
 		bind:section
 		onopen={(path) => focused && openFile(focused.id, path)}
-		ondiff={(change) => focused && openDiff(focused.id, change)}
+		ondiff={(change, commit) => focused && openDiff(focused.id, change, commit)}
 	/>
 
 	<main>
@@ -290,7 +290,7 @@
 								<Tab
 									{...props}
 									variant={file instanceof OpenDiff ? 'diff' : 'editor'}
-									against={file instanceof OpenDiff ? file.against : undefined}
+									against={file instanceof OpenDiff ? file.versus : undefined}
 									label={file.name}
 									title={file.deleted ? `${file.path} (deleted on disk)` : file.path}
 									dirty={file.dirty}

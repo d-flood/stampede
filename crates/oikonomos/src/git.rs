@@ -27,6 +27,7 @@ use crate::{
 };
 
 const THROTTLE: Duration = Duration::from_millis(250);
+const PAGE: usize = 100;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Change {
@@ -59,8 +60,35 @@ pub struct Status {
     changes: Vec<Change>,
 }
 
+#[derive(Serialize)]
+pub struct Commit {
+    sha: String,
+    short: String,
+    subject: String,
+    author: String,
+    date: String,
+}
+
+#[derive(Serialize)]
+pub struct Log {
+    commits: Vec<Commit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub struct HeadQuery {
+    path: String,
+}
+
+#[derive(Deserialize)]
+pub struct LogQuery {
+    cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ShowQuery {
+    sha: String,
     path: String,
 }
 
@@ -75,10 +103,44 @@ pub async fn head(
     Query(query): Query<HeadQuery>,
 ) -> Result<Vec<u8>, Failure> {
     let dir = root(&state, &id)?;
-    if !Path::new(&query.path).components().all(|component| matches!(component, Component::Normal(_))) {
-        return Err((StatusCode::FORBIDDEN, format!("{} is outside the Project", query.path)));
+    inside(&query.path)?;
+    Ok(content_at(&dir, "HEAD", &query.path).await)
+}
+
+pub async fn history(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Query(query): Query<LogQuery>,
+) -> Result<Json<Log>, Failure> {
+    let dir = root(&state, &id)?;
+    let cursor = query.cursor.as_deref().filter(|cursor| !cursor.is_empty());
+    let cursor = cursor
+        .map(|cursor| page(cursor).ok_or_else(|| (StatusCode::BAD_REQUEST, format!("{cursor} is not a cursor"))))
+        .transpose()?;
+    Ok(Json(log(&dir, cursor).await))
+}
+
+pub async fn commit(
+    State(state): State<AppState>,
+    Param((id, commit)): Param<(String, String)>,
+) -> Result<Json<Vec<Change>>, Failure> {
+    let dir = root(&state, &id)?;
+    let commit = sha(&commit).ok_or_else(|| (StatusCode::BAD_REQUEST, format!("{commit} is not a sha")))?;
+    let files = commit_files(&dir, commit).await;
+    files.map(Json).ok_or_else(|| (StatusCode::NOT_FOUND, format!("No commit {commit}")))
+}
+
+pub async fn show(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Query(query): Query<ShowQuery>,
+) -> Result<Vec<u8>, Failure> {
+    let dir = root(&state, &id)?;
+    inside(&query.path)?;
+    if sha(query.sha.strip_suffix('^').unwrap_or(&query.sha)).is_none() {
+        return Err((StatusCode::BAD_REQUEST, format!("{} is not a sha", query.sha)));
     }
-    Ok(head_content(&dir, &query.path).await)
+    Ok(content_at(&dir, &query.sha, &query.path).await)
 }
 
 /// Every uncommitted change against `HEAD`, or `None` when `dir` is not in a git repo.
@@ -89,8 +151,75 @@ pub async fn changes(dir: &Path) -> Option<Vec<Change>> {
     Some(parse(&git(dir, &args).await?, prefix))
 }
 
-pub async fn head_content(dir: &Path, path: &str) -> Vec<u8> {
-    git(dir, &["show", &format!("HEAD:./{path}")]).await.unwrap_or_default()
+/// A page of the current branch. The cursor pins the first page's tip, so new commits never shift later pages.
+pub async fn log(dir: &Path, cursor: Option<(&str, usize)>) -> Log {
+    let (start, skip) = cursor.unwrap_or(("HEAD", 0));
+    let (count, skip_arg) = (format!("--max-count={PAGE}"), format!("--skip={skip}"));
+    let args = ["log", "-z", "--format=%H%x00%h%x00%s%x00%an%x00%ar", &count, &skip_arg, start, "--"];
+    let output = git(dir, &args).await.unwrap_or_default();
+    let mut fields = output.split(|&byte| byte == 0).map(|field| String::from_utf8_lossy(field).into_owned());
+    let mut commits = Vec::new();
+    while let (Some(sha), Some(short), Some(subject), Some(author), Some(date)) =
+        (fields.next(), fields.next(), fields.next(), fields.next(), fields.next())
+    {
+        commits.push(Commit { sha, short, subject, author, date });
+    }
+    let cursor = (commits.len() == PAGE).then(|| {
+        let tip = cursor.map_or(commits[0].sha.as_str(), |(tip, _)| tip);
+        format!("{tip}:{}", skip + PAGE)
+    });
+    Log { commits, cursor }
+}
+
+pub async fn commit_files(dir: &Path, sha: &str) -> Option<Vec<Change>> {
+    let args = [
+        "diff-tree",
+        "-r",
+        "-z",
+        "--no-commit-id",
+        "--name-status",
+        "--find-renames",
+        "--relative",
+        "--root",
+        "--diff-merges=first-parent",
+        sha,
+        "--",
+    ];
+    let output = git(dir, &args).await?;
+    let mut fields = output.split(|&byte| byte == 0).map(|field| String::from_utf8_lossy(field).into_owned());
+    let mut files = Vec::new();
+    while let Some(status) = fields.next() {
+        let Some(path) = fields.next() else { break };
+        files.push(match status.chars().next() {
+            Some('A') => Change { path, kind: Kind::Added, from: None },
+            Some('D') => Change { path, kind: Kind::Deleted, from: None },
+            Some('R') => Change { path: fields.next()?, kind: Kind::Renamed, from: Some(path) },
+            Some('C') => Change { path: fields.next()?, kind: Kind::Added, from: None },
+            _ => Change { path, kind: Kind::Modified, from: None },
+        });
+    }
+    Some(files)
+}
+
+pub async fn content_at(dir: &Path, rev: &str, path: &str) -> Vec<u8> {
+    git(dir, &["show", &format!("{rev}:./{path}")]).await.unwrap_or_default()
+}
+
+fn inside(path: &str) -> Result<(), Failure> {
+    if Path::new(path).components().all(|component| matches!(component, Component::Normal(_))) {
+        Ok(())
+    } else {
+        Err((StatusCode::FORBIDDEN, format!("{path} is outside the Project")))
+    }
+}
+
+fn page(cursor: &str) -> Option<(&str, usize)> {
+    let (tip, skip) = cursor.split_once(':')?;
+    Some((sha(tip)?, skip.parse().ok()?))
+}
+
+fn sha(text: &str) -> Option<&str> {
+    (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(text)
 }
 
 async fn toplevel(dir: &Path) -> Option<PathBuf> {

@@ -4,9 +4,10 @@
 
 <script lang="ts">
 	import type { Device, Project } from '#lib/device.ts';
-	import type { Change, Git } from '#lib/git.ts';
+	import type { Change, Commit, Git } from '#lib/git.ts';
 	import Changes from '#lib/shell/Changes.svelte';
 	import Files from '#lib/shell/Files.svelte';
+	import History from '#lib/shell/History.svelte';
 
 	type Props = {
 		open: boolean;
@@ -16,7 +17,7 @@
 		device: Device;
 		section: Section;
 		onopen(path: string): void;
-		ondiff(change: Change): void;
+		ondiff(change: Change, commit?: Commit): void;
 	};
 
 	let { open, project, label, git, device, section = $bindable(), onopen, ondiff }: Props = $props();
@@ -28,7 +29,7 @@
 		{ id: 'search', label: 'Search' }
 	];
 
-	const shown = $derived(sections.filter(({ id }) => id !== 'changes' || git?.isRepo));
+	const shown = $derived(sections.filter(({ id }) => (id !== 'changes' && id !== 'history') || git?.isRepo));
 	const current = $derived(shown.some(({ id }) => id === section) ? section : 'files');
 </script>
 
@@ -37,7 +38,7 @@
 		<h1 title={project.path}>{label}</h1>
 		<div class="sections" role="group" aria-label="Sections">
 			{#each shown as { id, label } (id)}
-				<button aria-pressed={current === id} disabled={id === 'history' || id === 'search'} onclick={() => (section = id)}>{label}</button>
+				<button aria-pressed={current === id} disabled={id === 'search'} onclick={() => (section = id)}>{label}</button>
 			{/each}
 		</div>
 		{#if current === 'files'}
@@ -46,6 +47,10 @@
 			{/key}
 		{:else if current === 'changes'}
 			<Changes changes={git?.changes ?? []} onopen={ondiff} />
+		{:else if current === 'history'}
+			{#key project.id}
+				<History projectId={project.id} {device} onopen={ondiff} />
+			{/key}
 		{/if}
 	{/if}
 </aside>

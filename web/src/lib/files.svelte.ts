@@ -1,4 +1,5 @@
 import { form } from '#lib/form.ts';
+import type { Commit } from '#lib/git.ts';
 
 export type Entry ={ name: string; path: string; dir: boolean; ignored: boolean };
 
@@ -27,19 +28,23 @@ export class OpenFile {
 export type Layout = 'split' | 'unified';
 
 export class OpenDiff extends OpenFile {
-	against: 'HEAD' | 'disk';
+	against: 'HEAD' | 'disk' | Commit;
 	from?: string;
 	snapshot = $state.raw<{ disk: string; buffer: string }>();
 	layout = $state<Layout>(form() === 'phone' ? 'unified' : 'split');
 
-	constructor(projectId: string, path: string, against: 'HEAD' | 'disk', from?: string) {
+	constructor(projectId: string, path: string, against: 'HEAD' | 'disk' | Commit, from?: string) {
 		super(projectId, path);
 		this.against = against;
 		this.from = from;
 	}
 
 	get id() {
-		return `diff:${this.against}:${this.projectId}:${this.path}`;
+		return `diff:${typeof this.against === 'string' ? this.against : this.against.sha}:${this.projectId}:${this.path}`;
+	}
+
+	get versus() {
+		return typeof this.against === 'string' ? this.against : this.against.short;
 	}
 }
 

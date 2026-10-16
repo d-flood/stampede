@@ -65,6 +65,63 @@ async fn a_non_git_directory_is_not_a_repo() {
     let id = open(server.port, &dir).await;
     let expected = json!({ "isRepo": false, "changes": [] });
     assert_eq!(get(server.port, &format!("/api/projects/{id}/git")).await, expected);
+    assert_eq!(get(server.port, &format!("/api/projects/{id}/git/log")).await, json!({ "commits": [] }));
+}
+
+#[tokio::test]
+async fn a_commit_is_diffed_against_its_first_parent() {
+    let server = Server::start("git").await;
+    let repo = server.root.path().join("history");
+    fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    fs::write(repo.join("a.txt"), "one\n").unwrap();
+    fs::write(repo.join("b.txt"), "b\nb\nb\n").unwrap();
+    fs::write(repo.join("gone.txt"), "gone\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "Root"]);
+    git(&repo, &["checkout", "-qb", "side"]);
+    fs::write(repo.join("side.txt"), "side\n").unwrap();
+    git(&repo, &["add", "side.txt"]);
+    git(&repo, &["commit", "-qm", "Side"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    fs::write(repo.join("a.txt"), "two\n").unwrap();
+    git(&repo, &["mv", "b.txt", "c.txt"]);
+    git(&repo, &["rm", "-q", "gone.txt"]);
+    git(&repo, &["commit", "-qam", "Main"]);
+    git(&repo, &["merge", "-q", "--no-ff", "side", "-m", "Merge side"]);
+    let [merge, main, side, root] = ["HEAD", "HEAD^", "HEAD^2", "HEAD~2"].map(|rev| rev_parse(&repo, rev));
+
+    let id = open(server.port, &repo).await;
+    let log = get(server.port, &format!("/api/projects/{id}/git/log")).await;
+    let commits = log["commits"].as_array().unwrap();
+    let shas: Vec<_> = commits.iter().map(|commit| commit["sha"].as_str().unwrap()).collect();
+    assert_eq!(shas, [&merge, &main, &side, &root].map(String::as_str));
+    assert_eq!((&commits[0]["subject"], &commits[0]["author"]), (&json!("Merge side"), &json!("oikonomos")));
+    assert!(merge.starts_with(commits[0]["short"].as_str().unwrap()));
+    assert!(log.get("cursor").is_none());
+
+    let files = |sha: &str| format!("/api/projects/{id}/git/commit/{sha}");
+    let expected = json!([{ "path": "side.txt", "kind": "added" }]);
+    assert_eq!(get(server.port, &files(&merge)).await, expected);
+    let expected = json!([
+        { "path": "a.txt", "kind": "modified" },
+        { "path": "c.txt", "kind": "renamed", "from": "b.txt" },
+        { "path": "gone.txt", "kind": "deleted" },
+    ]);
+    assert_eq!(get(server.port, &files(&main)).await, expected);
+    let expected = json!([
+        { "path": "a.txt", "kind": "added" },
+        { "path": "b.txt", "kind": "added" },
+        { "path": "gone.txt", "kind": "added" },
+    ]);
+    assert_eq!(get(server.port, &files(&root)).await, expected);
+
+    let port = server.port;
+    assert_eq!(sides(port, &id, &merge, "side.txt", "side.txt").await, ["", "side\n"]);
+    assert_eq!(sides(port, &id, &merge, "a.txt", "a.txt").await, ["two\n", "two\n"]);
+    assert_eq!(sides(port, &id, &main, "b.txt", "c.txt").await, ["b\nb\nb\n", "b\nb\nb\n"]);
+    assert_eq!(sides(port, &id, &main, "gone.txt", "gone.txt").await, ["gone\n", ""]);
+    assert_eq!(sides(port, &id, &root, "a.txt", "a.txt").await, ["", "one\n"]);
 }
 
 fn git(repo: &Path, args: &[&str]) {
@@ -87,7 +144,22 @@ async fn open(port: u16, dir: &Path) -> String {
     next_control(&mut socket, "project.opened").await["projectId"].as_str().unwrap().to_owned()
 }
 
+fn rev_parse(repo: &Path, rev: &str) -> String {
+    let output = Command::new("git").arg("-C").arg(repo).args(["rev-parse", rev]).output().unwrap();
+    assert!(output.status.success(), "git rev-parse {rev}");
+    String::from_utf8(output.stdout).unwrap().trim_end().to_owned()
+}
+
+async fn sides(port: u16, id: &str, sha: &str, from: &str, path: &str) -> [String; 2] {
+    let show = |rev: &str, path: &str| text(port, format!("/api/projects/{id}/git/show?sha={rev}&path={path}"));
+    [show(&format!("{sha}%5E"), from).await, show(sha, path).await]
+}
+
 async fn get(port: u16, path: &str) -> Value {
+    serde_json::from_str(&text(port, path.to_owned()).await).unwrap()
+}
+
+async fn text(port: u16, path: String) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let request = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).await.unwrap();
@@ -95,5 +167,5 @@ async fn get(port: u16, path: &str) -> Value {
     stream.read_to_string(&mut response).await.unwrap();
     let (head, body) = response.split_once("\r\n\r\n").unwrap();
     assert!(head.starts_with("HTTP/1.1 200"), "{head}");
-    serde_json::from_str(body).unwrap()
+    body.to_owned()
 }

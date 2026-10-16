@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { kinds, type Change } from '#lib/git.ts';
+	import { kinds, split, type Change } from '#lib/git.ts';
 
 	let { changes, onopen }: { changes: Change[]; onopen(change: Change): void } = $props();
 
@@ -8,11 +8,6 @@
 			.map((group) => ({ ...group, changes: changes.filter((change) => change.kind === group.kind) }))
 			.filter((group) => group.changes.length)
 	);
-
-	function split(path: string) {
-		const slash = path.lastIndexOf('/');
-		return { name: path.slice(slash + 1), dir: path.slice(0, slash + 1) };
-	}
 </script>
 
 <section aria-label="Changes">

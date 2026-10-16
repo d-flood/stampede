@@ -5,7 +5,7 @@
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
 	import { read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { head } from '#lib/git.ts';
+	import { head, show } from '#lib/git.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -33,8 +33,7 @@
 
 	onMount(() => {
 		let disposed = false;
-		const loading = diff.against === 'HEAD' ? Promise.all([headContent(), current()]) : undefined;
-		Promise.all([language(diff.path), loading]).then(
+		Promise.all([language(diff.path), sides()]).then(
 			([extension, sides]) => {
 				if (disposed) return;
 				syntax = extension;
@@ -44,7 +43,8 @@
 					note = 'binary file';
 					return;
 				}
-				sync.start(b.hash, build(a, b.content).b.state.doc);
+				const doc = build(a, b.content).b.state.doc;
+				if (diff.against === 'HEAD') sync.start(b.hash, doc);
 			},
 			(error: Error) => (note = error.message)
 		);
@@ -72,8 +72,19 @@
 		if (active && shown && form() === 'desktop') shown.b.focus();
 	});
 
+	function sides(): Promise<[string, Contents]> | undefined {
+		if (diff.against === 'HEAD') return Promise.all([headContent(), current()]);
+		if (diff.against !== 'disk') return committed(diff.against.sha);
+	}
+
 	function headContent() {
 		return head(diff.projectId, diff.from ?? diff.path);
+	}
+
+	async function committed(sha: string): Promise<[string, Contents]> {
+		const parent = show(diff.projectId, `${sha}^`, diff.from ?? diff.path);
+		const [a, b] = await Promise.all([parent, show(diff.projectId, sha, diff.path)]);
+		return [a, a.includes('\0') || b.includes('\0') ? { binary: true, hash: '' } : { content: b, hash: '' }];
 	}
 
 	async function current(): Promise<Contents> {
@@ -163,7 +174,11 @@
 <div class="diff" role="tabpanel" hidden={!active}>
 	<div class="toolbar">
 		<span class="path" title={diff.path}>{diff.from ? `${diff.from} → ${diff.path}` : diff.path}</span>
-		{#if diff.against === 'disk'}<span class="sides">disk ↔ unsaved edits</span>{/if}
+		{#if diff.against === 'disk'}
+			<span class="sides">disk ↔ unsaved edits</span>
+		{:else if diff.against !== 'HEAD'}
+			<span class="sides" title={diff.against.subject}>{diff.against.short}^ ↔ {diff.against.short}</span>
+		{/if}
 		{#if diff.deleted}<span class="deleted">deleted on disk</span>{/if}
 		{#if shown}
 			{#if diff.layout === 'split'}
