@@ -2,8 +2,12 @@ import { loadConfig } from '#lib/config.svelte.ts';
 
 export type Project = { id: string; path: string };
 
+export type Terminal = { id: string; owner: { project: string } | 'drawer' };
+
 export type ServerMessage =
-	| { type: 'hello'; version: string; terminals: string[] }
+	| { type: 'hello'; version: string; terminals: Terminal[] }
+	| { type: 'terminal.created'; terminal: Terminal }
+	| { type: 'terminals.changed'; projectId: string; terminals: Terminal[] }
 	| { type: 'terminal.attached'; terminalId: string; channel: number; cols: number; rows: number }
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
 	| { type: 'config.changed' }
@@ -14,7 +18,8 @@ export type ServerMessage =
 
 export type ClientMessage =
 	| { type: 'hello'; deviceId: string }
-	| { type: 'terminal.create' }
+	| { type: 'terminal.create'; projectId: string }
+	| { type: 'terminal.close'; terminalId: string }
 	| { type: 'terminal.attach'; terminalId: string }
 	| { type: 'terminal.resize'; terminalId: string; cols: number; rows: number }
 	| { type: 'terminal.focus'; terminalId: string }
@@ -25,9 +30,15 @@ export type ClientMessage =
 	| { type: 'project.reorder'; order: string[] }
 	| { type: 'picker.list' };
 
+type Listener = {
+	message?(message: ServerMessage): void;
+	output?(channel: number, bytes: Uint8Array): void;
+};
+
 export type Device = {
 	send(message: ClientMessage): void;
 	input(channel: number, data: string): void;
+	listen(listener: Listener): () => void;
 	close(): void;
 };
 
@@ -43,11 +54,9 @@ function deviceId(): string {
 	return id;
 }
 
-export function connect(handlers: {
-	message(message: ServerMessage): void;
-	output(channel: number, bytes: Uint8Array): void;
-}): Device {
+export function connect(): Device {
 	const id = deviceId();
+	const listeners = new Set<Listener>();
 	let socket: WebSocket;
 	let closed = false;
 
@@ -59,10 +68,13 @@ export function connect(handlers: {
 			if (typeof data === 'string') {
 				const message: ServerMessage = JSON.parse(data);
 				if (message.type === 'config.changed') loadConfig();
-				return handlers.message(message);
+				for (const listener of listeners) listener.message?.(message);
+				return;
 			}
 			const view = new DataView(data);
-			if (view.getUint8(0) === OUTPUT) handlers.output(view.getUint32(1), new Uint8Array(data, 5));
+			if (view.getUint8(0) !== OUTPUT) return;
+			const bytes = new Uint8Array(data, 5);
+			for (const listener of listeners) listener.output?.(view.getUint32(1), bytes);
 		};
 		socket.onclose = () => {
 			if (!closed) setTimeout(open, 1000);
@@ -83,11 +95,16 @@ export function connect(handlers: {
 		if (socket.readyState === WebSocket.OPEN) socket.send(frame);
 	}
 
+	function listen(listener: Listener) {
+		listeners.add(listener);
+		return () => listeners.delete(listener);
+	}
+
 	function close() {
 		closed = true;
 		socket.close();
 	}
 
 	open();
-	return { send, input, close };
+	return { send, input, listen, close };
 }

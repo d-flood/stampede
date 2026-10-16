@@ -14,7 +14,7 @@
 	import Plus from '~icons/ph/plus';
 	import X from '~icons/ph/x';
 
-	onMount(() => connect({ message() {}, output() {} }).close);
+	onMount(() => connect().close);
 
 	const colors = [
 		'--color-bg',

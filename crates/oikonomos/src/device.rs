@@ -11,13 +11,14 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{broadcast::error::RecvError, mpsc, watch},
     task::{AbortHandle, JoinSet},
 };
 
 use crate::{
     AppState,
     config::Config,
+    holder::Owner,
     projects::{self, Projects},
     protocol::Size,
     terminals::{Attachment, Terminals},
@@ -32,7 +33,9 @@ enum Control {
     #[serde(rename = "hello")]
     Hello { device_id: String },
     #[serde(rename = "terminal.create")]
-    Create {},
+    Create { project_id: String },
+    #[serde(rename = "terminal.close")]
+    Close { terminal_id: String },
     #[serde(rename = "terminal.attach")]
     Attach { terminal_id: String },
     #[serde(rename = "terminal.resize")]
@@ -79,6 +82,7 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config }
         }
     });
     let mut list = projects.subscribe();
+    let mut changes = terminals.subscribe();
     let mut device = Device {
         id: uuid::Uuid::new_v4().to_string(),
         terminals,
@@ -110,6 +114,16 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config }
                 let projects = list.borrow_and_update().clone();
                 send(&device.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
             }
+            changed = changes.recv() => match changed {
+                Ok(Owner::Project(project_id)) => device.terminals_changed(&project_id),
+                Ok(Owner::Drawer) => {}
+                Err(RecvError::Lagged(_)) => {
+                    for project in device.projects.list().iter() {
+                        device.terminals_changed(&project.id);
+                    }
+                }
+                Err(RecvError::Closed) => break,
+            },
         }
     }
     writer.abort();
@@ -123,14 +137,23 @@ impl Device {
                 let hello = json!({
                     "type": "hello",
                     "version": env!("CARGO_PKG_VERSION"),
-                    "terminals": self.terminals.ids(),
+                    "terminals": self.terminals.list(),
                 });
                 send(&self.outgoing, hello);
             }
-            Control::Create {} => match self.terminals.create(&self.id).await {
-                Ok(terminal_id) => self.attach(terminal_id).await,
-                Err(error) => eprintln!("cannot create a terminal: {error}"),
-            },
+            Control::Create { project_id } => {
+                let projects = self.projects.list();
+                let Some(project) = projects.iter().find(|project| project.id == project_id) else {
+                    return eprintln!("cannot create a terminal in {project_id}: not open");
+                };
+                match self.terminals.create(project, &self.id).await {
+                    Ok(terminal) => {
+                        send(&self.outgoing, json!({ "type": "terminal.created", "terminal": terminal }))
+                    }
+                    Err(error) => eprintln!("cannot create a terminal: {error}"),
+                }
+            }
+            Control::Close { terminal_id } => self.terminals.close(&terminal_id),
             Control::Attach { terminal_id } => self.attach(terminal_id).await,
             Control::Resize { terminal_id, cols, rows } => {
                 self.terminals.resize(&terminal_id, &self.id, Size { cols, rows })
@@ -153,7 +176,12 @@ impl Device {
                     send(&self.outgoing, json!({ "type": "project.error", "path": path, "error": error }))
                 }
             },
-            Control::CloseProject { project_id } => self.projects.close(&project_id),
+            Control::CloseProject { project_id } => {
+                for terminal in self.terminals.owned(&Owner::Project(project_id.clone())) {
+                    self.terminals.close(&terminal.id);
+                }
+                self.projects.close(&project_id);
+            }
             Control::ReorderProjects { order } => self.projects.reorder(&order),
             Control::ListPicker {} => {
                 let roots = self.config.borrow().roots.clone();
@@ -206,6 +234,16 @@ impl Device {
             }
         });
         self.channels.insert(channel, (terminal, attachment));
+    }
+
+    fn terminals_changed(&self, project_id: &str) {
+        let terminals = self.terminals.owned(&Owner::Project(project_id.to_owned()));
+        let changed = json!({
+            "type": "terminals.changed",
+            "projectId": project_id,
+            "terminals": terminals,
+        });
+        send(&self.outgoing, changed);
     }
 
     fn binary(&self, bytes: &[u8]) {

@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::{self, Sender},
     thread,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use libghostty_vt::{
@@ -17,7 +18,10 @@ use libghostty_vt::{
     snapshot::Decoder,
     terminal::Mode,
 };
-use nix::unistd::{ForkResult, fork, setsid};
+use nix::{
+    sys::signal::{Signal, killpg},
+    unistd::{ForkResult, Pid, fork, setsid},
+};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 
@@ -34,13 +38,27 @@ pub struct HoldArgs {
     pub id: String,
     #[arg(long, value_name = "DIR")]
     pub cwd: Option<PathBuf>,
+    #[arg(long)]
+    pub project: Option<String>,
     #[arg(last = true, required = true)]
     pub command: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Owner {
+    Project(String),
+    #[default]
+    Drawer,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Record {
     pub id: String,
+    #[serde(default)]
+    pub owner: Owner,
+    #[serde(default)]
+    pub created: u128,
     pub cwd: PathBuf,
     pub command: Vec<String>,
     pub size: Size,
@@ -88,6 +106,8 @@ pub fn hold(args: HoldArgs) -> Result<(), Box<dyn Error>> {
             None => std::env::current_dir()?,
         },
         id: args.id,
+        owner: args.project.map_or(Owner::Drawer, Owner::Project),
+        created: SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
         command: args.command,
         size: Size { cols: 80, rows: 24 },
         protocol: protocol::VERSION,
@@ -124,6 +144,7 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     let mut child = pty.slave.spawn_command(command)?;
+    let pid = child.process_id();
     drop(pty.slave);
 
     let (events, received) = mpsc::channel();
@@ -208,6 +229,13 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
                     record.size = size;
                     let _ = files.write_record(record);
                 }
+            }
+            Event::Received(_, Message::Hangup) => {
+                // portable-pty starts the child with setsid, so its pid names its process group.
+                if let Some(pid) = pid {
+                    let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGHUP);
+                }
+                break;
             }
             Event::Received(..) => {}
             Event::Closed(id) => {

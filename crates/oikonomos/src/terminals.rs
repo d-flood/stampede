@@ -7,6 +7,7 @@ use std::{
 };
 
 use futures_util::StreamExt;
+use serde::Serialize;
 use tokio::{
     io::AsyncWriteExt,
     net::{
@@ -14,12 +15,13 @@ use tokio::{
         unix::{OwnedReadHalf, OwnedWriteHalf},
     },
     process::Command,
-    sync::{mpsc, watch},
+    sync::{broadcast, mpsc, watch},
 };
 use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
 
 use crate::{
-    holder,
+    holder::{self, Owner, Record},
+    projects::Project,
     protocol::{self, Message, Size},
 };
 
@@ -28,9 +30,17 @@ type Frames = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 pub struct Terminals {
     data_dir: PathBuf,
     terminals: Mutex<Vec<(String, Arc<Entry>)>>,
+    changed: broadcast::Sender<Owner>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct Terminal {
+    pub id: String,
+    pub owner: Owner,
 }
 
 struct Entry {
+    owner: Owner,
     control: mpsc::UnboundedSender<Message>,
     size: watch::Sender<Size>,
     lead: Mutex<Lead>,
@@ -70,6 +80,7 @@ impl Terminals {
         Self {
             data_dir,
             terminals: Mutex::default(),
+            changed: broadcast::Sender::new(64),
         }
     }
 
@@ -78,13 +89,21 @@ impl Terminals {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             entries => entries?,
         };
+        let mut records = Vec::new();
         for entry in entries {
-            let record = entry?.path();
-            if record.extension() != Some("json".as_ref()) {
+            let path = entry?.path();
+            if path.extension() != Some("json".as_ref()) {
                 continue;
             }
-            let Some(id) = record.file_stem().and_then(|stem| stem.to_str()) else { continue };
-            match self.open(id).await {
+            match read_record(&path) {
+                Ok(record) => records.push((path, record)),
+                Err(error) => eprintln!("cannot read {}: {error}", path.display()),
+            }
+        }
+        records.sort_by_key(|(_, record)| record.created);
+        for (path, record) in records {
+            let id = record.id.clone();
+            match self.open(record).await {
                 Ok(()) => {}
                 Err(error)
                     if matches!(
@@ -92,8 +111,8 @@ impl Terminals {
                         io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
                     ) =>
                 {
-                    let _ = fs::remove_file(holder::socket_path(&self.data_dir, id));
-                    let _ = fs::remove_file(&record);
+                    let _ = fs::remove_file(holder::socket_path(&self.data_dir, &id));
+                    let _ = fs::remove_file(&path);
                 }
                 Err(error) => eprintln!("cannot reattach terminal {id}: {error}"),
             }
@@ -101,11 +120,23 @@ impl Terminals {
         Ok(())
     }
 
-    pub fn ids(&self) -> Vec<String> {
-        self.terminals.lock().unwrap().iter().map(|(id, _)| id.clone()).collect()
+    pub fn subscribe(&self) -> broadcast::Receiver<Owner> {
+        self.changed.subscribe()
     }
 
-    pub async fn create(self: &Arc<Self>, device: &str) -> io::Result<String> {
+    pub fn list(&self) -> Vec<Terminal> {
+        let terminals = self.terminals.lock().unwrap();
+        terminals
+            .iter()
+            .map(|(id, entry)| Terminal { id: id.clone(), owner: entry.owner.clone() })
+            .collect()
+    }
+
+    pub fn owned(&self, owner: &Owner) -> Vec<Terminal> {
+        self.list().into_iter().filter(|terminal| terminal.owner == *owner).collect()
+    }
+
+    pub async fn create(self: &Arc<Self>, project: &Project, device: &str) -> io::Result<Terminal> {
         let id = format!("{:016x}", uuid::Uuid::new_v4().as_u64_pair().1);
         let shell = env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
         let status = Command::new(env::current_exe()?)
@@ -115,7 +146,9 @@ impl Terminals {
             .arg("--id")
             .arg(&id)
             .arg("--cwd")
-            .arg(crate::home())
+            .arg(&project.path)
+            .arg("--project")
+            .arg(&project.id)
             .arg("--")
             .arg(shell)
             .arg("-l")
@@ -127,24 +160,27 @@ impl Terminals {
         if !status.success() {
             return Err(io::Error::other(format!("holder {status}")));
         }
-        self.open(&id).await?;
+        let record = read_record(&holder::record_path(&self.data_dir, &id))?;
+        let owner = record.owner.clone();
+        self.open(record).await?;
         self.lead(&id, device);
-        Ok(id)
+        Ok(Terminal { id, owner })
     }
 
-    async fn open(self: &Arc<Self>, id: &str) -> io::Result<()> {
-        let record = fs::read(holder::record_path(&self.data_dir, id))?;
-        let record: holder::Record = serde_json::from_slice(&record)?;
-        let (mut frames, mut writer) = connect(&self.data_dir, id).await?;
+    async fn open(self: &Arc<Self>, record: Record) -> io::Result<()> {
+        let (mut frames, mut writer) = connect(&self.data_dir, &record.id).await?;
         let (control, mut pending) = mpsc::unbounded_channel();
+        let owner = record.owner;
         let entry = Entry {
+            owner: owner.clone(),
             control,
             size: watch::Sender::new(record.size),
             lead: Mutex::default(),
         };
-        self.terminals.lock().unwrap().push((id.to_owned(), Arc::new(entry)));
+        self.terminals.lock().unwrap().push((record.id.clone(), Arc::new(entry)));
+        let _ = self.changed.send(owner.clone());
         let terminals = Arc::clone(self);
-        let id = id.to_owned();
+        let id = record.id;
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -161,6 +197,7 @@ impl Terminals {
                 }
             }
             terminals.terminals.lock().unwrap().retain(|(other, _)| *other != id);
+            let _ = terminals.changed.send(owner);
         });
         Ok(())
     }
@@ -182,6 +219,12 @@ impl Terminals {
         self.lead(id, device);
         if let Some(entry) = self.get(id) {
             let _ = entry.control.send(Message::Input(bytes));
+        }
+    }
+
+    pub fn close(&self, id: &str) {
+        if let Some(entry) = self.get(id) {
+            let _ = entry.control.send(Message::Hangup);
         }
     }
 
@@ -218,6 +261,10 @@ impl Entry {
             self.size.send_replace(size);
         }
     }
+}
+
+fn read_record(path: &Path) -> io::Result<Record> {
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 
 async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHalf)> {

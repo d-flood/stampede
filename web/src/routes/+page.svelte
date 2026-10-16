@@ -1,18 +1,24 @@
 <script lang="ts">
-	import { connect, type Device, type Project, type ServerMessage } from '#lib/device.ts';
+	import { connect, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
 	import { form } from '#lib/form.ts';
 	import { labels } from '#lib/projects.ts';
 	import Picker from '#lib/shell/Picker.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
+	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import Menu from '#lib/ui/Menu.svelte';
+	import Tab from '#lib/ui/Tab.svelte';
 	import { onMount } from 'svelte';
+	import Plus from '~icons/ph/plus';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
 
-	let device: Device | undefined;
+	const device = connect();
 	let projects = $state<Project[]>([]);
+	let terminals = $state<Record<string, Terminal[]>>({});
 	let chosen = $state<string>();
+	let chosenTabs = $state<Record<string, string>>({});
 	let sidebar = $state(form() === 'desktop');
 	let picking = $state(false);
 	let directories = $state<string[]>([]);
@@ -20,16 +26,33 @@
 
 	const projectLabels = $derived(labels(projects));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
+	const tabs = $derived((focused && terminals[focused.id]) || []);
+	const activeTab = $derived(tabs.find((tab) => tab.id === chosenTabs[focused?.id ?? '']) ?? tabs.at(-1));
 
 	onMount(() => {
-		device = connect({ message, output() {} });
-		return () => device?.close();
+		const unlisten = device.listen({ message });
+		return () => {
+			unlisten();
+			device.close();
+		};
 	});
 
 	function message(message: ServerMessage) {
 		switch (message.type) {
-			case 'hello':
-				device?.send({ type: 'projects.list' });
+			case 'hello': {
+				const owned: Record<string, Terminal[]> = {};
+				for (const terminal of message.terminals) {
+					if (terminal.owner !== 'drawer') (owned[terminal.owner.project] ??= []).push(terminal);
+				}
+				terminals = owned;
+				device.send({ type: 'projects.list' });
+				break;
+			}
+			case 'terminals.changed':
+				terminals[message.projectId] = message.terminals;
+				break;
+			case 'terminal.created':
+				if (message.terminal.owner !== 'drawer') chosenTabs[message.terminal.owner.project] = message.terminal.id;
 				break;
 			case 'projects.changed':
 				projects = message.projects;
@@ -51,18 +74,27 @@
 	function pick() {
 		directories = [];
 		picking = true;
-		device?.send({ type: 'picker.list' });
+		device.send({ type: 'picker.list' });
 	}
 
 	function open(path: string): Promise<string | undefined> {
 		settle?.();
-		device?.send({ type: 'project.open', path });
+		device.send({ type: 'project.open', path });
 		return new Promise((resolve) => (settle = resolve));
 	}
 
 	function reorder(order: string[]) {
 		projects = order.flatMap((id) => projects.filter((project) => project.id === id));
-		device?.send({ type: 'project.reorder', order });
+		device.send({ type: 'project.reorder', order });
+	}
+
+	function closeTab(projectId: string, terminalId: string) {
+		if (terminalId === activeTab?.id) {
+			const index = tabs.findIndex((tab) => tab.id === terminalId);
+			const neighbor = tabs[index + 1] ?? tabs[index - 1];
+			if (neighbor) chosenTabs[projectId] = neighbor.id;
+		}
+		device.send({ type: 'terminal.close', terminalId });
 	}
 </script>
 
@@ -73,7 +105,7 @@
 		focused={focused?.id}
 		onfocus={(id) => (chosen = id)}
 		onreorder={reorder}
-		onclose={(projectId) => device?.send({ type: 'project.close', projectId })}
+		onclose={(projectId) => device.send({ type: 'project.close', projectId })}
 		onpick={pick}
 	/>
 
@@ -90,9 +122,39 @@
 			<IconButton label="Sidebar" aria-expanded={sidebar} onclick={() => (sidebar = !sidebar)}>
 				<SidebarSimple />
 			</IconButton>
-			<div role="tablist" aria-label="Tabs"></div>
+			<div role="tablist" aria-label="Tabs">
+				{#if focused}
+					{@const projectId = focused.id}
+					{#each tabs as tab (tab.id)}
+						<Menu context items={[{ label: 'Close', onselect: () => closeTab(projectId, tab.id) }]}>
+							{#snippet trigger(props)}
+								<Tab
+									{...props}
+									variant="terminal"
+									label="Terminal"
+									active={tab.id === activeTab?.id}
+									onclick={() => (chosenTabs[projectId] = tab.id)}
+								/>
+							{/snippet}
+						</Menu>
+					{/each}
+				{/if}
+			</div>
+			{#if focused}
+				{@const projectId = focused.id}
+				<Menu items={[{ label: 'Terminal', onselect: () => device.send({ type: 'terminal.create', projectId }) }]}>
+					{#snippet trigger(props)}
+						<IconButton {...props} label="New Tab"><Plus /></IconButton>
+					{/snippet}
+				</Menu>
+			{/if}
 		</div>
 		<div class="tabs">
+			{#each Object.entries(terminals) as [projectId, owned] (projectId)}
+				{#each owned as terminal (terminal.id)}
+					<TerminalView {device} terminalId={terminal.id} active={terminal.id === activeTab?.id} />
+				{/each}
+			{/each}
 			{#if !focused}
 				<div class="empty">
 					<p>No Project open</p>

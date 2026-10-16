@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { appearance, type Appearance } from '#lib/config.svelte.ts';
-	import { connect, type Device, type ServerMessage } from '#lib/device.ts';
+	import type { Device, ServerMessage } from '#lib/device.ts';
 	import { FitAddon, Terminal, init } from 'ghostty-web';
 	import { onMount } from 'svelte';
 
+	let { device, terminalId, active }: { device: Device; terminalId: string; active: boolean } = $props();
+
 	let container: HTMLDivElement;
-	let device: Device | undefined;
-	let view: Terminal | undefined;
+	let view = $state.raw<Terminal>();
 	let fit: FitAddon | undefined;
-	let current: { terminalId: string; channel: number } | undefined;
+	let channel: number | undefined;
 	let writing = false;
 	let ready = $state(false);
-	let connected = $state(false);
 	let shown = '';
 
 	onMount(() => {
@@ -19,12 +19,16 @@
 		init().then(() => {
 			if (!disposed) ready = true;
 		});
+		const unlisten = device.listen({ message, output });
 		container.addEventListener('focusin', focus);
 		container.addEventListener('pointerdown', focus);
-		new ResizeObserver(propose).observe(container);
+		const observer = new ResizeObserver(propose);
+		observer.observe(container);
 		return () => {
 			disposed = true;
-			device?.close();
+			observer.disconnect();
+			unlisten();
+			if (channel !== undefined) device.send({ type: 'terminal.detach', channel });
 			view?.dispose();
 		};
 	});
@@ -45,51 +49,53 @@
 		};
 	});
 
+	$effect(() => {
+		if (!active || !view) return;
+		window.terminal = view;
+		view.focus();
+	});
+
 	// ghostty-web can't change its theme after open(), so a new look gets a
 	// new view, re-attached for a fresh snapshot.
 	function open({ theme, fontFamily }: Appearance) {
 		view?.dispose();
 		const element = document.createElement('div');
 		container.replaceChildren(element);
-		view = window.terminal = new Terminal({ theme, fontFamily });
+		const next = new Terminal({ theme, fontFamily });
 		fit = new FitAddon();
-		view.loadAddon(fit);
-		view.open(element);
-		view.onData((data) => {
-			if (current && !writing) device?.input(current.channel, data);
+		next.loadAddon(fit);
+		next.open(element);
+		next.onData((data) => {
+			if (channel !== undefined && !writing) device.input(channel, data);
 		});
-		if (!device) {
-			device = connect({ message, output });
-		} else if (current) {
-			device.send({ type: 'terminal.detach', channel: current.channel });
-			device.send({ type: 'terminal.attach', terminalId: current.terminalId });
-			current = undefined;
-		}
+		view = next;
+		if (channel !== undefined) device.send({ type: 'terminal.detach', channel });
+		channel = undefined;
+		device.send({ type: 'terminal.attach', terminalId });
 	}
 
 	function message(message: ServerMessage) {
 		switch (message.type) {
-			case 'hello': {
-				connected = true;
-				const terminals = message.terminals;
-				const terminalId = terminals.find((id) => id === current?.terminalId) ?? terminals.at(-1);
-				if (terminalId) device?.send({ type: 'terminal.attach', terminalId });
+			case 'hello':
+				channel = undefined;
+				if (view) device.send({ type: 'terminal.attach', terminalId });
 				break;
-			}
 			case 'terminal.attached':
-				current = { terminalId: message.terminalId, channel: message.channel };
+				if (message.terminalId !== terminalId) break;
+				if (channel !== undefined) device.send({ type: 'terminal.detach', channel });
+				channel = message.channel;
 				view?.resize(message.cols, message.rows);
 				write('\x1bc');
 				propose();
 				break;
 			case 'terminal.resized':
-				if (message.terminalId === current?.terminalId) view?.resize(message.cols, message.rows);
+				if (message.terminalId === terminalId) view?.resize(message.cols, message.rows);
 				break;
 		}
 	}
 
-	function output(channel: number, bytes: Uint8Array) {
-		if (channel === current?.channel) write(bytes);
+	function output(from: number, bytes: Uint8Array) {
+		if (from === channel) write(bytes);
 	}
 
 	// Query responses come from the holder; ghostty-web's own ones are
@@ -102,39 +108,19 @@
 
 	function propose() {
 		const size = fit?.proposeDimensions();
-		if (current && size) device?.send({ type: 'terminal.resize', terminalId: current.terminalId, ...size });
+		if (channel !== undefined && size) device.send({ type: 'terminal.resize', terminalId, ...size });
 	}
 
 	function focus() {
-		if (current) device?.send({ type: 'terminal.focus', terminalId: current.terminalId });
-	}
-
-	function create() {
-		current = undefined;
-		write('\x1bc');
-		device?.send({ type: 'terminal.create' });
-		view?.focus();
+		device.send({ type: 'terminal.focus', terminalId });
 	}
 </script>
 
-<main>
-	<button onclick={create} disabled={!connected}>New Terminal</button>
-	<div class="terminal" bind:this={container}></div>
-</main>
+<div class="terminal" role="tabpanel" hidden={!active} bind:this={container}></div>
 
 <style>
-	main {
-		display: grid;
-		grid-template-rows: auto 1fr;
-		height: 100dvh;
-	}
-
-	button {
-		justify-self: start;
-	}
-
 	.terminal {
-		min-height: 0;
+		height: 100%;
 		overflow: auto;
 	}
 

@@ -117,18 +117,24 @@ impl View {
     pub async fn open(port: u16, device_id: &str, terminal_id: Option<&str>) -> Self {
         let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await.unwrap();
         control(&mut socket, json!({ "type": "hello", "deviceId": device_id })).await;
-        let hello = next_control(&mut socket).await;
-        assert_eq!(hello["type"], "hello");
-        let request = match terminal_id {
+        let hello = next_control(&mut socket, "hello").await;
+        let terminal_id = match terminal_id {
             Some(id) => {
-                assert!(hello["terminals"].as_array().unwrap().contains(&json!(id)), "{id} is not listed");
-                json!({ "type": "terminal.attach", "terminalId": id })
+                let terminals = hello["terminals"].as_array().unwrap();
+                assert!(terminals.iter().any(|terminal| terminal["id"] == id), "{id} is not listed");
+                id.to_owned()
             }
-            None => json!({ "type": "terminal.create" }),
+            None => {
+                control(&mut socket, json!({ "type": "project.open", "path": "~" })).await;
+                let opened = next_control(&mut socket, "project.opened").await;
+                let create = json!({ "type": "terminal.create", "projectId": opened["projectId"] });
+                control(&mut socket, create).await;
+                let created = next_control(&mut socket, "terminal.created").await;
+                created["terminal"]["id"].as_str().unwrap().to_owned()
+            }
         };
-        control(&mut socket, request).await;
-        let attached = next_control(&mut socket).await;
-        assert_eq!(attached["type"], "terminal.attached");
+        control(&mut socket, json!({ "type": "terminal.attach", "terminalId": terminal_id })).await;
+        let attached = next_control(&mut socket, "terminal.attached").await;
         let mut terminal = Terminal::new(
             attached["cols"].as_u64().unwrap() as u16,
             attached["rows"].as_u64().unwrap() as u16,
@@ -185,10 +191,13 @@ async fn control(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, messag
     socket.send(Message::Text(message.to_string().into())).await.unwrap();
 }
 
-async fn next_control(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>) -> Value {
+async fn next_control(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, kind: &str) -> Value {
     loop {
         if let Message::Text(text) = socket.next().await.unwrap().unwrap() {
-            return serde_json::from_str(&text).unwrap();
+            let message: Value = serde_json::from_str(&text).unwrap();
+            if message["type"] == kind {
+                return message;
+            }
         }
     }
 }
