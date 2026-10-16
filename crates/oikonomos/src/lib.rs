@@ -122,7 +122,6 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
         }
     });
     push::spawn(Arc::clone(&push), Arc::clone(&terminals));
-    layouts::spawn(Arc::clone(&layouts));
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);

@@ -1,8 +1,6 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    sync::Arc,
-    time::{Duration, SystemTime},
 };
 
 use axum::{
@@ -16,7 +14,6 @@ use uuid::Uuid;
 
 use crate::AppState;
 
-const KEEP: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const CLOSED: &str = "closed";
 
 pub struct Layouts {
@@ -50,27 +47,6 @@ impl Layouts {
             StatusCode::INTERNAL_SERVER_ERROR
         })
     }
-
-    async fn prune(&self) {
-        let Ok(mut entries) = tokio::fs::read_dir(&self.dir).await else { return };
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let modified = entry.metadata().await.and_then(|metadata| metadata.modified());
-            let old = modified.is_ok_and(|time| SystemTime::now().duration_since(time).unwrap_or_default() > KEEP);
-            if old && let Err(error) = tokio::fs::remove_file(entry.path()).await {
-                eprintln!("cannot prune {}: {error}", entry.path().display());
-            }
-        }
-    }
-}
-
-pub fn spawn(layouts: Arc<Layouts>) {
-    tokio::spawn(async move {
-        let mut daily = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
-        loop {
-            daily.tick().await;
-            layouts.prune().await;
-        }
-    });
 }
 
 fn device(id: &str) -> Result<String, StatusCode> {
