@@ -347,9 +347,17 @@
 		</div>
 		<div class="tabs">
 			{#each Object.entries(terminals) as [projectId, owned] (projectId)}
+				{@const project = projects.find((project) => project.id === projectId)}
 				{#each owned as terminal (terminal.id)}
 					{@const ended = terminal.state === 'ended'}
-					<TerminalView {device} terminalId={terminal.id} active={terminal.id === activeTab} {ended}>
+					<TerminalView
+						{device}
+						terminalId={terminal.id}
+						active={terminal.id === activeTab}
+						{ended}
+						{project}
+						onopen={(path, cursor) => openFile(projectId, path, cursor)}
+					>
 						{#if ended}
 							<div class="ended" role="status">
 								<span class="message"><Power /> Lost to a Host reboot; showing its last output.</span>
