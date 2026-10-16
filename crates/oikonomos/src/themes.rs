@@ -29,10 +29,7 @@ pub struct Theme {
 
 impl Theme {
     /// Resolves Ghostty's `theme` syntax: `Name`, or `light:Name,dark:Name`.
-    pub fn resolve(spec: Option<&str>) -> Result<Self, Error> {
-        let Some(spec) = spec else {
-            return Ok(Self::default());
-        };
+    pub fn resolve(spec: &str) -> Result<Self, Error> {
         let pair: Option<Vec<_>> = spec.split(',').map(|part| part.split_once(':')).collect();
         let Some(pair) = pair else {
             let palette = lookup(spec.trim())?;

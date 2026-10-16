@@ -8,6 +8,10 @@ export type Contents = { content: string; hash: string; binary?: undefined } | {
 
 export type Cursor = { line: number; column: number };
 
+type Saved<T = { hash: string }> = (T & { conflict?: undefined }) | { conflict: Contents };
+
+export type Invalid = { line: number | null; message: string };
+
 export class OpenFile {
 	projectId: string;
 	path: string;
@@ -26,6 +30,38 @@ export class OpenFile {
 
 	get name() {
 		return this.path.split('/').at(-1) ?? this.path;
+	}
+
+	read(): Promise<Contents> {
+		return read(this.projectId, this.path);
+	}
+
+	save(content: string, baseHash: string): Promise<Saved> {
+		return put(`/api/projects/${this.projectId}/file`, { path: this.path, content, baseHash });
+	}
+}
+
+export class OpenConfig extends OpenFile {
+	invalid = $state<Invalid>();
+
+	constructor(projectId: string) {
+		super(projectId, 'config.toml');
+	}
+
+	get id() {
+		return `config:${this.projectId}`;
+	}
+
+	async read(): Promise<Contents> {
+		const contents = await json<Contents & { error: Invalid | null }>(await fetch('/api/config/file'));
+		this.invalid = contents.error ?? undefined;
+		return contents;
+	}
+
+	async save(content: string, baseHash: string): Promise<Saved> {
+		const result = await put<{ hash: string; error: Invalid | null }>('/api/config/file', { content, baseHash });
+		if (!result.conflict) this.invalid = result.error ?? undefined;
+		return result;
 	}
 }
 
@@ -112,16 +148,11 @@ export async function read(projectId: string, path: string): Promise<Contents> {
 	return json(await fetch(`/api/projects/${projectId}/file?${new URLSearchParams({ path })}`));
 }
 
-export async function save(
-	projectId: string,
-	path: string,
-	content: string,
-	baseHash: string
-): Promise<{ hash: string; conflict?: undefined } | { conflict: Contents }> {
-	const response = await fetch(`/api/projects/${projectId}/file`, {
+async function put<T>(url: string, body: object): Promise<Saved<T>> {
+	const response = await fetch(url, {
 		method: 'PUT',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ path, content, baseHash })
+		body: JSON.stringify(body)
 	});
 	if (response.status === 409) return { conflict: await response.json() };
 	return json(response);

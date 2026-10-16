@@ -7,7 +7,7 @@ use std::{
 };
 
 use notify::{RecursiveMode, Watcher};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use tokio::sync::{mpsc, watch};
 use ttf_parser::Tag;
 
@@ -16,13 +16,15 @@ use crate::themes::Theme;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct Settings {
     roots: Vec<PathBuf>,
     leader: String,
     scrollback: usize,
-    theme: Option<String>,
+    #[serde(deserialize_with = "theme")]
+    theme: Theme,
     font: Fonts,
+    #[serde(deserialize_with = "rigs")]
     rig: Vec<Rig>,
     editor: Editor,
 }
@@ -33,7 +35,7 @@ impl Default for Settings {
             roots: vec!["~/repos".into()],
             leader: "ctrl+space".to_owned(),
             scrollback: 10_000,
-            theme: None,
+            theme: Theme::default(),
             font: Fonts::default(),
             rig: Vec::new(),
             editor: Editor::default(),
@@ -42,16 +44,17 @@ impl Default for Settings {
 }
 
 #[derive(Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct Fonts {
     mono: Mono,
 }
 
 #[derive(Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct Mono {
     family: String,
-    files: Vec<PathBuf>,
+    #[serde(deserialize_with = "faces")]
+    files: Vec<Face>,
 }
 
 impl Default for Mono {
@@ -61,6 +64,7 @@ impl Default for Mono {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rig {
     pub name: String,
     pub agent: Agent,
@@ -93,7 +97,7 @@ impl Agent {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Editor {
     pub keymap: Keymap,
 }
@@ -153,28 +157,57 @@ pub struct Face {
 }
 
 impl Config {
+    fn parse(text: &str) -> Result<Self, toml::de::Error> {
+        let Settings { roots, leader, scrollback, theme, font: Fonts { mono }, rig: rigs, editor } =
+            toml::from_str(text)?;
+        Ok(Self {
+            roots: roots.into_iter().map(expand).collect(),
+            leader,
+            scrollback,
+            theme,
+            font: Font { family: mono.family, faces: mono.files },
+            rigs,
+            editor,
+        })
+    }
+
     fn load(path: &Path) -> Result<Self, Error> {
         let text = match fs::read_to_string(path) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
             text => text?,
         };
-        let Settings { roots, leader, scrollback, theme, font: Fonts { mono }, rig: rigs, editor } =
-            toml::from_str(&text)?;
-        let faces = mono.files.into_iter().enumerate().map(face).collect::<Result<_, _>>()?;
-        let mut names = HashSet::new();
-        if let Some(rig) = rigs.iter().find(|rig| !names.insert(&rig.name)) {
-            return Err(format!("more than one rig is named {:?}", rig.name).into());
-        }
-        Ok(Self {
-            roots: roots.into_iter().map(expand).collect(),
-            leader,
-            scrollback,
-            theme: Theme::resolve(theme.as_deref())?,
-            font: Font { family: mono.family, faces },
-            rigs,
-            editor,
-        })
+        Ok(Self::parse(&text)?)
     }
+}
+
+#[derive(Serialize)]
+pub struct Invalid {
+    line: Option<usize>,
+    message: String,
+}
+
+pub fn check(text: &str) -> Option<Invalid> {
+    let error = Config::parse(text).err()?;
+    let line = error.span().map(|span| text[..span.start].matches('\n').count() + 1);
+    Some(Invalid { line, message: error.message().to_owned() })
+}
+
+fn theme<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Theme, D::Error> {
+    Theme::resolve(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+}
+
+fn rigs<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Rig>, D::Error> {
+    let rigs = Vec::<Rig>::deserialize(deserializer)?;
+    let mut names = HashSet::new();
+    match rigs.iter().find(|rig| !names.insert(&rig.name)) {
+        Some(rig) => Err(D::Error::custom(format!("more than one rig is named {:?}", rig.name))),
+        None => Ok(rigs),
+    }
+}
+
+fn faces<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Face>, D::Error> {
+    let files = Vec::<PathBuf>::deserialize(deserializer)?;
+    files.into_iter().enumerate().map(face).collect::<Result<_, _>>().map_err(D::Error::custom)
 }
 
 pub fn expand(path: PathBuf) -> PathBuf {

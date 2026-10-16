@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::AppState;
+use crate::{AppState, config};
 
 pub type Failure = (StatusCode, String);
 
@@ -36,6 +36,13 @@ pub struct FileQuery {
 #[serde(rename_all = "camelCase")]
 pub struct Save {
     path: String,
+    content: String,
+    base_hash: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigSave {
     content: String,
     base_hash: String,
 }
@@ -97,6 +104,40 @@ pub async fn write(
         Ok(Json(json!({ "hash": hash(save.content.as_bytes()) })).into_response())
     })
     .await
+}
+
+pub async fn read_config(State(state): State<AppState>) -> Result<Response, Failure> {
+    blocking(move || {
+        let bytes = config_bytes(&state.config_path)?;
+        let error = str::from_utf8(&bytes).ok().and_then(config::check);
+        let mut contents = contents(bytes);
+        contents["error"] = json!(error);
+        Ok(Json(contents).into_response())
+    })
+    .await
+}
+
+pub async fn write_config(
+    State(state): State<AppState>,
+    Json(save): Json<ConfigSave>,
+) -> Result<Response, Failure> {
+    blocking(move || {
+        let current = config_bytes(&state.config_path)?;
+        if hash(&current) != save.base_hash {
+            return Ok((StatusCode::CONFLICT, Json(contents(current))).into_response());
+        }
+        fs::write(&state.config_path, &save.content).map_err(failure)?;
+        let error = config::check(&save.content);
+        Ok(Json(json!({ "hash": hash(save.content.as_bytes()), "error": error })).into_response())
+    })
+    .await
+}
+
+fn config_bytes(path: &Path) -> Result<Vec<u8>, Failure> {
+    match fs::read(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        bytes => bytes.map_err(failure),
+    }
 }
 
 pub fn root(state: &AppState, id: &str) -> Result<PathBuf, Failure> {

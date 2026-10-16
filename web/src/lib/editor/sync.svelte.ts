@@ -1,5 +1,5 @@
 import type { Device } from '#lib/device.ts';
-import { read, RequestError, save, type OpenFile } from '#lib/files.svelte.ts';
+import { RequestError, type OpenFile } from '#lib/files.svelte.ts';
 import { Text } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 
@@ -47,7 +47,7 @@ export class Sync {
 		this.#saving = true;
 		this.#generation++;
 		try {
-			const result = await save(file.projectId, file.path, doc.toString(), this.#hash);
+			const result = await file.save(doc.toString(), this.#hash);
 			if (result.conflict) {
 				if (!result.conflict.binary) this.conflict = result.conflict;
 				return;
@@ -74,7 +74,7 @@ export class Sync {
 		}
 		const current = ++this.#generation;
 		try {
-			const contents = await read(file.projectId, file.path);
+			const contents = await file.read();
 			if (current !== this.#generation) return;
 			file.deleted = false;
 			if (contents.binary) return;

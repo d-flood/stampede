@@ -59,6 +59,7 @@ struct AppState {
     terminals: Arc<Terminals>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
+    config_path: PathBuf,
     disk: broadcast::Sender<watcher::Changed>,
     git: broadcast::Sender<git::Changed>,
     push: Arc<Push>,
@@ -72,6 +73,7 @@ fn router(state: AppState) -> Router {
         .route("/api/rigs", get(rigs))
         .route("/api/editor", get(editor))
         .route("/api/leader", get(leader))
+        .route("/api/config/file", get(files::read_config).put(files::write_config))
         .route("/api/hook", post(hooks::receive).layer(DefaultBodyLimit::disable()))
         .route("/api/push/key", get(push::key))
         .route("/api/push/subscribe", post(push::subscribe))
@@ -101,7 +103,8 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let disk = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, router(AppState { terminals, projects, config, disk, git, push })).await
+    let state = AppState { terminals, projects, config, config_path: args.config, disk, git, push };
+    axum::serve(listener, router(state)).await
 }
 
 async fn version() -> Json<Value> {

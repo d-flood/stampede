@@ -5,7 +5,7 @@
 	import { language } from '#lib/editor/languages.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { theme } from '#lib/editor/theme.ts';
-	import { read, type OpenFile } from '#lib/files.svelte.ts';
+	import { OpenConfig, type OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { baseline, type Git } from '#lib/git.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
@@ -15,6 +15,7 @@
 	import { basicSetup } from 'codemirror';
 	import { onMount } from 'svelte';
 	import FloppyDisk from '~icons/ph/floppy-disk';
+	import Warning from '~icons/ph/warning';
 
 	type Props = { file: OpenFile; device: Device; git?: Git; active: boolean; onshowdiff(disk: string, buffer: string): void };
 
@@ -28,7 +29,7 @@
 
 	onMount(() => {
 		let disposed = false;
-		Promise.all([read(file.projectId, file.path), language(file.path)]).then(
+		Promise.all([file.read(), language(file.path)]).then(
 			([contents, syntax]) => {
 				if (disposed) return;
 				if (contents.binary) {
@@ -54,10 +55,10 @@
 			},
 			(error: Error) => (note = error.message)
 		);
-		const unlisten = sync.listen(device);
+		const unlisten = file instanceof OpenConfig ? undefined : sync.listen(device);
 		return () => {
 			disposed = true;
-			unlisten();
+			unlisten?.();
 			view?.destroy();
 		};
 	});
@@ -76,7 +77,7 @@
 
 	$effect(() => {
 		const current = view;
-		if (!current) return;
+		if (!current || file instanceof OpenConfig) return;
 		let stale = false;
 		baseline(file.projectId, file.path, git).then((content) => {
 			if (!stale) current.dispatch({ effects: setBaseline.of(content === null ? null : current.state.toText(content)) });
@@ -114,6 +115,13 @@
 		{/if}
 	</div>
 	<Conflict {sync} onshowdiff={(disk) => view && onshowdiff(disk, view.state.doc.toString())} />
+	{#if file instanceof OpenConfig && file.invalid}
+		{@const { line, message } = file.invalid}
+		<div class="invalid" role="alert">
+			<span class="message"><Warning /> Not applied; the last good config stays in force.</span>
+			<code>{line ? `Line ${line}: ` : ''}{message}</code>
+		</div>
+	{/if}
 	<div class="content" bind:this={container}>
 		{#if note}<p>{note}</p>{/if}
 	</div>
@@ -154,6 +162,33 @@
 		flex: none;
 		color: var(--status-waiting);
 		font-size: var(--font-size-sm);
+	}
+
+	.invalid {
+		display: flex;
+		flex: none;
+		flex-direction: column;
+		gap: var(--space-1);
+		padding: var(--space-2) var(--space-3);
+		border-bottom: var(--border-width) solid var(--border);
+		background: color-mix(in oklab, var(--status-waiting) 16%, var(--color-bg));
+	}
+
+	.message {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
+	}
+
+	.message :global(svg) {
+		flex: none;
+		color: var(--status-waiting);
+	}
+
+	code {
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		white-space: pre-wrap;
 	}
 
 	.content {

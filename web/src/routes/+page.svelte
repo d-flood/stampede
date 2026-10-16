@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import { connect, type Attention, type Project, type ServerMessage, type Terminal } from '#lib/device.ts';
-	import { invalidate, listing, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
+	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
 	import { labels } from '#lib/projects.ts';
@@ -41,6 +41,7 @@
 	let closingProject = $state<string>();
 	let picking = $state(false);
 	let palette = $state<Scope>();
+	let unfocused = $state(false);
 	let directories = $state<string[]>([]);
 	let settle: ((error?: string) => void) | undefined;
 
@@ -229,6 +230,12 @@
 		if (cursor) file.cursor = cursor;
 	}
 
+	function openConfig() {
+		palette = undefined;
+		if (focused) openTab(new OpenConfig(focused.id));
+		else unfocused = true;
+	}
+
 	function openDiff(projectId: string, { path, from }: Change, against: 'HEAD' | Commit = 'HEAD') {
 		openTab(new OpenDiff(projectId, path, against, from));
 	}
@@ -384,11 +391,18 @@
 			{projects}
 			labels={projectLabels}
 			{focused}
+			actions={[{ label: 'Open config', run: openConfig }]}
 			onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
 			onrig={(rig) => (launch(rig), (palette = undefined))}
 			onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
 		/>
 	{/if}
+</Dialog>
+
+<Dialog bind:open={unfocused} title="Open a Project first" description="The config opens as a Tab in the Focused Project.">
+	{#snippet actions()}
+		<Button variant="primary" onclick={() => (unfocused = false)}>OK</Button>
+	{/snippet}
 </Dialog>
 
 <Dialog bind:open={picking} title="Open Project">
