@@ -118,6 +118,7 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String]) -> Result<(), Box
 
     let mut conns: HashMap<u64, Sender<Vec<u8>>> = HashMap::new();
     let mut next_id = 0;
+    let mut buffer = Vec::new();
     for event in received {
         match event {
             Event::Line(line) => {
@@ -125,17 +126,20 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String]) -> Result<(), Box
                 for conn in conns.values() {
                     let _ = conn.send(frame.clone());
                 }
+                buffer.push(frame);
             }
             Event::Exited => break,
             Event::Connected(stream) => {
                 next_id += 1;
-                if let Ok(conn) = accept(next_id, stream, events.clone()) {
+                if let Ok(conn) = accept(next_id, stream, events.clone(), &buffer) {
                     conns.insert(next_id, conn);
                 }
             }
             Event::Received(Message::Input(line)) => {
+                buffer.push(protocol::encode(&Message::Input(line.clone())));
                 let _ = input.send(line);
             }
+            Event::Received(Message::Forget) => buffer.clear(),
             Event::Received(Message::Hangup) => {
                 let _ = killpg(group, Signal::SIGTERM);
             }
@@ -148,7 +152,7 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String]) -> Result<(), Box
     Ok(())
 }
 
-fn accept(id: u64, stream: UnixStream, events: Sender<Event>) -> io::Result<Sender<Vec<u8>>> {
+fn accept(id: u64, stream: UnixStream, events: Sender<Event>, buffer: &[Vec<u8>]) -> io::Result<Sender<Vec<u8>>> {
     let mut reader = stream.try_clone()?;
     let mut writer = stream;
     let (frames, pending) = mpsc::channel::<Vec<u8>>();
@@ -171,8 +175,12 @@ fn accept(id: u64, stream: UnixStream, events: Sender<Event>) -> io::Result<Send
     let hello = Hello {
         protocol: protocol::VERSION,
         holder_version: env!("CARGO_PKG_VERSION").into(),
+        buffered: buffer.len(),
     };
     let _ = frames.send(protocol::encode(&Message::Hello(hello)));
+    for frame in buffer {
+        let _ = frames.send(frame.clone());
+    }
     Ok(frames)
 }
 
@@ -205,7 +213,8 @@ pub async fn spawn<'a>(
     Ok(())
 }
 
-pub async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHalf)> {
+/// Connects to a Chat holder, returning how many buffered frames it replays before streaming live.
+pub async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHalf, usize)> {
     let socket = tokio::net::UnixStream::connect(socket_path(data_dir, id)).await?;
     let (reader, writer) = socket.into_split();
     let codec = LengthDelimitedCodec::builder().max_frame_length(crate::protocol::MAX_FRAME).new_codec();
@@ -215,7 +224,7 @@ pub async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWrit
         None => None,
     };
     match hello {
-        Some(Message::Hello(hello)) if hello.protocol <= protocol::VERSION => Ok((frames, writer)),
+        Some(Message::Hello(hello)) if hello.protocol <= protocol::VERSION => Ok((frames, writer, hello.buffered)),
         Some(Message::Hello(hello)) => Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!("chat holder {id} speaks protocol {}, newer than {}", hello.protocol, protocol::VERSION),

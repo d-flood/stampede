@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
 import sys
+import time
 from pathlib import Path
 
 FLAGS = {'--input-format': 'stream-json', '--output-format': 'stream-json'}
@@ -25,6 +27,31 @@ def kind(message):
     return message.get('type'), message.get('request', {}).get('subtype')
 
 
+def remap(message):
+    text = json.dumps(message, ensure_ascii=False)
+    for recorded, sent in uuids.items():
+        text = text.replace(recorded, sent)
+    return text
+
+
+def record(entry):
+    config = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')
+    project = config / 'projects' / re.sub(r'[^a-zA-Z0-9]', '-', os.getcwd())
+    project.mkdir(parents=True, exist_ok=True)
+    with open(project / f'{entry["sessionId"]}.jsonl', 'a') as session:
+        session.write(remap(entry) + '\n')
+
+
+def gate(name):
+    gates = os.environ.get('OIKONOMOS_FAKE_GATES')
+    if not gates:
+        return
+    path = Path(gates) / name
+    path.touch()
+    while path.exists():
+        time.sleep(0.02)
+
+
 args = sys.argv[1:]
 for flag, value in FLAGS.items():
     if flag not in args or args.index(flag) + 1 >= len(args) or args[args.index(flag) + 1] != value:
@@ -37,6 +64,7 @@ for name, value in ENV.items():
         fail(f'{name} is not {value}')
 
 request_ids = {}
+uuids = {}
 for line in fixture().read_text().splitlines():
     entry = json.loads(line)
     if 'stdin' in entry:
@@ -48,12 +76,18 @@ for line in fixture().read_text().splitlines():
             fail(f'expected {kind(entry["stdin"])} but read {kind(message)}')
         if 'request_id' in message:
             request_ids[entry['stdin']['request_id']] = message['request_id']
+        if 'uuid' in message and 'uuid' in entry['stdin']:
+            uuids[entry['stdin']['uuid']] = message['uuid']
+    elif 'session' in entry:
+        record(entry['session'])
+    elif 'gate' in entry:
+        gate(entry['gate'])
     else:
         message = entry['stdout']
         response = message.get('response', {})
         if message.get('type') == 'control_response' and response.get('request_id') in request_ids:
             response['request_id'] = request_ids[response['request_id']]
-        print(json.dumps(message, ensure_ascii=False), flush=True)
+        print(remap(message), flush=True)
 
 for _ in sys.stdin:
     pass

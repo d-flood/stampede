@@ -121,6 +121,8 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let hook_url = format!("http://{}/api/hook", listener.local_addr()?);
     let attention = Arc::new(Feed::default());
     let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention)));
+    let rigs = config.borrow().rigs.clone();
+    chats.restore(&rigs).await?;
     let terminals = Arc::new(Terminals::new(args.data_dir, hook_url, Arc::clone(&attention)));
     terminals.restore().await?;
     terminals.scrollback(config.borrow().scrollback);

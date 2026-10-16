@@ -1,15 +1,21 @@
-use std::{collections::{BTreeMap, HashMap}, io, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::{
     io::AsyncWriteExt,
+    net::unix::OwnedWriteHalf,
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
 };
 use uuid::Uuid;
 
 use super::{
-    Driver, Event, Item, holder,
+    Chat, Driver, Event, Item,
+    holder::{self, Frames},
     protocol::{self, Message},
 };
 use crate::hooks::Status;
@@ -53,28 +59,84 @@ pub async fn start(
 ) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
     let env = env.iter().map(|(name, value)| (name.as_str(), value.as_str())).chain(SDK_ENV);
     holder::spawn(data_dir, id, cwd, env, ["claude"].iter().chain(&ARGS)).await?;
-    let (mut frames, mut writer) = holder::connect(data_dir, id).await?;
+    let (frames, mut writer, _) = holder::connect(data_dir, id).await?;
     let initialize = json!({
         "type": "control_request",
         "request_id": Uuid::new_v4().to_string(),
         "request": { "subtype": "initialize" },
     });
     writer.write_all(&input(&initialize)).await?;
-    let (commands, mut pending) = mpsc::unbounded_channel();
     let (events, received) = mpsc::unbounded_channel();
+    Ok((drive(frames, writer, Transcript::new(events)), received))
+}
+
+/// Rebuilds the transcript from the session file up to the holder's latest turn, then from the turn the holder replays.
+pub async fn reattach(
+    data_dir: &Path,
+    chat: &Chat,
+    env: &BTreeMap<String, String>,
+) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
+    let (mut frames, writer, buffered) = holder::connect(data_dir, &chat.id).await?;
+    let mut replay = Vec::with_capacity(buffered);
+    for _ in 0..buffered {
+        let frame = frames.next().await.ok_or(io::ErrorKind::UnexpectedEof)??;
+        replay.extend(protocol::decode(&frame)?);
+    }
+    let turn = replay.iter().find_map(|message| match message {
+        Message::Input(line) => user(line)?["uuid"].as_str().map(str::to_owned),
+        _ => None,
+    });
+    let (events, received) = mpsc::unbounded_channel();
+    let mut transcript = Transcript::new(events);
+    transcript.replaying = true;
+    if let Some(session) = &chat.agent_session
+        && let Some(contents) = session_file(env, session).and_then(|path| fs::read_to_string(path).ok())
+    {
+        for entry in contents.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
+            if turn.is_some() && entry["uuid"].as_str() == turn.as_deref() {
+                break;
+            }
+            transcript.recorded(&entry);
+        }
+    }
+    for message in replay {
+        match message {
+            Message::Line(line) => {
+                if let Ok(message) = serde_json::from_slice(&line) {
+                    transcript.read(&message);
+                }
+            }
+            Message::Input(line) => {
+                if let Some(message) = user(&line) {
+                    transcript.sent(&message);
+                }
+            }
+            _ => {}
+        }
+    }
+    transcript.replaying = false;
+    let _ = transcript.events.send(Event::Status(transcript.status));
+    Ok((drive(frames, writer, transcript), received))
+}
+
+fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcript) -> Claude {
+    let (commands, mut pending) = mpsc::unbounded_channel();
     tokio::spawn(async move {
-        let mut transcript = Transcript { events, len: 0, streaming: HashMap::new() };
         loop {
             tokio::select! {
                 command = pending.recv() => match command {
                     Some(Command::Send(text)) => {
-                        transcript.push(Item::User { text: text.clone(), images: 0 });
-                        let _ = transcript.events.send(Event::Status(Status::Working));
                         let message = json!({
                             "type": "user",
                             "message": { "role": "user", "content": text },
                             "parent_tool_use_id": null,
+                            "uuid": Uuid::new_v4().to_string(),
                         });
+                        let idle = transcript.status == Status::Done;
+                        transcript.sent(&message);
+                        if idle && writer.write_all(&protocol::encode(&Message::Forget)).await.is_err() {
+                            break;
+                        }
                         if writer.write_all(&input(&message)).await.is_err() {
                             break;
                         }
@@ -95,7 +157,22 @@ pub async fn start(
             }
         }
     });
-    Ok((Claude { commands }, received))
+    Claude { commands }
+}
+
+fn user(line: &[u8]) -> Option<Value> {
+    serde_json::from_slice::<Value>(line).ok().filter(|message| message["type"] == "user")
+}
+
+fn session_file(env: &BTreeMap<String, String>, session: &str) -> Option<PathBuf> {
+    let config = match env.get("CLAUDE_CONFIG_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => std::env::var_os("CLAUDE_CONFIG_DIR")
+            .map(PathBuf::from)
+            .or_else(|| std::env::home_dir().map(|home| home.join(".claude")))?,
+    };
+    let name = format!("{session}.jsonl");
+    fs::read_dir(config.join("projects")).ok()?.flatten().map(|project| project.path().join(&name)).find(|path| path.is_file())
 }
 
 fn input(message: &Value) -> Vec<u8> {
@@ -106,14 +183,56 @@ struct Transcript {
     events: UnboundedSender<Event>,
     len: usize,
     streaming: HashMap<u64, (usize, String)>,
+    status: Status,
+    replaying: bool,
 }
 
 impl Transcript {
+    fn new(events: UnboundedSender<Event>) -> Self {
+        Self { events, len: 0, streaming: HashMap::new(), status: Status::Done, replaying: false }
+    }
+
     fn push(&mut self, item: Item) -> usize {
         let index = self.len;
         self.len += 1;
         let _ = self.events.send(Event::Item(index, item));
         index
+    }
+
+    fn report(&mut self, status: Status) {
+        self.status = status;
+        if !self.replaying {
+            let _ = self.events.send(Event::Status(status));
+        }
+    }
+
+    fn sent(&mut self, message: &Value) {
+        if let Some(text) = message["message"]["content"].as_str() {
+            self.push(Item::User { text: text.to_owned(), images: 0 });
+            self.report(Status::Working);
+        }
+    }
+
+    fn recorded(&mut self, entry: &Value) {
+        if entry["isSidechain"] == true || entry["isMeta"] == true {
+            return;
+        }
+        match entry["type"].as_str() {
+            Some("user") => {
+                if let Some(text) = entry["message"]["content"].as_str() {
+                    self.push(Item::User { text: text.to_owned(), images: 0 });
+                }
+            }
+            Some("assistant") => {
+                for block in entry["message"]["content"].as_array().into_iter().flatten() {
+                    if block["type"] == "text" {
+                        let text = block["text"].as_str().unwrap_or_default().to_owned();
+                        self.push(Item::Text { text, streaming: false });
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn read(&mut self, message: &Value) {
@@ -124,9 +243,7 @@ impl Transcript {
                 }
             }
             Some("stream_event") if message["parent_tool_use_id"].is_null() => self.stream(&message["event"]),
-            Some("result") => {
-                let _ = self.events.send(Event::Status(Status::Done));
-            }
+            Some("result") => self.report(Status::Done),
             _ => {}
         }
     }

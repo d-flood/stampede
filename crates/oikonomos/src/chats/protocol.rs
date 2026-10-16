@@ -4,17 +4,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::MAX_FRAME;
 
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 
 const HELLO: u8 = 1;
 const LINE: u8 = 2;
 const INPUT: u8 = 3;
 const HANGUP: u8 = 4;
+const FORGET: u8 = 5;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Hello {
     pub protocol: u16,
     pub holder_version: String,
+    /// How many buffered `Line` and `Input` frames follow this one.
+    #[serde(default)]
+    pub buffered: usize,
 }
 
 #[derive(Debug)]
@@ -23,6 +27,7 @@ pub enum Message {
     Line(Vec<u8>),
     Input(Vec<u8>),
     Hangup,
+    Forget,
 }
 
 pub fn encode(message: &Message) -> Vec<u8> {
@@ -31,6 +36,7 @@ pub fn encode(message: &Message) -> Vec<u8> {
         Message::Line(bytes) => (LINE, bytes.clone()),
         Message::Input(bytes) => (INPUT, bytes.clone()),
         Message::Hangup => (HANGUP, Vec::new()),
+        Message::Forget => (FORGET, Vec::new()),
     };
     let mut frame = Vec::with_capacity(5 + payload.len());
     frame.extend_from_slice(&(payload.len() as u32 + 1).to_be_bytes());
@@ -49,6 +55,7 @@ pub fn decode(frame: &[u8]) -> io::Result<Option<Message>> {
         LINE => Message::Line(payload.to_vec()),
         INPUT => Message::Input(payload.to_vec()),
         HANGUP => Message::Hangup,
+        FORGET => Message::Forget,
         _ => return Ok(None),
     }))
 }

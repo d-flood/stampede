@@ -130,11 +130,49 @@ impl Chats {
         let (driver, events) = started.inspect_err(|_| {
             let _ = fs::remove_file(record_path(&self.data_dir, &chat.id));
         })?;
-        let entry = Arc::new(Entry { chat: Mutex::new(chat.clone()), transcript: Mutex::default(), driver });
-        self.chats.lock().unwrap().push(Arc::clone(&entry));
+        self.adopt(chat.clone(), driver, events);
         let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
-        tokio::spawn(Arc::clone(self).follow(entry, events));
         Ok(chat)
+    }
+
+    pub async fn restore(self: &Arc<Self>, rigs: &[Rig]) -> io::Result<()> {
+        let entries = match fs::read_dir(self.data_dir.join("chats")) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            entries => entries?,
+        };
+        let mut chats = Vec::new();
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension() != Some("json".as_ref()) {
+                continue;
+            }
+            match read_record(&path) {
+                Ok(chat) => chats.push(chat),
+                Err(error) => eprintln!("cannot read {}: {error}", path.display()),
+            }
+        }
+        chats.sort_by_key(|chat| chat.created);
+        for chat in chats {
+            let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
+            let reattached = match chat.agent {
+                Agent::ClaudeCode => claude::reattach(&self.data_dir, &chat, &env)
+                    .await
+                    .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+                Agent::Codex => Err(io::Error::new(io::ErrorKind::Unsupported, "Codex Chats cannot be restored yet")),
+            };
+            match reattached {
+                Ok((driver, events)) => self.adopt(chat, driver, events),
+                Err(error) => eprintln!("cannot restore chat {}: {error}", chat.id),
+            }
+        }
+        self.refresh_attention();
+        Ok(())
+    }
+
+    fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>) {
+        let entry = Arc::new(Entry { chat: Mutex::new(chat), transcript: Mutex::default(), driver });
+        self.chats.lock().unwrap().push(Arc::clone(&entry));
+        tokio::spawn(Arc::clone(self).follow(entry, events));
     }
 
     async fn follow(self: Arc<Self>, entry: Arc<Entry>, mut events: UnboundedReceiver<Event>) {
@@ -273,6 +311,10 @@ impl Chat {
 
 fn record_path(data_dir: &Path, id: &str) -> PathBuf {
     data_dir.join("chats").join(format!("{id}.json"))
+}
+
+fn read_record(path: &Path) -> io::Result<Chat> {
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 
 fn write_record(data_dir: &Path, chat: &Chat) -> io::Result<()> {
