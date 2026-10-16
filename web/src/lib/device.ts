@@ -11,6 +11,7 @@ export type Terminal = {
 	agent?: Agent;
 	status?: Status;
 	agentSession?: string;
+	label: string;
 };
 
 export type ServerMessage =
@@ -18,6 +19,7 @@ export type ServerMessage =
 	| { type: 'terminal.created'; terminal: Terminal }
 	| { type: 'terminals.changed'; projectId?: string; drawer?: true; terminals: Terminal[] }
 	| { type: 'terminal.status'; terminalId: string; status: Status }
+	| { type: 'terminal.title'; terminalId: string; label: string }
 	| { type: 'terminal.attached'; terminalId: string; channel: number; cols: number; rows: number }
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
 	| { type: 'config.changed' }

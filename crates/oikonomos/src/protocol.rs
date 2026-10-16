@@ -1,10 +1,13 @@
-use std::io::{self, Read};
+use std::{
+    io::{self, Read},
+    path::PathBuf,
+};
 
 use serde::{Deserialize, Serialize};
 
 use crate::hooks::Status;
 
-pub const VERSION: u16 = 4;
+pub const VERSION: u16 = 5;
 pub const MAX_FRAME: usize = 256 << 20;
 
 const HELLO: u8 = 1;
@@ -16,6 +19,7 @@ const RESIZE: u8 = 6;
 const HANGUP: u8 = 7;
 const FOREGROUND_CHANGED: u8 = 8;
 const AGENT: u8 = 9;
+const TITLE_CHANGED: u8 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Size {
@@ -40,6 +44,12 @@ pub struct AgentState {
     pub session: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Title {
+    pub title: Option<String>,
+    pub cwd: PathBuf,
+}
+
 #[derive(Debug)]
 pub enum Message {
     Hello(Hello),
@@ -51,6 +61,7 @@ pub enum Message {
     Hangup,
     ForegroundChanged(Foreground),
     Agent(AgentState),
+    TitleChanged(Title),
 }
 
 pub fn encode(message: &Message) -> Vec<u8> {
@@ -66,6 +77,7 @@ pub fn encode(message: &Message) -> Vec<u8> {
             (FOREGROUND_CHANGED, serde_json::to_vec(foreground).unwrap())
         }
         Message::Agent(state) => (AGENT, serde_json::to_vec(state).unwrap()),
+        Message::TitleChanged(title) => (TITLE_CHANGED, serde_json::to_vec(title).unwrap()),
     };
     let mut frame = Vec::with_capacity(5 + payload.len());
     frame.extend_from_slice(&(payload.len() as u32 + 1).to_be_bytes());
@@ -90,6 +102,7 @@ pub fn decode(frame: &[u8]) -> io::Result<Option<Message>> {
         HANGUP => Message::Hangup,
         FOREGROUND_CHANGED => Message::ForegroundChanged(serde_json::from_slice(payload)?),
         AGENT => Message::Agent(serde_json::from_slice(payload)?),
+        TITLE_CHANGED => Message::TitleChanged(serde_json::from_slice(payload)?),
         _ => return Ok(None),
     }))
 }

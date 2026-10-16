@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     collections::HashMap,
     error::Error,
     fs,
@@ -28,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::Agent,
     hooks::Status,
-    protocol::{self, AgentState, Foreground, Hello, Message, Size},
+    protocol::{self, AgentState, Foreground, Hello, Message, Size, Title},
 };
 
 const SCROLLBACK_LINES: usize = 10_000;
@@ -209,6 +210,7 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
         }
     });
 
+    let titled = Cell::new(false);
     let mut terminal = Terminal::new(record.size.cols, record.size.rows)?;
     terminal
         .set_scrollback_max_lines(Some(SCROLLBACK_LINES))?
@@ -218,7 +220,8 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
             move |_, data| {
                 let _ = input.send(data.to_vec());
             }
-        })?;
+        })?
+        .on_title_changed(|_| titled.set(true))?;
 
     let launching = [
         record.command.iter().flat_map(|arg| arg.bytes().chain([0])).collect(),
@@ -226,12 +229,25 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
         Vec::new(),
     ];
     let mut is_root_shell = record.rig.is_none();
+    let mut titles = Titles {
+        root: pid.map(|pid| pid as i32),
+        foreground: None,
+        setter: None,
+        current: Title {
+            title: None,
+            cwd: record.cwd.clone(),
+        },
+    };
+    let mut reported = titles.current.clone();
     let mut conns: HashMap<u64, Conn> = HashMap::new();
     let mut next_id = 0;
     for event in received {
         match event {
             Event::Output(bytes) => {
                 terminal.vt_write(&bytes);
+                if titled.replace(false) {
+                    titles.set(terminal.title().unwrap_or_default(), pty.master.process_group_leader());
+                }
                 let frame = protocol::encode(&Message::Output(bytes));
                 for conn in conns.values().filter(|conn| conn.attached) {
                     let _ = conn.frames.send(frame.clone());
@@ -243,6 +259,7 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
                 if let Ok(conn) = connect(next_id, stream, events.clone()) {
                     let foreground = Message::ForegroundChanged(Foreground { is_root_shell });
                     let _ = conn.frames.send(protocol::encode(&foreground));
+                    let _ = conn.frames.send(protocol::encode(&Message::TitleChanged(reported.clone())));
                     conns.insert(next_id, conn);
                 }
             }
@@ -286,6 +303,7 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
             }
             Event::Tick => {
                 let Some(leader) = pty.master.process_group_leader() else { continue };
+                titles.foreground(leader);
                 let root = pid.is_some_and(|pid| pid as i32 == leader);
                 // The Agent has exited only once the launch shell execs the interactive one; until
                 // then its argv is the launch command, this holder's (pre-exec), or empty (mid-exec).
@@ -310,8 +328,48 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
                 }
             }
         }
+        if titles.current != reported {
+            reported = titles.current.clone();
+            let frame = protocol::encode(&Message::TitleChanged(reported.clone()));
+            for conn in conns.values() {
+                let _ = conn.frames.send(frame.clone());
+            }
+        }
     }
     Ok(())
+}
+
+/// A title holds while the process group that set it keeps the foreground. One the root shell set
+/// itself also holds through the job it starts next, as a zsh preexec title does, until the root
+/// shell takes the foreground back.
+struct Titles {
+    root: Option<i32>,
+    foreground: Option<i32>,
+    setter: Option<i32>,
+    current: Title,
+}
+
+impl Titles {
+    fn foreground(&mut self, leader: i32) {
+        if self.foreground == Some(leader) {
+            return;
+        }
+        self.foreground = Some(leader);
+        if self.setter != self.root || self.root == Some(leader) {
+            self.current.title = None;
+        }
+        if let Some(cwd) = self.root.and_then(|root| fs::read_link(format!("/proc/{root}/cwd")).ok()) {
+            self.current.cwd = cwd;
+        }
+    }
+
+    fn set(&mut self, title: &str, leader: Option<i32>) {
+        if let Some(leader) = leader {
+            self.foreground(leader);
+        }
+        self.setter = self.foreground;
+        self.current.title = (!title.is_empty()).then(|| title.to_owned());
+    }
 }
 
 fn pty_size(size: Size) -> PtySize {

@@ -114,6 +114,7 @@ impl Drop for Server {
 pub struct View {
     socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
     pub terminal_id: String,
+    pub label: String,
     channel: u32,
     pub terminal: Terminal<'static, 'static>,
 }
@@ -123,11 +124,11 @@ impl View {
         let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await.unwrap();
         control(&mut socket, json!({ "type": "hello", "deviceId": device_id })).await;
         let hello = next_control(&mut socket, "hello").await;
-        let terminal_id = match terminal_id {
+        let listed = match terminal_id {
             Some(id) => {
                 let terminals = hello["terminals"].as_array().unwrap();
-                assert!(terminals.iter().any(|terminal| terminal["id"] == id), "{id} is not listed");
-                id.to_owned()
+                let listed = terminals.iter().find(|terminal| terminal["id"] == id);
+                listed.unwrap_or_else(|| panic!("{id} is not listed")).clone()
             }
             None => {
                 control(&mut socket, json!({ "type": "project.open", "path": "~" })).await;
@@ -135,10 +136,11 @@ impl View {
                 let create = json!({ "type": "terminal.create", "projectId": opened["projectId"] });
                 control(&mut socket, create).await;
                 let created = next_control(&mut socket, "terminal.created").await;
-                created["terminal"]["id"].as_str().unwrap().to_owned()
+                created["terminal"].clone()
             }
         };
-        control(&mut socket, json!({ "type": "terminal.attach", "terminalId": terminal_id })).await;
+        let attach = json!({ "type": "terminal.attach", "terminalId": listed["id"] });
+        control(&mut socket, attach).await;
         let attached = next_control(&mut socket, "terminal.attached").await;
         let mut terminal = Terminal::new(
             attached["cols"].as_u64().unwrap() as u16,
@@ -149,6 +151,7 @@ impl View {
         Self {
             socket,
             terminal_id: attached["terminalId"].as_str().unwrap().to_owned(),
+            label: listed["label"].as_str().unwrap().to_owned(),
             channel: attached["channel"].as_u64().unwrap() as u32,
             terminal,
         }
@@ -166,9 +169,13 @@ impl View {
     }
 
     pub async fn settle(&mut self, until: impl Fn(&str) -> bool) {
+        self.wait(|view| until(&view.text())).await;
+    }
+
+    pub async fn wait(&mut self, until: impl Fn(&Self) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
-            assert!(Instant::now() < deadline, "timed out with screen:\n{}", self.text());
+            assert!(Instant::now() < deadline, "timed out with label {:?} and screen:\n{}", self.label, self.text());
             match timeout(Duration::from_millis(500), self.socket.next()).await {
                 Ok(Some(Ok(Message::Binary(frame)))) => {
                     if frame[0] == 1 && frame[1..5] == self.channel.to_be_bytes() {
@@ -181,11 +188,13 @@ impl View {
                         let cols = message["cols"].as_u64().unwrap() as u16;
                         let rows = message["rows"].as_u64().unwrap() as u16;
                         self.terminal.resize(cols, rows, 0, 0).unwrap();
+                    } else if message["type"] == "terminal.title" && message["terminalId"] == *self.terminal_id {
+                        self.label = message["label"].as_str().unwrap().to_owned();
                     }
                 }
                 Ok(Some(Ok(_))) => {}
                 Ok(other) => panic!("the socket ended: {other:?}"),
-                Err(_) if until(&self.text()) => return,
+                Err(_) if until(self) => return,
                 Err(_) => {}
             }
         }

@@ -83,6 +83,7 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config }
     });
     let mut list = projects.subscribe();
     let mut changes = terminals.subscribe();
+    let mut titles = terminals.subscribe_titles();
     let mut device = Device {
         id: uuid::Uuid::new_v4().to_string(),
         terminals,
@@ -125,6 +126,15 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config }
                         device.terminals_changed(&Owner::Project(project.id.clone()));
                     }
                     device.terminals_changed(&Owner::Drawer);
+                }
+                Err(RecvError::Closed) => break,
+            },
+            title = titles.recv() => match title {
+                Ok((terminal_id, label)) => device.retitle(&terminal_id, &label),
+                Err(RecvError::Lagged(_)) => {
+                    for terminal in device.terminals.list() {
+                        device.retitle(&terminal.id, &terminal.label);
+                    }
                 }
                 Err(RecvError::Closed) => break,
             },
@@ -269,6 +279,10 @@ impl Device {
             }),
         };
         send(&self.outgoing, changed);
+    }
+
+    fn retitle(&self, terminal_id: &str, label: &str) {
+        send(&self.outgoing, json!({ "type": "terminal.title", "terminalId": terminal_id, "label": label }));
     }
 
     fn binary(&self, bytes: &[u8]) {

@@ -25,7 +25,7 @@ use crate::{
     holder::{self, Owner, Record},
     hooks::{self, Status, Transition},
     projects::Project,
-    protocol::{self, AgentState, Foreground, Message, Size},
+    protocol::{self, AgentState, Foreground, Message, Size, Title},
 };
 
 type Frames = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
@@ -35,6 +35,7 @@ pub struct Terminals {
     hook_url: String,
     terminals: Mutex<Vec<(String, Arc<Entry>)>>,
     changed: broadcast::Sender<Change>,
+    titles: broadcast::Sender<(String, String)>,
 }
 
 #[derive(Clone)]
@@ -56,10 +57,13 @@ pub struct Terminal {
     pub status: Option<Status>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<String>,
+    pub label: String,
 }
 
 struct Entry {
     terminal: Mutex<Terminal>,
+    shell: String,
+    title: Mutex<Title>,
     control: mpsc::UnboundedSender<Message>,
     size: watch::Sender<Size>,
     lead: Mutex<Lead>,
@@ -101,6 +105,7 @@ impl Terminals {
             hook_url,
             terminals: Mutex::default(),
             changed: broadcast::Sender::new(64),
+            titles: broadcast::Sender::new(64),
         }
     }
 
@@ -142,6 +147,10 @@ impl Terminals {
 
     pub fn subscribe(&self) -> broadcast::Receiver<Change> {
         self.changed.subscribe()
+    }
+
+    pub fn subscribe_titles(&self) -> broadcast::Receiver<(String, String)> {
+        self.titles.subscribe()
     }
 
     pub fn list(&self) -> Vec<Terminal> {
@@ -195,16 +204,25 @@ impl Terminals {
     async fn open(self: &Arc<Self>, record: Record) -> io::Result<Terminal> {
         let (mut frames, mut writer) = connect(&self.data_dir, &record.id).await?;
         let (control, mut pending) = mpsc::unbounded_channel();
+        let shell = Path::new(&record.command[0]).file_name().unwrap_or_default();
+        let shell = shell.to_string_lossy().into_owned();
+        let title = Title {
+            title: None,
+            cwd: record.cwd,
+        };
         let terminal = Terminal {
             id: record.id,
             owner: record.owner,
             status: record.rig.as_ref().map(|_| record.status.unwrap_or(Status::Done)),
             agent_session: record.agent_session,
+            label: label(record.rig.as_deref(), &shell, &title),
             rig: record.rig,
             agent: record.agent,
         };
         let entry = Arc::new(Entry {
             terminal: Mutex::new(terminal.clone()),
+            shell,
+            title: Mutex::new(title),
             control,
             size: watch::Sender::new(record.size),
             lead: Mutex::default(),
@@ -223,11 +241,18 @@ impl Terminals {
                     }
                     frame = frames.next() => {
                         let Some(Ok(frame)) = frame else { break };
-                        if let Ok(Some(Message::ForegroundChanged(Foreground { is_root_shell: true }))) =
-                            protocol::decode(&frame)
-                            && entry.agent_exited()
-                        {
-                            let _ = terminals.changed.send(Change::Terminals(owner.clone()));
+                        match protocol::decode(&frame) {
+                            Ok(Some(Message::ForegroundChanged(Foreground { is_root_shell: true })))
+                                if entry.agent_exited() =>
+                            {
+                                let _ = terminals.changed.send(Change::Terminals(owner.clone()));
+                            }
+                            Ok(Some(Message::TitleChanged(title))) => {
+                                if let Some(label) = entry.retitle(title) {
+                                    let _ = terminals.titles.send((id.clone(), label));
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -276,7 +301,7 @@ impl Terminals {
                 }
             }
             Some(Transition::Exit) => {
-                terminal.end_agent();
+                terminal.end_agent(&entry.shell, &entry.title.lock().unwrap());
                 let _ = self.changed.send(Change::Terminals(terminal.owner.clone()));
             }
             None => {}
@@ -320,11 +345,12 @@ impl Terminals {
 }
 
 impl Terminal {
-    fn end_agent(&mut self) {
+    fn end_agent(&mut self, shell: &str, title: &Title) {
         self.rig = None;
         self.agent = None;
         self.status = None;
         self.agent_session = None;
+        self.label = label(None, shell, title);
     }
 }
 
@@ -333,8 +359,19 @@ impl Entry {
     fn agent_exited(&self) -> bool {
         let mut terminal = self.terminal.lock().unwrap();
         let was = terminal.rig.is_some();
-        terminal.end_agent();
+        terminal.end_agent(&self.shell, &self.title.lock().unwrap());
         was
+    }
+
+    fn retitle(&self, title: Title) -> Option<String> {
+        let mut terminal = self.terminal.lock().unwrap();
+        let mut current = self.title.lock().unwrap();
+        *current = title;
+        let label = label(terminal.rig.as_deref(), &self.shell, &current);
+        (label != terminal.label).then(|| {
+            terminal.label.clone_from(&label);
+            label
+        })
     }
 
     fn apply(&self, size: Size) {
@@ -342,6 +379,19 @@ impl Entry {
             let _ = self.control.send(Message::Resize(size));
             self.size.send_replace(size);
         }
+    }
+}
+
+fn label(rig: Option<&str>, shell: &str, title: &Title) -> String {
+    match (rig, &title.title) {
+        (Some(rig), Some(title)) => format!("{rig} · {title}"),
+        (Some(rig), None) => rig.to_owned(),
+        (None, Some(title)) => title.clone(),
+        (None, None) => match title.cwd.strip_prefix(crate::home()) {
+            Ok(rest) if rest.as_os_str().is_empty() => format!("{shell} — ~"),
+            Ok(rest) => format!("{shell} — ~/{}", rest.display()),
+            Err(_) => format!("{shell} — {}", title.cwd.display()),
+        },
     }
 }
 

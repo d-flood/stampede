@@ -71,6 +71,11 @@
 			case 'terminal.created':
 				if (message.terminal.owner !== 'drawer') chosenTabs[message.terminal.owner.project] = message.terminal.id;
 				break;
+			case 'terminal.title':
+				for (const terminal of Object.values(terminals).flat()) {
+					if (terminal.id === message.terminalId) terminal.label = message.label;
+				}
+				break;
 			case 'projects.changed':
 				projects = message.projects;
 				for (const projectId in files) {
@@ -193,7 +198,7 @@
 									variant={tab.agent ? 'agent' : 'terminal'}
 									agent={tab.agent}
 									status={tab.status}
-									label={tab.rig ?? 'Terminal'}
+									label={tab.label}
 									active={tab.id === activeTab}
 									onclick={() => (chosenTabs[projectId] = tab.id)}
 								/>

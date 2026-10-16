@@ -31,6 +31,11 @@
 			case 'terminal.created':
 				if (message.terminal.owner === 'drawer') chosen = message.terminal.id;
 				break;
+			case 'terminal.title':
+				for (const terminal of terminals) {
+					if (terminal.id === message.terminalId) terminal.label = message.label;
+				}
+				break;
 		}
 	}
 
@@ -75,7 +80,7 @@
 						<Tab
 							{...props}
 							variant="terminal"
-							label="Terminal"
+							label={tab.label}
 							active={tab.id === active?.id}
 							onclick={() => (chosen = tab.id)}
 						/>
