@@ -28,6 +28,7 @@
 	let sidebar = $state(form() === 'desktop');
 	let section = $state<Section>('files');
 	let closing = $state<OpenFile>();
+	let closingProject = $state<string>();
 	let picking = $state(false);
 	let directories = $state<string[]>([]);
 	let settle: ((error?: string) => void) | undefined;
@@ -60,6 +61,12 @@
 			}
 			case 'terminals.changed':
 				if (message.projectId) terminals[message.projectId] = message.terminals;
+				break;
+			case 'terminal.status':
+				for (const owned of Object.values(terminals)) {
+					const terminal = owned.find((terminal) => terminal.id === message.terminalId);
+					if (terminal) terminal.status = message.status;
+				}
 				break;
 			case 'terminal.created':
 				if (message.terminal.owner !== 'drawer') chosenTabs[message.terminal.owner.project] = message.terminal.id;
@@ -99,6 +106,15 @@
 	function reorder(order: string[]) {
 		projects = order.flatMap((id) => projects.filter((project) => project.id === id));
 		device.send({ type: 'project.reorder', order });
+	}
+
+	function closeProject(projectId: string, confirmed = false) {
+		if (!confirmed && terminals[projectId]?.some((terminal) => terminal.status === 'working')) {
+			closingProject = projectId;
+			return;
+		}
+		closingProject = undefined;
+		device.send({ type: 'project.close', projectId });
 	}
 
 	function newTab(projectId: string) {
@@ -149,7 +165,7 @@
 		focused={focused?.id}
 		onfocus={(id) => (chosen = id)}
 		onreorder={reorder}
-		onclose={(projectId) => device.send({ type: 'project.close', projectId })}
+		onclose={(projectId) => closeProject(projectId)}
 		onpick={pick}
 	/>
 
@@ -176,6 +192,7 @@
 									{...props}
 									variant={tab.agent ? 'agent' : 'terminal'}
 									agent={tab.agent}
+									status={tab.status}
 									label={tab.rig ?? 'Terminal'}
 									active={tab.id === activeTab}
 									onclick={() => (chosenTabs[projectId] = tab.id)}
@@ -243,6 +260,17 @@
 	{#snippet actions()}
 		<Button onclick={() => (closing = undefined)}>Cancel</Button>
 		<Button variant="primary" onclick={() => closing && closeFile(closing, true)}>Discard</Button>
+	{/snippet}
+</Dialog>
+
+<Dialog
+	bind:open={() => !!closingProject, (open) => !open && (closingProject = undefined)}
+	title="Close {closingProject && projectLabels.get(closingProject)}?"
+	description="An Agent is working in this Project. Closing it ends its Terminals."
+>
+	{#snippet actions()}
+		<Button onclick={() => (closingProject = undefined)}>Cancel</Button>
+		<Button variant="primary" onclick={() => closingProject && closeProject(closingProject, true)}>Close</Button>
 	{/snippet}
 </Dialog>
 

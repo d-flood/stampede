@@ -62,9 +62,14 @@ pub struct Server {
 
 impl Server {
     pub async fn start(prefix: &str) -> Self {
+        Self::with_config(prefix, "").await
+    }
+
+    pub async fn with_config(prefix: &str, config: &str) -> Self {
         let parent = env::var_os("OIKONOMOS_E2E_ROOT").map_or_else(env::temp_dir, PathBuf::from);
         let root = tempfile::Builder::new().prefix(prefix).tempdir_in(parent).unwrap();
         fs::create_dir(root.path().join("home")).unwrap();
+        fs::write(root.path().join("config.toml"), config).unwrap();
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let child = spawn(root.path(), port).await;
         Self { port, root, child }
@@ -187,11 +192,11 @@ impl View {
     }
 }
 
-async fn control(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, message: Value) {
+pub async fn control(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, message: Value) {
     socket.send(Message::Text(message.to_string().into())).await.unwrap();
 }
 
-async fn next_control(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, kind: &str) -> Value {
+pub async fn next_control(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, kind: &str) -> Value {
     loop {
         if let Message::Text(text) = socket.next().await.unwrap().unwrap() {
             let message: Value = serde_json::from_str(&text).unwrap();

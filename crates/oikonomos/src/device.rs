@@ -21,7 +21,7 @@ use crate::{
     holder::Owner,
     projects::{self, Projects},
     protocol::Size,
-    terminals::{Attachment, Terminals},
+    terminals::{Attachment, Change, Terminals},
 };
 
 const OUTPUT: u8 = 1;
@@ -115,7 +115,11 @@ async fn connect(socket: WebSocket, AppState { terminals, projects, mut config }
                 send(&device.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
             }
             changed = changes.recv() => match changed {
-                Ok(owner) => device.terminals_changed(&owner),
+                Ok(Change::Terminals(owner)) => device.terminals_changed(&owner),
+                Ok(Change::Status(terminal_id, status)) => {
+                    let status = json!({ "type": "terminal.status", "terminalId": terminal_id, "status": status });
+                    send(&device.outgoing, status);
+                }
                 Err(RecvError::Lagged(_)) => {
                     for project in device.projects.list().iter() {
                         device.terminals_changed(&Owner::Project(project.id.clone()));

@@ -2,12 +2,22 @@ import { loadConfig, type Agent } from '#lib/config.svelte.ts';
 
 export type Project = { id: string; path: string };
 
-export type Terminal = { id: string; owner: { project: string } | 'drawer'; rig?: string; agent?: Agent };
+export type Status = 'working' | 'waiting' | 'done';
+
+export type Terminal = {
+	id: string;
+	owner: { project: string } | 'drawer';
+	rig?: string;
+	agent?: Agent;
+	status?: Status;
+	agentSession?: string;
+};
 
 export type ServerMessage =
 	| { type: 'hello'; version: string; terminals: Terminal[] }
 	| { type: 'terminal.created'; terminal: Terminal }
 	| { type: 'terminals.changed'; projectId?: string; drawer?: true; terminals: Terminal[] }
+	| { type: 'terminal.status'; terminalId: string; status: Status }
 	| { type: 'terminal.attached'; terminalId: string; channel: number; cols: number; rows: number }
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
 	| { type: 'config.changed' }

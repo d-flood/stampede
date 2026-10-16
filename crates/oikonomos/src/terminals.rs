@@ -8,6 +8,7 @@ use std::{
 
 use futures_util::StreamExt;
 use serde::Serialize;
+use serde_json::Value;
 use tokio::{
     io::AsyncWriteExt,
     net::{
@@ -22,19 +23,28 @@ use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
 use crate::{
     config::{Agent, Rig},
     holder::{self, Owner, Record},
+    hooks::{self, Status, Transition},
     projects::Project,
-    protocol::{self, Foreground, Message, Size},
+    protocol::{self, AgentState, Foreground, Message, Size},
 };
 
 type Frames = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 
 pub struct Terminals {
     data_dir: PathBuf,
+    hook_url: String,
     terminals: Mutex<Vec<(String, Arc<Entry>)>>,
-    changed: broadcast::Sender<Owner>,
+    changed: broadcast::Sender<Change>,
+}
+
+#[derive(Clone)]
+pub enum Change {
+    Terminals(Owner),
+    Status(String, Status),
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Terminal {
     pub id: String,
     pub owner: Owner,
@@ -42,6 +52,10 @@ pub struct Terminal {
     pub rig: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<Agent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<Status>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<String>,
 }
 
 struct Entry {
@@ -81,9 +95,10 @@ impl Output {
 }
 
 impl Terminals {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(data_dir: PathBuf, hook_url: String) -> Self {
         Self {
             data_dir,
+            hook_url,
             terminals: Mutex::default(),
             changed: broadcast::Sender::new(64),
         }
@@ -125,7 +140,7 @@ impl Terminals {
         Ok(())
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Owner> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Change> {
         self.changed.subscribe()
     }
 
@@ -146,7 +161,9 @@ impl Terminals {
     ) -> io::Result<Terminal> {
         let id = format!("{:016x}", uuid::Uuid::new_v4().as_u64_pair().1);
         let shell = env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
-        let mut command = Command::new(env::current_exe()?);
+        let exe = env::current_exe()?;
+        let mut command = Command::new(&exe);
+        command.env("OIKONOMOS_HOOK_URL", &self.hook_url);
         command.arg("hold").arg("--data-dir").arg(&self.data_dir).arg("--id").arg(&id);
         match project {
             Some(project) => command.arg("--cwd").arg(&project.path).arg("--project").arg(&project.id),
@@ -157,7 +174,7 @@ impl Terminals {
         }
         command.arg("--").arg(&shell);
         match rig {
-            Some(rig) => command.args(["-l", "-i", "-c"]).arg(launch(rig, &shell.to_string_lossy())),
+            Some(rig) => command.args(["-l", "-i", "-c"]).arg(launch(rig, &exe, &shell.to_string_lossy())),
             None => command.arg("-l"),
         };
         let status = command
@@ -181,6 +198,8 @@ impl Terminals {
         let terminal = Terminal {
             id: record.id,
             owner: record.owner,
+            status: record.rig.as_ref().map(|_| record.status.unwrap_or(Status::Done)),
+            agent_session: record.agent_session,
             rig: record.rig,
             agent: record.agent,
         };
@@ -191,7 +210,7 @@ impl Terminals {
             lead: Mutex::default(),
         });
         self.terminals.lock().unwrap().push((terminal.id.clone(), Arc::clone(&entry)));
-        let _ = self.changed.send(terminal.owner.clone());
+        let _ = self.changed.send(Change::Terminals(terminal.owner.clone()));
         let terminals = Arc::clone(self);
         let (id, owner) = (terminal.id.clone(), terminal.owner.clone());
         tokio::spawn(async move {
@@ -208,13 +227,13 @@ impl Terminals {
                             protocol::decode(&frame)
                             && entry.agent_exited()
                         {
-                            let _ = terminals.changed.send(owner.clone());
+                            let _ = terminals.changed.send(Change::Terminals(owner.clone()));
                         }
                     }
                 }
             }
             terminals.terminals.lock().unwrap().retain(|(other, _)| *other != id);
-            let _ = terminals.changed.send(owner);
+            let _ = terminals.changed.send(Change::Terminals(owner));
         });
         Ok(terminal)
     }
@@ -236,6 +255,35 @@ impl Terminals {
         self.lead(id, device);
         if let Some(entry) = self.get(id) {
             let _ = entry.control.send(Message::Input(bytes));
+        }
+    }
+
+    pub fn hook(&self, id: &str, agent: Agent, event: &str, payload: &Value) {
+        let Some(entry) = self.get(id) else { return };
+        let mut terminal = entry.terminal.lock().unwrap();
+        if terminal.agent != Some(agent) {
+            return;
+        }
+        let before = (terminal.status, terminal.agent_session.clone());
+        if let Some(session) = payload["session_id"].as_str() {
+            terminal.agent_session = Some(session.to_owned());
+        }
+        match hooks::transition(agent, event, payload) {
+            Some(Transition::To(now)) => {
+                terminal.status = Some(now);
+                if Some(now) != before.0 {
+                    let _ = self.changed.send(Change::Status(terminal.id.clone(), now));
+                }
+            }
+            Some(Transition::Exit) => {
+                terminal.end_agent();
+                let _ = self.changed.send(Change::Terminals(terminal.owner.clone()));
+            }
+            None => {}
+        }
+        if (terminal.status, &terminal.agent_session) != (before.0, &before.1) {
+            let state = AgentState { status: terminal.status, session: terminal.agent_session.clone() };
+            let _ = entry.control.send(Message::Agent(state));
         }
     }
 
@@ -271,12 +319,22 @@ impl Terminals {
     }
 }
 
+impl Terminal {
+    fn end_agent(&mut self) {
+        self.rig = None;
+        self.agent = None;
+        self.status = None;
+        self.agent_session = None;
+    }
+}
+
 impl Entry {
     /// The holder reports the root shell in the foreground only once a Rig's Agent has exited.
     fn agent_exited(&self) -> bool {
         let mut terminal = self.terminal.lock().unwrap();
-        terminal.agent = None;
-        terminal.rig.take().is_some()
+        let was = terminal.rig.is_some();
+        terminal.end_agent();
+        was
     }
 
     fn apply(&self, size: Size) {
@@ -287,12 +345,18 @@ impl Entry {
     }
 }
 
-fn launch(rig: &Rig, shell: &str) -> String {
-    let args: String = rig.args.iter().map(|arg| format!(" {}", quote(arg))).collect();
+fn launch(rig: &Rig, exe: &Path, shell: &str) -> String {
+    let args: String = rig
+        .args
+        .iter()
+        .cloned()
+        .chain(hooks::wiring(rig.agent, exe))
+        .map(|arg| format!(" {}", quote(&arg)))
+        .collect();
     format!("{}{args}; exec {} -l -i", rig.command, quote(shell))
 }
 
-fn quote(word: &str) -> String {
+pub fn quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', r"'\''"))
 }
 

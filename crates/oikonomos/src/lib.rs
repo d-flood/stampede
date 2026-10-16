@@ -2,6 +2,7 @@ mod config;
 mod device;
 mod files;
 mod holder;
+mod hooks;
 mod install;
 mod projects;
 mod protocol;
@@ -12,10 +13,10 @@ use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use rust_embed::RustEmbed;
 use serde_json::{Value, json};
@@ -23,6 +24,7 @@ use tokio::sync::watch;
 
 use config::{Config, Editor, Font, Rig};
 pub use holder::{HoldArgs, hold};
+pub use hooks::{HookArgs, hook};
 pub use install::{InstallArgs, UninstallArgs, install, uninstall};
 use projects::Projects;
 use terminals::Terminals;
@@ -61,6 +63,7 @@ fn router(state: AppState) -> Router {
         .route("/api/font", get(font))
         .route("/api/rigs", get(rigs))
         .route("/api/editor", get(editor))
+        .route("/api/hook", post(hooks::receive).layer(DefaultBodyLimit::disable()))
         .route("/api/projects/{id}/tree", get(files::tree))
         .route("/api/projects/{id}/file", get(files::read).put(files::write))
         .route("/fonts/host/{index}", get(host_font))
@@ -73,7 +76,8 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let config = config::watch(&args.config)?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
     let projects = Arc::new(Projects::load(&args.data_dir)?);
-    let terminals = Arc::new(Terminals::new(args.data_dir));
+    let hook_url = format!("http://{}/api/hook", listener.local_addr()?);
+    let terminals = Arc::new(Terminals::new(args.data_dir, hook_url));
     terminals.restore().await?;
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
     axum::serve(listener, router(AppState { terminals, projects, config })).await

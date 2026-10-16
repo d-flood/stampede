@@ -27,7 +27,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Agent,
-    protocol::{self, Foreground, Hello, Message, Size},
+    hooks::Status,
+    protocol::{self, AgentState, Foreground, Hello, Message, Size},
 };
 
 const SCROLLBACK_LINES: usize = 10_000;
@@ -71,6 +72,10 @@ pub struct Record {
     pub rig: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<Agent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<Status>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<String>,
     pub cwd: PathBuf,
     pub command: Vec<String>,
     pub size: Size,
@@ -122,6 +127,8 @@ pub fn hold(args: HoldArgs) -> Result<(), Box<dyn Error>> {
         created: SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
         rig: args.rig,
         agent: args.agent,
+        status: None,
+        agent_session: None,
         command: args.command,
         size: Size { cols: 80, rows: 24 },
         protocol: protocol::VERSION,
@@ -266,6 +273,13 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
                 }
                 break;
             }
+            Event::Received(_, Message::Agent(AgentState { status, session })) => {
+                if record.rig.is_some() {
+                    record.status = status;
+                    record.agent_session = session;
+                    let _ = files.write_record(record);
+                }
+            }
             Event::Received(..) => {}
             Event::Closed(id) => {
                 conns.remove(&id);
@@ -282,6 +296,8 @@ fn run(listener: UnixListener, files: &Files, record: &mut Record) -> Result<(),
                 {
                     record.rig = None;
                     record.agent = None;
+                    record.status = None;
+                    record.agent_session = None;
                     let _ = files.write_record(record);
                 }
                 let now = root && record.rig.is_none();
