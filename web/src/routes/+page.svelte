@@ -3,7 +3,7 @@
 	import { OpenBrowser } from '#lib/browser.svelte.ts';
 	import Browser from '#lib/shell/Browser.svelte';
 	import { ago, logos } from '#lib/chat/sessions.ts';
-	import { agentSessions } from '#lib/chat/agents.ts';
+	import { same, subagents } from '#lib/chat/agents.ts';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import {
 		connect,
@@ -64,7 +64,7 @@
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let chats = $state<Record<string, Chat[]>>({});
 	let chatItems = $state<Record<string, Item[]>>({});
-	let chatSessions = $state<Record<string, string>>({});
+	let openSubagents = $state<Record<string, string[]>>({});
 	let sessions = $state<Record<string, Session[]>>({});
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
@@ -233,7 +233,7 @@
 				for (const chat of gone) {
 					if (Object.values(chats).flat().some(({ id }) => id === chat.id)) continue;
 					delete chatItems[chat.id];
-					delete chatSessions[chat.id];
+					delete openSubagents[chat.id];
 				}
 				break;
 			}
@@ -249,8 +249,8 @@
 				break;
 			case 'chat.items': {
 				chatItems[message.chatId] = message.items;
-				const chat = Object.values(chats).flat().find(({ id }) => id === message.chatId);
-				if (chat && !agentSessions(chat, message.items).some(({ id }) => id === chatSessions[chat.id])) delete chatSessions[chat.id];
+				const opened = openSubagents[message.chatId];
+				if (opened && !subagents(message.items).some(({ path }) => same(path, opened))) delete openSubagents[message.chatId];
 				break;
 			}
 			case 'chat.item':
@@ -788,7 +788,6 @@
 									{/snippet}
 								</Menu>
 							{:else if chat}
-								{@const sessions = agentSessions(chat, chatItems[chat.id] ?? [])}
 								<Menu context items={[{ label: 'Close', onselect: () => closeChat(chat) }]}>
 									{#snippet trigger(props)}
 										<Tab
@@ -796,11 +795,8 @@
 											data-tab={id}
 											variant="agent"
 											agent={chat.agent}
-											status={chat.status === 'done' ? sessions.find(({ status }) => status !== 'done')?.status ?? 'done' : chat.status}
+											status={chat.status === 'done' ? subagents(chatItems[chat.id] ?? []).find(({ subagent }) => subagent.status !== 'done')?.subagent.status ?? 'done' : chat.status}
 											label={chat.rig}
-											{sessions}
-											session={chatSessions[chat.id] ?? ''}
-											onsession={(id) => (chatSessions[chat.id] = id)}
 											active={id === group.active}
 											onclose={() => closeChat(chat)}
 											onclick={() => {
@@ -954,8 +950,8 @@
 								{device}
 								{chat}
 								items={chatItems[chat.id] ?? []}
-								session={chatSessions[chat.id] ?? ''}
-								onsession={(id) => (chatSessions[chat.id] = id)}
+								opened={openSubagents[chat.id] ?? []}
+								onopen={(path) => (openSubagents[chat.id] = path)}
 								active={showing(chat.id)}
 								focused={chat.id === activeTab}
 								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}

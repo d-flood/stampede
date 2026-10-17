@@ -484,7 +484,7 @@ async function finishElsewhere(name: string) {
 }
 
 
-test('a Chat pins todos and hides completed subagent sessions', async ({ page }, { project }) => {
+test('a Chat pins todos and counts its completed subagent in the dock', async ({ page }, { project }) => {
 	const name = `subagent-${project.name}`;
 	const root = process.env.OIKONOMOS_E2E_ROOT!;
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
@@ -513,13 +513,16 @@ test('a Chat pins todos and hides completed subagent sessions', async ({ page },
 	await expect(tab.getByTitle('done')).toBeVisible();
 	await expect(todos.locator('summary')).toHaveText('Todos 3 of 3');
 	await expect(panel.getByText('Explore · Find file mentioning needle')).toHaveCount(0);
-	const picker = page.getByRole('combobox', { name: new RegExp('^Session in Fake Claude Subagent') });
+	const picker = page.getByRole('combobox', { name: /^Session in/ });
+	const dock = panel.getByRole('region', { name: 'Subagents' });
 	await expect(picker).toHaveCount(0);
+	await expect(dock.getByRole('button')).toHaveText(['1 finished']);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
 	await expect(picker).toHaveCount(0);
 	await tab.click();
 	await expect(picker).toHaveCount(0);
+	await expect(dock.getByRole('button')).toHaveText(['1 finished']);
 	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 	await tab.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
@@ -604,7 +607,7 @@ for (const agent of ['claude', 'codex']) {
 	});
 }
 
-test('a completed Codex subagent is hidden from the selected tab', async ({ page }, { project }) => {
+test('a completed Codex subagent moves to the dock\'s finished chip', async ({ page }, { project }) => {
 	const name = `codex-subagent-${project.name}`;
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
@@ -615,8 +618,8 @@ test('a completed Codex subagent is hidden from the selected tab', async ({ page
 	await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(tab.getByTitle('done')).toBeVisible();
-	const picker = page.getByRole('combobox', { name: /^Session in Fake Codex Subagent/ });
-	await expect(picker).toHaveCount(0);
+	await expect(page.getByRole('combobox', { name: /^Session in/ })).toHaveCount(0);
+	await expect(panel.getByRole('region', { name: 'Subagents' }).getByRole('button')).toHaveText(['1 finished']);
 	await expect(panel.getByText('notes.txt mentions “needle” and has 3 lines.', { exact: true })).toBeVisible();
 	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 });
