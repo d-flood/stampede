@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use common::{Cli, Server, control, git, init, leftovers, next, subscribe};
+use common::{Cli, Server, control, git, init, leftovers, next, reboot, subscribe};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
@@ -54,6 +54,21 @@ agent = "claude-code"
 env = { OIKONOMOS_FAKE_FIXTURE = "FIXTURES/claude-code/resume-verdict.synthetic.jsonl" }
 
 [[rig]]
+name = "Codex Approval Restart"
+agent = "codex"
+env = { OIKONOMOS_FAKE_FIXTURE = "approval-restart" }
+
+[[rig]]
+name = "Claude Reboot"
+agent = "claude-code"
+env = { OIKONOMOS_FAKE_FIXTURE = "FIXTURES/claude-code/loop-reboot.synthetic.jsonl" }
+
+[[rig]]
+name = "Codex Reboot"
+agent = "codex"
+env = { OIKONOMOS_FAKE_FIXTURE = "FIXTURES/codex/loop-reboot.synthetic.jsonl" }
+
+[[rig]]
 name = "No Session"
 agent = "claude-code"
 env = { OIKONOMOS_FAKE_FIXTURE = "FIXTURES/claude-code/no-session.synthetic.jsonl" }
@@ -82,9 +97,18 @@ impl Loop {
     }
 
     async fn with_rigs(prefix: &str, tickets: &[(u32, &str)], rigs: &str) -> Self {
+        Self::with_rigs_env(prefix, tickets, rigs, Vec::new()).await
+    }
+
+    async fn with_env(prefix: &str, tickets: &[(u32, &str)], env: Vec<(&'static str, std::ffi::OsString)>) -> Self {
+        Self::with_rigs_env(prefix, tickets, RIGS, env).await
+    }
+
+    async fn with_rigs_env(prefix: &str, tickets: &[(u32, &str)], rigs: &str, mut env: Vec<(&'static str, std::ffi::OsString)>) -> Self {
         let fixtures = format!("{}/tests/fixtures/chats", env!("CARGO_MANIFEST_DIR"));
         let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
-        let server = Server::with_env(prefix, &rigs.replace("FIXTURES", &fixtures), vec![("PATH", path.into())]).await;
+        env.push(("PATH", path.into()));
+        let server = Server::with_env(prefix, &rigs.replace("FIXTURES", &fixtures), env).await;
         let root = fs::canonicalize(server.root.path()).unwrap();
         let repo = init(&root, "repo");
         for (key, value) in [("user.name", "oikonomos"), ("user.email", "test@oikonomos.invalid"), ("commit.gpgsign", "false")] {
@@ -116,6 +140,12 @@ impl Loop {
 
     async fn restart(&mut self) {
         self.server.restart().await;
+        let client = reqwest::Client::builder().timeout(Duration::from_millis(500)).build().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while client.get(format!("http://127.0.0.1:{}/api/version", self.server.port)).send().await.is_err() {
+            assert!(Instant::now() < deadline, "the restarted server never served requests");
+            sleep(Duration::from_millis(50)).await;
+        }
         (self.socket, self.project_id, self.hello) = connect(self.server.port, &self.repo).await;
     }
 
@@ -1106,5 +1136,189 @@ async fn a_usage_pause_without_a_reset_adopts_the_next_readings_reset_time() {
         lp.until("resumption at the learned reset", |lp| lp.entries("run.resumed").len() == 1).await;
         fixture.release("after-reset");
         lp.until("one continue", |lp| lp.sent().iter().filter(|text| *text == "continue").count() == 1).await;
+    }
+}
+
+
+fn recovery_inputs(lp: &Loop, rig: &str) -> Vec<Value> {
+    let (path, method) = if rig.starts_with("Claude") {
+        ("home/.claude/fake-received.jsonl", "user")
+    } else {
+        ("home/.codex/fake-daemon/received.jsonl", "turn/start")
+    };
+    fs::read_to_string(lp.root.join(path)).unwrap_or_default().lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|message| message["type"] == method || message["method"] == method).collect()
+}
+
+async fn interruptible(lp: &mut Loop, gates: &Path) {
+    lp.claimed(&[1]).await;
+    lp.chat_status(1, "done").await;
+    let chat = lp.chat_of(1);
+    control(&mut lp.socket, json!({ "type": "chat.send", "chatId": chat, "text": "Interrupted work",
+        "images": [{ "mediaType": "image/png", "data": "eA==" }] })).await;
+    lp.until("the interrupted turn's gate", |_| gates.join("running").exists()).await;
+    lp.chat_status(1, "working").await;
+    control(&mut lp.socket, json!({ "type": "chat.send", "chatId": chat, "text": "Leave this queued", "queue": true,
+        "images": [{ "mediaType": "image/png", "data": "eQ==" }] })).await;
+    lp.until("the queued attachment", |lp| lp.chat_record(&chat).is_some_and(|record| record["queued"].as_array().is_some_and(|queued| queued.len() == 1))).await;
+}
+
+#[tokio::test]
+async fn rebooted_loop_chats_retry_once_preserving_attachments_and_live_reattachments() {
+    for rig in ["Claude Reboot", "Codex Reboot"] {
+        let gates = tempfile::tempdir().unwrap();
+        let mut lp = Loop::with_env("lr", &[(1, "")], vec![("OIKONOMOS_FAKE_GATES", gates.path().into())]).await;
+        lp.run(rig, 1).await;
+        interruptible(&mut lp, gates.path()).await;
+        let chat = lp.chat_of(1);
+        let queued = lp.chat_record(&chat).unwrap();
+        lp.server.stop().await;
+        reboot(&lp.root);
+        lp.restart().await;
+        lp.until("the recovery input", |_| gates.path().join("retried").exists()).await;
+        lp.chat_status(1, "working").await;
+        assert_eq!(lp.entries("turn.retried").len(), 1);
+        let inputs = recovery_inputs(&lp, rig);
+        assert_eq!(inputs.len(), 3, "{rig}: {inputs:?}");
+        let recovered = if rig.starts_with("Claude") { &inputs[2]["message"]["content"] } else { &inputs[2]["params"]["input"] };
+        assert_eq!(recovered[0]["text"], "Interrupted work");
+        let image = recovered.as_array().unwrap().iter().find(|item| item["type"] == "image").unwrap();
+        if rig.starts_with("Claude") { assert_eq!(image["source"]["data"], "eA=="); }
+        else { assert_eq!(image["url"], "data:image/png;base64,eA=="); }
+        for key in ["queued", "queuedImages"] { assert_eq!(lp.chat_record(&chat).unwrap()[key], queued[key]); }
+
+        lp.restart().await;
+        lp.chat_status(1, "working").await;
+        sleep(SETTLE).await;
+        assert_eq!(recovery_inputs(&lp, rig).len(), 3, "{rig} live reattachment");
+        lp.server.stop().await;
+        reboot(&lp.root);
+        lp.restart().await;
+        lp.chat_status(1, "done").await;
+        sleep(SETTLE).await;
+        assert_eq!(recovery_inputs(&lp, rig).len(), 3, "{rig} second interruption");
+        assert_eq!(lp.entries("turn.retried").len(), 1);
+        assert_eq!(lp.chat_of(1), chat);
+        assert_eq!(lp.chat_record(&chat).unwrap()["viewedSinceDone"], false);
+        for key in ["queued", "queuedImages"] { assert_eq!(lp.chat_record(&chat).unwrap()[key], queued[key]); }
+    }
+}
+
+#[tokio::test]
+async fn paused_and_archived_runs_leave_rebooted_chats_interrupted() {
+    for rig in ["Claude Reboot", "Codex Reboot"] {
+        for action in ["run.paused", "epic.archived"] {
+            let gates = tempfile::tempdir().unwrap();
+            let mut lp = Loop::with_env("lx", &[(1, "")], vec![("OIKONOMOS_FAKE_GATES", gates.path().into())]).await;
+            lp.run(rig, 1).await;
+            interruptible(&mut lp, gates.path()).await;
+            let event = if action == "run.paused" { json!({ "kind": action, "reason": "david" }) } else { json!({ "kind": action }) };
+            lp.record(event).await.unwrap();
+            lp.server.stop().await;
+            reboot(&lp.root);
+            lp.restart().await;
+            lp.chat_status(1, "done").await;
+            sleep(SETTLE).await;
+            assert_eq!(recovery_inputs(&lp, rig).len(), 2, "{rig} {action}");
+            assert!(lp.entries("turn.retried").is_empty());
+        }
+    }
+}
+
+
+#[tokio::test]
+async fn an_explicit_interrupt_never_recovers_even_after_a_paused_reboot() {
+    for rig in ["Claude Reboot", "Codex Reboot"] {
+        for restored in [false, true] {
+            let gates = tempfile::tempdir().unwrap();
+            let mut lp = Loop::with_env("li", &[(1, "")], vec![("OIKONOMOS_FAKE_GATES", gates.path().into())]).await;
+            lp.run(rig, 1).await;
+            interruptible(&mut lp, gates.path()).await;
+            let chat = lp.chat_of(1);
+            let gate = if restored {
+                lp.record(json!({ "kind": "run.paused", "reason": "david" })).await.unwrap();
+                lp.server.stop().await;
+                reboot(&lp.root);
+                lp.restart().await;
+                lp.chat_status(1, "done").await;
+                control(&mut lp.socket, json!({ "type": "chat.send", "chatId": chat, "text": "Continue by hand" })).await;
+                lp.until("the manual continuation", |_| gates.path().join("retried").exists()).await;
+                lp.chat_status(1, "working").await;
+                "retried"
+            } else { "running" };
+            control(&mut lp.socket, json!({ "type": "chat.interrupt", "chatId": chat })).await;
+            fs::remove_file(gates.path().join(gate)).unwrap();
+            lp.chat_status(1, "done").await;
+            if restored { lp.record(json!({ "kind": "run.resumed" })).await.unwrap(); }
+            sleep(SETTLE).await;
+            assert!(lp.entries("turn.retried").is_empty(), "{rig}, restored={restored}");
+            assert_eq!(recovery_inputs(&lp, rig).len(), if restored { 3 } else { 2 });
+        }
+    }
+}
+
+
+fn append_event(lp: &Loop, mut event: Value) {
+    use std::io::Write;
+    event["at"] = json!(1);
+    let mut file = fs::OpenOptions::new().append(true).open(lp.root.join("data/epics/work.jsonl")).unwrap();
+    writeln!(file, "{event}").unwrap();
+}
+
+#[tokio::test]
+async fn stopped_runs_released_claims_and_resolvers_never_receive_recovery_input() {
+    for rig in ["Claude Reboot", "Codex Reboot"] {
+        for state in ["stopped", "released", "resolver"] {
+            let gates = tempfile::tempdir().unwrap();
+            let mut lp = Loop::with_env("le", &[(1, "")], vec![("OIKONOMOS_FAKE_GATES", gates.path().into())]).await;
+            lp.run(rig, 1).await;
+            interruptible(&mut lp, gates.path()).await;
+            let chat = lp.chat_of(1);
+            let record = lp.chat_record(&chat).unwrap();
+            lp.server.stop().await;
+            reboot(&lp.root);
+            match state {
+                "stopped" => append_event(&lp, json!({ "kind": "run.stopped" })),
+                "released" => {
+                    append_event(&lp, json!({ "kind": "claim.released", "ticket": 1,
+                        "keep": { "worktree": lp.claim(1)["worktree"], "agent": record["agent"], "session": record["agentSession"] } }));
+                    append_event(&lp, json!({ "kind": "start.failed", "ticket": 1, "reason": "Keep the released Ticket for David" }));
+                }
+                _ => {
+                    append_event(&lp, json!({ "kind": "ticket.completed", "ticket": 1, "commit": "missing-commit" }));
+                    append_event(&lp, json!({ "kind": "merge.conflicted", "ticket": 1, "resolver": chat }));
+                }
+            }
+            lp.restart().await;
+            if state == "stopped" {
+                lp.until("the stopped Claim to be released", |lp| !lp.entries("claim.released").is_empty()).await;
+            } else { lp.chat_status(1, "done").await; }
+            sleep(SETTLE).await;
+            assert_eq!(recovery_inputs(&lp, rig).len(), 2, "{rig} {state}");
+            assert!(lp.entries("turn.retried").is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+async fn pending_requests_in_live_runs_survive_restart_without_recovery_input() {
+    for rig in ["Claude Approval", "Codex Approval Restart"] {
+        let mut lp = Loop::new("lp", &[(1, "")]).await;
+        lp.run(rig, 1).await;
+        lp.claimed(&[1]).await;
+        lp.chat_status(1, "waiting").await;
+        let chat = lp.chat_of(1);
+        control(&mut lp.socket, json!({ "type": "chat.attach", "chatId": chat })).await;
+        let before = lp.message(|message| message["type"] == "chat.request" && message["chatId"] == chat).await;
+        let sent = recovery_inputs(&lp, rig).len();
+        lp.restart().await;
+        lp.chat_status(1, "waiting").await;
+        control(&mut lp.socket, json!({ "type": "chat.attach", "chatId": chat })).await;
+        let after = lp.message(|message| message["type"] == "chat.request" && message["chatId"] == chat).await;
+        assert_eq!(after["request"], before["request"]);
+        sleep(SETTLE).await;
+        assert_eq!(recovery_inputs(&lp, rig).len(), sent);
+        assert!(lp.entries("turn.retried").is_empty());
     }
 }

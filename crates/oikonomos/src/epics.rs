@@ -60,6 +60,8 @@ pub enum Event {
     StartFailed { ticket: u32, reason: String },
     #[serde(rename = "restore.failed")]
     RestoreFailed { ticket: u32, chat: String },
+    #[serde(rename = "turn.retried")]
+    TurnRetried { ticket: u32, chat: String },
     #[serde(rename = "run.started")]
     RunStarted { rig: String, parallel: u32 },
     #[serde(rename = "run.changed")]
@@ -221,6 +223,8 @@ pub struct Landed {
 /// The live Run: the Rig its next Chats start with, how many Tickets it works at once, and why it starts none.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Run {
+    #[serde(skip)]
+    pub recovered: BTreeSet<String>,
     pub rig: String,
     pub parallel: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -486,8 +490,11 @@ impl Epic {
                     });
                 }
             }
+            Event::TurnRetried { chat, .. } => {
+                if let Some(run) = &mut self.run { run.recovered.insert(chat.clone()); }
+            }
             Event::RunStarted { rig, parallel } => {
-                self.run = Some(Run { rig: rig.clone(), parallel: *parallel, paused: None });
+                self.run = Some(Run { recovered: BTreeSet::new(), rig: rig.clone(), parallel: *parallel, paused: None });
                 self.call = None;
                 for ticket in self.tickets.values_mut().filter(|ticket| ticket.status == Status::NotStarted) {
                     ticket.attention = None;
@@ -644,6 +651,13 @@ impl Epic {
                 let status = self.ticket(*ticket)?.status;
                 let expected = if matches!(event, Event::StartFailed { .. }) { Status::NotStarted } else { Status::InProgress };
                 if status == expected { Ok(()) } else { Err(format!("{slug}/{ticket} is {status}")) }
+            }
+            Event::TurnRetried { ticket, chat } => {
+                let held = self.ticket(*ticket)?;
+                if !self.archived && self.run.as_ref().is_some_and(|run| run.paused.is_none() && !run.recovered.contains(chat))
+                    && held.status == Status::InProgress && !held.releasing
+                    && held.claim.as_ref().is_some_and(|claim| &claim.chat == chat)
+                { Ok(()) } else { Err(format!("{slug}/{ticket} cannot retry its interrupted turn")) }
             }
             Event::RunStarted { .. } if self.run.is_some() => Err(format!("{slug} already has a live Run")),
             Event::RunStarted { .. } if self.setup.is_none() => Err(format!(
@@ -1349,7 +1363,7 @@ mod tests {
 
     #[test]
     fn a_run_starts_changes_finishes_and_calls_until_viewed() {
-        let run = |rig: &str, parallel| Some(Run { rig: rig.to_owned(), parallel, paused: None });
+        let run = |rig: &str, parallel| Some(Run { recovered: BTreeSet::new(), rig: rig.to_owned(), parallel, paused: None });
         let changed = |payload: &str| format!(r#"{{"at":8,"kind":"run.changed",{payload}}}"#);
         let cases: Vec<(&str, Vec<String>, Option<Run>, bool)> = vec![
             ("no Run", vec![], None, false),
@@ -1553,7 +1567,7 @@ mod tests {
         use Status::*;
         let base = [ADDED.to_owned(), SETUP.to_owned(), ticket(1, &[]), ticket(2, &[]), ticket(3, &[])];
         let live = [started("Claude", 2), claimed(1), claimed(2), completed(2)];
-        let run = |paused| Some(Run { rig: "Claude".to_owned(), parallel: 2, paused });
+        let run = |paused| Some(Run { recovered: BTreeSet::new(), rig: "Claude".to_owned(), parallel: 2, paused });
         let cases: Vec<(&str, Vec<String>, Option<Run>, [Status; 3], [bool; 3])> = vec![
             ("live", vec![], run(None), [InProgress, Merging, NotStarted], [false; 3]),
             ("paused", vec![paused()], run(Some(Pause::David)), [InProgress, Merging, NotStarted], [false; 3]),
@@ -1561,7 +1575,7 @@ mod tests {
             (
                 "changed while paused",
                 vec![paused(), r#"{"at":8,"kind":"run.changed","parallel":3}"#.to_owned()],
-                Some(Run { rig: "Claude".to_owned(), parallel: 3, paused: Some(Pause::David) }),
+                Some(Run { recovered: BTreeSet::new(), rig: "Claude".to_owned(), parallel: 3, paused: Some(Pause::David) }),
                 [InProgress, Merging, NotStarted],
                 [false; 3],
             ),

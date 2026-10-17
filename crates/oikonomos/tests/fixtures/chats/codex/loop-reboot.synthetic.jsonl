@@ -1,0 +1,32 @@
+{"stdin":{"method":"initialize","id":0}}
+{"stdout":{"id":0,"result":{}}}
+{"stdin":{"method":"initialized"}}
+{"stdin":{"method":"thread/start","id":1}}
+{"stdout":{"id":1,"result":{"thread":{"id":"loop-reboot-thread","turns":[]}}}}
+{"stdin":{"method":"turn/start","id":2}}
+{"stdout":{"id":2,"result":{"turn":{"id":"first","status":"inProgress","items":[]}}}}
+{"stdout":{"method":"turn/started","params":{"threadId":"loop-reboot-thread","turn":{"id":"first","status":"inProgress","items":[]}}}}
+{"stdout":{"method":"item/started","params":{"threadId":"loop-reboot-thread","turnId":"first","item":{"id":"first-user","type":"userMessage","content":[{"type":"text","text":"Interrupted work","text_elements":[]}]}}}}
+{"stdout":{"method":"turn/completed","params":{"threadId":"loop-reboot-thread","turn":{"id":"first","status":"completed"}}}}
+{"stdin":{"method":"turn/start","id":3}}
+{"stdout":{"id":3,"result":{"turn":{"id":"second","status":"inProgress","items":[]}}}}
+{"stdout":{"method":"turn/started","params":{"threadId":"loop-reboot-thread","turn":{"id":"second","status":"inProgress","items":[]}}}}
+{"stdout":{"method":"item/started","params":{"threadId":"loop-reboot-thread","turnId":"second","item":{"id":"second-user","type":"userMessage","content":[{"type":"text","text":"Interrupted work","text_elements":[]}]}}}}
+{"gate":"running"}
+{"stdin":{"method":"turn/interrupt","id":90}}
+{"stdout":{"id":90,"result":{}}}
+{"stdout":{"method":"turn/completed","params":{"threadId":"loop-reboot-thread","turn":{"id":"second","status":"interrupted"}}}}
+{"stdin":{"method":"thread/resume","id":4}}
+{"stdout":{"id":4,"result":{"thread":{"id":"loop-reboot-thread","turns":[{"id":"second","status":"interrupted","items":[{"id":"second-user","type":"userMessage","content":[{"type":"text","text":"Interrupted work","text_elements":[]},{"type":"image","url":"data:image/png;base64,eA=="}]}]}]}}}}
+{"stdin":{"method":"turn/start","id":5}}
+{"stdout":{"id":5,"result":{"turn":{"id":"retried","status":"inProgress","items":[]}}}}
+{"stdout":{"method":"turn/started","params":{"threadId":"loop-reboot-thread","turn":{"id":"retried","status":"inProgress","items":[]}}}}
+{"stdout":{"method":"item/started","params":{"threadId":"loop-reboot-thread","turnId":"retried","item":{"id":"retried-user","type":"userMessage","content":[{"type":"text","text":"Interrupted work","text_elements":[]}]}}}}
+{"gate":"retried"}
+{"stdin":{"method":"turn/interrupt","id":90}}
+{"stdout":{"id":90,"result":{}}}
+{"stdout":{"method":"turn/completed","params":{"threadId":"loop-reboot-thread","turn":{"id":"second","status":"interrupted"}}}}
+{"stdin":{"method":"thread/resume","id":6}}
+{"stdout":{"id":6,"result":{"thread":{"id":"loop-reboot-thread","turns":[{"id":"retried","status":"inProgress","items":[{"id":"retried-user","type":"userMessage","content":[{"type":"text","text":"Interrupted work","text_elements":[]},{"type":"image","url":"data:image/png;base64,eA=="}]}]}]}}}}
+{"stdin":{"method":"thread/resume","id":7}}
+{"stdout":{"id":7,"result":{"thread":{"id":"loop-reboot-thread","turns":[{"id":"retried","status":"interrupted","items":[{"id":"retried-user","type":"userMessage","content":[{"type":"text","text":"Interrupted work","text_elements":[]},{"type":"image","url":"data:image/png;base64,eA=="}]}]}]}}}}

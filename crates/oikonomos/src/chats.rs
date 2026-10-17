@@ -339,6 +339,7 @@ impl Image {
 }
 
 pub enum Event {
+    Recoverable,
     Session(String),
     ResumeAt(Option<String>),
     PlanResolved(String),
@@ -362,6 +363,7 @@ pub enum Event {
 pub trait Driver: Send + Sync {
     /// Starts a turn, or steers the running one.
     fn send(&self, text: &str, images: &[Image]);
+    fn retry(&self);
     fn interrupt(&self);
     fn answer(&self, request_id: &str, answer: Answer);
     fn run(&self, builtin: Builtin);
@@ -586,6 +588,7 @@ struct Entry {
 }
 
 struct Transcript {
+    recoverable: bool,
     seq: u64,
     items: Vec<Item>,
     requests: Vec<Request>,
@@ -720,7 +723,7 @@ impl Chats {
     }
 
     fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>) {
-        let transcript = Transcript { seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status };
+        let transcript = Transcript { recoverable: false, seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status };
         let entry = Arc::new(Entry {
             chat: Mutex::new(chat),
             transcript: Mutex::new(transcript),
@@ -735,6 +738,7 @@ impl Chats {
         let id = entry.chat.lock().unwrap().id.clone();
         while let Some(event) = events.recv().await {
             match event {
+                Event::Recoverable => entry.transcript.lock().unwrap().recoverable = true,
                 Event::Activity(activity) => {
                     let mut chat = entry.chat.lock().unwrap();
                     if chat.activity != activity {
@@ -776,6 +780,7 @@ impl Chats {
                     }
                     drop(chat);
                     let mut transcript = entry.transcript.lock().unwrap();
+                    if status == Status::Working { transcript.recoverable = false; }
                     transcript.reported = status;
                     if status == Status::Done {
                         let pending: Vec<_> =
@@ -788,6 +793,7 @@ impl Chats {
                 }
                 Event::Request(request) => {
                     let mut transcript = entry.transcript.lock().unwrap();
+                    transcript.recoverable = false;
                     transcript.requests.retain(|other| other.id() != request.id());
                     transcript.requests.push(request.clone());
                     transcript.seq += 1;
@@ -829,6 +835,7 @@ impl Chats {
                         (*template, *text) = (Some(name), typed);
                     }
                     let mut transcript = entry.transcript.lock().unwrap();
+                    if matches!(&item, Item::User { .. }) { transcript.recoverable = false; }
                     match transcript.items.get_mut(index) {
                         Some(existing) => *existing = item.clone(),
                         None => {
@@ -845,6 +852,7 @@ impl Chats {
                 Event::Usage(readings) => self.usage.record(readings),
                 Event::Truncate(len) => {
                     let mut transcript = entry.transcript.lock().unwrap();
+                    transcript.recoverable = false;
                     transcript.items.truncate(len);
                     transcript.requests.clear();
                     transcript.seq += 1;
@@ -960,8 +968,25 @@ impl Chats {
         if Self::limited_turn(&transcript, &chat).as_deref() != Some(turn) || !decide() {
             return false;
         }
+        transcript.recoverable = false;
         transcript.reported = Status::Working;
         entry.driver.send("continue", &[]);
+        true
+    }
+
+    pub fn retry_interrupted(&self, id: &str, decide: impl FnOnce() -> bool) -> bool {
+        let Some(entry) = self.get(id) else { return false };
+        let mut transcript = entry.transcript.lock().unwrap();
+        let chat = entry.chat.lock().unwrap();
+        if !transcript.recoverable || transcript.reported != Status::Done || chat.status != Status::Done || !transcript.requests.is_empty()
+            || !matches!(transcript.items.last(), Some(Item::Notice { notice: Notice::Interrupted, .. }))
+            || !decide()
+        {
+            return false;
+        }
+        transcript.recoverable = false;
+        transcript.reported = Status::Working;
+        entry.driver.retry();
         true
     }
 
@@ -982,6 +1007,7 @@ impl Chats {
             self.queued(&chat);
         } else {
             transcript.reported = Status::Working;
+            transcript.recoverable = false;
             drop(chat);
             entry.driver.send(&templates::expand(text, &self.data_dir), images);
         }
@@ -990,6 +1016,8 @@ impl Chats {
     /// Stops the running turn and drops what was queued behind it.
     pub fn interrupt(&self, id: &str) {
         let Some(entry) = self.get(id) else { return };
+        let mut transcript = entry.transcript.lock().unwrap();
+        transcript.recoverable = false;
         let mut chat = entry.chat.lock().unwrap();
         if !chat.queued.is_empty() {
             chat.queued.clear();

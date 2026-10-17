@@ -60,6 +60,7 @@ pub struct Claude {
 
 enum Command {
     Send(String, Vec<Image>),
+    Retry,
     Interrupt,
     Answer(String, Answer),
     Run(Builtin),
@@ -69,6 +70,10 @@ enum Command {
 impl Driver for Claude {
     fn send(&self, text: &str, images: &[Image]) {
         let _ = self.commands.send(Command::Send(text.to_owned(), images.to_vec()));
+    }
+
+    fn retry(&self) {
+        let _ = self.commands.send(Command::Retry);
     }
 
     fn interrupt(&self) {
@@ -111,6 +116,7 @@ pub async fn resume(
         launch(data_dir, &chat.id, &chat.cwd, env, &chat.settings.chosen, session, chat.resume_at.as_deref(), None).await?;
     transcript.window = chat.context.map(|context| context.window);
     if chat.status != Status::Done {
+        if chat.status == Status::Working { let _ = transcript.events.send(Event::Recoverable); }
         transcript.push(Item::interrupted());
     }
     let _ = transcript.events.send(Event::Status(Status::Done));
@@ -217,6 +223,15 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                     Some(Command::Send(text, images)) => {
                         if send(&mut writer, &mut transcript, &text, &images).await.is_err() {
                             break;
+                        }
+                    }
+                    Some(Command::Retry) => {
+                        if let Some(content) = transcript.last_input.clone() {
+                            let message = json!({ "type": "user", "message": { "role": "user", "content": content },
+                                "parent_tool_use_id": null, "uuid": Uuid::new_v4().to_string() });
+                            transcript.sent(&message);
+                            if writer.write_all(&protocol::encode(&Message::Forget)).await.is_err()
+                                || writer.write_all(&input(&message)).await.is_err() { break; }
                         }
                     }
                     Some(Command::Run(Builtin::Rewind(index))) => {
@@ -568,6 +583,7 @@ struct Location {
 }
 
 struct Transcript {
+    last_input: Option<Value>,
     location: Option<Location>,
     session: Option<String>,
     checkpoints: HashMap<usize, String>,
@@ -614,6 +630,7 @@ enum Asked {
 impl Transcript {
     fn new(events: UnboundedSender<Event>, cwd: &Path) -> Self {
         Self {
+            last_input: None,
             location: None,
             session: None,
             checkpoints: HashMap::new(),
@@ -816,6 +833,7 @@ impl Transcript {
         if let Some(text) = content.as_str().map(str::to_owned).or_else(|| content.as_array().map(|blocks| {
             blocks.iter().filter_map(|block| block["text"].as_str()).collect::<Vec<_>>().join("\n")
         })) {
+            self.last_input = Some(content.clone());
             let images = content.as_array().into_iter().flatten().filter(|block| block["type"] == "image").count();
             let _ = self.events.send(Event::ResumeAt(None));
             self.checkpoint(message);
@@ -873,6 +891,7 @@ impl Transcript {
             Some("user") if entry["promptSource"] != "system" => match entry["message"]["content"].as_str() {
                 Some(content) => {
                     if let Some(text) = prompt(content) {
+                        self.last_input = Some(entry["message"]["content"].clone());
                         self.checkpoint(entry);
                         self.push(Item::User { text, images: 0, template: None });
                         self.compact();
@@ -882,7 +901,7 @@ impl Transcript {
                     let blocks = entry["message"]["content"].as_array().into_iter().flatten();
                     let text = blocks.clone().filter_map(|block| block["text"].as_str()).collect::<Vec<_>>().join("\n");
                     let images = blocks.filter(|block| block["type"] == "image").count();
-                    if !text.is_empty() || images > 0 { self.checkpoint(entry); self.push(Item::User { text, images, template: None }); }
+                    if !text.is_empty() || images > 0 { self.last_input = Some(entry["message"]["content"].clone()); self.checkpoint(entry); self.push(Item::User { text, images, template: None }); }
                     self.compact();
                     self.results(&entry["message"]["content"], &entry["toolUseResult"]);
                 }

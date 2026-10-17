@@ -1,0 +1,17 @@
+{"stdin":{"type":"user","message":{"role":"user","content":"Opening"}}}
+{"stdout":{"type":"system","subtype":"init","session_id":"6cb91426-1fcf-4f32-b873-32250a803701"}}
+{"stdout":{"type":"result","subtype":"success","session_id":"6cb91426-1fcf-4f32-b873-32250a803701","is_error":false,"result":"Done","usage":{}}}
+{"stdin":{"type":"user","uuid":"1285d925-be09-4c79-8828-96ab738ef437","message":{"role":"user","content":[{"type":"text","text":"Interrupted work"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"eA=="}}]}}}
+{"session":{"type":"user","sessionId":"6cb91426-1fcf-4f32-b873-32250a803701","uuid":"1285d925-be09-4c79-8828-96ab738ef437","parentUuid":null,"message":{"role":"user","content":[{"type":"text","text":"Interrupted work"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"eA=="}}]}}}
+{"stdout":{"type":"system","subtype":"session_state_changed","state":"working"}}
+{"gate":"running"}
+{"stdin":{"type":"control_request","request_id":"interrupt","request":{"subtype":"interrupt","cancel_queued":true}}}
+{"stdout":{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}}
+{"stdout":{"type":"result","subtype":"success","is_error":false,"usage":{}}}
+{"resume":"6cb91426-1fcf-4f32-b873-32250a803701"}
+{"stdin":{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Interrupted work"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"eA=="}}]}}}
+{"stdout":{"type":"system","subtype":"session_state_changed","state":"working"}}
+{"gate":"retried"}
+{"stdin":{"type":"control_request","request_id":"interrupt","request":{"subtype":"interrupt","cancel_queued":true}}}
+{"stdout":{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}}
+{"stdout":{"type":"result","subtype":"success","is_error":false,"usage":{}}}

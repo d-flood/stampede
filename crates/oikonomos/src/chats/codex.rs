@@ -40,6 +40,7 @@ pub struct Codex {
 
 enum Request {
     Send(String, Vec<Image>),
+    Retry,
     Interrupt,
     Answer(String, Answer),
     Run(Builtin),
@@ -49,6 +50,10 @@ enum Request {
 impl Driver for Codex {
     fn send(&self, text: &str, images: &[Image]) {
         let _ = self.requests.send(Request::Send(text.to_owned(), images.to_vec()));
+    }
+
+    fn retry(&self) {
+        let _ = self.requests.send(Request::Retry);
     }
 
     fn interrupt(&self) {
@@ -241,6 +246,11 @@ fn run(
                         input.extend(images.iter().map(|image| json!({ "type": "image", "url": format!("data:{};base64,{}", image.media_type, image.data) })));
                         input.extend(transcript.skill(&text));
                         let _ = connection.send(&mut transcript, Value::Array(input)).await;
+                    }
+                    Some(Request::Retry) => {
+                        if let Some(input) = transcript.last_input.clone() {
+                            let _ = connection.send(&mut transcript, input).await;
+                        }
                     }
                     Some(Request::Interrupt) => {
                         let _ = connection.interrupt(&mut transcript).await;
@@ -543,6 +553,7 @@ fn response(message: &Value) -> Option<u64> {
 }
 
 struct Transcript {
+    last_input: Option<Value>,
     thread: String,
     cwd: PathBuf,
     events: UnboundedSender<Event>,
@@ -613,6 +624,7 @@ fn policy_type(sandbox: &str) -> String {
 impl Transcript {
     fn new(thread: &str, cwd: &Path, events: UnboundedSender<Event>) -> Self {
         Self {
+            last_input: None,
             thread: thread.to_owned(),
             cwd: cwd.to_owned(),
             events,
@@ -797,6 +809,7 @@ impl Transcript {
             for item in turn["items"].as_array().into_iter().flatten() {
                 match item["type"].as_str() {
                     Some("userMessage") => {
+                        self.last_input = Some(item["content"].clone());
                         self.checkpoint();
                         self.push(user(item));
                     }
@@ -809,6 +822,7 @@ impl Transcript {
         let running = last.filter(|turn| turn["status"] == "inProgress");
         self.turn = running.and_then(|turn| turn["id"].as_str()).map(str::to_owned);
         if self.status != Status::Done && running.is_none() && !last.is_some_and(|turn| turn["status"] == "completed") {
+            if self.status == Status::Working { let _ = self.events.send(Event::Recoverable); }
             self.push(Item::interrupted());
         }
         if self.turn.is_some() { Status::Working } else { Status::Done }
@@ -1064,6 +1078,7 @@ impl Transcript {
                 if params["turn"]["status"] == "completed" { self.propose(); }
             }
             Some("item/started") if item["type"] == "userMessage" => {
+                self.last_input = Some(item["content"].clone());
                 self.checkpoint();
                 self.push(user(item));
             }

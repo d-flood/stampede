@@ -138,6 +138,7 @@ impl Runs {
                 }
                 self.meter(&slug, &mut resets).await;
                 self.continue_owed(&slug);
+                self.recover(&slug);
                 if self.fill(&slug) {
                     self.finish(&slug).await;
                 }
@@ -182,6 +183,19 @@ impl Runs {
                     Err(RecvError::Closed) => break,
                 },
             }
+        }
+    }
+
+    fn recover(&self, slug: &str) {
+        let Ok(epic) = self.epics.get(slug) else { return };
+        let Some(run) = epic.run.as_ref().filter(|run| !epic.archived && run.paused.is_none()) else { return };
+        for (&number, ticket) in &epic.tickets {
+            if ticket.status != Status::InProgress || ticket.releasing { continue; }
+            let Some(claim) = &ticket.claim else { continue };
+            if run.recovered.contains(&claim.chat) { continue; }
+            self.chats.retry_interrupted(&claim.chat, || {
+                self.epics.record(slug, Event::TurnRetried { ticket: number, chat: claim.chat.clone() }).is_ok()
+            });
         }
     }
 
