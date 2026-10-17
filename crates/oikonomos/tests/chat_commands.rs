@@ -17,8 +17,13 @@ const CLAUDE_MODES: &[[&str; 2]] = &[
     ["dontAsk", "dont ask"],
     ["bypassPermissions", "bypass permissions"],
 ];
-const CODEX_MODES: &[[&str; 2]] =
-    &[["read-only", "read only"], ["default", "default"], ["full-access", "full access"], ["plan", "plan"]];
+const CODEX_MODES: &[[&str; 2]] = &[
+    ["read-only", "read only"],
+    ["default", "default"],
+    ["approve-for-me", "approve for me"],
+    ["full-access", "full access"],
+    ["plan", "plan"],
+];
 
 const MANAGEMENT: &[&str] = &[
     "mcp", "hooks", "memory", "permissions", "plugin", "plugins", "statusline", "theme", "export", "add-dir",
@@ -42,7 +47,7 @@ async fn claude_built_ins_reach_the_agent_as_control_requests_and_user_text() {
     let directory = tempfile::tempdir().unwrap();
     let fixture = clear_fixture("claude-code", directory.path());
     let (server, mut socket, chat_id, mut view) = launch_fixture("claude-code", env, &fixture).await;
-    view.follow(&mut socket, &chat_id, |view| view.setting("effort").is_some()).await;
+    view.follow(&mut socket, &chat_id, |view| view.setting("effort").is_some() && view.capabilities["models"][0].is_string()).await;
     assert_eq!(view.last(), json!({ "model": "opus", "effort": "xhigh", "mode": "default", "pending": [] }));
     let initialize = &recorded("claude-code")[3]["stdout"]["response"]["response"];
     let commands: Vec<Value> = initialize["commands"]
@@ -218,11 +223,15 @@ async fn codex_built_ins_ride_the_next_turn_or_reach_the_daemon_as_requests() {
             "effort": "low",
             "collaborationMode": collaboration("default"),
             "approvalPolicy": "on-request",
+            "approvalsReviewer": "user",
             "sandboxPolicy": { "type": "workspaceWrite" },
         })
     );
     assert_eq!(params[7], &json!({ "threadId": first }));
-    assert_eq!(params[8], &json!({ "cwd": cwd, "config": { "tools.update_plan": { "enabled": true } } }));
+    assert_eq!(params[8], &json!({ "cwd": cwd, "config": {
+        "tools.update_plan": { "enabled": true },
+        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools"] },
+    } }));
     assert_eq!(params[9], &json!({ "threadId": first }));
     assert_eq!(record(&server, &chat_id)["agentSession"], second);
     assert_eq!(record(&server, &chat_id)["context"], Value::Null);
@@ -452,4 +461,40 @@ fn received(server: &Server) -> Vec<Value> {
 
 fn methods(server: &Server) -> Vec<Value> {
     received(server).into_iter().map(|message| message["method"].clone()).collect()
+}
+
+#[tokio::test]
+async fn rewind_cuts_the_conversation_and_uses_each_agents_restore_contract() {
+    for agent in ["claude-code", "codex"] {
+        let fixture = format!("{}/tests/fixtures/chats/{agent}/rewind.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
+        let (server, mut socket, chat_id, mut view) = launch_fixture(agent, Vec::new(), &fixture).await;
+        view.follow(&mut socket, &chat_id, |view| view.capabilities["rewindsFiles"] == (agent == "claude-code")).await;
+        assert_eq!(view.capabilities["rewindsFiles"], agent == "claude-code");
+        let file = server.root.path().join("home/rewind.txt");
+        fs::write(&file, "before").unwrap();
+        view.turn(&mut socket, &chat_id, json!({ "type": "chat.send", "chatId": chat_id, "text": "Change the file" })).await;
+        if agent == "codex" { fs::write(&file, "after").unwrap(); }
+        assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+        run(&mut socket, &chat_id, json!({ "command": "rewind", "value": 0 })).await;
+        view.follow(&mut socket, &chat_id, |view| view.items.last().is_some_and(|item| item["notice"] == "rewound")).await;
+        assert_eq!(view.items.len(), 1);
+        assert_eq!(view.items[0]["kind"], "notice");
+        if agent == "claude-code" {
+            assert_eq!(fs::read_to_string(&file).unwrap(), "before");
+            let path = server.root.path().join("home/.claude/fake-received.jsonl");
+            let log: Vec<Value> = fs::read_to_string(path).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            let user = log.iter().find(|message| message["type"] == "user").unwrap();
+            let rewind = log.iter().find(|message| message["request"]["subtype"] == "rewind_files").unwrap();
+            assert_eq!(rewind["request"]["user_message_id"], user["uuid"]);
+            let processes = common::leftovers(server.root.path());
+            assert!(processes.iter().any(|process| process.contains(&format!("--resume-session-at {}", user["uuid"].as_str().unwrap()))));
+        } else {
+            assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+            assert!(view.items[0]["text"].as_str().unwrap().contains("Files are left unchanged"));
+            let reverted = received(&server).into_iter().find(|message| message["method"] == "thread/revert").unwrap();
+            assert_eq!(reverted["params"]["threadId"], "01a14644-9d4c-76e3-85ad-597b2ce8db9f");
+            assert!(reverted["params"]["beforeTurnId"].is_string());
+        }
+        close_chat(&mut socket, server.root.path(), &chat_id).await;
+    }
 }

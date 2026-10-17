@@ -1,5 +1,7 @@
 # Chats speak each Agent's wire protocol from Rust, not through the official SDKs
 
+TUI sharing and handoff are superseded by [ADR 0011](0011-rigs-run-only-chats.md). Chats still use these wire protocols.
+
 The server drives Claude Code through its SDK's stdio protocol in a holder process per Chat, and drives Codex as a client of the `codex app-server` daemon.
 
 - Both Agents are native binaries that speak these protocols directly, so no Node runs (ADR 0002).

@@ -125,7 +125,8 @@ async fn a_queued_message_survives_a_server_restart() {
     let mut view = View::default();
     send(&mut socket, &chat_id, first, false).await;
     view.follow(&mut socket, &chat_id, |view| streaming(view, 1)).await;
-    send(&mut socket, &chat_id, queued, true).await;
+    let image = json!({ "mediaType": "image/png", "data": "aGVsbG8=" });
+    control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": queued, "queue": true, "images": [image] })).await;
     view.follow(&mut socket, &chat_id, |view| !view.queued.is_empty()).await;
 
     server.restart().await;
@@ -136,6 +137,7 @@ async fn a_queued_message_survives_a_server_restart() {
     let chat = chat.expect("the chat was not restored");
     assert_eq!(chat["status"], "working");
     assert_eq!(chat["queued"], json!([queued]));
+    assert_eq!(chat["queuedImages"], json!([[image]]));
     control(&mut socket, json!({ "type": "chat.attach", "chatId": chat_id })).await;
     let items = next_control(&mut socket, "chat.items").await["items"].as_array().unwrap().clone();
     let mut view = View { items, ..View::default() };
@@ -146,7 +148,9 @@ async fn a_queued_message_survives_a_server_restart() {
     interrupt(&mut socket, &chat_id).await;
     view.follow(&mut socket, &chat_id, |view| view.statuses.last().is_some_and(|status| status == "done")).await;
     assert_eq!(view.statuses, ["done"]);
-    assert_eq!(view.items, claude_items());
+    let mut expected = claude_items();
+    expected[4]["images"] = json!(1);
+    assert_eq!(view.items, expected);
     assert_eq!(record(&server, &chat_id)["queued"], json!([]));
 }
 
@@ -171,13 +175,17 @@ fn streaming(view: &View, index: usize) -> bool {
 }
 
 async fn launch(agent: &str) -> (Server, Socket, String) {
+    launch_fixture(agent, "steer-queue-interrupt").await
+}
+
+async fn launch_fixture(agent: &str, fixture: &str) -> (Server, Socket, String) {
     let config = format!(
         r#"
 [[rig]]
 name = "agent"
 agent = "{agent}"
 command = "agent"
-env = {{ OIKONOMOS_FAKE_FIXTURE = "steer-queue-interrupt" }}
+env = {{ OIKONOMOS_FAKE_FIXTURE = "{fixture}" }}
 "#
     );
     let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
@@ -238,5 +246,29 @@ impl View {
         })
         .await
         .unwrap_or_else(|_| panic!("timed out with {:?} {:?} {:?}", self.statuses, self.queued, self.items));
+    }
+}
+
+#[tokio::test]
+async fn images_reach_both_agents_without_becoming_transcript_data() {
+    for agent in ["claude-code", "codex"] {
+        let (server, mut socket, chat_id) = launch_fixture(agent, "simple-turn").await;
+        let image = json!({ "mediaType": "image/png", "data": "aGVsbG8=" });
+        control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Greet the reader", "images": [image] })).await;
+        let mut view = View::default();
+        view.follow(&mut socket, &chat_id, |view| view.statuses.last().is_some_and(|status| status == "done")).await;
+        assert_eq!(view.items[0]["images"], 1);
+        assert!(!view.items.iter().any(|item| item.to_string().contains("aGVsbG8=")));
+        close_chat(&mut socket, server.root.path(), &chat_id).await;
+        let log = if agent == "codex" { received(server.root.path()) } else {
+            fs::read_to_string(server.root.path().join("home/.claude/fake-received.jsonl")).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+        };
+        if agent == "codex" {
+            let sent = log.iter().find(|message| message["method"] == "turn/start").unwrap();
+            assert_eq!(sent["params"]["input"][1], json!({ "type": "image", "url": "data:image/png;base64,aGVsbG8=" }));
+        } else {
+            let sent = log.iter().find(|message| message["type"] == "user").unwrap();
+            assert_eq!(sent["message"]["content"][1], json!({ "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "aGVsbG8=" } }));
+        }
     }
 }

@@ -26,11 +26,7 @@ use nix::{
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    config::Agent,
-    hooks::{self, Status, Transition},
-    protocol::{self, AgentState, Foreground, Hello, Message, Size, Title},
-};
+use crate::protocol::{self, Hello, Message, Size, Title};
 
 const MAX_CONTINUATION: usize = 1 << 20;
 const FOREGROUND_POLL: Duration = Duration::from_millis(100);
@@ -46,10 +42,6 @@ pub struct HoldArgs {
     pub cwd: Option<PathBuf>,
     #[arg(long)]
     pub project: Option<String>,
-    #[arg(long, requires = "agent")]
-    pub rig: Option<String>,
-    #[arg(long, requires = "rig")]
-    pub agent: Option<Agent>,
     #[arg(long, value_name = "LINES")]
     pub scrollback: usize,
     #[arg(last = true, required = true)]
@@ -71,34 +63,10 @@ pub struct Record {
     pub owner: Owner,
     #[serde(default)]
     pub created: u128,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rig: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<Agent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<Status>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_session: Option<String>,
-    #[serde(default = "viewed")]
-    pub viewed_since_done: bool,
     pub cwd: PathBuf,
     pub command: Vec<String>,
     pub size: Size,
     pub protocol: u16,
-}
-
-impl Record {
-    fn end_agent(&mut self) {
-        self.rig = None;
-        self.agent = None;
-        self.status = None;
-        self.agent_session = None;
-    }
-}
-
-/// Launch counts as viewed, and so does a record from a holder that predates attention.
-fn viewed() -> bool {
-    true
 }
 
 pub fn socket_path(data_dir: &Path, id: &str) -> PathBuf {
@@ -157,11 +125,6 @@ pub fn hold(args: HoldArgs) -> Result<(), Box<dyn Error>> {
         id: args.id,
         owner: args.project.map_or(Owner::Drawer, Owner::Project),
         created: SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
-        rig: args.rig,
-        agent: args.agent,
-        status: None,
-        agent_session: None,
-        viewed_since_done: viewed(),
         command: args.command,
         size: Size { cols: 80, rows: 24 },
         protocol: protocol::VERSION,
@@ -200,8 +163,6 @@ fn run(
     let mut command = CommandBuilder::new(&record.command[0]);
     command.args(&record.command[1..]);
     command.cwd(&record.cwd);
-    command.env("OIKONOMOS_TERMINAL_ID", &record.id);
-    command.env("OIKONOMOS_DATA_DIR", files.record.parent().unwrap().parent().unwrap());
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     let mut child = pty.slave.spawn_command(command)?;
@@ -263,12 +224,6 @@ fn run(
         })?
         .on_title_changed(|_| titled.set(true))?;
 
-    let launching = [
-        record.command.iter().flat_map(|arg| arg.bytes().chain([0])).collect(),
-        fs::read("/proc/self/cmdline")?,
-        Vec::new(),
-    ];
-    let mut is_root_shell = record.rig.is_none();
     let mut titles = Titles {
         root: pid.map(|pid| pid as i32),
         foreground: None,
@@ -300,10 +255,7 @@ fn run(
             Event::Connected(stream) => {
                 next_id += 1;
                 if let Ok(conn) = connect(next_id, stream, events.clone()) {
-                    let foreground = Message::ForegroundChanged(Foreground { is_root_shell });
-                    let _ = conn.frames.send(protocol::encode(&foreground));
                     let _ = conn.frames.send(protocol::encode(&Message::TitleChanged(reported.clone())));
-                    let _ = conn.frames.send(protocol::encode(&Message::Agent(agent_state(record))));
                     conns.insert(next_id, conn);
                 }
             }
@@ -339,37 +291,6 @@ fn run(
                 }
                 break;
             }
-            Event::Received(id, Message::Hook(hook)) if record.agent == Some(hook.agent) => {
-                if let Some(session) = hook.payload["session_id"].as_str() {
-                    record.agent_session = Some(session.to_owned());
-                }
-                match hooks::transition(hook.agent, &hook.event, &hook.payload) {
-                    Some(Transition::To(status)) => {
-                        if status == Status::Done && agent_state(record).status != Some(status) {
-                            record.viewed_since_done = false;
-                        }
-                        record.status = Some(status);
-                    }
-                    Some(Transition::Exit) => {
-                        record.end_agent();
-                    }
-                    None => {}
-                }
-                let _ = files.write_record(record);
-                let frame = protocol::encode(&Message::Agent(agent_state(record)));
-                for conn in conns.values() { let _ = conn.frames.send(frame.clone()); }
-                if let Some(conn) = conns.get(&id) {
-                    let _ = conn.frames.send(protocol::encode(&Message::Hooked));
-                }
-            }
-            Event::Received(_, Message::Agent(AgentState { status, session, viewed_since_done })) => {
-                if record.rig.is_some() {
-                    record.status = status;
-                    record.agent_session = session;
-                    record.viewed_since_done = viewed_since_done;
-                    let _ = files.write_record(record);
-                }
-            }
             Event::Received(..) => {}
             Event::Closed(id) => {
                 conns.remove(&id);
@@ -384,25 +305,6 @@ fn run(
                 }
                 let Some(leader) = pty.master.process_group_leader() else { continue };
                 titles.foreground(leader);
-                let root = pid.is_some_and(|pid| pid as i32 == leader);
-                // The Agent has exited only once the launch shell execs the interactive one; until
-                // then its argv is the launch command, this holder's (pre-exec), or empty (mid-exec).
-                if root
-                    && record.rig.is_some()
-                    && fs::read(format!("/proc/{leader}/cmdline"))
-                        .is_ok_and(|argv| !launching.contains(&argv))
-                {
-                    record.end_agent();
-                    let _ = files.write_record(record);
-                }
-                let now = root && record.rig.is_none();
-                if now != is_root_shell {
-                    is_root_shell = now;
-                    let frame = protocol::encode(&Message::ForegroundChanged(Foreground { is_root_shell }));
-                    for conn in conns.values() {
-                        let _ = conn.frames.send(frame.clone());
-                    }
-                }
             }
         }
         if titles.current != reported {
@@ -446,14 +348,6 @@ impl Titles {
         }
         self.setter = self.foreground;
         self.current.title = (!title.is_empty()).then(|| title.to_owned());
-    }
-}
-
-fn agent_state(record: &Record) -> AgentState {
-    AgentState {
-        status: record.rig.as_ref().map(|_| record.status.unwrap_or(Status::Done)),
-        session: record.agent_session.clone(),
-        viewed_since_done: record.viewed_since_done,
     }
 }
 

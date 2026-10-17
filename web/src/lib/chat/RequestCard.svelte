@@ -1,53 +1,124 @@
 <script lang="ts">
+	import Code from '#lib/chat/Code.svelte';
 	import type { Answer, Request } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Text from '#lib/chat/Text.svelte';
 
-	type Props = { request: Request; agent: string; disabled: boolean; onanswer(answer: Answer): void };
-
-	let { request, agent, disabled, onanswer }: Props = $props();
-
-	const title = $derived.by(() => {
-		switch (request.kind) {
-			case 'command':
-				return `${agent} wants to run a command`;
-			case 'edit':
-				return `${agent} wants to edit a file`;
-			case 'other':
-				return request.title;
-		}
-	});
+	let { request, agent, disabled, onanswer }: { request: Request; agent: string; disabled: boolean; onanswer(answer: Answer): void } = $props();
+	let picking = $state(false);
+	let scope = $state<'chat' | 'always'>('chat');
+	let stops = $state<number[]>([]);
+	let step = $state(0);
+	let answers = $state<string[][]>([]);
+	let selected = $state<string[]>([]);
+	let other = $state('');
+	const question = $derived(request.kind === 'question' ? request.questions[step] : undefined);
+	const title = $derived(request.kind === 'command' ? `${agent} wants to run a command` : request.kind === 'edit' ? `${agent} wants to edit a file` : request.kind === 'plan' ? 'Proposed plan' : request.kind === 'question' ? question?.header : request.title);
 
 	function quote(word: string) {
 		return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 	}
+
+	function stop(index: number, length: number) {
+		if (request.kind !== 'command') return length;
+		return scope === 'chat' && !request.sessionPrefixes ? length : stops[index] ?? request.suggestion[index]?.length ?? length;
+	}
+
+	function choose(label: string) {
+		selected = question?.multiSelect ? selected.includes(label) ? selected.filter((value) => value !== label) : [...selected, label] : [label];
+	}
+
+	function next(skip = false) {
+		const chosen = skip ? [] : [...selected, ...(other.trim() ? [other.trim()] : [])];
+		const result = [...answers, chosen];
+		if (request.kind !== 'question' || step + 1 >= request.questions.length) onanswer({ answers: result });
+		else {
+			answers = result;
+			step += 1;
+			selected = [];
+			other = '';
+		}
+	}
+
+	function allowRules() {
+		if (request.kind !== 'command') return;
+		onanswer({ allow: true, rule: request.words.map((words, index) => ({ prefix: words.slice(0, stop(index, words.length)), scope })) });
+	}
 </script>
 
-<section aria-label="Approval" class="card" class:phone={form() === 'phone'}>
+<section aria-label={request.kind === 'question' ? 'Question' : request.kind === 'plan' ? 'Plan' : 'Approval'} class="card" class:phone={form() === 'phone'}>
 	<h2>{title}</h2>
-	{#if request.kind === 'command'}
-		<pre class="code">{request.words.map((words) => words.map(quote).join(' ')).join('\n')}</pre>
-	{:else if request.kind === 'edit'}
-		<div class="path">{request.path}</div>
-		<div class="code">
-			{#each request.diff.trimEnd().split('\n') as line, index (index)}
-				<div class="line" class:added={line.startsWith('+')} class:removed={line.startsWith('-')}>{line}</div>
+	{#if request.kind === 'question' && question}
+		<div class="progress">Question {step + 1} of {request.questions.length}</div>
+		<div>{question.question}</div>
+		<div class="options">
+			{#each question.options as option}
+				<button class="option" aria-pressed={selected.includes(option.label)} {disabled} onclick={() => choose(option.label)}>
+					<strong>{option.label}</strong><span>{option.description}</span>
+				</button>
 			{/each}
+			<label>Other…<input aria-label="Other answer" bind:value={other} {disabled} /></label>
+		</div>
+		<div class="actions">
+			<Button variant="primary" disabled={disabled || (!selected.length && !other.trim())} onclick={() => next()}>{step + 1 === request.questions.length ? 'Submit' : 'Next'}</Button>
+			<Button {disabled} onclick={() => next(true)}>Skip</Button>
+		</div>
+	{:else if request.kind === 'plan'}
+		<div class="code"><Text item={{ kind: 'text', text: request.plan, streaming: false }} /></div>
+		<div class="actions">
+			<Button variant="primary" {disabled} onclick={() => onanswer({ allow: true })}>Approve</Button>
+			<Button {disabled} onclick={() => onanswer({ allow: false })}>Keep planning</Button>
 		</div>
 	{:else}
-		<pre class="code">{request.detail}</pre>
-	{/if}
-	<div class="actions">
-		<Button variant="primary" {disabled} onclick={() => onanswer({ allow: true })}>Allow</Button>
 		{#if request.kind === 'command'}
-			<Button disabled>Always allow</Button>
+			<pre class="code"><Code code={request.words.map((words) => words.map(quote).join(' ')).join('\n')} path="command.sh" /></pre>
+			{#if picking}
+				<label>Rule scope <select aria-label="Rule scope" bind:value={scope} {disabled}><option value="chat">This Chat</option><option value="always">Always</option></select></label>
+				{#if scope === 'always' && !request.sessionPrefixes && request.words.length > 1}<div class="progress">Additional compound rules take effect after Codex restarts.</div>{/if}
+				{#if scope === 'chat' && !request.sessionPrefixes}<div class="progress">This Chat allows the exact command. Prefix rules require Always.</div>{/if}
+				{#each request.words as words, index}
+					<div class="words" aria-label="Command part {index + 1}">
+						{#each words as word, at}
+							<button class="word" aria-pressed={at < stop(index, words.length)} disabled={disabled || (scope === 'chat' && !request.sessionPrefixes)} onclick={() => (stops[index] = at + 1)}>{word}</button>
+						{/each}
+					</div>
+					<output>{words.slice(0, stop(index, words.length)).map(quote).join(' ')}{stop(index, words.length) < words.length ? ' *' : ''}</output>
+				{/each}
+			{/if}
+		{:else if request.kind === 'edit'}
+			<div class="path">{request.path}</div>
+			<div class="code"><Code code={request.diff} path={request.path} diff /></div>
+		{:else if request.kind === 'other'}
+			<pre class="code"><Code code={request.detail} path="arguments.json" /></pre>
 		{/if}
-		<Button variant="danger" {disabled} onclick={() => onanswer({ allow: false })}>Deny</Button>
-	</div>
+		<div class="actions">
+			{#if picking}
+				<Button variant="primary" {disabled} onclick={allowRules}>Allow rule{request.kind === 'command' && request.words.length > 1 ? 's' : ''}</Button>
+				<Button {disabled} onclick={() => (picking = false)}>Back</Button>
+			{:else}
+				<Button variant="primary" {disabled} onclick={() => onanswer({ allow: true })}>Allow</Button>
+				{#if request.kind === 'command'}<Button {disabled} onclick={() => (picking = true)}>Always allow</Button>{/if}
+			{/if}
+			<Button variant="danger" {disabled} onclick={() => onanswer({ allow: false })}>Deny</Button>
+		</div>
+	{/if}
 </section>
 
 <style>
+	.options { display: flex; flex-direction: column; gap: var(--space-2); }
+	.option { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); text-align: left; }
+	.option span, .progress { color: var(--muted-fg); font-size: var(--font-size-sm); }
+	.option, .word, input, select { padding: var(--space-2) var(--space-3); min-height: var(--target-min); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg); font: inherit; }
+	button[aria-pressed='true'] { border-color: var(--status-waiting); background: var(--hover); }
+	.word { max-width: 100%; overflow-wrap: anywhere; }
+	.words { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+	label { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+	input { flex: 1; min-width: 0; }
+	output { font-family: var(--font-mono); overflow-wrap: anywhere; }
 	.card {
+		max-height: 55dvh;
+		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
@@ -84,16 +155,20 @@
 	}
 
 	pre.code,
-	.line {
+	.code :global(.code-line) {
 		white-space: pre-wrap;
 	}
 
-	.added {
-		color: var(--git-added);
+	.code :global(.added) {
+		background: color-mix(in oklab, var(--git-added) 14%, transparent);
 	}
 
-	.removed {
-		color: var(--git-deleted);
+	.code :global(.removed) {
+		background: color-mix(in oklab, var(--git-deleted) 14%, transparent);
+	}
+
+	.code :global(.hunk) {
+		color: var(--muted-fg);
 	}
 
 	.actions {

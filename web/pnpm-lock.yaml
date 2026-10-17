@@ -104,6 +104,9 @@ importers:
       markdown-it:
         specifier: ^14.3.2
         version: 14.3.2
+      style-mod:
+        specifier: ^4.1.4
+        version: 4.1.4
       svelte:
         specifier: ^5.57.2
         version: 5.57.2

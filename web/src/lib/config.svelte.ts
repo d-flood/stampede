@@ -1,4 +1,3 @@
-import { form } from '#lib/form.ts';
 import type { ITheme } from 'ghostty-web';
 import { MediaQuery } from 'svelte/reactivity';
 
@@ -20,7 +19,6 @@ export type Appearance = { theme: ITheme; fontFamily: string; scrollback: number
 export type Agent = 'claude-code' | 'codex';
 export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 export type Rig = { name: string; agent: Agent; shortcut?: string };
-export type Launcher = { rig: Rig; chat: boolean; label: string };
 
 const dark = new MediaQuery('(prefers-color-scheme: dark)');
 let revision = $state(0);
@@ -90,13 +88,6 @@ export async function selectTheme(name: string) {
 
 export function rigs(): Rig[] {
 	return configured;
-}
-
-/** A Rig as a TUI and as a Chat, the form factor's default first. */
-export function launchers(rig: Rig): Launcher[] {
-	const tui = { rig, chat: false, label: rig.name };
-	const chat = { rig, chat: true, label: `${rig.name} as Chat` };
-	return form() === 'phone' ? [chat, tui] : [tui, chat];
 }
 
 export function leader(): string {

@@ -49,7 +49,7 @@ const chrome = EditorView.theme({
 	'.cm-diagnostic-warning': { borderLeftColor: 'var(--ansi-3)' }
 });
 
-const highlight = HighlightStyle.define([
+export const highlight = HighlightStyle.define([
 	{ tag: [tags.keyword, tags.controlKeyword, tags.moduleKeyword, tags.operatorKeyword], color: 'var(--ansi-5)' },
 	{ tag: [tags.string, tags.special(tags.string), tags.character], color: 'var(--ansi-2)' },
 	{ tag: [tags.regexp, tags.escape], color: 'var(--ansi-6)' },

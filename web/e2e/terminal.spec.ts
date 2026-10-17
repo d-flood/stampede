@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { openProject, screen } from './shell.ts';
 
-test('a Terminal runs echo hi and notification navigation reveals its Tab', async ({ page }, { project }) => {
+test('a Terminal runs echo hi and a deep link reveals its Tab', async ({ page }, { project }) => {
 	let target: { id: string; owner: { project: string } } | undefined;
 	page.on('websocket', (socket) => socket.on('framereceived', ({ payload }) => {
 		if (typeof payload !== 'string') return;
@@ -22,9 +22,7 @@ test('a Terminal runs echo hi and notification navigation reveals its Tab', asyn
 	const drawer = page.getByRole('region', { name: 'Drawer', includeHidden: true });
 	await expect.poll(() => drawer.evaluate((element) => getComputedStyle(element).transform)).toBe('none');
 	expect(target).toBeDefined();
-	await page.evaluate((terminal) => navigator.serviceWorker.dispatchEvent(new MessageEvent('message', {
-		data: { projectId: terminal.owner.project, terminalId: terminal.id }
-	})), target!);
+	await page.goto(`/?project=${target!.owner.project}&tab=${target!.id}`);
 	await expect(drawer).toHaveAttribute('inert', '');
 	await expect.poll(() => drawer.evaluate((element) => element.getBoundingClientRect().bottom)).toBeLessThanOrEqual(0);
 	await expect(page.locator(`[data-tab="${target!.id}"]`)).toHaveAttribute('aria-selected', 'true');

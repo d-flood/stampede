@@ -1,12 +1,9 @@
 <script lang="ts">
+	import Code from '#lib/chat/Code.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 
 	let { item, ondiff }: { item: Extract<Item, { kind: 'edit' }>; ondiff(path: string): void } = $props();
-
-	const signs: Record<string, string> = { '+': 'added', '-': 'removed', '@': 'hunk' };
-
-	const lines = $derived(item.diff.split('\n').filter((line) => line));
 </script>
 
 {#snippet counts()}
@@ -14,11 +11,9 @@
 {/snippet}
 
 {#snippet diff()}
-	{#if lines.length}
+	{#if item.diff}
 		<div class="diff">
-			{#each lines as line, index (index)}
-				<div class={signs[line[0]]}>{line}</div>
-			{/each}
+			<Code code={item.diff} path={item.path} diff />
 		</div>
 	{/if}
 {/snippet}
@@ -144,21 +139,21 @@
 		line-height: 1.6;
 	}
 
-	.diff div {
+	.diff :global(.code-line) {
 		padding: 0 var(--space-4);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
 
-	.diff .added {
+	.diff :global(.added) {
 		background: color-mix(in oklab, var(--git-added) 14%, transparent);
 	}
 
-	.diff .removed {
+	.diff :global(.removed) {
 		background: color-mix(in oklab, var(--git-deleted) 14%, transparent);
 	}
 
-	.diff .hunk {
+	.diff :global(.hunk) {
 		color: var(--muted-fg);
 	}
 </style>

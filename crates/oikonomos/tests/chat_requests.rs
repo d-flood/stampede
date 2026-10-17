@@ -139,6 +139,84 @@ async fn a_codex_subagents_request_is_answered_from_the_parent_chat() {
     assert_eq!(launched.answers(), [json!({ "decision": "accept" })]);
 }
 
+#[tokio::test]
+async fn claude_rules_preserve_each_prefix_and_scope() {
+    for (scope, shortened) in [("chat", true), ("always", true), ("always", false)] {
+        let launched = Launched::new("claude-code", "approval").await;
+        let mut device = Device::open(launched.server.port, "rules", &launched.chat_id).await;
+        device.send(COMPOUND).await;
+        device.follow(|device| !device.requests.is_empty()).await;
+        let request = device.requests[0].clone();
+        assert_eq!(request["suggestion"], json!([["mkdir", "-p", "out"], ["touch", "out/approved.txt"]]));
+        let prefixes = if shortened { json!([["mkdir"], ["touch"]]) } else { request["words"].clone() };
+        let rule: Vec<_> = prefixes.as_array().unwrap().iter().map(|prefix| json!({ "prefix": prefix, "scope": scope })).collect();
+        device.answer(&request, json!({ "allow": true, "rule": rule })).await;
+        device.follow(|device| device.status == "done").await;
+        close_chat(&mut device.socket, launched.server.root.path(), &device.chat_id).await;
+        let destination = if scope == "chat" { "session" } else { "localSettings" };
+        let contents = if shortened { ["mkdir:*", "touch:*"] } else { ["mkdir -p out", "touch out/approved.txt"] };
+        let updates = contents.map(|content| json!({ "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": content }], "behavior": "allow", "destination": destination }));
+        assert_eq!(launched.answers(), [json!({ "behavior": "allow", "updatedPermissions": updates })]);
+    }
+}
+
+#[tokio::test]
+async fn codex_rules_use_session_decisions_or_persist_each_selected_prefix() {
+    for scope in ["chat", "always"] {
+        let launched = Launched::new("codex", "approval").await;
+        let mut device = Device::open(launched.server.port, "rules", &launched.chat_id).await;
+        device.send(COMPOUND).await;
+        device.follow(|device| !device.requests.is_empty()).await;
+        let request = device.requests[0].clone();
+        let parts = request["words"].as_array().unwrap();
+        let rules: Vec<_> = parts.iter().map(|words| json!({ "prefix": if scope == "chat" { words.clone() } else { json!([words[0]]) }, "scope": scope })).collect();
+        device.answer(&request, json!({ "allow": true, "rule": rules })).await;
+        device.follow(|device| device.status == "done").await;
+        close_chat(&mut device.socket, launched.server.root.path(), &device.chat_id).await;
+        if scope == "chat" {
+            assert_eq!(launched.answers(), [json!({ "decision": "acceptForSession" })]);
+            assert!(!launched.server.root.path().join("home/.codex/rules").exists());
+        } else {
+            assert_eq!(launched.answers(), [json!({ "decision": { "acceptWithExecpolicyAmendment": { "execpolicy_amendment": ["mkdir"] } } })]);
+            let directory = launched.server.root.path().join("home/.codex/rules");
+            let files: Vec<_> = fs::read_dir(directory).unwrap().map(|entry| entry.unwrap().path()).collect();
+            assert_eq!(files.len(), 1);
+            assert_eq!(fs::read_to_string(&files[0]).unwrap(), "prefix_rule(pattern=[\"touch\"], decision=\"allow\")\n");
+        }
+    }
+}
+
+#[tokio::test]
+async fn both_agents_map_multiple_answers_and_plan_approval() {
+    for agent in ["claude-code", "codex"] {
+        let fixture = if agent == "claude-code" { format!("{}/tests/fixtures/chats/claude-code/questions.synthetic.jsonl", env!("CARGO_MANIFEST_DIR")) } else { "questions".to_owned() };
+        let launched = Launched::new(agent, &fixture).await;
+        let mut device = Device::open(launched.server.port, "questions", &launched.chat_id).await;
+        device.send("Ask me two questions, then propose a plan.").await;
+        device.follow(|device| device.requests.iter().any(|request| request["kind"] == "question")).await;
+        let request = device.requests[0].clone();
+        assert_eq!(request["questions"].as_array().unwrap().len(), 2);
+        device.answer(&request, json!({ "answers": [["Red"], ["Circle", "Square"]] })).await;
+        device.follow(|device| device.requests.iter().any(|request| request["kind"] == "plan")).await;
+        let plan = device.requests[0].clone();
+        assert!(!plan["plan"].as_str().unwrap().is_empty());
+        device.answer(&plan, json!({ "allow": true })).await;
+        device.follow(|device| device.status == "done" && device.requests.is_empty()).await;
+        close_chat(&mut device.socket, launched.server.root.path(), &device.chat_id).await;
+        let answers = launched.answers();
+        if agent == "claude-code" {
+            assert_eq!(answers[0]["updatedInput"]["answers"], json!({ "Choose a color": "Red", "Choose shapes": "Circle, Square" }));
+        } else {
+            let values: Vec<_> = answers[0]["answers"].as_object().unwrap().values().map(|answer| answer["answers"].clone()).collect();
+            assert!(values.contains(&json!(["Red"])));
+            assert!(values.contains(&json!(["Circle", "Square"])));
+            let received = launched.received();
+            let turn = received.iter().rev().find(|message| message["method"] == "turn/start").unwrap();
+            assert_eq!(turn["params"]["collaborationMode"]["mode"], "default");
+        }
+    }
+}
+
 async fn first_answer_wins(agent: &str, allowed: Value) {
     let launched = Launched::new(agent, "approval").await;
     let chat_id = &launched.chat_id;

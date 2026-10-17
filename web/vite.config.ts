@@ -8,7 +8,7 @@ const crate = readFileSync(new URL('../crates/oikonomos/Cargo.toml', import.meta
 
 export default defineConfig({
 	plugins: [
-		sveltekit({ adapter: adapter({ fallback: 'index.html' }), version: { name: crate.match(/^version = "(.+)"$/m)?.[1] } }),
+		sveltekit({ adapter: adapter({ fallback: 'index.html' }), version: { name: process.env.OIKONOMOS_BUILD_ID ?? crate.match(/^version = "(.+)"$/m)?.[1] } }),
 		Icons({ compiler: 'svelte' })
 	]
 });

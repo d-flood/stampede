@@ -41,3 +41,20 @@ export function screen(page: Page) {
 		return lines.map((line) => line?.translateToString(true) ?? '').join('\n');
 	});
 }
+
+export async function closeProject(page: Page, name: string) {
+	await page.evaluate((path) => new Promise<void>((resolve, reject) => {
+		const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
+		let closing = false;
+		const timer = setTimeout(() => { socket.close(); reject(new Error('Project cleanup timed out')); }, 5000);
+		socket.onopen = () => socket.send(JSON.stringify({ type: 'projects.list' }));
+		socket.onmessage = ({ data }) => {
+			if (typeof data !== 'string') return;
+			const message = JSON.parse(data);
+			if (message.type !== 'projects.changed') return;
+			const project = message.projects.find((project: { path: string }) => project.path === path);
+			if (!project) { clearTimeout(timer); socket.close(); resolve(); }
+			else if (!closing) { closing = true; socket.send(JSON.stringify({ type: 'project.close', projectId: project.id })); }
+		};
+	}), `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`);
+}

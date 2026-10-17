@@ -226,6 +226,10 @@ def check(message, recorded):
         fail(f'initialize without capabilities.experimentalApi: {params}')
     if method == 'thread/start' and params.get('config', {}).get('tools.update_plan', {}).get('enabled') is not True:
         fail('thread/start without tools.update_plan.enabled')
+    if method in ('thread/start', 'thread/resume'):
+        mcp = params.get('config', {}).get('mcp_servers.oikonomos_chat', {})
+        if not Path(mcp.get('command', '')).is_file() or mcp.get('args') != ['chat-tools']:
+            fail(f'{method} without chat HTML server: {mcp}')
     if method == 'thread/start' and os.path.realpath(params.get('cwd') or '') != os.path.realpath(os.getcwd()):
         fail(f'thread/start cwd {params.get("cwd")} is not the proxy cwd {os.getcwd()}')
 
@@ -237,6 +241,7 @@ def proxy():
     entries = [json.loads(line) for line in fixture().read_text().splitlines()]
     ids = {}
     index = 0
+    images = []
     while index < len(entries):
         entry = entries[index]
         if 'stdin' in entry:
@@ -247,6 +252,8 @@ def proxy():
                 index = resume(entries, message['params']['threadId'])
                 entry = entries[index]
             check(message, entry['stdin'])
+            if message.get('method') in ('turn/start', 'turn/steer'):
+                images = [item for item in message['params']['input'] if item['type'] in ('image', 'localImage')]
             if 'id' in message:
                 ids[entry['stdin']['id']] = message['id']
         elif 'gate' in entry:
@@ -257,6 +264,8 @@ def proxy():
             sys.exit(1)
         else:
             message = entry['stdout']
+            if message.get('method') in ('item/started', 'item/completed') and message.get('params', {}).get('item', {}).get('type') == 'userMessage' and images:
+                message['params']['item']['content'].extend(images)
             if 'method' not in message and message.get('id') in ids:
                 message['id'] = ids[message['id']]
             if 'thread' in (message.get('result') or {}):

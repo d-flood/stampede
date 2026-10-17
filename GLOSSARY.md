@@ -37,15 +37,15 @@ _Avoid_: global terminal, quake terminal, scratch terminal
 ### Agents
 
 **Agent**:
-The underlying AI coding harness, such as Claude Code or Codex, run either as a TUI or as a Chat.
+The underlying AI coding harness, such as Claude Code or Codex, driven by a Chat.
 _Avoid_: assistant, bot, AI, harness
 
 **TUI**:
-An Agent running its own terminal interface inside a Terminal; it can be continued as a Chat.
+An Agent running its own terminal interface, started by the user in an ordinary Terminal. Oikonomos does not manage its lifecycle or status.
 _Avoid_: agent, agent terminal
 
 **Chat**:
-An Agent that Oikonomos drives directly and shows in its own interface; it keeps running when Devices disconnect or Oikonomos restarts, stops when its Tab is closed, and can be continued as a TUI.
+An Agent that Oikonomos drives directly and shows in its own interface; it keeps running when Devices disconnect or Oikonomos restarts, stops when its Tab is closed.
 _Avoid_: conversation, thread, session, native agent
 
 **Agent status**:
@@ -57,7 +57,7 @@ Instructions Oikonomos owns and sends as part of a prompt, such as a Ticket's fi
 _Avoid_: skill, prompt file, command
 
 **Rig**:
-A named, configured way of launching an Agent — its model, effort, permission mode, and the command line its TUI uses — started into a Project as a TUI or a Chat with one click or shortcut.
+A named configuration for a Chat — its Agent, model, effort, permission mode and environment — started in a Project with one click or shortcut. Rigs also configure the Chats used by Runs.
 _Avoid_: preset, profile, launcher
 
 ### Tickets
@@ -79,7 +79,7 @@ One slice of an Epic, sized for a single Chat, naming the Tickets that block it.
 _Avoid_: task, issue, story, card
 
 **Ticket status**:
-One of _not started_, _in progress_ (held by a Chat or TUI), _merging_ (complete and waiting for or undergoing its merge), _merged_, or _skipped_.
+One of _not started_, _in progress_ (held by a Chat), _merging_ (complete and waiting for or undergoing its merge), _merged_, or _skipped_.
 _Avoid_: state, stage, column
 
 **Blocker**:
@@ -99,7 +99,7 @@ True of a Run that starts no new Chats while those already working carry on, eit
 _Avoid_: stopped, suspended, halted
 
 **Claim**:
-The record that a Chat or TUI holds a Ticket.
+The record that a Chat holds a Ticket.
 _Avoid_: lock, lease, assignment
 
 **Verdict**:
@@ -151,15 +151,11 @@ The column of open Projects used to hop between them, each marked when something
 _Avoid_: project list, project sidebar
 
 **Tab**:
-One thing open in a Project's main window: a TUI, a Chat, a Terminal, a file, a diff, or an Epic.
+One thing open in a Project's main window: a Chat, a Terminal, a file, a diff, or an Epic.
 _Avoid_: pane, panel, view
 
-**TUI tab**:
-A Tab showing a TUI; it looks distinct from Terminal and Editor tabs, changes appearance with Agent status, and carries the Agent's logo.
-_Avoid_: agent tab, agent pane
-
 **Chat tab**:
-A Tab showing a Chat; like a TUI tab, it carries the Agent's logo and changes appearance with Agent status.
+A Tab showing a Chat; it carries the Agent's logo and changes appearance with Agent status.
 _Avoid_: agent tab, chat view, conversation tab
 
 **Epic tab**:

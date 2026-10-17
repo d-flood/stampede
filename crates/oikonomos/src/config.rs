@@ -72,14 +72,8 @@ impl Default for Mono {
 pub struct Rig {
     pub name: String,
     pub agent: Agent,
-    #[serde(skip_serializing)]
-    pub command: String,
-    #[serde(default, skip_serializing)]
-    pub args: Vec<String>,
     #[serde(default, skip_serializing)]
     pub env: BTreeMap<String, String>,
-    #[serde(default, skip_serializing)]
-    pub resume: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shortcut: Option<String>,
     #[serde(default, skip_serializing)]
@@ -108,44 +102,23 @@ pub struct AgentSettings {
 }
 
 impl AgentSettings {
-    pub fn flags(&self, agent: Agent) -> Vec<String> {
+    pub fn claude_flags(&self) -> Vec<String> {
         let mut flags = Vec::new();
-        let mut add = |flag: &str, value: &str| flags.extend([flag.to_owned(), value.to_owned()]);
-        match agent {
-            Agent::ClaudeCode => {
-                if let Some(model) = &self.model {
-                    add("--model", model);
-                }
-                if let Some(effort) = &self.effort {
-                    add("--effort", effort);
-                }
-                if let Some(mode) = &self.mode {
-                    add("--permission-mode", mode);
-                }
-            }
-            Agent::Codex => {
-                if let Some(model) = &self.model {
-                    add("-m", model);
-                }
-                if let Some(effort) = &self.effort {
-                    add("-c", &format!("model_reasoning_effort={effort}"));
-                }
-                if let Some((approval, sandbox)) = self.mode.as_deref().and_then(codex_policy) {
-                    add("-a", approval);
-                    add("-s", sandbox);
-                }
+        for (flag, value) in [("--model", &self.model), ("--effort", &self.effort), ("--permission-mode", &self.mode)] {
+            if let Some(value) = value {
+                flags.extend([flag.to_owned(), value.clone()]);
             }
         }
         flags
     }
 }
 
-/// The approval policy and sandbox of a Codex mode.
-pub fn codex_policy(mode: &str) -> Option<(&'static str, &'static str)> {
+pub fn codex_policy(mode: &str) -> Option<(&'static str, &'static str, &'static str)> {
     match mode {
-        "read-only" => Some(("on-request", "read-only")),
-        "default" => Some(("on-request", "workspace-write")),
-        "full-access" => Some(("never", "danger-full-access")),
+        "read-only" => Some(("on-request", "read-only", "user")),
+        "default" => Some(("on-request", "workspace-write", "user")),
+        "approve-for-me" => Some(("on-request", "workspace-write", "auto_review")),
+        "full-access" => Some(("never", "danger-full-access", "user")),
         _ => None,
     }
 }
@@ -169,7 +142,7 @@ impl Agent {
     pub fn modes(self) -> &'static [&'static str] {
         match self {
             Agent::ClaudeCode => &["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
-            Agent::Codex => &["read-only", "default", "full-access"],
+            Agent::Codex => &["read-only", "default", "approve-for-me", "full-access"],
         }
     }
 }
@@ -287,17 +260,14 @@ impl Config {
         if let Some(rig) = self.rigs.iter().find(|rig| rig.agent == agent) {
             return rig.clone();
         }
-        let (name, command) = match agent {
-            Agent::ClaudeCode => ("Claude Code", "claude"),
-            Agent::Codex => ("Codex", "codex"),
+        let name = match agent {
+            Agent::ClaudeCode => "Claude Code",
+            Agent::Codex => "Codex",
         };
         Rig {
             name: name.to_owned(),
             agent,
-            command: command.to_owned(),
-            args: Vec::new(),
             env: BTreeMap::new(),
-            resume: None,
             shortcut: None,
             model: None,
             effort: None,
@@ -358,7 +328,14 @@ fn theme<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Theme, D::Error> 
 }
 
 fn rigs<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Rig>, D::Error> {
-    let rigs = Vec::<Rig>::deserialize(deserializer)?;
+    let rigs = Vec::<toml::Value>::deserialize(deserializer)?.into_iter().map(|mut value| {
+        if let Some(fields) = value.as_table_mut() {
+            for field in ["command", "args", "resume"] {
+                fields.remove(field);
+            }
+        }
+        Rig::deserialize(value).map_err(D::Error::custom)
+    }).collect::<Result<Vec<_>, _>>()?;
     let mut names = HashSet::new();
     if let Some(rig) = rigs.iter().find(|rig| !names.insert(&rig.name)) {
         return Err(D::Error::custom(format!("more than one rig is named {:?}", rig.name)));
@@ -453,6 +430,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chat_only_rigs_accept_old_configs_without_accepting_unknown_fields() {
+        let text = "[[rig]]\nname = 'Claude'\nagent = 'claude-code'\n";
+        let rig = Config::parse(text).unwrap().rigs.remove(0);
+        let legacy = format!("{text}command = 'unused'\nargs = ['ignored']\nresume = 'unused {{session}}'\n");
+        assert_eq!(Config::parse(&legacy).unwrap().rigs, [rig]);
+        assert!(check(&format!("{text}modle = 'opus'\n")).is_some());
+    }
+
+    #[test]
     fn rigs_carry_model_effort_and_mode() {
         let config = Config::parse(
             r#"
@@ -499,7 +485,7 @@ command = "codex"
             assert!(invalid.message.starts_with(&format!("rig \"Mine\": {agent} has no mode \"{mode}\"")), "{}", invalid.message);
             assert_eq!(invalid.line, Some(3));
         }
-        for (agent, mode) in [("codex", "read-only"), ("codex", "default"), ("claude-code", "default"), ("claude-code", "plan")] {
+        for (agent, mode) in [("codex", "read-only"), ("codex", "default"), ("codex", "approve-for-me"), ("claude-code", "default"), ("claude-code", "plan")] {
             let text = format!("[[rig]]\nname = \"Mine\"\nagent = \"{agent}\"\ncommand = \"x\"\nmode = \"{mode}\"\n");
             assert!(check(&text).is_none(), "{agent} refused mode {mode}");
         }

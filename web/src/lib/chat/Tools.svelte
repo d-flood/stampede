@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Code from '#lib/chat/Code.svelte';
 	import type { Item, ToolCall } from '#lib/device.svelte.ts';
 
 	let { item }: { item: Extract<Item, { kind: 'tools' }> } = $props();
@@ -28,7 +29,7 @@
 	<summary><span>{summary}</span></summary>
 	<ul>
 		{#each item.calls as call, index (index)}
-			<li><span class="verb">{call.kind === 'other' ? call.name : verbs[call.kind]}</span> {call.detail}</li>
+			<li><span class="verb">{call.kind === 'other' ? call.name : verbs[call.kind]}</span> {#if call.kind === 'other'}<Code code={call.detail} path="arguments.json" />{:else}{call.detail}{/if}</li>
 		{/each}
 	</ul>
 </details>

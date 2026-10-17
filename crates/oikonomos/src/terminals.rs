@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     env, fs, io,
     path::{Path, PathBuf},
     process::Stdio,
@@ -8,7 +8,6 @@ use std::{
 
 use futures_util::StreamExt;
 use serde::Serialize;
-use serde_json::Value;
 use tokio::{
     io::AsyncWriteExt,
     net::{
@@ -22,35 +21,18 @@ use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
 use uuid::Uuid;
 
 use crate::{
-    attention::{Attention, Feed, Source, Tab},
-    config::{Agent, Rig},
     holder::{self, Owner, Record},
-    hooks::{self, Status, Transition},
     projects::Project,
-    protocol::{self, AgentState, Foreground, Message, Size, Title},
+    protocol::{self, Message, Size, Title},
 };
 
 type Frames = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 
-struct Initial {
-    state: AgentState,
-    title: Title,
-}
-
 pub struct Terminals {
     data_dir: PathBuf,
-    hook_url: String,
     terminals: Mutex<Vec<(String, Slot)>>,
-    changed: broadcast::Sender<Change>,
+    changed: broadcast::Sender<Owner>,
     titles: broadcast::Sender<(String, String)>,
-    views: Mutex<HashMap<Uuid, (Option<String>, Vec<String>)>>,
-    attention: Arc<Feed>,
-}
-
-#[derive(Clone)]
-pub enum Change {
-    Terminals(Owner),
-    Status(String, Status),
 }
 
 #[derive(Clone, Serialize)]
@@ -58,18 +40,7 @@ pub enum Change {
 pub struct Terminal {
     pub id: String,
     pub owner: Owner,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rig: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent: Option<Agent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<Status>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_session: Option<String>,
     pub label: String,
-    pub needs_attention: bool,
-    #[serde(skip)]
-    viewed_since_done: bool,
     pub state: State,
 }
 
@@ -129,15 +100,12 @@ impl Output {
 }
 
 impl Terminals {
-    pub fn new(data_dir: PathBuf, hook_url: String, attention: Arc<Feed>) -> Self {
+    pub fn new(data_dir: PathBuf) -> Self {
         Self {
             data_dir,
-            hook_url,
             terminals: Mutex::default(),
             changed: broadcast::Sender::new(64),
             titles: broadcast::Sender::new(64),
-            views: Mutex::default(),
-            attention,
         }
     }
 
@@ -178,11 +146,11 @@ impl Terminals {
     fn end(&self, record: Record) {
         let size = record.size;
         let (terminal, ..) = describe(record);
-        let terminal = Terminal { status: None, state: State::Ended, ..terminal };
+        let terminal = Terminal { state: State::Ended, ..terminal };
         self.terminals.lock().unwrap().push((terminal.id.clone(), Slot::Ended(terminal, size)));
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Change> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Owner> {
         self.changed.subscribe()
     }
 
@@ -208,32 +176,22 @@ impl Terminals {
     pub async fn create(
         self: &Arc<Self>,
         project: Option<&Project>,
-        rig: Option<&Rig>,
-        session: Option<&str>,
         scrollback: usize,
         device: &str,
     ) -> io::Result<Terminal> {
         let id = format!("{:016x}", Uuid::new_v4().as_u64_pair().1);
         let shell = env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
-        let exe = env::current_exe()?;
         let mut command = Command::new("/proc/self/exe");
-        command.env("OIKONOMOS_HOOK_URL", &self.hook_url);
+        for key in ["OIKONOMOS_HOOK_URL", "OIKONOMOS_TERMINAL_ID", "OIKONOMOS_DATA_DIR"] {
+            command.env_remove(key);
+        }
         command.arg("hold").arg("--data-dir").arg(&self.data_dir).arg("--id").arg(&id);
         command.arg("--scrollback").arg(scrollback.to_string());
         match project {
             Some(project) => command.arg("--cwd").arg(&project.path).arg("--project").arg(&project.id),
             None => command.arg("--cwd").arg(crate::home()),
         };
-        if let Some(rig) = rig {
-            command.arg("--rig").arg(&rig.name).arg("--agent").arg(rig.agent.name()).envs(&rig.env);
-        }
-        command.arg("--").arg(&shell);
-        match rig {
-            Some(rig) => {
-                command.args(["-l", "-i", "-c"]).arg(launch(rig, session, &exe, &shell.to_string_lossy()))
-            }
-            None => command.arg("-l"),
-        };
+        command.arg("--").arg(&shell).arg("-l");
         let status = command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -255,14 +213,9 @@ impl Terminals {
         let size = record.size;
         let (mut terminal, shell, mut title) = describe(record);
         if let Some(initial) = initial {
-            title = initial.title;
-            terminal.status = initial.state.status;
-            terminal.agent_session = initial.state.session;
-            terminal.viewed_since_done = initial.state.viewed_since_done;
-            if terminal.status.is_none() { terminal.end_agent(&shell, &title); }
-            terminal.label = label(terminal.rig.as_deref(), &shell, &title);
+            title = initial;
+            terminal.label = label(&shell, &title);
         }
-        terminal.attend();
         let entry = Arc::new(Entry {
             terminal: Mutex::new(terminal.clone()),
             shell,
@@ -272,8 +225,7 @@ impl Terminals {
             lead: Mutex::default(),
         });
         self.terminals.lock().unwrap().push((terminal.id.clone(), Slot::Live(Arc::clone(&entry))));
-        let _ = self.changed.send(Change::Terminals(terminal.owner.clone()));
-        self.refresh_attention();
+        let _ = self.changed.send(terminal.owner.clone());
         let terminals = Arc::clone(self);
         let (id, owner) = (terminal.id.clone(), terminal.owner.clone());
         tokio::spawn(async move {
@@ -287,38 +239,9 @@ impl Terminals {
                     frame = frames.next() => {
                         let Some(Ok(frame)) = frame else { break };
                         match protocol::decode(&frame) {
-                            Ok(Some(Message::ForegroundChanged(Foreground { is_root_shell: true })))
-                                if entry.agent_exited() =>
-                            {
-                                let _ = terminals.changed.send(Change::Terminals(owner.clone()));
-                                terminals.refresh_attention();
-                            }
-                            Ok(Some(Message::Agent(state))) => {
-                                let mut terminal = entry.terminal.lock().unwrap();
-                                let before = terminal.agent_state();
-                                let status = state.status;
-                                if terminal.agent.is_some() {
-                                    terminal.status = status;
-                                    terminal.agent_session = state.session;
-                                    terminal.viewed_since_done = state.viewed_since_done;
-                                    if status.is_none() { terminal.end_agent(&entry.shell, &entry.title.lock().unwrap()); }
-                                    terminal.attend();
-                                }
-                                let changed = before != terminal.agent_state();
-                                drop(terminal);
-                                if changed {
-                                    let _ = terminals.changed.send(Change::Terminals(owner.clone()));
-                                    if let Some(status) = status && Some(status) != before.status {
-                                        let _ = terminals.changed.send(Change::Status(id.clone(), status));
-                                        terminals.call(&id, status);
-                                    }
-                                    terminals.refresh_attention();
-                                }
-                            }
                             Ok(Some(Message::TitleChanged(title))) => {
                                 if let Some(label) = entry.retitle(title) {
                                     let _ = terminals.titles.send((id.clone(), label));
-                                    terminals.refresh_attention();
                                 }
                             }
                             _ => {}
@@ -327,8 +250,7 @@ impl Terminals {
                 }
             }
             terminals.terminals.lock().unwrap().retain(|(other, _)| *other != id);
-            let _ = terminals.changed.send(Change::Terminals(owner));
-            terminals.refresh_attention();
+            let _ = terminals.changed.send(owner);
         });
         Ok(terminal)
     }
@@ -363,87 +285,6 @@ impl Terminals {
         }
     }
 
-    pub fn hook(&self, id: &str, agent: Agent, event: &str, payload: &Value) -> bool {
-        let Some(entry) = self.get(id) else { return false };
-        let mut terminal = entry.terminal.lock().unwrap();
-        if terminal.agent != Some(agent) {
-            return false;
-        }
-        let before = terminal.agent_state();
-        if let Some(session) = payload["session_id"].as_str() {
-            terminal.agent_session = Some(session.to_owned());
-        }
-        match hooks::transition(agent, event, payload) {
-            Some(Transition::To(now)) => {
-                terminal.status = Some(now);
-                if Some(now) != before.status {
-                    if now == Status::Done {
-                        terminal.viewed_since_done = self.shown(id);
-                    }
-                    terminal.attend();
-                    let _ = self.changed.send(Change::Status(terminal.id.clone(), now));
-                }
-            }
-            Some(Transition::Exit) => {
-                terminal.end_agent(&entry.shell, &entry.title.lock().unwrap());
-                let _ = self.changed.send(Change::Terminals(terminal.owner.clone()));
-            }
-            None => {}
-        }
-        let after = terminal.agent_state();
-        let status = after.status;
-        if after != before {
-            let _ = entry.control.send(Message::Agent(after));
-        }
-        drop(terminal);
-        if let Some(now) = status && status != before.status {
-            self.call(id, now);
-        }
-        self.refresh_attention();
-        true
-    }
-
-    pub fn view(&self, connection: Uuid, browser: Option<String>, terminal_ids: Vec<String>) {
-        let entries: Vec<_> = terminal_ids.iter().filter_map(|id| self.get(id)).collect();
-        if terminal_ids.is_empty() {
-            self.views.lock().unwrap().remove(&connection);
-        } else {
-            self.views.lock().unwrap().insert(connection, (browser, terminal_ids));
-        }
-        let mut viewed = false;
-        for entry in entries {
-            viewed |= entry.view();
-        }
-        if viewed {
-            self.refresh_attention();
-        }
-    }
-
-    fn shown(&self, id: &str) -> bool {
-        self.views.lock().unwrap().values().any(|(_, shown)| shown.iter().any(|shown| shown == id))
-    }
-
-    fn showing(&self, id: &str) -> HashSet<String> {
-        let views = self.views.lock().unwrap();
-        let showing = views.values().filter(|(_, shown)| shown.iter().any(|shown| shown == id));
-        showing.filter_map(|(browser, _)| browser.clone()).collect()
-    }
-
-    fn call(&self, id: &str, status: Status) {
-        if status == Status::Working {
-            return;
-        }
-        let Some(entry) = self.get(id) else { return };
-        let terminal = entry.terminal.lock().unwrap().clone();
-        if let Some(item) = Attention::of(Terminal { needs_attention: true, ..terminal }) {
-            self.attention.call(item, self.showing(id));
-        }
-    }
-
-    fn refresh_attention(&self) {
-        self.attention.publish(Source::Terminals, self.list().into_iter().filter_map(Attention::of).collect());
-    }
-
     pub fn close(&self, id: &str) {
         match self.get(id) {
             Some(entry) => {
@@ -467,7 +308,7 @@ impl Terminals {
         for path in [holder::record_path, holder::socket_path, holder::scrollback_path] {
             let _ = fs::remove_file(path(&self.data_dir, id));
         }
-        let _ = self.changed.send(Change::Terminals(terminal.owner));
+        let _ = self.changed.send(terminal.owner);
     }
 
     pub fn lead(&self, id: &str, device: &str) {
@@ -507,72 +348,12 @@ impl Terminals {
     }
 }
 
-impl Terminal {
-    fn end_agent(&mut self, shell: &str, title: &Title) {
-        self.rig = None;
-        self.agent = None;
-        self.status = None;
-        self.agent_session = None;
-        self.label = label(None, shell, title);
-        self.attend();
-    }
-
-    fn attend(&mut self) {
-        self.needs_attention = match self.status {
-            Some(Status::Waiting) => true,
-            Some(Status::Done) => !self.viewed_since_done,
-            Some(Status::Working) | None => false,
-        };
-    }
-
-    fn agent_state(&self) -> AgentState {
-        AgentState {
-            status: self.status,
-            session: self.agent_session.clone(),
-            viewed_since_done: self.viewed_since_done,
-        }
-    }
-}
-
-impl Attention {
-    fn of(terminal: Terminal) -> Option<Self> {
-        match (terminal.owner, terminal.status) {
-            (Owner::Project(project_id), Some(status)) if terminal.needs_attention => Some(Self {
-                project_id,
-                tab: Tab::Terminal { terminal_id: terminal.id },
-                label: terminal.label,
-                status,
-            }),
-            _ => None,
-        }
-    }
-}
-
 impl Entry {
-    /// The holder reports the root shell in the foreground only once a Rig's Agent has exited.
-    fn agent_exited(&self) -> bool {
-        let mut terminal = self.terminal.lock().unwrap();
-        let was = terminal.rig.is_some();
-        terminal.end_agent(&self.shell, &self.title.lock().unwrap());
-        was
-    }
-
-    fn view(&self) -> bool {
-        let mut terminal = self.terminal.lock().unwrap();
-        if terminal.status != Some(Status::Done) || terminal.viewed_since_done {
-            return false;
-        }
-        terminal.viewed_since_done = true;
-        terminal.attend();
-        let _ = self.control.send(Message::Agent(terminal.agent_state()));
-        true
-    }
-
     fn retitle(&self, title: Title) -> Option<String> {
         let mut terminal = self.terminal.lock().unwrap();
         let mut current = self.title.lock().unwrap();
         *current = title;
-        let label = label(terminal.rig.as_deref(), &self.shell, &current);
+        let label = label(&self.shell, &current);
         (label != terminal.label).then(|| {
             terminal.label.clone_from(&label);
             label
@@ -597,53 +378,28 @@ fn describe(record: Record) -> (Terminal, String, Title) {
     let terminal = Terminal {
         id: record.id,
         owner: record.owner,
-        status: record.rig.as_ref().map(|_| record.status.unwrap_or(Status::Done)),
-        agent_session: record.agent_session,
-        label: label(record.rig.as_deref(), &shell, &title),
-        rig: record.rig,
-        agent: record.agent,
-        needs_attention: false,
-        viewed_since_done: record.viewed_since_done,
+        label: label(&shell, &title),
         state: State::Live,
     };
     (terminal, shell, title)
 }
 
-fn label(rig: Option<&str>, shell: &str, title: &Title) -> String {
-    match (rig, &title.title) {
-        (Some(rig), Some(title)) => format!("{rig} · {title}"),
-        (Some(rig), None) => rig.to_owned(),
-        (None, Some(title)) => title.clone(),
-        (None, None) => match title.cwd.strip_prefix(crate::home()) {
-            Ok(rest) if rest.as_os_str().is_empty() => format!("{shell} — ~"),
-            Ok(rest) => format!("{shell} — ~/{}", rest.display()),
-            Err(_) => format!("{shell} — {}", title.cwd.display()),
-        },
+fn label(shell: &str, title: &Title) -> String {
+    if let Some(title) = &title.title {
+        return title.clone();
     }
-}
-
-fn launch(rig: &Rig, session: Option<&str>, exe: &Path, shell: &str) -> String {
-    let words = |words: &[String]| words.iter().map(|word| format!(" {}", quote(word))).collect::<String>();
-    let args = words(&[rig.args.clone(), rig.settings().flags(rig.agent)].concat());
-    let (command, hooks) = (&rig.command, words(&hooks::wiring(rig.agent, exe)));
-    let line = match (session.map(quote), &rig.resume, rig.agent) {
-        (None, ..) => format!("{command}{args}{hooks}"),
-        (Some(session), Some(resume), _) => format!("{}{args}{hooks}", resume.replace("{session}", &session)),
-        (Some(session), None, Agent::ClaudeCode) => format!("{command}{args}{hooks} --resume {session}"),
-        (Some(session), None, Agent::Codex) => format!("{command} resume{args}{hooks} {session}"),
-    };
-    format!("{line}; exec {} -l -i", quote(shell))
-}
-
-pub fn quote(word: &str) -> String {
-    format!("'{}'", word.replace('\'', r"'\''"))
+    match title.cwd.strip_prefix(crate::home()) {
+        Ok(rest) if rest.as_os_str().is_empty() => format!("{shell} — ~"),
+        Ok(rest) => format!("{shell} — ~/{}", rest.display()),
+        Err(_) => format!("{shell} — {}", title.cwd.display()),
+    }
 }
 
 fn read_record(path: &Path) -> io::Result<Record> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 
-async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHalf, Option<Initial>)> {
+async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHalf, Option<Title>)> {
     let socket = UnixStream::connect(holder::socket_path(data_dir, id)).await?;
     let (reader, writer) = socket.into_split();
     let codec = LengthDelimitedCodec::builder().max_frame_length(protocol::MAX_FRAME).new_codec();
@@ -655,16 +411,10 @@ async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHal
     match hello {
         Some(Message::Hello(hello)) if hello.protocol <= protocol::VERSION => {
             let initial = if hello.protocol >= 6 {
-                let mut title = None;
                 loop {
                     let frame = frames.next().await.ok_or(io::ErrorKind::UnexpectedEof)??;
-                    match protocol::decode(&frame)? {
-                        Some(Message::TitleChanged(current)) => title = Some(current),
-                        Some(Message::Agent(state)) => break Some(Initial {
-                            state,
-                            title: title.ok_or_else(|| io::Error::other("holder sent no title"))?,
-                        }),
-                        _ => {}
+                    if let Some(Message::TitleChanged(title)) = protocol::decode(&frame)? {
+                        break Some(title);
                     }
                 }
             } else { None };

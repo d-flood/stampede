@@ -5,7 +5,7 @@
 
 <script lang="ts">
 	import { ago, logos } from '#lib/chat/sessions.ts';
-	import { launchers, rigs, type Launcher } from '#lib/config.svelte.ts';
+	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import type { Project, Session } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { split } from '#lib/git.ts';
@@ -21,7 +21,7 @@
 		actions?: Action[];
 		sessions?: Session[];
 		onproject(projectId: string): void;
-		onrig(launcher: Launcher): void;
+		onrig(rig: Rig): void;
 		onfile(path: string): void;
 		onsession(session: Session): void;
 	};
@@ -52,11 +52,10 @@
 		{
 			heading: 'Rigs',
 			entries: find(all && focused ? rigs() : [], (rig) => rig.name)
-				.flatMap(launchers)
-				.map((launcher) => ({
-					value: `rig:${launcher.label}`,
-					label: launcher.label,
-					onselect: () => onrig(launcher)
+				.map((rig) => ({
+					value: `rig:${rig.name}`,
+					label: rig.name,
+					onselect: () => onrig(rig)
 				}))
 		},
 		{ heading: 'Files', entries: files },

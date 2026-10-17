@@ -26,14 +26,12 @@ cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
 [[rig]]
 name = "Fake Claude"
 agent = "claude-code"
-command = "claude"
 env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
 shortcut = "c"
 
 [[rig]]
 name = "Fake Claude (steer)"
 agent = "claude-code"
-command = "claude"
 env = { OIKONOMOS_FAKE_FIXTURE = "steer-queue-interrupt" }
 EOF
 cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
@@ -41,37 +39,31 @@ cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
 [[rig]]
 name = "Fake Codex"
 agent = "codex"
-command = "codex"
 env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn", OIKONOMOS_FAKE_THREADS = "threads", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
 
 [[rig]]
 name = "Fake Claude Tools"
 agent = "claude-code"
-command = "claude"
 env = { OIKONOMOS_FAKE_FIXTURE = "tools", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
 
 [[rig]]
 name = "Fake Claude Edits"
 agent = "claude-code"
-command = "claude"
 env = { OIKONOMOS_FAKE_FIXTURE = "edits", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
 
 [[rig]]
 name = "Fake Codex Edits"
 agent = "codex"
-command = "codex"
 env = { OIKONOMOS_FAKE_FIXTURE = "edits", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
 
 [[rig]]
 name = "Claude Approval"
 agent = "claude-code"
-command = "claude"
 env = { OIKONOMOS_FAKE_FIXTURE = "approval", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
 
 [[rig]]
 name = "Codex Approval"
 agent = "codex"
-command = "codex"
 env = { OIKONOMOS_FAKE_FIXTURE = "approval", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
 EOF
 
@@ -82,10 +74,35 @@ cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
 [[rig]]
 name = "Fake Claude Subagent $form"
 agent = "claude-code"
-command = "claude"
 env = { OIKONOMOS_FAKE_FIXTURE = "subagents", OIKONOMOS_FAKE_GATES = "$OIKONOMOS_E2E_ROOT/subagent-$form", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
 EOF
 done
+
+cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
+
+[[rig]]
+name = "Claude Questions"
+agent = "claude-code"
+env = { OIKONOMOS_FAKE_FIXTURE = "$PWD/crates/oikonomos/tests/fixtures/chats/claude-code/questions.synthetic.jsonl", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
+
+[[rig]]
+name = "Codex Questions"
+agent = "codex"
+env = { OIKONOMOS_FAKE_FIXTURE = "questions", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
+EOF
+
+cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
+
+[[rig]]
+name = "Claude Rewind"
+agent = "claude-code"
+env = { OIKONOMOS_FAKE_FIXTURE = "$PWD/crates/oikonomos/tests/fixtures/chats/claude-code/rewind.synthetic.jsonl", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
+
+[[rig]]
+name = "Codex Rewind"
+agent = "codex"
+env = { OIKONOMOS_FAKE_FIXTURE = "$PWD/crates/oikonomos/tests/fixtures/chats/codex/rewind.synthetic.jsonl", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
+EOF
 
 cleanup() {
 	pkill -f -- "${OIKONOMOS_E2E_ROOT//./\\.}" || true
@@ -100,6 +117,7 @@ case ${1:-} in
 		pnpm -C web build
 		cargo build --release
 		cargo test --workspace
+		python3 tests/rebuild_test.py
 		pnpm -C web exec playwright test
 		;;
 	rust)

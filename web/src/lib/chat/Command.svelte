@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Code from '#lib/chat/Code.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
 
 	let { item }: { item: Extract<Item, { kind: 'command' }> } = $props();
@@ -10,7 +11,7 @@
 
 <details class={item.status}>
 	<summary>
-		<span class="command">$ {item.command}</span>
+		<span class="command">$ <Code code={item.command} path="command.sh" /></span>
 		<span class="outcome">{outcomes[item.status]}</span>
 	</summary>
 	{#if output}

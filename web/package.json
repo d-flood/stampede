@@ -45,6 +45,7 @@
 		"fuzzysort": "^4.0.2",
 		"ghostty-web": "0.4.0",
 		"markdown-it": "^14.3.2",
+		"style-mod": "^4.1.4",
 		"svelte": "^5.57.2",
 		"svelte-check": "^4.7.6",
 		"typescript": "^6.0.3",

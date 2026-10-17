@@ -2,11 +2,11 @@ mod common;
 
 use std::{env, fs, time::Duration};
 
-use common::{Server, chat_turn, close_chat, control, leftovers, next_control};
+use common::{Server, chat_turn, close_chat, control, next_control};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
-    time::{Instant, sleep, timeout},
+    time::timeout,
 };
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
@@ -28,24 +28,6 @@ env = { OIKONOMOS_FAKE_FIXTURE = "rig-fields" }
 model = "gpt-6-luna"
 effort = "low"
 mode = "read-only"
-
-[[rig]]
-name = "claude tui"
-agent = "claude-code"
-command = "sh"
-args = ["-c", "printf '%s\\n' \"$0\" \"$@\" > claude-argv; exec sleep 600"]
-model = "opus"
-effort = "xhigh"
-mode = "acceptEdits"
-
-[[rig]]
-name = "codex tui"
-agent = "codex"
-command = "sh"
-args = ["-c", "printf '%s\\n' \"$0\" \"$@\" > codex-argv; exec sleep 600"]
-model = "gpt-6-luna"
-effort = "low"
-mode = "full-access"
 "#;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -90,45 +72,19 @@ async fn a_codex_chat_starts_its_thread_with_its_rigs_model_effort_and_mode() {
         json!({
             "cwd": server.root.path().join("home"),
             "model": "gpt-6-luna",
-            "config": { "model_reasoning_effort": "low", "tools.update_plan": { "enabled": true } },
+            "config": {
+                "model_reasoning_effort": "low",
+                "tools.update_plan": { "enabled": true },
+                "mcp_servers.oikonomos_chat": {
+                    "command": env!("CARGO_BIN_EXE_oikonomos"),
+                    "args": ["chat-tools"],
+                },
+            },
             "approvalPolicy": "on-request",
+            "approvalsReviewer": "user",
             "sandbox": "read-only",
         })
     );
-}
-
-#[tokio::test]
-async fn a_tui_gets_its_rigs_model_effort_and_mode_as_flags() {
-    let (server, mut socket, project_id) = open().await;
-    let expected = [
-        ("claude tui", "claude-argv", "--model opus --effort xhigh --permission-mode acceptEdits --settings"),
-        ("codex tui", "codex-argv", "-m gpt-6-luna -c model_reasoning_effort=low -a never -s danger-full-access -c"),
-    ];
-    for (rig, file, flags) in expected {
-        control(&mut socket, json!({ "type": "terminal.create", "projectId": project_id, "rig": rig })).await;
-        let terminal_id = next_control(&mut socket, "terminal.created").await["terminal"]["id"].clone();
-        let path = server.root.path().join("home").join(file);
-        let argv = timeout(Duration::from_secs(10), async {
-            loop {
-                if let Ok(argv) = fs::read_to_string(&path)
-                    && argv.ends_with('\n')
-                {
-                    break argv;
-                }
-                sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .unwrap_or_else(|_| panic!("{rig} never ran"));
-        let words: Vec<&str> = argv.lines().collect();
-        assert_eq!(words[..flags.split(' ').count()].join(" "), flags, "{rig}: {words:?}");
-        control(&mut socket, json!({ "type": "terminal.close", "terminalId": terminal_id })).await;
-    }
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !leftovers(server.root.path()).is_empty() {
-        assert!(Instant::now() < deadline, "left running: {:?}", leftovers(server.root.path()));
-        sleep(Duration::from_millis(50)).await;
-    }
 }
 
 async fn open() -> (Server, Socket, Value) {

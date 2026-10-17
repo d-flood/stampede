@@ -9,10 +9,6 @@ export type Status = 'working' | 'waiting' | 'done';
 export type Terminal = {
 	id: string;
 	owner: { project: string } | 'drawer';
-	rig?: string;
-	agent?: Agent;
-	status?: Status;
-	agentSession?: string;
 	label: string;
 	state: 'live' | 'ended';
 };
@@ -24,17 +20,22 @@ export type Item =
 	| { kind: 'text'; text: string; streaming: boolean }
 	| { kind: 'thinking'; seconds: number; text?: string }
 	| { kind: 'tools'; calls: ToolCall[] }
+	| { kind: 'html'; title: string; html: string }
 	| { kind: 'subagent'; name?: string; task: string; status: Status; items: Item[] }
 	| { kind: 'edit'; path: string; diff: string; added: number; removed: number }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
-	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted'; text: string };
+	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
 
 export type Request =
-	| { kind: 'command'; id: string; words: string[][] }
+	| { kind: 'command'; id: string; words: string[][]; suggestion: string[][]; sessionPrefixes: boolean }
+	| { kind: 'question'; id: string; questions: Question[] }
+	| { kind: 'plan'; id: string; plan: string }
 	| { kind: 'edit'; id: string; path: string; diff: string }
 	| { kind: 'other'; id: string; title: string; detail: string };
 
-export type Answer = { allow: true } | { allow: false; instead?: string };
+export type Question = { id: string; header: string; question: string; options: { label: string; description: string }[]; multiSelect: boolean };
+export type Image = { mediaType: string; data: string };
+export type Answer = { allow: true; rule?: { prefix: string[]; scope: 'chat' | 'always' }[] } | { allow: false; instead?: string } | { answers: string[][] };
 export type Todo = { text: string; status: 'pending' | 'active' | 'done' };
 
 export type Context = { used: number; window: number };
@@ -48,13 +49,14 @@ export type Settings = Partial<Record<Setting, string>> & { pending?: Setting[] 
 export type Choice = { value: string; label: string };
 
 export type Capabilities = {
+	rewindsFiles: boolean;
 	models: string[];
 	efforts: string[];
 	modes: Choice[];
 	commands: { name: string; description: string; hint: string }[];
 };
 
-export type Builtin = Setting | 'compact' | 'clear';
+export type Builtin = Setting | 'compact' | 'clear' | 'rewind';
 
 export type Chat = {
 	id: string;
@@ -74,10 +76,10 @@ export type Reading = { agent: Agent; window: 'five-hour' | 'weekly'; used: numb
 
 export type Session = { agent: Agent; sessionId: string; firstPrompt: string; updatedAt: number };
 
-export type Attention = { projectId: string; label: string; status: Status } & ({ terminalId: string } | { chatId: string });
+export type Attention = { projectId: string; chatId: string; label: string; status: Status };
 
 export function tabOf(item: Attention): string {
-	return 'chatId' in item ? item.chatId : item.terminalId;
+	return item.chatId;
 }
 
 export type Found = { line: number; column: number; preview: string };
@@ -95,10 +97,9 @@ export type Search = {
 };
 
 export type ServerMessage =
-	| { type: 'hello'; version: string; terminals: Terminal[]; chats: Chat[] }
+	| { type: 'hello'; version: string; buildId: string; terminals: Terminal[]; chats: Chat[] }
 	| { type: 'terminal.created'; terminal: Terminal }
 	| { type: 'terminals.changed'; projectId?: string; drawer?: true; terminals: Terminal[] }
-	| { type: 'terminal.status'; terminalId: string; status: Status }
 	| { type: 'terminal.title'; terminalId: string; label: string }
 	| { type: 'terminal.attached'; terminalId: string; channel: number; cols: number; rows: number }
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
@@ -133,10 +134,9 @@ export type ServerMessage =
 
 export type ClientMessage =
 	| { type: 'hello'; deviceId: string; browserId: string }
-	| { type: 'terminal.create'; projectId: string; rig?: string }
+	| { type: 'terminal.create'; projectId: string }
 	| { type: 'terminal.create'; owner: 'drawer' }
 	| { type: 'terminal.close'; terminalId: string }
-	| { type: 'terminal.resume'; terminalId: string }
 	| { type: 'terminal.attach'; terminalId: string }
 	| { type: 'terminal.resize'; terminalId: string; cols: number; rows: number }
 	| { type: 'terminal.focus'; terminalId: string }
@@ -144,16 +144,16 @@ export type ClientMessage =
 	| { type: 'chat.create'; projectId: string; rig: string }
 	| { type: 'chat.resume'; projectId: string; agent: Agent; sessionId: string }
 	| { type: 'sessions.list'; projectId: string }
-	| { type: 'chat.send'; chatId: string; text: string; queue: boolean }
+	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }
 	| { type: 'chat.close' | 'chat.attach' | 'chat.detach' | 'chat.interrupt'; chatId: string }
 	| { type: 'chat.answer'; chatId: string; requestId: string; answer: Answer }
-	| { type: 'chat.run'; chatId: string; command: Builtin; value?: string }
+	| { type: 'chat.run'; chatId: string; command: Builtin; value?: string | number }
 	| { type: 'projects.list' }
 	| { type: 'project.open'; path: string }
 	| { type: 'project.close'; projectId: string }
 	| { type: 'project.reorder'; order: string[] }
 	| { type: 'picker.list' }
-	| { type: 'device.view'; terminalIds: string[]; chatIds: string[] }
+	| { type: 'device.view'; chatIds: string[] }
 	| ({ type: 'search.start' } & Search)
 	| { type: 'lsp.switch'; projectId: string; on: boolean }
 	| { type: 'lsp.open' | 'lsp.close'; channel: string }

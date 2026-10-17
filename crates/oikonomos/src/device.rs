@@ -33,7 +33,7 @@ use crate::{
     projects::{self, Projects},
     protocol::Size,
     search,
-    terminals::{self, Attachment, Change, Terminals},
+    terminals::{Attachment, Terminals},
     usage::{Reading, Usage},
 };
 
@@ -46,11 +46,9 @@ enum Control {
     #[serde(rename = "hello")]
     Hello { device_id: String, browser_id: Option<String> },
     #[serde(rename = "terminal.create")]
-    Create { project_id: Option<String>, owner: Option<Owner>, rig: Option<String> },
+    Create { project_id: Option<String>, owner: Option<Owner> },
     #[serde(rename = "terminal.close")]
     Close { terminal_id: String },
-    #[serde(rename = "terminal.resume")]
-    Resume { terminal_id: String },
     #[serde(rename = "terminal.attach")]
     Attach { terminal_id: String },
     #[serde(rename = "terminal.resize")]
@@ -71,6 +69,8 @@ enum Control {
         text: String,
         #[serde(default)]
         queue: bool,
+        #[serde(default)]
+        images: Vec<chats::Image>,
     },
     #[serde(rename = "chat.interrupt")]
     InterruptChat { chat_id: String },
@@ -100,7 +100,6 @@ enum Control {
     ListPicker {},
     #[serde(rename = "device.view")]
     View {
-        terminal_ids: Vec<String>,
         #[serde(default)]
         chat_ids: Vec<String>,
     },
@@ -204,11 +203,7 @@ async fn connect(
                 device.stop_servers(|project_id| !projects.iter().any(|project| project.id == project_id));
             }
             changed = changes.recv() => match changed {
-                Ok(Change::Terminals(owner)) => device.terminals_changed(&owner),
-                Ok(Change::Status(terminal_id, status)) => {
-                    let status = json!({ "type": "terminal.status", "terminalId": terminal_id, "status": status });
-                    send(&device.outgoing, status);
-                }
+                Ok(owner) => device.terminals_changed(&owner),
                 Err(RecvError::Lagged(_)) => {
                     for project in device.projects.list().iter() {
                         device.terminals_changed(&Owner::Project(project.id.clone()));
@@ -305,7 +300,6 @@ async fn connect(
             },
         }
     }
-    device.terminals.view(device.connection, None, Vec::new());
     device.chats.view(device.connection, None, Vec::new());
     device.cancel_search();
     writer.abort();
@@ -320,6 +314,7 @@ impl Device {
                 let hello = json!({
                     "type": "hello",
                     "version": env!("CARGO_PKG_VERSION"),
+                    "buildId": env!("OIKONOMOS_BUILD_ID"),
                     "terminals": self.terminals.list(),
                     "chats": self.chats.list(),
                 });
@@ -328,7 +323,7 @@ impl Device {
                 self.usage_changed(&self.usage.readings());
                 self.send_switches();
             }
-            Control::Create { project_id, owner, rig } => {
+            Control::Create { project_id, owner } => {
                 let projects = self.projects.list();
                 let project = match (project_id, owner) {
                     (Some(project_id), None) => {
@@ -340,15 +335,8 @@ impl Device {
                     (None, Some(Owner::Drawer)) => None,
                     _ => return eprintln!("terminal.create needs a projectId or owner \"drawer\""),
                 };
-                let rig = match rig {
-                    Some(name) => match self.config.borrow().rigs.iter().find(|rig| rig.name == name) {
-                        Some(rig) => Some(rig.clone()),
-                        None => return eprintln!("cannot launch rig {name}: not in the config"),
-                    },
-                    None => None,
-                };
                 let scrollback = self.config.borrow().scrollback;
-                match self.terminals.create(project, rig.as_ref(), None, scrollback, &self.id).await {
+                match self.terminals.create(project, scrollback, &self.id).await {
                     Ok(terminal) => {
                         send(&self.outgoing, json!({ "type": "terminal.created", "terminal": terminal }))
                     }
@@ -356,7 +344,6 @@ impl Device {
                 }
             }
             Control::Close { terminal_id } => self.terminals.close(&terminal_id),
-            Control::Resume { terminal_id } => self.resume(&terminal_id).await,
             Control::Attach { terminal_id } => self.attach(terminal_id).await,
             Control::Resize { terminal_id, cols, rows } => {
                 self.terminals.resize(&terminal_id, &self.id, Size { cols, rows })
@@ -392,7 +379,7 @@ impl Device {
                 }
             }
             Control::ListSessions { project_id } => self.list_sessions(project_id),
-            Control::SendChat { chat_id, text, queue } => self.chats.send(&chat_id, &text, queue),
+            Control::SendChat { chat_id, text, queue, images } => self.chats.send(&chat_id, &text, queue, &images),
             Control::InterruptChat { chat_id } => self.chats.interrupt(&chat_id),
             Control::AnswerChat { chat_id, request_id, answer } => self.chats.answer(&chat_id, &request_id, answer),
             Control::RunChat { chat_id, builtin } => self.chats.run(&chat_id, builtin),
@@ -428,8 +415,7 @@ impl Device {
                 let directories = projects::directories(&roots);
                 send(&self.outgoing, json!({ "type": "picker.listed", "directories": directories }));
             }
-            Control::View { terminal_ids, chat_ids } => {
-                self.terminals.view(self.connection, self.browser.clone(), terminal_ids);
+            Control::View { chat_ids } => {
                 self.chats.view(self.connection, self.browser.clone(), chat_ids);
             }
             Control::Search(query) => self.search(query),
@@ -527,32 +513,6 @@ impl Device {
         }
     }
 
-    async fn resume(&self, terminal_id: &str) {
-        let Some((ended, _)) = self.terminals.ended(terminal_id) else { return };
-        let (Some(name), Some(session)) = (ended.rig, ended.agent_session) else {
-            return eprintln!("cannot resume terminal {terminal_id}: no Agent session");
-        };
-        let Some(rig) = self.config.borrow().rigs.iter().find(|rig| rig.name == name).cloned() else {
-            return eprintln!("cannot resume rig {name}: not in the config");
-        };
-        let projects = self.projects.list();
-        let project = match &ended.owner {
-            Owner::Project(project_id) => match projects.iter().find(|project| project.id == *project_id) {
-                Some(project) => Some(project),
-                None => return eprintln!("cannot resume terminal {terminal_id} in {project_id}: not open"),
-            },
-            Owner::Drawer => None,
-        };
-        let scrollback = self.config.borrow().scrollback;
-        match self.terminals.create(project, Some(&rig), Some(&session), scrollback, &self.id).await {
-            Ok(terminal) => {
-                self.terminals.dismiss(terminal_id);
-                send(&self.outgoing, json!({ "type": "terminal.created", "terminal": terminal }));
-            }
-            Err(error) => eprintln!("cannot resume terminal {terminal_id}: {error}"),
-        }
-    }
-
     async fn attach(&mut self, terminal_id: String) {
         let Attachment { mut size, mut output } = match self.terminals.attach(&terminal_id).await {
             Ok(attachment) => attachment,
@@ -626,7 +586,6 @@ impl Device {
         self.attached.insert(chat_id, seq);
     }
 
-    /// Lists the Project's past sessions, leaving out those live in a Chat or a TUI.
     fn list_sessions(&self, project_id: String) {
         let projects = self.projects.list();
         let Some(project) = projects.iter().find(|project| project.id == project_id) else {
@@ -636,9 +595,8 @@ impl Device {
         let config = self.config.borrow();
         let (claude, codex) = (config.rig_for(Agent::ClaudeCode), config.rig_for(Agent::Codex));
         drop(config);
-        let tuis = self.terminals.list().into_iter().filter(|terminal| terminal.state == terminals::State::Live);
         let chats = self.chats.list().into_iter().map(|chat| chat.agent_session);
-        let live: HashSet<String> = chats.chain(tuis.map(|tui| tui.agent_session)).flatten().collect();
+        let live: HashSet<String> = chats.flatten().collect();
         let outgoing = self.outgoing.clone();
         tokio::spawn(async move {
             let mut sessions = chats::sessions(&cwd, &claude, &codex).await;

@@ -5,7 +5,6 @@ mod device;
 mod files;
 mod git;
 mod holder;
-mod hooks;
 mod install;
 mod language_servers;
 mod layouts;
@@ -22,7 +21,7 @@ use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{Path, State},
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -34,9 +33,8 @@ use tokio::sync::{broadcast, watch};
 use attention::Feed;
 use chats::Chats;
 use config::{Config, Editor, Font, Keybar, Rig};
-pub use chats::{HoldChatArgs, hold_chat};
+pub use chats::{HoldChatArgs, hold_chat, chat_tools};
 pub use holder::{HoldArgs, hold};
-pub use hooks::{HookArgs, hook};
 pub use install::{InstallArgs, UninstallArgs, install, uninstall};
 use language_servers::LanguageServers;
 use layouts::Layouts;
@@ -94,7 +92,6 @@ fn router(state: AppState) -> Router {
         .route("/api/keybar", get(keybar))
         .route("/api/scrollback", get(scrollback))
         .route("/api/config/file", get(files::read_config).put(files::write_config))
-        .route("/api/hook", post(hooks::receive).layer(DefaultBodyLimit::disable()))
         .route("/api/push/key", get(push::key))
         .route("/api/push/subscribe", post(push::subscribe))
         .route("/api/devices/{id}/layout", get(layouts::read).put(layouts::write))
@@ -121,7 +118,6 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let push = Arc::new(Push::load(&args.data_dir)?);
     let languages = Arc::new(LanguageServers::load(&args.data_dir)?);
     let layouts = Arc::new(Layouts::load(&args.data_dir)?);
-    let hook_url = format!("http://{}/api/hook", listener.local_addr()?);
     let attention = Arc::new(Feed::default());
     push::spawn(Arc::clone(&push), &attention);
     let usage = Arc::new(Usage::default());
@@ -129,7 +125,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let rigs = config.borrow().rigs.clone();
     chats.restore(&rigs).await?;
     usage::spawn(Arc::clone(&usage), config.clone());
-    let terminals = Arc::new(Terminals::new(args.data_dir, hook_url, Arc::clone(&attention)));
+    let terminals = Arc::new(Terminals::new(args.data_dir));
     terminals.restore().await?;
     terminals.scrollback(config.borrow().scrollback);
     let mut settings = config.clone();
@@ -147,7 +143,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
 }
 
 async fn version() -> Json<Value> {
-    Json(json!({ "version": env!("CARGO_PKG_VERSION") }))
+    Json(json!({ "version": env!("CARGO_PKG_VERSION"), "buildId": env!("OIKONOMOS_BUILD_ID") }))
 }
 
 async fn theme(State(state): State<AppState>) -> Json<Theme> {

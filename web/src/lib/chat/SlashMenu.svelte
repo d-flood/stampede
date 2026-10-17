@@ -10,7 +10,7 @@
 		choices: Record<Setting, Choice[]>;
 		working: boolean;
 		replace(text: string): void;
-		onrun(command: Builtin, value?: string): void;
+		onrun(command: Builtin, value?: string | number): void;
 	};
 
 	type Row = {
@@ -24,15 +24,15 @@
 
 	let { text, agent, settings, capabilities, choices, working, replace, onrun }: Props = $props();
 
-	const builtins = ['effort', 'model', 'mode', 'compact', 'clear'];
+	const builtins = ['effort', 'model', 'mode', 'compact', 'clear', 'rewind'];
 	const templates: Row[] = [];
 
-	function run(command: Builtin, value?: string) {
+	function run(command: Builtin, value?: string | number) {
 		onrun(command, value);
 		replace('');
 	}
 
-	function now(command: 'compact' | 'clear', detail: string): Row {
+	function now(command: 'compact' | 'clear' | 'rewind', detail: string): Row {
 		const later = working ? 'after this turn' : detail;
 		return { label: `/${command}`, detail: later, disabled: working, choose: () => run(command) };
 	}
@@ -58,7 +58,8 @@
 			{ label: '/model', detail: model?.label ?? settings.model ?? '', choose: () => replace('/model ') },
 			{ label: '/mode', choices: choices.mode, current: settings.mode, choose: () => replace('/mode ') },
 			now('compact', 'free up context'),
-			now('clear', 'new session')
+			now('clear', 'new session'),
+			now('rewind', capabilities.rewindsFiles ? 'conversation and tracked files' : 'conversation only; files unchanged')
 		];
 		const commands = capabilities.commands.filter((command) => !builtins.includes(command.name));
 		const own = commands.map((command) => ({

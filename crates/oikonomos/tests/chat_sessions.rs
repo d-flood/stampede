@@ -118,7 +118,10 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
     let received = received(&server);
     let methods: Vec<Value> = received.iter().map(|message| message["method"].clone()).collect();
     assert_eq!(methods, ["initialize", "initialized", "thread/resume", "model/list", "skills/list", "turn/start", "thread/unsubscribe"]);
-    assert_eq!(received[2]["params"], json!({ "threadId": THREAD }));
+    assert_eq!(received[2]["params"], json!({ "threadId": THREAD, "config": {
+        "tools.update_plan": { "enabled": true },
+        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools"] },
+    } }));
 }
 
 #[tokio::test]

@@ -128,8 +128,14 @@ async fn a_codex_chat_resumes_its_thread_through_server_restarts() {
             "thread/unsubscribe",
         ]
     );
-    assert_eq!(received[8]["params"], json!({ "threadId": THREAD }));
-    assert_eq!(received[14]["params"], json!({ "threadId": THREAD }));
+    assert_eq!(received[8]["params"], json!({ "threadId": THREAD, "config": {
+        "tools.update_plan": { "enabled": true },
+        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools"] },
+    } }));
+    assert_eq!(received[14]["params"], json!({ "threadId": THREAD, "config": {
+        "tools.update_plan": { "enabled": true },
+        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools"] },
+    } }));
 }
 
 fn counted(numbers: RangeInclusive<u32>) -> String {

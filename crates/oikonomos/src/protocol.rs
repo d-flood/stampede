@@ -5,9 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::hooks::{Hook, Status};
-
-pub const VERSION: u16 = 6;
+pub const VERSION: u16 = 7;
 pub const MAX_FRAME: usize = 256 << 20;
 
 const HELLO: u8 = 1;
@@ -17,12 +15,8 @@ const OUTPUT: u8 = 4;
 const INPUT: u8 = 5;
 const RESIZE: u8 = 6;
 const HANGUP: u8 = 7;
-const FOREGROUND_CHANGED: u8 = 8;
-const AGENT: u8 = 9;
 const TITLE_CHANGED: u8 = 10;
 const SCROLLBACK: u8 = 11;
-const HOOK: u8 = 12;
-const HOOKED: u8 = 13;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Size {
@@ -34,18 +28,6 @@ pub struct Size {
 pub struct Hello {
     pub protocol: u16,
     pub holder_version: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Foreground {
-    pub is_root_shell: bool,
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentState {
-    pub status: Option<Status>,
-    pub session: Option<String>,
-    pub viewed_since_done: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,12 +45,8 @@ pub enum Message {
     Input(Vec<u8>),
     Resize(Size),
     Hangup,
-    ForegroundChanged(Foreground),
-    Agent(AgentState),
     TitleChanged(Title),
     Scrollback(usize),
-    Hook(Hook),
-    Hooked,
 }
 
 pub fn encode(message: &Message) -> Vec<u8> {
@@ -80,14 +58,8 @@ pub fn encode(message: &Message) -> Vec<u8> {
         Message::Input(bytes) => (INPUT, bytes.clone()),
         Message::Resize(size) => (RESIZE, serde_json::to_vec(size).unwrap()),
         Message::Hangup => (HANGUP, Vec::new()),
-        Message::ForegroundChanged(foreground) => {
-            (FOREGROUND_CHANGED, serde_json::to_vec(foreground).unwrap())
-        }
-        Message::Agent(state) => (AGENT, serde_json::to_vec(state).unwrap()),
         Message::TitleChanged(title) => (TITLE_CHANGED, serde_json::to_vec(title).unwrap()),
         Message::Scrollback(lines) => (SCROLLBACK, serde_json::to_vec(lines).unwrap()),
-        Message::Hook(hook) => (HOOK, serde_json::to_vec(hook).unwrap()),
-        Message::Hooked => (HOOKED, Vec::new()),
     };
     let mut frame = Vec::with_capacity(5 + payload.len());
     frame.extend_from_slice(&(payload.len() as u32 + 1).to_be_bytes());
@@ -110,19 +82,12 @@ pub fn decode(frame: &[u8]) -> io::Result<Option<Message>> {
         INPUT => Message::Input(payload.to_vec()),
         RESIZE => Message::Resize(serde_json::from_slice(payload)?),
         HANGUP => Message::Hangup,
-        FOREGROUND_CHANGED => Message::ForegroundChanged(serde_json::from_slice(payload)?),
-        // The title-rule branch of protocol 4 used tag 9 before Agent state claimed it.
-        AGENT => match serde_json::from_slice(payload) {
-            Ok(state) => Message::Agent(state),
-            Err(error) => match serde_json::from_slice(payload) {
-                Ok(title) => Message::TitleChanged(title),
-                Err(_) => return Err(error.into()),
-            },
+        9 => match serde_json::from_slice(payload) {
+            Ok(title) => Message::TitleChanged(title),
+            Err(_) => return Ok(None),
         },
         TITLE_CHANGED => Message::TitleChanged(serde_json::from_slice(payload)?),
         SCROLLBACK => Message::Scrollback(serde_json::from_slice(payload)?),
-        HOOK => Message::Hook(serde_json::from_slice(payload)?),
-        HOOKED => Message::Hooked,
         _ => return Ok(None),
     }))
 }

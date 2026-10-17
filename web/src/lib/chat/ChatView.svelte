@@ -20,7 +20,8 @@
 	const request = $derived(requests[0]);
 	const live = $derived(device.connection === 'connected');
 	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
-	let capabilities = $state<Capabilities>({ models: [], efforts: [], modes: [], commands: [] });
+	let rewinding = $state(false);
+	let capabilities = $state<Capabilities>({ models: [], efforts: [], modes: [], commands: [], rewindsFiles: false });
 	const choices = $derived({
 		model: capabilities.models.map((value) => ({ value, label: value })),
 		effort: capabilities.efforts.map((value) => ({ value, label: value })),
@@ -66,7 +67,9 @@
 		device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer });
 	}
 
-	function run(command: Builtin, value?: string) {
+	function run(command: Builtin, value?: string | number) {
+		if (command === 'rewind' && value === undefined) { rewinding = true; return; }
+		rewinding = false;
 		device.send({ type: 'chat.run', chatId: chat.id, command, value });
 	}
 
@@ -93,6 +96,16 @@
 			<ContextBar context={chat.context} compact />
 		{/if}
 	</Chips>
+	{#if rewinding}
+		<section class="rewind" aria-label="Rewind">
+			<strong>Rewind to before a message</strong>
+			<p>{capabilities.rewindsFiles ? 'Restores tracked edits. Bash and subagent changes are not restored.' : 'Conversation only. Files are left unchanged.'}</p>
+			{#each items as item, index}
+				{#if item.kind === 'user'}<button disabled={!live || chat.status !== 'done'} onclick={() => run('rewind', index)}>{item.text || `${item.images} images`}</button>{/if}
+			{/each}
+			<button onclick={() => (rewinding = false)}>Cancel</button>
+		</section>
+	{/if}
 	<Todos todos={chat.todos} working={chat.status === 'working'} />
 	<div class="transcript" {@attach follow}>
 		<div class="column">
@@ -114,6 +127,9 @@
 </div>
 
 <style>
+	.rewind { display: flex; flex-direction: column; flex: none; gap: var(--space-2); max-height: 45vh; padding: var(--space-3); overflow-y: auto; }
+	.rewind p { margin: 0; color: var(--muted-fg); }
+	.rewind button { min-height: var(--target-min); padding: var(--space-2); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); color: var(--color-fg); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
 	.panel {
 		display: flex;
 		flex-direction: column;

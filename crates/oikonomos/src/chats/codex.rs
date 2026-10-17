@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    io,
+    fs, io,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -18,11 +18,12 @@ use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
 use super::{
     AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Setting,
-    Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, diff, relative, seconds, unified, words,
+    Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
+    html,
 };
 use crate::{
     config::{Agent, AgentSettings, codex_policy},
-    hooks::Status,
+    chats::Status,
     usage::{Reading, Window},
 };
 
@@ -38,7 +39,7 @@ pub struct Codex {
 }
 
 enum Request {
-    Send(String),
+    Send(String, Vec<Image>),
     Interrupt,
     Answer(String, Answer),
     Run(Builtin),
@@ -46,8 +47,8 @@ enum Request {
 }
 
 impl Driver for Codex {
-    fn send(&self, text: &str) {
-        let _ = self.requests.send(Request::Send(text.to_owned()));
+    fn send(&self, text: &str, images: &[Image]) {
+        let _ = self.requests.send(Request::Send(text.to_owned(), images.to_vec()));
     }
 
     fn interrupt(&self) {
@@ -88,6 +89,7 @@ pub async fn resume(chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(
     let mut transcript = Transcript::new(thread, &chat.cwd, events);
     transcript.status = chat.status;
     transcript.settings = chat.settings.clone();
+    transcript.plan_resolved = chat.plan_resolved.clone();
     let (connection, proxy) = rejoin(&chat.cwd, env, &mut transcript).await?;
     Ok((run(connection, proxy, transcript, &chat.cwd, env), received))
 }
@@ -98,7 +100,7 @@ async fn rejoin(
     transcript: &mut Transcript,
 ) -> io::Result<(Connection, Child)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread })).await?;
+    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "config": tool_config() })).await?;
     let mut replay = Vec::new();
     let resumed = loop {
         let message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;
@@ -138,6 +140,7 @@ async fn rejoin(
         .await;
     }
     transcript.report(transcript.status);
+    if transcript.turn.is_none() { transcript.propose(); }
     for child in transcript.subagents.keys().cloned().collect::<Vec<_>>() {
         let read = connection.request("thread/read", json!({ "threadId": child, "includeTurns": true })).await?;
         transcript.reading.insert(read, child);
@@ -233,8 +236,9 @@ fn run(
         loop {
             tokio::select! {
                 request = pending.recv() => match request {
-                    Some(Request::Send(text)) => {
+                    Some(Request::Send(text, images)) => {
                         let mut input = vec![json!({ "type": "text", "text": text, "text_elements": [] })];
+                        input.extend(images.iter().map(|image| json!({ "type": "image", "url": format!("data:{};base64,{}", image.media_type, image.data) })));
                         input.extend(transcript.skill(&text));
                         let _ = connection.send(&mut transcript, Value::Array(input)).await;
                     }
@@ -242,20 +246,87 @@ fn run(
                         let _ = connection.interrupt(&mut transcript).await;
                     }
                     Some(Request::Answer(id, answer)) => {
+                        if transcript.plan.as_ref().is_some_and(|(plan, _)| plan == &id) {
+                            transcript.plan = None;
+                            transcript.plan_resolved = Some(id.clone());
+                            let _ = transcript.events.send(Event::PlanResolved(id.clone()));
+                            let text = match answer {
+                                Answer::Allow => {
+                                    transcript.choose(Setting::Mode, "default".to_owned());
+                                    Some("Implement the plan.".to_owned())
+                                }
+                                Answer::Deny { instead } => instead,
+                                _ => None,
+                            };
+                            if let Some(text) = text {
+                                let input = json!([{ "type": "text", "text": text, "text_elements": [] }]);
+                                let _ = connection.send(&mut transcript, input).await;
+                            }
+                            continue;
+                        }
                         let Some((rpc, grant)) = transcript.resolved(&id) else { continue };
-                        let result = match (&answer, grant) {
+                        let questions = transcript.questions.remove(&id);
+                        let question = questions.is_some();
+                        let result = if let Some(questions) = questions {
+                            let answers = match &answer {
+                                Answer::Answers(answers) => answers.clone(),
+                                Answer::Deny { instead: Some(text) } => vec![vec![text.clone()]; questions.len()],
+                                _ => vec![Vec::new(); questions.len()],
+                            };
+                            let mapped = questions.iter().zip(answers).map(|(q, answers)| (q.id.clone(), json!({ "answers": answers }))).collect::<serde_json::Map<_, _>>();
+                            json!({ "answers": mapped })
+                        } else { match (&answer, grant) {
                             (Answer::Allow, Some(permissions)) => json!({ "permissions": permissions, "scope": "turn" }),
                             (Answer::Deny { .. }, Some(_)) => json!({ "permissions": {}, "scope": "turn" }),
                             (Answer::Allow, None) => json!({ "decision": "accept" }),
+                            (Answer::Rules(rules), None) if rules.iter().all(|rule| rule.scope == Scope::Chat) => json!({ "decision": "acceptForSession" }),
+                            (Answer::Rules(rules), None) => {
+                                match persist_extra_rules(&env, rules) {
+                                    Ok(()) => {
+                                        json!({ "decision": { "acceptWithExecpolicyAmendment": { "execpolicy_amendment": rules[0].prefix } } })
+                                    }
+                                    Err(error) => {
+                                        transcript.push(Item::Notice { notice: Notice::Error, text: format!("Could not save approval rules: {error}") });
+                                        json!({ "decision": "decline" })
+                                    }
+                                }
+                            },
                             (Answer::Deny { instead: None }, None) => json!({ "decision": "cancel" }),
-                            (Answer::Deny { instead: Some(_) }, None) => json!({ "decision": "decline" }),
-                        };
+                            _ => json!({ "decision": "decline" }),
+                        }};
                         if connection.write(json!({ "id": rpc, "result": result })).await.is_err() {
                             continue;
                         }
+                        if question { continue; }
                         let Answer::Deny { instead: Some(text) } = answer else { continue };
                         let input = json!([{ "type": "text", "text": text, "text_elements": [] }]);
                         let _ = connection.send(&mut transcript, input).await;
+                    }
+                    Some(Request::Run(Builtin::Rewind(index))) if transcript.idle() => {
+                        if let Some(turn) = transcript.checkpoints.get(&index).cloned() {
+                            let params = json!({ "threadId": transcript.thread, "beforeTurnId": turn });
+                            match connection.call("thread/revert", params).await {
+                                Ok(_) => {
+                                    let mut turns = Vec::new();
+                                    let mut cursor = Value::Null;
+                                    loop {
+                                        let params = json!({ "threadId": transcript.thread, "sortDirection": "asc", "itemsView": "full", "cursor": cursor });
+                                        match connection.call("thread/turns/list", params).await {
+                                            Ok(page) => {
+                                                turns.extend(page["data"].as_array().into_iter().flatten().cloned());
+                                                cursor = page["nextCursor"].clone();
+                                                if cursor.is_null() { break; }
+                                            }
+                                            Err(error) => { transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() }); break; }
+                                        }
+                                    }
+                                    transcript.resumed(&json!(turns));
+                                    let _ = transcript.events.send(Event::Reset);
+                                    transcript.push(Item::Notice { notice: Notice::Rewound, text: "Conversation rewound. Files are left unchanged.".to_owned() });
+                                }
+                                Err(error) => { transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() }); }
+                            }
+                        }
                     }
                     Some(Request::Run(Builtin::Compact)) if transcript.idle() => {
                         transcript.report(Status::Working);
@@ -309,6 +380,20 @@ fn run(
     Codex { requests }
 }
 
+fn persist_extra_rules(env: &BTreeMap<String, String>, rules: &[super::Rule]) -> io::Result<()> {
+    if rules.len() < 2 { return Ok(()); }
+    let home = env.get("CODEX_HOME").map(PathBuf::from)
+        .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
+        .unwrap_or_else(|| crate::home().join(".codex"));
+    let directory = home.join("rules");
+    fs::create_dir_all(&directory)?;
+    let content = rules.iter().skip(1).map(|rule| {
+        let pattern = serde_json::to_string(&rule.prefix).unwrap();
+        format!("prefix_rule(pattern={pattern}, decision=\"allow\")\n")
+    }).collect::<String>();
+    fs::write(directory.join(format!("oikonomos-{}.rules", uuid::Uuid::new_v4())), content)
+}
+
 /// Reads the account's windows from the daemon, which answers without a thread.
 pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
     let (mut connection, mut proxy) = connect(&crate::home(), env).await?;
@@ -335,18 +420,23 @@ fn readings(snapshot: &Value) -> Vec<Reading> {
 }
 
 fn thread(cwd: &Path, settings: &AgentSettings) -> Value {
-    let mut params = json!({ "cwd": cwd, "config": { "tools.update_plan": { "enabled": true } } });
+    let mut params = json!({ "cwd": cwd, "config": tool_config() });
     if let Some(model) = &settings.model {
         params["model"] = json!(model);
     }
     if let Some(effort) = &settings.effort {
         params["config"]["model_reasoning_effort"] = json!(effort);
     }
-    if let Some((approval, sandbox)) = settings.mode.as_deref().and_then(codex_policy) {
+    if let Some((approval, sandbox, reviewer)) = settings.mode.as_deref().and_then(codex_policy) {
         params["approvalPolicy"] = json!(approval);
         params["sandbox"] = json!(sandbox);
+        params["approvalsReviewer"] = json!(reviewer);
     }
     params
+}
+
+fn tool_config() -> Value {
+    json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.oikonomos_chat": html::config() })
 }
 
 fn codex(cwd: &Path, env: &BTreeMap<String, String>) -> Command {
@@ -457,6 +547,7 @@ struct Transcript {
     cwd: PathBuf,
     events: UnboundedSender<Event>,
     len: usize,
+    checkpoints: HashMap<usize, String>,
     starting: Option<u64>,
     turn: Option<String>,
     streaming: HashMap<String, (usize, String)>,
@@ -477,6 +568,9 @@ struct Transcript {
     compacting: Option<u64>,
     applying: Vec<(Setting, Option<String>)>,
     lists: HashMap<u64, List>,
+    questions: HashMap<String, Vec<Question>>,
+    plan: Option<(String, String)>,
+    plan_resolved: Option<String>,
 }
 
 enum List {
@@ -492,8 +586,9 @@ fn enabled(skills: &Value) -> Vec<Value> {
 
 fn current(thread: &Value) -> Settings {
     let policy = |mode: &&str| {
-        let (approval, sandbox) = codex_policy(mode).unwrap();
+        let (approval, sandbox, reviewer) = codex_policy(mode).unwrap();
         thread["approvalPolicy"] == approval && thread["sandbox"]["type"] == policy_type(sandbox)
+            && thread["approvalsReviewer"].as_str().unwrap_or("user") == reviewer
     };
     let mode = match thread["collaborationMode"]["mode"] == "plan" {
         true => Some("plan"),
@@ -521,6 +616,7 @@ impl Transcript {
             cwd: cwd.to_owned(),
             events,
             len: 0,
+            checkpoints: HashMap::new(),
             starting: None,
             turn: None,
             streaming: HashMap::new(),
@@ -540,6 +636,9 @@ impl Transcript {
             compacting: None,
             applying: Vec::new(),
             lists: HashMap::new(),
+            questions: HashMap::new(),
+            plan: None,
+            plan_resolved: None,
         }
     }
 
@@ -569,6 +668,7 @@ impl Transcript {
             }
         });
         let capabilities = Capabilities {
+            rewinds_files: false,
             models: self.models.iter().filter_map(|model| model["model"].as_str()).map(str::to_owned).collect(),
             efforts: self.efforts(),
             modes,
@@ -606,9 +706,10 @@ impl Transcript {
         let collaboration = if mode.as_deref() == Some("plan") { "plan" } else { "default" };
         let settings = json!({ "model": model, "reasoning_effort": effort, "developer_instructions": null });
         turn["collaborationMode"] = json!({ "mode": collaboration, "settings": settings });
-        if let Some((approval, sandbox)) = mode.as_deref().and_then(codex_policy) {
+        if let Some((approval, sandbox, reviewer)) = mode.as_deref().and_then(codex_policy) {
             turn["approvalPolicy"] = json!(approval);
             turn["sandboxPolicy"] = json!({ "type": policy_type(sandbox) });
+            turn["approvalsReviewer"] = json!(reviewer);
         }
         self.applying = pending.iter().map(|&setting| (setting, self.settings.get(setting).clone())).collect();
     }
@@ -634,6 +735,9 @@ impl Transcript {
         self.steering.clear();
         self.unsteered = None;
         self.applying.clear();
+        self.checkpoints.clear();
+        self.questions.clear();
+        self.plan = None;
         self.previous = 0;
         let _ = self.events.send(Event::Session(self.thread.clone()));
         let _ = self.events.send(Event::Reset);
@@ -681,13 +785,19 @@ impl Transcript {
         self.unsteered = None;
         self.asked.clear();
         self.edits.clear();
-        for item in turns.iter().flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
-            match item["type"].as_str() {
-                Some("userMessage") => {
-                    self.push(user(item));
+        self.checkpoints.clear();
+        self.plan = None;
+        for turn in turns {
+            self.turn = turn["id"].as_str().map(str::to_owned);
+            for item in turn["items"].as_array().into_iter().flatten() {
+                match item["type"].as_str() {
+                    Some("userMessage") => {
+                        self.checkpoint();
+                        self.push(user(item));
+                    }
+                    Some("fileChange") if item["status"] == "inProgress" => self.edited(item),
+                    _ => self.completed(item, 0),
                 }
-                Some("fileChange") if item["status"] == "inProgress" => self.edited(item),
-                _ => self.completed(item, 0),
             }
         }
         let last = turns.last();
@@ -697,6 +807,19 @@ impl Transcript {
             self.push(Item::interrupted());
         }
         if self.turn.is_some() { Status::Working } else { Status::Done }
+    }
+
+    fn propose(&self) {
+        if self.settings.chosen.mode.as_deref() == Some("plan")
+            && let Some((id, plan)) = &self.plan
+            && self.plan_resolved.as_ref() != Some(id)
+        {
+            let _ = self.events.send(Event::Request(super::Request::Plan { id: id.clone(), plan: plan.clone() }));
+        }
+    }
+
+    fn checkpoint(&mut self) {
+        if let Some(turn) = &self.turn { self.checkpoints.insert(self.len, turn.clone()); }
     }
 
     fn edited(&mut self, item: &Value) {
@@ -836,7 +959,19 @@ impl Transcript {
                     actions => actions.iter().flat_map(|action| words(action)).collect(),
                 };
                 let id = self.ask(message, None);
-                let _ = self.events.send(Event::Request(super::Request::Command { id, words }));
+                let proposed = params["proposedExecpolicyAmendment"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+                let suggestion = words.iter().map(|part| if !proposed.is_empty() && part.starts_with(&proposed) { proposed.clone() } else { part.clone() }).collect();
+                let _ = self.events.send(Event::Request(super::Request::Command { id, words, suggestion, session_prefixes: false }));
+            }
+            Some("item/tool/requestUserInput") => {
+                let id = self.ask(message, None);
+                let mut raw = params["questions"].clone();
+                for question in raw.as_array_mut().into_iter().flatten() {
+                    if question["options"].is_null() { question["options"] = json!([]); }
+                }
+                let questions: Vec<Question> = serde_json::from_value(raw).unwrap_or_default();
+                self.questions.insert(id.clone(), questions.clone());
+                let _ = self.events.send(Event::Request(super::Request::Question { id, questions }));
             }
             Some("item/fileChange/requestApproval") => {
                 let id = self.ask(message, None);
@@ -876,7 +1011,10 @@ impl Transcript {
                 });
                 let _ = self.events.send(Event::Todos(todos.collect()));
             }
-            Some("turn/started") => self.turn = params["turn"]["id"].as_str().map(str::to_owned),
+            Some("turn/started") => {
+                self.turn = params["turn"]["id"].as_str().map(str::to_owned);
+                self.plan = None;
+            }
             Some("turn/completed") => {
                 self.turn = None;
                 // A message cut off by an interrupt or a steer never gets its item/completed.
@@ -890,8 +1028,10 @@ impl Transcript {
                     self.push(Item::interrupted());
                 }
                 self.report(Status::Done);
+                if params["turn"]["status"] == "completed" { self.propose(); }
             }
             Some("item/started") if item["type"] == "userMessage" => {
+                self.checkpoint();
                 self.push(user(item));
             }
             Some("item/started") if item["type"] == "agentMessage" => {
@@ -936,14 +1076,27 @@ impl Transcript {
         }
         let text = |key: &str| item[key].as_str().unwrap_or_default().to_owned();
         match item["type"].as_str() {
-            Some("agentMessage") => match item["id"].as_str().and_then(|id| self.streaming.remove(id)) {
+            Some("agentMessage") => {
+                if self.settings.chosen.mode.as_deref() == Some("plan")
+                    && (text("text").contains("<proposed_plan>") || (item["phase"] == "final_answer" && text("text").starts_with("Plan:")))
+                {
+                    let plan = text("text").replace("<proposed_plan>", "").replace("</proposed_plan>", "").trim().to_owned();
+                    self.plan = Some((format!("plan:{}", text("id")), plan));
+                }
+                match item["id"].as_str().and_then(|id| self.streaming.remove(id)) {
                 Some((index, _)) => {
                     let _ = self.events.send(Event::Item(index, agent(item)));
                 }
                 None => {
                     self.push(agent(item));
                 }
-            },
+                }
+            }
+            Some("plan") => {
+                if self.settings.chosen.mode.as_deref() == Some("plan") {
+                    self.plan = Some((format!("plan:{}", text("id")), text("text")));
+                }
+            }
             Some("reasoning") => {
                 let parts = |key: &str| {
                     let parts: Vec<&str> = item[key].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
@@ -982,6 +1135,13 @@ impl Transcript {
                 }
             }
             Some("mcpToolCall") => {
+                if item["server"] == html::SERVER && item["tool"] == html::TOOL
+                    && item["status"] == "completed" && item["result"]["isError"] != true
+                    && let Some(snippet) = html::item(&item["arguments"])
+                {
+                    self.push(snippet);
+                    return;
+                }
                 let name = format!("{}.{}", text("server"), text("tool"));
                 self.call(ToolKind::Other, &name, item["arguments"].to_string());
             }
@@ -1071,8 +1231,9 @@ fn notice(error: &Value) -> Item {
 
 fn user(item: &Value) -> Item {
     let content = item["content"].as_array().into_iter().flatten();
+    let images = content.clone().filter(|input| input["type"] == "image" || input["type"] == "localImage").count();
     let text: Vec<&str> = content.filter_map(|input| input["text"].as_str()).collect();
-    Item::User { text: text.join("\n"), images: 0 }
+    Item::User { text: text.join("\n"), images }
 }
 
 fn agent(item: &Value) -> Item {
@@ -1099,4 +1260,74 @@ fn edit(id: String, changes: &Value) -> super::Request {
         })
         .collect();
     super::Request::Edit { id, path, diff }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn html_renders_live_and_from_resumed_threads() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new("thread", Path::new("/project"), events);
+        let arguments = json!({ "title": "Flow", "html": "<b>Start → Finish</b>" });
+        let item = json!({ "type": "mcpToolCall", "id": "snippet", "server": html::SERVER,
+            "tool": html::TOOL, "arguments": arguments, "status": "completed", "result": { "content": [] } });
+        transcript.completed(&item, 0);
+        assert!(matches!(received.try_recv().unwrap(), Event::Item(0, snippet) if Some(&snippet) == html::item(&arguments).as_ref()));
+        transcript.resumed(&json!([{ "id": "turn", "status": "completed", "items": [item] }]));
+        assert!(matches!(received.try_recv().unwrap(), Event::Truncate(0)));
+        assert!(matches!(received.try_recv().unwrap(), Event::Item(0, snippet) if Some(&snippet) == html::item(&arguments).as_ref()));
+        let mut failed = item.clone();
+        failed["status"] = json!("failed");
+        transcript.completed(&failed, 0);
+        assert!(matches!(received.try_recv().unwrap(), Event::Item(1, Item::Tools { .. })));
+    }
+
+    #[test]
+    fn approve_for_me_starts_with_automatic_review_inside_the_workspace() {
+        let settings = AgentSettings { mode: Some("approve-for-me".to_owned()), ..AgentSettings::default() };
+        let params = thread(Path::new("/project"), &settings);
+        assert_eq!(params["approvalPolicy"], "on-request");
+        assert_eq!(params["sandbox"], "workspace-write");
+        assert_eq!(params["approvalsReviewer"], "auto_review");
+    }
+
+    #[test]
+    fn current_mode_distinguishes_automatic_and_manual_review() {
+        for (reviewer, expected) in [(Some("auto_review"), "approve-for-me"), (Some("user"), "default"), (None, "default")] {
+            let response = json!({
+                "approvalPolicy": "on-request",
+                "sandbox": { "type": "workspaceWrite" },
+                "approvalsReviewer": reviewer,
+            });
+            assert_eq!(current(&response).chosen.mode.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn mode_changes_update_the_reviewer_and_plan_preserves_it() {
+        let (events, _received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new("thread", Path::new("/project"), events);
+        for (mode, approval, sandbox, reviewer) in [
+            ("approve-for-me", "on-request", "workspaceWrite", "auto_review"),
+            ("default", "on-request", "workspaceWrite", "user"),
+            ("approve-for-me", "on-request", "workspaceWrite", "auto_review"),
+            ("read-only", "on-request", "readOnly", "user"),
+            ("approve-for-me", "on-request", "workspaceWrite", "auto_review"),
+            ("full-access", "never", "dangerFullAccess", "user"),
+        ] {
+            transcript.choose(Setting::Mode, mode.to_owned());
+            let mut turn = json!({});
+            transcript.overrides(&mut turn);
+            assert_eq!(turn["approvalPolicy"], approval);
+            assert_eq!(turn["sandboxPolicy"]["type"], sandbox);
+            assert_eq!(turn["approvalsReviewer"], reviewer);
+        }
+        transcript.choose(Setting::Mode, "plan".to_owned());
+        let mut turn = json!({});
+        transcript.overrides(&mut turn);
+        assert_eq!(turn["collaborationMode"]["mode"], "plan");
+        assert!(turn.get("approvalsReviewer").is_none());
+    }
 }

@@ -8,6 +8,23 @@ const javascript: Load = async () => (await import('@codemirror/lang-javascript'
 const python: Load = async () => (await import('@codemirror/lang-python')).python();
 const markdown: Load = async () => (await import('@codemirror/lang-markdown')).markdown();
 const yaml: Load = async () => (await import('@codemirror/lang-yaml')).yaml();
+const shell: Load = async () => {
+	const { shell } = await import('@codemirror/legacy-modes/mode/shell');
+	return StreamLanguage.define({
+		...shell,
+		token(stream, state) {
+			const style = shell.token(stream, state);
+			if (style === 'builtin') return 'variableName.function';
+			if (style) return style;
+			if (/^[|&;()<>]+$/.test(stream.current())) return 'operator';
+			if (/^[\w./-]+$/.test(stream.current()) && /(?:^|[|;&(])\s*$/.test(stream.string.slice(0, stream.start))) {
+				stream.eatWhile(/[\w./-]/);
+				return 'variableName.function';
+			}
+			return null;
+		}
+	});
+};
 
 const loaders: Record<string, Load> = {
 	ts: typescript,
@@ -28,6 +45,9 @@ const loaders: Record<string, Load> = {
 	rs: async () => (await import('@codemirror/lang-rust')).rust(),
 	yaml,
 	yml: yaml,
+	sh: shell,
+	bash: shell,
+	zsh: shell,
 	toml: async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/toml')).toml),
 	svelte: async () => (await import('@replit/codemirror-lang-svelte')).svelte()
 };

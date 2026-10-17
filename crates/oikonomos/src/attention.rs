@@ -1,43 +1,27 @@
-use std::{collections::HashSet, sync::Mutex};
+use std::collections::HashSet;
 
 use serde::Serialize;
 use tokio::sync::{broadcast, watch};
 
-use crate::hooks::Status;
+use crate::chats::Status;
 
 #[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Attention {
     pub project_id: String,
-    #[serde(flatten)]
-    pub tab: Tab,
+    pub chat_id: String,
     pub label: String,
     pub status: Status,
 }
 
-#[derive(Clone, PartialEq, Serialize)]
-#[serde(untagged, rename_all_fields = "camelCase")]
-pub enum Tab {
-    Terminal { terminal_id: String },
-    Chat { chat_id: String },
-}
-
-#[derive(Clone, Copy)]
-pub enum Source {
-    Terminals,
-    Chats,
-}
-
-/// Every Tab that needs attention, and a call each time one turns waiting or done, with the browsers showing it.
 pub struct Feed {
-    parts: Mutex<[Vec<Attention>; 2]>,
     items: watch::Sender<Vec<Attention>>,
     calls: broadcast::Sender<(Attention, HashSet<String>)>,
 }
 
 impl Default for Feed {
     fn default() -> Self {
-        Self { parts: Mutex::default(), items: watch::Sender::default(), calls: broadcast::Sender::new(64) }
+        Self { items: watch::Sender::default(), calls: broadcast::Sender::new(64) }
     }
 }
 
@@ -54,10 +38,7 @@ impl Feed {
         self.calls.subscribe()
     }
 
-    pub fn publish(&self, source: Source, items: Vec<Attention>) {
-        let mut parts = self.parts.lock().unwrap();
-        parts[source as usize] = items;
-        let items = parts.concat();
+    pub fn publish(&self, items: Vec<Attention>) {
         self.items.send_if_modified(|current| {
             let changed = *current != items;
             *current = items;

@@ -94,6 +94,10 @@ impl Server {
         self.child.kill().await.unwrap();
     }
 
+    pub fn pid(&self) -> u32 {
+        self.child.id().unwrap()
+    }
+
     pub async fn restart(&mut self) {
         if self.child.try_wait().unwrap().is_none() { self.stop().await; }
         self.child = spawn(self.root.path(), self.port, &self.env).await;

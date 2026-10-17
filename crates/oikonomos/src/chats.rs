@@ -1,6 +1,7 @@
 mod claude;
 mod codex;
 mod holder;
+mod html;
 mod protocol;
 
 use std::{
@@ -12,6 +13,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use base64ct::{Base64, Encoding};
 use tokio::sync::{
     broadcast,
     mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -19,13 +21,13 @@ use tokio::sync::{
 use uuid::Uuid;
 
 use crate::{
-    attention::{Attention, Feed, Source, Tab},
+    attention::{Attention, Feed},
     config::{Agent, AgentSettings, Rig},
-    hooks::Status,
     projects::Project,
     usage::{Reading, Usage},
 };
 pub use holder::{HoldChatArgs, hold_chat};
+pub use html::serve as chat_tools;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -38,6 +40,7 @@ pub enum Item {
         text: Option<String>,
     },
     Tools { calls: Vec<ToolCall> },
+    Html { title: String, html: String },
     Edit { path: String, diff: String, added: usize, removed: usize },
     Command { command: String, status: CommandStatus, output: String },
     Subagent {
@@ -82,6 +85,7 @@ pub enum Notice {
     Error,
     Limit,
     Interrupted,
+    Rewound,
 }
 
 impl Item {
@@ -194,9 +198,11 @@ pub struct Tokens {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
+#[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
 pub enum Request {
-    Command { id: String, words: Vec<Vec<String>> },
+    Command { id: String, words: Vec<Vec<String>>, suggestion: Vec<Vec<String>>, session_prefixes: bool },
+    Question { id: String, questions: Vec<Question> },
+    Plan { id: String, plan: String },
     Edit { id: String, path: String, diff: String },
     Other { id: String, title: String, detail: String },
 }
@@ -204,7 +210,8 @@ pub enum Request {
 impl Request {
     pub fn id(&self) -> &str {
         match self {
-            Request::Command { id, .. } | Request::Edit { id, .. } | Request::Other { id, .. } => id,
+            Request::Command { id, .. } | Request::Edit { id, .. } | Request::Other { id, .. }
+            | Request::Question { id, .. } | Request::Plan { id, .. } => id,
         }
     }
 }
@@ -213,24 +220,79 @@ impl Request {
 #[serde(from = "Decision")]
 pub enum Answer {
     Allow,
+    Rules(Vec<Rule>),
+    Answers(Vec<Vec<String>>),
     Deny { instead: Option<String> },
 }
 
 #[derive(Deserialize)]
 struct Decision {
+    #[serde(default)]
     allow: bool,
+    #[serde(default)]
+    rule: Vec<Rule>,
+    answers: Option<Vec<Vec<String>>>,
     #[serde(default)]
     instead: Option<String>,
 }
 
 impl From<Decision> for Answer {
-    fn from(Decision { allow, instead }: Decision) -> Self {
-        if allow { Answer::Allow } else { Answer::Deny { instead } }
+    fn from(Decision { allow, instead, rule, answers }: Decision) -> Self {
+        if let Some(answers) = answers { Answer::Answers(answers) }
+        else if allow && !rule.is_empty() { Answer::Rules(rule) }
+        else if allow { Answer::Allow } else { Answer::Deny { instead } }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Question {
+    #[serde(default)]
+    pub id: String,
+    pub header: String,
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<ChoiceDescription>,
+    #[serde(default)]
+    pub multi_select: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChoiceDescription {
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Rule {
+    pub prefix: Vec<String>,
+    pub scope: Scope,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Scope { Chat, Always }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Image {
+    pub media_type: String,
+    pub data: String,
+}
+
+impl Image {
+    fn valid(&self) -> bool {
+        matches!(self.media_type.as_str(), "image/png" | "image/jpeg" | "image/gif" | "image/webp")
+            && self.data.len() <= 5 * 1024 * 1024 * 4 / 3 + 4
+            && Base64::decode_vec(&self.data).is_ok_and(|data| !data.is_empty() && data.len() <= 5 * 1024 * 1024)
     }
 }
 
 pub enum Event {
     Session(String),
+    ResumeAt(Option<String>),
+    PlanResolved(String),
     Status(Status),
     /// Appends the Item when its index is the transcript's length, and replaces the one there otherwise.
     Item(usize, Item),
@@ -249,7 +311,7 @@ pub enum Event {
 /// One Agent's wire protocol. A driver's events end when its Agent has stopped.
 pub trait Driver: Send + Sync {
     /// Starts a turn, or steers the running one.
-    fn send(&self, text: &str);
+    fn send(&self, text: &str, images: &[Image]);
     fn interrupt(&self);
     fn answer(&self, request_id: &str, answer: Answer);
     fn run(&self, builtin: Builtin);
@@ -257,7 +319,9 @@ pub trait Driver: Send + Sync {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Capabilities {
+    pub rewinds_files: bool,
     pub models: Vec<String>,
     pub efforts: Vec<String>,
     pub modes: Vec<Choice>,
@@ -339,6 +403,7 @@ pub enum Builtin {
     Mode(String),
     Compact,
     Clear,
+    Rewind(usize),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -352,6 +417,10 @@ pub struct Chat {
     pub created: u128,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_resolved: Option<String>,
     pub status: Status,
     pub viewed_since_done: bool,
     #[serde(default)]
@@ -362,6 +431,8 @@ pub struct Chat {
     pub settings: Settings,
     #[serde(default)]
     pub queued: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queued_images: Vec<Vec<Image>>,
     #[serde(default)]
     pub todos: Vec<Todo>,
 }
@@ -413,6 +484,14 @@ pub enum Change {
     Todos { chat_id: String, todos: Vec<Todo> },
     Settings(String, Settings),
     Capabilities(String, Capabilities),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status {
+    Working,
+    Waiting,
+    Done,
 }
 
 pub struct Chats {
@@ -471,12 +550,15 @@ impl Chats {
             cwd: PathBuf::from(&project.path),
             created: SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_nanos(),
             agent_session: session.map(str::to_owned),
+            resume_at: None,
+            plan_resolved: None,
             status: Status::Done,
             viewed_since_done: true,
             context: None,
             tokens: None,
             settings: Settings { chosen: rig.settings(), pending: Vec::new() },
             queued: Vec::new(),
+            queued_images: Vec::new(),
             todos: Vec::new(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
@@ -561,10 +643,23 @@ impl Chats {
         };
         while let Some(event) = events.recv().await {
             match event {
+                Event::PlanResolved(id) => {
+                    let mut chat = entry.chat.lock().unwrap();
+                    chat.plan_resolved = Some(id);
+                    self.save(&chat);
+                }
+                Event::ResumeAt(at) => {
+                    let mut chat = entry.chat.lock().unwrap();
+                    chat.resume_at = at;
+                    self.save(&chat);
+                }
                 Event::Session(session) => {
                     let mut chat = entry.chat.lock().unwrap();
-                    chat.agent_session = Some(session);
-                    self.save(&chat);
+                    if chat.agent_session.as_ref() != Some(&session) {
+                        chat.agent_session = Some(session);
+                        self.save(&chat);
+                        let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+                    }
                 }
                 Event::Status(status) => {
                     let interrupted = matches!(
@@ -574,8 +669,9 @@ impl Chats {
                     let mut chat = entry.chat.lock().unwrap();
                     if status == Status::Done && !chat.queued.is_empty() && !interrupted {
                         let text = chat.queued.remove(0);
+                        let images = if chat.queued_images.is_empty() { Vec::new() } else { chat.queued_images.remove(0) };
                         self.queued(&chat);
-                        entry.driver.send(&text);
+                        entry.driver.send(&text, &images);
                         continue;
                     }
                     drop(chat);
@@ -649,6 +745,7 @@ impl Chats {
                     chat.context = None;
                     chat.tokens = None;
                     chat.queued.clear();
+                    chat.queued_images.clear();
                     chat.todos.clear();
                     self.queued(&chat);
                     let _ = self.changed.send(Change::Todos { chat_id: id.clone(), todos: Vec::new() });
@@ -725,15 +822,18 @@ impl Chats {
     }
 
     /// Sends `text` now, or with `queue` holds it until the running turn ends.
-    pub fn send(&self, id: &str, text: &str, queue: bool) {
+    pub fn send(&self, id: &str, text: &str, queue: bool, images: &[Image]) {
+        if images.iter().map(|image| image.data.len()).sum::<usize>() > 20 * 1024 * 1024 * 4 / 3 + 4 || images.len() > 20 || !images.iter().all(Image::valid) || (text.trim().is_empty() && images.is_empty()) { return; }
         let Some(entry) = self.get(id) else { return };
         let mut chat = entry.chat.lock().unwrap();
         if queue && chat.status != Status::Done {
+            while chat.queued_images.len() < chat.queued.len() { chat.queued_images.push(Vec::new()); }
             chat.queued.push(text.to_owned());
+            chat.queued_images.push(images.to_vec());
             self.queued(&chat);
         } else {
             drop(chat);
-            entry.driver.send(text);
+            entry.driver.send(text, images);
         }
     }
 
@@ -743,6 +843,7 @@ impl Chats {
         let mut chat = entry.chat.lock().unwrap();
         if !chat.queued.is_empty() {
             chat.queued.clear();
+            chat.queued_images.clear();
             self.queued(&chat);
         }
         drop(chat);
@@ -757,6 +858,19 @@ impl Chats {
     pub fn answer(&self, id: &str, request_id: &str, answer: Answer) {
         let Some(entry) = self.get(id) else { return };
         let mut transcript = entry.transcript.lock().unwrap();
+        let Some(request) = transcript.requests.iter().find(|request| request.id() == request_id) else { return };
+        match (&answer, request) {
+            (Answer::Rules(rules), Request::Command { words, session_prefixes, .. }) => {
+                if rules.len() != words.len() || rules.iter().any(|rule| rule.scope != rules[0].scope) || rules.iter().zip(words).any(|(rule, words)| {
+                    rule.prefix.is_empty() || !words.starts_with(&rule.prefix)
+                        || (!session_prefixes && rule.scope == Scope::Chat && rule.prefix != *words)
+                }) { return; }
+            }
+            (Answer::Rules(_), _) => return,
+            (Answer::Answers(answers), Request::Question { questions, .. }) if answers.len() == questions.len() => {},
+            (Answer::Answers(_), _) => return,
+            _ => {},
+        }
         if self.resolve(&mut transcript, id, request_id) {
             entry.driver.answer(request_id, answer);
             self.settle(&entry, &transcript);
@@ -765,6 +879,8 @@ impl Chats {
 
     pub fn run(&self, id: &str, builtin: Builtin) {
         if let Some(entry) = self.get(id) {
+            if matches!(builtin, Builtin::Rewind(_) | Builtin::Clear | Builtin::Compact)
+                && entry.chat.lock().unwrap().status != Status::Done { return; }
             entry.driver.run(builtin);
         }
     }
@@ -808,7 +924,7 @@ impl Chats {
 
     fn refresh_attention(&self) {
         let items = self.list().iter().filter(|chat| chat.needs_attention()).map(Chat::attention).collect();
-        self.attention.publish(Source::Chats, items);
+        self.attention.publish(items);
     }
 
     fn get(&self, id: &str) -> Option<Arc<Entry>> {
@@ -837,7 +953,7 @@ impl Chat {
     fn attention(&self) -> Attention {
         Attention {
             project_id: self.project_id.clone(),
-            tab: Tab::Chat { chat_id: self.id.clone() },
+            chat_id: self.id.clone(),
             label: self.rig.clone(),
             status: self.status,
         }

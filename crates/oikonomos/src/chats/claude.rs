@@ -22,12 +22,13 @@ use super::{
     AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Setting,
     Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
+    html,
     protocol::{self, Message},
-    Request, diff, seconds, unified, words,
+    Request, Image, Scope, diff, seconds, unified, words,
 };
 use crate::{
     config::{Agent, AgentSettings},
-    hooks::Status,
+    chats::Status,
     usage::{Reading, Window},
 };
 
@@ -58,7 +59,7 @@ pub struct Claude {
 }
 
 enum Command {
-    Send(String),
+    Send(String, Vec<Image>),
     Interrupt,
     Answer(String, Answer),
     Run(Builtin),
@@ -66,8 +67,8 @@ enum Command {
 }
 
 impl Driver for Claude {
-    fn send(&self, text: &str) {
-        let _ = self.commands.send(Command::Send(text.to_owned()));
+    fn send(&self, text: &str, images: &[Image]) {
+        let _ = self.commands.send(Command::Send(text.to_owned(), images.to_vec()));
     }
 
     fn interrupt(&self) {
@@ -95,7 +96,7 @@ pub async fn start(
     settings: &AgentSettings,
     session: Option<&str>,
 ) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
-    let (frames, writer, transcript, received) = launch(data_dir, id, cwd, env, settings, session).await?;
+    let (frames, writer, transcript, received) = launch(data_dir, id, cwd, env, settings, session, None, None).await?;
     Ok((drive(frames, writer, transcript), received))
 }
 
@@ -107,7 +108,7 @@ pub async fn resume(
     let _ = fs::remove_file(holder::socket_path(data_dir, &chat.id));
     let session = chat.agent_session.as_deref();
     let (frames, writer, mut transcript, received) =
-        launch(data_dir, &chat.id, &chat.cwd, env, &chat.settings.chosen, session).await?;
+        launch(data_dir, &chat.id, &chat.cwd, env, &chat.settings.chosen, session, chat.resume_at.as_deref(), None).await?;
     transcript.window = chat.context.map(|context| context.window);
     if chat.status != Status::Done {
         transcript.push(Item::interrupted());
@@ -123,18 +124,26 @@ async fn launch(
     env: &BTreeMap<String, String>,
     settings: &AgentSettings,
     session: Option<&str>,
+    at: Option<&str>,
+    sender: Option<UnboundedSender<Event>>,
 ) -> io::Result<(Frames, OwnedWriteHalf, Transcript, UnboundedReceiver<Event>)> {
     let variables = [("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1")].into_iter()
         .chain(env.iter().map(|(name, value)| (name.as_str(), value.as_str())))
-        .chain(SDK_ENV);
-    let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.flags(Agent::ClaudeCode));
+        .chain(SDK_ENV)
+        .chain([("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true")]);
+    let tools = ["--mcp-config".to_owned(), json!({ "mcpServers": { html::SERVER: html::config() } }).to_string(),
+        "--allowedTools".to_owned(), html::CLAUDE_TOOL.to_owned()];
+    let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.claude_flags()).chain(tools);
     let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
-    holder::spawn(data_dir, id, cwd, variables, command.chain(resume)).await?;
+    let rewind = at.into_iter().flat_map(|at| ["--resume-session-at".to_owned(), at.to_owned()]);
+    holder::spawn(data_dir, id, cwd, variables, command.chain(resume).chain(rewind)).await?;
     let (frames, mut writer, _) = holder::connect(data_dir, id).await?;
     let (events, received) = mpsc::unbounded_channel();
-    let mut transcript = Transcript::new(events, cwd);
+    let mut transcript = Transcript::new(sender.unwrap_or(events), cwd);
+    transcript.location = Some(Location { data_dir: data_dir.to_owned(), id: id.to_owned(), env: env.clone() });
+    transcript.session = session.map(str::to_owned);
     if let Some(session) = session {
-        transcript.history(env, session, None);
+        transcript.history(env, session, at);
     }
     transcript.settings.chosen = settings.clone();
     transcript.discover(&mut writer).await?;
@@ -159,11 +168,13 @@ pub async fn reattach(
     });
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(events, &chat.cwd);
+    transcript.location = Some(Location { data_dir: data_dir.to_owned(), id: chat.id.clone(), env: env.clone() });
+    transcript.session = chat.agent_session.clone();
     transcript.replaying = true;
     transcript.window = chat.context.map(|context| context.window);
     transcript.settings.chosen = chat.settings.chosen.clone();
     if let Some(session) = &chat.agent_session {
-        transcript.history(env, session, turn.as_deref());
+        transcript.history(env, session, turn.as_deref().or(chat.resume_at.as_deref()));
     }
     for message in replay {
         match message {
@@ -203,9 +214,18 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
         loop {
             tokio::select! {
                 command = pending.recv() => match command {
-                    Some(Command::Send(text)) => {
-                        if send(&mut writer, &mut transcript, &text).await.is_err() {
+                    Some(Command::Send(text, images)) => {
+                        if send(&mut writer, &mut transcript, &text, &images).await.is_err() {
                             break;
+                        }
+                    }
+                    Some(Command::Run(Builtin::Rewind(index))) => {
+                        match rewind(&mut frames, &mut writer, &mut transcript, index).await {
+                            Ok(Some(restarted)) => (frames, writer, transcript) = restarted,
+                            Ok(None) => {},
+                            Err(error) => {
+                                transcript.push(Item::Notice { notice: Notice::Error, text: format!("Could not rewind: {error}") });
+                            }
                         }
                     }
                     Some(Command::Run(builtin)) => {
@@ -224,8 +244,37 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                         }
                     }
                     Some(Command::Answer(id, answer)) => {
+                        let original = transcript.inputs.remove(&id).unwrap_or_default();
                         let response = match answer {
                             Answer::Allow => json!({ "behavior": "allow" }),
+                            Answer::Rules(rules) => {
+                                let parts = words(original["input"]["command"].as_str().unwrap_or_default());
+                                let updates = rules.iter().zip(parts).map(|(rule, part)| {
+                                    let command = shlex::try_join(rule.prefix.iter().map(String::as_str)).unwrap_or_default();
+                                    let content = if rule.prefix == part { command } else { format!("{command}:*") };
+                                    json!({ "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": content }],
+                                        "behavior": "allow", "destination": if rule.scope == Scope::Chat { "session" } else { "localSettings" } })
+                                }).collect::<Vec<_>>();
+                                json!({ "behavior": "allow", "updatedPermissions": updates })
+                            }
+                            Answer::Answers(answers) => {
+                                let mut updated = original["input"].clone();
+                                let mut mapped = serde_json::Map::new();
+                                for (question, answers) in original["input"]["questions"].as_array().into_iter().flatten().zip(answers) {
+                                    if let Some(question) = question["question"].as_str() {
+                                        mapped.insert(question.to_owned(), json!(answers.join(", ")));
+                                    }
+                                }
+                                updated["answers"] = json!(mapped);
+                                json!({ "behavior": "allow", "updatedInput": updated })
+                            }
+                            Answer::Deny { instead: Some(instead) } if original["tool_name"] == "AskUserQuestion" => {
+                                let mut updated = original["input"].clone();
+                                let answers = original["input"]["questions"].as_array().into_iter().flatten()
+                                    .filter_map(|q| q["question"].as_str()).map(|q| (q.to_owned(), json!(instead))).collect::<serde_json::Map<_, _>>();
+                                updated["answers"] = json!(answers);
+                                json!({ "behavior": "allow", "updatedInput": updated })
+                            }
                             Answer::Deny { instead: Some(instead) } => json!({ "behavior": "deny", "message": instead }),
                             Answer::Deny { instead: None } => json!({ "behavior": "deny", "message": DENIED, "interrupt": true }),
                         };
@@ -254,6 +303,49 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
         }
     });
     Claude { commands }
+}
+
+async fn rewind(
+    frames: &mut Frames,
+    writer: &mut OwnedWriteHalf,
+    transcript: &mut Transcript,
+    index: usize,
+) -> io::Result<Option<(Frames, OwnedWriteHalf, Transcript)>> {
+    if transcript.status != Status::Done { return Ok(None); }
+    let Some(checkpoint) = transcript.checkpoints.get(&index).cloned() else { return Ok(None) };
+    let Some(location) = transcript.location.clone() else { return Ok(None) };
+    let Some(session) = transcript.session.clone() else { return Ok(None) };
+    let id = Uuid::new_v4().to_string();
+    let request = json!({ "type": "control_request", "request_id": id,
+        "request": { "subtype": "rewind_files", "user_message_id": checkpoint } });
+    writer.write_all(&input(&request)).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let frame = frames.next().await.ok_or(io::ErrorKind::UnexpectedEof)??;
+            if let Some(Message::Line(line)) = protocol::decode(&frame)? {
+                let message: Value = serde_json::from_slice(&line)?;
+                if message["type"] == "control_response" && message["response"]["request_id"] == id {
+                    let response = &message["response"];
+                    if response["subtype"] != "success" || response["response"]["canRewind"] == false {
+                        return Err(io::Error::other(format!("{}", response.get("error").unwrap_or(&response["response"]))));
+                    }
+                    return Ok(());
+                }
+                transcript.read(&message);
+            }
+        }
+    }).await.map_err(io::Error::other)??;
+    writer.write_all(&protocol::encode(&Message::Hangup)).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async { while frames.next().await.is_some() {} }).await.map_err(io::Error::other)?;
+    let _ = fs::remove_file(holder::socket_path(&location.data_dir, &location.id));
+    let events = transcript.events.clone();
+    let _ = events.send(Event::Truncate(0));
+    let _ = events.send(Event::Reset);
+    let (frames, writer, mut fresh, _) = launch(&location.data_dir, &location.id, &transcript.cwd,
+        &location.env, &transcript.settings.chosen, Some(&session), Some(&checkpoint), Some(events)).await?;
+    let _ = fresh.events.send(Event::ResumeAt(Some(checkpoint)));
+    fresh.push(Item::Notice { notice: Notice::Rewound, text: "Conversation rewound; tracked edits restored. Bash and subagent changes are not restored.".to_owned() });
+    Ok(Some((frames, writer, fresh)))
 }
 
 /// Asks a fresh `claude` for the plan's windows with the `get_usage` control request, which makes no model call.
@@ -316,13 +408,20 @@ fn epoch_ms(time: &str) -> Option<u64> {
     u64::try_from(seconds * 1000 + i64::from(clock.nanosecond.unwrap_or(0) / 1_000_000)).ok()
 }
 
-async fn send(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, text: &str) -> io::Result<()> {
+async fn send(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, text: &str, images: &[Image]) -> io::Result<()> {
     let mut message = json!({
         "type": "user",
         "message": { "role": "user", "content": text },
         "parent_tool_use_id": null,
         "uuid": Uuid::new_v4().to_string(),
     });
+    if !images.is_empty() {
+        let mut content = vec![json!({ "type": "text", "text": text })];
+        content.extend(images.iter().map(|image| json!({ "type": "image", "source": {
+            "type": "base64", "media_type": image.media_type, "data": image.data
+        } })));
+        message["message"]["content"] = json!(content);
+    }
     let idle = transcript.status == Status::Done;
     if !idle {
         message["priority"] = json!("next");
@@ -336,8 +435,9 @@ async fn send(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, text: &s
 
 async fn run(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, builtin: Builtin) -> io::Result<()> {
     let (setting, request, value) = match builtin {
-        Builtin::Compact => return send(writer, transcript, "/compact").await,
-        Builtin::Clear => return send(writer, transcript, "/clear").await,
+        Builtin::Compact => return send(writer, transcript, "/compact", &[]).await,
+        Builtin::Clear => return send(writer, transcript, "/clear", &[]).await,
+        Builtin::Rewind(_) => return Ok(()),
         Builtin::Model(model) => (Setting::Model, json!({ "subtype": "set_model", "model": model }), model),
         Builtin::Effort(effort) => {
             let request = json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": effort } });
@@ -424,7 +524,20 @@ fn request(id: &str, request: &Value) -> Request {
     let input = &request["input"];
     let text = |field: &str| input[field].as_str().unwrap_or_default().to_owned();
     match request["tool_name"].as_str() {
-        Some("Bash") => Request::Command { id, words: words(&text("command")) },
+        Some("Bash") => {
+            let parts = words(&text("command"));
+            let rules = request["permission_suggestions"].as_array().into_iter().flatten()
+                .flat_map(|suggestion| suggestion["rules"].as_array().into_iter().flatten())
+                .filter(|rule| rule["toolName"] == "Bash")
+                .filter_map(|rule| rule["ruleContent"].as_str())
+                .flat_map(|rule| words(rule.trim_end_matches(":*"))).collect::<Vec<_>>();
+            let suggestion = parts.iter().map(|part| rules.iter().find(|rule| part.starts_with(rule)).unwrap_or(part).clone()).collect();
+            Request::Command { id, words: parts, suggestion, session_prefixes: true }
+        }
+        Some("AskUserQuestion") => Request::Question {
+            id, questions: serde_json::from_value(input["questions"].clone()).unwrap_or_default(),
+        },
+        Some("ExitPlanMode") => Request::Plan { id, plan: text("plan") },
         Some("Edit") => {
             let diff = diff(&text("old_string"), &text("new_string"));
             Request::Edit { id, path: text("file_path"), diff }
@@ -447,13 +560,24 @@ fn interrupted(content: &Value) -> bool {
     blocks.any(|block| block["text"].as_str().is_some_and(|text| text.starts_with("[Request interrupted by user")))
 }
 
+#[derive(Clone)]
+struct Location {
+    data_dir: PathBuf,
+    id: String,
+    env: BTreeMap<String, String>,
+}
+
 struct Transcript {
+    location: Option<Location>,
+    session: Option<String>,
+    checkpoints: HashMap<usize, String>,
     events: UnboundedSender<Event>,
     cwd: PathBuf,
     len: usize,
     streaming: HashMap<u64, (usize, String)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     commands: HashMap<String, (usize, String)>,
+    snippets: HashMap<String, Item>,
     edits: HashSet<String>,
     subagents: HashMap<String, (Subagent, Transcript)>,
     todos: Vec<(String, Todo)>,
@@ -465,6 +589,7 @@ struct Transcript {
     status: Status,
     replaying: bool,
     pending: Vec<Request>,
+    inputs: HashMap<String, Value>,
     /// The model of the main loop's latest API call, and how many tokens it was sent.
     call: Option<(String, u64)>,
     window: Option<u64>,
@@ -485,12 +610,16 @@ enum Asked {
 impl Transcript {
     fn new(events: UnboundedSender<Event>, cwd: &Path) -> Self {
         Self {
+            location: None,
+            session: None,
+            checkpoints: HashMap::new(),
             events,
             cwd: cwd.to_owned(),
             len: 0,
             streaming: HashMap::new(),
             tools: None,
             commands: HashMap::new(),
+            snippets: HashMap::new(),
             edits: HashSet::new(),
             subagents: HashMap::new(),
             todos: Vec::new(),
@@ -502,6 +631,7 @@ impl Transcript {
             status: Status::Done,
             replaying: false,
             pending: Vec::new(),
+            inputs: HashMap::new(),
             call: None,
             window: None,
             steering: HashSet::new(),
@@ -608,6 +738,7 @@ impl Transcript {
         let listed = self.models.iter().find(|listed| listed["value"] == model);
         let efforts = listed.and_then(|listed| listed["supportedEffortLevels"].as_array()).into_iter().flatten();
         let capabilities = Capabilities {
+            rewinds_files: true,
             models: self.models.iter().filter_map(|model| model["value"].as_str()).map(str::to_owned).collect(),
             efforts: efforts.filter_map(Value::as_str).map(str::to_owned).collect(),
             modes: Agent::ClaudeCode.modes().iter().map(|mode| Choice::mode(mode)).collect(),
@@ -667,9 +798,19 @@ impl Transcript {
         }
     }
 
+    fn checkpoint(&mut self, message: &Value) {
+        if let Some(id) = message["uuid"].as_str() { self.checkpoints.insert(self.len, id.to_owned()); }
+    }
+
     fn sent(&mut self, message: &Value) {
-        if let Some(text) = message["message"]["content"].as_str() {
-            self.push(Item::User { text: text.to_owned(), images: 0 });
+        let content = &message["message"]["content"];
+        if let Some(text) = content.as_str().map(str::to_owned).or_else(|| content.as_array().map(|blocks| {
+            blocks.iter().filter_map(|block| block["text"].as_str()).collect::<Vec<_>>().join("\n")
+        })) {
+            let images = content.as_array().into_iter().flatten().filter(|block| block["type"] == "image").count();
+            let _ = self.events.send(Event::ResumeAt(None));
+            self.checkpoint(message);
+            self.push(Item::User { text, images });
             if message.get("priority").is_some()
                 && let Some(uuid) = message["uuid"].as_str()
             {
@@ -684,7 +825,24 @@ impl Transcript {
         let Some(path) = session_file(env, session) else { return };
         let Ok(contents) = fs::read_to_string(&path) else { return };
         self.history = Some(path);
-        for entry in contents.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
+        let entries: Vec<Value> = contents.lines().filter_map(|line| serde_json::from_str(line).ok()).collect();
+        let chained: HashMap<&str, &Value> = entries.iter().filter(|entry| entry["isSidechain"] != true).filter_map(|entry| Some((entry["uuid"].as_str()?, entry))).collect();
+        let leaf = entries.iter().rev().find(|entry| {
+            matches!(entry["type"].as_str(), Some("user" | "assistant")) && entry["isSidechain"] != true && entry.get("parentUuid").is_some()
+        });
+        let mut branch = HashSet::new();
+        let mut current = leaf.and_then(|entry| entry["uuid"].as_str());
+        let mut complete = false;
+        while let Some(id) = current {
+            if !branch.insert(id) { break; }
+            let Some(entry) = chained.get(id) else { break };
+            current = entry["parentUuid"].as_str();
+            if entry.get("parentUuid") == Some(&Value::Null) { complete = true; }
+        }
+        let boundary = entries.iter().rposition(|entry| entry["type"] == "system" && entry["subtype"] == "compact_boundary");
+        for (index, entry) in entries.iter().enumerate() {
+            if complete && boundary.is_none_or(|boundary| index > boundary) && !branch.is_empty() && matches!(entry["type"].as_str(), Some("user" | "assistant"))
+                && entry["uuid"].as_str().is_some_and(|id| !branch.contains(id)) { continue; }
             if until.is_some() && entry["uuid"].as_str() == until {
                 // A compaction recorded just before the replayed turn's prompt belongs to that turn, which replays it.
                 self.compacted = false;
@@ -706,11 +864,16 @@ impl Transcript {
             Some("user") => match entry["message"]["content"].as_str() {
                 Some(content) => {
                     if let Some(text) = prompt(content) {
+                        self.checkpoint(entry);
                         self.push(Item::User { text, images: 0 });
                         self.compact();
                     }
                 }
                 None => {
+                    let blocks = entry["message"]["content"].as_array().into_iter().flatten();
+                    let text = blocks.clone().filter_map(|block| block["text"].as_str()).collect::<Vec<_>>().join("\n");
+                    let images = blocks.filter(|block| block["type"] == "image").count();
+                    if !text.is_empty() || images > 0 { self.checkpoint(entry); self.push(Item::User { text, images }); }
                     self.compact();
                     self.results(&entry["message"]["content"], &entry["toolUseResult"]);
                 }
@@ -759,6 +922,7 @@ impl Transcript {
                 if message["subtype"] == "init"
                     && let Some(session) = message["session_id"].as_str()
                 {
+                    self.session = Some(session.to_owned());
                     let _ = self.events.send(Event::Session(session.to_owned()));
                 }
                 if let Some(mode) = message["permissionMode"].as_str() {
@@ -785,6 +949,7 @@ impl Transcript {
             }
             Some("control_request") if message["request"]["subtype"] == "can_use_tool" => {
                 if let Some(id) = message["request_id"].as_str() {
+                    self.inputs.insert(id.to_owned(), message["request"].clone());
                     self.ask(request(id, &message["request"]));
                 }
             }
@@ -813,6 +978,7 @@ impl Transcript {
                 self.streaming.clear();
                 self.tools = None;
                 self.commands.clear();
+                self.snippets.clear();
                 self.edits.clear();
                 self.subagents.clear();
                 self.todos.clear();
@@ -820,6 +986,7 @@ impl Transcript {
                 self.tasks.clear();
                 self.todos_held = false;
                 self.pending.clear();
+                self.checkpoints.clear();
                 self.steering.clear();
                 let _ = self.events.send(Event::Reset);
                 let _ = self.events.send(Event::Truncate(0));
@@ -888,6 +1055,13 @@ impl Transcript {
         let input = &block["input"];
         let text = |key: &str| input[key].as_str().unwrap_or_default().to_owned();
         match name {
+            html::CLAUDE_TOOL => {
+                if let Some(item) = html::item(input) {
+                    self.snippets.insert(id.to_owned(), item);
+                } else {
+                    self.call(ToolKind::Other, name, input.to_string());
+                }
+            }
             "Bash" => {
                 let command = text("command");
                 let running = Item::Command { command: command.clone(), status: CommandStatus::Running, output: String::new() };
@@ -952,6 +1126,11 @@ impl Transcript {
     fn results(&mut self, content: &Value, result: &Value) {
         for block in content.as_array().into_iter().flatten().filter(|block| block["type"] == "tool_result") {
             let Some(id) = block["tool_use_id"].as_str() else { continue };
+            if let Some(item) = self.snippets.remove(id) {
+                if block["is_error"] != true {
+                    self.push(item);
+                }
+            }
             if self.edits.remove(id) && block["is_error"] != true {
                 self.edit(result);
             }
@@ -1091,4 +1270,35 @@ fn prompt(content: &str) -> Option<String> {
         Some(args) if !args.is_empty() => format!("{name} {args}"),
         _ => name.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod html_tests {
+    use super::*;
+
+    #[test]
+    fn html_renders_only_after_success_live_and_from_history() {
+        let arguments = json!({ "title": "Flow", "html": "<b>Start → Finish</b>" });
+        let assistant = json!({ "type": "assistant", "message": { "content": [{
+            "type": "tool_use", "id": "snippet", "name": html::CLAUDE_TOOL, "input": arguments,
+        }] } });
+        for recorded in [false, true] {
+            for denied in [false, true] {
+                let (events, mut received) = mpsc::unbounded_channel();
+                let mut transcript = Transcript::new(events, Path::new("/project"));
+                let result = json!({ "type": "user", "message": { "content": [{
+                    "type": "tool_result", "tool_use_id": "snippet", "is_error": denied, "content": "done",
+                }] } });
+                if recorded { transcript.recorded(&assistant); } else { transcript.read(&assistant); }
+                assert!(received.try_recv().is_err());
+                if recorded { transcript.recorded(&result); } else { transcript.read(&result); }
+                if denied {
+                    assert!(received.try_recv().is_err());
+                } else {
+                    assert!(matches!(received.try_recv().unwrap(), Event::Item(0, item) if Some(&item) == html::item(&arguments).as_ref()));
+                }
+                assert!(transcript.snippets.is_empty());
+            }
+        }
+    }
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { version } from '$app/env';
 	import { ago, logos } from '#lib/chat/sessions.ts';
-	import { launchers, rigs, type Launcher } from '#lib/config.svelte.ts';
+	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import {
 		connect,
 		tabOf,
@@ -82,6 +82,8 @@
 	let drawer: Drawer;
 	let drawerOpen = $state(false);
 	let settle: ((error?: string) => void) | undefined;
+	let updateAvailable = $state(false);
+	const dirty = $derived(Object.values(files).flat().some((file) => file.dirty));
 	const servers = new LanguageServers(
 		device,
 		(projectId) => projects.find((project) => project.id === projectId)?.path,
@@ -106,7 +108,6 @@
 	const groups = $derived(split ? [split.left, split.right] : [whole]);
 	const phone = $derived(form() === 'phone');
 	const foreground = $derived(visible && (!phone || (screen === 1 && !drawerOpen)));
-	const shown = $derived(foreground ? tabs.filter((tab) => showing(tab.id)).map((tab) => tab.id) : []);
 	const shownChats = $derived(foreground ? chatTabs.filter((chat) => showing(chat.id)).map((chat) => chat.id) : []);
 	const label = $derived(focused && projectLabels.get(focused.id));
 	const titles = $derived([
@@ -118,7 +119,7 @@
 		capture({ chosen, terminals, chats, files, chosenTabs, splits, sidebar: { open: sidebar, section } })
 	);
 
-	$effect(() => device.send({ type: 'device.view', terminalIds: shown, chatIds: shownChats }));
+	$effect(() => device.send({ type: 'device.view', chatIds: shownChats }));
 	$effect(() => saveLayout(deviceLayout));
 
 	const query = new URLSearchParams(location.search);
@@ -140,10 +141,7 @@
 		servers.message(message);
 		switch (message.type) {
 			case 'hello': {
-				if (message.version !== version && sessionStorage.getItem('reloadedFor') !== message.version) {
-					sessionStorage.setItem('reloadedFor', message.version);
-					putLayout(deviceLayout).then(() => location.reload());
-				}
+				updateAvailable = (message.buildId ?? message.version) !== version;
 				const owned: Record<string, Terminal[]> = {};
 				for (const terminal of message.terminals) {
 					if (terminal.owner !== 'drawer') (owned[terminal.owner.project] ??= []).push(terminal);
@@ -154,7 +152,7 @@
 				chats = chatsOwned;
 				for (const project of projects) invalidate(project.id);
 				device.send({ type: 'projects.list' });
-				device.send({ type: 'device.view', terminalIds: shown, chatIds: shownChats });
+				device.send({ type: 'device.view', chatIds: shownChats });
 				break;
 			}
 			case 'attention.changed':
@@ -165,12 +163,6 @@
 				break;
 			case 'terminals.changed':
 				if (message.projectId) terminals[message.projectId] = message.terminals;
-				break;
-			case 'terminal.status':
-				for (const owned of Object.values(terminals)) {
-					const terminal = owned.find((terminal) => terminal.id === message.terminalId);
-					if (terminal) terminal.status = message.status;
-				}
 				break;
 			case 'terminal.created': {
 				const { owner, id } = message.terminal;
@@ -328,7 +320,7 @@
 	}
 
 	function closeProject(projectId: string, confirmed = false) {
-		const agents = [...(terminals[projectId] ?? []), ...(chats[projectId] ?? [])];
+		const agents = chats[projectId] ?? [];
 		if (!confirmed && agents.some((agent) => agent.status === 'working')) {
 			closingProject = projectId;
 			return;
@@ -339,8 +331,7 @@
 
 	function newTab(projectId: string) {
 		const items = rigs()
-			.flatMap(launchers)
-			.map((launcher) => ({ label: launcher.label, onselect: () => launch(launcher, projectId) }));
+			.map((rig) => ({ label: rig.name, onselect: () => launch(rig, projectId) }));
 		const terminal = () => device.send({ type: 'terminal.create', projectId });
 		const rest = [{ label: 'Terminal', onselect: terminal }, { label: 'Open file', onselect: () => openPalette('files') }];
 		const recent = (sessions[projectId] ?? []).slice(0, RECENT).map((session) => ({
@@ -359,10 +350,8 @@
 		device.send({ type: 'chat.resume', projectId, agent, sessionId });
 	}
 
-	function launch({ rig, chat }: Launcher, projectId = focused?.id) {
-		if (!projectId) return;
-		if (chat) device.send({ type: 'chat.create', projectId, rig: rig.name });
-		else device.send({ type: 'terminal.create', projectId, rig: rig.name });
+	function launch(rig: Rig, projectId = focused?.id) {
+		if (projectId) device.send({ type: 'chat.create', projectId, rig: rig.name });
 	}
 
 	function jump(index: number) {
@@ -473,19 +462,9 @@
 		device.send({ type: 'chat.close', chatId: chat.id });
 	}
 
-	function resumable(terminal: Terminal) {
-		return !!terminal.rig && !!terminal.agentSession;
-	}
-
-	function resume(terminalId: string) {
-		device.send({ type: 'terminal.resume', terminalId });
-	}
-
 	function tabMenu(projectId: string, tab: Terminal) {
 		const close = () => closeTab(projectId, tab.id);
-		if (tab.state === 'live') return [{ label: 'Close', onselect: close }];
-		const resuming = resumable(tab) ? [{ label: 'Resume', onselect: () => resume(tab.id) }] : [];
-		return [...resuming, { label: 'Dismiss', onselect: close }];
+		return [{ label: tab.state === 'live' ? 'Close' : 'Dismiss', onselect: close }];
 	}
 
 	function openTab<T extends OpenFile>(tab: T): T {
@@ -591,9 +570,7 @@
 										<Tab
 											{...props}
 											data-tab={id}
-											variant={tab.agent ? 'agent' : 'terminal'}
-											agent={tab.agent}
-											status={tab.status}
+											variant="terminal"
 											ended={tab.state === 'ended'}
 											label={tab.label}
 											active={id === group.active}
@@ -693,9 +670,6 @@
 									<div class="ended" role="status">
 										<span class="message"><Power /> Lost to a Host reboot; showing its last output.</span>
 										<div class="choices">
-											{#if resumable(terminal)}
-												<Button variant="primary" onclick={() => resume(terminal.id)}>Resume</Button>
-											{/if}
 											<Button onclick={() => closeTab(projectId, terminal.id)}>Dismiss</Button>
 										</div>
 									</div>
@@ -827,6 +801,11 @@
 
 {#if device.connection === 'reconnecting'}
 	<div class="reconnecting" role="status"><WifiSlash /> Reconnecting…</div>
+{:else if updateAvailable}
+	<div class="update" role="status">
+		<span>{dirty ? 'Save your edits to reload the update.' : 'Oikonomos updated.'}</span>
+		<Button disabled={dirty} onclick={async () => { await putLayout(deviceLayout); location.reload(); }}>Reload</Button>
+	</div>
 {/if}
 
 <Leader
@@ -1074,7 +1053,8 @@
 		margin: 0;
 	}
 
-	.reconnecting {
+	.reconnecting,
+	.update {
 		position: fixed;
 		top: var(--space-2);
 		left: 50%;
@@ -1087,9 +1067,14 @@
 		border-radius: var(--radius-lg);
 		background: color-mix(in oklab, var(--status-waiting) 16%, var(--color-bg));
 		box-shadow: var(--shadow-float);
+		translate: -50%;
+		max-width: calc(100vw - 2 * var(--space-2));
+		box-sizing: border-box;
+	}
+
+	.reconnecting {
 		white-space: nowrap;
 		pointer-events: none;
-		translate: -50%;
 	}
 
 	.reconnecting :global(svg) {

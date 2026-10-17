@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+import argparse
+import configparser
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+
+ROOT = Path(__file__).resolve().parent
+INSTALL = Path.home() / ".local/lib/oikonomos"
+UNIT = Path.home() / ".config/systemd/user/oikonomos.service"
+SERVICE = "oikonomos.service"
+
+
+def parser():
+    result = argparse.ArgumentParser(description="Build and restart the Oikonomos user service, rolling back on startup failure.")
+    result.add_argument("--port", type=port)
+    result.add_argument("--data-dir", type=lambda value: str(Path(value).resolve()))
+    result.add_argument("--config", type=lambda value: str(Path(value).resolve()))
+    access = result.add_mutually_exclusive_group()
+    access.add_argument("--https-port", type=port, help="also configure Tailscale Serve")
+    access.add_argument("--local-only", dest="https_port", action="store_const", const=0, help="skip Tailscale setup")
+    return result
+
+
+def port(value):
+    value = int(value)
+    if not 1 <= value <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 1 and 65535")
+    return value
+
+
+def run(*command, **kwargs):
+    subprocess.run([str(part) for part in command], check=True, **kwargs)
+
+
+def systemctl(*args):
+    run("systemctl", "--user", *args, timeout=45)
+
+
+def atomic_copy(source, destination):
+    temporary = destination.with_name(destination.name + ".new")
+    shutil.copy2(source, temporary)
+    temporary.replace(destination)
+
+
+def atomic_write(path, text):
+    temporary = path.with_name(path.name + ".new")
+    temporary.write_text(text)
+    temporary.replace(path)
+
+
+def readiness(port, build=None, seconds=30):
+    deadline = time.monotonic() + seconds
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    while True:
+        try:
+            with opener.open(f"http://127.0.0.1:{port}/api/version", timeout=1) as response:
+                version = json.load(response)
+            if isinstance(version, dict) and version.get("version") and (build is None or version.get("buildId") == build):
+                return version
+        except (OSError, ValueError, urllib.error.URLError):
+            pass
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"server on port {port} did not become ready" + (f" with build {build}" if build else ""))
+        time.sleep(0.25)
+
+
+def deploy(arguments):
+    binary = INSTALL / "oikonomos"
+    previous = INSTALL / "oikonomos.previous"
+    manifest = INSTALL / "deployment.json"
+    old_unit = UNIT.read_text() if UNIT.exists() else None
+    defaults = dict(port=4580, data_dir=str(Path.home() / ".local/share/oikonomos"),
+                    config=str(Path.home() / ".config/oikonomos/config.toml"), https_port=0)
+    old_binary = binary if binary.exists() else None
+    if old_unit:
+        unit = configparser.ConfigParser(interpolation=None)
+        unit.read_string(old_unit)
+        if not unit.has_section("X-Oikonomos") or unit["Service"].get("KillMode") != "process":
+            raise RuntimeError(f"{UNIT} is not an Oikonomos service with KillMode=process")
+        command = [part.replace("%%", "%").replace("$$", "$") for part in shlex.split(unit["Service"]["ExecStart"])]
+        if len(command) < 2 or command[1] != "serve":
+            raise RuntimeError(f"cannot read server command in {UNIT}")
+        old_binary = Path(command[0])
+        defaults.update({key: value for key, value in vars(parser().parse_args(command[2:])).items() if value is not None})
+        defaults["https_port"] = int(unit["X-Oikonomos"]["HttpsPort"])
+    saved = json.loads(manifest.read_text()) if manifest.exists() else {}
+    old_settings = defaults if old_unit else defaults | saved.get("settings", {})
+    settings = old_settings | {key: value for key, value in vars(arguments).items() if value is not None}
+    for command in ("pnpm", "cargo", "systemctl", "loginctl"):
+        if not shutil.which(command):
+            raise RuntimeError(f"{command} is required")
+    run("systemctl", "--user", "show-environment", stdout=subprocess.DEVNULL, timeout=10)
+    if settings["https_port"] and not shutil.which("tailscale"):
+        raise RuntimeError("tailscale is required with --https-port")
+    if old_binary:
+        atomic_copy(old_binary, previous)
+
+    build = uuid.uuid4().hex
+    environment = os.environ | {"OIKONOMOS_BUILD_ID": build}
+    run("pnpm", "-C", "web", "install", "--frozen-lockfile", cwd=ROOT, env=environment)
+    run("pnpm", "-C", "web", "build", cwd=ROOT, env=environment)
+    run("cargo", "build", "--release", "--target-dir", ROOT / "target", cwd=ROOT, env=environment)
+    candidate = ROOT / "target/release/oikonomos"
+    configure = not old_unit or old_binary != binary or settings != old_settings
+    try:
+        atomic_copy(candidate, binary)
+        if configure:
+            command = [binary, "install", "--port", settings["port"], "--data-dir", settings["data_dir"],
+                       "--config", settings["config"]]
+            command += ["--https-port", settings["https_port"]] if settings["https_port"] else ["--local-only"]
+            run(*command)
+        systemctl("reset-failed", SERVICE)
+        systemctl("restart", SERVICE)
+        readiness(settings["port"], build)
+        atomic_write(manifest, json.dumps(dict(settings=settings, buildId=build)) + "\n")
+    except (Exception, KeyboardInterrupt):
+        print("Deployment failed; restoring the previous server.", file=sys.stderr, flush=True)
+        if old_unit and previous.exists():
+            atomic_copy(previous, binary)
+            lines = old_unit.splitlines(keepends=True)
+            executable = '"' + str(binary).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$") + '"'
+            old_unit = "".join(re.sub(r'^ExecStart=(?:"(?:\\.|[^"\\])*"|\S+)', lambda _: f"ExecStart={executable}", line) for line in lines)
+            atomic_write(UNIT, old_unit)
+            systemctl("daemon-reload")
+            systemctl("reset-failed", SERVICE)
+            systemctl("restart", SERVICE)
+            readiness(old_settings["port"], saved.get("buildId"))
+            if configure and settings["https_port"] != old_settings["https_port"] and settings["https_port"]:
+                run("tailscale", "serve", f"--https={settings['https_port']}", "off")
+            if configure and old_settings["https_port"]:
+                run("tailscale", "serve", "--bg", f"--https={old_settings['https_port']}", f"http://127.0.0.1:{old_settings['port']}")
+            print("Previous server restored.", file=sys.stderr, flush=True)
+        else:
+            subprocess.run(["systemctl", "--user", "disable", "--now", SERVICE], check=False, timeout=45)
+            UNIT.unlink(missing_ok=True)
+            systemctl("daemon-reload")
+            if previous.exists():
+                atomic_copy(previous, binary)
+            else:
+                binary.unlink(missing_ok=True)
+        raise
+    print(f"Oikonomos build {build} ready at http://127.0.0.1:{settings['port']}", flush=True)
+
+
+def main():
+    arguments = parser().parse_args()
+    INSTALL.mkdir(parents=True, exist_ok=True)
+    with (INSTALL / "rebuild.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("another Oikonomos rebuild is running") from None
+        deploy(arguments)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (Exception, KeyboardInterrupt) as error:
+        print(f"rebuild: {error or 'interrupted'}", file=sys.stderr)
+        sys.exit(1)

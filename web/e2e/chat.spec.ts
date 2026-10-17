@@ -3,14 +3,14 @@ import { expect, test, type Locator } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { openProject, showSidebar } from './shell.ts';
+import { closeProject, openProject, showSidebar } from './shell.ts';
 
 test('a Claude Code Chat streams its reply, shows done, and asks before closing while working', async ({ page }, { project }) => {
 	const name = `chat-${project.name}`;
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude as Chat' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
 	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await expect(tab.getByTitle('done')).toBeVisible();
@@ -48,7 +48,7 @@ test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, 
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Codex as Chat' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Codex', exact: true }).click();
 	const tab = page.getByRole('tab', { name: /^Fake Codex/ });
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await expect(tab.getByTitle('done')).toBeVisible();
@@ -79,7 +79,7 @@ test('a Chat folds tools, thinking, commands and a long first prompt into lines 
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude Tools as Chat' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude Tools', exact: true }).click();
 	const tab = page.getByRole('tab', { name: /^Fake Claude Tools/ });
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await expect(tab.getByTitle('done')).toBeVisible();
@@ -128,12 +128,12 @@ test('a working Chat steers, queues until its turn ends, and interrupts, with no
 	const keys = page.getByRole('toolbar', { name: 'Keys' });
 	if (project.name === 'pixel') {
 		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: 'Terminal' }).click();
+		await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
 		await page.locator('.terminal:visible canvas').click();
 		await expect(keys).toBeVisible();
 	}
 	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude (steer) as Chat' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude (steer)', exact: true }).click();
 	const tab = page.getByRole('tab', { name: /^Fake Claude \(steer\)/ });
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await expect(tab.getByTitle('done')).toBeVisible();
@@ -189,7 +189,7 @@ for (const { agent, rig, command, before, after } of slashed) {
 		mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
 		await openProject(page, name);
 		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: `${rig} as Chat` }).click();
+		await page.getByRole('menuitem', { name: rig, exact: true }).click();
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 		await expect(panel.getByRole('button', { name: before, exact: true })).toBeVisible();
 
@@ -225,7 +225,7 @@ for (const agent of ['Claude', 'Codex']) {
 		writeFileSync(`${root}/notes.txt`, 'alpha\nBETA\ngamma\n');
 		await openProject(page, name);
 		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: `Fake ${agent} Edits as Chat` }).click();
+		await page.getByRole('menuitem', { name: `Fake ${agent} Edits`, exact: true }).click();
 		const tab = page.getByRole('tab', { name: new RegExp(`^Fake ${agent} Edits`) });
 		await expect(tab).toHaveAttribute('aria-selected', 'true');
 		await expect(tab.getByTitle('done')).toBeVisible();
@@ -258,7 +258,7 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal' }).click();
+	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
 	const terminalTab = page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab').first();
 	await expect(terminalTab).toHaveAttribute('aria-selected', 'true');
 
@@ -282,7 +282,7 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 
 	// An unknown Tab falls back to the last one, so another Chat keeps this one from being chosen by default.
 	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude as Chat' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
 	await expect(page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab').last()).toHaveAttribute('aria-selected', 'true');
 	await expect(chatTab).toHaveAttribute('aria-selected', 'false');
 	const notification = { projectId, chatId, label: 'Fake Claude', status: 'done' };
@@ -334,37 +334,36 @@ function filledWith(meter: Locator, token: string) {
 	}, token);
 }
 
-test('each Rig launches as a TUI or a Chat, the Chat first on the phone and the TUI on desktop', async ({ page }, { project }) => {
+test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device', async ({ page }, { project }) => {
 	const created: string[] = [];
-	page.on('websocket', (socket) =>
-		socket.on('framesent', ({ payload }) => {
-			const type = typeof payload === 'string' && JSON.parse(payload).type;
-			if (type === 'chat.create' || type === 'terminal.create') created.push(type);
-		})
-	);
+	page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {
+		const type = typeof payload === 'string' && JSON.parse(payload).type;
+		if (type === 'chat.create' || type === 'terminal.create') created.push(type);
+	}));
 	const name = `launch-${project.name}`;
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	const phone = project.name === 'pixel';
-	const order = phone ? ['Fake Claude as Chat', 'Fake Claude'] : ['Fake Claude', 'Fake Claude as Chat'];
-
 	await page.getByRole('button', { name: 'New Tab' }).click();
-	const launchers = /^Fake Claude( as Chat)?$/;
-	await expect(page.getByRole('menuitem', { name: launchers })).toHaveText(order);
-	await page.keyboard.press('Escape');
+	await expect(page.getByRole('menuitem', { name: 'Fake Claude', exact: true })).toHaveCount(1);
+	await expect(page.getByRole('menuitem', { name: /as Chat|as TUI/ })).toHaveCount(0);
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(1);
 
 	await page.keyboard.press('Control+Space');
 	await page.keyboard.press('p');
 	await page.getByPlaceholder('Switch Project, launch a Rig, or open a file').fill('Fake Claude');
-	await expect(page.getByRole('option', { name: launchers })).toHaveText(order);
-	await page.keyboard.press('Escape');
+	await page.getByRole('option', { name: 'Fake Claude', exact: true }).click();
+	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(2);
 
 	await page.keyboard.press('Control+Space');
 	await page.keyboard.press('r');
-	await expect(page.getByRole('status').filter({ hasText: order[0] })).toBeVisible();
+	await expect(page.getByRole('status').filter({ hasText: 'Fake Claude' })).toBeVisible();
 	await page.keyboard.press('c');
-	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveAttribute('aria-selected', 'true');
-	expect(created).toEqual([phone ? 'chat.create' : 'terminal.create']);
+	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(3);
+	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).last()).toHaveAttribute('aria-selected', 'true');
+	expect(created).toEqual(['chat.create', 'chat.create', 'chat.create']);
+	await expect(page.getByRole('button', { name: 'Open as TUI' })).toHaveCount(0);
+	await closeProject(page, name);
 });
 
 test('past sessions of both Agents are listed newest first, searchable, and reopen as a Chat', async ({ page }, { project }) => {
@@ -443,7 +442,7 @@ test('a Chat pins todos above its transcript and expands subagent activity', asy
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: `Fake Claude Subagent ${project.name} as Chat` }).click();
+	await page.getByRole('menuitem', { name: `Fake Claude Subagent ${project.name}`, exact: true }).click();
 	const tab = page.getByRole('tab', { name: /^Fake Claude Subagent/ });
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
@@ -477,3 +476,51 @@ test('a Chat pins todos above its transcript and expands subagent activity', asy
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
 	await expect(tab).toHaveCount(0);
 });
+
+for (const agent of ['Claude', 'Codex']) {
+	test(`${agent} sends an image with a thumbnail and image count`, async ({ page }, { project }) => {
+		const name = `image-${agent}-${project.name}`;
+		mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+		await openProject(page, name);
+		await page.getByRole('button', { name: 'New Tab' }).click();
+		await page.getByRole('menuitem', { name: `Fake ${agent}`, exact: true }).click();
+		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+		const image = fileURLToPath(new URL('../static/icons/icon-192.png', import.meta.url));
+		await panel.getByLabel('Attach images', { exact: true }).setInputFiles(image);
+		await expect(panel.getByRole('img', { name: 'icon-192.png' })).toBeVisible();
+		await expect(panel.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+		await panel.getByRole('button', { name: 'Send', exact: true }).click();
+		await expect(panel.getByLabel('Attachments', { exact: true })).toHaveCount(0);
+		await expect(panel.getByText('1 image', { exact: true })).toBeVisible();
+		await expect.poll(() => panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+		await closeProject(page, name);
+	});
+}
+
+for (const agent of ['Claude', 'Codex']) {
+	test(`${agent} rewinds from the slash menu in the same Chat tab`, async ({ page }, { project }) => {
+		const name = `rewind-${agent}-${project.name}`;
+		mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+		await openProject(page, name);
+		await page.getByRole('button', { name: 'New Tab' }).click();
+		await page.getByRole('menuitem', { name: `${agent} Rewind`, exact: true }).click();
+		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+		const composer = panel.getByRole('textbox', { name: 'Composer' });
+		await composer.fill('Change the file');
+		await panel.getByRole('button', { name: 'Send', exact: true }).click();
+		const tab = page.getByRole('tab', { name: new RegExp(`^${agent} Rewind`) });
+		await expect(tab.getByTitle('done')).toBeVisible();
+		await expect(panel.locator('.user')).toHaveCount(1);
+		await composer.fill('/rewind');
+		await panel.getByRole('region', { name: 'Commands' }).getByRole('button', { name: /^\/rewind/ }).click();
+		const picker = panel.getByRole('region', { name: 'Rewind', exact: true });
+		await expect(picker).toContainText(agent === 'Claude' ? 'Bash and subagent changes are not restored.' : 'Files are left unchanged.');
+		await picker.getByRole('button', { name: agent === 'Claude' ? 'Change the file' : /^Greet the reader/ }).click();
+		await expect(picker).toHaveCount(0);
+		await expect(panel.getByText(agent === 'Claude' ? /^Conversation rewound; tracked edits restored/ : 'Conversation rewound. Files are left unchanged.')).toBeVisible();
+		await expect(panel.locator('.user')).toHaveCount(0);
+		await expect(tab).toHaveAttribute('aria-selected', 'true');
+		await closeProject(page, name);
+	});
+
+}

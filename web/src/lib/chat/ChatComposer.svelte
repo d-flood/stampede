@@ -1,9 +1,10 @@
 <script lang="ts">
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
-	import type { Builtin, Capabilities, Chat, Choice, Device, Request, Setting } from '#lib/device.svelte.ts';
+	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Stop from '~icons/ph/stop-fill';
+	import Paperclip from '~icons/ph/paperclip';
 
 	let { device, chat, live, request, capabilities, choices, onrun }: {
 		device: Device;
@@ -12,32 +13,61 @@
 		request?: Request;
 		capabilities: Capabilities;
 		choices: Record<Setting, Choice[]>;
-		onrun(command: Builtin, value?: string): void;
+		onrun(command: Builtin, value?: string | number): void;
 	} = $props();
 
 	let composer: Composer;
 	let slash = $state<SlashMenu>();
+	let picker: HTMLInputElement;
+	let images = $state<(Image & { name: string })[]>([]);
+	let error = $state('');
+	let reading = $state(false);
+
+	async function attach() {
+		error = '';
+		const files = [...(picker.files ?? [])];
+		picker.value = '';
+		if (files.length + images.length > 20) { error = 'Attach up to 20 images.'; return; }
+		if (files.some((file) => !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type))) { error = 'Choose PNG, JPEG, GIF or WebP images.'; return; }
+		if (files.some((file) => file.size > 5 * 1024 * 1024)) { error = 'Each image must be 5 MB or smaller.'; return; }
+		if (files.reduce((size, file) => size + file.size, 0) + images.reduce((size, image) => size + image.data.length * 3 / 4, 0) > 20 * 1024 * 1024) { error = 'Keep attachments under 20 MB per message.'; return; }
+		reading = true;
+		try {
+			const added = await Promise.all(files.map((file) => new Promise<Image & { name: string }>((resolve, reject) => {
+				const reader = new FileReader();
+				reader.onload = () => resolve({ name: file.name, mediaType: file.type, data: String(reader.result).split(',')[1] });
+				reader.onerror = () => reject(reader.error);
+				reader.readAsDataURL(file);
+			})));
+			images = [...images, ...added];
+		} catch { error = 'Could not read the image. Try again.'; }
+		finally { reading = false; }
+	}
+
 	const working = $derived(chat.status !== 'done' && !request);
 	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
 
 	function send(text: string, queue: boolean) {
-		if (!live || !text.trim()) return false;
+		if (!live || reading || (!text.trim() && !images.length)) return false;
 		if (request) {
+			if (images.length) { error = 'Remove images before answering a request.'; return false; }
 			device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer: { allow: false, instead: text } });
 			return true;
 		}
 		const [, command, value] = text.trim().match(/^\/(\w+)(?: +(\S+))?$/) ?? [];
-		if (command === 'compact' || command === 'clear') {
+		if (!images.length && (command === 'compact' || command === 'clear' || command === 'rewind')) {
 			if (chat.status !== 'done' || value) return false;
 			onrun(command);
 			return true;
 		}
-		if (command === 'model' || command === 'effort' || command === 'mode') {
+		if (!images.length && (command === 'model' || command === 'effort' || command === 'mode')) {
 			if (!choices[command].some((choice) => choice.value === value)) return false;
 			onrun(command, value);
 			return true;
 		}
-		device.send({ type: 'chat.send', chatId: chat.id, text, queue });
+		device.send({ type: 'chat.send', chatId: chat.id, text, queue, images: images.map(({ mediaType, data }) => ({ mediaType, data })) });
+		images = [];
+		error = '';
 		return true;
 	}
 
@@ -51,22 +81,32 @@
 	}
 </script>
 
+<input bind:this={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple aria-label="Attach images" hidden onchange={attach} />
+{#if images.length}
+	<div class="attachments" aria-label="Attachments">
+		{#each images as image, index}
+			<div class="thumbnail"><img src="data:{image.mediaType};base64,{image.data}" alt={image.name} /><button aria-label="Remove {image.name}" onclick={() => (images = images.filter((_, at) => at !== index))}>×</button></div>
+		{/each}
+	</div>
+{/if}
+{#if error}<div role="alert">{error}</div>{/if}
 <Composer bind:this={composer} id={chat.id} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onkeydown={(event) => slash?.key(event)}>
 	{#snippet menu(text, replace)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
 	{/snippet}
 	{#snippet actions(text: string, clear: () => void)}
+		<Button aria-label="Attach image" title="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
 		{#if working}
 			<Button aria-label="Interrupt" title="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
 				<span class="stop"><Stop /></span>
 			</Button>
 			<span class="gap"></span>
-			<Button disabled={!text || !live} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
+			<Button disabled={(!text.trim() && !images.length) || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
 				Queue
 			</Button>
 			<Button
 				variant="primary"
-				disabled={!text || !live}
+				disabled={(!text.trim() && !images.length) || !live || reading}
 				onmousedown={keepFocus}
 				onclick={() => send(text, false) && clear()}
 			>
@@ -75,7 +115,7 @@
 		{:else}
 			<Button
 				variant="primary"
-				disabled={!text || !live}
+				disabled={(!text.trim() && !images.length) || !live || reading}
 				onmousedown={keepFocus}
 				onclick={() => send(text, false) && clear()}
 			>
@@ -86,6 +126,11 @@
 </Composer>
 
 <style>
+	.attachments { display: flex; gap: var(--space-2); overflow-x: auto; }
+	.thumbnail { position: relative; flex: none; }
+	.thumbnail img { width: 64px; height: 64px; object-fit: cover; border-radius: var(--radius-md); }
+	.thumbnail button { position: absolute; top: 0; right: 0; min-width: var(--target-min); min-height: var(--target-min); border: 0; border-radius: var(--radius-md); background: var(--surface-2); color: var(--color-fg); cursor: pointer; }
+	[role='alert'] { color: var(--ansi-1); }
 	.stop {
 		display: inline-flex;
 		color: var(--ansi-1);

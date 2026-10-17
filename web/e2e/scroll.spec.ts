@@ -13,6 +13,7 @@ async function newTerminal(page: Page, name: string) {
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal' }).click();
 	await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/\S/);
+	await page.locator('.terminal:visible [contenteditable="true"]').focus();
 }
 
 async function run(page: Page, command: string) {

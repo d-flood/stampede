@@ -86,10 +86,9 @@ def waiting():
 
 
 def log(received):
-    if 'CLAUDE_CONFIG_DIR' in os.environ:
-        config().mkdir(parents=True, exist_ok=True)
-        with open(config() / 'fake-received.jsonl', 'a') as file:
-            file.write(received.decode() + "\n")
+    config().mkdir(parents=True, exist_ok=True)
+    with open(config() / 'fake-received.jsonl', 'a') as file:
+        file.write(received.decode() + "\n")
 
 
 def read(expected):
@@ -148,6 +147,15 @@ for name, value in ENV.items():
     if os.environ.get(name) != value:
         fail(f'{name} is not {value}')
 
+if os.environ.get('CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING') == 'true':
+    if '--mcp-config' not in args or '--allowedTools' not in args:
+        fail('chat HTML tool is missing')
+    mcp = json.loads(args[args.index('--mcp-config') + 1])['mcpServers']['oikonomos_chat']
+    if not Path(mcp['command']).is_file() or mcp['args'] != ['chat-tools']:
+        fail(f'invalid chat HTML server: {mcp}')
+    if args[args.index('--allowedTools') + 1] != 'mcp__oikonomos_chat__render_html':
+        fail('chat HTML tool is not allowed')
+
 entries = [json.loads(line) for line in fixture().read_text().splitlines()]
 start = 0
 if '--resume' in args:
@@ -174,6 +182,9 @@ for entry in entries[start:]:
         expected = entry['args']
         if not any(args[i:i + len(expected)] == expected for i in range(len(args))):
             fail(f'{expected} is missing from {args}')
+    elif 'file' in entry:
+        path = Path.cwd() / entry['file']['path']
+        path.write_text(entry['file']['text'])
     elif 'session' in entry:
         record(entry['session'])
     elif 'gate' in entry:

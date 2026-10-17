@@ -15,6 +15,10 @@ pub struct InstallArgs {
     pub port: u16,
     #[arg(long, default_value_t = 8443)]
     pub https_port: u16,
+    #[arg(long)]
+    pub local_only: bool,
+    #[arg(long, value_name = "FILE")]
+    pub config: Option<PathBuf>,
     #[arg(long, hide = true, default_value = "oikonomos")]
     pub unit_name: String,
     #[arg(long, hide = true, value_name = "DIR")]
@@ -41,34 +45,32 @@ pub fn install(args: InstallArgs) -> io::Result<()> {
     let unit = unit(&args, added_linger)?;
     let https = format!("--https={}", args.https_port);
     let target = format!("http://127.0.0.1:{}", args.port);
-    let groups: [&[&[&str]]; 3] = [
-        &[
-            &["systemctl", "--user", "daemon-reload"],
-            &["systemctl", "--user", "enable", "--now", &args.unit_name],
-        ],
-        &[&["loginctl", "enable-linger", &user]],
-        &[&["tailscale", "serve", "--bg", &https, &target]],
+    let mut commands = vec![
+        vec!["systemctl", "--user", "daemon-reload"],
+        vec!["systemctl", "--user", "enable", "--now", &args.unit_name],
+        vec!["loginctl", "enable-linger", &user],
     ];
+    if !args.local_only {
+        commands.push(vec!["tailscale", "serve", "--bg", &https, &target]);
+    }
     if args.dry_run {
         let dir = path.parent().unwrap().display();
         print!("mkdir -p {dir}\ncat > {} <<'EOF'\n{unit}EOF\n", path.display());
-        for group in groups {
-            println!();
-            for command in group {
-                println!("{}", command.join(" "));
-            }
+        println!();
+        for command in commands {
+            println!("{}", command.join(" "));
         }
         return Ok(());
     }
     fs::create_dir_all(path.parent().unwrap())?;
     fs::write(&path, unit)?;
-    groups.into_iter().flatten().try_for_each(|command| run(command))
+    commands.iter().try_for_each(|command| run(command))
 }
 
 pub fn uninstall(args: UninstallArgs) -> io::Result<()> {
     let path = unit_path(&args.unit_name);
     let installed = installed(&path)?;
-    if serving(&installed)? {
+    if installed.https_port != 0 && serving(&installed)? {
         run(&["tailscale", "serve", &format!("--https={}", installed.https_port), "off"])?;
     }
     run(&["systemctl", "--user", "disable", "--now", &args.unit_name])?;
@@ -81,16 +83,21 @@ pub fn uninstall(args: UninstallArgs) -> io::Result<()> {
 }
 
 fn unit(args: &InstallArgs, added_linger: bool) -> io::Result<String> {
-    let mut exec = format!("{} serve --port {}", env::current_exe()?.display(), args.port);
+    let mut exec = format!("{} serve --port {}", argument(&env::current_exe()?.to_string_lossy()), args.port);
     if let Some(dir) = &args.data_dir {
-        exec += &format!(" --data-dir {}", std::path::absolute(dir)?.display());
+        exec += &format!(" --data-dir {}", argument(&std::path::absolute(dir)?.to_string_lossy()));
     }
+    if let Some(config) = &args.config {
+        exec += &format!(" --config {}", argument(&std::path::absolute(config)?.to_string_lossy()));
+    }
+    let path = quoted(&format!("PATH={}", env::var("PATH").unwrap_or_default()));
     Ok(format!(
         "[Unit]
 Description=Oikonomos
 
 [Service]
 ExecStart={exec}
+Environment={path}
 Restart=on-failure
 KillMode=process
 
@@ -103,9 +110,17 @@ HttpsPort={}
 AddedLinger={}
 ",
         args.port,
-        args.https_port,
+        if args.local_only { 0 } else { args.https_port },
         if added_linger { "yes" } else { "no" },
     ))
+}
+
+fn quoted(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"").replace('%', "%%").replace('\n', "\\n").replace('\r', "\\r"))
+}
+
+fn argument(value: &str) -> String {
+    quoted(&value.replace('$', "$$"))
 }
 
 fn installed(path: &Path) -> io::Result<Installed> {

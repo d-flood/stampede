@@ -20,6 +20,8 @@
 	<div class="user text">{item.text}</div>
 {/if}
 
+{#if item.images}<div class="label">{item.images} image{item.images === 1 ? '' : 's'}</div>{/if}
+
 <style>
 	.user {
 		padding: var(--space-3) var(--space-4);
