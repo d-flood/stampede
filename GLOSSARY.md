@@ -44,6 +44,10 @@ _Avoid_: assistant, bot, AI, harness
 A child conversation a Chat's Agent spawns to carry out a delegated piece of work and report back; it is not itself an Agent or a Chat.
 _Avoid_: task, sidechain, helper, delegate
 
+**Main**:
+A Chat's own conversation, as distinct from those of its Subagents.
+_Avoid_: parent, root, main session
+
 **TUI**:
 An Agent running its own terminal interface, started by the user in an ordinary Terminal. Oikonomos does not manage its lifecycle or status.
 _Avoid_: agent, agent terminal
