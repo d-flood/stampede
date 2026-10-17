@@ -1187,7 +1187,7 @@ impl Transcript {
                         Some("delete") => unified(diff, ""),
                         _ => diff.to_owned(),
                     };
-                    self.push(Item::edit(relative(&self.cwd, path), diff));
+                    self.push(Item::edit(relative(&self.cwd, path), diff, kind["type"] == "add"));
                 }
             }
             Some("webSearch") => {
@@ -1208,7 +1208,7 @@ impl Transcript {
                     return;
                 }
                 let name = format!("{}.{}", text("server"), text("tool"));
-                self.call(ToolKind::Other, &name, item["arguments"].to_string());
+                self.call(ToolKind::Mcp, &name, item["arguments"].to_string());
             }
             Some("dynamicToolCall") => self.call(ToolKind::Other, &text("tool"), item["arguments"].to_string()),
             Some("imageView") => self.call(ToolKind::Read, "imageView", text("path")),

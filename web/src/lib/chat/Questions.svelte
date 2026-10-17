@@ -1,12 +1,13 @@
 <script lang="ts">
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
 	import type { AnsweredQuestions } from '#lib/device.svelte.ts';
+	import CaretRight from '~icons/ph/caret-right';
 
 	let { record }: { record: AnsweredQuestions } = $props();
 </script>
 
 <details aria-label="Answered questions">
-	<summary>{record.questions.length} {record.questions.length === 1 ? 'question' : 'questions'} answered<span>{record.questions.map((question) => question.header).join(', ')}</span></summary>
+	<summary><span class="caret"><CaretRight /></span>{record.questions.length} {record.questions.length === 1 ? 'question' : 'questions'} answered<span>{record.questions.map((question) => question.header).join(', ')}</span></summary>
 	<div class="questions">
 		{#each record.questions as question, index}
 			<section>
@@ -27,8 +28,8 @@
 	details { min-width: 0; }
 	summary { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-height: var(--target-min); color: var(--muted-fg); font-size: var(--font-size-sm); list-style: none; cursor: pointer; }
 	summary::-webkit-details-marker { display: none; }
-	summary::before { content: '▸'; }
-	details[open] > summary::before { content: '▾'; }
+	.caret { display: inline-flex; flex: none; width: 1em; transition: transform var(--dur-fast); }
+	details[open] > summary > .caret { transform: rotate(90deg); }
 	summary:hover { color: var(--color-fg); }
 	summary span { overflow-wrap: anywhere; }
 	.questions, section, .options, .option { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }

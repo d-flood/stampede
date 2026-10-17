@@ -1,27 +1,28 @@
 <script lang="ts">
+	import { icon, icons } from '#lib/chat/icons.ts';
 	import type { Item } from '#lib/device.svelte.ts';
 	import type { Snippet } from 'svelte';
+	import CaretRight from '~icons/ph/caret-right';
 
 	let { items, activity, children }: { items: Item[]; activity?: string | null; children: Snippet } = $props();
 
 	const count = $derived(items.reduce((count, item) => count + (item.kind === 'tools' ? item.calls.length : ['command', 'edit'].includes(item.kind) ? 1 : 0), 0));
-	const latest = $derived.by(() => {
-		if (activity) return activity;
+	const last = $derived.by(() => {
 		for (const item of items.toReversed()) {
-			if (item.kind === 'command') return `$ ${item.command}`;
-			if (item.kind === 'edit') return `Edited ${item.path}`;
+			if (item.kind === 'command') return { icon: icons.command, text: `$ ${item.command}` };
+			if (item.kind === 'edit') return { icon: icon(item), text: `Edited ${item.path}` };
 			if (item.kind === 'tools') {
 				const call = item.calls.at(-1);
-				if (call) return `${call.name}${call.kind === 'other' ? '' : ` ${call.detail}`}`;
+				if (call) return { icon: icons[call.kind], text: `${call.name}${call.kind === 'other' || call.kind === 'mcp' ? '' : ` ${call.detail}`}` };
 			}
 		}
-		return '';
 	});
+	const latest = $derived(activity || last?.text || '');
 </script>
 
 {#if count}
 	<details class="calls">
-		<summary><span class="count">{count} tool {count === 1 ? 'call' : 'calls'}</span><span class="latest">{latest}</span></summary>
+		<summary><span class="caret"><CaretRight /></span><span class="count">{count} tool {count === 1 ? 'call' : 'calls'}</span>{#if last?.icon}<span class="icon"><last.icon /></span>{/if}<span class="latest">{latest}</span></summary>
 		<div class="content">{@render children()}</div>
 	</details>
 {:else}
@@ -31,11 +32,12 @@
 <style>
 	summary { display: flex; align-items: center; gap: var(--space-2); min-height: var(--target-min); color: var(--muted-fg); font-size: var(--font-size-sm); list-style: none; cursor: pointer; }
 	summary::-webkit-details-marker { display: none; }
-	summary::before { content: '▸'; flex: none; }
-	details[open] > summary::before { content: '▾'; }
+	.caret { display: inline-flex; flex: none; width: 1em; transition: transform var(--dur-fast); }
+	details[open] > summary > .caret { transform: rotate(90deg); }
 	summary:hover { color: var(--color-fg); }
 	.count { flex: none; }
+	.count::after { content: ' ·'; }
 	.latest { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
-	.latest::before { content: '· '; }
+	.icon { display: inline-flex; flex: none; }
 	.content { padding-top: var(--space-2); }
 </style>

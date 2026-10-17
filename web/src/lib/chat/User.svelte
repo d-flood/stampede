@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Item } from '#lib/device.svelte.ts';
+	import CaretRight from '~icons/ph/caret-right';
 
 	let { item, first }: { item: Extract<Item, { kind: 'user' }>; first: boolean } = $props();
 
@@ -13,6 +14,7 @@
 				{#if first}<span class="label">First prompt</span>{' · '}{/if}{lines[0]}
 			</span>
 			<span class="label">{lines.length} lines</span>
+			<span class="caret"><CaretRight /></span>
 		</summary>
 		<div class="text">{item.text}</div>
 	</details>
@@ -58,13 +60,16 @@
 		display: none;
 	}
 
-	summary::after {
-		content: '▸';
+	.caret {
+		display: inline-flex;
+		flex: none;
+		width: 1em;
 		color: var(--muted-fg);
+		transition: transform var(--dur-fast);
 	}
 
-	details[open] > summary::after {
-		content: '▾';
+	details[open] > summary > .caret {
+		transform: rotate(90deg);
 	}
 
 	.first {

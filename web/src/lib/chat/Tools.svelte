@@ -1,10 +1,12 @@
 <script lang="ts">
 	import Code from '#lib/chat/Code.svelte';
+	import { icons } from '#lib/chat/icons.ts';
 	import type { Item, ToolCall } from '#lib/device.svelte.ts';
+	import CaretRight from '~icons/ph/caret-right';
 
 	let { item }: { item: Extract<Item, { kind: 'tools' }> } = $props();
 
-	const verbs = { read: 'Read', search: 'Search', fetch: 'Fetch', web: 'Web search' };
+	const verbs: Partial<Record<ToolCall['kind'], string>> = { read: 'Read', search: 'Search', fetch: 'Fetch', web: 'Web search' };
 
 	const phrases: [ToolCall['kind'], (count: number) => string][] = [
 		['read', (count) => `read ${count} ${count === 1 ? 'file' : 'files'}`],
@@ -18,7 +20,7 @@
 			const count = item.calls.filter((call) => call.kind === kind).length;
 			return count ? [phrase(count)] : [];
 		});
-		const others = new Set(item.calls.filter((call) => call.kind === 'other').map((call) => call.name));
+		const others = new Set(item.calls.filter((call) => !verbs[call.kind]).map((call) => call.name));
 		if (others.size) parts.push(`used ${[...others].join(', ')}`);
 		const text = parts.join(' · ');
 		return text.charAt(0).toUpperCase() + text.slice(1);
@@ -26,10 +28,11 @@
 </script>
 
 <details>
-	<summary><span>{summary}</span></summary>
+	<summary><span class="caret"><CaretRight /></span><span class="text">{summary}</span></summary>
 	<ul>
 		{#each item.calls as call, index (index)}
-			<li><span class="verb">{call.kind === 'other' ? call.name : verbs[call.kind]}</span> {#if call.kind === 'other'}<Code code={call.detail} path="arguments.json" />{:else}{call.detail}{/if}</li>
+			{@const Icon = icons[call.kind]}
+			<li><span class="icon"><Icon /></span><span><span class="verb">{verbs[call.kind] ?? call.name}</span> {#if verbs[call.kind]}{call.detail}{:else}<Code code={call.detail} path="arguments.json" />{/if}</span></li>
 		{/each}
 	</ul>
 </details>
@@ -54,19 +57,22 @@
 		display: none;
 	}
 
-	summary::before {
-		content: '▸';
+	.caret {
+		display: inline-flex;
+		flex: none;
+		width: 1em;
+		transition: transform var(--dur-fast);
 	}
 
-	details[open] > summary::before {
-		content: '▾';
+	details[open] > summary > .caret {
+		transform: rotate(90deg);
 	}
 
 	summary:hover {
 		color: var(--color-fg);
 	}
 
-	summary span {
+	summary .text {
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -83,7 +89,20 @@
 	}
 
 	li {
+		display: flex;
+		gap: var(--space-2);
 		overflow-wrap: anywhere;
+	}
+
+	li > span {
+		min-width: 0;
+	}
+
+	.icon {
+		display: inline-flex;
+		flex: none;
+		height: 1lh;
+		align-items: center;
 	}
 
 	.verb {

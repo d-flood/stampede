@@ -48,7 +48,14 @@ pub enum Item {
     },
     Tools { calls: Vec<ToolCall> },
     Html { title: String, html: String },
-    Edit { path: String, diff: String, added: usize, removed: usize },
+    Edit {
+        path: String,
+        diff: String,
+        added: usize,
+        removed: usize,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        write: bool,
+    },
     Command { command: String, status: CommandStatus, output: String },
     Subagent {
         id: String,
@@ -105,6 +112,7 @@ pub enum ToolKind {
     Search,
     Fetch,
     Web,
+    Mcp,
     Other,
 }
 
@@ -142,9 +150,9 @@ impl Item {
         Item::Notice { notice: Notice::Interrupted, text: "Interrupted".to_owned() }
     }
 
-    fn edit(path: String, diff: String) -> Self {
+    fn edit(path: String, diff: String, write: bool) -> Self {
         let count = |sign: char| diff.lines().skip_while(|line| !line.starts_with("@@")).filter(|line| line.starts_with(sign)).count();
-        Item::Edit { path, added: count('+'), removed: count('-'), diff }
+        Item::Edit { path, added: count('+'), removed: count('-'), diff, write }
     }
 }
 

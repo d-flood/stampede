@@ -2,6 +2,7 @@
 	import Code from '#lib/chat/Code.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import CaretRight from '~icons/ph/caret-right';
 
 	let { item, ondiff }: { item: Extract<Item, { kind: 'edit' }>; ondiff(path: string): void } = $props();
 </script>
@@ -29,6 +30,7 @@
 		<summary>
 			<span class="title">Edited <span class="path">{item.path.split('/').at(-1)}</span></span>
 			{@render counts()}
+			<span class="caret"><CaretRight /></span>
 		</summary>
 		{@render diff()}
 		{@render open()}
@@ -74,13 +76,16 @@
 		display: none;
 	}
 
-	summary::after {
-		content: '▸';
+	.caret {
+		display: inline-flex;
+		flex: none;
+		width: 1em;
 		color: var(--muted-fg);
+		transition: transform var(--dur-fast);
 	}
 
-	details[open] > summary::after {
-		content: '▾';
+	details[open] > summary > .caret {
+		transform: rotate(90deg);
 	}
 
 	.title {
