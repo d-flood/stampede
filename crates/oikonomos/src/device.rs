@@ -430,15 +430,7 @@ impl Device {
                     send(&self.outgoing, json!({ "type": "project.error", "path": path, "error": error }))
                 }
             },
-            Control::CloseProject { project_id } => {
-                for terminal in self.terminals.owned(&Owner::Project(project_id.clone())) {
-                    self.terminals.close(&terminal.id);
-                }
-                for chat in self.chats.owned(&project_id) {
-                    self.chats.close(&chat.id);
-                }
-                self.projects.close(&project_id);
-            }
+            Control::CloseProject { project_id } => self.runs.close_project(&project_id),
             Control::ReorderProjects { order } => self.projects.reorder(&order),
             Control::ListPicker {} => {
                 let roots = self.config.borrow().roots.clone();

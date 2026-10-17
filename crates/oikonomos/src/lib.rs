@@ -146,11 +146,19 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage)));
     let rigs = config.borrow().rigs.clone();
     chats.restore(&rigs).await?;
-    let runs = Runs::new(&args.data_dir, Arc::clone(&epics), Arc::clone(&chats), Arc::clone(&projects), config.clone(), Arc::clone(&attention))?;
+    let terminals = Arc::new(Terminals::new(args.data_dir.clone()));
+    terminals.restore().await?;
+    let runs = Runs::new(
+        &args.data_dir,
+        Arc::clone(&epics),
+        Arc::clone(&chats),
+        Arc::clone(&terminals),
+        Arc::clone(&projects),
+        config.clone(),
+        Arc::clone(&attention),
+    )?;
     cli::listen(requests, Arc::clone(&epics), Arc::clone(&runs));
     usage::spawn(Arc::clone(&usage), config.clone());
-    let terminals = Arc::new(Terminals::new(args.data_dir));
-    terminals.restore().await?;
     terminals.scrollback(config.borrow().scrollback);
     let mut settings = config.clone();
     let configured_terminals = Arc::clone(&terminals);

@@ -727,3 +727,50 @@ async fn closing_a_chat_after_its_verdict_leaves_its_ticket_resolved() {
     assert!(lp.ok(&["ticket", "work/1"], "").contains("Status: merged"));
     assert_eq!(lp.claims(), [1, 2]);
 }
+
+#[tokio::test]
+async fn a_live_runs_worktrees_open_as_projects_beside_its_own_and_close_once_resolved_or_removed() {
+    let mut lp = Loop::new("loop-run-nest", &[(1, ""), (2, "")]).await;
+    let roles = |message: &Value| -> Vec<Value> {
+        message["projects"].as_array().unwrap().iter().filter_map(|project| Some(project.get("worktree")?["role"].clone())).collect()
+    };
+    lp.run("Done", 2).await;
+    lp.claimed(&[1, 2]).await;
+    let changed = lp.message(|message| message["type"] == "projects.changed" && roles(message).len() == 3).await;
+    let projects = changed["projects"].as_array().unwrap();
+    let nested = |role: Value| projects.iter().find(|project| project["worktree"]["role"] == role).unwrap().clone();
+    let integration = nested(json!("integration"));
+    assert_eq!(integration["path"], lp.worktree("integration").display().to_string());
+    assert_eq!(integration["worktree"], json!({ "parent": lp.project_id, "epic": "work", "role": "integration" }));
+    for number in [1, 2] {
+        let project = nested(json!({ "ticket": number }));
+        assert_eq!(project["path"], lp.worktree(&number.to_string()).display().to_string());
+        assert_eq!(project["worktree"], json!({ "parent": lp.project_id, "epic": "work", "role": { "ticket": number } }));
+        let chat = lp.chat_record(&lp.chat_of(number)).unwrap();
+        assert_eq!(chat["projectId"], project["id"], "work/{number}'s Chat belongs to its worktree Project");
+    }
+
+    let first = lp.chat_of(1);
+    lp.complete(1);
+    let changed = lp.message(|message| message["type"] == "projects.changed" && roles(message).len() == 2).await;
+    assert!(!roles(&changed).contains(&json!({ "ticket": 1 })), "{changed}");
+    let parent = json!(lp.project_id);
+    lp.until("work/1's Chat to move to the Project its worktree sat beside", |lp| {
+        lp.chat_record(&first).is_some_and(|chat| chat["projectId"] == parent)
+    })
+    .await;
+    lp.complete(2);
+    lp.finished(1).await;
+    lp.message(|message| message["type"] == "projects.changed" && roles(message).is_empty()).await;
+    let second = lp.chat_of(2);
+    lp.until("work/2's Chat to move too", |lp| lp.chat_record(&second).is_some_and(|chat| chat["projectId"] == parent)).await;
+    assert!(lp.entries("claim.released").is_empty(), "closing a worktree Project gives no Ticket back");
+
+    let integration = lp.worktree("integration");
+    control(&mut lp.socket, json!({ "type": "project.open", "path": integration })).await;
+    lp.message(|message| message["type"] == "projects.changed" && message["projects"].as_array().unwrap().len() == 2).await;
+    let landed = reqwest::Client::new().post(format!("http://127.0.0.1:{}/api/epics/work/land", lp.server.port)).send().await.unwrap();
+    assert!(landed.status().is_success(), "{}", landed.text().await.unwrap());
+    let changed = lp.message(|message| message["type"] == "projects.changed" && message["projects"].as_array().unwrap().len() == 1).await;
+    assert_eq!(changed["projects"][0]["id"], lp.project_id, "a Project opened on the Integration Worktree closes once Landing removes it");
+}

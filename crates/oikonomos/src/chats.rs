@@ -620,6 +620,19 @@ impl Chats {
         self.list().into_iter().filter(|chat| chat.project_id == project_id).collect()
     }
 
+    pub fn hand_over(&self, from: &str, to: &str) {
+        for entry in self.chats.lock().unwrap().iter() {
+            let mut chat = entry.chat.lock().unwrap();
+            if chat.project_id == from {
+                to.clone_into(&mut chat.project_id);
+                self.save(&chat);
+            }
+        }
+        let _ = self.changed.send(Change::Chats(to.to_owned()));
+        let _ = self.changed.send(Change::Chats(from.to_owned()));
+        self.refresh_attention();
+    }
+
     /// Starts a Chat owned by `project` that runs in `cwd`: the Project's own directory, or a Ticket Worktree.
     pub async fn create(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>) -> io::Result<Chat> {
         let chat = Chat {
@@ -718,10 +731,7 @@ impl Chats {
     }
 
     async fn follow(self: Arc<Self>, entry: Arc<Entry>, mut events: UnboundedReceiver<Event>) {
-        let (id, project_id) = {
-            let chat = entry.chat.lock().unwrap();
-            (chat.id.clone(), chat.project_id.clone())
-        };
+        let id = entry.chat.lock().unwrap().id.clone();
         while let Some(event) = events.recv().await {
             match event {
                 Event::Activity(activity) => {
@@ -869,6 +879,7 @@ impl Chats {
         }
         self.chats.lock().unwrap().retain(|other| !Arc::ptr_eq(other, &entry));
         let _ = fs::remove_file(record_path(&self.data_dir, &id));
+        let project_id = entry.chat.lock().unwrap().project_id.clone();
         let _ = self.changed.send(Change::Chats(project_id));
         self.refresh_attention();
         let _ = self.lifecycle.send(Lifecycle::Ended(Box::new(entry.chat.lock().unwrap().clone())));

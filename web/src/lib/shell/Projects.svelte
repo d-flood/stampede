@@ -1,6 +1,8 @@
 <script lang="ts">
-	import type { Project } from '#lib/device.svelte.ts';
-	import { monogram } from '#lib/projects.ts';
+	import type { Epic, Project } from '#lib/device.svelte.ts';
+	import Progress from '#lib/epics/Progress.svelte';
+	import { counts } from '#lib/epics.svelte.ts';
+	import { monogram, type Tile } from '#lib/projects.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import type { Snippet } from 'svelte';
@@ -9,6 +11,8 @@
 	type Props = {
 		projects: Project[];
 		labels: Map<string, string>;
+		worktrees: Map<string, Tile[]>;
+		epics: Record<string, Epic[]>;
 		focused?: string;
 		onfocus(id: string): void;
 		onclose(id: string): void;
@@ -16,13 +20,14 @@
 		badge?: Snippet<[Project]>;
 	};
 
-	let { projects, labels, focused, onfocus, onclose, onpick, badge }: Props = $props();
+	let { projects, labels, worktrees, epics, focused, onfocus, onclose, onpick, badge }: Props = $props();
 </script>
 
 <nav aria-label="Projects">
 	<ol>
 		{#each projects as project (project.id)}
 			{@const label = labels.get(project.id) ?? project.path}
+			{@const tiles = worktrees.get(project.id) ?? []}
 			<li>
 				<Menu context items={[{ label: 'Close', onselect: () => onclose(project.id) }]}>
 					{#snippet trigger(props)}
@@ -42,11 +47,32 @@
 							<span class="text">
 								<strong>{label}</strong>
 								<span class="path">{project.path}</span>
+								{#each (epics[project.id] ?? []).filter((epic) => epic.run && !epic.archived) as epic (epic.slug)}
+									{@const tally = counts(epic)}
+									<span class="run">Run {epic.slug} · <span class="resolved">{tally.merged + tally.skipped} of {epic.tickets.length}</span></span>
+									<Progress {epic} />
+								{/each}
 							</span>
 							{@render badge?.(project)}
 						</button>
 					{/snippet}
 				</Menu>
+				{#if tiles.length}
+					<div class="worktrees" role="group" aria-label="Worktrees of {label}">
+						{#each tiles as tile (tile.id)}
+							{@const name = labels.get(tile.id) ?? tile.mark}
+							<button
+								class="tile {tile.status ?? ''}"
+								class:focused={tile.id === focused}
+								aria-label={tile.status ? `${name}, ${tile.status}` : name}
+								aria-current={tile.id === focused}
+								onclick={() => onfocus(tile.id)}
+							>
+								{tile.mark}
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</li>
 		{/each}
 	</ol>
@@ -74,12 +100,18 @@
 		list-style: none;
 	}
 
+	li {
+		display: flex;
+		gap: var(--space-2);
+	}
+
 	.project {
 		display: flex;
+		flex: 1;
 		align-items: center;
 		gap: var(--space-3);
 		box-sizing: border-box;
-		width: 100%;
+		min-width: 0;
 		padding: var(--space-2);
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-md);
@@ -119,5 +151,62 @@
 		font-size: var(--font-size-sm);
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.run {
+		font-size: var(--font-size-sm);
+	}
+
+	.resolved {
+		color: var(--status-done);
+	}
+
+	.worktrees {
+		display: flex;
+		flex: none;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+
+	.tile {
+		width: var(--target-min);
+		height: var(--target-min);
+		padding: 0;
+		border: var(--border-width) solid var(--muted-fg);
+		border-radius: var(--radius-md);
+		background: var(--surface-1);
+		color: var(--color-fg);
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.tile.working,
+	.tile.waiting,
+	.tile.done {
+		border-width: 2px;
+		border-color: currentColor;
+	}
+
+	.tile.working {
+		color: var(--status-working);
+	}
+
+	.tile.waiting {
+		color: var(--status-waiting);
+	}
+
+	.tile.done {
+		color: var(--status-done);
+	}
+
+	.tile.stopping {
+		border-style: dashed;
+		color: var(--muted-fg);
+	}
+
+	.tile.focused {
+		outline: var(--border-width) solid var(--color-fg);
+		outline-offset: var(--border-width);
 	}
 </style>

@@ -521,3 +521,90 @@ test('a paused Run starts nothing until it is resumed, and stopping it gives its
 	expect(existsSync(kinds('ticket.claimed')[1].worktree)).toBe(true);
 	await showFiles(await showSidebar(page));
 });
+
+test('a live Run’s worktree Projects sit beside their Project, open on a tap, and go when it finishes', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
+	const slug = `nest-${project.name}`;
+	const data = `${process.env.OIKONOMOS_E2E_ROOT}/data`;
+	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	const gate = `${process.env.OIKONOMOS_E2E_ROOT}/gated-${project.name}/verdict`;
+	mkdirSync(root, { recursive: true });
+	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
+	git('init', '-q');
+	git('config', 'user.name', 'oikonomos');
+	git('config', 'user.email', 'e2e@oikonomos.invalid');
+	git('config', 'commit.gpgsign', 'false');
+	writeFileSync(`${root}/README`, 'nest\n');
+	git('add', 'README');
+	git('commit', '-qm', 'Initial commit');
+	const cli = (stdin: string, ...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', data], { cwd: root, input: stdin });
+	cli('# Nest\n', 'epic', 'add', slug, '--title', 'Nest them', '--brief', '-');
+	cli('Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
+	cli('Beside it.\n', 'ticket', 'add', slug, '2', '--title', 'Beside', '--body', '-');
+	cli('', 'epic', 'set-setup', slug, '');
+
+	await openProject(page, slug);
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
+	const run = page.getByRole('tabpanel', { name: `Epic ${slug}` }).getByRole('region', { name: 'Run', exact: true });
+	await run.getByRole('combobox', { name: 'Rig' }).selectOption(`Fake Claude Gated ${project.name}`);
+	await run.getByRole('group', { name: 'Parallel' }).getByRole('button', { name: 'More' }).click();
+	await run.getByRole('button', { name: 'Start Run' }).click();
+	await expect(run).toContainText('Run live');
+
+	if (phone) await page.getByRole('button', { name: 'Previous screen' }).click();
+	const rail = page.getByRole('navigation', { name: 'Projects' });
+	const parent = rail.getByRole('button', { name: slug, exact: true });
+	const row = rail.getByRole('listitem').filter({ has: page.getByRole('button', { name: slug, exact: true }) });
+	const worktrees = row.getByRole('group', { name: `Worktrees of ${slug}` });
+	await expect(worktrees.getByRole('button')).toHaveText(['In', '1', '2'], { timeout: 15000 });
+	await expect(worktrees.getByRole('button', { name: `Integration ${slug}`, exact: true })).toBeVisible();
+	const second = worktrees.getByRole('button', { name: `${slug}/2, working`, exact: true });
+	await expect(worktrees.getByRole('button', { name: `${slug}/1, working`, exact: true })).toBeVisible();
+	await expect(second).toBeVisible();
+	await expect.poll(() => second.evaluate((tile) => {
+		const computed = getComputedStyle(tile);
+		const probe = document.createElement('span');
+		probe.style.color = computed.getPropertyValue('--status-working');
+		tile.append(probe);
+		const expected = getComputedStyle(probe).color;
+		probe.remove();
+		return computed.color === expected && computed.borderTopColor === expected;
+	})).toBe(true);
+	await expect.poll(async () => {
+		const avatar = await parent.boundingBox();
+		const column = await worktrees.boundingBox();
+		return !!avatar && !!column && column.x >= avatar.x + avatar.width && Math.abs(column.y - avatar.y) < 2;
+	}).toBe(true);
+	await expect(row).toContainText(phone ? `Run ${slug} · 0 of 2` : '0/2');
+	await row.screenshot({ path: test.info().outputPath('worktrees.png') });
+	await page.screenshot({ path: test.info().outputPath('run.png') });
+
+	await second.click();
+	await expect(second).toHaveAttribute('aria-current', 'true');
+	const heading = phone ? page.locator('.phone > header h1') : page.getByRole('complementary', { name: 'Sidebar' }).getByRole('heading', { level: 1 });
+	await expect(heading).toHaveText(`${slug}/2`);
+	const chat = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/2`);
+	const worktree = await showSidebar(page);
+	await worktree.getByRole('button', { name: 'Changes', exact: true }).click();
+	await expect(worktree.getByRole('region', { name: 'Changes' }).getByRole('button', { name: /work\.txt/ })).toBeVisible();
+	await page.screenshot({ path: test.info().outputPath('worktree.png') });
+
+	if (phone) {
+		await page.getByRole('button', { name: 'Previous screen' }).click();
+		await page.getByRole('button', { name: 'Previous screen' }).click();
+	}
+	await expect.poll(() => (rmSync(gate, { force: true }), worktrees.count()), { timeout: 20000 }).toBe(0);
+	await expect(row).not.toContainText(phone ? `Run ${slug}` : '/2');
+	await expect(parent).toHaveAttribute('aria-current', 'true');
+	expect(readFileSync(`${data}/worktrees/${slug}/integration/work.txt`, 'utf8')).toBe('Done by the fake.\n');
+	expect(cli('', 'ticket', `${slug}/2`).toString()).toContain('Status: merged');
+	await page.screenshot({ path: test.info().outputPath('finished.png') });
+	if (phone) await parent.click();
+	const moved = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab', { name: /^Fake Claude Gated/ });
+	await expect(moved).toHaveCount(2);
+	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/2`);
+	await showFiles(await showSidebar(page));
+});

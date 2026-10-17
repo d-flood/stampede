@@ -1,6 +1,7 @@
 <script lang="ts">
-	import type { Project } from '#lib/device.svelte.ts';
-	import { monogram } from '#lib/projects.ts';
+	import type { Epic, Project } from '#lib/device.svelte.ts';
+	import { counts } from '#lib/epics.svelte.ts';
+	import { monogram, type Tile } from '#lib/projects.ts';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import type { Snippet } from 'svelte';
@@ -9,6 +10,8 @@
 	type Props = {
 		projects: Project[];
 		labels: Map<string, string>;
+		worktrees: Map<string, Tile[]>;
+		epics: Record<string, Epic[]>;
 		focused?: string;
 		onfocus(id: string): void;
 		onreorder(order: string[]): void;
@@ -18,7 +21,7 @@
 		attention?: Snippet;
 	};
 
-	let { projects, labels, focused, onfocus, onreorder, onclose, onpick, badge, attention }: Props = $props();
+	let { projects, labels, worktrees, epics, focused, onfocus, onreorder, onclose, onpick, badge, attention }: Props = $props();
 
 	let list: HTMLOListElement;
 	let drag = $state<{ id: string; y: number; order: string[]; moved: boolean }>();
@@ -67,28 +70,54 @@
 	<ol bind:this={list} onpointerdown={pointerdown}>
 		{#each shown as project (project.id)}
 			{@const label = labels.get(project.id) ?? project.path}
+			{@const tiles = worktrees.get(project.id) ?? []}
 			<li>
-				<Menu context items={[{ label: 'Close', onselect: () => onclose(project.id) }]}>
-					{#snippet trigger(props)}
-						<button
-							{...props}
-							tabindex={0}
-							class="project"
-							class:focused={project.id === focused}
-							class:dragging={drag?.moved && drag.id === project.id}
-							aria-label={label}
-							aria-current={project.id === focused}
-							title={label}
-							data-project={project.id}
-							onclick={() => {
-								if (!dragged) onfocus(project.id);
-							}}
-						>
-							{monogram(project.path)}
-							{#if badge}<span class="badge">{@render badge(project)}</span>{/if}
-						</button>
-					{/snippet}
-				</Menu>
+				<span class="own">
+					<Menu context items={[{ label: 'Close', onselect: () => onclose(project.id) }]}>
+						{#snippet trigger(props)}
+							<button
+								{...props}
+								tabindex={0}
+								class="project"
+								class:focused={project.id === focused}
+								class:dragging={drag?.moved && drag.id === project.id}
+								aria-label={label}
+								aria-current={project.id === focused}
+								title={label}
+								data-project={project.id}
+								onclick={() => {
+									if (!dragged) onfocus(project.id);
+								}}
+							>
+								{monogram(project.path)}
+								{#if badge}<span class="badge">{@render badge(project)}</span>{/if}
+							</button>
+						{/snippet}
+					</Menu>
+					{#each (epics[project.id] ?? []).filter((epic) => epic.run && !epic.archived) as epic (epic.slug)}
+						{@const tally = counts(epic)}
+						<span class="progress" title="Run {epic.slug}: {tally.merged + tally.skipped} of {epic.tickets.length} resolved">
+							{tally.merged + tally.skipped}/{epic.tickets.length}
+						</span>
+					{/each}
+				</span>
+				{#if tiles.length}
+					<div class="worktrees" role="group" aria-label="Worktrees of {label}">
+						{#each tiles as tile (tile.id)}
+							{@const name = labels.get(tile.id) ?? tile.mark}
+							<button
+								class="tile {tile.status ?? ''}"
+								class:focused={tile.id === focused}
+								aria-label={tile.status ? `${name}, ${tile.status}` : name}
+								aria-current={tile.id === focused}
+								title={tile.status ? `${name} ${tile.status}` : name}
+								onclick={() => onfocus(tile.id)}
+							>
+								{tile.mark}
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</li>
 		{/each}
 	</ol>
@@ -115,10 +144,90 @@
 	ol {
 		display: flex;
 		flex-direction: column;
+		align-self: stretch;
 		gap: var(--space-2);
 		margin: 0;
 		padding: 0;
 		list-style: none;
+	}
+
+	li {
+		display: flex;
+		gap: var(--space-2);
+	}
+
+	.own {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: var(--space-1);
+	}
+
+	.progress {
+		color: var(--status-done);
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.worktrees {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		padding-left: var(--space-2);
+		border-left: var(--border-width) solid var(--border);
+	}
+
+	.tile {
+		width: var(--target-min);
+		height: var(--target-min);
+		padding: 0;
+		border: var(--border-width) solid var(--muted-fg);
+		border-radius: var(--radius-md);
+		background: var(--surface-1);
+		color: var(--color-fg);
+		font: inherit;
+		font-size: var(--font-size-sm);
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.tile:hover {
+		background: var(--hover);
+	}
+
+	.tile.working,
+	.tile.waiting,
+	.tile.done {
+		border-width: 2px;
+		border-color: currentColor;
+	}
+
+	.tile.working {
+		color: var(--status-working);
+	}
+
+	.tile.waiting {
+		color: var(--status-waiting);
+	}
+
+	.tile.done {
+		color: var(--status-done);
+	}
+
+	.tile.stopping {
+		border-style: dashed;
+		color: var(--muted-fg);
+	}
+
+	.tile.focused {
+		outline: var(--border-width) solid var(--color-fg);
+		outline-offset: var(--border-width);
+	}
+
+	.tile:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
+		outline-offset: var(--border-width);
 	}
 
 	.project {

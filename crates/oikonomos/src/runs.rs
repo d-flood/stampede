@@ -21,8 +21,10 @@ use crate::{
     config::{Config, Rig},
     epics::{Author, Epic, Epics, Event, Keep, Status},
     git,
-    projects::{Project, Projects},
+    holder::Owner,
+    projects::{Project, Projects, Role, Worktree},
     templates::{self, RESOLVER, TICKET},
+    terminals::Terminals,
 };
 
 mod landing;
@@ -37,6 +39,7 @@ pub struct Runs {
     cli: String,
     epics: Arc<Epics>,
     chats: Arc<Chats>,
+    terminals: Arc<Terminals>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
     attention: Arc<Feed>,
@@ -54,6 +57,7 @@ impl Runs {
         data_dir: &Path,
         epics: Arc<Epics>,
         chats: Arc<Chats>,
+        terminals: Arc<Terminals>,
         projects: Arc<Projects>,
         config: watch::Receiver<Arc<Config>>,
         attention: Arc<Feed>,
@@ -68,6 +72,7 @@ impl Runs {
             cli: utf8(env::current_exe()?)?,
             epics,
             chats,
+            terminals,
             projects,
             config,
             attention,
@@ -122,6 +127,7 @@ impl Runs {
                 if self.fill(&slug) {
                     self.finish(&slug).await;
                 }
+                self.nest(&slug).await;
                 self.call(&slug, &mut called).await;
             }
             tokio::select! {
@@ -271,10 +277,11 @@ impl Runs {
         Ok(Attention { project_id: project.id, tab, label, status: chats::Status::Done })
     }
 
-    /// The open Project that checks out the Epic's repository, its main checkout before any other worktree.
+    /// The open Project that checks out the Epic's repository, its main checkout before any other worktree,
+    /// and never a worktree Project a Run opened.
     async fn project(&self, epic: &Epic) -> Result<Project, String> {
         let mut found = None;
-        for project in self.projects.list().iter() {
+        for project in self.projects.list().iter().filter(|project| project.worktree.is_none()) {
             let path = Path::new(&project.path);
             if git::common_dir(path).await.as_deref() == Some(epic.project.as_path()) {
                 if epic.project.parent() == Some(path) {
@@ -284,6 +291,83 @@ impl Runs {
             }
         }
         found.ok_or_else(|| format!("No open Project checks out {}'s repository, so Oikonomos could not start a Chat.", epic.slug))
+    }
+
+    fn home(&self, slug: &str, parent: &Project, worktree: &str, role: Role) -> Project {
+        let live = self.epics.get(slug).is_ok_and(|epic| epic.run.is_some() && !epic.archived);
+        if !live || parent.worktree.is_some() {
+            return parent.clone();
+        }
+        self.projects.nest(worktree, Worktree { parent: parent.id.clone(), epic: slug.to_owned(), role })
+    }
+
+    async fn nest(&self, slug: &str) {
+        let Ok(epic) = self.epics.get(slug) else { return };
+        let live = epic.run.is_some() && !epic.archived;
+        let starting: Vec<u32> = self.starting.lock().unwrap().iter().filter(|(other, _)| other == slug).map(|&(_, number)| number).collect();
+        let active = |number: u32| epic.tickets.get(&number).filter(|ticket| matches!(ticket.status, Status::InProgress | Status::Merging));
+        let worktrees = Path::new(&self.worktrees).join(slug);
+        let projects = self.projects.list();
+        for project in projects.iter() {
+            let path = Path::new(&project.path);
+            let kept = match &project.worktree {
+                Some(worktree) if worktree.epic != slug => continue,
+                None if !path.starts_with(&worktrees) => continue,
+                None => path.exists(),
+                Some(Worktree { role: Role::Integration, .. }) => live && path.exists(),
+                Some(Worktree { role: Role::Ticket(number), .. }) => {
+                    starting.contains(number) || active(*number).is_some_and(|ticket| ticket.worktree.as_deref() == Some(path))
+                }
+            };
+            if kept {
+                continue;
+            }
+            let parent = match &project.worktree {
+                Some(worktree) => Some(worktree.parent.clone()),
+                None => self.project(&epic).await.ok().map(|parent| parent.id),
+            };
+            match parent {
+                Some(parent) => self.unnest(&project.id, &parent),
+                None => self.close_project(&project.id),
+            }
+        }
+        if !live {
+            return;
+        }
+        let tickets = epic.tickets.keys().filter_map(|&number| Some((active(number)?.worktree.as_deref()?, Role::Ticket(number))));
+        let integration = epic.integration.as_deref().map(|path| (path, Role::Integration));
+        let mut missing: Vec<(&Path, Role)> = integration.into_iter().chain(tickets).collect();
+        missing.retain(|(path, _)| path.exists() && !projects.iter().any(|project| Path::new(&project.path) == *path));
+        if missing.is_empty() {
+            return;
+        }
+        let Ok(parent) = self.project(&epic).await else { return };
+        for (path, role) in missing {
+            self.projects.nest(&path.to_string_lossy(), Worktree { parent: parent.id.clone(), epic: slug.to_owned(), role });
+        }
+    }
+
+    // Retain finished Chats when their worktree closes, without stopping a Resolver or releasing its Claim.
+    fn unnest(&self, id: &str, parent: &str) {
+        for terminal in self.terminals.owned(&Owner::Project(id.to_owned())) {
+            self.terminals.close(&terminal.id);
+        }
+        self.chats.hand_over(id, parent);
+        self.projects.close(id);
+    }
+
+    pub fn close_project(&self, id: &str) {
+        let projects = self.projects.list();
+        for nested in projects.iter().filter(|project| project.worktree.as_ref().is_some_and(|worktree| worktree.parent == id)) {
+            self.close_project(&nested.id);
+        }
+        for terminal in self.terminals.owned(&Owner::Project(id.to_owned())) {
+            self.terminals.close(&terminal.id);
+        }
+        for chat in self.chats.owned(id) {
+            self.chats.close(&chat.id);
+        }
+        self.projects.close(id);
     }
 
     /// Records which Epics a Device shows, and that David has seen any finished Run among them.
@@ -383,7 +467,8 @@ impl Runs {
             Some(resume) if resume.agent != rig.agent => self.config.borrow().rig_for(resume.agent),
             _ => rig.clone(),
         };
-        let chat = match self.chats.create(project, Path::new(&worktree), &rig, resume.map(|resume| resume.session.as_str())).await {
+        let home = self.home(slug, project, &worktree, Role::Ticket(number));
+        let chat = match self.chats.create(&home, Path::new(&worktree), &rig, resume.map(|resume| resume.session.as_str())).await {
             Ok(chat) => chat,
             Err(error) => return abandon(format!("cannot start a Chat for {slug}/{number}: {error}")).await,
         };
@@ -606,6 +691,7 @@ impl Runs {
         let rig = self.config.borrow().rigs.iter().find(|rig| rig.name == *name).cloned();
         let rig = rig.ok_or_else(|| format!("Its Rig {name} is no longer in the config, so Oikonomos could not start a Resolver."))?;
         let project = self.project(epic).await?;
+        let project = self.home(slug, &project, &integration.to_string_lossy(), Role::Integration);
         let chat = self
             .chats
             .create(&project, integration, &rig, None)

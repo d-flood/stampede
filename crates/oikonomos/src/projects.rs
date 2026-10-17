@@ -14,6 +14,22 @@ use crate::config::expand;
 pub struct Project {
     pub id: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<Worktree>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Worktree {
+    pub parent: String,
+    pub epic: String,
+    pub role: Role,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    Integration,
+    Ticket(u32),
 }
 
 pub type List = Arc<Vec<Project>>;
@@ -60,10 +76,26 @@ impl Projects {
             if list.iter().any(|project| project.id == id) {
                 return false;
             }
-            list.push(Project { id: id.clone(), path });
+            list.push(Project { id: id.clone(), path, worktree: None });
             true
         });
         Ok(id)
+    }
+
+    pub fn nest(&self, path: &str, worktree: Worktree) -> Project {
+        let id = id(path);
+        let mut nested = Project { id: id.clone(), path: path.to_owned(), worktree: Some(worktree) };
+        self.change(|list| match list.iter().find(|project| project.id == id) {
+            Some(open) => {
+                nested = open.clone();
+                false
+            }
+            None => {
+                list.push(nested.clone());
+                true
+            }
+        });
+        nested
     }
 
     pub fn close(&self, id: &str) {

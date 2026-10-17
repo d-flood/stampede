@@ -68,8 +68,13 @@ env = { OIKONOMOS_FAKE_FIXTURE = "approval", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/c
 EOF
 
 for form in desktop pixel; do
-mkdir "$OIKONOMOS_E2E_ROOT/subagent-$form"
+mkdir "$OIKONOMOS_E2E_ROOT/subagent-$form" "$OIKONOMOS_E2E_ROOT/gated-$form"
 cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
+
+[[rig]]
+name = "Fake Claude Gated $form"
+agent = "claude-code"
+env = { OIKONOMOS_FAKE_FIXTURE = "$PWD/crates/oikonomos/tests/fixtures/chats/claude-code/verdict.synthetic.jsonl", OIKONOMOS_FAKE_GATES = "$OIKONOMOS_E2E_ROOT/gated-$form", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
 
 [[rig]]
 name = "Fake Claude Subagent $form"

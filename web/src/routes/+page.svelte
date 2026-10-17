@@ -25,7 +25,7 @@
 	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
-	import { labels } from '#lib/projects.ts';
+	import { labels, worktrees } from '#lib/projects.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
@@ -104,6 +104,9 @@
 	);
 
 	const projectLabels = $derived(labels(projects));
+	const ownProjects = $derived(projects.filter((project) => !project.worktree));
+	const allChats = $derived(Object.values(chats).flat());
+	const nested = $derived(worktrees(projects, epics, allChats));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
 	const tabs = $derived((focused && terminals[focused.id]) || []);
 	const chatTabs = $derived((focused && chats[focused.id]) || []);
@@ -191,15 +194,24 @@
 				}
 				break;
 			}
-			case 'chats.changed':
-				for (const chat of chats[message.projectId] ?? []) {
-					if (!message.chats.some(({ id }) => id === chat.id)) {
-						delete chatItems[chat.id];
-						delete chatSessions[chat.id];
-					}
+			case 'chats.changed': {
+				const selected = activeTab;
+				if (selected && focused?.worktree?.parent === message.projectId && message.chats.some(({ id }) => id === selected)) {
+					chosenTabs[message.projectId] = selected;
+				}
+				const listed = (chat: Chat) => message.chats.some(({ id }) => id === chat.id);
+				const gone = (chats[message.projectId] ?? []).filter((chat) => !listed(chat));
+				for (const projectId in chats) {
+					if (projectId !== message.projectId && chats[projectId].some(listed)) chats[projectId] = chats[projectId].filter((chat) => !listed(chat));
 				}
 				chats[message.projectId] = message.chats;
+				for (const chat of gone) {
+					if (Object.values(chats).flat().some(({ id }) => id === chat.id)) continue;
+					delete chatItems[chat.id];
+					delete chatSessions[chat.id];
+				}
 				break;
+			}
 			case 'chat.status':
 				for (const chat of Object.values(chats).flat()) {
 					if (chat.id === message.chatId) chat.status = message.status;
@@ -253,8 +265,15 @@
 					if (terminal.id === message.terminalId) terminal.label = message.label;
 				}
 				break;
-			case 'projects.changed':
+			case 'projects.changed': {
+				const left = focused;
+				const selected = activeTab;
 				projects = message.projects;
+				if (left?.worktree && !projects.some((project) => project.id === left.id)) {
+					const { parent } = left.worktree;
+					chosenTabs[parent] = selected ?? chosenTabs[parent];
+					chosen = parent;
+				}
 				for (const projectId in browsers) {
 					if (!projects.some((project) => project.id === projectId)) delete browsers[projectId];
 				}
@@ -287,6 +306,7 @@
 				for (const project of projects) loadGit(project.id);
 				if (!activeTab) warmUp();
 				break;
+			}
 			case 'git.changed':
 				loadGit(message.projectId);
 				break;
@@ -375,8 +395,8 @@
 	}
 
 	async function loadGit(projectId: string) {
-		const loaded = await status(projectId);
-		if (projects.some((project) => project.id === projectId)) git[projectId] = loaded;
+		const loaded = await status(projectId).catch(() => undefined);
+		if (loaded && projects.some((project) => project.id === projectId)) git[projectId] = loaded;
 	}
 
 	function pick() {
@@ -392,12 +412,12 @@
 	}
 
 	function reorder(order: string[]) {
-		projects = order.flatMap((id) => projects.filter((project) => project.id === id));
+		projects = [...order.flatMap((id) => projects.filter((project) => project.id === id)), ...projects.filter((project) => project.worktree)];
 		device.send({ type: 'project.reorder', order });
 	}
 
 	function closeProject(projectId: string, confirmed = false) {
-		const agents = chats[projectId] ?? [];
+		const agents = allChats.filter((chat) => chat.projectId === projectId || projects.some(({ id, worktree }) => id === chat.projectId && worktree?.parent === projectId));
 		if (!confirmed && agents.some((agent) => agent.status === 'working')) {
 			closingProject = projectId;
 			return;
@@ -818,8 +838,11 @@
 								loaded={!!epics[epic.projectId]}
 								active={showing(epic.id)}
 								{device}
-								chats={chats[epic.projectId] ?? []}
-								onchat={(chatId) => choose(epic.projectId, chatId)}
+								chats={allChats}
+								onchat={(chatId) => {
+									const chat = allChats.find(({ id }) => id === chatId);
+									if (chat) attend(chat.projectId, chatId);
+								}}
 							/>
 						{/await}
 					{/if}
@@ -949,8 +972,10 @@
 			<div class="screen" inert={screen !== 0}>
 				<Usage readings={usage} />
 				<Projects
-					{projects}
+					projects={ownProjects}
 					labels={projectLabels}
+					worktrees={nested}
+					{epics}
 					focused={focused?.id}
 					onfocus={focus}
 					onclose={(projectId) => closeProject(projectId)}
@@ -965,8 +990,10 @@
 {:else}
 	<div class="shell">
 		<Rail
-			{projects}
+			projects={ownProjects}
 			labels={projectLabels}
+			worktrees={nested}
+			{epics}
 			focused={focused?.id}
 			onfocus={(id) => (chosen = id)}
 			onreorder={reorder}
