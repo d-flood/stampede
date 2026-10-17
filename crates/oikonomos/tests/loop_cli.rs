@@ -1,75 +1,9 @@
 mod common;
 
-use std::{
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-};
+use std::{fs, path::Path};
 
-use common::Server;
+use common::{Cli, Server, git, init};
 use serde_json::Value;
-
-struct Cli {
-    data_dir: PathBuf,
-}
-
-impl Cli {
-    fn run(&self, cwd: &Path, args: &[&str], stdin: &str) -> Result<String, String> {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_oikonomos"))
-            .args(args)
-            .arg("--data-dir")
-            .arg(&self.data_dir)
-            .current_dir(cwd)
-            .env_clear()
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
-        let output = child.wait_with_output().unwrap();
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        let stderr = String::from_utf8(output.stderr).unwrap();
-        if output.status.success() {
-            assert_eq!(stderr, "", "{args:?}");
-            Ok(stdout)
-        } else {
-            assert_eq!(stdout, "", "{args:?}");
-            Err(stderr)
-        }
-    }
-
-    fn ok(&self, cwd: &Path, args: &[&str], stdin: &str) -> String {
-        self.run(cwd, args, stdin).unwrap_or_else(|error| panic!("{args:?} failed: {error}"))
-    }
-
-    fn refused(&self, cwd: &Path, args: &[&str], stdin: &str) -> String {
-        match self.run(cwd, args, stdin) {
-            Ok(output) => panic!("{args:?} succeeded: {output}"),
-            Err(error) => error,
-        }
-    }
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(["-c", "user.name=oikonomos", "-c", "user.email=test@oikonomos.invalid", "-C"])
-        .arg(dir)
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .status()
-        .unwrap();
-    assert!(status.success(), "git {args:?}");
-}
-
-fn init(root: &Path, name: &str) -> PathBuf {
-    let repo = root.join(name);
-    fs::create_dir(&repo).unwrap();
-    git(&repo, &["init", "-q"]);
-    fs::canonicalize(repo).unwrap()
-}
 
 #[tokio::test]
 async fn the_cli_publishes_and_reads_an_epic_through_the_server() {

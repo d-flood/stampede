@@ -4,6 +4,7 @@ use std::{
     env,
     ffi::OsString,
     fs,
+    io::Write,
     net::TcpListener,
     path::{Path, PathBuf},
     process::Stdio,
@@ -336,6 +337,67 @@ fn processes(root: &Path) -> Vec<(i32, String)> {
             ((cmdline.contains(root) || inside) && !cmdline.contains(" serve ")).then_some((pid, cmdline))
         })
         .collect()
+}
+
+pub struct Cli {
+    pub data_dir: PathBuf,
+}
+
+impl Cli {
+    pub fn run(&self, cwd: &Path, args: &[&str], stdin: &str) -> Result<String, String> {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_oikonomos"))
+            .args(args)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+            .current_dir(cwd)
+            .env_clear()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+        let output = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        if output.status.success() {
+            assert_eq!(stderr, "", "{args:?}");
+            Ok(stdout)
+        } else {
+            assert_eq!(stdout, "", "{args:?}");
+            Err(stderr)
+        }
+    }
+
+    pub fn ok(&self, cwd: &Path, args: &[&str], stdin: &str) -> String {
+        self.run(cwd, args, stdin).unwrap_or_else(|error| panic!("{args:?} failed: {error}"))
+    }
+
+    pub fn refused(&self, cwd: &Path, args: &[&str], stdin: &str) -> String {
+        match self.run(cwd, args, stdin) {
+            Ok(output) => panic!("{args:?} succeeded: {output}"),
+            Err(error) => error,
+        }
+    }
+}
+
+pub fn git(dir: &Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .args(["-c", "user.name=oikonomos", "-c", "user.email=test@oikonomos.invalid", "-C"])
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+pub fn init(root: &Path, name: &str) -> PathBuf {
+    let repo = root.join(name);
+    fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    fs::canonicalize(repo).unwrap()
 }
 
 pub async fn subscribe(server: &Server, browsers: &[&str]) -> mpsc::UnboundedReceiver<(String, Value)> {

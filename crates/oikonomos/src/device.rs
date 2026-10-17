@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -28,6 +28,8 @@ use crate::{
     attention::{Attention, Feed},
     chats::{self, Builtin, Chats},
     config::{Agent, Config},
+    epics::Epics,
+    git,
     holder::Owner,
     language_servers::{self, Input, LanguageServers, Server, Switch},
     projects::{self, Projects},
@@ -105,6 +107,8 @@ enum Control {
     },
     #[serde(rename = "search.start")]
     Search(search::Query),
+    #[serde(rename = "epics.subscribe")]
+    SubscribeEpics { project_id: String },
     #[serde(rename = "lsp.switch")]
     Switch { project_id: String, on: bool },
     #[serde(rename = "lsp.open")]
@@ -137,11 +141,13 @@ struct Device {
     search: Option<Arc<AtomicBool>>,
     languages: Arc<LanguageServers>,
     servers: HashMap<String, Server>,
+    epics: Arc<Epics>,
+    epic_projects: HashMap<String, PathBuf>,
 }
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, chats, attention, usage, projects, mut config, disk, git, languages, .. }: AppState,
+    AppState { terminals, chats, attention, usage, projects, mut config, disk, git, languages, epics, .. }: AppState,
 ) {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = mpsc::unbounded_channel();
@@ -161,6 +167,7 @@ async fn connect(
     let mut disk = disk.subscribe();
     let mut git = git.subscribe();
     let mut switches = languages.subscribe();
+    let mut epic_changes = epics.subscribe();
     let mut device = Device {
         id: Uuid::new_v4().to_string(),
         browser: None,
@@ -179,6 +186,8 @@ async fn connect(
         search: None,
         languages,
         servers: HashMap::new(),
+        epics,
+        epic_projects: HashMap::new(),
     };
     config.mark_unchanged();
     loop {
@@ -201,6 +210,7 @@ async fn connect(
                 let projects = list.borrow_and_update().clone();
                 send(&device.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
                 device.stop_servers(|project_id| !projects.iter().any(|project| project.id == project_id));
+                device.epic_projects.retain(|project_id, _| projects.iter().any(|project| project.id == *project_id));
             }
             changed = changes.recv() => match changed {
                 Ok(owner) => device.terminals_changed(&owner),
@@ -296,6 +306,15 @@ async fn connect(
             switch = switches.recv() => match switch {
                 Ok(switch) => device.switched(switch),
                 Err(RecvError::Lagged(_)) => device.send_switches(),
+                Err(RecvError::Closed) => break,
+            },
+            changed = epic_changes.recv() => match changed {
+                Ok(slug) => device.epic_changed(&slug),
+                Err(RecvError::Lagged(_)) => {
+                    for (project_id, common_dir) in &device.epic_projects {
+                        device.send_epics(project_id, Some(common_dir.as_path()));
+                    }
+                }
                 Err(RecvError::Closed) => break,
             },
         }
@@ -419,6 +438,7 @@ impl Device {
                 self.chats.view(self.connection, self.browser.clone(), chat_ids);
             }
             Control::Search(query) => self.search(query),
+            Control::SubscribeEpics { project_id } => self.subscribe_epics(project_id).await,
             Control::Switch { project_id, on } => self.languages.switch(&project_id, on),
             Control::OpenServer { channel } => self.open_server(channel),
             Control::CloseServer { channel } => {
@@ -608,6 +628,32 @@ impl Device {
     fn chats_changed(&self, project_id: &str) {
         let chats = self.chats.owned(project_id);
         send(&self.outgoing, json!({ "type": "chats.changed", "projectId": project_id, "chats": chats }));
+    }
+
+    async fn subscribe_epics(&mut self, project_id: String) {
+        let projects = self.projects.list();
+        let Some(project) = projects.iter().find(|project| project.id == project_id) else {
+            return eprintln!("cannot list the Epics of {project_id}: not open");
+        };
+        let common_dir = git::common_dir(Path::new(&project.path)).await;
+        self.send_epics(&project_id, common_dir.as_deref());
+        if let Some(common_dir) = common_dir {
+            self.epic_projects.insert(project_id, common_dir);
+        }
+    }
+
+    fn send_epics(&self, project_id: &str, common_dir: Option<&Path>) {
+        let epics = common_dir.map_or_else(Vec::new, |common_dir| self.epics.list(common_dir));
+        send(&self.outgoing, json!({ "type": "epics.changed", "projectId": project_id, "epics": epics }));
+    }
+
+    fn epic_changed(&self, slug: &str) {
+        let Ok(epic) = self.epics.get(slug) else { return };
+        for (project_id, common_dir) in &self.epic_projects {
+            if *common_dir == epic.project {
+                send(&self.outgoing, json!({ "type": "epic.changed", "projectId": project_id, "epic": epic }));
+            }
+        }
     }
 
     fn attention_changed(&self, items: &[Attention]) {

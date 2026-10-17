@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { HTMLButtonAttributes } from 'svelte/elements';
+	import Article from '~icons/ph/article';
 	import CheckBold from '~icons/ph/check-bold';
 	import CircleNotchBold from '~icons/ph/circle-notch-bold';
 	import FileCode from '~icons/ph/file-code';
@@ -12,7 +13,7 @@
 	import OpenAI from '~icons/simple-icons/openai';
 
 	type Props = HTMLButtonAttributes & {
-		variant: 'agent' | 'terminal' | 'editor' | 'diff' | 'browser';
+		variant: 'agent' | 'terminal' | 'editor' | 'diff' | 'browser' | 'epic';
 		label: string;
 		agent?: 'claude-code' | 'codex';
 		against?: string;
@@ -38,7 +39,7 @@
 		...rest
 	}: Props = $props();
 
-	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe };
+	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe, epic: Article };
 	const agents = { 'claude-code': Claude, codex: OpenAI };
 	const marks = { working: CircleNotchBold, waiting: HandPalmFill, done: CheckBold };
 	const Icon = $derived(variant === 'agent' ? agents[agent] : icons[variant]);

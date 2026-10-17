@@ -88,6 +88,7 @@ struct AppState {
     languages: Arc<LanguageServers>,
     layouts: Arc<Layouts>,
     browsers: Arc<browser::Browsers>,
+    epics: Arc<Epics>,
 }
 
 fn router(state: AppState) -> Router {
@@ -125,7 +126,8 @@ fn router(state: AppState) -> Router {
 pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let config = config::watch(&args.config)?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
-    cli::listen(&args.data_dir, Arc::new(Epics::load(&args.data_dir)?))?;
+    let epics = Arc::new(Epics::load(&args.data_dir)?);
+    cli::listen(&args.data_dir, Arc::clone(&epics))?;
     let projects = Arc::new(Projects::load(&args.data_dir)?);
     let push = Arc::new(Push::load(&args.data_dir)?);
     let languages = Arc::new(LanguageServers::load(&args.data_dir)?);
@@ -151,7 +153,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    let state = AppState { terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers };
+    let state = AppState { terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics };
     axum::serve(listener, router(state)).await
 }
 

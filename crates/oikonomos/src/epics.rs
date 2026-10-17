@@ -8,7 +8,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
+use tokio::sync::broadcast;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -57,7 +58,8 @@ impl fmt::Display for Author {
 }
 
 #[cfg_attr(not(test), expect(dead_code, reason = "Claim, Verdict and merge events set the other statuses"))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Status {
     NotStarted,
     InProgress,
@@ -84,18 +86,20 @@ impl fmt::Display for Status {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Epic {
     pub slug: String,
     pub title: String,
+    #[serde(skip)]
     pub project: PathBuf,
     pub brief: String,
     pub setup: Option<String>,
     pub archived: bool,
+    #[serde(serialize_with = "numbered")]
     pub tickets: BTreeMap<u32, Ticket>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Ticket {
     pub title: String,
     pub body: String,
@@ -104,11 +108,21 @@ pub struct Ticket {
     pub notes: Vec<Note>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Note {
     pub author: Author,
     pub text: String,
     pub at: u64,
+}
+
+fn numbered<S: Serializer>(tickets: &BTreeMap<u32, Ticket>, serializer: S) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct Numbered<'a> {
+        number: u32,
+        #[serde(flatten)]
+        ticket: &'a Ticket,
+    }
+    serializer.collect_seq(tickets.iter().map(|(&number, ticket)| Numbered { number, ticket }))
 }
 
 /// Folds an Epic's log into its current state, or nothing when the log does not start with `epic.added`.
@@ -227,6 +241,7 @@ fn valid_slug(slug: &str) -> bool {
 pub struct Epics {
     dir: PathBuf,
     epics: Mutex<BTreeMap<String, Epic>>,
+    changes: broadcast::Sender<String>,
 }
 
 impl Epics {
@@ -247,7 +262,11 @@ impl Epics {
                 Err(error) => eprintln!("cannot read {}: {error}", path.display()),
             }
         }
-        Ok(Self { dir, epics: Mutex::new(epics) })
+        Ok(Self { dir, epics: Mutex::new(epics), changes: broadcast::channel(64).0 })
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<String> {
+        self.changes.subscribe()
     }
 
     fn path(&self, slug: &str) -> PathBuf {
@@ -256,6 +275,10 @@ impl Epics {
 
     pub fn get(&self, slug: &str) -> Result<Epic, String> {
         self.epics.lock().unwrap().get(slug).cloned().ok_or_else(|| format!("there is no Epic {slug}"))
+    }
+
+    pub fn list(&self, project: &Path) -> Vec<Epic> {
+        self.epics.lock().unwrap().values().filter(|epic| epic.project == project).cloned().collect()
     }
 
     pub fn add(&self, slug: &str, title: &str, brief: &str, project: &Path) -> Result<(), String> {
@@ -286,6 +309,7 @@ impl Epics {
             .and_then(|file| append(file, &entry))
             .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
         epics.insert(slug.to_owned(), Epic::added(&entry).expect("an epic.added entry"));
+        let _ = self.changes.send(slug.to_owned());
         Ok(())
     }
 
@@ -301,6 +325,7 @@ impl Epics {
             .and_then(|file| append(file, &entry))
             .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
         epic.apply(&entry);
+        let _ = self.changes.send(slug.to_owned());
         Ok(())
     }
 }

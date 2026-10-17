@@ -9,6 +9,7 @@
 		tabOf,
 		type Attention,
 		type Chat,
+		type Epic,
 		type Project,
 		type Reading,
 		type ServerMessage,
@@ -16,6 +17,7 @@
 		type Terminal
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
+	import { OpenEpic } from '#lib/epics.svelte.ts';
 	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
@@ -63,6 +65,9 @@
 	let visible = $state(document.visibilityState === 'visible');
 	let files = $state<Record<string, OpenFile[]>>(restored.files);
 	let browsers = $state<Record<string, OpenBrowser[]>>(restored.browsers);
+	let epicTabs = $state<Record<string, OpenEpic[]>>(restored.epics);
+	let epics = $state<Record<string, Epic[]>>({});
+	const subscribed = new Set<string>();
 	let git = $state<Record<string, Git>>({});
 	let chosen = $state(restored.chosen);
 	let chosenTabs = $state<Record<string, string>>(restored.chosenTabs);
@@ -99,10 +104,12 @@
 	const chatTabs = $derived((focused && chats[focused.id]) || []);
 	const fileTabs = $derived((focused && files[focused.id]) || []);
 	const browserTabs = $derived((focused && browsers[focused.id]) || []);
+	const openEpics = $derived((focused && epicTabs[focused.id]) || []);
 	const tabIds = $derived([
 		...tabs.map((tab) => tab.id),
 		...chatTabs.map((chat) => chat.id),
 		...browserTabs.map((browser) => browser.id),
+		...openEpics.map((epic) => epic.id),
 		...fileTabs.map((file) => file.id)
 	]);
 	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? '']) ?? tabIds.at(-1));
@@ -121,7 +128,7 @@
 		{ title: sectionShowing(section, focused && git[focused.id]).label, sub: label }
 	]);
 	const deviceLayout = $derived(
-		capture({ chosen, terminals, chats, files, browsers, chosenTabs, splits, sidebar: { open: sidebar, section } })
+		capture({ chosen, terminals, chats, files, browsers, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section } })
 	);
 
 	$effect(() => device.send({ type: 'device.view', chatIds: shownChats }));
@@ -156,6 +163,7 @@
 				for (const chat of message.chats) (chatsOwned[chat.projectId] ??= []).push(chat);
 				chats = chatsOwned;
 				for (const project of projects) invalidate(project.id);
+				subscribed.clear();
 				device.send({ type: 'projects.list' });
 				device.send({ type: 'device.view', chatIds: shownChats });
 				break;
@@ -236,12 +244,37 @@
 				for (const projectId in chosenTabs) {
 					if (!projects.some((project) => project.id === projectId)) delete chosenTabs[projectId];
 				}
+				for (const projectId in epicTabs) {
+					if (!projects.some((project) => project.id === projectId)) delete epicTabs[projectId];
+				}
+				for (const projectId in epics) {
+					if (!projects.some((project) => project.id === projectId)) delete epics[projectId];
+				}
+				for (const projectId of subscribed) {
+					if (!projects.some((project) => project.id === projectId)) subscribed.delete(projectId);
+				}
+				for (const { id } of projects) {
+					if (subscribed.has(id)) continue;
+					subscribed.add(id);
+					device.send({ type: 'epics.subscribe', projectId: id });
+				}
 				for (const project of projects) loadGit(project.id);
 				if (!activeTab) warmUp();
 				break;
 			case 'git.changed':
 				loadGit(message.projectId);
 				break;
+			case 'epics.changed':
+				epics[message.projectId] = message.epics;
+				break;
+			case 'epic.changed': {
+				const { epic } = message;
+				const listed = (epics[message.projectId] ??= []);
+				const index = listed.findIndex((other) => other.slug >= epic.slug);
+				if (listed[index]?.slug === epic.slug) listed[index] = epic;
+				else listed.splice(index === -1 ? listed.length : index, 0, epic);
+				break;
+			}
 			case 'fs.changed':
 				invalidate(message.projectId);
 				break;
@@ -516,6 +549,24 @@
 		browsers[browser.projectId] = browsers[browser.projectId].filter((open) => open.id !== browser.id);
 	}
 
+	function openEpic(projectId: string, slug: string) {
+		epicTabs[projectId] ??= [];
+		const open = epicTabs[projectId];
+		let epic = open.find((epic) => epic.slug === slug);
+		if (!epic) {
+			epic = new OpenEpic(projectId, slug);
+			open.push(epic);
+			place(projectId, epic.id);
+		}
+		choose(projectId, epic.id);
+		slide(1);
+	}
+
+	function closeEpic(epic: OpenEpic) {
+		leave(epic.projectId, epic.id);
+		epicTabs[epic.projectId] = epicTabs[epic.projectId].filter((open) => open !== epic);
+	}
+
 	function openConfig() {
 		palette = undefined;
 		if (focused) openTab(new OpenConfig(focused.id));
@@ -564,8 +615,10 @@
 		{device}
 		bind:section
 		{usage}
+		epics={focused && epics[focused.id]}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		ondiff={(change, commit) => focused && openDiff(focused.id, change, commit)}
+		onepic={(slug) => focused && openEpic(focused.id, slug)}
 	/>
 {/snippet}
 
@@ -596,6 +649,7 @@
 							{@const chat = chatTabs.find((chat) => chat.id === id)}
 							{@const file = fileTabs.find((file) => file.id === id)}
 							{@const browser = browserTabs.find((browser) => browser.id === id)}
+							{@const epic = openEpics.find((epic) => epic.id === id)}
 							{#if tab}
 								<Menu context items={tabMenu(projectId, tab)}>
 									{#snippet trigger(props)}
@@ -636,6 +690,22 @@
 									{#snippet trigger(props)}
 										<Tab {...props} data-tab={id} variant="browser" label={browser.name} active={id === group.active}
 											onclose={() => closeBrowser(browser)} onclick={() => { if (!dragged) choose(projectId, id); }} />
+									{/snippet}
+								</Menu>
+							{:else if epic}
+								<Menu context items={[{ label: 'Close', onselect: () => closeEpic(epic) }]}>
+									{#snippet trigger(props)}
+										<Tab
+											{...props}
+											data-tab={id}
+											variant="epic"
+											label={epic.name}
+											active={id === group.active}
+											onclose={() => closeEpic(epic)}
+											onclick={() => {
+												if (!dragged) choose(projectId, id);
+											}}
+										/>
 									{/snippet}
 								</Menu>
 							{:else if file}
@@ -691,6 +761,20 @@
 			{#each Object.values(browsers).flat() as browser (browser.id)}
 				<div class="view" hidden={!showing(browser.id)} style:grid-column={column(browser.id)} onfocusin={() => choose(browser.projectId, browser.id)}>
 					{#if showing(browser.id) || warm()}<Browser {browser} />{/if}
+				</div>
+			{/each}
+			{#each Object.values(epicTabs).flat() as epic (epic.id)}
+				<div class="view" hidden={!showing(epic.id)} style:grid-column={column(epic.id)} onfocusin={() => choose(epic.projectId, epic.id)}>
+					{#if showing(epic.id) || warm()}
+						{#await import('#lib/epics/EpicView.svelte') then { default: EpicView }}
+							<EpicView
+								open={epic}
+								epic={epics[epic.projectId]?.find((listed) => listed.slug === epic.slug)}
+								loaded={!!epics[epic.projectId]}
+								active={showing(epic.id)}
+							/>
+						{/await}
+					{/if}
 				</div>
 			{/each}
 			{#each Object.entries(terminals) as [projectId, owned] (projectId)}

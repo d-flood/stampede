@@ -1,17 +1,18 @@
 <script lang="ts" module>
 	import type { Git } from '#lib/git.ts';
 
-	export type Section = 'files' | 'changes' | 'history' | 'search';
+	export type Section = 'files' | 'changes' | 'history' | 'search' | 'epics';
 
 	const sections: { id: Section; label: string }[] = [
 		{ id: 'files', label: 'Files' },
 		{ id: 'changes', label: 'Changes' },
 		{ id: 'history', label: 'History' },
-		{ id: 'search', label: 'Search' }
+		{ id: 'search', label: 'Search' },
+		{ id: 'epics', label: 'Epics' }
 	];
 
 	export function available(git?: Git) {
-		return sections.filter(({ id }) => (id !== 'changes' && id !== 'history') || git?.isRepo);
+		return sections.filter(({ id }) => id === 'files' || id === 'search' || git?.isRepo);
 	}
 
 	export function showing(section: Section, git?: Git) {
@@ -20,11 +21,12 @@
 </script>
 
 <script lang="ts">
-	import type { Device, Project, Reading } from '#lib/device.svelte.ts';
+	import type { Device, Epic, Project, Reading } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import type { Change, Commit } from '#lib/git.ts';
 	import Changes from '#lib/shell/Changes.svelte';
+	import Epics from '#lib/shell/Epics.svelte';
 	import Files from '#lib/shell/Files.svelte';
 	import History from '#lib/shell/History.svelte';
 	import Search from '#lib/shell/Search.svelte';
@@ -38,11 +40,13 @@
 		device: Device;
 		section: Section;
 		usage: Reading[];
+		epics?: Epic[];
 		onopen(path: string, cursor?: Cursor): void;
 		ondiff(change: Change, commit?: Commit): void;
+		onepic(slug: string): void;
 	};
 
-	let { open, project, label, git, device, section = $bindable(), usage, onopen, ondiff }: Props = $props();
+	let { open, project, label, git, device, section = $bindable(), usage, epics, onopen, ondiff, onepic }: Props = $props();
 
 	const shown = $derived(available(git));
 	const current = $derived(showing(section, git).id);
@@ -66,6 +70,8 @@
 			{#key project.id}
 				<History projectId={project.id} {device} onopen={ondiff} />
 			{/key}
+		{:else if current === 'epics'}
+			<Epics epics={epics ?? []} onopen={onepic} />
 		{/if}
 		{#key project.id}
 			<Search projectId={project.id} {device} hidden={current !== 'search'} {onopen} />

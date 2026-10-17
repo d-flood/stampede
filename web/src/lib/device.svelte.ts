@@ -76,6 +76,14 @@ export type Reading = { agent: Agent; window: 'five-hour' | 'weekly'; used: numb
 
 export type Session = { agent: Agent; sessionId: string; firstPrompt: string; updatedAt: number };
 
+export type TicketStatus = 'not-started' | 'in-progress' | 'merging' | 'merged' | 'skipped';
+
+export type Note = { author: 'agent' | 'david'; text: string; at: number };
+
+export type Ticket = { number: number; title: string; body: string; blockers: number[]; status: TicketStatus; notes: Note[] };
+
+export type Epic = { slug: string; title: string; brief: string; setup: string | null; archived: boolean; tickets: Ticket[] };
+
 export type Attention = { projectId: string; chatId: string; label: string; status: Status };
 
 export function tabOf(item: Attention): string {
@@ -125,6 +133,8 @@ export type ServerMessage =
 	| { type: 'attention.changed'; items: Attention[] }
 	| { type: 'usage.changed'; readings: Reading[] }
 	| { type: 'git.changed'; projectId: string }
+	| { type: 'epics.changed'; projectId: string; epics: Epic[] }
+	| { type: 'epic.changed'; projectId: string; epic: Epic }
 	| { type: 'search.started'; searchId: string }
 	| { type: 'search.results'; searchId: string; file: string; matches: Found[] }
 	| { type: 'search.done'; searchId: string; truncated: boolean; error?: string }
@@ -155,6 +165,7 @@ export type ClientMessage =
 	| { type: 'picker.list' }
 	| { type: 'device.view'; chatIds: string[] }
 	| ({ type: 'search.start' } & Search)
+	| { type: 'epics.subscribe'; projectId: string }
 	| { type: 'lsp.switch'; projectId: string; on: boolean }
 	| { type: 'lsp.open' | 'lsp.close'; channel: string }
 	| { type: 'lsp'; channel: string; message: string };

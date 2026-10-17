@@ -1,5 +1,6 @@
 import { claimDeviceId, deviceId, type Chat, type Terminal } from '#lib/device.svelte.ts';
 import { OpenBrowser } from '#lib/browser.svelte.ts';
+import { OpenEpic } from '#lib/epics.svelte.ts';
 import { OpenConfig, OpenDiff, OpenFile, type Layout as DiffMode } from '#lib/files.svelte.ts';
 import type { Commit } from '#lib/git.ts';
 import type { Section } from '#lib/shell/Sidebar.svelte';
@@ -9,6 +10,7 @@ export type TabRef =
 	| { kind: 'browser'; id: string; url: string }
 	| { kind: 'terminal'; id: string }
 	| { kind: 'chat'; id: string }
+	| { kind: 'epic'; slug: string }
 	| { kind: 'file'; path: string }
 	| { kind: 'config' }
 	| { kind: 'diff'; path: string; against: 'HEAD' | Commit; from?: string };
@@ -30,6 +32,7 @@ export type Workspace = {
 	chats: Record<string, Chat[]>;
 	files: Record<string, OpenFile[]>;
 	browsers: Record<string, OpenBrowser[]>;
+	epics: Record<string, OpenEpic[]>;
 	chosenTabs: Record<string, string>;
 	splits: Record<string, Split>;
 	sidebar: Layout['sidebar'];
@@ -85,6 +88,7 @@ export function capture(workspace: Workspace): Layout {
 	const projectIds = new Set([
 		...Object.keys(workspace.files),
 		...Object.keys(workspace.browsers),
+		...Object.keys(workspace.epics),
 		...Object.keys(workspace.chosenTabs),
 		...Object.keys(workspace.splits)
 	]);
@@ -95,9 +99,12 @@ export function capture(workspace: Workspace): Layout {
 		const terminals = workspace.terminals[projectId] ?? [];
 		const chats = workspace.chats[projectId] ?? [];
 		const browsers = workspace.browsers[projectId] ?? [];
+		const epics = workspace.epics[projectId] ?? [];
 		const find = (id: string): TabRef | null => {
 			const browser = browsers.find((browser) => browser.id === id);
 			if (browser) return { kind: 'browser', id, url: browser.url };
+			const epic = epics.find((epic) => epic.id === id);
+			if (epic) return { kind: 'epic', slug: epic.slug };
 			const file = files.find((file) => file.id === id);
 			if (file) return ref(file);
 			return chats.some((chat) => chat.id === id) ? { kind: 'chat', id } : { kind: 'terminal', id };
@@ -113,6 +120,7 @@ export function capture(workspace: Workspace): Layout {
 				...terminals.map(({ id }): TabRef => ({ kind: 'terminal', id })),
 				...chats.map(({ id }): TabRef => ({ kind: 'chat', id })),
 				...browsers.map(({ id, url }): TabRef => ({ kind: 'browser', id, url })),
+				...epics.map(({ slug }): TabRef => ({ kind: 'epic', slug })),
 				...files.flatMap((file) => ref(file) ?? [])
 			],
 			active: active ? find(active) : null,
@@ -126,10 +134,15 @@ export function capture(workspace: Workspace): Layout {
 export function restore() {
 	const files: Workspace['files'] = {};
 	const browsers: Workspace['browsers'] = {};
+	const epics: Workspace['epics'] = {};
 	const chosenTabs: Workspace['chosenTabs'] = {};
 	const splits: Workspace['splits'] = {};
 	for (const [projectId, project] of Object.entries(saved?.projects ?? {})) {
-		const id = (ref: TabRef) => (ref.kind === 'terminal' || ref.kind === 'chat' || ref.kind === 'browser' ? ref.id : reopen(projectId, ref)!.id);
+		const id = (ref: TabRef) => {
+			if (ref.kind === 'terminal' || ref.kind === 'chat' || ref.kind === 'browser') return ref.id;
+			if (ref.kind === 'epic') return new OpenEpic(projectId, ref.slug).id;
+			return reopen(projectId, ref)!.id;
+		};
 		const half = ({ tabs, active }: Half): TabGroup => ({ tabs: tabs.map(id), active: active ? id(active) : undefined });
 		files[projectId] = project.tabs.flatMap((ref) => reopen(projectId, ref) ?? []);
 		browsers[projectId] = project.tabs.flatMap((ref) => {
@@ -138,6 +151,7 @@ export function restore() {
 			browser.url = ref.url;
 			return [browser];
 		});
+		epics[projectId] = project.tabs.flatMap((ref) => (ref.kind === 'epic' ? [new OpenEpic(projectId, ref.slug)] : []));
 		for (const file of files[projectId]) {
 			if (file instanceof OpenDiff) file.layout = saved?.diffModes[file.id] ?? file.layout;
 		}
@@ -147,5 +161,5 @@ export function restore() {
 			splits[projectId] = { left: half(left), right: half(right), ratio };
 		}
 	}
-	return { chosen: saved?.focusedProject ?? undefined, files, browsers, chosenTabs, splits, sidebar: saved?.sidebar };
+	return { chosen: saved?.focusedProject ?? undefined, files, browsers, epics, chosenTabs, splits, sidebar: saved?.sidebar };
 }
