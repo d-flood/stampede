@@ -81,14 +81,17 @@
 			if (!scroller.getClientRects().length) { visible = false; return; }
 			if (pinned) scroller.scrollTop = scroller.scrollHeight;
 			else if (!visible) scroller.scrollTop = top;
+			top = scroller.scrollTop;
 			visible = true;
 		});
 		observer.observe(scroller);
 		observer.observe(scroller.firstElementChild!);
 		const off = on(scroller, 'scroll', () => {
 			if (!scroller.getClientRects().length) return;
+			const next = scroller.scrollTop;
+			const bottom = scroller.scrollHeight - next - scroller.clientHeight < 2;
+			if (next < top || bottom) pinned = bottom;
 			top = scroller.scrollTop;
-			pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2;
 		});
 		return () => {
 			off();
