@@ -25,6 +25,8 @@ use crate::{
     templates::{RESOLVER, TICKET},
 };
 
+mod landing;
+
 const TAIL: usize = 40;
 
 /// The loop: Runs that start Tickets in their own worktrees, take their Verdicts, and merge them one at a time.

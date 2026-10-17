@@ -71,6 +71,14 @@ pub enum Event {
     RunFinished,
     #[serde(rename = "epic.viewed")]
     Viewed,
+    #[serde(rename = "epic.landed")]
+    Landed { base: String, head: String },
+    #[serde(rename = "landing.refused")]
+    LandingRefused { reason: String },
+    #[serde(rename = "integration.removed")]
+    IntegrationRemoved,
+    #[serde(rename = "integration.kept")]
+    IntegrationKept { reason: String },
     #[serde(other)]
     Unknown,
 }
@@ -151,6 +159,20 @@ pub struct Epic {
     /// A Run finished, and no Device has shown the Epic since.
     #[serde(skip)]
     pub finished: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landed: Option<Landed>,
+    /// Why the last Landing left the Integration Worktree standing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kept: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
+}
+
+/// The base the Epic branch last landed on, and the commit the base reached.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Landed {
+    pub base: String,
+    pub head: String,
 }
 
 /// The live Run: the Rig its next Chats start with, and how many Tickets it works at once.
@@ -232,6 +254,9 @@ impl Epic {
             queue: Vec::new(),
             run: None,
             finished: false,
+            landed: None,
+            kept: None,
+            notes: Vec::new(),
         })
     }
 
@@ -275,6 +300,8 @@ impl Epic {
             Event::BranchCut { base, worktree } => {
                 self.base = Some(base.clone());
                 self.integration = Some(worktree.clone());
+                self.landed = None;
+                self.kept = None;
             }
             Event::Claimed { ticket, chat, rig, worktree } => {
                 if let Some(ticket) = self.tickets.get_mut(ticket) {
@@ -373,6 +400,15 @@ impl Epic {
                 self.finished = true;
             }
             Event::Viewed => self.finished = false,
+            Event::Landed { base, head } => self.landed = Some(Landed { base: base.clone(), head: head.clone() }),
+            Event::LandingRefused { reason } => {
+                self.notes.push(Note { author: Author::Oikonomos, text: format!("Landing was refused: {reason}."), at: entry.at });
+            }
+            Event::IntegrationRemoved => {
+                self.integration = None;
+                self.kept = None;
+            }
+            Event::IntegrationKept { reason } => self.kept = Some(reason.clone()),
             Event::EpicAdded { .. } | Event::Unknown => {}
         }
     }
@@ -484,6 +520,10 @@ impl Epic {
                 Some(_) => Ok(()),
                 None => Err(format!("{slug}/{ticket} has no Resolver")),
             },
+            Event::Landed { .. } | Event::IntegrationRemoved | Event::IntegrationKept { .. } if self.integration.is_none() => {
+                Err(format!("{slug} has no Integration Worktree"))
+            }
+            Event::LandingRefused { reason } => filled(reason, "reason"),
             _ => Ok(()),
         }
     }
@@ -821,6 +861,9 @@ mod tests {
             queue: Vec::new(),
             run: None,
             finished: false,
+            landed: None,
+            kept: None,
+            notes: Vec::new(),
         };
         assert_eq!(epic, expected);
         let fresh = folded(&[ADDED.to_owned()]).unwrap();
@@ -877,6 +920,13 @@ mod tests {
             (Event::RunChanged { rig: Some("R".to_owned()), parallel: None }, r#"{"at":9,"kind":"run.changed","rig":"R"}"#),
             (Event::RunFinished, r#"{"at":9,"kind":"run.finished"}"#),
             (Event::Viewed, r#"{"at":9,"kind":"epic.viewed"}"#),
+            (
+                Event::Landed { base: "main".to_owned(), head: "abc".to_owned() },
+                r#"{"at":9,"kind":"epic.landed","base":"main","head":"abc"}"#,
+            ),
+            (Event::LandingRefused { reason: "R".to_owned() }, r#"{"at":9,"kind":"landing.refused","reason":"R"}"#),
+            (Event::IntegrationRemoved, r#"{"at":9,"kind":"integration.removed"}"#),
+            (Event::IntegrationKept { reason: "R".to_owned() }, r#"{"at":9,"kind":"integration.kept","reason":"R"}"#),
         ];
         for (event, line) in cases {
             let entry = Entry { at: 9, event };
@@ -1218,5 +1268,47 @@ mod tests {
         assert_eq!(epic.queue, [3]);
         assert_eq!(frontier(&epic), [2], "a resolved merge resolves its Blocker");
         assert_eq!(epic.check(&Event::MergeConflicted { ticket: 3, resolver: "next".to_owned() }), Ok(()));
+    }
+
+    #[test]
+    fn a_landing_is_recorded_its_refusals_become_notes_and_a_new_branch_starts_over() {
+        let cut = |worktree: &str| format!(r#"{{"at":2,"kind":"branch.cut","base":"main","worktree":"{worktree}"}}"#);
+        let refused = r#"{"at":3,"kind":"landing.refused","reason":"/repo is on topic rather than main"}"#.to_owned();
+        let landed = r#"{"at":4,"kind":"epic.landed","base":"main","head":"abc"}"#.to_owned();
+        let kept = r#"{"at":5,"kind":"integration.kept","reason":"It has uncommitted changes."}"#.to_owned();
+        let removed = run_event("integration.removed");
+        let state = |lines: &[String]| {
+            let epic = folded(&[vec![ADDED.to_owned(), cut("/w/integration")], lines.to_vec()].concat()).unwrap();
+            let integration = epic.integration.as_ref().map(|path| path.to_string_lossy().into_owned());
+            (integration, epic.landed.map(|landed| (landed.base, landed.head)), epic.kept, epic.notes.len())
+        };
+        let landing = || Some(("main".to_owned(), "abc".to_owned()));
+        let integration = || Some("/w/integration".to_owned());
+        let cases: Vec<(&str, Vec<String>, (Option<String>, Option<(String, String)>, Option<String>, usize))> = vec![
+            ("a refusal", vec![refused.clone()], (integration(), None, None, 1)),
+            ("a clean Landing", vec![refused.clone(), landed.clone(), removed.clone()], (None, landing(), None, 1)),
+            (
+                "a Landing that keeps the worktree",
+                vec![landed.clone(), kept.clone()],
+                (integration(), landing(), Some("It has uncommitted changes.".to_owned()), 0),
+            ),
+            ("a later Landing that removes it", vec![landed.clone(), kept, landed.clone(), removed.clone()], (None, landing(), None, 0)),
+            ("a new Epic branch", vec![refused, landed, removed, cut("/w/again")], (Some("/w/again".to_owned()), None, None, 1)),
+        ];
+        for (name, lines, expected) in cases {
+            assert_eq!(state(&lines), expected, "{name}");
+        }
+
+        let epic = folded(&[ADDED.to_owned(), cut("/w/integration"), r#"{"at":3,"kind":"landing.refused","reason":"why"}"#.to_owned()]).unwrap();
+        assert_eq!(epic.notes, [Note { author: Author::Oikonomos, text: "Landing was refused: why.".to_owned(), at: 3 }]);
+        let json = serde_json::to_value(&epic).unwrap();
+        assert_eq!(json["notes"], serde_json::json!([{ "author": "oikonomos", "text": "Landing was refused: why.", "at": 3 }]));
+        let uncut = folded(&[ADDED.to_owned()]).unwrap();
+        assert_eq!(serde_json::to_value(&uncut).unwrap().get("notes"), None);
+        for event in [Event::Landed { base: "main".to_owned(), head: "abc".to_owned() }, Event::IntegrationRemoved] {
+            assert_eq!(uncut.check(&event), Err("loop has no Integration Worktree".to_owned()));
+            assert_eq!(epic.check(&event), Ok(()));
+        }
+        assert_eq!(epic.check(&Event::LandingRefused { reason: " ".to_owned() }), Err("the reason is empty".to_owned()));
     }
 }

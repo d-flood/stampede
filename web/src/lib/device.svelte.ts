@@ -107,6 +107,9 @@ export type Epic = {
 	base?: string;
 	integration?: string;
 	run?: Run;
+	landed?: { base: string; head: string };
+	kept?: string;
+	notes?: Note[];
 	tickets: Ticket[];
 };
 

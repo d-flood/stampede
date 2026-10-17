@@ -44,12 +44,16 @@ export type Edit =
 	| { kind: 'run.started'; rig: string; parallel: number }
 	| { kind: 'run.changed'; rig?: string; parallel?: number };
 
-export async function record(slug: string, edit: Edit): Promise<string | undefined> {
-	const response = await fetch(`/api/epics/${slug}`, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(edit)
-	}).catch((error: Error) => error);
+export function record(slug: string, edit: Edit): Promise<string | undefined> {
+	return post(`/api/epics/${slug}`, { headers: { 'content-type': 'application/json' }, body: JSON.stringify(edit) });
+}
+
+export function land(slug: string): Promise<string | undefined> {
+	return post(`/api/epics/${slug}/land`, {});
+}
+
+async function post(url: string, init: RequestInit): Promise<string | undefined> {
+	const response = await fetch(url, { method: 'POST', ...init }).catch((error: Error) => error);
 	if (response instanceof Error) return response.message;
 	return response.ok ? undefined : await response.text();
 }

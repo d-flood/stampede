@@ -1,11 +1,12 @@
 <script lang="ts">
+	import { ago } from '#lib/chat/sessions.ts';
 	import Text from '#lib/chat/Text.svelte';
 	import { rigs } from '#lib/config.svelte.ts';
 	import type { Chat, Device, Epic, Ticket } from '#lib/device.svelte.ts';
 	import Blockers from '#lib/epics/Blockers.svelte';
 	import Progress from '#lib/epics/Progress.svelte';
 	import TicketDetail from '#lib/epics/Ticket.svelte';
-	import { counts, label, record, resolved, statuses, toggle, tones, type Edit, type OpenEpic } from '#lib/epics.svelte.ts';
+	import { counts, label, land, record, resolved, statuses, toggle, tones, type Edit, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -39,6 +40,18 @@
 	const next = $derived(Math.max(0, ...tickets.map((ticket) => ticket.number)) + 1);
 	const choices = $derived(rigs());
 	const rig = $derived(choices.some((choice) => choice.name === open.rig) ? open.rig : choices[0]?.name);
+	const merges = $derived(tickets.filter((ticket) => ticket.status === 'merged').length);
+	const unresolved = $derived(tickets.filter((ticket) => !resolved(ticket.status)));
+	const unlandable = $derived.by(() => {
+		if (epic?.run || tickets.some((ticket) => ticket.status === 'merging')) return 'Available once no Run is live and nothing is merging';
+		if (!epic?.integration) return epic?.landed ? 'Nothing is left to land' : 'Available once the first Ticket starts';
+	});
+	const standing = $derived.by(() => {
+		if (!epic?.landed) return [];
+		const kept = tickets.filter((ticket) => ticket.worktree && ticket.attention && resolved(ticket.status));
+		return [...(epic.kept ? [epic.kept] : []), ...kept.map((ticket) => `${epic.slug}/${ticket.number}: ${ticket.attention}`)];
+	});
+	const authors = { agent: 'Agent', david: 'David', oikonomos: 'Oikonomos' };
 
 	let draft = $state('');
 	let title = $state('');
@@ -48,6 +61,9 @@
 	let saving = $state(false);
 	let archiving = $state(false);
 	let refused = $state<string>();
+	let confirming = $state(false);
+	let landing = $state(false);
+	let unlanded = $state<string>();
 	let returnTo: OpenEpic['page'];
 
 	onMount(() => painted(open.id));
@@ -102,6 +118,14 @@
 		if (parallel < 1) return;
 		if (epic?.run) run({ kind: 'run.changed', parallel });
 		else open.parallel = parallel;
+	}
+
+	async function landEpic() {
+		if (landing || !epic) return;
+		landing = true;
+		unlanded = await land(epic.slug);
+		landing = false;
+		if (!unlanded) confirming = false;
 	}
 
 	function chatOf(ticket: Ticket) {
@@ -206,6 +230,47 @@
 	</section>
 {/snippet}
 
+{#snippet landButton(epic: Epic)}
+	<Button variant="primary" disabled={!!unlandable} onclick={() => ((unlanded = undefined), (confirming = true))}>
+		{epic.base ? `Land into ${epic.base}` : 'Land'}
+	</Button>
+	{#if unlandable}<p class="hint">{unlandable}</p>{/if}
+{/snippet}
+
+{#snippet worktree(epic: Epic)}
+	<section aria-label="Integration Worktree" class="worktree">
+		<div class="heading">
+			<h2>Integration Worktree</h2>
+			{#if epic.integration}
+				<button class="link" onclick={() => epic.integration && device.send({ type: 'project.open', path: epic.integration })}>Open</button>
+			{/if}
+		</div>
+		{#if epic.integration}
+			<p class="unset">{merges} {merges === 1 ? 'merge' : 'merges'}{#if epic.base}{' '}· cut from {epic.base}{/if}</p>
+		{:else if !epic.landed}
+			<p class="unset">Not cut yet; the first Ticket to start cuts it.</p>
+		{/if}
+		{#if epic.landed}
+			<p class="unset">Landed into {epic.landed.base} at <span class="head">{epic.landed.head.slice(0, 12)}</span></p>
+		{/if}
+		{#if standing.length}
+			<div class="standing" role="status">
+				<h3>Left standing</h3>
+				<ul>
+					{#each standing as reason, index (index)}<li>{reason}</li>{/each}
+				</ul>
+			</div>
+		{/if}
+		{#if !phone}{@render landButton(epic)}{/if}
+		{#each epic.notes ?? [] as note, index (index)}
+			<div class="entry">
+				<span class="meta">{authors[note.author]} · {ago(note.at)}</span>
+				<p>{note.text}</p>
+			</div>
+		{/each}
+	</section>
+{/snippet}
+
 {#snippet archive()}
 	<div class="archive"><Button onclick={() => ((error = undefined), (archiving = true))}>Archive Epic</Button></div>
 {/snippet}
@@ -305,9 +370,8 @@
 								<TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} {open} chat={chatOf(ticket)} {device} {onchat} />
 							</div>
 						{/if}
-					{:else}
-						<p class="unset">No Tickets yet.</p>
 					{/each}
+					{#if !tickets.length}<p class="unset">No Tickets yet.</p>{/if}
 					{#if folded}
 						<button class="fold" onclick={() => (open.showResolved = !open.showResolved)}>
 							{open.showResolved ? 'Hide' : 'Show'} {folded} resolved
@@ -316,6 +380,7 @@
 					<button class="add" onclick={() => edit('new-ticket', '')}><Plus /> Add a Ticket</button>
 				</section>
 				{#if phone}
+					{@render worktree(epic)}
 					{@render archive()}
 				{:else}
 					<aside>
@@ -334,13 +399,39 @@
 							</div>
 							{@render command(epic)}
 						</section>
+						{@render worktree(epic)}
 						{@render archive()}
 					</aside>
 				{/if}
 			</div>
 		</div>
+		{#if phone}<footer class="land">{@render landButton(epic)}</footer>{/if}
 	{/if}
 </div>
+
+<Dialog
+	bind:open={confirming}
+	title={epic?.base ? `Land ${open.slug} into ${epic.base}?` : `Land ${open.slug}?`}
+	description="Oikonomos merges the Epic branch into {epic?.base ?? 'its base'} in the Project's own checkout, then removes the Integration Worktree and the Epic branch if they are clean. It refuses, changing nothing, if the checkout is on another branch, has uncommitted changes, or would conflict."
+>
+	{#if unresolved.length}
+		<div class="unresolved">
+			<p>Still unresolved:</p>
+			<ul>
+				{#each unresolved as ticket (ticket.number)}
+					<li><span class="number">{ticket.number}</span> {ticket.title} · <span style:color={tones[ticket.status]}>{label(ticket.status)}</span></li>
+				{/each}
+			</ul>
+		</div>
+	{:else}
+		<p class="unresolved">Every Ticket is merged or skipped.</p>
+	{/if}
+	{#if unlanded}<p class="error" role="alert">{unlanded}</p>{/if}
+	{#snippet actions()}
+		<Button onclick={() => (confirming = false)}>Cancel</Button>
+		<Button variant="primary" disabled={landing} onclick={landEpic}>{landing ? 'Landing…' : 'Land'}</Button>
+	{/snippet}
+</Dialog>
 
 <Dialog
 	bind:open={archiving}
@@ -861,7 +952,8 @@
 		min-width: 16rem;
 	}
 
-	aside section {
+	aside section,
+	.phone .worktree {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
@@ -870,9 +962,92 @@
 		border-radius: var(--radius-lg);
 	}
 
-	aside h2 {
+	aside h2,
+	.worktree h2 {
 		margin: 0;
 		font-size: var(--font-size-md);
+	}
+
+	.phone .worktree {
+		flex: 1 1 100%;
+		min-width: 0;
+	}
+
+	.worktree .head {
+		font-family: var(--font-mono);
+	}
+
+	.hint {
+		margin: 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.standing {
+		padding: var(--space-2) var(--space-3);
+		border-left: 2px solid var(--status-waiting);
+		background: color-mix(in oklab, var(--status-waiting) 10%, transparent);
+		font-size: var(--font-size-sm);
+		overflow-wrap: anywhere;
+	}
+
+	.standing h3 {
+		margin: 0;
+		font-size: inherit;
+	}
+
+	.standing ul {
+		margin: 0;
+		padding-left: 1.25em;
+	}
+
+	.entry {
+		padding-left: var(--space-3);
+		border-left: 2px solid var(--border);
+		font-size: var(--font-size-sm);
+	}
+
+	.entry p {
+		margin: 0;
+		overflow-wrap: anywhere;
+	}
+
+	.meta {
+		color: var(--muted-fg);
+	}
+
+	.land {
+		display: flex;
+		flex: none;
+		flex-direction: column;
+		gap: var(--space-1);
+		padding: var(--space-2) var(--space-3) var(--space-3);
+		border-top: var(--border-width) solid var(--border);
+	}
+
+	.land .hint {
+		text-align: center;
+	}
+
+	.unresolved {
+		margin: var(--space-3) 0 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.unresolved p {
+		margin: 0;
+	}
+
+	.unresolved ul {
+		margin: var(--space-1) 0 0;
+		padding: 0;
+		color: var(--color-fg);
+		list-style: none;
+	}
+
+	.unresolved + .error {
+		margin-top: var(--space-3);
 	}
 
 	.heading {

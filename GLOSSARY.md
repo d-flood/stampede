@@ -111,7 +111,7 @@ One of an Agent's rolling usage allowances, such as its five-hour or weekly wind
 _Avoid_: quota, rate limit, limit
 
 **Note**:
-A durable message an Agent or David attaches to a Ticket: a decision, an answer the Ticket asked for, or a hand-off.
+A durable message an Agent or David attaches to a Ticket: a decision, an answer the Ticket asked for, or a hand-off. Oikonomos attaches its own, and a refused Landing becomes a Note on the Epic.
 _Avoid_: comment, log, message
 
 **Setup Command**:

@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openProject, showSidebar } from './shell.ts';
 
@@ -142,6 +142,7 @@ test('a Ticket body and David’s Note, edited in the Epic tab, persist across a
 		return Object.values(layout?.projects ?? {}).some((project) =>
 			(project as { tabs: { kind: string; slug?: string }[] }).tabs.some((tab) => tab.kind === 'epic' && tab.slug === slug));
 	}, slug)).toBe(true);
+	await showFiles(await showSidebar(page));
 	await page.reload();
 	await openTicket(panel, phone, 2);
 	await expect(body).toHaveText('Show the tab, edited as Markdown.');
@@ -278,6 +279,14 @@ test('Start on a Frontier Ticket works it with a fake Agent until it is merged',
 	await tickets.getByRole('button', { name: /^2\s*More/ }).click();
 	await expect(start).toBeEnabled();
 	await page.screenshot({ path: test.info().outputPath('unblocked.png') });
+
+	if (phone) await panel.getByRole('button', { name: `Back to ${slug}` }).click();
+	await panel.getByRole('button', { name: /^Land into / }).click();
+	const confirm = page.getByRole('dialog', { name: /^Land start-/ });
+	await expect(confirm).toContainText('Still unresolved:');
+	await expect(confirm.getByRole('listitem')).toHaveText([/^2\s*More · not started$/]);
+	await confirm.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(confirm).toHaveCount(0);
 	await showFiles(await showSidebar(page));
 });
 
@@ -391,6 +400,9 @@ test('a Run started from the Epic tab works the Epic through and calls from the 
 
 	await expect(run).toContainText('Run live');
 	await expect(startRun).toHaveCount(0);
+	const land = panel.getByRole('button', { name: /^Land( into .+)?$/ });
+	await expect(land).toBeDisabled();
+	await expect(panel.getByText('Available once no Run is live and nothing is merging', { exact: true })).toBeVisible();
 	if (phone) {
 		const summary = run.getByRole('button', { name: /Fake Claude Verdict · ×2/ });
 		await expect(summary).toHaveAttribute('aria-expanded', 'false');
@@ -422,5 +434,30 @@ test('a Run started from the Epic tab works the Epic through and calls from the 
 	await list.click();
 	await expect(entry).toHaveCount(0);
 	await page.keyboard.press('Escape');
+
+	const base = git('symbolic-ref', '--short', 'HEAD').toString().trim();
+	await expect(land).toHaveText(`Land into ${base}`);
+	await expect(land).toBeEnabled();
+	writeFileSync(`${root}/scratch.txt`, 'Not yet added.\n');
+	await land.click();
+	const confirm = page.getByRole('dialog', { name: `Land ${slug} into ${base}?` });
+	await expect(confirm).toContainText('Every Ticket is merged or skipped.');
+	await confirm.getByRole('button', { name: 'Land', exact: true }).click();
+	const refusal = `${root} has uncommitted changes in scratch.txt; commit them or put them aside and land again`;
+	await expect(confirm.getByRole('alert')).toHaveText(refusal);
+	const worktree = panel.getByRole('region', { name: 'Integration Worktree' });
+	await expect(worktree).toContainText(`Landing was refused: ${refusal}.`);
+	expect(existsSync(`${root}/work.txt`)).toBe(false);
+	await page.screenshot({ path: test.info().outputPath('refused.png') });
+	rmSync(`${root}/scratch.txt`);
+	await confirm.getByRole('button', { name: 'Land', exact: true }).click();
+	await expect(confirm).toHaveCount(0);
+	await expect(worktree).toContainText(`Landed into ${base} at`);
+	await expect(land).toBeDisabled();
+	await expect(panel.getByText('Nothing is left to land', { exact: true })).toBeVisible();
+	expect(readFileSync(`${root}/work.txt`, 'utf8')).toBe('Done by the fake.\n');
+	expect(existsSync(`${data}/worktrees/${slug}/integration`)).toBe(false);
+	expect(git('branch', '--list', `oikonomos/${slug}/*`).toString()).toBe('');
+	await page.screenshot({ path: test.info().outputPath('landed.png') });
 	await showFiles(await showSidebar(page));
 });

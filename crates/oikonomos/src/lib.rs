@@ -114,6 +114,7 @@ fn router(state: AppState) -> Router {
         .route("/api/devices/{id}/layout", get(layouts::read).put(layouts::write))
         .route("/api/devices/{id}/closing", post(layouts::closing))
         .route("/api/epics/{slug}", post(record_epic))
+        .route("/api/epics/{slug}/land", post(land_epic))
         .route("/api/projects/{id}/tree", get(files::tree))
         .route("/api/projects/{id}/files", get(files::paths))
         .route("/api/projects/{id}/file", get(files::read).head(files::exists).put(files::write))
@@ -212,6 +213,10 @@ async fn record_epic(State(state): State<AppState>, Path(slug): Path<String>, Js
         return Err((StatusCode::BAD_REQUEST, format!("there is no Rig {rig} in the config")));
     }
     state.epics.record(&slug, event).map(|()| StatusCode::NO_CONTENT).map_err(|error| (StatusCode::BAD_REQUEST, error))
+}
+
+async fn land_epic(State(state): State<AppState>, Path(slug): Path<String>) -> Result<String, files::Failure> {
+    state.runs.land(&slug).await.map_err(|refusal| (StatusCode::BAD_REQUEST, refusal))
 }
 
 async fn font(State(state): State<AppState>) -> Json<Font> {
