@@ -86,6 +86,11 @@ agent = "claude-code"
 env = { OIKONOMOS_FAKE_FIXTURE = "$PWD/crates/oikonomos/tests/fixtures/chats/claude-code/questions.synthetic.jsonl", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
 
 [[rig]]
+name = "Fake Claude Verdict"
+agent = "claude-code"
+env = { OIKONOMOS_FAKE_FIXTURE = "$PWD/crates/oikonomos/tests/fixtures/chats/claude-code/verdict.synthetic.jsonl", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
+
+[[rig]]
 name = "Codex Questions"
 agent = "codex"
 env = { OIKONOMOS_FAKE_FIXTURE = "questions", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }

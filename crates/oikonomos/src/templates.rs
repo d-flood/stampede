@@ -16,9 +16,12 @@ pub const TEMPLATES: &[Template] = &[
     Template { name: "tickets", description: "write the Epic's Tickets and its Setup Command", text: include_str!("templates/tickets.md") },
 ];
 
+/// The first prompt of every Ticket's Chat. The loop sends it, so the slash menu does not offer it.
+pub const TICKET: Template = Template { name: "ticket", description: "work one Ticket", text: include_str!("templates/ticket.md") };
+
 impl Template {
     /// The CLI only finds a server on a non-default data directory when told it.
-    fn opening(&self, data_dir: &Path) -> String {
+    pub fn opening(&self, data_dir: &Path) -> String {
         let text = self.text.trim_end();
         if data_dir == crate::data_dir() {
             return text.to_owned();
@@ -40,7 +43,7 @@ pub fn expand<'a>(text: &'a str, data_dir: &Path) -> Cow<'a, str> {
 
 /// The Template a sent text was expanded from, and the text as it was typed.
 pub fn recognize(text: &str, data_dir: &Path) -> Option<(&'static str, String)> {
-    TEMPLATES.iter().find_map(|template| {
+    TEMPLATES.iter().chain([&TICKET]).find_map(|template| {
         let typed = text.strip_prefix(&template.opening(data_dir))?;
         Some(match typed {
             "" => (template.name, format!("/{}", template.name)),

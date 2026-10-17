@@ -30,6 +30,24 @@ pub enum Event {
     NoteAdded { ticket: u32, author: Author, text: String },
     #[serde(rename = "epic.archived")]
     Archived,
+    #[serde(rename = "branch.cut")]
+    BranchCut { base: String, worktree: PathBuf },
+    #[serde(rename = "ticket.claimed")]
+    Claimed { ticket: u32, chat: String, rig: String, worktree: PathBuf },
+    #[serde(rename = "setup.failed")]
+    SetupFailed { ticket: u32 },
+    #[serde(rename = "ticket.completed")]
+    Completed { ticket: u32, commit: String },
+    #[serde(rename = "ticket.skipped")]
+    Skipped { ticket: u32, reason: String },
+    #[serde(rename = "ticket.merged")]
+    Merged { ticket: u32 },
+    #[serde(rename = "merge.failed")]
+    MergeFailed { ticket: u32, reason: String },
+    #[serde(rename = "worktree.removed")]
+    WorktreeRemoved { ticket: u32 },
+    #[serde(rename = "worktree.kept")]
+    WorktreeKept { ticket: u32, reason: String },
     #[serde(other)]
     Unknown,
 }
@@ -46,6 +64,7 @@ pub struct Entry {
 pub enum Author {
     Agent,
     David,
+    Oikonomos,
 }
 
 impl fmt::Display for Author {
@@ -53,11 +72,11 @@ impl fmt::Display for Author {
         f.write_str(match self {
             Author::Agent => "agent",
             Author::David => "david",
+            Author::Oikonomos => "oikonomos",
         })
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "Claim, Verdict and merge events set the other statuses"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Status {
@@ -95,8 +114,15 @@ pub struct Epic {
     pub brief: String,
     pub setup: Option<String>,
     pub archived: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub integration: Option<PathBuf>,
     #[serde(serialize_with = "numbered")]
     pub tickets: BTreeMap<u32, Ticket>,
+    /// The merging Tickets still to merge, in the order of their Verdicts.
+    #[serde(skip)]
+    pub queue: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -106,6 +132,21 @@ pub struct Ticket {
     pub blockers: Vec<u32>,
     pub status: Status,
     pub notes: Vec<Note>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim: Option<Claim>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attention: Option<String>,
+    #[serde(skip)]
+    pub commit: Option<String>,
+}
+
+/// The Chat that holds a Ticket, or held it when it gave its Verdict.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Claim {
+    pub chat: String,
+    pub rig: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -145,7 +186,10 @@ impl Epic {
             brief: brief.clone(),
             setup: None,
             archived: false,
+            base: None,
+            integration: None,
             tickets: BTreeMap::new(),
+            queue: Vec::new(),
         })
     }
 
@@ -160,6 +204,10 @@ impl Epic {
                     blockers: blockers.clone(),
                     status: Status::NotStarted,
                     notes: Vec::new(),
+                    claim: None,
+                    worktree: None,
+                    attention: None,
+                    commit: None,
                 });
             }
             Event::BodySet { ticket, body } => {
@@ -178,6 +226,59 @@ impl Epic {
                 }
             }
             Event::Archived => self.archived = true,
+            Event::BranchCut { base, worktree } => {
+                self.base = Some(base.clone());
+                self.integration = Some(worktree.clone());
+            }
+            Event::Claimed { ticket, chat, rig, worktree } => {
+                if let Some(ticket) = self.tickets.get_mut(ticket) {
+                    ticket.status = Status::InProgress;
+                    ticket.claim = Some(Claim { chat: chat.clone(), rig: rig.clone() });
+                    ticket.worktree = Some(worktree.clone());
+                    ticket.attention = None;
+                }
+            }
+            Event::SetupFailed { ticket } => {
+                if let Some(ticket) = self.tickets.get_mut(ticket) {
+                    ticket.attention = Some("The Setup Command failed; its Note has the end of the output.".to_owned());
+                }
+            }
+            Event::Completed { ticket: number, commit } => {
+                if let Some(ticket) = self.tickets.get_mut(number) {
+                    ticket.status = Status::Merging;
+                    ticket.commit = Some(commit.clone());
+                    self.queue.push(*number);
+                }
+            }
+            Event::Skipped { ticket, reason } => {
+                if let Some(ticket) = self.tickets.get_mut(ticket) {
+                    ticket.status = Status::Skipped;
+                    ticket.notes.push(Note { author: Author::Agent, text: reason.clone(), at: entry.at });
+                }
+            }
+            Event::Merged { ticket: number } => {
+                self.queue.retain(|queued| queued != number);
+                if let Some(ticket) = self.tickets.get_mut(number) {
+                    ticket.status = Status::Merged;
+                    ticket.attention = None;
+                }
+            }
+            Event::MergeFailed { ticket: number, reason } => {
+                self.queue.retain(|queued| queued != number);
+                if let Some(ticket) = self.tickets.get_mut(number) {
+                    ticket.attention = Some(reason.clone());
+                }
+            }
+            Event::WorktreeRemoved { ticket } => {
+                if let Some(ticket) = self.tickets.get_mut(ticket) {
+                    ticket.worktree = None;
+                }
+            }
+            Event::WorktreeKept { ticket, reason } => {
+                if let Some(ticket) = self.tickets.get_mut(ticket) {
+                    ticket.attention = Some(reason.clone());
+                }
+            }
             Event::EpicAdded { .. } | Event::Unknown => {}
         }
     }
@@ -224,9 +325,32 @@ impl Epic {
                     None => Ok(()),
                 }
             }
+            Event::SetupFailed { ticket } | Event::WorktreeRemoved { ticket } | Event::WorktreeKept { ticket, .. } => {
+                self.ticket(*ticket).map(drop)
+            }
             Event::NoteAdded { ticket, text, .. } => {
                 self.ticket(*ticket)?;
                 filled(text, "Note")
+            }
+            Event::BranchCut { .. } if self.integration.is_some() => Err(format!("{slug} already has its Epic branch")),
+            Event::Claimed { ticket, .. } => {
+                if self.frontier().any(|(number, _)| number == *ticket) {
+                    Ok(())
+                } else {
+                    Err(format!("{slug}/{ticket} is not on the Frontier: it is {}", self.ticket(*ticket)?.status))
+                }
+            }
+            Event::Completed { ticket, .. } | Event::Skipped { ticket, .. } => {
+                let status = self.ticket(*ticket)?.status;
+                if status == Status::InProgress {
+                    Ok(())
+                } else {
+                    Err(format!("{slug}/{ticket} is {status}, not in progress, so it takes no Verdict"))
+                }
+            }
+            Event::Merged { ticket } | Event::MergeFailed { ticket, .. } => {
+                let status = self.ticket(*ticket)?.status;
+                if status == Status::Merging { Ok(()) } else { Err(format!("{slug}/{ticket} is {status}, not merging")) }
             }
             _ => Ok(()),
         }
@@ -254,8 +378,17 @@ impl Epic {
         let resolved = |blocker: &u32| self.tickets.get(blocker).is_some_and(|ticket| ticket.status.resolved());
         self.tickets
             .iter()
-            .filter(move |(_, ticket)| ticket.status == Status::NotStarted && ticket.blockers.iter().all(resolved))
+            .filter(move |(_, ticket)| {
+                ticket.status == Status::NotStarted && ticket.claim.is_none() && ticket.blockers.iter().all(resolved)
+            })
             .map(|(number, ticket)| (*number, ticket))
+    }
+}
+
+impl Ticket {
+    /// Resolved, with a worktree that cleanup has neither removed nor kept.
+    pub fn awaits_cleanup(&self) -> bool {
+        self.status.resolved() && self.worktree.is_some() && self.attention.is_none()
     }
 }
 
@@ -318,6 +451,10 @@ impl Epics {
 
     pub fn get(&self, slug: &str) -> Result<Epic, String> {
         self.epics.lock().unwrap().get(slug).cloned().ok_or_else(|| format!("there is no Epic {slug}"))
+    }
+
+    pub fn slugs(&self) -> Vec<String> {
+        self.epics.lock().unwrap().keys().cloned().collect()
     }
 
     pub fn list(&self, project: &Path) -> Vec<Epic> {
@@ -424,7 +561,7 @@ mod tests {
     fn tickets_fold_into_statuses_and_the_frontier() {
         let unknown = [
             r#"{"at":4,"kind":"run.started","rig":"Claude","parallel":2}"#.to_owned(),
-            r#"{"at":5,"kind":"ticket.claimed","ticket":1,"chat":"0123","worktree":"/w"}"#.to_owned(),
+            r#"{"at":5,"kind":"claim.released","ticket":1,"keep":{"worktree":"/w"}}"#.to_owned(),
         ];
         let missing = [
             blockers(9, &[]),
@@ -519,6 +656,10 @@ mod tests {
                 Note { author: Author::Agent, text: "First".to_owned(), at: 6 },
                 Note { author: Author::David, text: "Second".to_owned(), at: 7 },
             ],
+            claim: None,
+            worktree: None,
+            attention: None,
+            commit: None,
         };
         let expected = Epic {
             slug: "loop".to_owned(),
@@ -527,7 +668,10 @@ mod tests {
             brief: "Second brief".to_owned(),
             setup: Some(String::new()),
             archived: true,
+            base: None,
+            integration: None,
             tickets: BTreeMap::from([(1, ticket)]),
+            queue: Vec::new(),
         };
         assert_eq!(epic, expected);
         let fresh = folded(&[ADDED.to_owned()]).unwrap();
@@ -556,13 +700,152 @@ mod tests {
                 r#"{"at":9,"kind":"note.added","ticket":3,"author":"agent","text":"N"}"#,
             ),
             (Event::Archived, r#"{"at":9,"kind":"epic.archived"}"#),
+            (
+                Event::BranchCut { base: "main".to_owned(), worktree: PathBuf::from("/w/i") },
+                r#"{"at":9,"kind":"branch.cut","base":"main","worktree":"/w/i"}"#,
+            ),
+            (
+                Event::Claimed { ticket: 3, chat: "c".to_owned(), rig: "R".to_owned(), worktree: PathBuf::from("/w/3") },
+                r#"{"at":9,"kind":"ticket.claimed","ticket":3,"chat":"c","rig":"R","worktree":"/w/3"}"#,
+            ),
+            (Event::SetupFailed { ticket: 3 }, r#"{"at":9,"kind":"setup.failed","ticket":3}"#),
+            (Event::Completed { ticket: 3, commit: "abc".to_owned() }, r#"{"at":9,"kind":"ticket.completed","ticket":3,"commit":"abc"}"#),
+            (Event::Skipped { ticket: 3, reason: "R".to_owned() }, r#"{"at":9,"kind":"ticket.skipped","ticket":3,"reason":"R"}"#),
+            (Event::Merged { ticket: 3 }, r#"{"at":9,"kind":"ticket.merged","ticket":3}"#),
+            (Event::MergeFailed { ticket: 3, reason: "R".to_owned() }, r#"{"at":9,"kind":"merge.failed","ticket":3,"reason":"R"}"#),
+            (Event::WorktreeRemoved { ticket: 3 }, r#"{"at":9,"kind":"worktree.removed","ticket":3}"#),
+            (Event::WorktreeKept { ticket: 3, reason: "R".to_owned() }, r#"{"at":9,"kind":"worktree.kept","ticket":3,"reason":"R"}"#),
         ];
         for (event, line) in cases {
             let entry = Entry { at: 9, event };
             assert_eq!(serde_json::to_string(&entry).unwrap(), line);
             assert_eq!(serde_json::from_str::<Entry>(line).unwrap(), entry);
         }
-        let unknown: Entry = serde_json::from_str(r#"{"at":9,"kind":"ticket.merged","ticket":3}"#).unwrap();
+        let unknown: Entry = serde_json::from_str(r#"{"at":9,"kind":"run.finished"}"#).unwrap();
         assert_eq!(unknown.event, Event::Unknown);
+    }
+
+    fn claimed(number: u32) -> String {
+        format!(r#"{{"at":4,"kind":"ticket.claimed","ticket":{number},"chat":"chat{number}","rig":"Claude","worktree":"/w/{number}"}}"#)
+    }
+
+    fn completed(number: u32) -> String {
+        format!(r#"{{"at":5,"kind":"ticket.completed","ticket":{number},"commit":"c{number}"}}"#)
+    }
+
+    fn event(kind: &str, number: u32) -> String {
+        format!(r#"{{"at":6,"kind":"{kind}","ticket":{number},"reason":"Why {number}"}}"#)
+    }
+
+    #[test]
+    fn claims_verdicts_and_merges_move_tickets_through_their_statuses() {
+        use Status::*;
+        let base = [ticket(1, &[]), ticket(2, &[1]), ticket(3, &[])];
+        let cases: Vec<(&str, Vec<String>, [Status; 3], Vec<u32>, Vec<u32>)> = vec![
+            ("a Claim takes a Ticket off the Frontier", vec![claimed(1)], [InProgress, NotStarted, NotStarted], vec![3], vec![]),
+            ("complete makes it merging and queues it", vec![claimed(1), completed(1)], [Merging, NotStarted, NotStarted], vec![3], vec![1]),
+            (
+                "a merge resolves it as a Blocker",
+                vec![claimed(1), completed(1), event("ticket.merged", 1)],
+                [Merged, NotStarted, NotStarted],
+                vec![2, 3],
+                vec![],
+            ),
+            ("skip resolves it as a Blocker", vec![claimed(1), event("ticket.skipped", 1)], [Skipped, NotStarted, NotStarted], vec![2, 3], vec![]),
+            (
+                "a failed merge leaves it merging, out of the queue",
+                vec![claimed(1), completed(1), event("merge.failed", 1)],
+                [Merging, NotStarted, NotStarted],
+                vec![3],
+                vec![],
+            ),
+            (
+                "merges queue in Verdict order",
+                vec![claimed(3), claimed(1), completed(3), completed(1)],
+                [Merging, NotStarted, Merging],
+                vec![],
+                vec![3, 1],
+            ),
+            (
+                "a merge leaves the rest of the queue",
+                vec![claimed(3), claimed(1), completed(3), completed(1), event("ticket.merged", 3)],
+                [Merging, NotStarted, Merged],
+                vec![],
+                vec![1],
+            ),
+            ("a failed setup leaves it on the Frontier", vec![event("setup.failed", 1)], [NotStarted, NotStarted, NotStarted], vec![1, 3], vec![]),
+        ];
+        for (name, events, statuses, expected, queue) in cases {
+            let epic = folded(&[vec![ADDED.to_owned()], base.to_vec(), events].concat()).unwrap();
+            let folded: Vec<Status> = epic.tickets.values().map(|ticket| ticket.status).collect();
+            assert_eq!(folded, statuses, "{name}");
+            assert_eq!(frontier(&epic), expected, "{name}");
+            assert_eq!(epic.queue, queue, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_ticket_keeps_its_claim_worktree_and_attention() {
+        let epic = folded(&[
+            ADDED.to_owned(),
+            ticket(1, &[]),
+            r#"{"at":2,"kind":"branch.cut","base":"main","worktree":"/w/integration"}"#.to_owned(),
+            event("setup.failed", 1),
+        ])
+        .unwrap();
+        assert_eq!((epic.base.as_deref(), epic.integration.as_deref()), (Some("main"), Some(Path::new("/w/integration"))));
+        let failed = &epic.tickets[&1];
+        assert!(failed.attention.as_ref().unwrap().contains("Setup Command"));
+        assert_eq!((&failed.claim, &failed.worktree), (&None, &None));
+
+        let lines = [ADDED.to_owned(), ticket(1, &[]), event("setup.failed", 1), claimed(1)];
+        let epic = folded(&lines).unwrap();
+        let held = &epic.tickets[&1];
+        assert_eq!(held.claim, Some(Claim { chat: "chat1".to_owned(), rig: "Claude".to_owned() }));
+        assert_eq!(held.worktree.as_deref(), Some(Path::new("/w/1")));
+        assert_eq!(held.attention, None, "a Claim clears what the failed setup flagged");
+
+        let merged = folded(&[lines.to_vec(), vec![completed(1), event("ticket.merged", 1)]].concat()).unwrap();
+        let ticket1 = &merged.tickets[&1];
+        assert_eq!((ticket1.commit.as_deref(), ticket1.claim.is_some()), (Some("c1"), true), "the Claim records who gave the Verdict");
+        assert!(ticket1.awaits_cleanup());
+        let removed = folded(&[lines.to_vec(), vec![completed(1), event("ticket.merged", 1), event("worktree.removed", 1)]].concat()).unwrap();
+        assert_eq!(removed.tickets[&1].worktree, None);
+        assert!(!removed.tickets[&1].awaits_cleanup());
+        let kept = folded(&[lines.to_vec(), vec![event("ticket.skipped", 1), event("worktree.kept", 1)]].concat()).unwrap();
+        let kept = &kept.tickets[&1];
+        assert_eq!((kept.attention.as_deref(), kept.worktree.is_some()), (Some("Why 1"), true));
+        assert_eq!(kept.notes, vec![Note { author: Author::Agent, text: "Why 1".to_owned(), at: 6 }], "a skip's reason is its Note");
+        assert!(!kept.awaits_cleanup());
+    }
+
+    #[test]
+    fn check_refuses_events_the_state_machine_forbids() {
+        let epic = folded(&[
+            ADDED.to_owned(),
+            r#"{"at":2,"kind":"branch.cut","base":"main","worktree":"/w/integration"}"#.to_owned(),
+            ticket(1, &[]),
+            ticket(2, &[1]),
+            ticket(3, &[]),
+            claimed(3),
+            completed(3),
+        ])
+        .unwrap();
+        let claim = |ticket| Event::Claimed { ticket, chat: "c".to_owned(), rig: "R".to_owned(), worktree: PathBuf::from("/w") };
+        let refused = [
+            (claim(2), "loop/2 is not on the Frontier: it is not started"),
+            (claim(3), "loop/3 is not on the Frontier: it is merging"),
+            (Event::Completed { ticket: 1, commit: "c".to_owned() }, "loop/1 is not started, not in progress, so it takes no Verdict"),
+            (Event::Completed { ticket: 3, commit: "c".to_owned() }, "loop/3 is merging, not in progress, so it takes no Verdict"),
+            (Event::Skipped { ticket: 1, reason: "r".to_owned() }, "loop/1 is not started, not in progress, so it takes no Verdict"),
+            (Event::Merged { ticket: 1 }, "loop/1 is not started, not merging"),
+            (Event::BranchCut { base: "main".to_owned(), worktree: PathBuf::from("/w") }, "loop already has its Epic branch"),
+            (claim(9), "loop has no Ticket 9"),
+        ];
+        for (event, error) in refused {
+            assert_eq!(epic.check(&event), Err(error.to_owned()));
+        }
+        assert_eq!(epic.check(&claim(1)), Ok(()));
+        assert_eq!(epic.check(&Event::Merged { ticket: 3 }), Ok(()));
     }
 }

@@ -9,11 +9,15 @@ use std::{
 
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt},
+    net::UnixListener,
+};
 
 use crate::{
     epics::{Author, Epic, Epics, Event},
     git,
+    runs::Runs,
 };
 
 #[derive(Subcommand)]
@@ -54,6 +58,31 @@ pub enum CliCommand {
     Frontier {
         /// The Epic's slug, such as chat-ui.
         epic: String,
+        #[command(flatten)]
+        connection: Connection,
+    },
+    /// Record that the Ticket you hold is complete.
+    ///
+    /// Run it from inside the Ticket's worktree, as your last act on the Ticket. It commits everything left uncommitted there, new files included, with the given message, then records the Verdict, and Oikonomos merges the Ticket into its Epic's Integration Worktree. A clean worktree is accepted, so a Ticket with no diff, or whose work lives in another repository, can still be completed. Only a Ticket in progress takes a Verdict, and only one; it is refused from any other directory.
+    Complete {
+        /// The Ticket, written as <epic>/<n>, such as chat-ui/4.
+        #[arg(value_name = "EPIC/N")]
+        reference: Reference,
+        /// The commit message for whatever is left uncommitted. Quote it so that it reaches the command as one argument.
+        #[arg(short, long)]
+        message: String,
+        #[command(flatten)]
+        connection: Connection,
+    },
+    /// Record that the Ticket you hold is moot, and retire it.
+    ///
+    /// Run it from inside the Ticket's worktree when the codebase has already made the Ticket unnecessary. The reason becomes a Note on the Ticket, and the Ticket becomes skipped, which resolves it as a Blocker. Only a Ticket in progress takes a Verdict, and only one; it is refused from any other directory.
+    Skip {
+        /// The Ticket, written as <epic>/<n>, such as chat-ui/4.
+        #[arg(value_name = "EPIC/N")]
+        reference: Reference,
+        /// Why the Ticket is moot. Quote it so that it reaches the command as one argument.
+        reason: String,
         #[command(flatten)]
         connection: Connection,
     },
@@ -197,6 +226,10 @@ enum Request {
     Note { epic: String, ticket: u32, text: String },
     #[serde(rename = "frontier")]
     Frontier { epic: String },
+    #[serde(rename = "complete")]
+    Complete { epic: String, ticket: u32, message: String, cwd: PathBuf },
+    #[serde(rename = "skip")]
+    Skip { epic: String, ticket: u32, reason: String, cwd: PathBuf },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -230,11 +263,14 @@ pub fn cli(command: CliCommand) -> Result<(), String> {
     Ok(())
 }
 
+fn cwd() -> Result<PathBuf, String> {
+    env::current_dir().map_err(|error| format!("cannot read the current directory: {error}"))
+}
+
 fn request(command: CliCommand) -> Result<(Connection, Request), String> {
     Ok(match command {
         CliCommand::Epic(EpicCommand::Add { slug, title, brief, connection }) => {
-            let cwd = env::current_dir().map_err(|error| format!("cannot read the current directory: {error}"))?;
-            (connection, Request::AddEpic { slug, title, brief: read(&brief, "Brief")?, cwd })
+            (connection, Request::AddEpic { slug, title, brief: read(&brief, "Brief")?, cwd: cwd()? })
         }
         CliCommand::Epic(EpicCommand::SetBrief { epic, brief, connection }) => {
             (connection, Request::SetBrief { epic, brief: read(&brief, "Brief")? })
@@ -257,6 +293,12 @@ fn request(command: CliCommand) -> Result<(Connection, Request), String> {
             (connection, Request::Note { epic, ticket, text })
         }
         CliCommand::Frontier { epic, connection } => (connection, Request::Frontier { epic }),
+        CliCommand::Complete { reference: Reference { epic, ticket }, message, connection } => {
+            (connection, Request::Complete { epic, ticket, message, cwd: cwd()? })
+        }
+        CliCommand::Skip { reference: Reference { epic, ticket }, reason, connection } => {
+            (connection, Request::Skip { epic, ticket, reason, cwd: cwd()? })
+        }
     })
 }
 
@@ -273,34 +315,37 @@ fn read(source: &Path, what: &str) -> Result<String, String> {
     Ok(text)
 }
 
-pub fn listen(data_dir: &Path, epics: Arc<Epics>) -> io::Result<()> {
+/// Takes the socket early, so CLI requests made while the server is starting wait for `listen` instead of failing.
+pub fn bind(data_dir: &Path) -> io::Result<UnixListener> {
     let path = socket_path(data_dir);
     match fs::remove_file(&path) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
         _ => {}
     }
-    let listener = tokio::net::UnixListener::bind(&path)?;
+    UnixListener::bind(&path)
+}
+
+pub fn listen(listener: UnixListener, epics: Arc<Epics>, runs: Arc<Runs>) {
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
-                    tokio::spawn(respond(stream, Arc::clone(&epics)));
+                    tokio::spawn(respond(stream, Arc::clone(&epics), Arc::clone(&runs)));
                 }
                 Err(error) => eprintln!("cannot accept a CLI connection: {error}"),
             }
         }
     });
-    Ok(())
 }
 
-async fn respond(stream: tokio::net::UnixStream, epics: Arc<Epics>) {
+async fn respond(stream: tokio::net::UnixStream, epics: Arc<Epics>, runs: Arc<Runs>) {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
     if tokio::io::BufReader::new(reader).read_line(&mut line).await.is_err() {
         return;
     }
     let handled = match serde_json::from_str(&line) {
-        Ok(request) => handle(&epics, request).await,
+        Ok(request) => handle(&epics, &runs, request).await,
         Err(error) => Err(format!("cannot read the request: {error}")),
     };
     let response = handled.map_or_else(Response::Error, Response::Output);
@@ -309,7 +354,7 @@ async fn respond(stream: tokio::net::UnixStream, epics: Arc<Epics>) {
     let _ = writer.write_all(&reply).await;
 }
 
-async fn handle(epics: &Epics, request: Request) -> Result<String, String> {
+async fn handle(epics: &Epics, runs: &Runs, request: Request) -> Result<String, String> {
     match request {
         Request::AddEpic { slug, title, brief, cwd } => {
             let project = git::common_dir(&cwd)
@@ -345,6 +390,8 @@ async fn handle(epics: &Epics, request: Request) -> Result<String, String> {
             let lines: Vec<_> = epic.frontier().map(|(number, ticket)| format!("{}/{number} {}", epic.slug, ticket.title)).collect();
             Ok(if lines.is_empty() { format!("Nothing in {} is on the Frontier.", epic.slug) } else { lines.join("\n") })
         }
+        Request::Complete { epic, ticket, message, cwd } => runs.complete(&epic, ticket, &cwd, &message).await,
+        Request::Skip { epic, ticket, reason, cwd } => runs.skip(&epic, ticket, &cwd, &reason),
     }
 }
 

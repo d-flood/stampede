@@ -78,11 +78,32 @@ export type Session = { agent: Agent; sessionId: string; firstPrompt: string; up
 
 export type TicketStatus = 'not-started' | 'in-progress' | 'merging' | 'merged' | 'skipped';
 
-export type Note = { author: 'agent' | 'david'; text: string; at: number };
+export type Note = { author: 'agent' | 'david' | 'oikonomos'; text: string; at: number };
 
-export type Ticket = { number: number; title: string; body: string; blockers: number[]; status: TicketStatus; notes: Note[] };
+export type Claim = { chat: string; rig: string };
 
-export type Epic = { slug: string; title: string; brief: string; setup: string | null; archived: boolean; tickets: Ticket[] };
+export type Ticket = {
+	number: number;
+	title: string;
+	body: string;
+	blockers: number[];
+	status: TicketStatus;
+	notes: Note[];
+	claim?: Claim;
+	worktree?: string;
+	attention?: string;
+};
+
+export type Epic = {
+	slug: string;
+	title: string;
+	brief: string;
+	setup: string | null;
+	archived: boolean;
+	base?: string;
+	integration?: string;
+	tickets: Ticket[];
+};
 
 export type Attention = { projectId: string; chatId: string; label: string; status: Status };
 
@@ -135,6 +156,8 @@ export type ServerMessage =
 	| { type: 'git.changed'; projectId: string }
 	| { type: 'epics.changed'; projectId: string; epics: Epic[] }
 	| { type: 'epic.changed'; projectId: string; epic: Epic }
+	| { type: 'ticket.started'; projectId: string; epic: string; ticket: number; chatId: string }
+	| { type: 'ticket.error'; projectId: string; epic: string; ticket: number; error: string }
 	| { type: 'search.started'; searchId: string }
 	| { type: 'search.results'; searchId: string; file: string; matches: Found[] }
 	| { type: 'search.done'; searchId: string; truncated: boolean; error?: string }
@@ -166,6 +189,7 @@ export type ClientMessage =
 	| { type: 'device.view'; chatIds: string[] }
 	| ({ type: 'search.start' } & Search)
 	| { type: 'epics.subscribe'; projectId: string }
+	| { type: 'ticket.start'; projectId: string; epic: string; ticket: number; rig: string }
 	| { type: 'lsp.switch'; projectId: string; on: boolean }
 	| { type: 'lsp.open' | 'lsp.close'; channel: string }
 	| { type: 'lsp'; channel: string; message: string };

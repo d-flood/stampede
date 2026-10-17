@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openProject, showSidebar } from './shell.ts';
 
@@ -223,4 +223,60 @@ test('David changes Blockers, adds a Ticket, edits the Brief and Setup Command, 
 		'epic.archived'
 	]);
 	await showFiles(sidebar);
+});
+
+test('Start on a Frontier Ticket works it with a fake Agent until it is merged', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
+	const slug = `start-${project.name}`;
+	const data = `${process.env.OIKONOMOS_E2E_ROOT}/data`;
+	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	mkdirSync(root, { recursive: true });
+	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
+	git('init', '-q');
+	git('config', 'user.name', 'oikonomos');
+	git('config', 'user.email', 'e2e@oikonomos.invalid');
+	git('config', 'commit.gpgsign', 'false');
+	writeFileSync(`${root}/README`, 'start\n');
+	git('add', 'README');
+	git('commit', '-qm', 'Initial commit');
+	const cli = (stdin: string, ...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', data], { cwd: root, input: stdin });
+	cli('# Start\n', 'epic', 'add', slug, '--title', 'Start one', '--brief', '-');
+	cli('Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
+	cli('Then more.\n', 'ticket', 'add', slug, '2', '--title', 'More', '--blocked-by', '1', '--body', '-');
+
+	await openProject(page, slug);
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
+	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
+	const tickets = panel.getByRole('region', { name: 'Tickets' });
+	const row = tickets.getByRole('button', { name: /^1\s*The work/ });
+	await row.click();
+	const start = panel.getByRole('button', { name: 'Start', exact: true });
+	await expect(start).toBeDisabled();
+	await expect(panel.getByText('Record a Setup Command before starting a Ticket.')).toBeVisible();
+	cli('', 'epic', 'set-setup', slug, '');
+	await expect(start).toBeEnabled();
+	await panel.getByRole('combobox', { name: 'Rig' }).selectOption('Fake Claude Verdict');
+	await start.click();
+
+	const status = phone ? panel.locator('.chips') : row;
+	await expect(status).toContainText('merged', { timeout: 15000 });
+	await expect(start).toHaveCount(0);
+	expect(readFileSync(`${data}/worktrees/${slug}/integration/work.txt`, 'utf8')).toBe('Done by the fake.\n');
+	await expect.poll(() => existsSync(`${data}/worktrees/${slug}/1`)).toBe(false);
+	await page.screenshot({ path: test.info().outputPath('merged.png') });
+
+	if (phone) await panel.getByRole('button', { name: /^Chat · done/ }).click();
+	else await panel.getByRole('button', { name: 'Open Chat' }).click();
+	const chat = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/1`);
+
+	await page.getByRole('tab', { name: `Epic ${slug}` }).click();
+	if (phone) await panel.getByRole('button', { name: `Back to ${slug}` }).click();
+	else await row.click();
+	await tickets.getByRole('button', { name: /^2\s*More/ }).click();
+	await expect(start).toBeEnabled();
+	await page.screenshot({ path: test.info().outputPath('unblocked.png') });
+	await showFiles(await showSidebar(page));
 });

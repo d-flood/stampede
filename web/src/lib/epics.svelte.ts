@@ -1,11 +1,25 @@
-import type { Epic, TicketStatus } from '#lib/device.svelte.ts';
+import type { Device, Epic, Ticket, TicketStatus } from '#lib/device.svelte.ts';
 
 export class OpenEpic {
 	ticket = $state<number>();
 	page = $state<'brief' | 'setup' | 'edit-brief' | 'edit-ticket' | 'new-ticket'>();
 	showResolved = $state(false);
+	rig = $state<string>();
+	starting = $state<number[]>([]);
+	errors = $state<Record<number, string>>({});
 
 	constructor(public projectId: string, public slug: string) {}
+
+	start(device: Device, ticket: number, rig: string) {
+		this.starting.push(ticket);
+		delete this.errors[ticket];
+		device.send({ type: 'ticket.start', projectId: this.projectId, epic: this.slug, ticket, rig });
+	}
+
+	settle(ticket: number, error?: string) {
+		this.starting = this.starting.filter((number) => number !== ticket);
+		if (error) this.errors[ticket] = error;
+	}
 
 	get id() {
 		return `epic:${this.projectId}:${this.slug}`;
@@ -55,6 +69,11 @@ export function label(status: TicketStatus) {
 
 export function resolved(status: TicketStatus) {
 	return status === 'merged' || status === 'skipped';
+}
+
+export function onFrontier(epic: Epic, ticket: Ticket) {
+	const done = (number: number) => epic.tickets.some((other) => other.number === number && resolved(other.status));
+	return ticket.status === 'not-started' && !ticket.claim && ticket.blockers.every(done);
 }
 
 export function counts(epic: Epic) {

@@ -233,6 +233,24 @@ async fn toplevel(dir: &Path) -> Option<PathBuf> {
     dir.starts_with(&toplevel).then_some(toplevel)
 }
 
+/// Runs git in `dir`, giving its trimmed output, or what it printed when it failed.
+pub async fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .map_err(|error| format!("cannot run git: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim_end().to_owned();
+    if output.status.success() {
+        return Ok(stdout);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    Err(if stderr.is_empty() { format!("git {} failed: {stdout}", args.join(" ")) } else { stderr })
+}
+
 async fn git(dir: &Path, args: &[&str]) -> Option<Vec<u8>> {
     let output = Command::new("git")
         .arg("--no-optional-locks")

@@ -14,6 +14,7 @@ mod layouts;
 mod projects;
 mod protocol;
 mod push;
+mod runs;
 mod search;
 mod templates;
 mod terminals;
@@ -46,6 +47,7 @@ use language_servers::LanguageServers;
 use layouts::Layouts;
 use projects::Projects;
 use push::Push;
+use runs::Runs;
 use terminals::Terminals;
 use themes::Theme;
 use usage::Usage;
@@ -90,6 +92,7 @@ struct AppState {
     layouts: Arc<Layouts>,
     browsers: Arc<browser::Browsers>,
     epics: Arc<Epics>,
+    runs: Arc<Runs>,
 }
 
 fn router(state: AppState) -> Router {
@@ -130,7 +133,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let config = config::watch(&args.config)?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
     let epics = Arc::new(Epics::load(&args.data_dir)?);
-    cli::listen(&args.data_dir, Arc::clone(&epics))?;
+    let requests = cli::bind(&args.data_dir)?;
     let projects = Arc::new(Projects::load(&args.data_dir)?);
     let push = Arc::new(Push::load(&args.data_dir)?);
     let languages = Arc::new(LanguageServers::load(&args.data_dir)?);
@@ -142,6 +145,8 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage)));
     let rigs = config.borrow().rigs.clone();
     chats.restore(&rigs).await?;
+    let runs = Runs::new(&args.data_dir, Arc::clone(&epics), Arc::clone(&chats))?;
+    cli::listen(requests, Arc::clone(&epics), Arc::clone(&runs));
     usage::spawn(Arc::clone(&usage), config.clone());
     let terminals = Arc::new(Terminals::new(args.data_dir));
     terminals.restore().await?;
@@ -156,7 +161,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    let state = AppState { terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics };
+    let state = AppState { terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs };
     axum::serve(listener, router(state)).await
 }
 

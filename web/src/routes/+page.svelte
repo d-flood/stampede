@@ -277,6 +277,12 @@
 				closeArchived(message.projectId);
 				break;
 			}
+			case 'ticket.started':
+			case 'ticket.error':
+				for (const open of epicTabs[message.projectId] ?? []) {
+					if (open.slug === message.epic) open.settle(message.ticket, message.type === 'ticket.error' ? message.error : undefined);
+				}
+				break;
 			case 'fs.changed':
 				invalidate(message.projectId);
 				break;
@@ -779,6 +785,9 @@
 								epic={epics[epic.projectId]?.find((listed) => listed.slug === epic.slug)}
 								loaded={!!epics[epic.projectId]}
 								active={showing(epic.id)}
+								{device}
+								chats={chats[epic.projectId] ?? []}
+								onchat={(chatId) => choose(epic.projectId, chatId)}
 							/>
 						{/await}
 					{/if}

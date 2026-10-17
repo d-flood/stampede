@@ -554,13 +554,14 @@ impl Chats {
         self.list().into_iter().filter(|chat| chat.project_id == project_id).collect()
     }
 
-    pub async fn create(self: &Arc<Self>, project: &Project, rig: &Rig, session: Option<&str>) -> io::Result<Chat> {
+    /// Starts a Chat owned by `project` that runs in `cwd`: the Project's own directory, or a Ticket Worktree.
+    pub async fn create(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>) -> io::Result<Chat> {
         let chat = Chat {
             id: format!("{:016x}", Uuid::new_v4().as_u64_pair().1),
             project_id: project.id.clone(),
             rig: rig.name.clone(),
             agent: rig.agent,
-            cwd: PathBuf::from(&project.path),
+            cwd: cwd.to_owned(),
             created: SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_nanos(),
             agent_session: session.map(str::to_owned),
             resume_at: None,

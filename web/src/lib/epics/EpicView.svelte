@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Text from '#lib/chat/Text.svelte';
-	import type { Epic } from '#lib/device.svelte.ts';
+	import type { Chat, Device, Epic, Ticket } from '#lib/device.svelte.ts';
 	import Blockers from '#lib/epics/Blockers.svelte';
 	import Progress from '#lib/epics/Progress.svelte';
 	import TicketDetail from '#lib/epics/Ticket.svelte';
@@ -15,9 +15,17 @@
 	import CaretRight from '~icons/ph/caret-right';
 	import Plus from '~icons/ph/plus';
 
-	type Props = { open: OpenEpic; epic?: Epic; loaded: boolean; active: boolean };
+	type Props = {
+		open: OpenEpic;
+		epic?: Epic;
+		loaded: boolean;
+		active: boolean;
+		device: Device;
+		chats: Chat[];
+		onchat: (chatId: string) => void;
+	};
 
-	let { open, epic, loaded, active }: Props = $props();
+	let { open, epic, loaded, active, device, chats, onchat }: Props = $props();
 
 	const phone = $derived(form() === 'phone');
 	const tickets = $derived(epic?.tickets ?? []);
@@ -73,6 +81,15 @@
 	function saveSetup(event: SubmitEvent) {
 		event.preventDefault();
 		if (setup !== undefined) save({ kind: 'setup.set', command: setup.trim() }, () => (setup = undefined));
+	}
+
+	function chatOf(ticket: Ticket) {
+		return chats.find((chat) => chat.id === ticket.claim?.chat);
+	}
+
+	function holder(ticket: Ticket) {
+		if (ticket.status !== 'in-progress' || !ticket.claim) return ticket.attention ? 'needs attention' : '';
+		return `${ticket.claim.rig} · ${chatOf(ticket)?.status ?? 'closed'}`;
 	}
 </script>
 
@@ -156,7 +173,9 @@
 		<div class="scroll">{@render command(epic)}</div>
 	{:else if phone && ticket}
 		{@render back(`${epic.slug}/${ticket.number}`, () => (open.ticket = undefined), () => edit('edit-ticket', ticket.body))}
-		<div class="scroll"><TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} /></div>
+		<div class="scroll">
+			<TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} {open} chat={chatOf(ticket)} {device} {onchat} />
+		</div>
 	{:else}
 		{@const tally = counts(epic)}
 		<div class="scroll">
@@ -203,7 +222,7 @@
 								<span class="text">
 									<span class="title">{ticket.title}</span>
 									<span class="sub" style:--tone={tones[ticket.status]}>
-										{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}
+										{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}{#if holder(ticket)}{' '}· {holder(ticket)}{/if}
 									</span>
 								</span>
 								<CaretRight />
@@ -211,11 +230,13 @@
 								<span class="title">{ticket.title}</span>
 								<span class="number">{ticket.blockers.join(', ')}</span>
 								<span class="status" style:--tone={tones[ticket.status]}>{label(ticket.status)}</span>
-								<span></span>
+								<span class="held" class:flagged={!!ticket.attention}>{holder(ticket)}</span>
 							{/if}
 						</button>
 						{#if expanded}
-							<div class="detail"><TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} /></div>
+							<div class="detail">
+								<TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} {open} chat={chatOf(ticket)} {device} {onchat} />
+							</div>
 						{/if}
 					{:else}
 						<p class="unset">No Tickets yet.</p>
@@ -564,6 +585,18 @@
 	.status,
 	.sub {
 		color: var(--tone);
+	}
+
+	.held {
+		overflow: hidden;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.flagged {
+		color: var(--status-waiting);
 	}
 
 	.detail {

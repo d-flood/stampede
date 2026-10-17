@@ -34,6 +34,7 @@ use crate::{
     language_servers::{self, Input, LanguageServers, Server, Switch},
     projects::{self, Projects},
     protocol::Size,
+    runs::Runs,
     search,
     terminals::{Attachment, Terminals},
     usage::{Reading, Usage},
@@ -109,6 +110,8 @@ enum Control {
     Search(search::Query),
     #[serde(rename = "epics.subscribe")]
     SubscribeEpics { project_id: String },
+    #[serde(rename = "ticket.start")]
+    StartTicket { project_id: String, epic: String, ticket: u32, rig: String },
     #[serde(rename = "lsp.switch")]
     Switch { project_id: String, on: bool },
     #[serde(rename = "lsp.open")]
@@ -143,11 +146,12 @@ struct Device {
     servers: HashMap<String, Server>,
     epics: Arc<Epics>,
     epic_projects: HashMap<String, PathBuf>,
+    runs: Arc<Runs>,
 }
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, chats, attention, usage, projects, mut config, disk, git, languages, epics, .. }: AppState,
+    AppState { terminals, chats, attention, usage, projects, mut config, disk, git, languages, epics, runs, .. }: AppState,
 ) {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = mpsc::unbounded_channel();
@@ -188,6 +192,7 @@ async fn connect(
         servers: HashMap::new(),
         epics,
         epic_projects: HashMap::new(),
+        runs,
     };
     config.mark_unchanged();
     loop {
@@ -381,7 +386,7 @@ impl Device {
                 let Some(rig) = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned() else {
                     return eprintln!("cannot launch rig {rig} as a chat: not in the config");
                 };
-                match self.chats.create(project, &rig, None).await {
+                match self.chats.create(project, Path::new(&project.path), &rig, None).await {
                     Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
                     Err(error) => eprintln!("cannot create a chat: {error}"),
                 }
@@ -392,7 +397,7 @@ impl Device {
                     return eprintln!("cannot resume a chat in {project_id}: not open");
                 };
                 let rig = self.config.borrow().rig_for(agent);
-                match self.chats.create(project, &rig, Some(&session_id)).await {
+                match self.chats.create(project, Path::new(&project.path), &rig, Some(&session_id)).await {
                     Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
                     Err(error) => eprintln!("cannot resume session {session_id}: {error}"),
                 }
@@ -439,6 +444,7 @@ impl Device {
             }
             Control::Search(query) => self.search(query),
             Control::SubscribeEpics { project_id } => self.subscribe_epics(project_id).await,
+            Control::StartTicket { project_id, epic, ticket, rig } => self.start_ticket(project_id, epic, ticket, rig),
             Control::Switch { project_id, on } => self.languages.switch(&project_id, on),
             Control::OpenServer { channel } => self.open_server(channel),
             Control::CloseServer { channel } => {
@@ -640,6 +646,24 @@ impl Device {
         if let Some(common_dir) = common_dir {
             self.epic_projects.insert(project_id, common_dir);
         }
+    }
+
+    fn start_ticket(&self, project_id: String, epic: String, ticket: u32, rig: String) {
+        let project = self.projects.list().iter().find(|project| project.id == project_id).cloned();
+        let rig = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned();
+        let (runs, outgoing) = (Arc::clone(&self.runs), self.outgoing.clone());
+        tokio::spawn(async move {
+            let started = match (project, rig) {
+                (Some(project), Some(rig)) => runs.start(&epic, ticket, &project, &rig).await,
+                (None, _) => Err(format!("Project {project_id} is not open")),
+                (_, None) => Err("that Rig is no longer in the config".to_owned()),
+            };
+            let reply = match started {
+                Ok(chat_id) => json!({ "type": "ticket.started", "projectId": project_id, "epic": epic, "ticket": ticket, "chatId": chat_id }),
+                Err(error) => json!({ "type": "ticket.error", "projectId": project_id, "epic": epic, "ticket": ticket, "error": error }),
+            };
+            send(&outgoing, reply);
+        });
     }
 
     fn send_epics(&self, project_id: &str, common_dir: Option<&Path>) {
