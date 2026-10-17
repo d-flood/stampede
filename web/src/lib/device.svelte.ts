@@ -36,7 +36,7 @@ export type Request =
 	| { kind: 'other'; id: string; title: string; detail: string };
 
 export type Question = { id: string; header: string; question: string; options: { label: string; description: string; preview?: string }[]; multiSelect: boolean };
-export type AnsweredQuestions = { after: number; questions: Question[]; answers: string[][] };
+export type AnsweredQuestions = { source?: string; after: number; questions: Question[]; answers: string[][] };
 export type Image = { mediaType: string; data: string };
 export type Answer = { allow: true; rule?: { prefix: string[]; scope: 'chat' | 'always' }[] } | { allow: false; instead?: string } | { answers: string[][] };
 export type Todo = { text: string; status: 'pending' | 'active' | 'done' };

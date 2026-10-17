@@ -24,7 +24,7 @@ use super::{
     holder::{self, Frames},
     html,
     protocol::{self, Message},
-    Request, Image, Scope, diff, seconds, unified, words,
+    Request, Image, Scope, AnsweredQuestions, Question, diff, seconds, unified, words,
 };
 use crate::{
     config::{Agent, AgentSettings},
@@ -565,6 +565,25 @@ fn request(id: &str, request: &Value) -> Request {
             Request::Other { id, title, detail: serde_json::to_string_pretty(input).unwrap_or_default() }
         }
     }
+}
+
+fn recorded_answers(question: &Question, text: &str) -> Vec<String> {
+    if text.is_empty() { return Vec::new(); }
+    if !question.multi_select { return vec![text.to_owned()]; }
+    let mut remaining = text;
+    let mut answers = Vec::new();
+    while !remaining.is_empty() {
+        let option = question.options.iter().filter(|option| {
+            !option.label.is_empty() && (remaining == option.label || remaining.strip_prefix(&option.label).is_some_and(|tail| tail.starts_with(", ")))
+        }).max_by_key(|option| option.label.len());
+        let Some(option) = option else {
+            answers.push(remaining.to_owned());
+            break;
+        };
+        answers.push(option.label.clone());
+        remaining = remaining[option.label.len()..].strip_prefix(", ").unwrap_or_default();
+    }
+    answers
 }
 
 fn input(message: &Value) -> Vec<u8> {
@@ -1224,6 +1243,16 @@ impl Transcript {
     fn results(&mut self, content: &Value, result: &Value) {
         for block in content.as_array().into_iter().flatten().filter(|block| block["type"] == "tool_result") {
             let Some(id) = block["tool_use_id"].as_str() else { continue };
+            if block["is_error"] != true && result["answers"].is_object()
+                && let Ok(questions) = serde_json::from_value::<Vec<Question>>(result["questions"].clone())
+                && !questions.is_empty()
+            {
+                let answers = questions.iter().map(|question| {
+                    recorded_answers(question, result["answers"][&question.question].as_str().unwrap_or_default())
+                }).collect();
+                let record = AnsweredQuestions { source: Some(id.to_owned()), after: self.len, questions, answers };
+                let _ = self.events.send(Event::QuestionsRecovered(record));
+            }
             self.activity.finish(id, &self.events);
             if let Some(item) = self.snippets.remove(id) {
                 if block["is_error"] != true {

@@ -42,6 +42,45 @@ env = { OIKONOMOS_FAKE_FIXTURE = "simple-turn" }
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 #[tokio::test]
+async fn past_claude_questions_are_recovered_without_duplicating_saved_answers() {
+    let (mut server, mut socket, project_id) = start(RIGS, Vec::new()).await;
+    let questions = json!([
+        { "header": "Color", "question": "Choose a color", "options": [{ "label": "Red", "description": "Warm", "preview": "Red   warm\nBlue  cool" }], "multiSelect": false },
+        { "header": "Shapes", "question": "Choose shapes", "options": [{ "label": "Circle, round", "description": "Round" }, { "label": "Square", "description": "Four sides" }], "multiSelect": true }
+    ]);
+    let result = json!({ "questions": questions, "answers": { "Choose a color": "Red", "Choose shapes": "Circle, round, Square, Triangle" } });
+    let entries = [
+        json!({ "type": "user", "uuid": "prompt", "parentUuid": null, "message": { "role": "user", "content": "Ask me" } }),
+        json!({ "type": "assistant", "uuid": "question", "parentUuid": "prompt", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "past-question", "name": "AskUserQuestion", "input": { "questions": questions } }] } }),
+        json!({ "type": "user", "uuid": "answer", "parentUuid": "question", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "past-question", "content": "Answered" }] }, "toolUseResult": result }),
+    ];
+    fs::write(sessions(&server).join(format!("{COLOR}.jsonl")), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+    let chat = resume(&mut socket, &project_id, "claude-code", COLOR).await;
+    let chat_id = chat["id"].as_str().unwrap();
+    attach(&mut socket, chat_id).await;
+    let path = server.root.path().join("data/chats").join(format!("{chat_id}.json"));
+    let mut saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let history = saved["answeredQuestions"].as_array().unwrap();
+    assert_eq!(history.len(), 1, "old native questions must be available without answering again");
+    assert_eq!(history[0]["questions"][0]["options"][0]["preview"], "Red   warm\nBlue  cool");
+    assert_eq!(history[0]["answers"], json!([["Red"], ["Circle, round", "Square", "Triangle"]]));
+    saved["answeredQuestions"][0].as_object_mut().unwrap().remove("source");
+    fs::write(&path, saved.to_string()).unwrap();
+    for _ in 0..2 {
+        server.restart().await;
+        let (mut restored, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+        control(&mut restored, json!({ "type": "hello", "deviceId": "recovered" })).await;
+        next_control(&mut restored, "hello").await;
+        attach(&mut restored, chat_id).await;
+        let saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["answeredQuestions"].as_array().unwrap().len(), 1);
+        assert_eq!(saved["answeredQuestions"][0]["source"], "past-question");
+        socket = restored;
+    }
+    close_chat(&mut socket, server.root.path(), chat_id).await;
+}
+
+#[tokio::test]
 async fn both_agents_past_sessions_are_listed_newest_first() {
     let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
     let elsewhere = server.root.path().join("home/.claude/projects/-tmp-oikonomos-elsewhere");

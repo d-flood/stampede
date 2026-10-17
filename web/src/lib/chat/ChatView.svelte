@@ -21,6 +21,7 @@
 	const sessions = $derived(agentSessions(chat, items));
 	const selected = $derived(sessions.find(({ id }) => id === session) ?? sessions[0]);
 	let requests = $state<Request[]>([]);
+	let attached = $state(false);
 	const request = $derived(requests[0]);
 	const live = $derived(device.connection === 'connected');
 	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
@@ -44,10 +45,12 @@
 	function message(message: ServerMessage) {
 		switch (message.type) {
 			case 'hello':
+				attached = false;
 				device.send({ type: 'chat.attach', chatId: chat.id });
 				break;
 			case 'chat.items':
 				if (message.chatId !== chat.id) break;
+				attached = true;
 				requests = [];
 				break;
 			case 'chat.request':
@@ -124,7 +127,7 @@
 	{#each sessions as entry (entry.id)}
 		<div class="transcript" hidden={entry.id !== selected.id} {@attach follow}>
 			<div class="column">
-				<Transcript items={entry.items} answered={!entry.id ? chat.answeredQuestions : []} activity={entry.activity} {ondiff} />
+				<Transcript items={entry.items} answered={attached && !entry.id ? chat.answeredQuestions : []} activity={entry.activity} {ondiff} />
 				{#if !entry.id}<Queued queued={chat.queued} />{/if}
 			</div>
 		</div>

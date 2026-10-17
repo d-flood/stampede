@@ -1,8 +1,42 @@
 import { expect, test, type Page } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { closeProject, openProject } from './shell.ts';
 
 const prompt = 'Run the shell command `mkdir -p out && touch out/approved.txt` exactly as written, then reply with the single word Done.';
+
+test('past Claude questions reopen with their full options, previews and answers', async ({ page }, { project }) => {
+	const name = `past-questions-${project.name}`;
+	const root = process.env.OIKONOMOS_E2E_ROOT;
+	const path = `${root}/projects/${name}`;
+	const sessions = `${root}/claude/projects/${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+	mkdirSync(path, { recursive: true });
+	mkdirSync(sessions, { recursive: true });
+	const session = project.name === 'pixel' ? '450deab6-5332-4d11-b2e4-06bbbd5902c5' : 'fbcf4472-975e-4690-993d-a4cda05e7c84';
+	const questions = [{ header: 'Icons', question: 'Which icon mapping?', options: [{ label: 'Distinct icons', description: 'Use a different icon for every tool.', preview: 'Read   file-text\nEdit   pencil-simple' }, { label: 'One icon', description: 'Use the same icon for every tool.' }], multiSelect: false }];
+	const entries = [
+		{ type: 'user', uuid: 'prompt', parentUuid: null, sessionId: session, message: { role: 'user', content: 'Review previous choices' } },
+		{ type: 'assistant', uuid: 'question', parentUuid: 'prompt', sessionId: session, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'past-question', name: 'AskUserQuestion', input: { questions } }] } },
+		{ type: 'user', uuid: 'answer', parentUuid: 'question', sessionId: session, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'past-question', content: 'Answered' }] }, toolUseResult: { questions, answers: { 'Which icon mapping?': 'Distinct icons' } } }
+	];
+	writeFileSync(`${sessions}/${session}.jsonl`, entries.map((entry) => JSON.stringify(entry)).join('\n'));
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('group', { name: 'Sessions' }).getByRole('menuitem').filter({ hasText: 'Review previous choices' }).click();
+	const history = page.getByRole('group', { name: 'Answered questions', exact: true });
+	await expect(history).toHaveCount(1);
+	await history.locator('summary').click();
+	await expect(history.getByText('Which icon mapping?', { exact: true })).toBeVisible();
+	await expect(history.getByText('Use the same icon for every tool.', { exact: true })).toBeVisible();
+	await expect(history.locator('.preview')).toHaveText('Read   file-text\nEdit   pencil-simple');
+	await expect(history.locator('.preview')).toHaveCSS('white-space', 'pre');
+	await expect(history.getByText('Answer: Distinct icons', { exact: true })).toBeVisible();
+	await expect.poll(() => history.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+	await page.reload();
+	await expect(history).toHaveCount(1);
+	await history.locator('summary').click();
+	await expect(history.getByText('Answer: Distinct icons', { exact: true })).toBeVisible();
+	await closeProject(page, name);
+});
 
 async function launch(page: Page, rig: string, name: string) {
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });

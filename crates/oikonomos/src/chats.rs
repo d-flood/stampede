@@ -315,8 +315,10 @@ pub struct ChoiceDescription {
     pub preview: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AnsweredQuestions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     pub after: usize,
     pub questions: Vec<Question>,
     pub answers: Vec<Vec<String>>,
@@ -353,6 +355,7 @@ pub enum Event {
     ResumeAt(Option<String>),
     PlanResolved(String),
     QuestionsTruncated(usize),
+    QuestionsRecovered(AnsweredQuestions),
     Status(Status),
     Activity(Option<String>),
     /// Appends the Item when its index is the transcript's length, and replaces the one there otherwise.
@@ -770,6 +773,21 @@ impl Chats {
                     self.save(&chat);
                     let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
                 }
+                Event::QuestionsRecovered(record) => {
+                    let mut chat = entry.chat.lock().unwrap();
+                    let existing = chat.answered_questions.iter_mut().find(|saved| {
+                        saved.source == record.source || (saved.source.is_none() && saved.questions == record.questions
+                            && saved.answers.iter().map(|answers| answers.join(", ")).eq(record.answers.iter().map(|answers| answers.join(", "))))
+                    });
+                    if let Some(existing) = existing {
+                        if *existing == record { continue; }
+                        *existing = record;
+                    } else {
+                        chat.answered_questions.push(record);
+                    }
+                    self.save(&chat);
+                    let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+                }
                 Event::ResumeAt(at) => {
                     let mut chat = entry.chat.lock().unwrap();
                     chat.resume_at = at;
@@ -1075,7 +1093,7 @@ impl Chats {
                 Answer::Deny { instead: Some(text) } => vec![vec![text.clone()]; questions.len()],
                 _ => vec![Vec::new(); questions.len()],
             };
-            Some(AnsweredQuestions { after: transcript.items.len(), questions: questions.clone(), answers })
+            Some(AnsweredQuestions { source: None, after: transcript.items.len(), questions: questions.clone(), answers })
         } else { None };
         if self.resolve(&mut transcript, id, request_id) {
             if let Some(answered) = answered {
