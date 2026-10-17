@@ -1,7 +1,7 @@
 import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test, type Locator } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { closeProject, openProject, showSidebar } from './shell.ts';
 
@@ -209,6 +209,47 @@ for (const { agent, rig, command, before, after } of slashed) {
 		await page.keyboard.press('Escape');
 	});
 }
+
+test('/spec from the slash menu sends its Template before the typed text', async ({ page }, { project }) => {
+	const root = process.env.OIKONOMOS_E2E_ROOT;
+	const name = `template-${project.name}`;
+	mkdirSync(`${root}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	await expect(tab.getByTitle('done')).toBeVisible();
+
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	await composer.fill('/');
+	const menu = panel.getByRole('region', { name: 'Commands' });
+	await menu.getByRole('button', { name: /^\/spec write the Brief/ }).click();
+	await expect(composer).toHaveValue('/spec ');
+	await expect(menu).toHaveCount(0);
+	await composer.press('End');
+	await composer.pressSequentially('go');
+	await panel.getByRole('button', { name: 'Send' }).click();
+
+	await expect(panel.locator('.user')).toHaveText('/spec go');
+	await expect(panel.getByText('Problem Statement')).toHaveCount(0);
+	const spec = readFileSync(fileURLToPath(new URL('../../crates/oikonomos/src/templates/spec.md', import.meta.url)), 'utf8').trimEnd();
+	const data = `${root}/data`;
+	const sent = () =>
+		readFileSync(`${root}/claude/fake-received.jsonl`, 'utf8')
+			.split('\n')
+			.filter(Boolean)
+			.map((line) => JSON.parse(line))
+			.filter((message) => message.type === 'user')
+			.map((message) => message.message.content);
+	const note = `This Oikonomos server keeps its data in ${data}, so pass \`--data-dir ${data}\` to every \`oikonomos\` command.`;
+	await expect.poll(sent).toContain(`${spec}\n\n${note}\n\ngo`);
+	await expect(tab.getByTitle('done')).toBeVisible();
+
+	await tab.click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await expect(tab).toHaveCount(0);
+});
 
 for (const agent of ['Claude', 'Codex']) {
 	test(`a ${agent} edit is a card that opens its file in a Diff tab`, async ({ page }, { project }) => {

@@ -16,6 +16,8 @@
 		</summary>
 		<div class="text">{item.text}</div>
 	</details>
+{:else if item.template}
+	<div class="user text"><span class="template">/{item.template}</span>{item.text.slice(item.template.length + 1)}</div>
 {:else}
 	<div class="user text">{item.text}</div>
 {/if}
@@ -75,6 +77,11 @@
 
 	.label {
 		color: var(--muted-fg);
+	}
+
+	.template {
+		font-family: var(--font-mono);
+		font-weight: 600;
 	}
 
 	.images {

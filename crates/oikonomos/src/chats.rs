@@ -24,6 +24,7 @@ use crate::{
     attention::{Attention, Feed},
     config::{Agent, AgentSettings, Rig},
     projects::Project,
+    templates,
     usage::{Reading, Usage},
 };
 pub use holder::{HoldChatArgs, hold_chat};
@@ -32,7 +33,12 @@ pub use html::serve as chat_tools;
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Item {
-    User { text: String, images: usize },
+    User {
+        text: String,
+        images: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        template: Option<&'static str>,
+    },
     Text { text: String, streaming: bool, phase: Phase },
     Thinking {
         seconds: u64,
@@ -678,7 +684,7 @@ impl Chats {
                         let text = chat.queued.remove(0);
                         let images = if chat.queued_images.is_empty() { Vec::new() } else { chat.queued_images.remove(0) };
                         self.queued(&chat);
-                        entry.driver.send(&text, &images);
+                        entry.driver.send(&templates::expand(&text, &self.data_dir), &images);
                         continue;
                     }
                     drop(chat);
@@ -729,7 +735,12 @@ impl Chats {
                     self.save(&chat);
                     let _ = self.changed.send(Change::Todos { chat_id: id.clone(), todos });
                 }
-                Event::Item(index, item) => {
+                Event::Item(index, mut item) => {
+                    if let Item::User { text, template, .. } = &mut item
+                        && let Some((name, typed)) = templates::recognize(text, &self.data_dir)
+                    {
+                        (*template, *text) = (Some(name), typed);
+                    }
                     let mut transcript = entry.transcript.lock().unwrap();
                     match transcript.items.get_mut(index) {
                         Some(existing) => *existing = item.clone(),
@@ -840,7 +851,7 @@ impl Chats {
             self.queued(&chat);
         } else {
             drop(chat);
-            entry.driver.send(text, images);
+            entry.driver.send(&templates::expand(text, &self.data_dir), images);
         }
     }
 

@@ -19,11 +19,13 @@ export type Appearance = { theme: ITheme; fontFamily: string; scrollback: number
 export type Agent = 'claude-code' | 'codex';
 export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 export type Rig = { name: string; agent: Agent; shortcut?: string };
+export type Template = { name: string; description: string };
 
 const dark = new MediaQuery('(prefers-color-scheme: dark)');
 let revision = $state(0);
 let faces: FontFace[] = [];
 let configured = $state.raw<Rig[]>([]);
+let offered = $state.raw<Template[]>([]);
 let chord = $state('ctrl+space');
 let extras = $state.raw<string[]>([]);
 let scrollback = $state(10_000);
@@ -38,14 +40,15 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export async function loadConfig() {
-	const [theme, font, rigs, settings, leaderKey, keys, lines] = await Promise.all([
+	const [theme, font, rigs, settings, leaderKey, keys, lines, listed] = await Promise.all([
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
 		get<Rig[]>('/api/rigs'),
 		get<EditorSettings>('/api/editor'),
 		get<string>('/api/leader'),
 		get<Keybar>('/api/keybar'),
-		get<number>('/api/scrollback')
+		get<number>('/api/scrollback'),
+		get<Template[]>('/api/templates')
 	]);
 	editor.keymap = settings.keymap;
 	chord = leaderKey;
@@ -58,6 +61,7 @@ export async function loadConfig() {
 	for (const face of faces) document.fonts.add(face);
 	style.setProperty('--font-mono', `"${font.family}", "Symbols Nerd Font Mono", monospace`);
 	configured = rigs;
+	offered = listed;
 	revision++;
 }
 
@@ -88,6 +92,10 @@ export async function selectTheme(name: string) {
 
 export function rigs(): Rig[] {
 	return configured;
+}
+
+export function templates(): Template[] {
+	return offered;
 }
 
 export function leader(): string {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { agentNames, type Agent } from '#lib/config.svelte.ts';
+	import { agentNames, templates, type Agent } from '#lib/config.svelte.ts';
 	import type { Builtin, Capabilities, Choice, Setting, Settings } from '#lib/device.svelte.ts';
 
 	type Props = {
@@ -25,7 +25,6 @@
 	let { text, agent, settings, capabilities, choices, working, replace, onrun }: Props = $props();
 
 	const builtins = ['effort', 'model', 'mode', 'compact', 'clear', 'rewind'];
-	const templates: Row[] = [];
 
 	function run(command: Builtin, value?: string | number) {
 		onrun(command, value);
@@ -59,9 +58,11 @@
 			{ label: '/mode', choices: choices.mode, current: settings.mode, choose: () => replace('/mode ') },
 			now('compact', 'free up context'),
 			now('clear', 'new session'),
-			now('rewind', capabilities.rewindsFiles ? 'conversation and tracked files' : 'conversation only; files unchanged')
+			now('rewind', capabilities.rewindsFiles ? 'conversation and tracked files' : 'conversation only; files unchanged'),
+			...templates().map(({ name, description }) => ({ label: `/${name}`, detail: description, choose: () => replace(`/${name} `) }))
 		];
-		const commands = capabilities.commands.filter((command) => !builtins.includes(command.name));
+		const taken = [...builtins, ...templates().map((template) => template.name)];
+		const commands = capabilities.commands.filter((command) => !taken.includes(command.name));
 		const own = commands.map((command) => ({
 			label: `/${command.name}`,
 			detail: command.hint || command.description,
@@ -70,7 +71,6 @@
 		const matches = (row: Row) => row.label.startsWith(`/${typed}`);
 		return [
 			{ heading: 'Oikonomos', rows: oikonomos.filter(matches) },
-			{ heading: 'Templates', rows: templates.filter(matches) },
 			{ heading: `From ${agentNames[agent]}`, rows: own.filter(matches) }
 		].filter((group) => group.rows.length);
 	});

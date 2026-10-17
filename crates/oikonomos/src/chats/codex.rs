@@ -1233,7 +1233,7 @@ fn user(item: &Value) -> Item {
     let content = item["content"].as_array().into_iter().flatten();
     let images = content.clone().filter(|input| input["type"] == "image" || input["type"] == "localImage").count();
     let text: Vec<&str> = content.filter_map(|input| input["text"].as_str()).collect();
-    Item::User { text: text.join("\n"), images }
+    Item::User { text: text.join("\n"), images, template: None }
 }
 
 fn agent(item: &Value) -> Item {

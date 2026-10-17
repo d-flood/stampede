@@ -816,7 +816,7 @@ impl Transcript {
             let images = content.as_array().into_iter().flatten().filter(|block| block["type"] == "image").count();
             let _ = self.events.send(Event::ResumeAt(None));
             self.checkpoint(message);
-            self.push(Item::User { text, images });
+            self.push(Item::User { text, images, template: None });
             if message.get("priority").is_some()
                 && let Some(uuid) = message["uuid"].as_str()
             {
@@ -871,7 +871,7 @@ impl Transcript {
                 Some(content) => {
                     if let Some(text) = prompt(content) {
                         self.checkpoint(entry);
-                        self.push(Item::User { text, images: 0 });
+                        self.push(Item::User { text, images: 0, template: None });
                         self.compact();
                     }
                 }
@@ -879,14 +879,14 @@ impl Transcript {
                     let blocks = entry["message"]["content"].as_array().into_iter().flatten();
                     let text = blocks.clone().filter_map(|block| block["text"].as_str()).collect::<Vec<_>>().join("\n");
                     let images = blocks.filter(|block| block["type"] == "image").count();
-                    if !text.is_empty() || images > 0 { self.checkpoint(entry); self.push(Item::User { text, images }); }
+                    if !text.is_empty() || images > 0 { self.checkpoint(entry); self.push(Item::User { text, images, template: None }); }
                     self.compact();
                     self.results(&entry["message"]["content"], &entry["toolUseResult"]);
                 }
             },
             Some("attachment") if entry["attachment"]["type"] == "queued_command" => {
                 if let Some(text) = entry["attachment"]["prompt"].as_str() {
-                    self.push(Item::User { text: text.to_owned(), images: 0 });
+                    self.push(Item::User { text: text.to_owned(), images: 0, template: None });
                 }
             }
             Some("assistant") => {

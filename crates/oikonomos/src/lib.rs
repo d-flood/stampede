@@ -15,6 +15,7 @@ mod projects;
 mod protocol;
 mod push;
 mod search;
+mod templates;
 mod terminals;
 mod themes;
 mod usage;
@@ -99,6 +100,7 @@ fn router(state: AppState) -> Router {
         .route("/api/themes", get(theme_names))
         .route("/api/font", get(font))
         .route("/api/rigs", get(rigs))
+        .route("/api/templates", get(templates))
         .route("/api/editor", get(editor))
         .route("/api/leader", get(leader))
         .route("/api/keybar", get(keybar))
@@ -187,6 +189,10 @@ async fn font(State(state): State<AppState>) -> Json<Font> {
 
 async fn rigs(State(state): State<AppState>) -> Json<Vec<Rig>> {
     Json(state.config.borrow().rigs.clone())
+}
+
+async fn templates() -> Json<&'static [templates::Template]> {
+    Json(templates::TEMPLATES)
 }
 
 async fn editor(State(state): State<AppState>) -> Json<Editor> {

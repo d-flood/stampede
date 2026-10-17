@@ -16,7 +16,7 @@ export type Terminal = {
 export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'other'; name: string; detail: string };
 
 export type Item =
-	| { kind: 'user'; text: string; images: number }
+	| { kind: 'user'; text: string; images: number; template?: string }
 	| { kind: 'text'; text: string; streaming: boolean; phase: 'commentary' | 'final' }
 	| { kind: 'thinking'; seconds: number; text?: string }
 	| { kind: 'tools'; calls: ToolCall[] }
