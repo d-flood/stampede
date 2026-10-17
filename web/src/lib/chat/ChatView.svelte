@@ -7,6 +7,7 @@
 	import Meters from '#lib/chat/Meters.svelte';
 	import Queued from '#lib/chat/Queued.svelte';
 	import RequestCard from '#lib/chat/RequestCard.svelte';
+	import Shells from '#lib/chat/Shells.svelte';
 	import Todos from '#lib/chat/Todos.svelte';
 	import Chips from '#lib/chat/Chips.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
@@ -133,6 +134,7 @@
 		</div>
 	{/each}
 	<div class="foot">
+		<Shells {items} />
 		<Activity status={selected.status} activity={selected.activity} />
 		{#if request}
 			{#key request.id}

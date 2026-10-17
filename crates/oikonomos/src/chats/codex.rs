@@ -565,7 +565,7 @@ struct Transcript {
     streaming: HashMap<String, (usize, String, Phase)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     activity: super::Activity,
-    commands: HashMap<String, usize>,
+    commands: HashMap<String, (usize, Item)>,
     subagents: HashMap<String, (Subagent, Transcript)>,
     reading: HashMap<u64, String>,
     previous: u64,
@@ -1101,9 +1101,14 @@ impl Transcript {
                 }
             }
             Some("item/started") if item["type"] == "commandExecution" => {
-                let index = self.push(command(item));
-                if let Some(id) = item["id"].as_str() {
-                    self.commands.insert(id.to_owned(), index);
+                self.command(item);
+            }
+            Some("item/commandExecution/outputDelta") => {
+                if let Some((index, item)) = params["itemId"].as_str().and_then(|id| self.commands.get_mut(id)) {
+                    if let Item::Command { output, .. } = item {
+                        output.push_str(params["delta"].as_str().unwrap_or_default());
+                    }
+                    let _ = self.events.send(Event::Item(*index, item.clone()));
                 }
             }
             Some("item/completed") => {
@@ -1153,14 +1158,7 @@ impl Transcript {
                 };
                 self.push(Item::Thinking { seconds: seconds(elapsed), text: parts("summary").or_else(|| parts("content")) });
             }
-            Some("commandExecution") => match item["id"].as_str().and_then(|id| self.commands.remove(id)) {
-                Some(index) => {
-                    let _ = self.events.send(Event::Item(index, command(item)));
-                }
-                None => {
-                    self.push(command(item));
-                }
-            },
+            Some("commandExecution") => self.command(item),
             Some("fileChange") if item["status"] == "completed" => {
                 for change in item["changes"].as_array().into_iter().flatten() {
                     let (kind, diff) = (&change["kind"], change["diff"].as_str().unwrap_or_default());
@@ -1237,6 +1235,26 @@ impl Transcript {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn command(&mut self, value: &Value) {
+        let id = value["id"].as_str().unwrap_or_default();
+        let mut item = command(value);
+        let index = match self.commands.remove(id) {
+            Some((index, previous)) => {
+                if value["aggregatedOutput"].is_null()
+                    && let (Item::Command { output, .. }, Item::Command { output: previous, .. }) = (&mut item, previous)
+                {
+                    *output = previous;
+                }
+                let _ = self.events.send(Event::Item(index, item.clone()));
+                index
+            }
+            None => self.push(item.clone()),
+        };
+        if matches!(item, Item::Command { status: CommandStatus::Running, .. }) {
+            self.commands.insert(id.to_owned(), (index, item));
         }
     }
 
@@ -1318,6 +1336,31 @@ fn edit(id: String, changes: &Value) -> super::Request {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn running_shells_stream_and_complete_in_place_after_resume() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new("thread", Path::new("/project"), events);
+        let item = json!({ "type": "commandExecution", "id": "shell", "command": "pnpm dev", "status": "inProgress" });
+        transcript.resumed(&json!([{ "id": "turn", "status": "completed", "items": [item] }]));
+        transcript.read(&json!({ "method": "item/commandExecution/outputDelta", "params": {
+            "threadId": "thread", "itemId": "shell", "delta": "Server ready\n",
+        } }));
+        let mut items = BTreeMap::new();
+        while let Ok(event) = received.try_recv() {
+            if let Event::Item(index, item) = event { items.insert(index, item); }
+        }
+        assert!(matches!(items.get(&0), Some(Item::Command { status: CommandStatus::Running, output, .. }) if output == "Server ready\n"));
+        let mut finished = item;
+        finished["status"] = json!("completed");
+        transcript.completed(&finished, 0);
+        while let Ok(event) = received.try_recv() {
+            if let Event::Item(index, item) = event { items.insert(index, item); }
+        }
+        assert_eq!(items.len(), 1);
+        assert!(matches!(items.get(&0), Some(Item::Command { status: CommandStatus::Ok, output, .. }) if output == "Server ready\n"));
+        assert!(transcript.commands.is_empty());
+    }
 
     #[test]
     fn html_renders_live_and_from_resumed_threads() {

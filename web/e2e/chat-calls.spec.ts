@@ -44,11 +44,13 @@ test('agent messages stay visible with collapsed streaming tool counts between t
 	update(3, { kind: 'command', command: 'wc -l notes.txt', status: 'running', output: '' });
 	await expect(summaries).toHaveText(['2 tool callsGrep needle', '1 tool call$ wc -l notes.txt']);
 	await expect(panel.getByText('I found the match. I’ll count its lines.', { exact: true })).toBeVisible();
-	await expect(panel.locator('.command')).toBeHidden();
+	await expect(panel.locator('.transcript .command')).toBeHidden();
+	await expect(panel.getByRole('region', { name: 'Running shells' })).toContainText('wc -l notes.txt');
 	if (project.name === 'pixel') await summaries.last().tap();
 	else await summaries.last().click();
-	await expect(panel.locator('.command')).toBeVisible();
+	await expect(panel.locator('.transcript .command')).toBeVisible();
 	update(3, { kind: 'command', command: 'wc -l notes.txt', status: 'ok', output: '3 notes.txt' });
+	await expect(panel.getByRole('region', { name: 'Running shells' })).toHaveCount(0);
 	await expect(panel.locator('.calls[open]')).toHaveCount(1);
 	await expect(summaries.last()).toContainText('1 tool call');
 	await panel.locator('summary', { hasText: '$ wc -l notes.txt' }).last().click();

@@ -616,7 +616,7 @@ struct Transcript {
     said: Vec<(usize, String)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     activity: super::Activity,
-    commands: HashMap<String, (usize, String)>,
+    commands: HashMap<String, (usize, String, String)>,
     snippets: HashMap<String, Item>,
     edits: HashSet<String>,
     subagents: HashMap<String, (Subagent, Transcript)>,
@@ -1078,12 +1078,23 @@ impl Transcript {
     }
 
     fn task_status(&mut self, task: Option<&str>, tool: Option<&str>, status: Option<&str>) {
-        let tool = tool.filter(|tool| self.subagents.contains_key(*tool)).or_else(|| task.and_then(|task| self.tasks.get(task).map(String::as_str)));
-        if matches!(status, Some("completed" | "failed" | "stopped"))
-            && let Some((subagent, _)) = tool.and_then(|tool| self.subagents.get_mut(tool))
-        {
-            subagent.status = Status::Done;
-            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+        for (subagent, transcript) in self.subagents.values_mut() {
+            transcript.task_status(task, tool, status);
+            if subagent.update() {
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
+        }
+        let tool = tool.filter(|tool| self.subagents.contains_key(*tool) || self.commands.contains_key(*tool))
+            .or_else(|| task.and_then(|task| self.tasks.get(task).map(String::as_str))).map(str::to_owned);
+        if matches!(status, Some("completed" | "failed" | "stopped")) {
+            if let Some((subagent, _)) = tool.as_ref().and_then(|tool| self.subagents.get_mut(tool)) {
+                subagent.status = Status::Done;
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
+            if let Some((index, command, output)) = tool.as_ref().and_then(|tool| self.commands.remove(tool)) {
+                let status = if status == Some("completed") { CommandStatus::Ok } else { CommandStatus::Failed };
+                let _ = self.events.send(Event::Item(index, Item::Command { command, status, output }));
+            }
         }
     }
 
@@ -1189,7 +1200,7 @@ impl Transcript {
                 let command = text("command");
                 let running = Item::Command { command: command.clone(), status: CommandStatus::Running, output: String::new() };
                 let index = self.push(running);
-                self.commands.insert(id.to_owned(), (index, command));
+                self.commands.insert(id.to_owned(), (index, command, String::new()));
             }
             "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => {
                 self.edits.insert(id.to_owned());
@@ -1291,16 +1302,25 @@ impl Transcript {
                 }
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
-            let Some((index, command)) = self.commands.remove(id) else {
+            let Some((index, command, _)) = self.commands.remove(id) else {
                 continue;
             };
-            let status = if block["is_error"] == true { CommandStatus::Failed } else { CommandStatus::Ok };
             let output = match &block["content"] {
                 Value::String(text) => text.clone(),
                 blocks => {
                     let texts: Vec<&str> = blocks.as_array().into_iter().flatten().filter_map(|block| block["text"].as_str()).collect();
                     texts.join("\n")
                 }
+            };
+            let task = result["backgroundTaskId"].as_str();
+            let status = if block["is_error"] == true {
+                CommandStatus::Failed
+            } else if let Some(task) = task {
+                self.tasks.insert(task.to_owned(), id.to_owned());
+                self.commands.insert(id.to_owned(), (index, command.clone(), output.clone()));
+                CommandStatus::Running
+            } else {
+                CommandStatus::Ok
             };
             let _ = self.events.send(Event::Item(index, Item::Command { command, status, output }));
         }
@@ -1427,6 +1447,42 @@ fn prompt(content: &str) -> Option<String> {
 #[cfg(test)]
 mod subagent_tests {
     use super::*;
+
+    #[test]
+    fn background_shells_remain_running_until_notified_live_and_from_history() {
+        for recorded in [false, true] {
+            for status in ["completed", "failed", "stopped"] {
+                let (events, mut received) = mpsc::unbounded_channel();
+                let mut transcript = Transcript::new(events, Path::new("/project"));
+                let assistant = json!({ "type": "assistant", "message": { "content": [{
+                    "type": "tool_use", "id": "shell", "name": "Bash", "input": { "command": "pnpm dev", "run_in_background": true },
+                }] } });
+                let mut result = json!({ "type": "user", "message": { "content": [{
+                    "type": "tool_result", "tool_use_id": "shell", "content": "Server starting",
+                }] } });
+                result[if recorded { "toolUseResult" } else { "tool_use_result" }] = json!({ "backgroundTaskId": "task" });
+                for entry in [assistant, result] {
+                    if recorded { transcript.recorded(&entry); } else { transcript.read(&entry); }
+                }
+                let mut items = BTreeMap::new();
+                while let Ok(event) = received.try_recv() {
+                    if let Event::Item(index, item) = event { items.insert(index, item); }
+                }
+                assert!(matches!(items.get(&0), Some(Item::Command { status: CommandStatus::Running, output, .. }) if output == "Server starting"));
+                let notification = json!({ "type": "user", "promptSource": "system", "message": { "content": format!(
+                    "<task-notification><task-id>task</task-id><status>{status}</status></task-notification>"
+                ) } });
+                if recorded { transcript.recorded(&notification); } else { transcript.read(&notification); }
+                while let Ok(event) = received.try_recv() {
+                    if let Event::Item(index, item) = event { items.insert(index, item); }
+                }
+                let expected = if status == "completed" { CommandStatus::Ok } else { CommandStatus::Failed };
+                assert!(matches!(items.get(&0), Some(Item::Command { status, output, .. }) if *status == expected && output == "Server starting"));
+                assert_eq!(items.len(), 1);
+                assert!(transcript.commands.is_empty());
+            }
+        }
+    }
 
     #[test]
     fn background_completion_is_restored_without_hiding_active_agents() {
