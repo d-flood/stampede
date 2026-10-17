@@ -14,9 +14,9 @@
 {/if}
 
 <style>
-	.activity { display: flex; align-items: center; gap: var(--space-2); min-height: var(--target-min); color: var(--status-working); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+	.activity { display: flex; align-items: center; gap: var(--space-2); min-height: var(--target-min); color: var(--status-working); font-size: var(--font-size-sm); }
 	.waiting { color: var(--status-waiting); }
 	.spinner { display: inline-flex; flex: none; animation: spin 1s linear var(--pulse); }
-	.label { min-width: 0; }
+	.label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	@keyframes spin { to { transform: rotate(1turn); } }
 </style>
