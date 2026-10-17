@@ -26,6 +26,7 @@ fn chat_html_tool_speaks_mcp_and_validates_snippets() {
     assert_eq!(responses.len(), 6);
     assert_eq!(responses[0]["result"]["capabilities"], json!({ "tools": {} }));
     assert_eq!(responses[1]["result"]["tools"][0]["name"], "render_html");
+    assert_eq!(responses[1]["result"]["tools"][1]["name"], "render_media");
     assert_eq!(responses[2]["result"]["isError"], false);
     assert_eq!(responses[3]["result"]["isError"], true);
     assert_eq!(responses[4]["result"]["isError"], true);

@@ -137,8 +137,8 @@ async fn launch(
         .chain(env.iter().map(|(name, value)| (name.as_str(), value.as_str())))
         .chain(SDK_ENV)
         .chain([("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true")]);
-    let tools = ["--mcp-config".to_owned(), json!({ "mcpServers": { html::SERVER: html::config() } }).to_string(),
-        "--allowedTools".to_owned(), html::CLAUDE_TOOL.to_owned()];
+    let tools = ["--mcp-config".to_owned(), json!({ "mcpServers": { html::SERVER: html::config(data_dir) } }).to_string(),
+        "--allowedTools".to_owned(), format!("{},{}", html::CLAUDE_TOOL, crate::media::CLAUDE_TOOL)];
     let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.claude_flags()).chain(tools);
     let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
     let rewind = at.into_iter().flat_map(|at| ["--resume-session-at".to_owned(), at.to_owned()]);
@@ -618,6 +618,7 @@ struct Transcript {
     activity: super::Activity,
     commands: HashMap<String, (usize, String, String)>,
     snippets: HashMap<String, Item>,
+    media: HashSet<String>,
     edits: HashSet<String>,
     subagents: HashMap<String, (Subagent, Transcript)>,
     todos: Vec<(String, Todo)>,
@@ -665,6 +666,7 @@ impl Transcript {
             activity: super::Activity::default(),
             commands: HashMap::new(),
             snippets: HashMap::new(),
+            media: HashSet::new(),
             edits: HashSet::new(),
             subagents: HashMap::new(),
             todos: Vec::new(),
@@ -1027,6 +1029,7 @@ impl Transcript {
                 self.tools = None;
                 self.commands.clear();
                 self.snippets.clear();
+                self.media.clear();
                 self.edits.clear();
                 self.subagents.clear();
                 self.todos.clear();
@@ -1189,6 +1192,7 @@ impl Transcript {
             self.activity.start(id, label, &self.events);
         }
         match name {
+            crate::media::CLAUDE_TOOL => { self.media.insert(id.to_owned()); }
             html::CLAUDE_TOOL => {
                 if let Some(item) = html::item(input) {
                     self.snippets.insert(id.to_owned(), item);
@@ -1275,6 +1279,11 @@ impl Transcript {
                 if block["is_error"] != true {
                     self.push(item);
                 }
+            }
+            if self.media.remove(id) && block["is_error"] != true
+                && let Some(item) = crate::media::item(block)
+            {
+                self.push(item);
             }
             if self.edits.remove(id) && block["is_error"] != true {
                 self.edit(result);
@@ -1537,7 +1546,7 @@ mod subagent_tests {
 }
 
 #[cfg(test)]
-mod html_tests {
+mod render_tests {
     use super::*;
 
     #[test]
@@ -1566,6 +1575,35 @@ mod html_tests {
                     assert!(matches!(items.as_slice(), [(0, item)] if Some(item) == html::item(&arguments).as_ref()));
                 }
                 assert!(transcript.snippets.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn media_renders_only_after_success_live_and_from_history_without_the_source_file() {
+        let asset = json!({ "title": "Screenshot", "asset": "f382e7e5-ff76-42cc-b150-cb8b59c8aefa.png" });
+        let assistant = json!({ "type": "assistant", "message": { "content": [{
+            "type": "tool_use", "id": "media", "name": crate::media::CLAUDE_TOOL,
+            "input": { "path": "/removed/screenshot.png", "title": "Screenshot" },
+        }] } });
+        for content in [json!(asset.to_string()), json!([{ "type": "text", "text": asset.to_string() }])] {
+            for recorded in [false, true] {
+                for denied in [false, true] {
+                    let (events, mut received) = mpsc::unbounded_channel();
+                    let mut transcript = Transcript::new(events, Path::new("/project"));
+                    let block = json!({ "type": "tool_result", "tool_use_id": "media", "is_error": denied, "content": content });
+                    let result = json!({ "type": "user", "message": { "content": [block] } });
+                    if recorded { transcript.recorded(&assistant); } else { transcript.read(&assistant); }
+                    assert!(!std::iter::from_fn(|| received.try_recv().ok()).any(|event| matches!(event, Event::Item(..))));
+                    if recorded { transcript.recorded(&result); } else { transcript.read(&result); }
+                    let items: Vec<_> = std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+                        Event::Item(_, item) => Some(item),
+                        _ => None,
+                    }).collect();
+                    if denied { assert!(items.is_empty()); }
+                    else { assert_eq!(items, [crate::media::item(&block).unwrap()]); }
+                    assert!(transcript.media.is_empty());
+                }
             }
         }
     }

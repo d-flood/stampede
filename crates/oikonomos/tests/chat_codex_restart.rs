@@ -130,11 +130,11 @@ async fn a_codex_chat_resumes_its_thread_through_server_restarts() {
     );
     assert_eq!(received[8]["params"], json!({ "threadId": THREAD, "config": {
         "tools.update_plan": { "enabled": true },
-        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools"] },
+        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools", "--data-dir", server.root.path().join("data")] },
     } }));
     assert_eq!(received[14]["params"], json!({ "threadId": THREAD, "config": {
         "tools.update_plan": { "enabled": true },
-        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools"] },
+        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools", "--data-dir", server.root.path().join("data")] },
     } }));
 }
 

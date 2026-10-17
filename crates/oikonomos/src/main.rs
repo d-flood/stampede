@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use clap::{Parser, Subcommand};
-use oikonomos::{CliCommand, HoldArgs, HoldChatArgs, InstallArgs, ServeArgs, UninstallArgs};
+use oikonomos::{ChatToolsArgs, CliCommand, HoldArgs, HoldChatArgs, InstallArgs, ServeArgs, UninstallArgs};
 
 #[derive(Parser)]
 #[command(version)]
@@ -15,7 +15,7 @@ enum Command {
     Serve(ServeArgs),
     Hold(HoldArgs),
     HoldChat(HoldChatArgs),
-    ChatTools,
+    ChatTools(ChatToolsArgs),
     Install(InstallArgs),
     Uninstall(UninstallArgs),
     #[command(flatten)]
@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Command::Hold(args) => oikonomos::hold(args),
         Command::HoldChat(args) => oikonomos::hold_chat(args),
-        Command::ChatTools => Ok(oikonomos::chat_tools()?),
+        Command::ChatTools(args) => Ok(oikonomos::chat_tools(args)?),
         Command::Install(args) => Ok(oikonomos::install(args)?),
         Command::Uninstall(args) => Ok(oikonomos::uninstall(args)?),
         Command::Cli(command) => {

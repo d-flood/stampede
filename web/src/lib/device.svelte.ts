@@ -23,6 +23,7 @@ export type Item =
 	| { kind: 'thinking'; seconds: number; text?: string }
 	| { kind: 'tools'; calls: ToolCall[] }
 	| { kind: 'html'; title: string; html: string }
+	| { kind: 'media'; title: string; asset: string }
 	| { kind: 'subagent'; name?: string; task: string; status: Status; activity?: string | null; items: Item[] }
 	| { kind: 'edit'; path: string; diff: string; added: number; removed: number }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }

@@ -168,9 +168,9 @@ if os.environ.get('CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING') == 'true':
     if '--mcp-config' not in args or '--allowedTools' not in args:
         fail('chat HTML tool is missing')
     mcp = json.loads(args[args.index('--mcp-config') + 1])['mcpServers']['oikonomos_chat']
-    if not Path(mcp['command']).is_file() or mcp['args'] != ['chat-tools']:
+    if not Path(mcp['command']).is_file() or mcp['args'][:2] != ['chat-tools', '--data-dir'] or len(mcp['args']) != 3 or not Path(mcp['args'][2]).is_absolute():
         fail(f'invalid chat HTML server: {mcp}')
-    if args[args.index('--allowedTools') + 1] != 'mcp__oikonomos_chat__render_html':
+    if args[args.index('--allowedTools') + 1] != 'mcp__oikonomos_chat__render_html,mcp__oikonomos_chat__render_media':
         fail('chat HTML tool is not allowed')
 
 entries = [json.loads(line) for line in fixture().read_text().splitlines()]

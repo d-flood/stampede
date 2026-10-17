@@ -11,6 +11,7 @@ mod holder;
 mod install;
 mod language_servers;
 mod layouts;
+mod media;
 mod projects;
 mod protocol;
 mod push;
@@ -39,7 +40,7 @@ use attention::Feed;
 use chats::Chats;
 use config::{Config, Editor, Font, Keybar, Rig};
 use epics::{Author, Epics, Event, Pause};
-pub use chats::{HoldChatArgs, hold_chat, chat_tools};
+pub use chats::{ChatToolsArgs, HoldChatArgs, hold_chat, chat_tools};
 pub use cli::{CliCommand, cli};
 pub use holder::{HoldArgs, hold};
 pub use install::{InstallArgs, UninstallArgs, install, uninstall};
@@ -77,6 +78,7 @@ fn data_dir() -> PathBuf {
 
 #[derive(Clone)]
 struct AppState {
+    media_dir: PathBuf,
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
     attention: Arc<Feed>,
@@ -109,6 +111,7 @@ fn router(state: AppState) -> Router {
         .route("/api/keybar", get(keybar))
         .route("/api/scrollback", get(scrollback))
         .route("/api/config/file", get(files::read_config).put(files::write_config))
+        .route("/api/media/{asset}", get(media::read))
         .route("/api/push/key", get(push::key))
         .route("/api/push/subscribe", post(push::subscribe))
         .route("/api/devices/{id}/layout", get(layouts::read).put(layouts::write))
@@ -171,7 +174,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    let state = AppState { terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs };
+    let state = AppState { media_dir: args.data_dir.join("media"), terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs };
     axum::serve(listener, router(state)).await
 }
 

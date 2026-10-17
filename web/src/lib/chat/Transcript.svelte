@@ -3,6 +3,7 @@
 	import Calls from '#lib/chat/Calls.svelte';
 	import Edit from '#lib/chat/Edit.svelte';
 	import Html from '#lib/chat/Html.svelte';
+	import Media from '#lib/chat/Media.svelte';
 	import Notice from '#lib/chat/Notice.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Thinking from '#lib/chat/Thinking.svelte';
@@ -19,7 +20,7 @@
 	});
 
 	function interim(item: Entry) {
-		return !['user', 'text', 'html', 'notice', 'questions'].includes(item.kind);
+		return !['user', 'text', 'html', 'media', 'notice', 'questions'].includes(item.kind);
 	}
 
 	const runs = $derived(
@@ -51,6 +52,8 @@
 		<Tools {item} />
 	{:else if item.kind === 'html'}
 		<Html {item} />
+	{:else if item.kind === 'media'}
+		<Media {item} />
 	{:else if item.kind === 'edit'}
 		<Edit {item} {ondiff} />
 	{:else if item.kind === 'command'}

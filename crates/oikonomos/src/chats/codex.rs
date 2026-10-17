@@ -74,38 +74,40 @@ impl Driver for Codex {
 }
 
 pub async fn start(
+    data_dir: &Path,
     cwd: &Path,
     env: &BTreeMap<String, String>,
     settings: &AgentSettings,
 ) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let started = connection.call("thread/start", thread(cwd, settings)).await?;
+    let started = connection.call("thread/start", thread(data_dir, cwd, settings)).await?;
     let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
     let _ = events.send(Event::Session(thread.to_owned()));
     let mut transcript = Transcript::new(thread, cwd, events);
     transcript.settings = current(&started);
-    Ok((run(connection, proxy, transcript, cwd, env), received))
+    Ok((run(connection, proxy, transcript, data_dir, cwd, env), received))
 }
 
-pub async fn resume(chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
+pub async fn resume(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
     let thread = chat.agent_session.as_deref().ok_or_else(|| io::Error::other("the chat has no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(thread, &chat.cwd, events);
     transcript.status = chat.status;
     transcript.settings = chat.settings.clone();
     transcript.plan_resolved = chat.plan_resolved.clone();
-    let (connection, proxy) = rejoin(&chat.cwd, env, &mut transcript).await?;
-    Ok((run(connection, proxy, transcript, &chat.cwd, env), received))
+    let (connection, proxy) = rejoin(data_dir, &chat.cwd, env, &mut transcript).await?;
+    Ok((run(connection, proxy, transcript, data_dir, &chat.cwd, env), received))
 }
 
 async fn rejoin(
+    data_dir: &Path,
     cwd: &Path,
     env: &BTreeMap<String, String>,
     transcript: &mut Transcript,
 ) -> io::Result<(Connection, Child)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "config": tool_config() })).await?;
+    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "config": tool_config(data_dir) })).await?;
     let mut replay = Vec::new();
     let resumed = loop {
         let message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;
@@ -154,13 +156,14 @@ async fn rejoin(
 }
 
 async fn reconnect(
+    data_dir: &Path,
     cwd: &Path,
     env: &BTreeMap<String, String>,
     transcript: &mut Transcript,
 ) -> Option<(Connection, Child)> {
     let deadline = Instant::now() + RECONNECTING;
     loop {
-        match rejoin(cwd, env, transcript).await {
+        match rejoin(data_dir, cwd, env, transcript).await {
             Ok(rejoined) => return Some(rejoined),
             Err(_) if Instant::now() < deadline => sleep(Duration::from_secs(1)).await,
             Err(error) => {
@@ -222,11 +225,12 @@ fn run(
     mut connection: Connection,
     mut proxy: Child,
     mut transcript: Transcript,
+    data_dir: &Path,
     cwd: &Path,
     env: &BTreeMap<String, String>,
 ) -> Codex {
     let (requests, mut pending) = mpsc::unbounded_channel();
-    let (cwd, env) = (cwd.to_owned(), env.clone());
+    let (data_dir, cwd, env) = (data_dir.to_owned(), cwd.to_owned(), env.clone());
     tokio::spawn(async move {
         // The proxy outlives a daemon that has gone until it next relays something.
         let mut heartbeat = interval(HEARTBEAT);
@@ -348,7 +352,7 @@ fn run(
                         }
                     }
                     Some(Request::Run(Builtin::Clear)) if transcript.idle() => {
-                        match connection.call("thread/start", thread(&cwd, &AgentSettings::default())).await {
+                        match connection.call("thread/start", thread(&data_dir, &cwd, &AgentSettings::default())).await {
                             Ok(started) => {
                                 let previous = json!({ "threadId": transcript.thread });
                                 let _ = connection.call("thread/unsubscribe", previous).await;
@@ -375,7 +379,7 @@ fn run(
                     }
                     None => {
                         let _ = proxy.kill().await;
-                        match reconnect(&cwd, &env, &mut transcript).await {
+                        match reconnect(&data_dir, &cwd, &env, &mut transcript).await {
                             Some(rejoined) => (connection, proxy) = rejoined,
                             None => return,
                         }
@@ -430,8 +434,8 @@ fn readings(snapshot: &Value) -> Vec<Reading> {
     windows.collect()
 }
 
-fn thread(cwd: &Path, settings: &AgentSettings) -> Value {
-    let mut params = json!({ "cwd": cwd, "config": tool_config() });
+fn thread(data_dir: &Path, cwd: &Path, settings: &AgentSettings) -> Value {
+    let mut params = json!({ "cwd": cwd, "config": tool_config(data_dir) });
     if let Some(model) = &settings.model {
         params["model"] = json!(model);
     }
@@ -446,8 +450,8 @@ fn thread(cwd: &Path, settings: &AgentSettings) -> Value {
     params
 }
 
-fn tool_config() -> Value {
-    json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.oikonomos_chat": html::config() })
+fn tool_config(data_dir: &Path) -> Value {
+    json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.oikonomos_chat": html::config(data_dir) })
 }
 
 fn codex(cwd: &Path, env: &BTreeMap<String, String>) -> Command {
@@ -1182,9 +1186,13 @@ impl Transcript {
                 }
             }
             Some("mcpToolCall") => {
-                if item["server"] == html::SERVER && item["tool"] == html::TOOL
+                if item["server"] == html::SERVER
                     && item["status"] == "completed" && item["result"]["isError"] != true
-                    && let Some(snippet) = html::item(&item["arguments"])
+                    && let Some(snippet) = match item["tool"].as_str() {
+                        Some(html::TOOL) => html::item(&item["arguments"]),
+                        Some(crate::media::TOOL) => crate::media::item(&item["result"]),
+                        _ => None,
+                    }
                 {
                     self.push(snippet);
                     return;
@@ -1381,9 +1389,30 @@ mod tests {
     }
 
     #[test]
+    fn media_renders_live_and_from_resumed_threads_without_the_source_file() {
+        let asset = json!({ "title": "Screen recording", "asset": "f382e7e5-ff76-42cc-b150-cb8b59c8aefa.webm" });
+        for result in [json!({ "structuredContent": asset }), json!({ "content": [{ "type": "text", "text": asset.to_string() }] })] {
+            let (events, mut received) = mpsc::unbounded_channel();
+            let mut transcript = Transcript::new("thread", Path::new("/project"), events);
+            let item = json!({ "type": "mcpToolCall", "id": "media", "server": html::SERVER,
+                "tool": crate::media::TOOL, "arguments": { "path": "/removed/recording.webm", "title": "Screen recording" },
+                "status": "completed", "result": result });
+            transcript.completed(&item, 0);
+            assert!(matches!(received.try_recv().unwrap(), Event::Item(0, media) if Some(&media) == crate::media::item(&result).as_ref()));
+            transcript.resumed(&json!([{ "id": "turn", "status": "completed", "items": [item] }]));
+            assert!(matches!(received.try_recv().unwrap(), Event::Truncate(0)));
+            assert!(matches!(received.try_recv().unwrap(), Event::Item(0, media) if Some(&media) == crate::media::item(&result).as_ref()));
+            let mut failed = item.clone();
+            failed["result"]["isError"] = json!(true);
+            transcript.completed(&failed, 0);
+            assert!(matches!(received.try_recv().unwrap(), Event::Item(1, Item::Tools { .. })));
+        }
+    }
+
+    #[test]
     fn approve_for_me_starts_with_automatic_review_inside_the_workspace() {
         let settings = AgentSettings { mode: Some("approve-for-me".to_owned()), ..AgentSettings::default() };
-        let params = thread(Path::new("/project"), &settings);
+        let params = thread(Path::new("/data"), Path::new("/project"), &settings);
         assert_eq!(params["approvalPolicy"], "on-request");
         assert_eq!(params["sandbox"], "workspace-write");
         assert_eq!(params["approvalsReviewer"], "auto_review");

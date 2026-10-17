@@ -1,4 +1,5 @@
 use std::io::{self, BufRead, Write};
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -10,10 +11,16 @@ pub const TOOL: &str = "render_html";
 pub const CLAUDE_TOOL: &str = "mcp__oikonomos_chat__render_html";
 const LIMIT: usize = 256 * 1024;
 
-pub fn config() -> Value {
+#[derive(clap::Args)]
+pub struct ChatToolsArgs {
+    #[arg(long, value_name = "DIR", default_value_os_t = crate::data_dir())]
+    pub data_dir: PathBuf,
+}
+
+pub fn config(data_dir: &Path) -> Value {
     json!({
         "command": std::env::current_exe().expect("cannot locate oikonomos"),
-        "args": ["chat-tools"],
+        "args": ["chat-tools", "--data-dir", std::path::absolute(data_dir).expect("cannot locate data directory")],
     })
 }
 
@@ -34,7 +41,7 @@ pub fn item(arguments: &Value) -> Option<Item> {
     Some(Item::Html { title: snippet.title, html: snippet.html })
 }
 
-fn reply(request: &Value) -> Option<Value> {
+fn reply(request: &Value, data_dir: &Path) -> Option<Value> {
     let id = request.get("id")?;
     let result = match request["method"].as_str() {
         Some("initialize") => json!({
@@ -56,6 +63,19 @@ fn reply(request: &Value) -> Option<Value> {
                 "additionalProperties": false,
             },
             "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false },
+        }, {
+            "name": crate::media::TOOL,
+            "description": "Display an existing image or screen recording inline in Oikonomos chat. Supply an absolute local file path and a descriptive title (also used as image alt text). Supports PNG, JPEG, GIF, WebP, MP4, and WebM up to 100 MiB; use browser-compatible video codecs. The file is copied into durable storage, so temporary source files may be removed afterward. Create screenshots and recordings with your existing tools before calling this tool. Do not encode media as base64 or repeat it in a code block.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+                    "path": { "type": "string", "minLength": 1 },
+                },
+                "required": ["title", "path"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
         }] }),
         Some("tools/call") if request["params"]["name"] == TOOL => {
             let valid = item(&request["params"]["arguments"]).is_some();
@@ -64,17 +84,20 @@ fn reply(request: &Value) -> Option<Value> {
                 "isError": !valid,
             })
         }
+        Some("tools/call") if request["params"]["name"] == crate::media::TOOL => {
+            crate::media::call(data_dir, &request["params"]["arguments"])
+        }
         _ => return Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "Method not found" } })),
     };
     Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
-pub fn serve() -> io::Result<()> {
+pub fn serve(args: ChatToolsArgs) -> io::Result<()> {
     let mut output = io::stdout().lock();
     for line in io::stdin().lock().lines() {
         let line = line?;
         let response = match serde_json::from_str::<Value>(&line) {
-            Ok(request) => reply(&request),
+            Ok(request) => reply(&request, &args.data_dir),
             Err(_) => Some(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": "Parse error" } })),
         };
         if let Some(response) = response {

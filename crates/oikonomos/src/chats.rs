@@ -29,7 +29,7 @@ use crate::{
     usage::{Reading, Usage},
 };
 pub use holder::{HoldChatArgs, hold_chat};
-pub use html::serve as chat_tools;
+pub use html::{ChatToolsArgs, serve as chat_tools};
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -48,6 +48,7 @@ pub enum Item {
     },
     Tools { calls: Vec<ToolCall> },
     Html { title: String, html: String },
+    Media { title: String, asset: String },
     Edit { path: String, diff: String, added: usize, removed: usize },
     Command { command: String, status: CommandStatus, output: String },
     Subagent {
@@ -681,10 +682,10 @@ impl Chats {
             Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env, &chat.settings.chosen, session)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-            Agent::Codex if session.is_some() => codex::resume(&chat, &rig.env)
+            Agent::Codex if session.is_some() => codex::resume(&self.data_dir, &chat, &rig.env)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-            Agent::Codex => codex::start(&chat.cwd, &rig.env, &chat.settings.chosen)
+            Agent::Codex => codex::start(&self.data_dir, &chat.cwd, &rig.env, &chat.settings.chosen)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
         };
@@ -725,7 +726,7 @@ impl Chats {
                     reattached => reattached,
                 }
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-                Agent::Codex => codex::resume(&chat, &env)
+                Agent::Codex => codex::resume(&self.data_dir, &chat, &env)
                     .await
                     .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             };
