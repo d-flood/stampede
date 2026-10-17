@@ -18,7 +18,7 @@
 					<button onclick={() => onopen(epic.slug)}>
 						<span class="line">
 							<span class="slug">{epic.slug}</span>
-							{#if epic.run}<span class="live">Run live</span>{/if}
+							{#if epic.run}<span class="live" class:paused={!!epic.run.paused}>{epic.run.paused ? 'Run paused' : 'Run live'}</span>{/if}
 						</span>
 						<span class="title">{epic.title}</span>
 						<Progress {epic} />
@@ -107,6 +107,10 @@
 	.live {
 		color: var(--status-done);
 		font-size: var(--font-size-sm);
+	}
+
+	.paused {
+		color: var(--status-waiting);
 	}
 
 	.title {

@@ -361,8 +361,8 @@ async fn a_reopened_ticket_starts_again_in_a_fresh_worktree_and_an_edit_mid_chat
     lp.ok(&["ticket", "add", "work", "2", "--title", "Then more", "--blocked-by", "1", "--body", "-"], "More.\n");
     lp.ok(&["epic", "set-setup", "work", ""], "");
     let reopen = json!({ "kind": "ticket.reopened", "ticket": 1 });
-    let refused = |status: &str| (400, format!("work/1 is {status}; only a merged or skipped Ticket can be moved back to not started"));
-    assert_eq!(lp.record(&reopen).await, refused("not started"));
+    let refused = (400, "work/1 is not started; only an in-progress, merged or skipped Ticket can be moved back to not started".to_owned());
+    assert_eq!(lp.record(&reopen).await, refused);
 
     let first = lp.start(1, "Verdict").await.unwrap();
     lp.ticket_until(1, |ticket| ticket["status"] == "merged" && ticket.get("worktree").is_none()).await;
@@ -378,7 +378,6 @@ async fn a_reopened_ticket_starts_again_in_a_fresh_worktree_and_an_edit_mid_chat
     let (worktree, integration) = (lp.worktree("1"), lp.worktree("integration"));
     assert_eq!(output(&worktree, &["rev-parse", "HEAD"]), output(&integration, &["rev-parse", "HEAD"]), "cut from the Epic branch");
     assert_eq!(fs::read_to_string(worktree.join("work.txt")).unwrap(), "Done by the fake.\n");
-    assert_eq!(lp.record(&reopen).await, refused("in progress"));
 
     let edit = json!({ "kind": "ticket.body.set", "ticket": 1, "body": "Write work.txt again.\n" });
     assert_eq!(lp.record(&edit).await, (204, String::new()));

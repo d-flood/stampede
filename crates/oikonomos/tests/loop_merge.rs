@@ -309,8 +309,15 @@ async fn a_conflict_with_no_resolver_to_start_is_aborted_and_flagged() {
     fs::write(lp.worktree("2").join("README"), "two\n").unwrap();
     lp.cli.ok(&lp.worktree("1"), &["complete", "work/1", "-m", "One"], "");
     lp.ticket_until(1, |ticket| ticket["status"] == "merged").await;
-    control(&mut lp.socket, json!({ "type": "project.close", "projectId": lp.project_id })).await;
-    lp.follow(|message| message["type"] == "projects.changed" && message["projects"] == json!([])).await;
+    fs::write(lp.root.join("config.toml"), "").unwrap();
+    let rigs = format!("http://127.0.0.1:{}/api/rigs", lp.server.port);
+    timeout(Duration::from_secs(10), async {
+        while reqwest::get(&rigs).await.unwrap().text().await.unwrap() != "[]" {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the Rigs were never removed");
 
     lp.cli.ok(&lp.worktree("2"), &["complete", "work/2", "-m", "Two"], "");
     let failed = timeout(Duration::from_secs(10), async {
@@ -325,7 +332,7 @@ async fn a_conflict_with_no_resolver_to_start_is_aborted_and_flagged() {
     .expect("the merge never failed");
     assert_eq!(
         failed["reason"],
-        "Its merge into the Integration Worktree conflicted in README, so Oikonomos aborted it. No open Project checks out work's repository, so Oikonomos could not start a Chat."
+        "Its merge into the Integration Worktree conflicted in README, so Oikonomos aborted it. Its Rig Done is no longer in the config, so Oikonomos could not start a Resolver."
     );
     let integration = lp.worktree("integration");
     assert!(!merging(&integration));

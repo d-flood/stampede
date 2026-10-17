@@ -52,6 +52,7 @@
 		return [...(epic.kept ? [epic.kept] : []), ...kept.map((ticket) => `${epic.slug}/${ticket.number}: ${ticket.attention}`)];
 	});
 	const authors = { agent: 'Agent', david: 'David', oikonomos: 'Oikonomos' };
+	const working = $derived(tickets.filter((ticket) => ticket.status === 'in-progress'));
 
 	let draft = $state('');
 	let title = $state('');
@@ -60,6 +61,7 @@
 	let error = $state<string>();
 	let saving = $state(false);
 	let archiving = $state(false);
+	let stopping = $state(false);
 	let refused = $state<string>();
 	let confirming = $state(false);
 	let landing = $state(false);
@@ -134,7 +136,7 @@
 
 	function holder(ticket: Ticket) {
 		if (ticket.status !== 'in-progress' || !ticket.claim) return ticket.attention ? 'needs attention' : '';
-		return `${ticket.claim.rig} · ${chatOf(ticket)?.status ?? 'closed'}`;
+		return `${ticket.claim.rig} · ${ticket.releasing ? 'stopping' : (chatOf(ticket)?.status ?? 'closed')}`;
 	}
 </script>
 
@@ -208,7 +210,7 @@
 	<section class="run" aria-label="Run">
 		{#if live}
 			<div class="top">
-				<span class="live">Run live</span>
+				<span class="live" class:paused={!!live.paused}>{live.paused ? 'Run paused' : 'Run live'}</span>
 				{#if phone}
 					<button class="summary" aria-expanded={open.showRun} onclick={() => (open.showRun = !open.showRun)}>
 						{live.rig} · ×{live.parallel}
@@ -220,7 +222,16 @@
 		{#if !phone || !live || open.showRun}
 			<div class="settings">{@render settings(epic)}</div>
 		{/if}
-		{#if !live}
+		{#if live}
+			<div class="controls">
+				{#if live.paused}
+					<Button onclick={() => run({ kind: 'run.resumed' })}>Resume</Button>
+				{:else}
+					<Button onclick={() => run({ kind: 'run.paused', reason: 'david' })}>Pause</Button>
+				{/if}
+				<Button variant="danger" onclick={() => (working.length ? (stopping = true) : run({ kind: 'run.stopped' }))}>Stop</Button>
+			</div>
+		{:else}
 			<Button variant="primary" disabled={!rig || epic.setup === null} onclick={() => rig && run({ kind: 'run.started', rig, parallel: open.parallel })}>
 				Start Run
 			</Button>
@@ -445,6 +456,19 @@
 	{/snippet}
 </Dialog>
 
+<Dialog
+	bind:open={stopping}
+	title="Stop the Run?"
+	description={working.length === 1
+		? 'Its Chat stops and its Ticket goes back to not started, keeping its worktree and Agent session for the next Run.'
+		: `Its ${working.length} Chats stop and their Tickets go back to not started, each keeping its worktree and Agent session for the next Run.`}
+>
+	{#snippet actions()}
+		<Button onclick={() => (stopping = false)}>Cancel</Button>
+		<Button variant="primary" onclick={() => ((stopping = false), run({ kind: 'run.stopped' }))}>Stop</Button>
+	{/snippet}
+</Dialog>
+
 <style>
 	.epic {
 		display: flex;
@@ -659,6 +683,15 @@
 		content: '';
 	}
 
+	.live.paused::before {
+		background: var(--status-waiting);
+	}
+
+	.controls {
+		display: flex;
+		gap: var(--space-2);
+	}
+
 	.settings {
 		display: flex;
 		flex: 1;
@@ -725,6 +758,10 @@
 	.phone .settings {
 		flex-direction: column;
 		align-items: stretch;
+	}
+
+	.phone .controls > :global(button) {
+		flex: 1;
 	}
 
 	.phone .setting select {

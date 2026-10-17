@@ -42,7 +42,10 @@ export type Edit =
 	| { kind: 'ticket.reopened'; ticket: number }
 	| { kind: 'epic.archived' }
 	| { kind: 'run.started'; rig: string; parallel: number }
-	| { kind: 'run.changed'; rig?: string; parallel?: number };
+	| { kind: 'run.changed'; rig?: string; parallel?: number }
+	| { kind: 'run.paused'; reason: 'david' }
+	| { kind: 'run.resumed' }
+	| { kind: 'run.stopped' };
 
 export function record(slug: string, edit: Edit): Promise<string | undefined> {
 	return post(`/api/epics/${slug}`, { headers: { 'content-type': 'application/json' }, body: JSON.stringify(edit) });
@@ -83,6 +86,13 @@ export function resolved(status: TicketStatus) {
 export function onFrontier(epic: Epic, ticket: Ticket) {
 	const done = (number: number) => epic.tickets.some((other) => other.number === number && resolved(other.status));
 	return ticket.status === 'not-started' && !ticket.claim && ticket.blockers.every(done);
+}
+
+export function heldBy(epics: Epic[], chatId: string) {
+	for (const epic of epics) {
+		const ticket = epic.tickets.find((ticket) => ticket.status === 'in-progress' && ticket.claim?.chat === chatId);
+		if (ticket) return `${epic.slug}/${ticket.number}`;
+	}
 }
 
 export function counts(epic: Epic) {

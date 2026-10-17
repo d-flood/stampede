@@ -38,7 +38,7 @@ use tokio::sync::{broadcast, watch};
 use attention::Feed;
 use chats::Chats;
 use config::{Config, Editor, Font, Keybar, Rig};
-use epics::{Author, Epics, Event};
+use epics::{Author, Epics, Event, Pause};
 pub use chats::{HoldChatArgs, hold_chat, chat_tools};
 pub use cli::{CliCommand, cli};
 pub use holder::{HoldArgs, hold};
@@ -201,7 +201,10 @@ async fn record_epic(State(state): State<AppState>, Path(slug): Path<String>, Js
         | Event::Reopened { .. }
         | Event::Archived
         | Event::RunStarted { .. }
-        | Event::RunChanged { .. } => true,
+        | Event::RunChanged { .. }
+        | Event::RunPaused { pause: Pause::David }
+        | Event::RunResumed
+        | Event::RunStopped => true,
         _ => false,
     };
     if !editable {

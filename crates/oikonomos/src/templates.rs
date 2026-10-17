@@ -24,15 +24,21 @@ pub const RESOLVER: Template =
     Template { name: "resolver", description: "resolve a Ticket's conflicted merge", text: include_str!("templates/resolver.md") };
 
 impl Template {
-    /// The CLI only finds a server on a non-default data directory when told it.
     pub fn opening(&self, data_dir: &Path) -> String {
         let text = self.text.trim_end();
-        if data_dir == crate::data_dir() {
-            return text.to_owned();
+        match data_dir_sentence(data_dir) {
+            Some(sentence) => format!("{text}\n\n{sentence}"),
+            None => text.to_owned(),
         }
-        let dir = data_dir.display();
-        format!("{text}\n\nThis Oikonomos server keeps its data in {dir}, so pass `--data-dir {dir}` to every `oikonomos` command.")
     }
+}
+
+/// The CLI only finds a server on a non-default data directory when told it.
+pub fn data_dir_sentence(data_dir: &Path) -> Option<String> {
+    (data_dir != crate::data_dir()).then(|| {
+        let dir = data_dir.display();
+        format!("This Oikonomos server keeps its data in {dir}, so pass `--data-dir {dir}` to every `oikonomos` command.")
+    })
 }
 
 pub fn expand<'a>(text: &'a str, data_dir: &Path) -> Cow<'a, str> {

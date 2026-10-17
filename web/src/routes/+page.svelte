@@ -19,7 +19,7 @@
 		type Terminal
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
-	import { OpenEpic } from '#lib/epics.svelte.ts';
+	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
 	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
@@ -84,6 +84,7 @@
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
 	let closingChat = $state<Chat>();
+	const closingTicket = $derived(closingChat && heldBy(epics[closingChat.projectId] ?? [], closingChat.id));
 	let picking = $state(false);
 	let palette = $state<Scope>();
 	let unfocused = $state(false);
@@ -533,7 +534,7 @@
 	}
 
 	function closeChat(chat: Chat, confirmed = false) {
-		if (!confirmed && chat.status === 'working') {
+		if (!confirmed && (chat.status === 'working' || heldBy(epics[chat.projectId] ?? [], chat.id))) {
 			closingChat = chat;
 			return;
 		}
@@ -1045,7 +1046,9 @@
 <Dialog
 	bind:open={() => !!closingChat, (open) => !open && (closingChat = undefined)}
 	title="Close {closingChat?.rig}?"
-	description="Its Agent is working. Closing the Chat stops it."
+	description={closingTicket
+		? `It holds ${closingTicket}. Closing the Chat stops its Agent and gives ${closingTicket} back to not started, keeping its worktree and session.`
+		: 'Its Agent is working. Closing the Chat stops it.'}
 >
 	{#snippet actions()}
 		<Button onclick={() => (closingChat = undefined)}>Cancel</Button>

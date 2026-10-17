@@ -461,3 +461,63 @@ test('a Run started from the Epic tab works the Epic through and calls from the 
 	await page.screenshot({ path: test.info().outputPath('landed.png') });
 	await showFiles(await showSidebar(page));
 });
+
+test('a paused Run starts nothing until it is resumed, and stopping it gives its Ticket back', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
+	const slug = `pause-${project.name}`;
+	const data = `${process.env.OIKONOMOS_E2E_ROOT}/data`;
+	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	mkdirSync(root, { recursive: true });
+	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
+	git('init', '-q');
+	git('config', 'user.name', 'oikonomos');
+	git('config', 'user.email', 'e2e@oikonomos.invalid');
+	git('config', 'commit.gpgsign', 'false');
+	writeFileSync(`${root}/README`, 'pause\n');
+	git('add', 'README');
+	git('commit', '-qm', 'Initial commit');
+	const cli = (cwd: string, stdin: string, ...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', data], { cwd, input: stdin });
+	cli(root, '# Pause\n', 'epic', 'add', slug, '--title', 'Pause it', '--brief', '-');
+	cli(root, 'Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
+	cli(root, 'Beside it.\n', 'ticket', 'add', slug, '2', '--title', 'Beside', '--body', '-');
+	cli(root, '', 'epic', 'set-setup', slug, '');
+	const log = () => readFileSync(`${data}/epics/${slug}.jsonl`, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+	const kinds = (kind: string) => log().filter((entry) => entry.kind === kind);
+
+	await openProject(page, slug);
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
+	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
+	const run = panel.getByRole('region', { name: 'Run', exact: true });
+	const tickets = panel.getByRole('region', { name: 'Tickets' });
+	const row = (number: number) => tickets.getByRole('button', { name: new RegExp(`^${number}\\s`) });
+	await run.getByRole('combobox', { name: 'Rig' }).selectOption('Fake Claude');
+	await run.getByRole('button', { name: 'Start Run' }).click();
+	await expect(row(1)).toContainText('in progress', { timeout: 15000 });
+
+	await run.getByRole('button', { name: 'Pause' }).click();
+	await expect(run).toContainText('Run paused');
+	await expect(run.getByRole('button', { name: 'Pause' })).toHaveCount(0);
+	await page.screenshot({ path: test.info().outputPath('paused.png') });
+	cli(kinds('ticket.claimed')[0].worktree, '', 'complete', `${slug}/1`, '-m', 'Done by hand');
+	if (phone) await expect(tickets.getByRole('button', { name: 'Show 1 resolved' })).toBeVisible({ timeout: 15000 });
+	else await expect(row(1)).toContainText('merged', { timeout: 15000 });
+	await page.waitForTimeout(1000);
+	expect(kinds('ticket.claimed')).toHaveLength(1);
+	await expect(row(2)).toContainText('not started');
+
+	await run.getByRole('button', { name: 'Resume' }).click();
+	await expect(run).toContainText('Run live');
+	await expect(row(2)).toContainText('in progress', { timeout: 15000 });
+	await run.getByRole('button', { name: 'Stop' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Stop the Run?' });
+	await expect(dialog).toContainText('Its Chat stops and its Ticket goes back to not started');
+	await page.screenshot({ path: test.info().outputPath('stop.png') });
+	await dialog.getByRole('button', { name: 'Stop' }).click();
+	await expect(row(2)).toContainText('not started', { timeout: 15000 });
+	await expect(run.getByRole('button', { name: 'Start Run' })).toBeVisible();
+	expect(kinds('claim.released')).toHaveLength(1);
+	expect(existsSync(kinds('ticket.claimed')[1].worktree)).toBe(true);
+	await showFiles(await showSidebar(page));
+});

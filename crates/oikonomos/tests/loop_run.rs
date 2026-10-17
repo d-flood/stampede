@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use common::{Cli, Server, control, git, init, next, subscribe};
+use common::{Cli, Server, control, git, init, leftovers, next, subscribe};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
@@ -47,7 +47,20 @@ env = { OIKONOMOS_FAKE_FIXTURE = "approval" }
 name = "Codex Approval"
 agent = "codex"
 env = { OIKONOMOS_FAKE_FIXTURE = "approval" }
+
+[[rig]]
+name = "Resume"
+agent = "claude-code"
+env = { OIKONOMOS_FAKE_FIXTURE = "FIXTURES/claude-code/resume-verdict.synthetic.jsonl" }
+
+[[rig]]
+name = "No Session"
+agent = "claude-code"
+env = { OIKONOMOS_FAKE_FIXTURE = "FIXTURES/claude-code/no-session.synthetic.jsonl" }
 "#;
+
+/// The session the fake Claude's Verdict fixtures report.
+const SESSION: &str = "5678b8c0-71a1-4040-8ccc-e6bcaf84f90e";
 
 /// Long enough for a Run that was going to start another Ticket to have cut its worktree.
 const SETTLE: Duration = Duration::from_millis(800);
@@ -186,8 +199,62 @@ impl Loop {
 
     /// The opening prompts the fake Claude received, one per Chat that started a Ticket.
     fn prompts(&self) -> usize {
+        self.sent().len()
+    }
+
+    /// What every Chat of the fake Claude was sent, in order.
+    fn sent(&self) -> Vec<String> {
         let received = fs::read_to_string(self.root.join("home/.claude/fake-received.jsonl")).unwrap_or_default();
-        received.lines().filter(|line| serde_json::from_str::<Value>(line).unwrap()["type"] == "user").count()
+        let messages = received.lines().map(|line| serde_json::from_str::<Value>(line).unwrap());
+        let users = messages.filter(|message| message["type"] == "user");
+        users.map(|message| message["message"]["content"].as_str().unwrap().to_owned()).collect()
+    }
+
+    fn chat_record(&self, chat_id: &str) -> Option<Value> {
+        let bytes = fs::read(self.root.join(format!("data/chats/{chat_id}.json"))).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Makes the Setup Command note each worktree it runs in.
+    fn note_setups(&self) {
+        let command = format!("basename \"$PWD\" >> {}", self.root.join("setups").display());
+        self.ok(&["epic", "set-setup", "work", &command], "");
+    }
+
+    fn setups(&self) -> Vec<String> {
+        fs::read_to_string(self.root.join("setups")).unwrap_or_default().lines().map(str::to_owned).collect()
+    }
+
+    fn worktrees(&self) -> Vec<Value> {
+        self.entries("ticket.claimed").iter().map(|entry| entry["worktree"].clone()).collect()
+    }
+
+    /// Closes a Ticket's Chat as a Device does, and waits for the Ticket to be given back.
+    async fn close(&mut self, number: u64) -> Value {
+        let chat_id = self.chat_of(number);
+        self.drain().await;
+        control(&mut self.socket, json!({ "type": "chat.close", "chatId": chat_id })).await;
+        self.given_back(number, &chat_id).await
+    }
+
+    /// Reads every message the Device has been sent so far.
+    async fn drain(&mut self) {
+        while timeout(Duration::from_millis(300), next(&mut self.socket)).await.is_ok() {}
+    }
+
+    /// Waits for a Ticket to be given back, keeping its worktree, after what `drain` last read.
+    async fn given_back(&mut self, number: u64, chat_id: &str) -> Value {
+        self.message(|message| {
+            let ticket = &message["epic"]["tickets"][number as usize - 1];
+            message["type"] == "epic.changed"
+                && ticket["status"] == "not-started"
+                && ticket.get("claim").is_none()
+                && ticket.get("worktree").is_some()
+        })
+        .await;
+        assert!(self.chat_record(chat_id).is_none(), "work/{number}'s Chat stopped before its Ticket was given back");
+        assert!(!leftovers(&self.root).iter().any(|process| process.contains(chat_id)), "{:?}", leftovers(&self.root));
+        self.entries("claim.released").pop().unwrap()
     }
 
     async fn message(&mut self, until: impl Fn(&Value) -> bool) -> Value {
@@ -476,6 +543,14 @@ async fn a_chat_that_fails_to_restore_keeps_its_claim_and_worktree_and_no_other_
     assert_eq!(lp.entries("restore.failed").len(), 1, "flagged once");
     lp.record(json!({ "kind": "run.changed", "parallel": 2 })).await.unwrap();
     lp.claimed(&[1, 2]).await;
+
+    lp.drain().await;
+    lp.record(json!({ "kind": "ticket.reopened", "ticket": 1 })).await.unwrap();
+    let released = lp.given_back(1, &chat_id).await;
+    assert_eq!(released["keep"], json!({ "worktree": lp.worktree("1"), "agent": "codex" }), "moved back, it keeps its worktree");
+    lp.claimed(&[1, 2, 1]).await;
+    assert_eq!(lp.worktrees()[2], json!(lp.worktree("1")), "its flag went with its Claim, so the Run took it again");
+    assert_eq!(lp.entries("claim.released").len(), 1);
 }
 
 #[tokio::test]
@@ -493,4 +568,162 @@ async fn a_ticket_reopened_mid_run_is_taken_again_when_a_slot_frees() {
     lp.claimed(&[1, 2, 1]).await;
     lp.complete(1);
     lp.finished(1).await;
+}
+
+#[tokio::test]
+async fn a_paused_run_starts_nothing_through_a_restart_and_a_resume_fills_its_slots() {
+    let mut lp = Loop::new("loop-run-pause", &[(1, ""), (2, ""), (3, "")]).await;
+    let pause = json!({ "kind": "run.paused", "reason": "david" });
+    assert_eq!(lp.record(pause.clone()).await, Err("work has no live Run".to_owned()));
+    lp.run("Done", 1).await;
+    lp.claimed(&[1]).await;
+    assert_eq!(lp.record(json!({ "kind": "run.resumed" })).await, Err("work's Run is not paused".to_owned()));
+    lp.record(pause.clone()).await.unwrap();
+    assert_eq!(lp.record(pause).await, Err("work's Run is already paused".to_owned()));
+    let paused = |message: &Value| message["type"] == "epic.changed" && message["epic"]["run"]["paused"] == json!({ "reason": "david" });
+    lp.message(paused).await;
+
+    lp.chat_status(1, "done").await;
+    lp.complete(1);
+    lp.until("work/1's merge", |lp| !lp.entries("ticket.merged").is_empty()).await;
+    lp.record(json!({ "kind": "run.changed", "parallel": 2 })).await.unwrap();
+    lp.claimed(&[1]).await;
+    lp.restart().await;
+    lp.claimed(&[1]).await;
+    assert!(lp.entries("run.finished").is_empty());
+
+    lp.record(json!({ "kind": "run.resumed" })).await.unwrap();
+    lp.claimed(&[1, 2, 3]).await;
+    lp.complete(2);
+    lp.complete(3);
+    lp.finished(1).await;
+}
+
+#[tokio::test]
+async fn a_stopped_run_gives_back_its_tickets_and_the_next_run_resumes_each_session_in_its_worktree() {
+    let mut lp = Loop::new("loop-run-stop", &[(1, "")]).await;
+    lp.note_setups();
+    lp.run("Resume", 1).await;
+    lp.claimed(&[1]).await;
+    lp.chat_status(1, "done").await;
+    let chat_id = lp.chat_of(1);
+    assert_eq!(lp.chat_record(&chat_id).unwrap()["agentSession"], SESSION);
+
+    lp.drain().await;
+    lp.record(json!({ "kind": "run.stopped" })).await.unwrap();
+    let released = lp.given_back(1, &chat_id).await;
+    let keep = json!({ "worktree": lp.worktree("1"), "agent": "claude-code", "session": SESSION });
+    assert_eq!((released["ticket"].as_u64(), &released["keep"]), (Some(1), &keep));
+    assert!(lp.ok(&["ticket", "work/1"], "").contains("Status: not started"));
+    assert!(lp.worktree("1").exists());
+    assert_eq!(lp.record(json!({ "kind": "run.stopped" })).await, Err("work has no live Run".to_owned()));
+    sleep(SETTLE).await;
+    assert_eq!((lp.claims(), lp.entries("claim.released").len()), (vec![1], 1));
+    assert!(lp.entries("run.finished").is_empty(), "a stopped Run has not finished");
+
+    lp.run("Resume", 1).await;
+    lp.finished(1).await;
+    assert_eq!(lp.worktrees(), vec![json!(lp.worktree("1")); 2], "retaken in its old worktree");
+    let resumed = lp.chat_of(1);
+    assert_eq!(lp.chat_record(&resumed).unwrap()["agentSession"], SESSION);
+    assert!(leftovers(&lp.root).iter().any(|process| process.contains(&format!("--resume {SESSION}"))));
+    assert_eq!(lp.setups(), ["integration", "1"], "its kept worktree is not set up again");
+    let sent = lp.sent();
+    assert_eq!(sent.len(), 2);
+    assert!(sent[0].starts_with("You hold one Ticket"), "{}", sent[0]);
+    assert!(sent[1].starts_with("Oikonomos stopped this Chat before work/1 had its Verdict"), "{}", sent[1]);
+    assert_eq!(lp.entries("ticket.merged").len(), 1);
+    assert_eq!(fs::read_to_string(lp.worktree("integration").join("work.txt")).unwrap(), "Done by the fake.\n");
+}
+
+#[tokio::test]
+async fn closing_a_loop_chat_gives_back_its_ticket_once_after_its_agent_stops_for_both_agents() {
+    for rig in ["Done", "Codex Done"] {
+        let mut lp = Loop::new("loop-run-close", &[(1, "")]).await;
+        lp.run(rig, 1).await;
+        lp.claimed(&[1]).await;
+        lp.chat_status(1, "done").await;
+        let session = lp.chat_record(&lp.chat_of(1)).unwrap()["agentSession"].clone();
+        let agent = if rig == "Done" { "claude-code" } else { "codex" };
+        lp.record(json!({ "kind": "run.paused", "reason": "david" })).await.unwrap();
+
+        let released = lp.close(1).await;
+        assert_eq!(released["keep"], json!({ "worktree": lp.worktree("1"), "agent": agent, "session": session }), "{rig}");
+        sleep(SETTLE).await;
+        assert_eq!(lp.entries("claim.released").len(), 1, "{rig}: released once");
+        assert_eq!(lp.claims(), [1], "{rig}: the paused Run does not take it back");
+        assert!(lp.ok(&["ticket", "work/1"], "").contains("Status: not started"), "{rig}");
+        assert!(lp.worktree("1").exists(), "{rig}");
+    }
+}
+
+#[tokio::test]
+async fn an_in_progress_ticket_moved_back_resumes_its_session_and_stopping_gives_it_back_again() {
+    let mut lp = Loop::new("loop-run-back", &[(1, "")]).await;
+    lp.run("Done", 1).await;
+    lp.claimed(&[1]).await;
+    lp.chat_status(1, "done").await;
+    let first = lp.chat_of(1);
+    let session = lp.chat_record(&first).unwrap()["agentSession"].clone();
+
+    lp.drain().await;
+    lp.record(json!({ "kind": "ticket.reopened", "ticket": 1 })).await.unwrap();
+    lp.given_back(1, &first).await;
+    lp.claimed(&[1, 1]).await;
+    let second = lp.chat_of(1);
+    assert_ne!(second, first);
+    assert_eq!(lp.worktrees(), vec![json!(lp.worktree("1")); 2]);
+    assert_eq!(lp.chat_record(&second).unwrap()["agentSession"], session);
+    lp.chat_status(1, "done").await;
+
+    lp.drain().await;
+    lp.record(json!({ "kind": "run.stopped" })).await.unwrap();
+    let released = lp.given_back(1, &second).await;
+    assert_eq!(released["keep"]["session"], session);
+    sleep(SETTLE).await;
+    assert_eq!((lp.claims(), lp.entries("claim.released").len()), (vec![1, 1], 2));
+    let refused = lp.record(json!({ "kind": "ticket.reopened", "ticket": 1 })).await;
+    assert_eq!(refused, Err("work/1 is not started; only an in-progress, merged or skipped Ticket can be moved back to not started".to_owned()));
+}
+
+#[tokio::test]
+async fn closing_before_the_session_began_keeps_the_worktree_and_starts_a_fresh_session_there() {
+    let mut lp = Loop::new("loop-run-fresh", &[(1, "")]).await;
+    lp.note_setups();
+    lp.run("No Session", 1).await;
+    lp.claimed(&[1]).await;
+    lp.until("the opening prompt to arrive", |lp| lp.prompts() == 1).await;
+    assert_eq!(lp.chat_record(&lp.chat_of(1)).unwrap().get("agentSession"), None);
+    lp.record(json!({ "kind": "run.changed", "rig": "Verdict" })).await.unwrap();
+
+    let released = lp.close(1).await;
+    assert_eq!(released["keep"], json!({ "worktree": lp.worktree("1"), "agent": "claude-code" }));
+    lp.finished(1).await;
+    let rigs: Vec<Value> = lp.entries("ticket.claimed").iter().map(|entry| entry["rig"].clone()).collect();
+    assert_eq!(rigs, ["No Session", "Verdict"]);
+    assert_eq!(lp.worktrees(), vec![json!(lp.worktree("1")); 2]);
+    assert_eq!(lp.setups(), ["integration", "1"]);
+    let sent = lp.sent();
+    assert_eq!(sent.len(), 2);
+    assert!(sent.iter().all(|text| text.starts_with("You hold one Ticket")), "a fresh session gets the Template: {sent:?}");
+    assert_eq!(lp.entries("claim.released").len(), 1);
+}
+
+#[tokio::test]
+async fn closing_a_chat_after_its_verdict_leaves_its_ticket_resolved() {
+    let mut lp = Loop::new("loop-run-after", &[(1, ""), (2, "")]).await;
+    lp.run("Done", 1).await;
+    lp.claimed(&[1]).await;
+    lp.chat_status(1, "done").await;
+    lp.complete(1);
+    lp.claimed(&[1, 2]).await;
+    lp.until("work/1's merge", |lp| !lp.entries("ticket.merged").is_empty()).await;
+
+    let chat_id = lp.chat_of(1);
+    control(&mut lp.socket, json!({ "type": "chat.close", "chatId": chat_id })).await;
+    lp.until("work/1's Chat to stop", |lp| lp.chat_record(&chat_id).is_none()).await;
+    sleep(SETTLE).await;
+    assert!(lp.entries("claim.released").is_empty());
+    assert!(lp.ok(&["ticket", "work/1"], "").contains("Status: merged"));
+    assert_eq!(lp.claims(), [1, 2]);
 }

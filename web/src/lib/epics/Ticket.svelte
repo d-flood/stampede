@@ -7,6 +7,7 @@
 	import { label, onFrontier, record, resolved, toggle, tones, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Dialog from '#lib/ui/Dialog.svelte';
 	import CaretRight from '~icons/ph/caret-right';
 
 	type Props = {
@@ -25,7 +26,7 @@
 	const authors = { agent: 'Agent', david: 'David', oikonomos: 'Oikonomos' };
 	const others = $derived(epic.tickets.filter((other) => other.number !== ticket.number));
 	const startable = $derived(!epic.run && onFrontier(epic, ticket));
-	const reopenable = $derived(resolved(ticket.status));
+	const reopenable = $derived(resolved(ticket.status) || ticket.status === 'in-progress');
 	const edited = $derived(!!ticket.claim?.edited);
 	const starting = $derived(open.starting.includes(ticket.number));
 	const error = $derived(open.errors[ticket.number]);
@@ -36,9 +37,15 @@
 	let adding = $state(false);
 	let unsaved = $state<string>();
 	let reopening = $state(false);
+	let confirming = $state(false);
 	let unmoved = $state<string>();
 
-	async function reopen() {
+	async function reopen(confirmed = false) {
+		if (ticket.status === 'in-progress' && !confirmed) {
+			confirming = true;
+			return;
+		}
+		confirming = false;
 		reopening = true;
 		unmoved = await record(epic.slug, { kind: 'ticket.reopened', ticket: ticket.number });
 		reopening = false;
@@ -57,6 +64,10 @@
 		if (!unsaved) draft = '';
 	}
 </script>
+
+{#snippet move()}
+	<Button disabled={reopening || ticket.releasing} onclick={() => reopen()}>Move to not started</Button>
+{/snippet}
 
 {#snippet start()}
 	<div class="start">
@@ -132,19 +143,30 @@
 		<div class="actions">
 			<Button onclick={onedit}>Edit</Button>
 			{#if chat}<Button onclick={() => onchat(chat.id)}>Open Chat</Button>{/if}
-			{#if reopenable}<Button disabled={reopening} onclick={reopen}>Move to not started</Button>{/if}
+			{#if reopenable}{@render move()}{/if}
 			{#if startable}{@render start()}{/if}
 		</div>
 	{:else if startable}
 		{@render start()}
 	{:else if reopenable}
-		<Button disabled={reopening} onclick={reopen}>Move to not started</Button>
+		{@render move()}
 	{/if}
 	{#if unmoved}<p class="error" role="alert">{unmoved}</p>{/if}
 	{#if startable && epic.setup === null}
 		<p class="hint">Record a Setup Command before starting a Ticket.</p>
 	{/if}
 </div>
+
+<Dialog
+	bind:open={confirming}
+	title="Move {epic.slug}/{ticket.number} to not started?"
+	description="Its Chat stops. Its worktree and Agent session are kept for the next Chat that takes it."
+>
+	{#snippet actions()}
+		<Button onclick={() => (confirming = false)}>Cancel</Button>
+		<Button variant="primary" onclick={() => reopen(true)}>Move</Button>
+	{/snippet}
+</Dialog>
 
 <style>
 	.ticket {

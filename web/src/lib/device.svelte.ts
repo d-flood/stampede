@@ -94,9 +94,10 @@ export type Ticket = {
 	worktree?: string;
 	attention?: string;
 	resolver?: string;
+	releasing?: boolean;
 };
 
-export type Run = { rig: string; parallel: number };
+export type Run = { rig: string; parallel: number; paused?: { reason: 'david' } };
 
 export type Epic = {
 	slug: string;

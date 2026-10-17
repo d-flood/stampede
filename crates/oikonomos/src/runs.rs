@@ -17,12 +17,12 @@ use uuid::Uuid;
 
 use crate::{
     attention::{Attention, Feed, Source, Tab},
-    chats::{self, Chats, Lifecycle},
+    chats::{self, Chat, Chats, Lifecycle},
     config::{Config, Rig},
-    epics::{Author, Epic, Epics, Event, Status},
+    epics::{Author, Epic, Epics, Event, Keep, Status},
     git,
     projects::{Project, Projects},
-    templates::{RESOLVER, TICKET},
+    templates::{self, RESOLVER, TICKET},
 };
 
 mod landing;
@@ -93,7 +93,7 @@ impl Runs {
             let Ok(epic) = self.epics.get(&slug) else { continue };
             for (&number, ticket) in &epic.tickets {
                 let chat = match ticket.status {
-                    Status::InProgress => ticket.claim.as_ref().map(|claim| &claim.chat),
+                    Status::InProgress if !ticket.releasing => ticket.claim.as_ref().map(|claim| &claim.chat),
                     Status::Merging => ticket.resolver.as_ref(),
                     _ => None,
                 };
@@ -113,9 +113,11 @@ impl Runs {
     async fn schedule(self: Arc<Self>, mut scheduled: mpsc::UnboundedReceiver<String>, mut lifecycle: broadcast::Receiver<Lifecycle>) {
         let mut changes = self.epics.subscribe();
         let mut called = BTreeMap::new();
+        let mut closing = HashSet::new();
         let mut slugs = self.epics.slugs();
         loop {
             for slug in slugs.drain(..) {
+                self.release(&slug, &mut closing);
                 if self.fill(&slug) {
                     self.finish(&slug).await;
                 }
@@ -130,6 +132,10 @@ impl Runs {
                 },
                 event = lifecycle.recv() => match event {
                     Ok(event) => {
+                        if let Lifecycle::Ended(chat) = &event {
+                            closing.remove(&chat.id);
+                            self.released(chat);
+                        }
                         slugs.extend(self.epics.holding(event.chat()));
                         if matches!(event, Lifecycle::Status(_, chats::Status::Done) | Lifecycle::Ended(_))
                             && let Some(slug) = self.epics.resolving(event.chat())
@@ -138,6 +144,7 @@ impl Runs {
                         }
                     }
                     Err(RecvError::Lagged(_)) => {
+                        closing.clear();
                         slugs = self.epics.slugs();
                         for slug in &slugs {
                             let _ = self.merges.send(slug.clone());
@@ -166,6 +173,9 @@ impl Runs {
         if takeable.is_empty() && busy.is_empty() {
             return true;
         }
+        if run.paused.is_some() {
+            return false;
+        }
         for number in takeable.into_iter().take((run.parallel as usize).saturating_sub(busy.len())) {
             let Ok(starting) = Starting::new(self, slug, number) else { continue };
             let (runs, slug, rig) = (Arc::clone(self), slug.to_owned(), run.rig.clone());
@@ -179,20 +189,48 @@ impl Runs {
         false
     }
 
+    /// Stops the Chat of each Ticket going back to not started, once, or releases the Ticket now when it has none.
+    fn release(&self, slug: &str, closing: &mut HashSet<String>) {
+        let Ok(epic) = self.epics.get(slug) else { return };
+        for (&number, ticket) in epic.tickets.iter().filter(|(_, ticket)| ticket.releasing) {
+            let (Some(claim), Some(worktree)) = (&ticket.claim, &ticket.worktree) else { continue };
+            if closing.insert(claim.chat.clone()) && !self.chats.end(&claim.chat) {
+                closing.remove(&claim.chat);
+                self.give_back(slug, number, Keep { worktree: worktree.clone(), agent: None, session: None });
+            }
+        }
+    }
+
+    /// Returns the in-progress Ticket a Chat held once that Chat has stopped, keeping its worktree and Agent session.
+    fn released(&self, chat: &Chat) {
+        let Some(slug) = self.epics.holding(&chat.id) else { return };
+        let Ok(epic) = self.epics.get(&slug) else { return };
+        let held = epic.tickets.iter().find(|(_, ticket)| ticket.claim.as_ref().is_some_and(|claim| claim.chat == chat.id));
+        let Some((&number, ticket)) = held.filter(|(_, ticket)| ticket.status == Status::InProgress) else { return };
+        let Some(worktree) = ticket.worktree.clone() else { return };
+        self.give_back(&slug, number, Keep { worktree, agent: Some(chat.agent), session: chat.agent_session.clone() });
+    }
+
+    fn give_back(&self, slug: &str, number: u32, keep: Keep) {
+        if let Err(error) = self.epics.record(slug, Event::Released { ticket: number, keep }) {
+            eprintln!("cannot release {slug}/{number}: {error}");
+        }
+    }
+
     /// The Run's step: starts a Ticket with the Run's Rig, in the open Project that checks out the Epic's repository.
     async fn take(&self, slug: &str, number: u32, rig: &str) -> Result<String, String> {
         let project = self.project(&self.epics.get(slug)?).await?;
         let found = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned();
         let rig = found.ok_or_else(|| format!("The Run's Rig {rig} is no longer in the config, so Oikonomos could not start a Chat."))?;
-        self.begin(slug, number, &project, &rig).await
+        self.begin(slug, number, &project, &rig, true).await
     }
 
-    /// Flags a Ticket the Run could not start, unless its failed Setup Command already has, so the Run moves on.
+    /// Flags a Ticket the live Run could not start, unless its failed Setup Command already has, so the Run moves on.
     fn start_failed(&self, slug: &str, number: u32, reason: String) {
-        let flagged = self.epics.get(slug).map(|epic| epic.tickets.get(&number).is_some_and(|ticket| ticket.attention.is_some()));
-        if flagged == Ok(false)
-            && let Err(error) = self.epics.record(slug, Event::StartFailed { ticket: number, reason })
-        {
+        let unflagged = self.epics.get(slug).is_ok_and(|epic| {
+            epic.run.is_some() && epic.tickets.get(&number).is_some_and(|ticket| ticket.attention.is_none())
+        });
+        if unflagged && let Err(error) = self.epics.record(slug, Event::StartFailed { ticket: number, reason }) {
             eprintln!("cannot flag {slug}/{number}: {error}");
         }
     }
@@ -277,11 +315,13 @@ impl Runs {
     /// Starts a Frontier Ticket by hand, outside any Run.
     pub async fn start(&self, slug: &str, number: u32, project: &Project, rig: &Rig) -> Result<String, String> {
         let _starting = Starting::new(self, slug, number)?;
-        self.begin(slug, number, project, rig).await
+        self.begin(slug, number, project, rig, false).await
     }
 
-    /// Starts a Frontier Ticket: cuts its worktree, runs the Setup Command there, and gives it to a new Chat.
-    async fn begin(&self, slug: &str, number: u32, project: &Project, rig: &Rig) -> Result<String, String> {
+    /// Starts a Frontier Ticket: cuts its worktree and runs the Setup Command there, or takes the worktree its released
+    /// Claim kept, then gives it to a new Chat, which resumes the kept session when there is one. A Run's start gives
+    /// up if the Run stops before the Claim is recorded.
+    async fn begin(&self, slug: &str, number: u32, project: &Project, rig: &Rig, run: bool) -> Result<String, String> {
         let epic = self.epics.get(slug)?;
         let Some(setup) = epic.setup.clone() else {
             return Err(format!(
@@ -297,6 +337,10 @@ impl Runs {
                 status => format!("{slug}/{number} is {status}, so it is not on the Frontier"),
             });
         }
+        let live = |epic: &Epic| match &epic.run {
+            None if run => Err(format!("{slug}'s Run stopped before {slug}/{number} had its Chat")),
+            _ => Ok(()),
+        };
         let integration = {
             let _cutting = self.cutting.lock().await;
             match self.epics.get(slug)?.integration {
@@ -304,26 +348,50 @@ impl Runs {
                 None => self.cut(&epic, project, &setup, number).await?,
             }
         };
-        let (worktree, branch) = self.fresh(Path::new(&integration), slug, number).await;
-        git::run(Path::new(&integration), &["worktree", "add", "-b", &branch, &worktree, &epic_branch(slug)]).await?;
-        if let Err(note) = run_setup(&setup, &worktree, "this Ticket's new worktree").await {
-            discard(&integration, &worktree, &branch).await;
-            return Err(self.setup_failed(slug, number, note));
-        }
-        let chat = match self.chats.create(project, Path::new(&worktree), rig, None).await {
-            Ok(chat) => chat,
-            Err(error) => {
-                discard(&integration, &worktree, &branch).await;
-                return Err(format!("cannot start a Chat for {slug}/{number}: {error}"));
+        let kept = ticket.worktree.as_deref().filter(|worktree| worktree.exists());
+        let (worktree, branch) = match kept {
+            Some(kept) => {
+                let name = kept.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+                (kept.to_string_lossy().into_owned(), ticket_branch(slug, &name))
+            }
+            None => {
+                let (worktree, branch) = self.fresh(Path::new(&integration), slug, number).await;
+                git::run(Path::new(&integration), &["worktree", "add", "-b", &branch, &worktree, &epic_branch(slug)]).await?;
+                if let Err(note) = run_setup(&setup, &worktree, "this Ticket's new worktree").await {
+                    discard(&integration, &worktree, &branch).await;
+                    return Err(self.setup_failed(slug, number, note));
+                }
+                (worktree, branch)
             }
         };
-        let claim = Event::Claimed { ticket: number, chat: chat.id.clone(), rig: rig.name.clone(), worktree: PathBuf::from(&worktree) };
-        if let Err(error) = self.epics.record(slug, claim) {
-            self.chats.close(&chat.id);
-            discard(&integration, &worktree, &branch).await;
-            return Err(error);
+        let abandon = async |error: String| {
+            if kept.is_none() {
+                discard(&integration, &worktree, &branch).await;
+            }
+            Err(error)
+        };
+        if let Err(error) = live(&self.epics.get(slug)?) {
+            return abandon(error).await;
         }
-        self.chats.send(&chat.id, &self.prompt(&epic, number, &branch), false, &[]);
+        let resume = ticket.kept.as_ref().filter(|_| kept.is_some());
+        let rig = match resume {
+            Some(resume) if resume.agent != rig.agent => self.config.borrow().rig_for(resume.agent),
+            _ => rig.clone(),
+        };
+        let chat = match self.chats.create(project, Path::new(&worktree), &rig, resume.map(|resume| resume.session.as_str())).await {
+            Ok(chat) => chat,
+            Err(error) => return abandon(format!("cannot start a Chat for {slug}/{number}: {error}")).await,
+        };
+        let claim = Event::Claimed { ticket: number, chat: chat.id.clone(), rig: rig.name.clone(), worktree: PathBuf::from(&worktree) };
+        if let Err(error) = self.epics.record_if(slug, claim, live) {
+            self.chats.close(&chat.id);
+            return abandon(error).await;
+        }
+        let text = match resume {
+            Some(_) => self.carry_on(&epic, number, &branch),
+            None => self.prompt(&epic, number, &branch),
+        };
+        self.chats.send(&chat.id, &text, false, &[]);
         Ok(chat.id)
     }
 
@@ -380,6 +448,19 @@ impl Runs {
             ticket.title,
             ticket.body.trim_end()
         )
+    }
+
+    /// What a resumed session is sent in place of the Ticket Template.
+    fn carry_on(&self, epic: &Epic, number: u32, branch: &str) -> String {
+        let reference = format!("{}/{number}", epic.slug);
+        let mut text = format!(
+            "Oikonomos stopped this Chat before {reference} had its Verdict, and has resumed it in the same worktree. Carry on where you stopped, and finish with exactly one Verdict.\n\nYour Ticket is {reference}, on the branch `{branch}`. {}",
+            self.binary()
+        );
+        if let Some(sentence) = templates::data_dir_sentence(&self.data_dir) {
+            text = format!("{text} {sentence}");
+        }
+        text
     }
 
     /// The Resolver Template, then the merge it resolves, which `templates::recognize` shows as what followed `/resolver`.

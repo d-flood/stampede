@@ -998,6 +998,20 @@ impl Chats {
         }
     }
 
+    /// Closes a Chat, or forgets the record of one that did not come back when the server restarted.
+    /// Either way `Lifecycle::Ended` follows with its last state; false when there is no such Chat.
+    pub fn end(&self, id: &str) -> bool {
+        if self.get(id).is_some() {
+            self.close(id);
+            return true;
+        }
+        let path = record_path(&self.data_dir, id);
+        let Ok(chat) = read_record(&path) else { return false };
+        let _ = fs::remove_file(path);
+        let _ = self.lifecycle.send(Lifecycle::Ended(Box::new(chat)));
+        true
+    }
+
     pub fn view(&self, connection: Uuid, browser: Option<String>, chat_ids: Vec<String>) {
         let entries: Vec<_> = chat_ids.iter().filter_map(|id| self.get(id)).collect();
         if chat_ids.is_empty() {
