@@ -86,6 +86,7 @@
 							label={tab.label}
 							ended={tab.state === 'ended'}
 							active={tab.id === active?.id}
+							onclose={() => closeTab(tab.id)}
 							onclick={() => (chosen = tab.id)}
 						/>
 					{/snippet}

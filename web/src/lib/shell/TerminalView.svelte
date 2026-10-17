@@ -30,10 +30,11 @@
 		ended?: boolean;
 		project?: Project;
 		onopen?(path: string, cursor?: Cursor): void;
+		onbrowse?(url: string): void;
 		children?: Snippet;
 	};
 
-	let { device, terminalId, active, focused, ended = false, project, onopen, children }: Props = $props();
+	let { device, terminalId, active, focused, ended = false, project, onopen, onbrowse, children }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<Terminal>();
@@ -120,7 +121,7 @@
 		element.addEventListener('beforeinput', (event) => {
 			if (event.inputType === 'insertText' && event.data && !event.isComposing) send(event.data);
 		});
-		if (onopen) linkify(next, () => project, onopen);
+		if (onopen) linkify(next, () => project, onopen, onbrowse);
 		next.attachCustomWheelEventHandler((event) => {
 			if (!next.hasMouseTracking()) return false;
 			scroll(lines(event), event);

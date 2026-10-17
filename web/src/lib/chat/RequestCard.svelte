@@ -17,7 +17,9 @@
 	const title = $derived(request.kind === 'command' ? `${agent} wants to run a command` : request.kind === 'edit' ? `${agent} wants to edit a file` : request.kind === 'plan' ? 'Proposed plan' : request.kind === 'question' ? question?.header : request.title);
 
 	function quote(word: string) {
-		return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+		if (/^[\w@%+=:,./-]+$/.test(word)) return word;
+		if (word.includes("'") && !/["$`\\]/.test(word)) return `"${word}"`;
+		return `'${word.replaceAll("'", `'\\''`)}'`;
 	}
 
 	function stop(index: number, length: number) {
@@ -65,7 +67,7 @@
 			<Button {disabled} onclick={() => next(true)}>Skip</Button>
 		</div>
 	{:else if request.kind === 'plan'}
-		<div class="code"><Text item={{ kind: 'text', text: request.plan, streaming: false }} /></div>
+		<div class="code"><Text item={{ kind: 'text', text: request.plan, streaming: false, phase: 'final' }} /></div>
 		<div class="actions">
 			<Button variant="primary" {disabled} onclick={() => onanswer({ allow: true })}>Approve</Button>
 			<Button {disabled} onclick={() => onanswer({ allow: false })}>Keep planning</Button>

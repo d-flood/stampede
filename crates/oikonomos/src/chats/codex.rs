@@ -17,7 +17,7 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
 use super::{
-    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Setting,
+    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Phase, Setting,
     Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
     html,
 };
@@ -550,7 +550,7 @@ struct Transcript {
     checkpoints: HashMap<usize, String>,
     starting: Option<u64>,
     turn: Option<String>,
-    streaming: HashMap<String, (usize, String)>,
+    streaming: HashMap<String, (usize, String, Phase)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     commands: HashMap<String, usize>,
     subagents: HashMap<String, (Subagent, Transcript)>,
@@ -766,9 +766,9 @@ impl Transcript {
         index
     }
 
-    fn stream(&mut self, id: &str, text: &str) {
-        let index = self.push(Item::Text { text: text.to_owned(), streaming: true });
-        self.streaming.insert(id.to_owned(), (index, text.to_owned()));
+    fn stream(&mut self, id: &str, text: &str, phase: Phase) {
+        let index = self.push(Item::Text { text: text.to_owned(), streaming: true, phase });
+        self.streaming.insert(id.to_owned(), (index, text.to_owned(), phase));
     }
 
     fn resumed(&mut self, turns: &Value) -> Status {
@@ -1018,8 +1018,8 @@ impl Transcript {
             Some("turn/completed") => {
                 self.turn = None;
                 // A message cut off by an interrupt or a steer never gets its item/completed.
-                for (_, (index, text)) in self.streaming.drain() {
-                    let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false }));
+                for (_, (index, text, phase)) in self.streaming.drain() {
+                    let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false, phase }));
                 }
                 if params["turn"]["status"] == "failed" {
                     self.push(notice(&params["turn"]["error"]));
@@ -1036,19 +1036,19 @@ impl Transcript {
             }
             Some("item/started") if item["type"] == "agentMessage" => {
                 let (Some(id), Some(text)) = (item["id"].as_str(), item["text"].as_str()) else { return };
-                self.stream(id, text);
+                self.stream(id, text, phase(item));
             }
             Some("item/agentMessage/delta") => {
                 let Some(id) = params["itemId"].as_str() else { return };
                 let delta = params["delta"].as_str().unwrap_or_default();
                 match self.streaming.get_mut(id) {
-                    Some((index, text)) => {
+                    Some((index, text, phase)) => {
                         text.push_str(delta);
-                        let item = Item::Text { text: text.clone(), streaming: true };
+                        let item = Item::Text { text: text.clone(), streaming: true, phase: *phase };
                         let _ = self.events.send(Event::Item(*index, item));
                     }
                     // A resume rejoins a streaming message without its item/started or its text so far.
-                    None => self.stream(id, delta),
+                    None => self.stream(id, delta, Phase::Final),
                 }
             }
             Some("item/started") if item["type"] == "commandExecution" => {
@@ -1084,7 +1084,7 @@ impl Transcript {
                     self.plan = Some((format!("plan:{}", text("id")), plan));
                 }
                 match item["id"].as_str().and_then(|id| self.streaming.remove(id)) {
-                Some((index, _)) => {
+                Some((index, ..)) => {
                     let _ = self.events.send(Event::Item(index, agent(item)));
                 }
                 None => {
@@ -1237,7 +1237,11 @@ fn user(item: &Value) -> Item {
 }
 
 fn agent(item: &Value) -> Item {
-    Item::Text { text: item["text"].as_str().unwrap_or_default().to_owned(), streaming: false }
+    Item::Text { text: item["text"].as_str().unwrap_or_default().to_owned(), streaming: false, phase: phase(item) }
+}
+
+fn phase(item: &Value) -> Phase {
+    if item["phase"] == "commentary" { Phase::Commentary } else { Phase::Final }
 }
 
 fn key(id: &Value) -> String {

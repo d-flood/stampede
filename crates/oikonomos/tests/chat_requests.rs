@@ -247,7 +247,7 @@ async fn first_answer_wins(agent: &str, allowed: Value) {
         assert_eq!(device.resolved, [request["id"].clone()]);
         assert!(device.requests.is_empty());
     }
-    assert_eq!(first.items.last().unwrap(), &json!({ "kind": "text", "text": "Done", "streaming": false }));
+    assert_eq!(first.items.last().unwrap(), &json!({ "kind": "text", "text": "Done", "streaming": false, "phase": "final" }));
     close_chat(&mut first.socket, launched.server.root.path(), chat_id).await;
     assert_eq!(launched.answers(), [allowed]);
 }
@@ -274,7 +274,7 @@ async fn denied(agent: &str, edit: &str, command: &str) -> (Launched, Device) {
     device.answer(&request, json!({ "allow": false, "instead": INSTEAD })).await;
     device.follow(|device| device.status == "done").await;
     assert_eq!(device.statuses, ["working", "waiting", "working", "done"]);
-    assert_eq!(device.items.last().unwrap(), &json!({ "kind": "text", "text": "Skipped", "streaming": false }));
+    assert_eq!(device.items.last().unwrap(), &json!({ "kind": "text", "text": "Skipped", "streaming": false, "phase": "final" }));
     (launched, device)
 }
 

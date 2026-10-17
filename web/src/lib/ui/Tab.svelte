@@ -3,14 +3,16 @@
 	import CheckBold from '~icons/ph/check-bold';
 	import CircleNotchBold from '~icons/ph/circle-notch-bold';
 	import FileCode from '~icons/ph/file-code';
+	import Globe from '~icons/ph/globe';
 	import GitDiff from '~icons/ph/git-diff';
 	import HandPalmFill from '~icons/ph/hand-palm-fill';
 	import TerminalWindow from '~icons/ph/terminal-window';
+	import X from '~icons/ph/x';
 	import Claude from '~icons/simple-icons/claude';
 	import OpenAI from '~icons/simple-icons/openai';
 
 	type Props = HTMLButtonAttributes & {
-		variant: 'agent' | 'terminal' | 'editor' | 'diff';
+		variant: 'agent' | 'terminal' | 'editor' | 'diff' | 'browser';
 		label: string;
 		agent?: 'claude-code' | 'codex';
 		against?: string;
@@ -19,6 +21,7 @@
 		dirty?: boolean;
 		deleted?: boolean;
 		ended?: boolean;
+		onclose?: () => void;
 	};
 
 	let {
@@ -31,33 +34,56 @@
 		dirty = false,
 		deleted = false,
 		ended = false,
+		onclose,
 		...rest
 	}: Props = $props();
 
-	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff };
+	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe };
 	const agents = { 'claude-code': Claude, codex: OpenAI };
 	const marks = { working: CircleNotchBold, waiting: HandPalmFill, done: CheckBold };
 	const Icon = $derived(variant === 'agent' ? agents[agent] : icons[variant]);
 	const Mark = $derived(status && marks[status]);
 </script>
 
-<button role="tab" aria-selected={active} class="{variant} {status ?? ''}" class:active class:deleted class:ended {...rest}>
-	<Icon />
-	<span class="label">{label}</span>
-	{#if variant === 'diff'}<span class="vs">↔ {against}</span>{/if}
-	{#if Mark}<span class="mark" title={status}><Mark /></span>{/if}
-	{#if dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
-</button>
+<div class="tab" class:closable={active && !!onclose}>
+	<button role="tab" aria-selected={active} class="select {variant} {status ?? ''}" class:active class:deleted class:ended {...rest}>
+		<Icon />
+		<span class="label">{label}</span>
+		{#if variant === 'diff'}<span class="vs">↔ {against}</span>{/if}
+		{#if Mark}<span class="mark" title={status}><Mark /></span>{/if}
+		{#if dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
+	</button>
+	{#if active && onclose}
+		<button
+			class="close"
+			type="button"
+			aria-label="Close {label}"
+			title="Close {label}"
+			onpointerdown={(event) => event.stopPropagation()}
+			onclick={(event) => {
+				event.stopPropagation();
+				onclose?.();
+			}}
+		><X /></button>
+	{/if}
+</div>
 
 <style>
-	button {
+	.tab {
 		position: relative;
 		display: inline-flex;
 		flex: none;
+		min-width: 0;
+		max-width: 14rem;
+	}
+
+	.select {
+		position: relative;
+		display: inline-flex;
+		flex: 1;
 		align-items: center;
 		gap: var(--space-2);
 		min-width: 0;
-		max-width: 14rem;
 		min-height: calc(var(--target-min) + var(--space-2));
 		margin-bottom: calc(-1 * var(--border-width));
 		padding: 0 var(--space-3);
@@ -75,9 +101,40 @@
 			color var(--dur-fast);
 	}
 
-	button:not(.active):hover {
+	.select:not(.active):hover {
 		background: var(--hover);
 		color: var(--color-fg);
+	}
+
+	.closable .select {
+		padding-right: calc(var(--target-min) + var(--space-3));
+	}
+
+	.close {
+		position: absolute;
+		top: 50%;
+		right: var(--border-width);
+		display: inline-grid;
+		place-items: center;
+		width: var(--target-min);
+		height: var(--target-min);
+		padding: 0;
+		border: none;
+		border-radius: var(--radius-sm);
+		background: none;
+		color: var(--muted-fg);
+		font-size: var(--font-size-lg);
+		cursor: pointer;
+		transform: translateY(-50%);
+	}
+
+	.close:hover {
+		background: var(--hover);
+		color: var(--color-fg);
+	}
+
+	.close:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
 	}
 
 	.label {

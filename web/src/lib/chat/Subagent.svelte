@@ -10,7 +10,7 @@
 		<span class="task">↳ {item.name ? `${item.name} · ` : ''}{item.task}</span>
 		<span class="status" class:working={item.status === 'working'} class:waiting={item.status === 'waiting'}>{item.status}</span>
 	</summary>
-	<div class="activity"><Transcript items={item.items} {ondiff} /></div>
+	<Transcript items={item.items} {ondiff} />
 </details>
 
 <style>
@@ -49,13 +49,5 @@
 	}
 	.waiting {
 		color: var(--status-waiting);
-	}
-	.activity {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-3);
-		margin-left: var(--space-3);
-		padding-left: var(--space-3);
-		border-left: var(--border-width) solid var(--border);
 	}
 </style>

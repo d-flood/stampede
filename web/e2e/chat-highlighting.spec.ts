@@ -28,7 +28,9 @@ const items: Item[] = [
 	{ kind: 'command', command: 'pnpm -C web check', status: 'running', output: '' },
 	{ kind: 'command', command: "sed -n '1,125p' web/e2e/chat-requests.spec.ts", status: 'ok', output: '' },
 	{ kind: 'command', command: "ps -eo pid,ppid,comm | rg 'pnpm|node|zsh'", status: 'ok', output: '' },
-	{ kind: 'command', command: 'cat web/e2e/search.spec.ts | head -42; git diff', status: 'ok', output: '' }
+	{ kind: 'command', command: 'cat web/e2e/search.spec.ts | head -42; git diff', status: 'ok', output: '' },
+	{ kind: 'command', command: "python3 -c 'import json; print(json.dumps(1))' | head", status: 'ok', output: '' },
+	{ kind: 'command', command: "python3 -I - <<'EOF'\nfor line in open('x'):\n    print(line)\nEOF\necho done", status: 'ok', output: '' }
 ];
 
 test('chat highlights commands, tool arguments, and both sides of inline diffs', async ({ page }, { project, repeatEachIndex }) => {
@@ -74,6 +76,12 @@ test('chat highlights commands, tool arguments, and both sides of inline diffs',
 	const chained = panel.locator('.command').filter({ hasText: 'cat web/e2e' });
 	await colored(chained.getByText('head', { exact: true }), '--ansi-4');
 	await colored(chained.getByText('git', { exact: true }), '--ansi-4');
+	const inline = panel.locator('.command').filter({ hasText: 'import json' });
+	await colored(inline.getByText('import', { exact: true }), '--ansi-5');
+	await colored(inline.getByText('head', { exact: true }), '--ansi-4');
+	const heredoc = panel.locator('.command').filter({ hasText: 'for line' });
+	await colored(heredoc.getByText('for', { exact: true }), '--ansi-5');
+	await colored(heredoc.getByText('echo', { exact: true }), '--ansi-4');
 	await panel.getByText('Used example', { exact: true }).click();
 	await colored(panel.getByRole('listitem').getByText('true', { exact: true }), '--ansi-3');
 
@@ -105,6 +113,10 @@ test('chat highlights commands, tool arguments, and both sides of inline diffs',
 	route!.send(JSON.stringify({ type: 'chat.resolved', chatId: chatId!, requestId: 'highlight-edit' }));
 	request({ kind: 'command', id: 'highlight-command', words: [['printf', 'hello world', '$HOME']], suggestion: [], sessionPrefixes: true });
 	await colored(approval.locator('pre').getByText("'hello world'", { exact: true }), '--ansi-2');
+	route!.send(JSON.stringify({ type: 'chat.resolved', chatId: chatId!, requestId: 'highlight-command' }));
+	request({ kind: 'command', id: 'highlight-python', words: [['python3', '-c', "print('hi')"]], suggestion: [], sessionPrefixes: true });
+	await expect(approval.locator('pre')).toHaveText(`python3 -c "print('hi')"`);
+	await colored(approval.locator('pre').getByText('print', { exact: true }), '--ansi-4');
 	await closeProject(page, name);
 });
 

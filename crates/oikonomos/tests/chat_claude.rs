@@ -41,7 +41,7 @@ async fn a_claude_chat_streams_a_turn_and_closing_stops_its_agent() {
         items,
         [
             json!({ "kind": "user", "text": PROMPT, "images": 0 }),
-            json!({ "kind": "text", "text": "Hello and **welcome**! 👋", "streaming": false }),
+            json!({ "kind": "text", "text": "Hello and **welcome**! 👋", "streaming": false, "phase": "final" }),
         ]
     );
 

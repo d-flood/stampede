@@ -1,4 +1,5 @@
 mod attention;
+mod browser;
 mod chats;
 mod config;
 mod device;
@@ -78,11 +79,13 @@ struct AppState {
     push: Arc<Push>,
     languages: Arc<LanguageServers>,
     layouts: Arc<Layouts>,
+    browsers: Arc<browser::Browsers>,
 }
 
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/version", get(version))
+        .route("/api/browser", post(browser::open))
         .route("/api/theme", get(theme).put(set_theme))
         .route("/api/themes", get(theme_names))
         .route("/api/font", get(font))
@@ -118,6 +121,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let push = Arc::new(Push::load(&args.data_dir)?);
     let languages = Arc::new(LanguageServers::load(&args.data_dir)?);
     let layouts = Arc::new(Layouts::load(&args.data_dir)?);
+    let browsers = Arc::new(browser::Browsers::new(args.port));
     let attention = Arc::new(Feed::default());
     push::spawn(Arc::clone(&push), &attention);
     let usage = Arc::new(Usage::default());
@@ -138,7 +142,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
-    let state = AppState { terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts };
+    let state = AppState { terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers };
     axum::serve(listener, router(state)).await
 }
 

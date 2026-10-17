@@ -2,7 +2,7 @@ import type { Project } from '#lib/device.svelte.ts';
 import type { Cursor } from '#lib/files.svelte.ts';
 import { OSC8LinkProvider, type ILink, type Terminal } from 'ghostty-web';
 
-const URLS = /https?:\/\/[\w\-.~:/?#@!$&*+,;=%]+/g;
+const URLS = /https?:\/\/[\w\-.~:/?#@!$&*+,;=%\[\]]+/g;
 const TRAILING = /[.,;!?)\]]+$/;
 const PATHS = /([./~]?[\w@.-]+(?:\/[\w@.-]+)*\.\w+)(?::(\d+)(?::(\d+))?)?/g;
 const FRESH_MS = 10_000;
@@ -27,11 +27,12 @@ function relative(path: string, root: string): string | undefined {
 	if (path.startsWith(`${root}/`)) return path.slice(root.length + 1);
 }
 
-function browse(url: string) {
-	window.open(url, '_blank', 'noopener');
-}
-
-export function linkify(view: Terminal, project: () => Project | undefined, onopen: (path: string, cursor?: Cursor) => void) {
+export function linkify(view: Terminal, project: () => Project | undefined, onopen: (path: string, cursor?: Cursor) => void, onbrowse?: (url: string) => void) {
+	function browse(value: string) {
+		const url = URL.parse(value);
+		if (onbrowse && url?.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) onbrowse(url.href);
+		else window.open(value, '_blank', 'noopener');
+	}
 	// ghostty-web's built-in providers only follow Ctrl/Cmd-clicks.
 	view['linkDetector']?.dispose();
 	const hyperlinks = new OSC8LinkProvider(view);

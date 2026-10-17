@@ -14,6 +14,7 @@
 	ol {
 		display: flex;
 		flex-direction: column;
+		align-items: flex-end;
 		gap: var(--space-2);
 		margin: 0;
 		padding: 0;
@@ -21,6 +22,7 @@
 	}
 
 	li {
+		max-width: 85%;
 		padding: var(--space-3) var(--space-4);
 		border: var(--border-width) dashed var(--border);
 		border-radius: var(--radius-lg);

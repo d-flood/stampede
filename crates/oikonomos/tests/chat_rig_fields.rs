@@ -47,7 +47,7 @@ async fn a_claude_chat_starts_with_its_rigs_model_effort_and_mode() {
         items,
         [
             json!({ "kind": "user", "text": prompt, "images": 0 }),
-            json!({ "kind": "text", "text": "ready", "streaming": false }),
+            json!({ "kind": "text", "text": "ready", "streaming": false, "phase": "final" }),
         ]
     );
     let record: Value = serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{chat_id}.json"))).unwrap()).unwrap();

@@ -72,7 +72,7 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
     assert_eq!(chat["agentSession"], COLOR);
     let color = [
         json!({ "kind": "user", "text": "Name a color in one word.", "images": 0 }),
-        json!({ "kind": "text", "text": "Crimson", "streaming": false }),
+        json!({ "kind": "text", "text": "Crimson", "streaming": false, "phase": "final" }),
     ];
     assert_eq!(attach(&mut socket, chat_id).await, color);
     let running = leftovers(server.root.path());
@@ -85,7 +85,7 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
     assert_eq!(turn(&mut socket, chat_id, "Now name a fruit in one word.").await, ["working", "done"]);
     let fruit = [
         json!({ "kind": "user", "text": "Now name a fruit in one word.", "images": 0 }),
-        json!({ "kind": "text", "text": "Mango", "streaming": false }),
+        json!({ "kind": "text", "text": "Mango", "streaming": false, "phase": "final" }),
     ];
     assert_eq!(attach(&mut socket, chat_id).await, [color, fruit].concat());
     let record: Value =
@@ -104,14 +104,14 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
     let hi = [
         json!({ "kind": "user", "text": "Say hi in three words.", "images": 0 }),
         json!({ "kind": "thinking", "seconds": 0 }),
-        json!({ "kind": "text", "text": "Hi there, friend!", "streaming": false }),
+        json!({ "kind": "text", "text": "Hi there, friend!", "streaming": false, "phase": "final" }),
     ];
     assert_eq!(attach(&mut socket, chat_id).await, hi);
 
     assert_eq!(turn(&mut socket, chat_id, "Now say bye in two words.").await, ["working", "done"]);
     let bye = [
         json!({ "kind": "user", "text": "Now say bye in two words.", "images": 0 }),
-        json!({ "kind": "text", "text": "Bye, friend!", "streaming": false }),
+        json!({ "kind": "text", "text": "Bye, friend!", "streaming": false, "phase": "final" }),
     ];
     assert_eq!(attach(&mut socket, chat_id).await, [&hi[..], &bye].concat());
     close_chat(&mut socket, server.root.path(), chat_id).await;

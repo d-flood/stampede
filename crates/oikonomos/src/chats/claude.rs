@@ -19,7 +19,7 @@ use toml::value::{Datetime, Offset};
 use uuid::Uuid;
 
 use super::{
-    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Setting,
+    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Phase, Setting,
     Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     html,
@@ -575,6 +575,9 @@ struct Transcript {
     cwd: PathBuf,
     len: usize,
     streaming: HashMap<u64, (usize, String)>,
+    message: Option<String>,
+    phase: Phase,
+    said: Vec<(usize, String)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     commands: HashMap<String, (usize, String)>,
     snippets: HashMap<String, Item>,
@@ -617,6 +620,9 @@ impl Transcript {
             cwd: cwd.to_owned(),
             len: 0,
             streaming: HashMap::new(),
+            message: None,
+            phase: Phase::Final,
+            said: Vec::new(),
             tools: None,
             commands: HashMap::new(),
             snippets: HashMap::new(),
@@ -1027,6 +1033,7 @@ impl Transcript {
 
     /// Text blocks of a `streamed` message already arrived as stream events.
     fn assistant(&mut self, message: &Value, thinking: &Value, streamed: bool) {
+        self.begin(&message["message"]);
         let blocks = message["message"]["content"].as_array().into_iter().flatten();
         if let Some(error) = message["error"].as_str() {
             let text: Vec<&str> = blocks.filter_map(|block| block["text"].as_str()).collect();
@@ -1038,15 +1045,32 @@ impl Transcript {
             match block["type"].as_str() {
                 Some("text") if !streamed => {
                     let text = block["text"].as_str().unwrap_or_default().to_owned();
-                    self.push(Item::Text { text, streaming: false });
+                    let index = self.push(Item::Text { text: text.clone(), streaming: false, phase: self.phase });
+                    self.said.push((index, text));
                 }
                 Some("thinking") => {
                     let text = block["thinking"].as_str().filter(|text| !text.is_empty()).map(str::to_owned);
                     self.push(Item::Thinking { seconds: seconds(thinking.as_u64().unwrap_or_default()), text });
                 }
-                Some("tool_use") => self.tool(block),
+                Some("tool_use") => {
+                    self.phase = Phase::Commentary;
+                    for (index, text) in self.said.drain(..) {
+                        let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false, phase: Phase::Commentary }));
+                    }
+                    self.tool(block);
+                }
                 _ => {}
             }
+        }
+    }
+
+    /// Only a tool call later in the same message shows that its text was said while working.
+    fn begin(&mut self, message: &Value) {
+        let id = message["id"].as_str();
+        if id.is_none() || self.message.as_deref() != id {
+            self.message = id.map(str::to_owned);
+            self.phase = Phase::Final;
+            self.said.clear();
         }
     }
 
@@ -1208,25 +1232,27 @@ impl Transcript {
 
     fn stream(&mut self, event: &Value) {
         if event["type"] == "message_start" {
+            self.begin(&event["message"]);
             return self.called(&event["message"]);
         }
         let Some(block) = event["index"].as_u64() else { return };
         match event["type"].as_str() {
             Some("content_block_start") if event["content_block"]["type"] == "text" => {
                 let text = event["content_block"]["text"].as_str().unwrap_or_default().to_owned();
-                let index = self.push(Item::Text { text: text.clone(), streaming: true });
+                let index = self.push(Item::Text { text: text.clone(), streaming: true, phase: self.phase });
                 self.streaming.insert(block, (index, text));
             }
             Some("content_block_delta") if event["delta"]["type"] == "text_delta" => {
                 if let Some((index, text)) = self.streaming.get_mut(&block) {
                     text.push_str(event["delta"]["text"].as_str().unwrap_or_default());
-                    let item = Item::Text { text: text.clone(), streaming: true };
+                    let item = Item::Text { text: text.clone(), streaming: true, phase: self.phase };
                     let _ = self.events.send(Event::Item(*index, item));
                 }
             }
             Some("content_block_stop") => {
                 if let Some((index, text)) = self.streaming.remove(&block) {
-                    let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false }));
+                    let _ = self.events.send(Event::Item(index, Item::Text { text: text.clone(), streaming: false, phase: self.phase }));
+                    self.said.push((index, text));
                 }
             }
             _ => {}
@@ -1299,6 +1325,52 @@ mod html_tests {
                 }
                 assert!(transcript.snippets.is_empty());
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod phase_tests {
+    use super::*;
+
+    #[test]
+    fn text_turns_to_commentary_once_its_message_calls_a_tool_live_and_from_history() {
+        let entry = |id: &str, block: Value| json!({ "type": "assistant", "message": { "id": id, "content": [block] } });
+        let text = |text: &str| json!({ "type": "text", "text": text });
+        let tool = json!({ "type": "tool_use", "id": "read", "name": "Read", "input": { "file_path": "/project/notes.txt" } });
+        let streamed = |id: &str, text: &str| {
+            [
+                json!({ "type": "message_start", "message": { "id": id } }),
+                json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "" } }),
+                json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": text } }),
+                json!({ "type": "content_block_stop", "index": 0 }),
+            ]
+            .map(|event| json!({ "type": "stream_event", "event": event, "parent_tool_use_id": null }))
+        };
+        for recorded in [false, true] {
+            let (events, mut received) = mpsc::unbounded_channel();
+            let mut transcript = Transcript::new(events, Path::new("/project"));
+            if recorded {
+                for message in [entry("working", text("Reading.")), entry("working", tool.clone()), entry("answer", text("Done."))] {
+                    transcript.recorded(&message);
+                }
+            } else {
+                let messages = streamed("working", "Reading.").into_iter().chain([entry("working", tool.clone())]).chain(streamed("answer", "Done."));
+                for message in messages {
+                    transcript.read(&message);
+                }
+            }
+            let mut items = BTreeMap::new();
+            while let Ok(event) = received.try_recv() {
+                if let Event::Item(index, item) = event {
+                    items.insert(index, item);
+                }
+            }
+            let texts: Vec<_> = items.into_values().filter_map(|item| match item {
+                Item::Text { text, phase, .. } => Some((text, phase)),
+                _ => None,
+            }).collect();
+            assert_eq!(texts, [("Reading.".to_owned(), Phase::Commentary), ("Done.".to_owned(), Phase::Final)], "recorded: {recorded}");
         }
     }
 }

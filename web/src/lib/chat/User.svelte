@@ -20,13 +20,16 @@
 	<div class="user text">{item.text}</div>
 {/if}
 
-{#if item.images}<div class="label">{item.images} image{item.images === 1 ? '' : 's'}</div>{/if}
+{#if item.images}<div class="label images">{item.images} image{item.images === 1 ? '' : 's'}</div>{/if}
 
 <style>
 	.user {
+		align-self: flex-end;
+		max-width: 85%;
 		padding: var(--space-3) var(--space-4);
-		border-radius: var(--radius-lg);
-		background: var(--surface-2);
+		border: var(--border-width) solid color-mix(in oklab, var(--ansi-4) 38%, var(--color-bg));
+		border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
+		background: color-mix(in oklab, var(--ansi-4) 16%, var(--color-bg));
 	}
 
 	.text {
@@ -72,6 +75,10 @@
 
 	.label {
 		color: var(--muted-fg);
+	}
+
+	.images {
+		align-self: flex-end;
 	}
 
 	details .text {

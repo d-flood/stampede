@@ -66,7 +66,7 @@ async fn a_codex_chat_resumes_its_thread_through_server_restarts() {
         view.items,
         [
             json!({ "kind": "user", "text": COUNT, "images": 0 }),
-            json!({ "kind": "text", "text": during, "streaming": true }),
+            json!({ "kind": "text", "text": during, "streaming": true, "phase": "final" }),
         ]
     );
     assert!(view.statuses.is_empty(), "{:?}", view.statuses);
@@ -77,7 +77,7 @@ async fn a_codex_chat_resumes_its_thread_through_server_restarts() {
     assert_eq!(view.statuses, ["done"]);
     let finished = [
         json!({ "kind": "user", "text": COUNT, "images": 0 }),
-        json!({ "kind": "text", "text": counted(1..=60).trim_end(), "streaming": false }),
+        json!({ "kind": "text", "text": counted(1..=60).trim_end(), "streaming": false, "phase": "final" }),
     ];
     assert_eq!(view.items, finished);
 
@@ -96,7 +96,7 @@ async fn a_codex_chat_resumes_its_thread_through_server_restarts() {
             finished[0].clone(),
             finished[1].clone(),
             json!({ "kind": "user", "text": SAY, "images": 0 }),
-            json!({ "kind": "text", "text": "Done", "streaming": false }),
+            json!({ "kind": "text", "text": "Done", "streaming": false, "phase": "final" }),
         ]
     );
     let record = fs::read(server.root.path().join(format!("data/chats/{chat_id}.json"))).unwrap();

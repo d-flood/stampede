@@ -33,7 +33,7 @@ pub use html::serve as chat_tools;
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Item {
     User { text: String, images: usize },
-    Text { text: String, streaming: bool },
+    Text { text: String, streaming: bool, phase: Phase },
     Thinking {
         seconds: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -68,6 +68,13 @@ pub enum ToolKind {
     Fetch,
     Web,
     Other,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Phase {
+    Commentary,
+    Final,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]

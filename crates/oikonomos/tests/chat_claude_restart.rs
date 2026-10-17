@@ -69,9 +69,9 @@ async fn a_claude_chat_streams_on_through_a_server_restart() {
         view.items,
         [
             json!({ "kind": "user", "text": GREET, "images": 0 }),
-            json!({ "kind": "text", "text": GREETING, "streaming": false }),
+            json!({ "kind": "text", "text": GREETING, "streaming": false, "phase": "final" }),
             json!({ "kind": "user", "text": COUNT, "images": 0 }),
-            json!({ "kind": "text", "text": during, "streaming": true }),
+            json!({ "kind": "text", "text": during, "streaming": true, "phase": "final" }),
         ]
     );
 
@@ -80,9 +80,9 @@ async fn a_claude_chat_streams_on_through_a_server_restart() {
     assert_eq!(view.statuses, ["done"]);
     let finished = [
         json!({ "kind": "user", "text": GREET, "images": 0 }),
-        json!({ "kind": "text", "text": GREETING, "streaming": false }),
+        json!({ "kind": "text", "text": GREETING, "streaming": false, "phase": "final" }),
         json!({ "kind": "user", "text": COUNT, "images": 0 }),
-        json!({ "kind": "text", "text": COUNTED, "streaming": false }),
+        json!({ "kind": "text", "text": COUNTED, "streaming": false, "phase": "final" }),
     ];
     assert_eq!(view.items, finished);
     let record = fs::read(server.root.path().join(format!("data/chats/{chat_id}.json"))).unwrap();

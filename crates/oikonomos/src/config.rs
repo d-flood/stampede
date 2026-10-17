@@ -260,9 +260,9 @@ impl Config {
         if let Some(rig) = self.rigs.iter().find(|rig| rig.agent == agent) {
             return rig.clone();
         }
-        let name = match agent {
-            Agent::ClaudeCode => "Claude Code",
-            Agent::Codex => "Codex",
+        let (name, mode) = match agent {
+            Agent::ClaudeCode => ("Claude Code", "auto"),
+            Agent::Codex => ("Codex", "approve-for-me"),
         };
         Rig {
             name: name.to_owned(),
@@ -271,7 +271,7 @@ impl Config {
             shortcut: None,
             model: None,
             effort: None,
-            mode: None,
+            mode: Some(mode.to_owned()),
         }
     }
 

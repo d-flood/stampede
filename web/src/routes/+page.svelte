@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { version } from '$app/env';
+	import { OpenBrowser } from '#lib/browser.svelte.ts';
+	import Browser from '#lib/shell/Browser.svelte';
 	import { ago, logos } from '#lib/chat/sessions.ts';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import {
@@ -60,6 +62,7 @@
 	let usage = $state<Reading[]>([]);
 	let visible = $state(document.visibilityState === 'visible');
 	let files = $state<Record<string, OpenFile[]>>(restored.files);
+	let browsers = $state<Record<string, OpenBrowser[]>>(restored.browsers);
 	let git = $state<Record<string, Git>>({});
 	let chosen = $state(restored.chosen);
 	let chosenTabs = $state<Record<string, string>>(restored.chosenTabs);
@@ -95,9 +98,11 @@
 	const tabs = $derived((focused && terminals[focused.id]) || []);
 	const chatTabs = $derived((focused && chats[focused.id]) || []);
 	const fileTabs = $derived((focused && files[focused.id]) || []);
+	const browserTabs = $derived((focused && browsers[focused.id]) || []);
 	const tabIds = $derived([
 		...tabs.map((tab) => tab.id),
 		...chatTabs.map((chat) => chat.id),
+		...browserTabs.map((browser) => browser.id),
 		...fileTabs.map((file) => file.id)
 	]);
 	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? '']) ?? tabIds.at(-1));
@@ -116,7 +121,7 @@
 		{ title: sectionShowing(section, focused && git[focused.id]).label, sub: label }
 	]);
 	const deviceLayout = $derived(
-		capture({ chosen, terminals, chats, files, chosenTabs, splits, sidebar: { open: sidebar, section } })
+		capture({ chosen, terminals, chats, files, browsers, chosenTabs, splits, sidebar: { open: sidebar, section } })
 	);
 
 	$effect(() => device.send({ type: 'device.view', chatIds: shownChats }));
@@ -216,6 +221,9 @@
 				break;
 			case 'projects.changed':
 				projects = message.projects;
+				for (const projectId in browsers) {
+					if (!projects.some((project) => project.id === projectId)) delete browsers[projectId];
+				}
 				for (const projectId in files) {
 					if (!projects.some((project) => project.id === projectId)) delete files[projectId];
 				}
@@ -333,7 +341,11 @@
 		const items = rigs()
 			.map((rig) => ({ label: rig.name, onselect: () => launch(rig, projectId) }));
 		const terminal = () => device.send({ type: 'terminal.create', projectId });
-		const rest = [{ label: 'Terminal', onselect: terminal }, { label: 'Open file', onselect: () => openPalette('files') }];
+		const rest = [
+			{ label: 'Terminal', onselect: terminal },
+			{ label: 'Browser', onselect: () => openBrowser(projectId) },
+			{ label: 'Open file', onselect: () => openPalette('files') }
+		];
 		const recent = (sessions[projectId] ?? []).slice(0, RECENT).map((session) => ({
 			label: session.firstPrompt,
 			icon: logos[session.agent],
@@ -485,6 +497,25 @@
 		if (cursor) file.cursor = cursor;
 	}
 
+	function openBrowser(projectId: string, url = '') {
+		browsers[projectId] ??= [];
+		const open = browsers[projectId];
+		let browser = url ? open.find((browser) => browser.url === url) : undefined;
+		if (!browser) {
+			browser = new OpenBrowser(projectId);
+			browser.url = url;
+			open.push(browser);
+			place(projectId, browser.id);
+		}
+		choose(projectId, browser.id);
+		slide(1);
+	}
+
+	function closeBrowser(browser: OpenBrowser) {
+		leave(browser.projectId, browser.id);
+		browsers[browser.projectId] = browsers[browser.projectId].filter((open) => open.id !== browser.id);
+	}
+
 	function openConfig() {
 		palette = undefined;
 		if (focused) openTab(new OpenConfig(focused.id));
@@ -564,6 +595,7 @@
 							{@const tab = tabs.find((tab) => tab.id === id)}
 							{@const chat = chatTabs.find((chat) => chat.id === id)}
 							{@const file = fileTabs.find((file) => file.id === id)}
+							{@const browser = browserTabs.find((browser) => browser.id === id)}
 							{#if tab}
 								<Menu context items={tabMenu(projectId, tab)}>
 									{#snippet trigger(props)}
@@ -574,6 +606,7 @@
 											ended={tab.state === 'ended'}
 											label={tab.label}
 											active={id === group.active}
+											onclose={() => closeTab(projectId, id)}
 											onclick={() => {
 												if (!dragged) choose(projectId, id);
 											}}
@@ -591,10 +624,18 @@
 											status={chat.status}
 											label={chat.rig}
 											active={id === group.active}
+											onclose={() => closeChat(chat)}
 											onclick={() => {
 												if (!dragged) choose(projectId, id);
 											}}
 										/>
+									{/snippet}
+								</Menu>
+							{:else if browser}
+								<Menu context items={[{ label: 'Close', onselect: () => closeBrowser(browser) }]}>
+									{#snippet trigger(props)}
+										<Tab {...props} data-tab={id} variant="browser" label={browser.name} active={id === group.active}
+											onclose={() => closeBrowser(browser)} onclick={() => { if (!dragged) choose(projectId, id); }} />
 									{/snippet}
 								</Menu>
 							{:else if file}
@@ -610,6 +651,7 @@
 											dirty={file.dirty}
 											deleted={file.deleted}
 											active={id === group.active}
+											onclose={() => closeFile(file)}
 											onclick={() => {
 												if (!dragged) choose(projectId, id);
 											}}
@@ -646,6 +688,11 @@
 			></div>
 		{/if}
 		<div class="tabs">
+			{#each Object.values(browsers).flat() as browser (browser.id)}
+				<div class="view" hidden={!showing(browser.id)} style:grid-column={column(browser.id)} onfocusin={() => choose(browser.projectId, browser.id)}>
+					{#if showing(browser.id) || warm()}<Browser {browser} />{/if}
+				</div>
+			{/each}
 			{#each Object.entries(terminals) as [projectId, owned] (projectId)}
 				{@const project = projects.find((project) => project.id === projectId)}
 				{#each owned as terminal (terminal.id)}
@@ -665,6 +712,7 @@
 								{ended}
 								{project}
 								onopen={(path, cursor) => openFile(projectId, path, cursor)}
+								onbrowse={(url) => openBrowser(projectId, url)}
 							>
 								{#if ended}
 									<div class="ended" role="status">

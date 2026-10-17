@@ -63,7 +63,7 @@ async fn a_claude_chat_whose_holder_is_gone_resumes_its_session_and_is_interrupt
     let (mut socket, mut view) = reconnect(server.port, &chat_id).await;
     let interrupted = [
         json!({ "kind": "user", "text": GREET, "images": 0 }),
-        json!({ "kind": "text", "text": "Hello there, friend!", "streaming": false }),
+        json!({ "kind": "text", "text": "Hello there, friend!", "streaming": false, "phase": "final" }),
         json!({ "kind": "user", "text": COUNT_WORDS, "images": 0 }),
         json!({ "kind": "notice", "notice": "interrupted", "text": "Interrupted" }),
     ];
@@ -82,7 +82,7 @@ async fn a_claude_chat_whose_holder_is_gone_resumes_its_session_and_is_interrupt
     let said = [
         json!({ "kind": "user", "text": SAY, "images": 0 }),
         json!({ "kind": "thinking", "seconds": 0 }),
-        json!({ "kind": "text", "text": "Done", "streaming": false }),
+        json!({ "kind": "text", "text": "Done", "streaming": false, "phase": "final" }),
     ];
     assert_eq!(view.items[4..], said);
     close_chat(&mut socket, server.root.path(), &chat_id).await;
@@ -188,7 +188,7 @@ async fn said(socket: &mut Socket, server: &Server, chat_id: &str, view: &mut Vi
     assert_eq!(view.statuses, ["working", "done"]);
     let said = [
         json!({ "kind": "user", "text": SAY, "images": 0 }),
-        json!({ "kind": "text", "text": "Done", "streaming": false }),
+        json!({ "kind": "text", "text": "Done", "streaming": false, "phase": "final" }),
     ];
     assert_eq!(view.items[2..], said);
     close_chat(socket, server.root.path(), chat_id).await;

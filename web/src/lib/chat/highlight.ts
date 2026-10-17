@@ -13,12 +13,46 @@ export async function parser(path: string): Promise<Parser | undefined> {
 	return EditorState.create({ extensions }).facet(language)?.parser;
 }
 
-export function codeLines(code: string, parser?: Parser): Token[][] {
-	if (!parser) return code.split('\n').map((text) => [{ text, classes: '' }]);
-	const lines: Token[][] = [[]];
+const inline = /\bpython[\d.]*\b[^\n'"|;&]*?(?:-c\s+(?:'([^']*)|"((?:[^"\\]|\\.)*))|<<-?\s*(['"]?)(\w+)\3[^\n]*\n)/dg;
+
+function scripts(code: string): [number, number][] {
+	const found: [number, number][] = [];
+	const pattern = new RegExp(inline);
+	for (let match; (match = pattern.exec(code)); ) {
+		let [start, end] = match.indices![1] ?? match.indices![2] ?? [match.index + match[0].length, -1];
+		if (end < 0) {
+			const terminator = code.slice(start).search(new RegExp(`^\\s*${match[4]}\\s*$`, 'm'));
+			end = terminator < 0 ? code.length : start + terminator;
+		}
+		found.push([start, end]);
+		pattern.lastIndex = end;
+	}
+	return found;
+}
+
+function paint(classes: string[], code: string, parser: Parser, offset = 0) {
+	let at = offset;
 	highlightCode(code, parser.parse(code), highlight,
-		(text, classes) => lines[lines.length - 1].push({ text, classes }),
-		() => lines.push([]));
+		(text, style) => {
+			classes.fill(style, at, at + text.length);
+			at += text.length;
+		},
+		() => at++);
+}
+
+export function codeLines(code: string, parser?: Parser, python?: Parser): Token[][] {
+	if (!parser) return code.split('\n').map((text) => [{ text, classes: '' }]);
+	const classes = new Array<string>(code.length).fill('');
+	paint(classes, code, parser);
+	if (python) for (const [start, end] of scripts(code)) paint(classes, code.slice(start, end), python, start);
+	const lines: Token[][] = [[]];
+	for (let at = 0; at < code.length; at++) {
+		const line = lines[lines.length - 1];
+		const last = line[line.length - 1];
+		if (code[at] === '\n') lines.push([]);
+		else if (last?.classes === classes[at]) last.text += code[at];
+		else line.push({ text: code[at], classes: classes[at] });
+	}
 	return lines;
 }
 

@@ -73,14 +73,14 @@ async fn a_codex_chat_steers_mid_turn_queues_for_the_next_and_interrupts() {
     view.follow(&mut socket, &chat_id, |view| view.statuses.last().is_some_and(|status| status == "done")).await;
 
     assert_eq!(view.statuses, ["working", "done"]);
-    let counted = json!({ "kind": "text", "text": "1\n2\n3\n", "streaming": false });
+    let counted = json!({ "kind": "text", "text": "1\n2\n3\n", "streaming": false, "phase": "final" });
     assert_eq!(
         view.items,
         [
             json!({ "kind": "user", "text": first, "images": 0 }),
             counted.clone(),
             json!({ "kind": "user", "text": steer, "images": 0 }),
-            json!({ "kind": "text", "text": "banana", "streaming": false }),
+            json!({ "kind": "text", "text": "banana", "streaming": false, "phase": "final" }),
             json!({ "kind": "user", "text": queued, "images": 0 }),
             counted,
             json!({ "kind": "notice", "notice": "interrupted", "text": "Interrupted" }),
@@ -160,11 +160,11 @@ fn claude_items() -> [Value; 7] {
     let interrupted: Vec<String> = (1..=16).map(|number| number.to_string()).collect();
     [
         json!({ "kind": "user", "text": first, "images": 0 }),
-        json!({ "kind": "text", "text": counted.join("\n"), "streaming": false }),
+        json!({ "kind": "text", "text": counted.join("\n"), "streaming": false, "phase": "final" }),
         json!({ "kind": "user", "text": steer, "images": 0 }),
-        json!({ "kind": "text", "text": "banana 🍌", "streaming": false }),
+        json!({ "kind": "text", "text": "banana 🍌", "streaming": false, "phase": "final" }),
         json!({ "kind": "user", "text": queued, "images": 0 }),
-        json!({ "kind": "text", "text": interrupted.join("\n"), "streaming": false }),
+        json!({ "kind": "text", "text": interrupted.join("\n"), "streaming": false, "phase": "final" }),
         json!({ "kind": "notice", "notice": "interrupted", "text": "Interrupted" }),
     ]
 }

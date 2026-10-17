@@ -7,11 +7,16 @@
 	const html = $derived(render(item.text));
 </script>
 
-<div class="text" class:streaming={item.streaming}>{@html html}</div>
+<div class="text" class:streaming={item.streaming} class:commentary={item.phase === 'commentary'}>{@html html}</div>
 
 <style>
 	.text {
 		overflow-wrap: anywhere;
+	}
+
+	.commentary {
+		color: color-mix(in oklab, var(--color-fg) 76%, var(--color-bg));
+		font-size: 0.95em;
 	}
 
 	.text > :global(:first-child) {

@@ -82,7 +82,7 @@ async fn codex_tools_reasoning_and_commands_normalize_to_blocks_live_and_from_th
     let mut expected = [
         user(CODEX_PROMPT),
         json!({ "kind": "thinking", "seconds": 3 }),
-        text("I’ll run both counts in order, then search the web.\n"),
+        said("I’ll run both counts in order, then search the web.\n"),
         json!({ "kind": "command", "command": "wc -l notes.txt", "status": "ok", "output": "3 notes.txt\n" }),
         json!({
             "kind": "command",
@@ -160,7 +160,7 @@ async fn each_file_of_a_codex_file_change_becomes_an_edit_item_live_and_from_the
     view.turn(&mut socket, &chat_id, CODEX_EDITS).await;
     let expected = [
         user(CODEX_EDITS),
-        text("I’ll apply the three file changes."),
+        said("I’ll apply the three file changes."),
         json!({
             "kind": "command",
             "command": "cat notes.txt old.txt",
@@ -248,7 +248,7 @@ async fn subagents(agent: &str) {
             { "kind": "thinking", "seconds": 2 },
             { "kind": "command", "command": "cat notes.txt", "status": "ok", "output": "alpha\nneedle in a haystack\nomega\n" },
             { "kind": "command", "command": "cat todo.txt", "status": "ok", "output": "buy milk\nwalk the dog\n" },
-            { "kind": "text", "text": "notes.txt mentions “needle”; todo.txt does not.", "streaming": false },
+            { "kind": "text", "text": "notes.txt mentions “needle”; todo.txt does not.", "streaming": false, "phase": "final" },
         ])
     };
     assert_eq!(child["items"], expected);
@@ -299,7 +299,11 @@ fn edit(path: &str, diff: &str, added: usize, removed: usize) -> Value {
 }
 
 fn text(text: &str) -> Value {
-    json!({ "kind": "text", "text": text, "streaming": false })
+    json!({ "kind": "text", "text": text, "streaming": false, "phase": "final" })
+}
+
+fn said(text: &str) -> Value {
+    json!({ "kind": "text", "text": text, "streaming": false, "phase": "commentary" })
 }
 
 async fn launch(agent: &str, fixture: &str) -> (Server, Socket, String) {

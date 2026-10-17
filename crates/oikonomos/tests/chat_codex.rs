@@ -23,7 +23,7 @@ async fn a_codex_chat_streams_a_turn_and_closing_stops_its_proxy() {
         items,
         [
             json!({ "kind": "user", "text": PROMPT, "images": 0 }),
-            json!({ "kind": "text", "text": "Welcome—**glad** you’re here.", "streaming": false }),
+            json!({ "kind": "text", "text": "Welcome—**glad** you’re here.", "streaming": false, "phase": "final" }),
         ]
     );
 
@@ -51,7 +51,7 @@ async fn closing_a_working_codex_chat_interrupts_its_turn() {
     let chat_id = chat["id"].as_str().unwrap();
     let send = json!({ "type": "chat.send", "chatId": chat_id, "text": "Count from 1 to 300, one number per line." });
     control(&mut socket, send).await;
-    let streaming = json!({ "kind": "text", "text": "1", "streaming": true });
+    let streaming = json!({ "kind": "text", "text": "1", "streaming": true, "phase": "final" });
     timeout(Duration::from_secs(20), async {
         while next(&mut socket).await["item"] != streaming {}
     })

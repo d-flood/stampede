@@ -84,7 +84,7 @@ async fn claude_built_ins_reach_the_agent_as_control_requests_and_user_text() {
         view.items,
         [
             json!({ "kind": "user", "text": OK, "images": 0 }),
-            json!({ "kind": "text", "text": "ok", "streaming": false })
+            json!({ "kind": "text", "text": "ok", "streaming": false, "phase": "final" })
         ]
     );
     assert_eq!(record(&server, &chat_id)["todos"], json!([{ "text": "Old session task", "status": "pending" }]));
