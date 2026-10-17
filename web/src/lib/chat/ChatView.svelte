@@ -124,7 +124,7 @@
 	{#each sessions as entry (entry.id)}
 		<div class="transcript" hidden={entry.id !== selected.id} {@attach follow}>
 			<div class="column">
-				<Transcript items={entry.items} activity={entry.activity} {ondiff} />
+				<Transcript items={entry.items} answered={!entry.id ? chat.answeredQuestions : []} activity={entry.activity} {ondiff} />
 				{#if !entry.id}<Queued queued={chat.queued} />{/if}
 			</div>
 		</div>

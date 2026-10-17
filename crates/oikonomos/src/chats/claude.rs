@@ -354,6 +354,7 @@ async fn rewind(
     tokio::time::timeout(std::time::Duration::from_secs(5), async { while frames.next().await.is_some() {} }).await.map_err(io::Error::other)?;
     let _ = fs::remove_file(holder::socket_path(&location.data_dir, &location.id));
     let events = transcript.events.clone();
+    let _ = events.send(Event::QuestionsTruncated(index));
     let _ = events.send(Event::Truncate(0));
     let _ = events.send(Event::Reset);
     let (frames, writer, mut fresh, _) = launch(&location.data_dir, &location.id, &transcript.cwd,
@@ -992,6 +993,7 @@ impl Transcript {
             }
             Some("control_response") => self.answered(&message["response"]),
             Some("conversation_reset") => {
+                let _ = self.events.send(Event::QuestionsTruncated(0));
                 self.activity.clear(&self.events);
                 self.call = None;
                 self.window = None;

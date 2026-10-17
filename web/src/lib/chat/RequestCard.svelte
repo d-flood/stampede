@@ -4,6 +4,7 @@
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Text from '#lib/chat/Text.svelte';
+	import QuestionOption from '#lib/chat/QuestionOption.svelte';
 
 	let { request, agent, disabled, onanswer }: { request: Request; agent: string; disabled: boolean; onanswer(answer: Answer): void } = $props();
 	let picking = $state(false);
@@ -57,7 +58,7 @@
 		<div class="options">
 			{#each question.options as option}
 				<button class="option" aria-pressed={selected.includes(option.label)} {disabled} onclick={() => choose(option.label)}>
-					<strong>{option.label}</strong><span>{option.description}</span>
+					<QuestionOption {option} />
 				</button>
 			{/each}
 			<label>Other…<input aria-label="Other answer" bind:value={other} {disabled} /></label>
@@ -110,7 +111,7 @@
 <style>
 	.options { display: flex; flex-direction: column; gap: var(--space-2); }
 	.option { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); text-align: left; }
-	.option span, .progress { color: var(--muted-fg); font-size: var(--font-size-sm); }
+	.progress { color: var(--muted-fg); font-size: var(--font-size-sm); }
 	.option, .word, input, select { padding: var(--space-2) var(--space-3); min-height: var(--target-min); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg); font: inherit; }
 	button[aria-pressed='true'] { border-color: var(--status-waiting); background: var(--hover); }
 	.word { max-width: 100%; overflow-wrap: anywhere; }

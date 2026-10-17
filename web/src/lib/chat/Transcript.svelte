@@ -8,16 +8,22 @@
 	import Thinking from '#lib/chat/Thinking.svelte';
 	import Tools from '#lib/chat/Tools.svelte';
 	import User from '#lib/chat/User.svelte';
-	import type { Item } from '#lib/device.svelte.ts';
+	import Questions from '#lib/chat/Questions.svelte';
+	import type { AnsweredQuestions, Item } from '#lib/device.svelte.ts';
 
-	let { items, activity, ondiff }: { items: Item[]; activity?: string | null; ondiff(path: string): void } = $props();
+	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
+	let { items, answered = [], activity, ondiff }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; ondiff(path: string): void } = $props();
+	const entries = $derived.by(() => {
+		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map((record) => ({ kind: 'questions', record }));
+		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
+	});
 
-	function interim(item: Item) {
-		return !['user', 'text', 'html', 'notice'].includes(item.kind);
+	function interim(item: Entry) {
+		return !['user', 'text', 'html', 'notice', 'questions'].includes(item.kind);
 	}
 
 	const runs = $derived(
-		items.reduce<{ rail: boolean; indices: number[] }[]>((runs, item, index) => {
+		entries.reduce<{ rail: boolean; indices: number[] }[]>((runs, item, index) => {
 			if (item.kind === 'subagent') return runs;
 			const rail = interim(item);
 			const last = runs.at(-1);
@@ -27,14 +33,14 @@
 		}, [])
 	);
 
-	function dot(item: Item) {
+	function dot(item: Entry) {
 		if (item.kind === 'text' || item.kind === 'thinking') return 'said';
 		if (item.kind === 'command' || item.kind === 'subagent') return item.status;
 		return 'done';
 	}
 </script>
 
-{#snippet entry(item: Item, index: number)}
+{#snippet entry(item: Entry, index: number)}
 	{#if item.kind === 'user'}
 		<User {item} first={index === 0} />
 	{:else if item.kind === 'text'}
@@ -51,21 +57,23 @@
 		<Command {item} />
 	{:else if item.kind === 'notice'}
 		<Notice {item} />
+	{:else if item.kind === 'questions'}
+		<Questions record={item.record} />
 	{/if}
 {/snippet}
 
 {#each runs as run (run.indices[0])}
 	{#if run.rail}
-		<Calls items={run.indices.map((index) => items[index])} activity={run === runs.at(-1) ? activity : null}>
+		<Calls items={run.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={run === runs.at(-1) ? activity : null}>
 			<div class="rail">
 				{#each run.indices as index (index)}
-					<div class="step" data-dot={dot(items[index])}>{@render entry(items[index], index)}</div>
+					<div class="step" data-dot={dot(entries[index])}>{@render entry(entries[index], index)}</div>
 				{/each}
 			</div>
 		</Calls>
 	{:else}
 		{#each run.indices as index (index)}
-			{@render entry(items[index], index)}
+			{@render entry(entries[index], index)}
 		{/each}
 	{/if}
 {/each}

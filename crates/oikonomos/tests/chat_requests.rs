@@ -189,19 +189,53 @@ async fn codex_rules_use_session_decisions_or_persist_each_selected_prefix() {
 #[tokio::test]
 async fn both_agents_map_multiple_answers_and_plan_approval() {
     for agent in ["claude-code", "codex"] {
-        let fixture = if agent == "claude-code" { format!("{}/tests/fixtures/chats/claude-code/questions.synthetic.jsonl", env!("CARGO_MANIFEST_DIR")) } else { "questions".to_owned() };
-        let launched = Launched::new(agent, &fixture).await;
+        let scratch = tempfile::tempdir().unwrap();
+        let fixture = if agent == "claude-code" {
+            format!("{}/tests/fixtures/chats/claude-code/questions.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"))
+        } else {
+            let mut entries: Vec<Value> = include_str!("fixtures/chats/codex/questions.recorded.jsonl").lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            let mut result = entries.iter().find(|entry| entry["stdout"]["result"]["thread"].is_object()).unwrap()["stdout"]["result"].clone();
+            let turns: Vec<_> = entries.iter().filter(|entry| entry["stdout"]["method"] == "turn/completed").map(|entry| {
+                let mut turn = entry["stdout"]["params"]["turn"].clone();
+                let items: Vec<_> = entries.iter().filter(|entry| entry["stdout"]["method"] == "item/completed" && entry["stdout"]["params"]["turnId"] == turn["id"])
+                    .map(|entry| entry["stdout"]["params"]["item"].clone()).collect();
+                turn["items"] = json!(items);
+                turn
+            }).collect();
+            result["thread"]["turns"] = json!(turns);
+            entries.extend([
+                json!({ "stdin": { "method": "thread/resume", "id": 100 } }),
+                json!({ "stdout": { "id": 100, "result": result } }),
+                json!({ "stdin": { "method": "thread/unsubscribe", "id": 101 } }),
+                json!({ "stdout": { "id": 101, "result": {} } }),
+            ]);
+            let fixture = scratch.path().join("questions.jsonl");
+            fs::write(&fixture, entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+            fixture.to_string_lossy().into_owned()
+        };
+        let mut launched = Launched::new(agent, &fixture).await;
         let mut device = Device::open(launched.server.port, "questions", &launched.chat_id).await;
         device.send("Ask me two questions, then propose a plan.").await;
         device.follow(|device| device.requests.iter().any(|request| request["kind"] == "question")).await;
         let request = device.requests[0].clone();
         assert_eq!(request["questions"].as_array().unwrap().len(), 2);
+        if agent == "claude-code" {
+            assert_eq!(request["questions"][0]["options"][0]["preview"], "Color   Temperature   Use\nRed     warm          Highlight commands that need attention\nBlue    cool          Show commands that are still running");
+        }
         device.answer(&request, json!({ "answers": [["Red"], ["Circle", "Square"]] })).await;
         device.follow(|device| device.requests.iter().any(|request| request["kind"] == "plan")).await;
         let plan = device.requests[0].clone();
         assert!(!plan["plan"].as_str().unwrap().is_empty());
         device.answer(&plan, json!({ "allow": true })).await;
         device.follow(|device| device.status == "done" && device.requests.is_empty()).await;
+        let path = launched.server.root.path().join("data/chats").join(format!("{}.json", launched.chat_id));
+        let saved: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved["answeredQuestions"][0]["questions"], request["questions"]);
+        assert_eq!(saved["answeredQuestions"][0]["answers"], json!([["Red"], ["Circle", "Square"]]));
+        launched.server.restart().await;
+        let mut device = Device::open(launched.server.port, "restarted", &launched.chat_id).await;
+        assert_eq!(device.history, saved["answeredQuestions"]);
+        assert!(device.history[0]["after"].as_u64().unwrap() as usize <= device.items.len());
         close_chat(&mut device.socket, launched.server.root.path(), &device.chat_id).await;
         let answers = launched.answers();
         if agent == "claude-code" {
@@ -369,6 +403,7 @@ struct Device {
     requests: Vec<Value>,
     resolved: Vec<Value>,
     listed: usize,
+    history: Value,
 }
 
 impl Device {
@@ -377,7 +412,8 @@ impl Device {
         control(&mut socket, json!({ "type": "hello", "deviceId": name })).await;
         let hello = next_control(&mut socket, "hello").await;
         let chat = hello["chats"].as_array().unwrap().iter().find(|chat| chat["id"] == chat_id).cloned();
-        let status = chat.expect("the chat is not listed")["status"].clone();
+        let chat = chat.expect("the chat is not listed");
+        let status = chat["status"].clone();
         let mut device = Self {
             socket,
             chat_id: chat_id.to_owned(),
@@ -388,6 +424,7 @@ impl Device {
             requests: Vec::new(),
             resolved: Vec::new(),
             listed: 0,
+            history: chat["answeredQuestions"].clone(),
         };
         let attention = next_control(&mut device.socket, "attention.changed").await;
         device.attend(&attention);

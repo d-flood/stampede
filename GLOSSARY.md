@@ -40,6 +40,10 @@ _Avoid_: global terminal, quake terminal, scratch terminal
 The underlying AI coding harness, such as Claude Code or Codex, driven by a Chat.
 _Avoid_: assistant, bot, AI, harness
 
+**Subagent**:
+A child conversation a Chat's Agent spawns to carry out a delegated piece of work and report back; it is not itself an Agent or a Chat.
+_Avoid_: task, sidechain, helper, delegate
+
 **TUI**:
 An Agent running its own terminal interface, started by the user in an ordinary Terminal. Oikonomos does not manage its lifecycle or status.
 _Avoid_: agent, agent terminal
@@ -49,7 +53,7 @@ An Agent that Oikonomos drives directly and shows in its own interface; it keeps
 _Avoid_: conversation, thread, session, native agent
 
 **Agent status**:
-One of _working_, _waiting_ (blocked mid-task on the user, e.g. a permission prompt), or _done_ (finished its turn and sitting at its prompt).
+One of _working_, _waiting_ (blocked mid-task on the user, e.g. a permission prompt), or _done_ (finished its turn, with no Subagent still running, and sitting at its prompt).
 _Avoid_: state, activity, idle
 
 **Template**:

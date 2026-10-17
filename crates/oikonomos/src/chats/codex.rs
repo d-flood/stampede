@@ -330,6 +330,7 @@ fn run(
                                             Err(error) => { transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() }); break; }
                                         }
                                     }
+                                    let _ = transcript.events.send(Event::QuestionsTruncated(index));
                                     transcript.resumed(&json!(turns));
                                     let _ = transcript.events.send(Event::Reset);
                                     transcript.push(Item::Notice { notice: Notice::Rewound, text: "Conversation rewound. Files are left unchanged.".to_owned() });

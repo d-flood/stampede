@@ -70,6 +70,15 @@ for (const agent of ['Claude', 'Codex']) {
 		const { panel } = await launch(page, `${agent} Questions`, `questions-${agent}-${project.name}`);
 		const question = panel.getByRole('region', { name: 'Question', exact: true });
 		await expect(question).toContainText('Question 1 of 2');
+		await expect(question.getByText(agent === 'Claude' ? 'Choose a color' : 'Which color should the text file contain?', { exact: true })).toBeVisible();
+		await expect(question.getByText(agent === 'Claude' ? 'Warm' : 'Choose Red for the file content.', { exact: true })).toBeVisible();
+		if (agent === 'Claude') {
+			const preview = question.locator('.preview');
+			await expect(preview).toBeVisible();
+			await expect(preview).toHaveText('Color   Temperature   Use\nRed     warm          Highlight commands that need attention\nBlue    cool          Show commands that are still running');
+			await expect(preview).toHaveCSS('white-space', 'pre');
+		}
+		if (agent === 'Codex') await expect(panel.getByText('I’ll collect both choices first, then write the short plan without creating the file.', { exact: true })).toBeVisible();
 		await expect.poll(() => question.evaluate((node) => node.scrollWidth <= node.clientWidth && node.getBoundingClientRect().bottom <= window.innerHeight)).toBe(true);
 		await question.getByRole('button', { name: /^Red/ }).click();
 		await question.getByRole('button', { name: 'Next', exact: true }).click();
@@ -80,6 +89,18 @@ for (const agent of ['Claude', 'Codex']) {
 		await expect(plan).toBeVisible();
 		await plan.getByRole('button', { name: 'Approve', exact: true }).click();
 		await expect(plan).toHaveCount(0);
+		const history = panel.getByRole('group', { name: 'Answered questions', exact: true });
+		await expect(history).not.toHaveAttribute('open');
+		await history.locator('summary').click();
+		await expect(history.getByText('Answer: Red', { exact: true })).toBeVisible();
+		await expect(history.getByText('Answer: Triangle', { exact: true })).toBeVisible();
+		await expect(history.getByText(agent === 'Claude' ? 'Warm' : 'Choose Red for the file content.', { exact: true })).toBeVisible();
+		if (agent === 'Claude') await expect(history.locator('.preview')).toBeVisible();
+		await expect.poll(() => history.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+		await page.reload();
+		await expect(history).not.toHaveAttribute('open');
+		await history.locator('summary').click();
+		await expect(history.getByText('Answer: Triangle', { exact: true })).toBeVisible();
 		await closeProject(page, `questions-${agent}-${project.name}`);
 	});
 }

@@ -311,6 +311,15 @@ pub struct ChoiceDescription {
     pub label: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AnsweredQuestions {
+    pub after: usize,
+    pub questions: Vec<Question>,
+    pub answers: Vec<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -343,6 +352,7 @@ pub enum Event {
     Session(String),
     ResumeAt(Option<String>),
     PlanResolved(String),
+    QuestionsTruncated(usize),
     Status(Status),
     Activity(Option<String>),
     /// Appends the Item when its index is the transcript's length, and replaces the one there otherwise.
@@ -489,6 +499,8 @@ pub struct Chat {
     pub queued_images: Vec<Vec<Image>>,
     #[serde(default)]
     pub todos: Vec<Todo>,
+    #[serde(default)]
+    pub answered_questions: Vec<AnsweredQuestions>,
 }
 
 #[derive(Serialize)]
@@ -658,6 +670,7 @@ impl Chats {
             queued: Vec::new(),
             queued_images: Vec::new(),
             todos: Vec::new(),
+            answered_questions: Vec::new(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
@@ -751,6 +764,12 @@ impl Chats {
                     chat.plan_resolved = Some(id);
                     self.save(&chat);
                 }
+                Event::QuestionsTruncated(after) => {
+                    let mut chat = entry.chat.lock().unwrap();
+                    chat.answered_questions.retain(|record| record.after <= after);
+                    self.save(&chat);
+                    let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+                }
                 Event::ResumeAt(at) => {
                     let mut chat = entry.chat.lock().unwrap();
                     chat.resume_at = at;
@@ -759,6 +778,7 @@ impl Chats {
                 Event::Session(session) => {
                     let mut chat = entry.chat.lock().unwrap();
                     if chat.agent_session.as_ref() != Some(&session) {
+                        if chat.agent_session.is_some() { chat.answered_questions.clear(); }
                         chat.agent_session = Some(session.clone());
                         self.save(&chat);
                         let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
@@ -1049,7 +1069,21 @@ impl Chats {
             (Answer::Answers(_), _) => return,
             _ => {},
         }
+        let answered = if let Request::Question { questions, .. } = request {
+            let answers = match &answer {
+                Answer::Answers(answers) => answers.clone(),
+                Answer::Deny { instead: Some(text) } => vec![vec![text.clone()]; questions.len()],
+                _ => vec![Vec::new(); questions.len()],
+            };
+            Some(AnsweredQuestions { after: transcript.items.len(), questions: questions.clone(), answers })
+        } else { None };
         if self.resolve(&mut transcript, id, request_id) {
+            if let Some(answered) = answered {
+                let mut chat = entry.chat.lock().unwrap();
+                chat.answered_questions.push(answered);
+                self.save(&chat);
+                let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+            }
             entry.driver.answer(request_id, answer);
             self.settle(&entry, &transcript);
         }
