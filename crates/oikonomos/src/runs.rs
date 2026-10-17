@@ -26,6 +26,7 @@ use crate::{
 };
 
 mod landing;
+mod submodules;
 
 const TAIL: usize = 40;
 
@@ -357,6 +358,10 @@ impl Runs {
             None => {
                 let (worktree, branch) = self.fresh(Path::new(&integration), slug, number).await;
                 git::run(Path::new(&integration), &["worktree", "add", "-b", &branch, &worktree, &epic_branch(slug)]).await?;
+                if let Err(error) = submodules::init(Path::new(&worktree), Path::new(&integration)).await {
+                    discard(&integration, &worktree, &branch).await;
+                    return Err(format!("Oikonomos could not check out the submodules of {slug}/{number}'s new worktree: {error}"));
+                }
                 if let Err(note) = run_setup(&setup, &worktree, "this Ticket's new worktree").await {
                     discard(&integration, &worktree, &branch).await;
                     return Err(self.setup_failed(slug, number, note));
@@ -418,6 +423,10 @@ impl Runs {
             .map_err(|_| format!("{} is not on a branch, so there is nothing to cut {slug}'s branch from", project.path))?;
         let (branch, worktree) = (epic_branch(slug), self.worktree(slug, "integration"));
         git::run(checkout, &["worktree", "add", "-b", &branch, &worktree, &base]).await?;
+        if let Err(error) = submodules::init(Path::new(&worktree), checkout).await {
+            discard(&project.path, &worktree, &branch).await;
+            return Err(format!("Oikonomos could not check out the submodules of {slug}'s new Integration Worktree: {error}"));
+        }
         if let Err(note) = run_setup(setup, &worktree, "the Epic's new Integration Worktree").await {
             discard(&project.path, &worktree, &branch).await;
             return Err(self.setup_failed(slug, number, note));
@@ -546,15 +555,34 @@ impl Runs {
         }
     }
 
-    /// Merges a completed Ticket into the Integration Worktree, leaving a conflicted merge to a Resolver Chat.
+    /// Merges a completed Ticket into the Integration Worktree, leaving a conflicted merge to a Resolver Chat. The
+    /// submodule commits it records are fetched from its Ticket Worktree first, and it is not merged without them.
     async fn merge(&self, epic: &Epic, number: u32) -> Result<(), String> {
         let slug = &epic.slug;
         let ticket = epic.ticket(number)?;
         let integration = epic.integration.as_deref().ok_or_else(|| format!("{slug} has no Integration Worktree"))?;
         let commit = ticket.commit.as_deref().ok_or_else(|| format!("{slug}/{number} has no completed commit"))?;
+        let worktree = ticket.worktree.as_deref().ok_or_else(|| format!("{slug}/{number} has no Ticket Worktree"))?;
+        let moved = match submodules::carry(worktree, integration, "HEAD", commit).await {
+            Ok(moved) => moved,
+            Err(why) => {
+                let text = format!("Oikonomos did not merge {slug}/{number}, because {why}.");
+                self.epics.record(slug, Event::NoteAdded { ticket: number, author: Author::Oikonomos, text })?;
+                let reason = "Its submodule commit could not be fetched into the Integration Worktree, so Oikonomos did not merge it; its Note names the submodule and commit.";
+                return self.epics.record(slug, Event::MergeFailed { ticket: number, reason: reason.to_owned() });
+            }
+        };
         let message = format!("Merge {slug}/{number}: {}", ticket.title);
         let error = match git::run(integration, &["merge", "--no-ff", "--no-edit", "-m", &message, commit]).await {
-            Ok(_) => return self.epics.record(slug, Event::Merged { ticket: number }),
+            Ok(_) => {
+                if let Err(error) = submodules::sync(integration, &moved).await {
+                    let text = format!(
+                        "Oikonomos merged {slug}/{number} but could not check out its submodule commits in the Integration Worktree, which shows them as changed until they are: {error}"
+                    );
+                    self.epics.record(slug, Event::NoteAdded { ticket: number, author: Author::Oikonomos, text })?;
+                }
+                return self.epics.record(slug, Event::Merged { ticket: number });
+            }
             Err(error) => error,
         };
         if git::run(integration, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).await.is_err() {
@@ -591,7 +619,8 @@ impl Runs {
         Ok(())
     }
 
-    /// Whether the Resolver's turn has ended with the merge committed, HEAD containing the Ticket and nothing left uncommitted.
+    /// Whether the Resolver's turn has ended with the merge committed, HEAD containing the Ticket and nothing left
+    /// uncommitted once the submodules are checked out at the commits the merge records.
     async fn resolved(&self, epic: &Epic, number: u32, resolver: &str) -> bool {
         if self.chats.list().iter().any(|chat| chat.id == resolver && chat.status != chats::Status::Done) {
             return false;
@@ -599,12 +628,19 @@ impl Runs {
         let (Some(integration), Some(commit)) = (epic.integration.as_deref(), epic.tickets[&number].commit.as_deref()) else {
             return false;
         };
-        git::run(integration, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).await.is_err()
-            && git::run(integration, &["status", "--porcelain"]).await.is_ok_and(|status| status.is_empty())
-            && git::run(integration, &["merge-base", "--is-ancestor", commit, "HEAD"]).await.is_ok()
+        if git::run(integration, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).await.is_ok()
+            || git::run(integration, &["merge-base", "--is-ancestor", commit, "HEAD"]).await.is_err()
+        {
+            return false;
+        }
+        if let Ok(paths) = submodules::checked_out(integration).await {
+            let _ = submodules::sync(integration, &paths).await;
+        }
+        git::run(integration, &["status", "--porcelain"]).await.is_ok_and(|status| status.is_empty())
     }
 
-    /// Removes a resolved Ticket's worktree and branch, unless that would lose work.
+    /// Removes a resolved Ticket's worktree and branch, unless that would lose work. The worktree is clean only when
+    /// its submodules are too, and is then removed with `--force`, which git requires of a worktree with submodules.
     async fn clean(&self, epic: &Epic, number: u32) -> Result<(), String> {
         let slug = &epic.slug;
         let ticket = epic.ticket(number)?;
@@ -613,7 +649,7 @@ impl Runs {
         let name = worktree.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
         let (path, branch) = (worktree.to_string_lossy(), ticket_branch(slug, &name));
         let kept = |reason: String| Event::WorktreeKept { ticket: number, reason };
-        let event = match git::run(worktree, &["status", "--porcelain"]).await {
+        let event = match submodules::status(worktree).await {
             Err(_) if !worktree.exists() => {
                 git::run(integration, &["worktree", "prune"]).await?;
                 Event::WorktreeRemoved { ticket: number }
@@ -625,7 +661,7 @@ impl Runs {
             Ok(_) if git::run(integration, &["merge-base", "--is-ancestor", &branch, &epic_branch(slug)]).await.is_err() => kept(format!(
                 "Oikonomos kept its Ticket Worktree at {path} and its branch {branch}, which has commits the Epic branch lacks."
             )),
-            Ok(_) => match git::run(integration, &["worktree", "remove", &path]).await {
+            Ok(_) => match git::run(integration, &["worktree", "remove", "--force", &path]).await {
                 Err(error) => kept(format!("git could not remove its Ticket Worktree at {path}: {error}")),
                 Ok(_) => {
                     if let Err(error) = git::run(integration, &["branch", "-D", &branch]).await {

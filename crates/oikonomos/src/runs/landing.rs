@@ -5,19 +5,21 @@ use std::{
 
 use tokio::process::Command;
 
-use super::{Runs, epic_branch};
+use super::{Runs, epic_branch, submodules};
 use crate::{
     epics::{Epic, Event, Status},
     git,
 };
 
-/// A Landing every check has passed: the Epic branch, the base it merges into, and the checkout it merges in.
+/// A Landing every check has passed: the Epic branch, the base it merges into, the checkout it merges in, and the
+/// Integration Worktree whose submodules hold the commits the Epic branch records.
 struct Landing {
     slug: String,
     title: String,
     checkout: PathBuf,
     base: String,
     branch: String,
+    integration: PathBuf,
 }
 
 impl Runs {
@@ -26,7 +28,7 @@ impl Runs {
     pub async fn land(&self, slug: &str) -> Result<String, String> {
         let _cutting = self.cutting.lock().await;
         let epic = self.epics.get(slug)?;
-        let (landing, head) = match attempt(&epic).await {
+        let (landing, head, moved) = match attempt(&epic).await {
             Ok(landed) => landed,
             Err(reason) => {
                 self.epics.record(slug, Event::LandingRefused { reason: reason.clone() })?;
@@ -34,14 +36,18 @@ impl Runs {
             }
         };
         self.epics.record(slug, Event::Landed { base: landing.base.clone(), head: head.clone() })?;
-        let landed = format!("Landed {slug} into {} at {}.", landing.base, &head[..head.len().min(12)]);
+        let mut landed = format!("Landed {slug} into {} at {}.", landing.base, &head[..head.len().min(12)]);
+        if let Err(error) = submodules::sync(&landing.checkout, &moved).await {
+            landed = format!("{landed} Oikonomos could not check out its submodule commits in {}: {error}", landing.checkout.display());
+        }
         Ok(match self.tidy(&landing).await? {
             Some(kept) => format!("{landed} {kept}"),
             None => landed,
         })
     }
 
-    /// Removes the Integration Worktree and the Epic branch after a Landing, or says why it kept them.
+    /// Removes the Integration Worktree and the Epic branch after a Landing, or says why it kept them. The worktree is
+    /// clean only when its submodules are too, and is then removed with `--force`, which git requires of one with submodules.
     async fn tidy(&self, landing: &Landing) -> Result<Option<String>, String> {
         let (slug, branch) = (&landing.slug, &landing.branch);
         let epic = self.epics.get(slug)?;
@@ -53,7 +59,7 @@ impl Runs {
                 "Oikonomos kept the Integration Worktree at {path} and the Epic branch {branch}, because {slug}/{number} is {} and merges there.",
                 ticket.status
             )),
-            None => match git::run(integration, &["status", "--porcelain"]).await {
+            None => match submodules::status(integration).await {
                 Err(_) if !integration.exists() => git::run(&landing.checkout, &["worktree", "prune"])
                     .await
                     .err()
@@ -62,7 +68,7 @@ impl Runs {
                 Ok(status) if !status.is_empty() => Some(format!(
                     "Oikonomos kept the Integration Worktree at {path} and the Epic branch {branch}, because the worktree has uncommitted changes."
                 )),
-                Ok(_) => git::run(&landing.checkout, &["worktree", "remove", &path])
+                Ok(_) => git::run(&landing.checkout, &["worktree", "remove", "--force", &path])
                     .await
                     .err()
                     .map(|error| format!("git could not remove the Integration Worktree at {path}: {error}")),
@@ -82,20 +88,22 @@ impl Runs {
     }
 }
 
-/// Lands the Epic once every check passes, or says what stopped it; nothing changes before the merge itself.
-async fn attempt(epic: &Epic) -> Result<(Landing, String), String> {
+/// Lands the Epic once every check passes, or says what stopped it; nothing changes before the merge itself but the
+/// submodule commits fetched into the checkout. Gives the new HEAD and the submodules the merge moved.
+async fn attempt(epic: &Epic) -> Result<(Landing, String, Vec<String>), String> {
     let landing = Landing::check(epic).await?;
     landing.mergeable().await?;
+    let moved = landing.carry().await?;
     landing.merge().await?;
     let head = git::run(&landing.checkout, &["rev-parse", "HEAD"]).await.unwrap_or_default();
-    Ok((landing, head))
+    Ok((landing, head, moved))
 }
 
 impl Landing {
     /// What must hold before a Landing touches the checkout. Reads only.
     async fn check(epic: &Epic) -> Result<Self, String> {
         let slug = &epic.slug;
-        let (Some(base), Some(_)) = (&epic.base, &epic.integration) else {
+        let (Some(base), Some(integration)) = (&epic.base, &epic.integration) else {
             return Err(format!("{slug} has no Epic branch yet, so there is nothing to land"));
         };
         let settled = "land once no Run is live and nothing is merging";
@@ -132,7 +140,14 @@ impl Landing {
         if git::run(&checkout, &["rev-parse", "-q", "--verify", &format!("refs/heads/{branch}")]).await.is_err() {
             return Err(format!("{branch} is gone, so there is nothing to land"));
         }
-        Ok(Self { slug: slug.clone(), title: epic.title.clone(), checkout, base: base.clone(), branch })
+        Ok(Self { slug: slug.clone(), title: epic.title.clone(), checkout, base: base.clone(), branch, integration: integration.clone() })
+    }
+
+    /// Fetches into the checkout's submodules, from the Integration Worktree's, the commits the Epic branch moved them to.
+    async fn carry(&self) -> Result<Vec<String>, String> {
+        submodules::carry(&self.integration, &self.checkout, &self.base, &self.branch)
+            .await
+            .map_err(|why| format!("Oikonomos left {} untouched, because {why}", self.checkout.display()))
     }
 
     /// Refuses a merge that would conflict, found by merging the trees alone, without touching any checkout.
