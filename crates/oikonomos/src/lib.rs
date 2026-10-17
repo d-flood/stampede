@@ -145,7 +145,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage)));
     let rigs = config.borrow().rigs.clone();
     chats.restore(&rigs).await?;
-    let runs = Runs::new(&args.data_dir, Arc::clone(&epics), Arc::clone(&chats))?;
+    let runs = Runs::new(&args.data_dir, Arc::clone(&epics), Arc::clone(&chats), Arc::clone(&projects), config.clone(), Arc::clone(&attention))?;
     cli::listen(requests, Arc::clone(&epics), Arc::clone(&runs));
     usage::spawn(Arc::clone(&usage), config.clone());
     let terminals = Arc::new(Terminals::new(args.data_dir));
@@ -198,11 +198,18 @@ async fn record_epic(State(state): State<AppState>, Path(slug): Path<String>, Js
         | Event::BodySet { .. }
         | Event::BlockersSet { .. }
         | Event::Reopened { .. }
-        | Event::Archived => true,
+        | Event::Archived
+        | Event::RunStarted { .. }
+        | Event::RunChanged { .. } => true,
         _ => false,
     };
     if !editable {
         return Err((StatusCode::FORBIDDEN, "a Device records only David's edits; Epics come from the CLI".to_owned()));
+    }
+    if let Event::RunStarted { rig, .. } | Event::RunChanged { rig: Some(rig), .. } = &event
+        && !state.config.borrow().rigs.iter().any(|other| other.name == *rig)
+    {
+        return Err((StatusCode::BAD_REQUEST, format!("there is no Rig {rig} in the config")));
     }
     state.epics.record(&slug, event).map(|()| StatusCode::NO_CONTENT).map_err(|error| (StatusCode::BAD_REQUEST, error))
 }

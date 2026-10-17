@@ -24,7 +24,7 @@
 	const phone = $derived(form() === 'phone');
 	const authors = { agent: 'Agent', david: 'David', oikonomos: 'Oikonomos' };
 	const others = $derived(epic.tickets.filter((other) => other.number !== ticket.number));
-	const startable = $derived(onFrontier(epic, ticket));
+	const startable = $derived(!epic.run && onFrontier(epic, ticket));
 	const reopenable = $derived(resolved(ticket.status));
 	const edited = $derived(!!ticket.claim?.edited);
 	const starting = $derived(open.starting.includes(ticket.number));

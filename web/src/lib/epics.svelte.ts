@@ -5,6 +5,8 @@ export class OpenEpic {
 	page = $state<'brief' | 'setup' | 'edit-brief' | 'edit-ticket' | 'new-ticket'>();
 	showResolved = $state(false);
 	rig = $state<string>();
+	parallel = $state(1);
+	showRun = $state(false);
 	starting = $state<number[]>([]);
 	errors = $state<Record<number, string>>({});
 
@@ -38,7 +40,9 @@ export type Edit =
 	| { kind: 'blockers.set'; ticket: number; blockers: number[] }
 	| { kind: 'note.added'; ticket: number; author: 'david'; text: string }
 	| { kind: 'ticket.reopened'; ticket: number }
-	| { kind: 'epic.archived' };
+	| { kind: 'epic.archived' }
+	| { kind: 'run.started'; rig: string; parallel: number }
+	| { kind: 'run.changed'; rig?: string; parallel?: number };
 
 export async function record(slug: string, edit: Edit): Promise<string | undefined> {
 	const response = await fetch(`/api/epics/${slug}`, {

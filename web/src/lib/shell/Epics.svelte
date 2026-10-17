@@ -16,11 +16,17 @@
 				{@const tally = counts(epic)}
 				<li>
 					<button onclick={() => onopen(epic.slug)}>
-						<span class="slug">{epic.slug}</span>
+						<span class="line">
+							<span class="slug">{epic.slug}</span>
+							{#if epic.run}<span class="live">Run live</span>{/if}
+						</span>
 						<span class="title">{epic.title}</span>
 						<Progress {epic} />
-						<span class="summary">
-							{tally.merged + tally.skipped} of {epic.tickets.length} resolved{#if tally['in-progress']}{' '}· {tally['in-progress']} in progress{/if}
+						<span class="line summary">
+							<span>
+								{tally.merged + tally.skipped} of {epic.tickets.length} resolved{#if tally['in-progress']}{' '}· {tally['in-progress']} in progress{/if}
+							</span>
+							{#if epic.run}<span>{epic.run.rig} · ×{epic.run.parallel}</span>{/if}
 						</span>
 					</button>
 				</li>
@@ -88,8 +94,19 @@
 		outline-offset: calc(-1 * var(--border-width));
 	}
 
+	.line {
+		display: flex;
+		justify-content: space-between;
+		gap: var(--space-2);
+	}
+
 	.slug {
 		font-weight: 600;
+	}
+
+	.live {
+		color: var(--status-done);
+		font-size: var(--font-size-sm);
 	}
 
 	.title {

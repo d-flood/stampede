@@ -1,65 +1,263 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashMap, HashSet},
     env, fs, io,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
 };
 
-use tokio::{process::Command, sync::mpsc};
+use tokio::{
+    process::Command,
+    sync::{broadcast::error::RecvError, mpsc, watch},
+};
+use uuid::Uuid;
 
 use crate::{
-    chats::Chats,
-    config::Rig,
+    attention::{Attention, Feed, Source, Tab},
+    chats::{self, Chats},
+    config::{Config, Rig},
     epics::{Author, Epic, Epics, Event, Status},
     git,
-    projects::Project,
+    projects::{Project, Projects},
     templates::TICKET,
 };
 
 const TAIL: usize = 40;
 
-/// The loop: starts Tickets in their own worktrees, takes their Verdicts, and merges them one at a time.
+/// The loop: Runs that start Tickets in their own worktrees, take their Verdicts, and merge them one at a time.
 pub struct Runs {
     data_dir: PathBuf,
     worktrees: String,
     cli: String,
     epics: Arc<Epics>,
     chats: Arc<Chats>,
-    starting: Mutex<HashSet<(String, u32)>>,
+    projects: Arc<Projects>,
+    config: watch::Receiver<Arc<Config>>,
+    attention: Arc<Feed>,
+    starting: Arc<Mutex<HashSet<(String, u32)>>>,
     cutting: tokio::sync::Mutex<()>,
     merges: mpsc::UnboundedSender<String>,
+    schedule: mpsc::UnboundedSender<String>,
+    views: Mutex<HashMap<Uuid, (Option<String>, Vec<String>)>>,
 }
 
 impl Runs {
-    /// Starts the merge queue, picking up whatever was left merging or uncleaned when the server last stopped.
-    pub fn new(data_dir: &Path, epics: Arc<Epics>, chats: Arc<Chats>) -> io::Result<Arc<Self>> {
+    /// Matches Claims to the Chats restored before it, then starts the merge queue and the Runs' scheduling,
+    /// picking up whatever was left merging, uncleaned or unscheduled when the server last stopped.
+    pub fn new(
+        data_dir: &Path,
+        epics: Arc<Epics>,
+        chats: Arc<Chats>,
+        projects: Arc<Projects>,
+        config: watch::Receiver<Arc<Config>>,
+        attention: Arc<Feed>,
+    ) -> io::Result<Arc<Self>> {
         let utf8 = |path: PathBuf| path.into_os_string().into_string().map_err(|_| io::Error::other("a path is not UTF-8"));
         let (merges, queued) = mpsc::unbounded_channel();
+        let (schedule, scheduled) = mpsc::unbounded_channel();
         let runs = Arc::new(Self {
             data_dir: data_dir.to_owned(),
             worktrees: utf8(fs::canonicalize(data_dir)?.join("worktrees"))?,
             cli: utf8(env::current_exe()?)?,
             epics,
             chats,
-            starting: Mutex::default(),
+            projects,
+            config,
+            attention,
+            starting: Arc::default(),
             cutting: tokio::sync::Mutex::new(()),
             merges,
+            schedule,
+            views: Mutex::default(),
         });
+        runs.reconcile();
         tokio::spawn(Arc::clone(&runs).merge_queued(queued));
+        tokio::spawn(Arc::clone(&runs).schedule(scheduled));
         for slug in runs.epics.slugs() {
             let _ = runs.merges.send(slug);
         }
         Ok(runs)
     }
 
+    /// Flags every in-progress Ticket whose Chat did not come back with the server, keeping its Claim and worktree.
+    fn reconcile(&self) {
+        let live: HashSet<String> = self.chats.list().into_iter().map(|chat| chat.id).collect();
+        for slug in self.epics.slugs() {
+            let Ok(epic) = self.epics.get(&slug) else { continue };
+            for (&number, ticket) in &epic.tickets {
+                let Some(claim) = ticket.claim.as_ref().filter(|claim| !live.contains(&claim.chat)) else { continue };
+                if ticket.status == Status::InProgress && ticket.attention.is_none() {
+                    let lost = Event::RestoreFailed { ticket: number, chat: claim.chat.clone() };
+                    if let Err(error) = self.epics.record(&slug, lost) {
+                        eprintln!("cannot flag {slug}/{number}'s missing Chat: {error}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Steps an Epic's Run whenever the Epic changes, a Chat holding one of its Tickets changes, or a start ends.
+    async fn schedule(self: Arc<Self>, mut scheduled: mpsc::UnboundedReceiver<String>) {
+        let mut changes = self.epics.subscribe();
+        let mut lifecycle = self.chats.lifecycle();
+        let mut called = BTreeMap::new();
+        let mut slugs = self.epics.slugs();
+        loop {
+            for slug in slugs.drain(..) {
+                if self.fill(&slug) {
+                    self.finish(&slug).await;
+                }
+                self.call(&slug, &mut called).await;
+            }
+            tokio::select! {
+                Some(slug) = scheduled.recv() => slugs.push(slug),
+                changed = changes.recv() => match changed {
+                    Ok(slug) => slugs.push(slug),
+                    Err(RecvError::Lagged(_)) => slugs = self.epics.slugs(),
+                    Err(RecvError::Closed) => break,
+                },
+                event = lifecycle.recv() => match event {
+                    Ok(event) => slugs.extend(self.epics.holding(event.chat())),
+                    Err(RecvError::Lagged(_)) => slugs = self.epics.slugs(),
+                    Err(RecvError::Closed) => break,
+                },
+            }
+        }
+    }
+
+    /// Starts Frontier Tickets in number order until the live Run's slots are full, and says whether it has finished.
+    /// Every in-progress or merging Ticket holds a slot, whatever its Chat's status.
+    fn fill(self: &Arc<Self>, slug: &str) -> bool {
+        let Ok(epic) = self.epics.get(slug) else { return false };
+        let Some(run) = epic.run.as_ref().filter(|_| !epic.archived) else { return false };
+        let mut busy: HashSet<u32> = epic
+            .tickets
+            .iter()
+            .filter(|(_, ticket)| matches!(ticket.status, Status::InProgress | Status::Merging))
+            .map(|(&number, _)| number)
+            .collect();
+        busy.extend(self.starting.lock().unwrap().iter().filter(|(other, _)| other == slug).map(|&(_, number)| number));
+        let takeable = epic.frontier().filter(|(number, ticket)| ticket.attention.is_none() && !busy.contains(number));
+        let takeable: Vec<u32> = takeable.map(|(number, _)| number).collect();
+        if takeable.is_empty() && busy.is_empty() {
+            return true;
+        }
+        for number in takeable.into_iter().take((run.parallel as usize).saturating_sub(busy.len())) {
+            let Ok(starting) = Starting::new(self, slug, number) else { continue };
+            let (runs, slug, rig) = (Arc::clone(self), slug.to_owned(), run.rig.clone());
+            tokio::spawn(async move {
+                if let Err(reason) = runs.take(&slug, number, &rig).await {
+                    runs.start_failed(&slug, number, reason);
+                }
+                drop(starting);
+            });
+        }
+        false
+    }
+
+    /// The Run's step: starts a Ticket with the Run's Rig, in the open Project that checks out the Epic's repository.
+    async fn take(&self, slug: &str, number: u32, rig: &str) -> Result<String, String> {
+        let project = self.project(&self.epics.get(slug)?).await?;
+        let found = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned();
+        let rig = found.ok_or_else(|| format!("The Run's Rig {rig} is no longer in the config, so Oikonomos could not start a Chat."))?;
+        self.begin(slug, number, &project, &rig).await
+    }
+
+    /// Flags a Ticket the Run could not start, unless its failed Setup Command already has, so the Run moves on.
+    fn start_failed(&self, slug: &str, number: u32, reason: String) {
+        let flagged = self.epics.get(slug).map(|epic| epic.tickets.get(&number).is_some_and(|ticket| ticket.attention.is_some()));
+        if flagged == Ok(false)
+            && let Err(error) = self.epics.record(slug, Event::StartFailed { ticket: number, reason })
+        {
+            eprintln!("cannot flag {slug}/{number}: {error}");
+        }
+    }
+
+    /// Records that the Run has finished, and pushes to every browser not showing its Epic.
+    async fn finish(&self, slug: &str) {
+        if let Err(error) = self.epics.record(slug, Event::RunFinished) {
+            return eprintln!("cannot finish {slug}'s Run: {error}");
+        }
+        if let Ok(item) = self.item(slug).await {
+            self.attention.call(item, self.showing(slug));
+        }
+        if self.shown(slug) {
+            let _ = self.epics.record(slug, Event::Viewed);
+        }
+    }
+
+    /// Keeps the attention feed's Epic items in step with the finished Runs no Device has shown yet.
+    async fn call(&self, slug: &str, called: &mut BTreeMap<String, Attention>) {
+        let finished = self.epics.get(slug).is_ok_and(|epic| epic.finished && !epic.archived);
+        if finished == called.contains_key(slug) {
+            return;
+        }
+        if !finished {
+            called.remove(slug);
+        } else if let Ok(item) = self.item(slug).await {
+            called.insert(slug.to_owned(), item);
+        } else {
+            return;
+        }
+        self.attention.publish(Source::Epics, called.values().cloned().collect());
+    }
+
+    async fn item(&self, slug: &str) -> Result<Attention, String> {
+        let project = self.project(&self.epics.get(slug)?).await?;
+        let (tab, label) = (Tab::Epic { epic: slug.to_owned() }, format!("Epic {slug}"));
+        Ok(Attention { project_id: project.id, tab, label, status: chats::Status::Done })
+    }
+
+    /// The open Project that checks out the Epic's repository, its main checkout before any other worktree.
+    async fn project(&self, epic: &Epic) -> Result<Project, String> {
+        let mut found = None;
+        for project in self.projects.list().iter() {
+            let path = Path::new(&project.path);
+            if git::common_dir(path).await.as_deref() == Some(epic.project.as_path()) {
+                if epic.project.parent() == Some(path) {
+                    return Ok(project.clone());
+                }
+                found.get_or_insert_with(|| project.clone());
+            }
+        }
+        found.ok_or_else(|| format!("No open Project checks out {}'s repository, so Oikonomos could not start a Chat.", epic.slug))
+    }
+
+    /// Records which Epics a Device shows, and that David has seen any finished Run among them.
+    pub fn view(&self, connection: Uuid, browser: Option<String>, slugs: Vec<String>) {
+        for slug in &slugs {
+            let _ = self.epics.record(slug, Event::Viewed);
+        }
+        let mut views = self.views.lock().unwrap();
+        if slugs.is_empty() {
+            views.remove(&connection);
+        } else {
+            views.insert(connection, (browser, slugs));
+        }
+    }
+
+    fn shown(&self, slug: &str) -> bool {
+        self.views.lock().unwrap().values().any(|(_, shown)| shown.iter().any(|shown| shown == slug))
+    }
+
+    fn showing(&self, slug: &str) -> HashSet<String> {
+        let views = self.views.lock().unwrap();
+        let showing = views.values().filter(|(_, shown)| shown.iter().any(|shown| shown == slug));
+        showing.filter_map(|(browser, _)| browser.clone()).collect()
+    }
+
     fn worktree(&self, slug: &str, name: &str) -> String {
         format!("{}/{slug}/{name}", self.worktrees)
     }
 
-    /// Starts a Frontier Ticket: cuts its worktree, runs the Setup Command there, and gives it to a new Chat.
+    /// Starts a Frontier Ticket by hand, outside any Run.
     pub async fn start(&self, slug: &str, number: u32, project: &Project, rig: &Rig) -> Result<String, String> {
         let _starting = Starting::new(self, slug, number)?;
+        self.begin(slug, number, project, rig).await
+    }
+
+    /// Starts a Frontier Ticket: cuts its worktree, runs the Setup Command there, and gives it to a new Chat.
+    async fn begin(&self, slug: &str, number: u32, project: &Project, rig: &Rig) -> Result<String, String> {
         let epic = self.epics.get(slug)?;
         let Some(setup) = epic.setup.clone() else {
             return Err(format!(
@@ -284,25 +482,28 @@ impl Runs {
     }
 }
 
-/// Marks a Ticket as starting, so a second Start cannot race the first through its Setup Command.
-struct Starting<'a> {
-    runs: &'a Runs,
+/// Marks a Ticket as starting, so a second start cannot race the first through its Setup Command.
+/// The start holds a slot of a live Run until it ends, when the Run is stepped again.
+struct Starting {
+    starting: Arc<Mutex<HashSet<(String, u32)>>>,
+    schedule: mpsc::UnboundedSender<String>,
     key: (String, u32),
 }
 
-impl<'a> Starting<'a> {
-    fn new(runs: &'a Runs, slug: &str, number: u32) -> Result<Self, String> {
+impl Starting {
+    fn new(runs: &Runs, slug: &str, number: u32) -> Result<Self, String> {
         let key = (slug.to_owned(), number);
         if !runs.starting.lock().unwrap().insert(key.clone()) {
             return Err(format!("{slug}/{number} is already starting"));
         }
-        Ok(Self { runs, key })
+        Ok(Self { starting: Arc::clone(&runs.starting), schedule: runs.schedule.clone(), key })
     }
 }
 
-impl Drop for Starting<'_> {
+impl Drop for Starting {
     fn drop(&mut self) {
-        self.runs.starting.lock().unwrap().remove(&self.key);
+        self.starting.lock().unwrap().remove(&self.key);
+        let _ = self.schedule.send(self.key.0.clone());
     }
 }
 

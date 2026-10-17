@@ -121,6 +121,7 @@
 	const phone = $derived(form() === 'phone');
 	const foreground = $derived(visible && (!phone || (screen === 1 && !drawerOpen)));
 	const shownChats = $derived(foreground ? chatTabs.filter((chat) => showing(chat.id)).map((chat) => chat.id) : []);
+	const shownEpics = $derived(foreground ? openEpics.filter((epic) => showing(epic.id)).map((epic) => epic.slug) : []);
 	const label = $derived(focused && projectLabels.get(focused.id));
 	const titles = $derived([
 		{ title: 'Projects' },
@@ -131,7 +132,7 @@
 		capture({ chosen, terminals, chats, files, browsers, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section } })
 	);
 
-	$effect(() => device.send({ type: 'device.view', chatIds: shownChats }));
+	$effect(() => device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics }));
 	$effect(() => saveLayout(deviceLayout));
 
 	const query = new URLSearchParams(location.search);
@@ -165,7 +166,7 @@
 				for (const project of projects) invalidate(project.id);
 				subscribed.clear();
 				device.send({ type: 'projects.list' });
-				device.send({ type: 'device.view', chatIds: shownChats });
+				device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics });
 				break;
 			}
 			case 'attention.changed':
@@ -303,7 +304,9 @@
 	function attend(projectId: string, tabId: string) {
 		if (drawerOpen) drawer.toggle();
 		focus(projectId);
-		choose(projectId, tabId);
+		const [kind, , slug] = tabId.split(':');
+		if (kind === 'epic' && slug) openEpic(projectId, slug);
+		else choose(projectId, tabId);
 	}
 
 	function focus(projectId: string) {

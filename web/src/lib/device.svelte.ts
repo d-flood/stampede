@@ -94,6 +94,8 @@ export type Ticket = {
 	attention?: string;
 };
 
+export type Run = { rig: string; parallel: number };
+
 export type Epic = {
 	slug: string;
 	title: string;
@@ -102,13 +104,14 @@ export type Epic = {
 	archived: boolean;
 	base?: string;
 	integration?: string;
+	run?: Run;
 	tickets: Ticket[];
 };
 
-export type Attention = { projectId: string; chatId: string; label: string; status: Status };
+export type Attention = { projectId: string; label: string; status: Status } & ({ chatId: string } | { epic: string });
 
 export function tabOf(item: Attention): string {
-	return item.chatId;
+	return 'chatId' in item ? item.chatId : `epic:${item.projectId}:${item.epic}`;
 }
 
 export type Found = { line: number; column: number; preview: string };
@@ -186,7 +189,7 @@ export type ClientMessage =
 	| { type: 'project.close'; projectId: string }
 	| { type: 'project.reorder'; order: string[] }
 	| { type: 'picker.list' }
-	| { type: 'device.view'; chatIds: string[] }
+	| { type: 'device.view'; chatIds: string[]; epics: string[] }
 	| ({ type: 'search.start' } & Search)
 	| { type: 'epics.subscribe'; projectId: string }
 	| { type: 'ticket.start'; projectId: string; epic: string; ticket: number; rig: string }

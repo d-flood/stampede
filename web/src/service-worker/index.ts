@@ -1,6 +1,6 @@
 import { self } from '$app/service-worker';
 
-type Item = { projectId: string; chatId: string; label: string; status: 'waiting' | 'done' };
+type Item = { projectId: string; label: string; status: 'waiting' | 'done' } & ({ chatId: string } | { epic: string });
 
 self.addEventListener('install', () => self.skipWaiting());
 
@@ -17,7 +17,8 @@ self.addEventListener('notificationclick', (event) => {
 async function open(item: Item) {
 	const [client] = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
 	if (!client) {
-		const query = new URLSearchParams({ project: item.projectId, tab: item.chatId });
+		const tab = 'chatId' in item ? item.chatId : `epic:${item.projectId}:${item.epic}`;
+		const query = new URLSearchParams({ project: item.projectId, tab });
 		await self.clients.openWindow(`/?${query}`);
 		return;
 	}

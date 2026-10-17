@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Text from '#lib/chat/Text.svelte';
+	import { rigs } from '#lib/config.svelte.ts';
 	import type { Chat, Device, Epic, Ticket } from '#lib/device.svelte.ts';
 	import Blockers from '#lib/epics/Blockers.svelte';
 	import Progress from '#lib/epics/Progress.svelte';
@@ -11,8 +12,10 @@
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import { onMount } from 'svelte';
+	import CaretDown from '~icons/ph/caret-down';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
+	import Minus from '~icons/ph/minus';
 	import Plus from '~icons/ph/plus';
 
 	type Props = {
@@ -34,6 +37,8 @@
 	const shown = $derived(folded && !open.showResolved ? tickets.filter((ticket) => !resolved(ticket.status)) : tickets);
 	const lines = $derived(epic?.brief.trimEnd().split('\n').length ?? 0);
 	const next = $derived(Math.max(0, ...tickets.map((ticket) => ticket.number)) + 1);
+	const choices = $derived(rigs());
+	const rig = $derived(choices.some((choice) => choice.name === open.rig) ? open.rig : choices[0]?.name);
 
 	let draft = $state('');
 	let title = $state('');
@@ -42,6 +47,7 @@
 	let error = $state<string>();
 	let saving = $state(false);
 	let archiving = $state(false);
+	let refused = $state<string>();
 	let returnTo: OpenEpic['page'];
 
 	onMount(() => painted(open.id));
@@ -81,6 +87,21 @@
 	function saveSetup(event: SubmitEvent) {
 		event.preventDefault();
 		if (setup !== undefined) save({ kind: 'setup.set', command: setup.trim() }, () => (setup = undefined));
+	}
+
+	async function run(edit: Edit) {
+		if (epic) refused = await record(epic.slug, edit);
+	}
+
+	function chooseRig(name: string) {
+		if (epic?.run) run({ kind: 'run.changed', rig: name });
+		else open.rig = name;
+	}
+
+	function limit(parallel: number) {
+		if (parallel < 1) return;
+		if (epic?.run) run({ kind: 'run.changed', parallel });
+		else open.parallel = parallel;
 	}
 
 	function chatOf(ticket: Ticket) {
@@ -140,6 +161,51 @@
 	{/if}
 {/snippet}
 
+{#snippet settings(epic: Epic)}
+	{@const parallel = epic.run?.parallel ?? open.parallel}
+	<label class="setting">
+		<span>Rig</span>
+		<select value={epic.run?.rig ?? rig} onchange={(event) => chooseRig(event.currentTarget.value)}>
+			{#each choices as choice (choice.name)}
+				<option value={choice.name}>{choice.name}</option>
+			{/each}
+		</select>
+	</label>
+	<span class="setting" role="group" aria-label="Parallel">
+		<span aria-hidden="true">Parallel</span>
+		<IconButton label="Fewer" disabled={parallel <= 1} onclick={() => limit(parallel - 1)}><Minus /></IconButton>
+		<output class="limit">{parallel}</output>
+		<IconButton label="More" onclick={() => limit(parallel + 1)}><Plus /></IconButton>
+	</span>
+{/snippet}
+
+{#snippet runBar(epic: Epic)}
+	{@const live = epic.run}
+	<section class="run" aria-label="Run">
+		{#if live}
+			<div class="top">
+				<span class="live">Run live</span>
+				{#if phone}
+					<button class="summary" aria-expanded={open.showRun} onclick={() => (open.showRun = !open.showRun)}>
+						{live.rig} · ×{live.parallel}
+						<CaretDown />
+					</button>
+				{/if}
+			</div>
+		{/if}
+		{#if !phone || !live || open.showRun}
+			<div class="settings">{@render settings(epic)}</div>
+		{/if}
+		{#if !live}
+			<Button variant="primary" disabled={!rig || epic.setup === null} onclick={() => rig && run({ kind: 'run.started', rig, parallel: open.parallel })}>
+				Start Run
+			</Button>
+			{#if epic.setup === null}<p class="note">Record a Setup Command before starting a Run.</p>{/if}
+		{/if}
+		{#if refused}<p class="note error" role="alert">{refused}</p>{/if}
+	</section>
+{/snippet}
+
 {#snippet archive()}
 	<div class="archive"><Button onclick={() => ((error = undefined), (archiving = true))}>Archive Epic</Button></div>
 {/snippet}
@@ -195,6 +261,7 @@
 					</ul>
 				</div>
 			</header>
+			{@render runBar(epic)}
 			{#if phone}
 				<div class="pages">
 					<button onclick={() => (open.page = 'brief')}>Brief <CaretRight /></button>
@@ -466,6 +533,115 @@
 	.count {
 		color: var(--tone);
 		font-variant-numeric: tabular-nums;
+	}
+
+	.run {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-2) var(--space-4);
+		margin-bottom: var(--space-4);
+		padding: var(--space-2) var(--space-4);
+		border-radius: var(--radius-lg);
+		background: var(--surface-2);
+	}
+
+	.top {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-2);
+	}
+
+	.live {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		font-weight: 600;
+	}
+
+	.live::before {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--status-done);
+		content: '';
+	}
+
+	.settings {
+		display: flex;
+		flex: 1;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-2) var(--space-4);
+	}
+
+	.setting {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		color: var(--muted-fg);
+	}
+
+	select {
+		min-height: var(--target-min);
+		padding: 0 var(--space-2);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--surface-1);
+		color: var(--color-fg);
+		font: inherit;
+	}
+
+	.limit {
+		min-width: 1.5em;
+		color: var(--color-fg);
+		font-family: var(--font-mono);
+		text-align: center;
+	}
+
+	.run .note {
+		flex-basis: 100%;
+		margin: 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.run .error {
+		color: var(--ansi-1);
+	}
+
+	.summary {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		min-height: var(--target-min);
+		padding: 0;
+		border: none;
+		background: none;
+		color: var(--muted-fg);
+		font: inherit;
+		font-size: var(--font-size-sm);
+	}
+
+	.phone .run {
+		flex-direction: column;
+		align-items: stretch;
+		margin-bottom: var(--space-3);
+		padding: var(--space-3);
+	}
+
+	.phone .settings {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.phone .setting select {
+		flex: 1;
+	}
+
+	.phone [role='group'] > span:first-child {
+		flex: 1;
 	}
 
 	.pages {

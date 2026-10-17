@@ -21,7 +21,7 @@ use tokio::sync::{
 use uuid::Uuid;
 
 use crate::{
-    attention::{Attention, Feed},
+    attention::{Attention, Feed, Source, Tab},
     config::{Agent, AgentSettings, Rig},
     projects::Project,
     templates,
@@ -507,10 +507,32 @@ pub enum Status {
     Done,
 }
 
+/// A step in a Chat's life, the same for every Agent: what the loop follows instead of the drivers' events.
+#[derive(Clone)]
+#[expect(dead_code, reason = "scheduling needs only which Chat changed; releasing and recovering Chats read what changed")]
+pub enum Lifecycle {
+    Status(String, Status),
+    Session(String, String),
+    /// An interrupted turn, or one cut off by a usage limit.
+    Notice(String, Notice),
+    /// The Chat has stopped and its record is gone; this is its last state.
+    Ended(Box<Chat>),
+}
+
+impl Lifecycle {
+    pub fn chat(&self) -> &str {
+        match self {
+            Lifecycle::Status(chat, _) | Lifecycle::Session(chat, _) | Lifecycle::Notice(chat, _) => chat,
+            Lifecycle::Ended(chat) => &chat.id,
+        }
+    }
+}
+
 pub struct Chats {
     data_dir: PathBuf,
     chats: Mutex<Vec<Arc<Entry>>>,
     changed: broadcast::Sender<Change>,
+    lifecycle: broadcast::Sender<Lifecycle>,
     views: Mutex<HashMap<Uuid, (Option<String>, Vec<String>)>>,
     attention: Arc<Feed>,
     usage: Arc<Usage>,
@@ -536,6 +558,7 @@ impl Chats {
             data_dir,
             chats: Mutex::default(),
             changed: broadcast::Sender::new(1024),
+            lifecycle: broadcast::Sender::new(256),
             views: Mutex::default(),
             attention,
             usage,
@@ -544,6 +567,10 @@ impl Chats {
 
     pub fn subscribe(&self) -> broadcast::Receiver<Change> {
         self.changed.subscribe()
+    }
+
+    pub fn lifecycle(&self) -> broadcast::Receiver<Lifecycle> {
+        self.lifecycle.subscribe()
     }
 
     pub fn list(&self) -> Vec<Chat> {
@@ -670,9 +697,10 @@ impl Chats {
                 Event::Session(session) => {
                     let mut chat = entry.chat.lock().unwrap();
                     if chat.agent_session.as_ref() != Some(&session) {
-                        chat.agent_session = Some(session);
+                        chat.agent_session = Some(session.clone());
                         self.save(&chat);
                         let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+                        let _ = self.lifecycle.send(Lifecycle::Session(id.clone(), session));
                     }
                 }
                 Event::Status(status) => {
@@ -745,7 +773,12 @@ impl Chats {
                     let mut transcript = entry.transcript.lock().unwrap();
                     match transcript.items.get_mut(index) {
                         Some(existing) => *existing = item.clone(),
-                        None => transcript.items.push(item.clone()),
+                        None => {
+                            if let Item::Notice { notice: notice @ (Notice::Interrupted | Notice::Limit), .. } = &item {
+                                let _ = self.lifecycle.send(Lifecycle::Notice(id.clone(), *notice));
+                            }
+                            transcript.items.push(item.clone())
+                        }
                     }
                     transcript.seq += 1;
                     let seq = transcript.seq;
@@ -789,6 +822,7 @@ impl Chats {
         let _ = fs::remove_file(record_path(&self.data_dir, &id));
         let _ = self.changed.send(Change::Chats(project_id));
         self.refresh_attention();
+        let _ = self.lifecycle.send(Lifecycle::Ended(Box::new(entry.chat.lock().unwrap().clone())));
     }
 
     fn settle(&self, entry: &Entry, transcript: &Transcript) {
@@ -806,6 +840,7 @@ impl Chats {
         let item = chat.attention();
         drop(chat);
         let _ = self.changed.send(Change::Status(id.clone(), status));
+        let _ = self.lifecycle.send(Lifecycle::Status(id.clone(), status));
         self.refresh_attention();
         if status != Status::Working {
             self.attention.call(item, self.showing(&id));
@@ -943,7 +978,7 @@ impl Chats {
 
     fn refresh_attention(&self) {
         let items = self.list().iter().filter(|chat| chat.needs_attention()).map(Chat::attention).collect();
-        self.attention.publish(items);
+        self.attention.publish(Source::Chats, items);
     }
 
     fn get(&self, id: &str) -> Option<Arc<Entry>> {
@@ -972,7 +1007,7 @@ impl Chat {
     fn attention(&self) -> Attention {
         Attention {
             project_id: self.project_id.clone(),
-            chat_id: self.id.clone(),
+            tab: Tab::Chat { chat_id: self.id.clone() },
             label: self.rig.clone(),
             status: self.status,
         }

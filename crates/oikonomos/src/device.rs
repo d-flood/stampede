@@ -105,6 +105,8 @@ enum Control {
     View {
         #[serde(default)]
         chat_ids: Vec<String>,
+        #[serde(default)]
+        epics: Vec<String>,
     },
     #[serde(rename = "search.start")]
     Search(search::Query),
@@ -325,6 +327,7 @@ async fn connect(
         }
     }
     device.chats.view(device.connection, None, Vec::new());
+    device.runs.view(device.connection, None, Vec::new());
     device.cancel_search();
     writer.abort();
 }
@@ -439,8 +442,9 @@ impl Device {
                 let directories = projects::directories(&roots);
                 send(&self.outgoing, json!({ "type": "picker.listed", "directories": directories }));
             }
-            Control::View { chat_ids } => {
+            Control::View { chat_ids, epics } => {
                 self.chats.view(self.connection, self.browser.clone(), chat_ids);
+                self.runs.view(self.connection, self.browser.clone(), epics);
             }
             Control::Search(query) => self.search(query),
             Control::SubscribeEpics { project_id } => self.subscribe_epics(project_id).await,

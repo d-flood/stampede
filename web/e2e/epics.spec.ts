@@ -257,7 +257,7 @@ test('Start on a Frontier Ticket works it with a fake Agent until it is merged',
 	await expect(panel.getByText('Record a Setup Command before starting a Ticket.')).toBeVisible();
 	cli('', 'epic', 'set-setup', slug, '');
 	await expect(start).toBeEnabled();
-	await panel.getByRole('combobox', { name: 'Rig' }).selectOption('Fake Claude Verdict');
+	await (phone ? panel : tickets).getByRole('combobox', { name: 'Rig' }).selectOption('Fake Claude Verdict');
 	await start.click();
 
 	const status = phone ? panel.locator('.chips') : row;
@@ -308,7 +308,7 @@ test('a merged Ticket moved back to not started is worked again on the Epic bran
 	const row = panel.getByRole('region', { name: 'Tickets' }).getByRole('button', { name: /^1\s*The work/ });
 	await row.click();
 	const start = panel.getByRole('button', { name: 'Start', exact: true });
-	const rig = panel.getByRole('combobox', { name: 'Rig' });
+	const rig = (phone ? panel : panel.getByRole('region', { name: 'Tickets' })).getByRole('combobox', { name: 'Rig' });
 	const reopen = panel.getByRole('button', { name: 'Move to not started' });
 	await expect(reopen).toHaveCount(0);
 	await rig.selectOption('Fake Claude Verdict');
@@ -346,5 +346,81 @@ test('a merged Ticket moved back to not started is worked again on the Epic bran
 		await expect(row).toContainText('· edited');
 	}
 	expect(log().map((entry) => entry.kind).slice(-4)).toEqual(['worktree.removed', 'ticket.reopened', 'ticket.claimed', 'ticket.body.set']);
+	await showFiles(await showSidebar(page));
+});
+
+test('a Run started from the Epic tab works the Epic through and calls from the Attention list when it finishes', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
+	const slug = `run-${project.name}`;
+	const data = `${process.env.OIKONOMOS_E2E_ROOT}/data`;
+	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	const gate = `${process.env.OIKONOMOS_E2E_ROOT}/${slug}.go`;
+	mkdirSync(root, { recursive: true });
+	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
+	git('init', '-q');
+	git('config', 'user.name', 'oikonomos');
+	git('config', 'user.email', 'e2e@oikonomos.invalid');
+	git('config', 'commit.gpgsign', 'false');
+	writeFileSync(`${root}/README`, 'run\n');
+	git('add', 'README');
+	git('commit', '-qm', 'Initial commit');
+	const cli = (stdin: string, ...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', data], { cwd: root, input: stdin });
+	cli('# Run\n', 'epic', 'add', slug, '--title', 'Run it', '--brief', '-');
+	cli('Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
+	cli('Then more.\n', 'ticket', 'add', slug, '2', '--title', 'More', '--blocked-by', '1', '--body', '-');
+	cli('Beside it.\n', 'ticket', 'add', slug, '3', '--title', 'Beside', '--body', '-');
+
+	await openProject(page, slug);
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
+	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
+	const run = panel.getByRole('region', { name: 'Run', exact: true });
+	const startRun = run.getByRole('button', { name: 'Start Run' });
+	await expect(startRun).toBeDisabled();
+	await expect(run).toContainText('Record a Setup Command before starting a Run.');
+	cli('', 'epic', 'set-setup', slug, `until [ -e ${gate} ]; do sleep 0.1; done`);
+	await expect(startRun).toBeEnabled();
+	await run.getByRole('combobox', { name: 'Rig' }).selectOption('Fake Claude Verdict');
+	const limit = run.getByRole('group', { name: 'Parallel' });
+	await expect(limit.getByRole('button', { name: 'Fewer' })).toBeDisabled();
+	await limit.getByRole('button', { name: 'More' }).click();
+	await expect(limit.locator('output')).toHaveText('2');
+	await page.screenshot({ path: test.info().outputPath('start-run.png') });
+	await startRun.click();
+
+	await expect(run).toContainText('Run live');
+	await expect(startRun).toHaveCount(0);
+	if (phone) {
+		const summary = run.getByRole('button', { name: /Fake Claude Verdict · ×2/ });
+		await expect(summary).toHaveAttribute('aria-expanded', 'false');
+		await summary.click();
+	}
+	await expect(run.getByRole('combobox', { name: 'Rig' })).toHaveValue('Fake Claude Verdict');
+	await limit.getByRole('button', { name: 'More' }).click();
+	await expect(limit.locator('output')).toHaveText('3');
+	if (phone) await expect(run.getByRole('button', { name: /Fake Claude Verdict · ×3/ })).toBeVisible();
+	await expect(panel.getByRole('region', { name: 'Tickets' })).not.toContainText('in progress');
+	await page.screenshot({ path: test.info().outputPath('run-live.png') });
+
+	await page.getByRole('button', { name: `Close Epic ${slug}` }).click();
+	await expect(panel).toHaveCount(0);
+	writeFileSync(gate, '');
+	const list = page.getByRole('button', { name: 'Attention list' });
+	const entry = phone
+		? page.getByRole('dialog', { name: 'Needs attention' }).getByRole('button', { name: `Epic ${slug} in ${slug}` })
+		: page.getByRole('menuitem', { name: `Epic ${slug} in ${slug}` });
+	await list.click();
+	await expect(entry).toBeVisible({ timeout: 20000 });
+	await entry.click();
+	await expect(page.getByRole('tab', { name: `Epic ${slug}` })).toHaveAttribute('aria-selected', 'true');
+	await expect(panel).toContainText('3 merged');
+	await expect(run).not.toContainText('Run live');
+	await expect(startRun).toBeVisible();
+	expect(readFileSync(`${data}/worktrees/${slug}/integration/work.txt`, 'utf8')).toBe('Done by the fake.\n');
+	await page.screenshot({ path: test.info().outputPath('finished.png') });
+	await list.click();
+	await expect(entry).toHaveCount(0);
+	await page.keyboard.press('Escape');
 	await showFiles(await showSidebar(page));
 });
