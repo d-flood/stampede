@@ -10,6 +10,9 @@
 	import Todos from '#lib/chat/Todos.svelte';
 	import Chips from '#lib/chat/Chips.svelte';
 	import Dock from '#lib/chat/Dock.svelte';
+	import Prompt from '#lib/chat/Prompt.svelte';
+	import SubagentHeader from '#lib/chat/SubagentHeader.svelte';
+	import Text from '#lib/chat/Text.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -21,6 +24,7 @@
 
 	const subagents = $derived(flatten(items));
 	const selected = $derived(subagents.find(({ path }) => same(path, opened))?.subagent);
+	const trail = $derived(subagents.filter(({ path }) => path.length < opened.length && same(path, opened.slice(0, path.length))));
 	const current = $derived(selected ?? chat);
 	let requests = $state<Request[]>([]);
 	let attached = $state(false);
@@ -124,7 +128,7 @@
 		{/if}
 		<Todos todos={chat.todos} working={chat.status === 'working'} />
 	{:else}
-		<div class="session-heading"><strong>{selected.task}</strong><span>{selected.status}</span></div>
+		<SubagentHeader subagent={selected} {trail} {onopen} />
 	{/if}
 	<div class="transcript" hidden={!!selected} {@attach follow}>
 		<div class="column">
@@ -136,7 +140,14 @@
 		{#key opened.join('/')}
 			<div class="transcript" {@attach follow}>
 				<div class="column">
+					{#if selected.prompt}<Prompt prompt={selected.prompt} />{/if}
 					<Transcript items={selected.items} activity={selected.activity} {ondiff} />
+					{#if selected.report}
+						<section class="report" aria-label="Report">
+							<span class="label">Report</span>
+							<Text item={{ kind: 'text', text: selected.report, streaming: false, phase: 'final' }} />
+						</section>
+					{/if}
 				</div>
 			</div>
 		{/key}
@@ -157,16 +168,16 @@
 				<Meters {chat} />
 			{/if}
 		{:else}
-			<div class="session-footer"><span>Subagent session</span><Button onclick={() => onopen([])}>Return to Main</Button></div>
+			<div class="subagent"><span>Subagent</span><Button onclick={() => onopen([])}>Back to Main</Button></div>
 		{/if}
 	</div>
 </div>
 
 <style>
-	.session-heading, .session-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); }
-	.session-heading { border-bottom: var(--border-width) solid var(--border); }
-	.session-heading strong { min-width: 0; overflow-wrap: anywhere; }
-	.session-heading span, .session-footer span { color: var(--muted-fg); }
+	.subagent { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); }
+	.subagent span, .report .label { color: var(--muted-fg); }
+	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }
+	.report .label { font-size: var(--font-size-sm); }
 	.transcript[hidden] { display: none; }
 	.rewind { display: flex; flex-direction: column; flex: none; gap: var(--space-2); max-height: 45vh; padding: var(--space-3); overflow-y: auto; }
 	.rewind p { margin: 0; color: var(--muted-fg); }
