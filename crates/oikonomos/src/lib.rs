@@ -156,6 +156,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
         Arc::clone(&projects),
         config.clone(),
         Arc::clone(&attention),
+        Arc::clone(&usage),
     )?;
     cli::listen(requests, Arc::clone(&epics), Arc::clone(&runs));
     usage::spawn(Arc::clone(&usage), config.clone());

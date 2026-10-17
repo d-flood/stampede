@@ -29,6 +29,7 @@ struct Settings {
     editor: Editor,
     keybar: Keybar,
     language_servers: LanguageServers,
+    r#loop: Loop,
 }
 
 impl Default for Settings {
@@ -43,7 +44,21 @@ impl Default for Settings {
             editor: Editor::default(),
             keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
+            r#loop: Loop::default(),
         }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct Loop {
+    #[serde(deserialize_with = "fraction")]
+    pause_at: f64,
+}
+
+impl Default for Loop {
+    fn default() -> Self {
+        Self { pause_at: 0.9 }
     }
 }
 
@@ -190,6 +205,7 @@ pub struct Config {
     pub editor: Editor,
     pub keybar: Keybar,
     pub language_servers: LanguageServers,
+    pub pause_at: f64,
 }
 
 impl Default for Config {
@@ -204,6 +220,7 @@ impl Default for Config {
             editor: Editor::default(),
             keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
+            pause_at: Loop::default().pause_at,
         }
     }
 }
@@ -241,6 +258,7 @@ impl Config {
             editor,
             keybar,
             language_servers,
+            r#loop,
         } = toml::from_str(text)?;
         Ok(Self {
             roots: roots.into_iter().map(expand).collect(),
@@ -252,6 +270,7 @@ impl Config {
             editor,
             keybar,
             language_servers,
+            pause_at: r#loop.pause_at,
         })
     }
 
@@ -350,6 +369,15 @@ fn rigs<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Rig>, D::Error
         }
     }
     Ok(rigs)
+}
+
+fn fraction<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+    let share = f64::deserialize(deserializer)?;
+    if share > 0.0 && share <= 1.0 {
+        Ok(share)
+    } else {
+        Err(D::Error::custom(format!("{share} is not a share of a Usage window; use one greater than 0 and at most 1, such as 0.9")))
+    }
 }
 
 fn faces<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Face>, D::Error> {
@@ -489,5 +517,16 @@ command = "codex"
             let text = format!("[[rig]]\nname = \"Mine\"\nagent = \"{agent}\"\ncommand = \"x\"\nmode = \"{mode}\"\n");
             assert!(check(&text).is_none(), "{agent} refused mode {mode}");
         }
+    }
+
+    #[test]
+    fn a_run_pauses_at_the_share_of_a_usage_window_the_loop_table_sets() {
+        assert_eq!(Config::parse("").unwrap().pause_at, 0.9);
+        assert_eq!(Config::parse("[loop]\npause_at = 0.75\n").unwrap().pause_at, 0.75);
+        assert_eq!(Config::parse("[loop]\npause_at = 1\n").unwrap().pause_at, 1.0);
+        let invalid = check("roots = []\n[loop]\npause_at = 90\n").unwrap();
+        assert!(invalid.message.contains("90 is not a share of a Usage window"), "{}", invalid.message);
+        assert_eq!(invalid.line, Some(3));
+        assert!(check("[loop]\npause = 0.5\n").is_some());
     }
 }

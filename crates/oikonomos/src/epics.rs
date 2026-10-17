@@ -11,7 +11,7 @@ use std::{
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::sync::broadcast;
 
-use crate::config::Agent;
+use crate::{config::Agent, usage::Window};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -82,6 +82,10 @@ pub enum Event {
     RunStopped,
     #[serde(rename = "claim.released")]
     Released { ticket: u32, keep: Keep },
+    #[serde(rename = "turn.cut")]
+    TurnCut { ticket: u32, turn: String },
+    #[serde(rename = "turn.continued")]
+    TurnContinued { ticket: u32 },
     #[serde(rename = "epic.viewed")]
     Viewed,
     #[serde(rename = "epic.landed")]
@@ -100,6 +104,12 @@ pub enum Event {
 #[serde(tag = "reason", rename_all = "lowercase")]
 pub enum Pause {
     David,
+    Usage {
+        agent: Agent,
+        window: Window,
+        #[serde(rename = "resetsAt", default, skip_serializing_if = "Option::is_none")]
+        resets_at: Option<u64>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -184,9 +194,8 @@ pub struct Epic {
     pub queue: Vec<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<Run>,
-    /// A Run finished, and no Device has shown the Epic since.
     #[serde(skip)]
-    pub finished: bool,
+    pub call: Option<Call>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub landed: Option<Landed>,
     /// Why the last Landing left the Integration Worktree standing.
@@ -194,6 +203,12 @@ pub struct Epic {
     pub kept: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<Note>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Call {
+    Finished,
+    Paused,
 }
 
 /// The base the Epic branch last landed on, and the commit the base reached.
@@ -253,6 +268,16 @@ pub struct Claim {
     /// The body changed after this Claim was made, and nothing told its Chat.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub edited: bool,
+    #[serde(skip)]
+    pub continuation: Option<Continuation>,
+    #[serde(skip)]
+    pub cut_turn: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Continuation {
+    Pending,
+    Due,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -297,7 +322,7 @@ impl Epic {
             tickets: BTreeMap::new(),
             queue: Vec::new(),
             run: None,
-            finished: false,
+            call: None,
             landed: None,
             kept: None,
             notes: Vec::new(),
@@ -356,7 +381,7 @@ impl Epic {
                     let resumed = ticket.kept.take().filter(|_| ticket.worktree.as_ref() == Some(worktree));
                     let edited = resumed.is_some_and(|kept| kept.edited);
                     ticket.status = Status::InProgress;
-                    ticket.claim = Some(Claim { chat: chat.clone(), rig: rig.clone(), edited });
+                    ticket.claim = Some(Claim { chat: chat.clone(), rig: rig.clone(), edited, continuation: None, cut_turn: None });
                     ticket.worktree = Some(worktree.clone());
                     ticket.attention = None;
                 }
@@ -437,6 +462,17 @@ impl Epic {
                     ticket.releasing = false;
                 }
             }
+            Event::TurnCut { ticket, turn } => {
+                if let Some(claim) = self.tickets.get_mut(ticket).and_then(|ticket| ticket.claim.as_mut()) {
+                    claim.continuation = self.run.as_ref().filter(|run| run.paused != Some(Pause::David)).map(|_| Continuation::Pending);
+                    claim.cut_turn = Some(turn.clone());
+                }
+            }
+            Event::TurnContinued { ticket } => {
+                if let Some(claim) = self.tickets.get_mut(ticket).and_then(|ticket| ticket.claim.as_mut()) {
+                    claim.continuation = None;
+                }
+            }
             Event::RestoreFailed { ticket, chat } => {
                 if let Some(ticket) = self.tickets.get_mut(ticket) {
                     ticket.attention = Some(if ticket.resolver.as_ref() == Some(chat) {
@@ -452,7 +488,7 @@ impl Epic {
             }
             Event::RunStarted { rig, parallel } => {
                 self.run = Some(Run { rig: rig.clone(), parallel: *parallel, paused: None });
-                self.finished = false;
+                self.call = None;
                 for ticket in self.tickets.values_mut().filter(|ticket| ticket.status == Status::NotStarted) {
                     ticket.attention = None;
                 }
@@ -465,25 +501,31 @@ impl Epic {
             }
             Event::RunFinished => {
                 self.run = None;
-                self.finished = true;
+                self.call = Some(Call::Finished);
             }
             Event::RunPaused { pause } => {
-                if let Some(run) = &mut self.run {
-                    run.paused = Some(pause.clone());
+                let Some(run) = &mut self.run else { return };
+                let paused = run.paused.replace(pause.clone());
+                if *pause == Pause::David {
+                    self.unpause(None);
+                } else if paused.is_none() {
+                    self.call = Some(Call::Paused);
                 }
             }
             Event::RunResumed => {
-                if let Some(run) = &mut self.run {
-                    run.paused = None;
+                let Some(run) = &mut self.run else { return };
+                if let Some(Pause::Usage { .. }) = run.paused.take() {
+                    self.unpause(Some(Continuation::Due));
                 }
             }
             Event::RunStopped => {
                 self.run = None;
+                self.unpause(None);
                 for ticket in self.tickets.values_mut().filter(|ticket| ticket.status == Status::InProgress) {
                     ticket.releasing = true;
                 }
             }
-            Event::Viewed => self.finished = false,
+            Event::Viewed => self.call = None,
             Event::Landed { base, head } => self.landed = Some(Landed { base: base.clone(), head: head.clone() }),
             Event::LandingRefused { reason } => {
                 self.notes.push(Note { author: Author::Oikonomos, text: format!("Landing was refused: {reason}."), at: entry.at });
@@ -494,6 +536,17 @@ impl Epic {
             }
             Event::IntegrationKept { reason } => self.kept = Some(reason.clone()),
             Event::EpicAdded { .. } | Event::Unknown => {}
+        }
+    }
+
+    fn unpause(&mut self, owed: Option<Continuation>) {
+        if self.call == Some(Call::Paused) {
+            self.call = None;
+        }
+        for claim in self.tickets.values_mut().filter_map(|ticket| ticket.claim.as_mut()) {
+            if claim.continuation.is_some() {
+                claim.continuation = owed;
+            }
         }
     }
 
@@ -607,10 +660,30 @@ impl Epic {
             Event::RunPaused { pause } if self.run.as_ref().is_some_and(|run| run.paused.as_ref() == Some(pause)) => {
                 Err(format!("{slug}'s Run is already paused"))
             }
+            Event::RunPaused { pause: Pause::Usage { .. } }
+                if self.run.as_ref().is_some_and(|run| run.paused == Some(Pause::David)) =>
+            {
+                Err(format!("David paused {slug}'s Run"))
+            }
             Event::RunResumed if self.run.as_ref().is_some_and(|run| run.paused.is_none()) => {
                 Err(format!("{slug}'s Run is not paused"))
             }
-            Event::Viewed if !self.finished => Err(format!("{slug} has no finished Run to show")),
+            Event::TurnCut { .. } if self.run.is_none() => Err(format!("{slug} has no live Run to continue its Chat")),
+            Event::TurnCut { ticket, .. } | Event::TurnContinued { ticket } => {
+                let held = self.ticket(*ticket)?;
+                let owed = held.claim.as_ref().is_some_and(|claim| claim.continuation.is_some());
+                if let Event::TurnCut { turn, .. } = event
+                    && held.claim.as_ref().is_some_and(|claim| claim.cut_turn.as_ref() == Some(turn))
+                {
+                    return Err(format!("{slug}/{ticket}'s cut-off turn was recorded already"));
+                }
+                match (held.status, matches!(event, Event::TurnCut { .. }), owed) {
+                    (Status::InProgress, true, _) | (Status::InProgress, false, true) => Ok(()),
+                    (Status::InProgress, false, false) => Err(format!("{slug}/{ticket}'s Chat is owed no continue")),
+                    (status, ..) => Err(format!("{slug}/{ticket} is {status}, so it has no Chat to continue")),
+                }
+            }
+            Event::Viewed if self.call.is_none() => Err(format!("{slug} has no finished or paused Run to show")),
             Event::MergeConflicted { ticket, .. } => {
                 if self.ticket(*ticket)?.resolver.is_some() {
                     Err(format!("{slug}/{ticket} already has a Resolver"))
@@ -972,7 +1045,7 @@ mod tests {
             tickets: BTreeMap::from([(1, ticket)]),
             queue: Vec::new(),
             run: None,
-            finished: false,
+            call: None,
             landed: None,
             kept: None,
             notes: Vec::new(),
@@ -1139,7 +1212,7 @@ mod tests {
         let lines = [ADDED.to_owned(), ticket(1, &[]), event("setup.failed", 1), claimed(1)];
         let epic = folded(&lines).unwrap();
         let held = &epic.tickets[&1];
-        assert_eq!(held.claim, Some(Claim { chat: "chat1".to_owned(), rig: "Claude".to_owned(), edited: false }));
+        assert_eq!(held.claim, Some(Claim { chat: "chat1".to_owned(), rig: "Claude".to_owned(), edited: false, continuation: None, cut_turn: None }));
         assert_eq!(held.worktree.as_deref(), Some(Path::new("/w/1")));
         assert_eq!(held.attention, None, "a Claim clears what the failed setup flagged");
 
@@ -1236,7 +1309,7 @@ mod tests {
         let epic = folded(&[base.to_vec(), merged, vec![reopened(1), again]].concat()).unwrap();
         let ticket = &epic.tickets[&1];
         assert_eq!((ticket.status, frontier(&epic)), (InProgress, vec![]));
-        assert_eq!(ticket.claim, Some(Claim { chat: "again".to_owned(), rig: "Codex".to_owned(), edited: false }));
+        assert_eq!(ticket.claim, Some(Claim { chat: "again".to_owned(), rig: "Codex".to_owned(), edited: false, continuation: None, cut_turn: None }));
         assert_eq!(ticket.worktree.as_deref(), Some(Path::new("/w/1-2")));
     }
 
@@ -1259,7 +1332,7 @@ mod tests {
             assert_eq!(epic.tickets[&1].claim.as_ref().map(|claim| claim.edited), expected, "{name}");
         }
 
-        let claim = |edited| serde_json::to_value(Claim { chat: "c".to_owned(), rig: "R".to_owned(), edited }).unwrap();
+        let claim = |edited| serde_json::to_value(Claim { chat: "c".to_owned(), rig: "R".to_owned(), edited, continuation: None, cut_turn: None }).unwrap();
         assert_eq!(claim(false), serde_json::json!({ "chat": "c", "rig": "R" }));
         assert_eq!(claim(true), serde_json::json!({ "chat": "c", "rig": "R", "edited": true }));
     }
@@ -1290,7 +1363,7 @@ mod tests {
         ];
         for (name, events, run, finished) in cases {
             let epic = folded(&[vec![ADDED.to_owned(), SETUP.to_owned(), ticket(1, &[])], events].concat()).unwrap();
-            assert_eq!((epic.run, epic.finished), (run, finished), "{name}");
+            assert_eq!((epic.run, epic.call == Some(Call::Finished)), (run, finished), "{name}");
         }
     }
 
@@ -1342,7 +1415,7 @@ mod tests {
             (&idle, start(0), "a Run works on at least one Ticket at a time"),
             (&idle, change(2), "loop has no live Run"),
             (&idle, Event::RunFinished, "loop has no live Run"),
-            (&idle, Event::Viewed, "loop has no finished Run to show"),
+            (&idle, Event::Viewed, "loop has no finished or paused Run to show"),
             (&live, start(1), "loop already has a live Run"),
             (&live, change(0), "a Run works on at least one Ticket at a time"),
             (&live, Event::StartFailed { ticket: 1, reason: "R".to_owned() }, "loop/1 is in progress"),
@@ -1442,6 +1515,34 @@ mod tests {
         r#"{"at":8,"kind":"run.paused","reason":"david"}"#.to_owned()
     }
 
+    #[test]
+    fn usage_pauses_persist_one_continuation_and_manual_actions_cancel_it() {
+        let base = vec![ADDED.to_owned(), SETUP.to_owned(), ticket(1, &[]), started("Claude", 1), claimed(1)];
+        let usage = r#"{"at":8,"kind":"run.paused","reason":"usage","agent":"claude-code","window":"five-hour","resetsAt":1000}"#.to_owned();
+        let cut = r#"{"at":9,"kind":"turn.cut","ticket":1,"turn":"first"}"#.to_owned();
+        let continued = r#"{"at":11,"kind":"turn.continued","ticket":1}"#.to_owned();
+        let cases = [
+            (vec![usage.clone(), cut.clone()], Some(Continuation::Pending), Some(Call::Paused)),
+            (vec![usage.clone(), cut.clone(), run_event("run.resumed")], Some(Continuation::Due), None),
+            (vec![usage.clone(), cut.clone(), run_event("run.resumed"), continued.clone()], None, None),
+            (vec![usage.clone(), cut.clone(), paused()], None, None),
+            (vec![usage.clone(), cut.clone(), run_event("run.stopped")], None, None),
+            (vec![usage.clone(), cut.clone(), run_event("epic.viewed")], Some(Continuation::Pending), None),
+        ];
+        for (events, continuation, call) in cases {
+            let epic = folded(&[base.clone(), events].concat()).unwrap();
+            let claim = epic.tickets[&1].claim.as_ref().unwrap();
+            assert_eq!(claim.continuation, continuation);
+            assert_eq!(claim.cut_turn.as_deref(), Some("first"));
+            assert_eq!(epic.call, call);
+            assert!(epic.check(&Event::TurnCut { ticket: 1, turn: "first".to_owned() }).is_err());
+        }
+        let epic = folded(&[base, vec![usage, cut, run_event("run.resumed"), continued]].concat()).unwrap();
+        assert_eq!(epic.check(&Event::TurnCut { ticket: 1, turn: "second".to_owned() }), Ok(()));
+        let entry: Entry = serde_json::from_str(r#"{"at":8,"kind":"run.paused","reason":"usage","agent":"claude-code","window":"weekly","resetsAt":1000}"#).unwrap();
+        assert_eq!(serde_json::to_value(entry).unwrap()["resetsAt"], 1000);
+    }
+
     fn released(number: u32, session: Option<&str>) -> String {
         let session = session.map(|session| format!(r#","session":"{session}""#)).unwrap_or_default();
         format!(r#"{{"at":9,"kind":"claim.released","ticket":{number},"keep":{{"worktree":"/w/{number}","agent":"claude-code"{session}}}}}"#)
@@ -1473,7 +1574,7 @@ mod tests {
         for (name, events, expected, statuses, releasing) in cases {
             let epic = folded(&[base.to_vec(), live.to_vec(), events].concat()).unwrap();
             assert_eq!(epic.run, expected, "{name}");
-            assert!(!epic.finished, "{name}: stopping is not finishing");
+            assert!(epic.call.is_none(), "{name}: stopping is not finishing");
             assert_eq!(epic.tickets.values().map(|ticket| ticket.status).collect::<Vec<_>>(), statuses, "{name}");
             assert_eq!(epic.tickets.values().map(|ticket| ticket.releasing).collect::<Vec<_>>(), releasing, "{name}");
         }

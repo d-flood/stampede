@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use tokio::{
@@ -12,6 +13,7 @@ use tokio::{
         broadcast::{self, error::RecvError},
         mpsc, watch,
     },
+    time::sleep,
 };
 use uuid::Uuid;
 
@@ -19,12 +21,13 @@ use crate::{
     attention::{Attention, Feed, Source, Tab},
     chats::{self, Chat, Chats, Lifecycle},
     config::{Config, Rig},
-    epics::{Author, Epic, Epics, Event, Keep, Status},
+    epics::{Author, Call, Continuation, Epic, Epics, Event, Keep, Pause, Run, Status},
     git,
     holder::Owner,
     projects::{Project, Projects, Role, Worktree},
     templates::{self, RESOLVER, TICKET},
     terminals::Terminals,
+    usage::Usage,
 };
 
 mod landing;
@@ -43,6 +46,7 @@ pub struct Runs {
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
     attention: Arc<Feed>,
+    usage: Arc<Usage>,
     starting: Arc<Mutex<HashSet<(String, u32)>>>,
     cutting: tokio::sync::Mutex<()>,
     merges: mpsc::UnboundedSender<String>,
@@ -61,6 +65,7 @@ impl Runs {
         projects: Arc<Projects>,
         config: watch::Receiver<Arc<Config>>,
         attention: Arc<Feed>,
+        usage: Arc<Usage>,
     ) -> io::Result<Arc<Self>> {
         let utf8 = |path: PathBuf| path.into_os_string().into_string().map_err(|_| io::Error::other("a path is not UTF-8"));
         let (merges, queued) = mpsc::unbounded_channel();
@@ -76,6 +81,7 @@ impl Runs {
             projects,
             config,
             attention,
+            usage,
             starting: Arc::default(),
             cutting: tokio::sync::Mutex::new(()),
             merges,
@@ -114,23 +120,35 @@ impl Runs {
         }
     }
 
-    /// Steps an Epic's Run whenever the Epic changes, a Chat holding one of its Tickets changes, or a start ends,
-    /// and rechecks a conflicted merge whenever its Resolver's turn ends or its Chat closes.
     async fn schedule(self: Arc<Self>, mut scheduled: mpsc::UnboundedReceiver<String>, mut lifecycle: broadcast::Receiver<Lifecycle>) {
         let mut changes = self.epics.subscribe();
+        let mut readings = self.usage.subscribe();
+        let mut config = self.config.clone();
         let mut called = BTreeMap::new();
         let mut closing = HashSet::new();
+        let mut resets = BTreeMap::new();
         let mut slugs = self.epics.slugs();
         loop {
             for slug in slugs.drain(..) {
                 self.release(&slug, &mut closing);
+                if let Ok(epic) = self.epics.get(&slug) {
+                    for claim in epic.tickets.values().filter_map(|ticket| ticket.claim.as_ref()) {
+                        self.limited(&claim.chat);
+                    }
+                }
+                self.meter(&slug, &mut resets).await;
+                self.continue_owed(&slug);
                 if self.fill(&slug) {
                     self.finish(&slug).await;
                 }
                 self.nest(&slug).await;
                 self.call(&slug, &mut called).await;
             }
+            let reset = resets.values().min().map(|&at: &u64| Duration::from_millis(at.saturating_sub(now())));
             tokio::select! {
+                Ok(()) = readings.changed() => slugs = self.epics.slugs(),
+                Ok(()) = config.changed() => slugs = self.epics.slugs(),
+                () = sleep(reset.unwrap_or_default()), if reset.is_some() => slugs = resets.keys().cloned().collect(),
                 Some(slug) = scheduled.recv() => slugs.push(slug),
                 changed = changes.recv() => match changed {
                     Ok(slug) => slugs.push(slug),
@@ -139,9 +157,13 @@ impl Runs {
                 },
                 event = lifecycle.recv() => match event {
                     Ok(event) => {
-                        if let Lifecycle::Ended(chat) = &event {
-                            closing.remove(&chat.id);
-                            self.released(chat);
+                        match &event {
+                            Lifecycle::Ended(chat) => {
+                                closing.remove(&chat.id);
+                                self.released(chat);
+                            }
+                            Lifecycle::Status(chat, chats::Status::Done) => self.limited(chat),
+                            _ => {}
                         }
                         slugs.extend(self.epics.holding(event.chat()));
                         if matches!(event, Lifecycle::Status(_, chats::Status::Done) | Lifecycle::Ended(_))
@@ -247,7 +269,11 @@ impl Runs {
         if let Err(error) = self.epics.record(slug, Event::RunFinished) {
             return eprintln!("cannot finish {slug}'s Run: {error}");
         }
-        if let Ok(item) = self.item(slug).await {
+        self.push(slug, chats::Status::Done).await;
+    }
+
+    async fn push(&self, slug: &str, status: chats::Status) {
+        if let Ok(item) = self.item(slug, status).await {
             self.attention.call(item, self.showing(slug));
         }
         if self.shown(slug) {
@@ -255,26 +281,144 @@ impl Runs {
         }
     }
 
-    /// Keeps the attention feed's Epic items in step with the finished Runs no Device has shown yet.
-    async fn call(&self, slug: &str, called: &mut BTreeMap<String, Attention>) {
-        let finished = self.epics.get(slug).is_ok_and(|epic| epic.finished && !epic.archived);
-        if finished == called.contains_key(slug) {
+    async fn meter(&self, slug: &str, resets: &mut BTreeMap<String, u64>) {
+        resets.remove(slug);
+        let Ok(epic) = self.epics.get(slug) else { return };
+        let Some(run) = epic.run.as_ref().filter(|run| !epic.archived && run.paused != Some(Pause::David)) else { return };
+        let over = self.over(run);
+        let recorded = match (&run.paused, &over) {
+            (None, Some(pause)) => match self.epics.record(slug, Event::RunPaused { pause: pause.clone() }) {
+                Ok(()) => {
+                    self.push(slug, chats::Status::Waiting).await;
+                    Ok(())
+                }
+                error => error,
+            },
+            (Some(paused), Some(pause)) if paused != pause => self.epics.record(slug, Event::RunPaused { pause: pause.clone() }),
+            (Some(_), None) => self.epics.record_if(slug, Event::RunResumed, |epic| match epic.run.as_ref().and_then(|run| run.paused.as_ref()) {
+                Some(Pause::Usage { .. }) => Ok(()),
+                _ => Err(format!("{slug}'s Run is no longer paused for usage")),
+            }),
+            _ => Ok(()),
+        };
+        if let Err(error) = recorded {
+            eprintln!("cannot pause or resume {slug}'s Run for usage: {error}");
+        }
+        if let Some(Pause::Usage { resets_at: Some(at), .. }) = over {
+            resets.insert(slug.to_owned(), at);
+        }
+    }
+
+    fn over(&self, run: &Run) -> Option<Pause> {
+        let config = self.config.borrow();
+        let agent = config.rigs.iter().find(|rig| rig.name == run.rig).map(|rig| rig.agent);
+        let readings = self.usage.readings();
+        let now = now();
+        let mut paused_window = None;
+        if let Some(Pause::Usage { agent, window, resets_at }) = &run.paused {
+            paused_window = Some((*agent, *window));
+            let latest = readings.iter().find(|reading| (reading.agent, reading.window) == (*agent, *window));
+            let waiting = match resets_at {
+                Some(at) => *at > now,
+                None => latest.is_none_or(|reading| reading.used >= config.pause_at && reading.resets_at.is_none_or(|at| at > now)),
+            };
+            if waiting {
+                return Some(Pause::Usage {
+                    agent: *agent,
+                    window: *window,
+                    resets_at: resets_at.or_else(|| latest.and_then(|reading| reading.resets_at)),
+                });
+            }
+        }
+        readings
+            .into_iter()
+            .filter(|reading| {
+                (Some(reading.agent) == agent || paused_window == Some((reading.agent, reading.window)))
+                    && reading.used >= config.pause_at && reading.resets_at.is_none_or(|at| at > now)
+            })
+            .max_by_key(|reading| reading.resets_at.unwrap_or(u64::MAX))
+            .map(|reading| Pause::Usage { agent: reading.agent, window: reading.window, resets_at: reading.resets_at })
+    }
+
+    fn limited(&self, chat: &str) {
+        let Some(slug) = self.epics.holding(chat) else { return };
+        let Some(turn) = self.chats.cut_off(chat) else { return };
+        let holds = |epic: &Epic| {
+            let held = epic.tickets.iter().find(|(_, ticket)| ticket.claim.as_ref().is_some_and(|claim| claim.chat == chat));
+            match held {
+                Some((&number, ticket)) if ticket.status == Status::InProgress && !ticket.releasing => Ok(number),
+                _ => Err(format!("{chat} holds no in-progress Ticket")),
+            }
+        };
+        let Ok(number) = self.epics.get(&slug).and_then(|epic| holds(&epic)) else { return };
+        if self.epics.get(&slug).is_ok_and(|epic| {
+            epic.run.is_none()
+                || epic.tickets[&number].claim.as_ref().is_some_and(|claim| claim.cut_turn.as_ref() == Some(&turn))
+        }) {
             return;
         }
-        if !finished {
-            called.remove(slug);
-        } else if let Ok(item) = self.item(slug).await {
-            called.insert(slug.to_owned(), item);
-        } else {
+        if let Err(error) = self.epics.record_if(&slug, Event::TurnCut { ticket: number, turn }, |epic| holds(epic).map(drop)) {
+            eprintln!("cannot owe {slug}/{number}'s Chat a continue: {error}");
+        }
+    }
+
+    fn continue_owed(&self, slug: &str) {
+        let Ok(epic) = self.epics.get(slug) else { return };
+        for (&number, ticket) in epic.tickets.iter().filter(|(_, ticket)| ticket.status == Status::InProgress && !ticket.releasing) {
+            let Some(claim) = &ticket.claim else { continue };
+            let (Some(Continuation::Due), Some(turn)) = (claim.continuation, &claim.cut_turn) else { continue };
+            let still = |epic: &Epic| {
+                let held = &epic.tickets[&number];
+                if !epic.archived && epic.run.as_ref().is_some_and(|run| run.paused.is_none()) && !held.releasing
+                    && held.claim.as_ref().is_some_and(|now| now.chat == claim.chat && now.continuation == Some(Continuation::Due))
+                {
+                    Ok(())
+                } else {
+                    Err(format!("{slug}/{number}'s Chat is no longer owed that continue"))
+                }
+            };
+            self.chats.continue_cut_off(&claim.chat, turn, || {
+                self.epics.record_if(slug, Event::TurnContinued { ticket: number }, still).is_ok()
+            });
+            if self.chats.cut_off(&claim.chat).as_ref() != Some(turn) {
+                let _ = self.epics.record_if(slug, Event::TurnContinued { ticket: number }, |epic| {
+                    if epic.tickets[&number].claim.as_ref().is_some_and(|now| now.chat == claim.chat && now.continuation.is_some()) {
+                        Ok(())
+                    } else {
+                        Err("No continuation is pending".to_owned())
+                    }
+                });
+            }
+        }
+    }
+
+    async fn call(&self, slug: &str, called: &mut BTreeMap<String, Attention>) {
+        let call = self.epics.get(slug).ok().filter(|epic| !epic.archived).and_then(|epic| epic.call);
+        let status = call.map(|call| match call {
+            Call::Finished => chats::Status::Done,
+            Call::Paused => chats::Status::Waiting,
+        });
+        if status == called.get(slug).map(|item| item.status) {
             return;
+        }
+        match status {
+            None => {
+                called.remove(slug);
+            }
+            Some(status) => match self.item(slug, status).await {
+                Ok(item) => {
+                    called.insert(slug.to_owned(), item);
+                }
+                Err(_) => return,
+            },
         }
         self.attention.publish(Source::Epics, called.values().cloned().collect());
     }
 
-    async fn item(&self, slug: &str) -> Result<Attention, String> {
+    async fn item(&self, slug: &str, status: chats::Status) -> Result<Attention, String> {
         let project = self.project(&self.epics.get(slug)?).await?;
         let (tab, label) = (Tab::Epic { epic: slug.to_owned() }, format!("Epic {slug}"));
-        Ok(Attention { project_id: project.id, tab, label, status: chats::Status::Done })
+        Ok(Attention { project_id: project.id, tab, label, status })
     }
 
     /// The open Project that checks out the Epic's repository, its main checkout before any other worktree,
@@ -822,6 +966,10 @@ async fn discard(repo: &str, worktree: &str, branch: &str) {
     if let Err(error) = removed.and(git::run(repo, &["branch", "-D", branch]).await) {
         eprintln!("cannot discard {worktree}: {error}");
     }
+}
+
+fn now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64)
 }
 
 fn quote(text: &str) -> String {

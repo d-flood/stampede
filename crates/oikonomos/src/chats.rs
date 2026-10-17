@@ -13,6 +13,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use base64ct::{Base64, Encoding};
 use tokio::sync::{
     broadcast,
@@ -761,12 +762,12 @@ impl Chats {
                     }
                 }
                 Event::Status(status) => {
-                    let interrupted = matches!(
+                    let cut_off = matches!(
                         entry.transcript.lock().unwrap().items.last(),
-                        Some(Item::Notice { notice: Notice::Interrupted, .. })
+                        Some(Item::Notice { notice: Notice::Interrupted | Notice::Limit, .. })
                     );
                     let mut chat = entry.chat.lock().unwrap();
-                    if status == Status::Done && !chat.queued.is_empty() && !interrupted {
+                    if status == Status::Done && !chat.queued.is_empty() && !cut_off {
                         let text = chat.queued.remove(0);
                         let images = if chat.queued_images.is_empty() { Vec::new() } else { chat.queued_images.remove(0) };
                         self.queued(&chat);
@@ -935,6 +936,35 @@ impl Chats {
         Some((transcript.seq, transcript.items.clone(), transcript.requests.clone()))
     }
 
+    pub fn cut_off(&self, id: &str) -> Option<String> {
+        let entry = self.get(id)?;
+        let transcript = entry.transcript.lock().unwrap();
+        let chat = entry.chat.lock().unwrap();
+        Self::limited_turn(&transcript, &chat)
+    }
+
+    fn limited_turn(transcript: &Transcript, chat: &Chat) -> Option<String> {
+        if transcript.reported != Status::Done || chat.status != Status::Done || !transcript.requests.is_empty()
+            || !matches!(transcript.items.last(), Some(Item::Notice { notice: Notice::Limit, .. }))
+        {
+            return None;
+        }
+        let users: Vec<_> = transcript.items.iter().filter(|item| matches!(item, Item::User { .. })).collect();
+        Some(Base64::encode_string(&Sha256::digest(serde_json::to_vec(&users).ok()?)))
+    }
+
+    pub fn continue_cut_off(&self, id: &str, turn: &str, decide: impl FnOnce() -> bool) -> bool {
+        let Some(entry) = self.get(id) else { return false };
+        let mut transcript = entry.transcript.lock().unwrap();
+        let chat = entry.chat.lock().unwrap();
+        if Self::limited_turn(&transcript, &chat).as_deref() != Some(turn) || !decide() {
+            return false;
+        }
+        transcript.reported = Status::Working;
+        entry.driver.send("continue", &[]);
+        true
+    }
+
     pub fn capabilities(&self, id: &str) -> Option<Capabilities> {
         Some(self.get(id)?.capabilities.lock().unwrap().clone())
     }
@@ -943,6 +973,7 @@ impl Chats {
     pub fn send(&self, id: &str, text: &str, queue: bool, images: &[Image]) {
         if images.iter().map(|image| image.data.len()).sum::<usize>() > 20 * 1024 * 1024 * 4 / 3 + 4 || images.len() > 20 || !images.iter().all(Image::valid) || (text.trim().is_empty() && images.is_empty()) { return; }
         let Some(entry) = self.get(id) else { return };
+        let mut transcript = entry.transcript.lock().unwrap();
         let mut chat = entry.chat.lock().unwrap();
         if queue && chat.status != Status::Done {
             while chat.queued_images.len() < chat.queued.len() { chat.queued_images.push(Vec::new()); }
@@ -950,6 +981,7 @@ impl Chats {
             chat.queued_images.push(images.to_vec());
             self.queued(&chat);
         } else {
+            transcript.reported = Status::Working;
             drop(chat);
             entry.driver.send(&templates::expand(text, &self.data_dir), images);
         }

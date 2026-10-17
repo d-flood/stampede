@@ -3,7 +3,7 @@ mod common;
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use common::{Cli, Server, control, git, init, leftovers, next, subscribe};
@@ -78,9 +78,13 @@ struct Loop {
 
 impl Loop {
     async fn new(prefix: &str, tickets: &[(u32, &str)]) -> Self {
+        Self::with_rigs(prefix, tickets, RIGS).await
+    }
+
+    async fn with_rigs(prefix: &str, tickets: &[(u32, &str)], rigs: &str) -> Self {
         let fixtures = format!("{}/tests/fixtures/chats", env!("CARGO_MANIFEST_DIR"));
         let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
-        let server = Server::with_env(prefix, &RIGS.replace("FIXTURES", &fixtures), vec![("PATH", path.into())]).await;
+        let server = Server::with_env(prefix, &rigs.replace("FIXTURES", &fixtures), vec![("PATH", path.into())]).await;
         let root = fs::canonicalize(server.root.path()).unwrap();
         let repo = init(&root, "repo");
         for (key, value) in [("user.name", "oikonomos"), ("user.email", "test@oikonomos.invalid"), ("commit.gpgsign", "false")] {
@@ -773,4 +777,334 @@ async fn a_live_runs_worktrees_open_as_projects_beside_its_own_and_close_once_re
     assert!(landed.status().is_success(), "{}", landed.text().await.unwrap());
     let changed = lp.message(|message| message["type"] == "projects.changed" && message["projects"].as_array().unwrap().len() == 1).await;
     assert_eq!(changed["projects"][0]["id"], lp.project_id, "a Project opened on the Integration Worktree closes once Landing removes it");
+}
+
+struct UsageFixture {
+    root: tempfile::TempDir,
+    rigs: String,
+    resets_at: Option<u64>,
+}
+
+impl UsageFixture {
+    fn new(ending: &str, reset_after: Option<Duration>) -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let resets_at = reset_after.map(|after| (SystemTime::now() + after).duration_since(UNIX_EPOCH).unwrap().as_secs() * 1000);
+        let usage = |used: f64| json!({ "stdout": { "type": "rate_limit_event", "rate_limit_info": { "unifiedWindows": {
+            "five_hour": { "utilization": used, "resetsAt": resets_at.map(|at| at / 1000) }
+        } } } });
+        let mut entries = vec![
+            json!({ "stdin": { "type": "control_request", "request_id": "init", "request": { "subtype": "initialize" } } }),
+            json!({ "stdout": { "type": "control_response", "response": { "subtype": "success", "request_id": "init", "response": {} } } }),
+            json!({ "stdin": { "type": "user" } }),
+            json!({ "stdout": { "type": "system", "subtype": "init", "session_id": SESSION } }),
+            usage(0.95),
+        ];
+        if ending == "notice-only" {
+            entries.pop();
+        }
+        if ending == "queued" {
+            entries.push(json!({ "gate": "turn" }));
+        }
+        if ending != "done" {
+            entries.push(json!({ "stdout": { "type": "assistant", "error": "rate_limit", "message": { "id": "limited", "content": [{ "type": "text", "text": "Usage limit" }] } } }));
+        }
+        if ending == "waiting" {
+            entries.push(json!({ "stdout": { "type": "control_request", "request_id": "permission", "request": {
+                "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": "echo permission" }
+            } } }));
+        } else {
+            entries.push(json!({ "stdout": { "type": "result", "subtype": "success" } }));
+        }
+        entries.extend([
+            json!({ "gate": "reset" }),
+            usage(0.1),
+            json!({ "gate": "after-reset" }),
+            json!({ "stdin": { "type": "user" } }),
+            json!({ "stdout": { "type": "result", "subtype": "success" } }),
+        ]);
+        if ending == "queued" {
+            let completed = entries.pop().unwrap();
+            entries.extend([
+                json!({ "gate": "continue-done" }),
+                completed.clone(),
+                json!({ "stdin": { "type": "user" } }),
+                completed.clone(),
+                json!({ "stdin": { "type": "user" } }),
+                completed,
+            ]);
+        }
+        fs::write(root.path().join("usage.jsonl"), entries.into_iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
+        let rigs = format!("{RIGS}\n[[rig]]\nname = \"Usage\"\nagent = \"claude-code\"\nenv = {{ OIKONOMOS_FAKE_FIXTURE = \"{}\", OIKONOMOS_FAKE_GATES = \"{}\" }}\n", root.path().join("usage.jsonl").display(), root.path().display());
+        Self { root, rigs, resets_at }
+    }
+
+    fn release(&self, gate: &str) {
+        fs::remove_file(self.root.path().join(gate)).unwrap();
+    }
+
+    async fn gated(&self, gate: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !self.root.path().join(gate).exists() {
+            assert!(Instant::now() < deadline, "fake never reached {gate}");
+            sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn usage_pauses_pushes_and_continues_a_cut_off_turn_once_across_restarts() {
+    let fixture = UsageFixture::new("limit", Some(Duration::from_secs(6)));
+    let mut lp = Loop::with_rigs("ur", &[(1, ""), (2, "1")], &fixture.rigs).await;
+    let mut pushes = subscribe(&lp.server, &["away"]).await;
+    lp.run("Usage", 1).await;
+    fixture.gated("reset").await;
+    lp.until("the usage pause and cut-off turn", |lp| !lp.entries("run.paused").is_empty() && !lp.entries("turn.cut").is_empty()).await;
+    let paused = lp.entries("run.paused").pop().unwrap();
+    assert_eq!(paused["reason"], "usage");
+    assert_eq!(paused["agent"], "claude-code");
+    assert_eq!(paused["window"], "five-hour");
+    assert_eq!(paused["resetsAt"], fixture.resets_at.unwrap());
+    assert_eq!(epic_pushed(&mut pushes).await.1["status"], "waiting");
+    let attention = feed(lp.server.port).await;
+    assert!(attention.as_array().unwrap().iter().any(|item| item["epic"] == "work" && item["status"] == "waiting"));
+    lp.server.stop().await;
+    let until_reset = fixture.resets_at.unwrap().saturating_sub(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64);
+    sleep(Duration::from_millis(until_reset + 80)).await;
+    fixture.release("reset");
+    fixture.gated("after-reset").await;
+    lp.restart().await;
+    fixture.release("after-reset");
+    lp.until("one continue", |lp| lp.sent().iter().filter(|text| *text == "continue").count() == 1).await;
+    lp.chat_status(1, "done").await;
+    assert_eq!(lp.entries("run.resumed").len(), 1);
+    assert_eq!(lp.entries("turn.continued").len(), 1);
+    assert!(!has_epic(&feed(lp.server.port).await));
+    lp.restart().await;
+    sleep(SETTLE).await;
+    assert_eq!(lp.sent().iter().filter(|text| *text == "continue").count(), 1);
+    assert_eq!(lp.entries("turn.cut").len(), 1);
+    assert_eq!(lp.claims(), [1]);
+}
+
+#[tokio::test]
+async fn usage_resets_resume_normal_done_and_waiting_chats_without_continuing_them() {
+    for ending in ["done", "waiting"] {
+        let fixture = UsageFixture::new(ending, None);
+        let lp = Loop::with_rigs("un", &[(1, "")], &fixture.rigs).await;
+        lp.run("Usage", 1).await;
+        fixture.gated("reset").await;
+        lp.until("usage pause", |lp| !lp.entries("run.paused").is_empty()).await;
+        lp.chat_status(1, if ending == "waiting" { "waiting" } else { "done" }).await;
+        fixture.release("reset");
+        fixture.gated("after-reset").await;
+        lp.until("usage reset resumes the Run", |lp| !lp.entries("run.resumed").is_empty()).await;
+        sleep(SETTLE).await;
+        assert_eq!(lp.sent().len(), 1, "{ending}");
+        assert!(lp.entries("turn.cut").is_empty(), "{ending}");
+    }
+}
+
+#[tokio::test]
+async fn stopping_or_manually_pausing_a_usage_paused_run_cancels_continuation() {
+    for action in [json!({ "kind": "run.paused", "reason": "david" }), json!({ "kind": "run.stopped" })] {
+        let fixture = UsageFixture::new("limit", None);
+        let mut lp = Loop::with_rigs("uc", &[(1, "")], &fixture.rigs).await;
+        lp.run("Usage", 1).await;
+        fixture.gated("reset").await;
+        lp.until("the usage pause and cut-off turn", |lp| !lp.entries("run.paused").is_empty() && !lp.entries("turn.cut").is_empty()).await;
+        lp.record(action.clone()).await.unwrap();
+        fixture.release("reset");
+        sleep(SETTLE).await;
+        lp.restart().await;
+        sleep(SETTLE).await;
+        assert_eq!(lp.sent().len(), 1, "{action}");
+        assert!(lp.entries("run.resumed").is_empty());
+        assert!(lp.entries("turn.continued").is_empty());
+        if action["kind"] == "run.paused" {
+            lp.record(json!({ "kind": "run.resumed" })).await.unwrap();
+            sleep(SETTLE).await;
+            assert_eq!(lp.sent().len(), 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn manual_input_after_a_cut_off_turn_cancels_the_automatic_continue() {
+    let fixture = UsageFixture::new("limit", None);
+    let mut lp = Loop::with_rigs("um", &[(1, "")], &fixture.rigs).await;
+    lp.run("Usage", 1).await;
+    fixture.gated("reset").await;
+    lp.until("the usage pause and cut-off turn", |lp| !lp.entries("run.paused").is_empty() && !lp.entries("turn.cut").is_empty()).await;
+    let chat = lp.chat_of(1);
+    control(&mut lp.socket, json!({ "type": "chat.send", "chatId": chat, "text": "I handled this" })).await;
+    lp.chat_status(1, "working").await;
+    fixture.release("reset");
+    fixture.gated("after-reset").await;
+    fixture.release("after-reset");
+    lp.chat_status(1, "done").await;
+    sleep(SETTLE).await;
+    assert_eq!(lp.sent().len(), 2);
+    assert_eq!(lp.sent()[1], "I handled this");
+    assert_eq!(lp.entries("turn.cut").len(), 1);
+}
+
+#[tokio::test]
+async fn a_known_usage_reset_ignores_early_low_readings_and_resumes_on_time() {
+    let fixture = UsageFixture::new("limit", Some(Duration::from_secs(5)));
+    let lp = Loop::with_rigs("ut", &[(1, "")], &fixture.rigs).await;
+    lp.run("Usage", 1).await;
+    fixture.gated("reset").await;
+    lp.until("the usage pause and cut-off turn", |lp| !lp.entries("run.paused").is_empty() && !lp.entries("turn.cut").is_empty()).await;
+    fixture.release("reset");
+    fixture.gated("after-reset").await;
+    sleep(SETTLE).await;
+    assert!(lp.entries("run.resumed").is_empty());
+    fixture.release("after-reset");
+    lp.until("the timer resumes and continues", |lp| lp.sent().iter().filter(|text| *text == "continue").count() == 1).await;
+    assert_eq!(lp.entries("run.resumed").len(), 1);
+}
+
+#[tokio::test]
+async fn a_usage_cutoff_missed_before_restart_is_discovered_from_the_restored_transcript() {
+    let fixture = UsageFixture::new("limit", None);
+    let mut lp = Loop::with_rigs("ud", &[(1, "")], &fixture.rigs).await;
+    lp.run("Usage", 1).await;
+    fixture.gated("reset").await;
+    lp.until("the usage pause and cut-off turn", |lp| !lp.entries("run.paused").is_empty() && !lp.entries("turn.cut").is_empty()).await;
+    lp.server.stop().await;
+    let without_cut = lp.log().into_iter().filter(|entry| entry["kind"] != "turn.cut").map(|entry| format!("{entry}\n")).collect::<String>();
+    fs::write(lp.root.join("data/epics/work.jsonl"), without_cut).unwrap();
+    lp.restart().await;
+    lp.until("the reconstructed cutoff", |lp| lp.entries("turn.cut").len() == 1).await;
+    fixture.release("reset");
+    fixture.gated("after-reset").await;
+    fixture.release("after-reset");
+    lp.until("the recovered continue", |lp| lp.sent().iter().filter(|text| *text == "continue").count() == 1).await;
+    lp.chat_status(1, "done").await;
+    lp.restart().await;
+    sleep(SETTLE).await;
+    assert_eq!(lp.sent().iter().filter(|text| *text == "continue").count(), 1);
+}
+
+#[tokio::test]
+async fn usage_pauses_at_the_configured_threshold_and_rechecks_when_it_changes() {
+    let fixture = UsageFixture::new("limit", None);
+    let rigs = format!("[loop]\npause_at = 0.99\n{}", fixture.rigs);
+    let lp = Loop::with_rigs("uf", &[(1, "")], &rigs).await;
+    lp.run("Usage", 1).await;
+    fixture.gated("reset").await;
+    sleep(SETTLE).await;
+    assert!(lp.entries("run.paused").is_empty());
+    fs::write(lp.root.join("config.toml"), rigs.replace("0.99", "0.9")).unwrap();
+    lp.until("a pause at the new threshold", |lp| lp.entries("run.paused").len() == 1).await;
+    fixture.release("reset");
+    fixture.gated("after-reset").await;
+    fixture.release("after-reset");
+    lp.until("one continuation after reset", |lp| lp.sent().iter().filter(|text| *text == "continue").count() == 1).await;
+}
+
+#[tokio::test]
+async fn a_usage_limit_retains_queued_messages_and_images_until_the_continuation_finishes() {
+    let fixture = UsageFixture::new("queued", None);
+    let mut lp = Loop::with_rigs("uq", &[(1, "")], &fixture.rigs).await;
+    lp.run("Usage", 1).await;
+    fixture.gated("turn").await;
+    let chat = lp.chat_of(1);
+    let image = json!({ "mediaType": "image/png", "data": "aGVsbG8=" });
+    control(&mut lp.socket, json!({ "type": "chat.send", "chatId": chat, "text": "First queued", "queue": true, "images": [image] })).await;
+    control(&mut lp.socket, json!({ "type": "chat.send", "chatId": chat, "text": "Second queued", "queue": true })).await;
+    let queued = |lp: &Loop| lp.chat_record(&chat).is_some_and(|record| record["queued"] == json!(["First queued", "Second queued"]));
+    lp.until("both queued messages", queued).await;
+    fixture.release("turn");
+    fixture.gated("reset").await;
+    lp.until("the cut-off turn", |lp| lp.entries("turn.cut").len() == 1).await;
+    lp.chat_status(1, "done").await;
+    assert!(queued(&lp));
+    assert_eq!(lp.sent().len(), 1);
+    lp.restart().await;
+    assert!(queued(&lp));
+    assert_eq!(lp.chat_record(&chat).unwrap()["queuedImages"], json!([[image], []]));
+    fixture.release("reset");
+    fixture.gated("after-reset").await;
+    fixture.release("after-reset");
+    fixture.gated("continue-done").await;
+    assert_eq!(lp.sent().last().unwrap(), "continue");
+    assert!(queued(&lp));
+    fixture.release("continue-done");
+    lp.chat_status(1, "done").await;
+    let received = fs::read_to_string(lp.root.join("home/.claude/fake-received.jsonl")).unwrap();
+    let messages: Vec<Value> = received.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).filter(|message| message["type"] == "user").collect();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[1]["message"]["content"], "continue");
+    assert_eq!(messages[2]["message"]["content"], json!([
+        { "type": "text", "text": "First queued" },
+        { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "aGVsbG8=" } }
+    ]));
+    assert_eq!(messages[3]["message"]["content"], "Second queued");
+    let record = lp.chat_record(&chat).unwrap();
+    assert_eq!(record["queued"], json!([]));
+    assert!(record.get("queuedImages").is_none());
+    assert_eq!(lp.entries("turn.continued").len(), 1);
+}
+
+#[tokio::test]
+async fn changing_the_rig_does_not_bypass_the_old_agents_usage_reset() {
+    let fixture = UsageFixture::new("limit", Some(Duration::from_secs(5)));
+    let lp = Loop::with_rigs("us", &[(1, "")], &fixture.rigs).await;
+    lp.run("Usage", 1).await;
+    fixture.gated("reset").await;
+    lp.until("the usage pause and cut-off turn", |lp| !lp.entries("run.paused").is_empty() && !lp.entries("turn.cut").is_empty()).await;
+    lp.record(json!({ "kind": "run.changed", "rig": "Codex Done" })).await.unwrap();
+    sleep(SETTLE).await;
+    assert!(lp.entries("run.resumed").is_empty());
+    assert_eq!(lp.sent().len(), 1);
+    fixture.release("reset");
+    fixture.gated("after-reset").await;
+    fixture.release("after-reset");
+    lp.until("the old Agent resets before continuation", |lp| lp.sent().iter().filter(|text| *text == "continue").count() == 1).await;
+    assert_eq!(lp.entries("run.resumed").len(), 1);
+}
+
+#[tokio::test]
+async fn a_limit_notice_without_a_usage_reading_keeps_attention_without_guessing_a_reset() {
+    let fixture = UsageFixture::new("notice-only", None);
+    let lp = Loop::with_rigs("ul", &[(1, "")], &fixture.rigs).await;
+    lp.run("Usage", 1).await;
+    fixture.gated("reset").await;
+    lp.chat_status(1, "done").await;
+    let chat = lp.chat_of(1);
+    let attention = feed(lp.server.port).await;
+    assert!(attention.as_array().unwrap().iter().any(|item| item["chatId"] == chat && item["status"] == "done"));
+    fixture.release("reset");
+    fixture.gated("after-reset").await;
+    sleep(SETTLE).await;
+    assert!(lp.entries("run.paused").is_empty());
+    assert!(lp.entries("run.resumed").is_empty());
+    assert_eq!(lp.sent().len(), 1);
+}
+
+#[tokio::test]
+async fn a_usage_pause_without_a_reset_adopts_the_next_readings_reset_time() {
+    for seconds_ahead in [0, 4] {
+        let fixture = UsageFixture::new("limit", None);
+        let reset = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + seconds_ahead;
+        let path = fixture.root.path().join("usage.jsonl");
+        let mut entries: Vec<Value> = fs::read_to_string(&path).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let changed = entries.iter_mut().filter(|entry| entry["stdout"]["type"] == "rate_limit_event").nth(1).unwrap();
+        changed["stdout"]["rate_limit_info"]["unifiedWindows"]["five_hour"] = json!({ "utilization": 0.95, "resetsAt": reset });
+        fs::write(path, entries.into_iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
+        let lp = Loop::with_rigs("ua", &[(1, "")], &fixture.rigs).await;
+        lp.run("Usage", 1).await;
+        fixture.gated("reset").await;
+        lp.until("the initial pause", |lp| !lp.entries("run.paused").is_empty()).await;
+        fixture.release("reset");
+        fixture.gated("after-reset").await;
+        if seconds_ahead > 0 {
+            lp.until("the announced reset time", |lp| lp.entries("run.paused").iter().any(|entry| entry["resetsAt"] == reset * 1000)).await;
+            assert!(lp.entries("run.resumed").is_empty());
+        }
+        lp.until("resumption at the learned reset", |lp| lp.entries("run.resumed").len() == 1).await;
+        fixture.release("after-reset");
+        lp.until("one continue", |lp| lp.sent().iter().filter(|text| *text == "continue").count() == 1).await;
+    }
 }

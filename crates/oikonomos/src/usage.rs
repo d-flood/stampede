@@ -3,7 +3,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::{
     sync::watch,
     time::{MissedTickBehavior, interval, timeout},
@@ -17,7 +17,7 @@ use crate::{
 const REFRESH: Duration = Duration::from_secs(5 * 60);
 const READING: Duration = Duration::from_secs(30);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Window {
     FiveHour,
