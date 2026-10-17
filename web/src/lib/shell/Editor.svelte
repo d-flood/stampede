@@ -38,11 +38,14 @@
 	let container: HTMLDivElement;
 	let view = $state.raw<EditorView>();
 	let note = $state<string>();
+	let wrap = $state(false);
 	const sync = new Sync(() => file, () => view);
 	const keys = new Compartment();
+	const wrapping = new Compartment();
 
 	onMount(() => {
 		let disposed = false;
+		wrap = /\.(md|markdown)$/i.test(file.path);
 		Promise.all([file.read(), language(file.path)]).then(
 			([contents, syntax]) => {
 				if (disposed) return;
@@ -56,6 +59,7 @@
 						doc: contents.content,
 						extensions: [
 							keys.of([]),
+							wrapping.of(wrap ? EditorView.lineWrapping : []),
 							keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 							basicSetup,
 							changeMarkers,
@@ -77,6 +81,12 @@
 			view?.destroy();
 		};
 	});
+
+	function toggleWrap() {
+		if (!view) return;
+		wrap = !wrap;
+		view.dispatch({ effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []) });
+	}
 
 	$effect(() => {
 		const current = view;
@@ -131,6 +141,9 @@
 		<span class="path" title={file.path}>{file.path}</span>
 		{#if file.deleted}<span class="deleted">deleted on disk</span>{/if}
 		<ServerSwitch {servers} projectId={file.projectId} path={file.path} attached />
+		{#if view}
+			<Button aria-label="Line wrapping" aria-pressed={wrap} variant={wrap ? 'primary' : 'default'} onclick={toggleWrap}>Wrap</Button>
+		{/if}
 		{#if form() === 'phone' && view}
 			<Button onclick={() => sync.write()} disabled={!file.dirty}><FloppyDisk /> Save</Button>
 		{/if}

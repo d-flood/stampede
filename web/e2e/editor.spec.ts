@@ -1,8 +1,57 @@
 import { expect, test } from '@playwright/test';
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { openProject, showSidebar } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
+
+test('line wrapping defaults to Markdown and toggles per editor without losing edits', async ({ page }, { project }) => {
+	const name = `wrapping-${project.name}`;
+	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	const content = 'A long line of prose that should wrap inside the editor. '.repeat(80);
+	mkdirSync(root);
+	for (const file of ['notes.MD', 'prose.markdown', 'plain.txt']) writeFileSync(`${root}/${file}`, content);
+	await openProject(page, name);
+	let sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'notes.MD', exact: true }).click();
+	const editor = page.locator('.editor:not([hidden])');
+	const toggle = editor.getByRole('button', { name: 'Line wrapping', exact: true });
+	const line = editor.locator('.cm-line').first();
+	const wrapped = () => line.evaluate((element) => {
+		const height = element.getBoundingClientRect().height;
+		const lineHeight = parseFloat(getComputedStyle(element).lineHeight);
+		return height > lineHeight * 2;
+	});
+	await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+	await expect.poll(wrapped).toBe(true);
+	await toggle.click();
+	await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+	await expect.poll(wrapped).toBe(false);
+	await editor.locator('.cm-content').focus();
+	await page.keyboard.press('ControlOrMeta+End');
+	await page.keyboard.type(' unsaved edit');
+	await toggle.click();
+	await expect.poll(wrapped).toBe(true);
+	await expect(editor.locator('.cm-content')).toContainText('unsaved edit');
+	await editor.locator('.cm-content').focus();
+	await page.keyboard.press('ControlOrMeta+z');
+	await expect(editor.locator('.cm-content')).not.toContainText('unsaved edit');
+	await toggle.click();
+	sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'plain.txt', exact: true }).click();
+	await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+	await expect.poll(wrapped).toBe(false);
+	await toggle.click();
+	await expect.poll(wrapped).toBe(true);
+	await page.screenshot({ path: test.info().outputPath('line-wrapping.png') });
+	sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'notes.MD', exact: true }).click();
+	await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+	await expect.poll(wrapped).toBe(false);
+	sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'prose.markdown', exact: true }).click();
+	await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+	await expect.poll(wrapped).toBe(true);
+});
 
 test('Editor markers and Agent file changes preserve explicit edits', async ({ page }, { project }) => {
 	const file = `${project.name}.txt`;

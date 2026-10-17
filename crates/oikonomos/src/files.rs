@@ -41,6 +41,12 @@ pub struct Save {
 }
 
 #[derive(Deserialize)]
+pub struct Create {
+    path: String,
+    dir: bool,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigSave {
     content: String,
@@ -136,6 +142,30 @@ pub async fn write(
         }
         fs::write(&path, &save.content).map_err(failure)?;
         Ok(Json(json!({ "hash": hash(save.content.as_bytes()) })).into_response())
+    })
+    .await
+}
+
+pub async fn create(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Json(create): Json<Create>,
+) -> Result<Response, Failure> {
+    let root = root(&state, &id)?;
+    blocking(move || {
+        let relative = Path::new(&create.path);
+        if !relative.components().all(|part| matches!(part, Component::Normal(_))) {
+            return Err((StatusCode::FORBIDDEN, "Invalid path within the Project".to_owned()));
+        }
+        let name = relative.file_name().ok_or_else(|| (StatusCode::BAD_REQUEST, "No name".to_owned()))?;
+        let parent = relative.parent().unwrap_or(Path::new(""));
+        let path = resolve(&root, &parent.to_string_lossy())?.join(name);
+        if create.dir {
+            fs::create_dir(path).map_err(failure)?;
+        } else {
+            fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(failure)?;
+        }
+        Ok(StatusCode::CREATED.into_response())
     })
     .await
 }
@@ -280,6 +310,7 @@ fn hash(bytes: &[u8]) -> String {
 
 fn failure(error: io::Error) -> Failure {
     let status = match error.kind() {
+        io::ErrorKind::AlreadyExists => StatusCode::CONFLICT,
         io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
         io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
         io::ErrorKind::IsADirectory | io::ErrorKind::NotADirectory => StatusCode::BAD_REQUEST,

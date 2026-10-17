@@ -154,6 +154,16 @@ export async function remove(projectId: string, path: string): Promise<void> {
 	invalidate(projectId);
 }
 
+export async function create(projectId: string, path: string, dir: boolean): Promise<void> {
+	const response = await fetch(`/api/projects/${projectId}/file`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ path, dir })
+	});
+	if (!response.ok) throw new RequestError(response.status, await response.text());
+	invalidate(projectId);
+}
+
 async function put<T>(url: string, body: object): Promise<Saved<T>> {
 	const response = await fetch(url, {
 		method: 'PUT',

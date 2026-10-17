@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Device } from '#lib/device.svelte.ts';
-	import { list, remove, RequestError, type Entry } from '#lib/files.svelte.ts';
+	import { create, list, remove, RequestError, type Entry } from '#lib/files.svelte.ts';
 	import { letters, type Change } from '#lib/git.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
@@ -12,6 +12,8 @@
 	import DotsThree from '~icons/ph/dots-three';
 	import Eye from '~icons/ph/eye';
 	import EyeSlash from '~icons/ph/eye-slash';
+	import FilePlus from '~icons/ph/file-plus';
+	import FolderPlus from '~icons/ph/folder-plus';
 	import Trash from '~icons/ph/trash';
 
 	type Props = { projectId: string; device: Device; changes: Change[]; onopen(path: string): void };
@@ -24,6 +26,11 @@
 	let confirming = $state(false);
 	let deleting = $state(false);
 	let error = $state('');
+	let destination = $state({ path: '', dir: false });
+	let naming = $state(false);
+	let name = $state('');
+	let creating = $state(false);
+	let createError = $state('');
 	const expanded = new SvelteSet<string>();
 	const kinds = $derived(new Map(changes.map((change) => [change.path, change.kind])));
 	const marked = $derived(new Set(changes.flatMap(({ path, from }) => [...parents(path), ...parents(from ?? '')])));
@@ -76,6 +83,41 @@
 		confirming = true;
 	}
 
+	function creationItems(path: string) {
+		return [
+			{ label: 'New File', icon: FilePlus, onselect: () => startCreate(path, false) },
+			{ label: 'New Directory', icon: FolderPlus, onselect: () => startCreate(path, true) }
+		];
+	}
+
+	function startCreate(path: string, dir: boolean) {
+		if (creating) return;
+		destination = { path, dir };
+		name = '';
+		createError = '';
+		naming = true;
+	}
+
+	async function createEntry(event: SubmitEvent) {
+		event.preventDefault();
+		if (!name.trim() || creating) return;
+		const path = destination.path ? `${destination.path}/${name.trim()}` : name.trim();
+		creating = true;
+		try {
+			await create(projectId, path, destination.dir);
+			if (destination.path) expanded.add(destination.path);
+			reload();
+			naming = false;
+			if (!destination.dir) onopen(path);
+		} catch (cause) {
+			createError = cause instanceof RequestError && cause.status === 409
+				? 'A file or directory with that name already exists.'
+				: cause instanceof Error ? cause.message : String(cause);
+		} finally {
+			creating = false;
+		}
+	}
+
 	async function deleteEntry() {
 		if (!target || deleting) return;
 		deleting = true;
@@ -102,19 +144,20 @@
 		{#each listings[path] ?? [] as entry (entry.path)}
 			{@const open = entry.dir && expanded.has(entry.path)}
 			{@const kind = entry.dir ? undefined : kinds.get(entry.path)}
+			{@const changed = kind ?? (entry.dir && marked.has(entry.path) ? 'modified' : undefined)}
 			{@const items = [{ label: 'Delete', icon: Trash, onselect: () => confirm(entry) }]}
 			<li>
 				<div class="row">
-					<Menu context {items}>
+					<Menu context items={[...creationItems(entry.dir ? entry.path : path), ...items]}>
 						{#snippet trigger(props)}
 							<button
 								{...props}
 								tabindex={0}
 								class="entry"
 								class:ignored={entry.ignored}
-								class:changed={kind}
+								class:changed={changed}
 								style:--depth={depth}
-								style:--git={kind && `var(--git-${kind})`}
+								style:--git={changed && `var(--git-${changed})`}
 								aria-expanded={entry.dir ? open : undefined}
 								title={kind ? `${entry.path} (${kind})` : entry.path}
 								onclick={(event) => {
@@ -157,8 +200,28 @@
 			{#if includeIgnored}<Eye />{:else}<EyeSlash />{/if}
 		</IconButton>
 	</header>
-	<div class="tree">{@render tree('', 0)}</div>
+	<Menu context items={creationItems('')}>
+		{#snippet trigger(props)}
+			<div {...props} class="tree" role="group" aria-label="File tree">{@render tree('', 0)}</div>
+		{/snippet}
+	</Menu>
 </section>
+
+<Dialog
+	bind:open={naming}
+	title={destination.dir ? 'New Directory' : 'New File'}
+	description={`Create in ${destination.path || 'Project root'}`}
+>
+	<form id="create-entry" onsubmit={createEntry}>
+		<label for="entry-name">Name</label>
+		<input id="entry-name" bind:value={name} required pattern="[^/]+" autocomplete="off" spellcheck="false" disabled={creating} />
+		{#if createError}<p role="alert">{createError}</p>{/if}
+	</form>
+	{#snippet actions()}
+		<Button disabled={creating} onclick={() => (naming = false)}>Cancel</Button>
+		<Button type="submit" form="create-entry" variant="primary" disabled={creating || !name.trim()}>{creating ? 'Creating…' : 'Create'}</Button>
+	{/snippet}
+</Dialog>
 
 <Dialog
 	bind:open={confirming}
@@ -204,6 +267,27 @@
 		margin: 0;
 		padding: 0;
 		list-style: none;
+	}
+
+	label {
+		display: block;
+		margin-bottom: var(--space-1);
+	}
+
+	input {
+		box-sizing: border-box;
+		width: 100%;
+		min-height: var(--target-min);
+		padding: var(--space-2);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface-2);
+		color: var(--color-fg);
+		font: inherit;
+	}
+
+	input:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
 	}
 
 	.row {

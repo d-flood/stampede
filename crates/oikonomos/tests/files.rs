@@ -7,6 +7,57 @@ use serde_json::json;
 use tokio_tungstenite::connect_async;
 
 #[tokio::test]
+async fn creation_is_confined_to_the_project_and_never_overwrites_entries() {
+    let server = Server::start("create-files-").await;
+    let root = server.root.path().join("project");
+    let outside = server.root.path().join("outside");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(&outside).unwrap();
+    fs::write(root.join("keep.txt"), "keep").unwrap();
+    symlink(&outside, root.join("external")).unwrap();
+    symlink(outside.join("missing.txt"), root.join("dangling")).unwrap();
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "create-files" })).await;
+    next_control(&mut socket, "hello").await;
+    control(&mut socket, json!({ "type": "project.open", "path": root })).await;
+    let opened = next_control(&mut socket, "project.opened").await;
+    let id = opened["projectId"].as_str().unwrap();
+    let api = format!("http://127.0.0.1:{}/api/projects/{id}/file", server.port);
+    let client = reqwest::Client::new();
+    for (path, dir, status) in [
+        ("notes.txt", false, 201),
+        ("docs", true, 201),
+        ("docs/child.txt", false, 201),
+        ("docs/nested", true, 201),
+        ("keep.txt", false, 409),
+        ("keep.txt", true, 409),
+        ("docs", false, 409),
+        ("docs", true, 409),
+        ("dangling", false, 409),
+        ("dangling", true, 409),
+        ("", false, 400),
+        (".", true, 403),
+        ("../escaped.txt", false, 403),
+        ("/escaped", true, 403),
+        ("external/escaped.txt", false, 403),
+        ("external/escaped", true, 403),
+        ("docs/../escaped.txt", false, 403),
+    ] {
+        let response = client.post(&api)
+            .header("content-type", "application/json")
+            .body(json!({ "path": path, "dir": dir }).to_string())
+            .send().await.unwrap();
+        assert_eq!(response.status().as_u16(), status, "{path}, dir={dir}");
+    }
+    assert_eq!(fs::read_to_string(root.join("keep.txt")).unwrap(), "keep");
+    assert_eq!(fs::read(root.join("notes.txt")).unwrap(), Vec::<u8>::new());
+    assert!(root.join("docs/child.txt").is_file());
+    assert!(root.join("docs/nested").is_dir());
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+    assert!(!server.root.path().join("escaped.txt").exists());
+}
+
+#[tokio::test]
 async fn deletion_removes_entries_without_following_symlinks_or_leaving_the_project() {
     let server = Server::start("files-").await;
     let root = server.root.path().join("project");

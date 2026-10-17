@@ -1,8 +1,62 @@
 import { expect, test } from '@playwright/test';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { openProject, showSidebar } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
+
+test('context menus create files and directories in the selected location', async ({ page }, { project }) => {
+	const name = `create-${project.name}`;
+	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	mkdirSync(root);
+	await openProject(page, name);
+	let sidebar = await showSidebar(page);
+	const tree = sidebar.getByRole('group', { name: 'File tree', exact: true });
+	await tree.click({ button: 'right', position: { x: 10, y: 10 } });
+	await page.getByRole('menuitem', { name: 'New File', exact: true }).click();
+	const fileDialog = page.getByRole('dialog', { name: 'New File', exact: true });
+	await fileDialog.getByLabel('Name', { exact: true }).fill('root.txt');
+	await fileDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+	expect(existsSync(`${root}/root.txt`)).toBe(false);
+	await tree.click({ button: 'right', position: { x: 10, y: 10 } });
+	await page.getByRole('menuitem', { name: 'New File', exact: true }).click();
+	await fileDialog.getByLabel('Name', { exact: true }).fill('root.txt');
+	await fileDialog.getByRole('button', { name: 'Create', exact: true }).click();
+	await expect(fileDialog).toBeHidden();
+	await expect(page.locator('.editor:not([hidden]) .cm-content')).toBeVisible();
+	expect(readFileSync(`${root}/root.txt`, 'utf8')).toBe('');
+	sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'root.txt', exact: true }).click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'New Directory', exact: true }).click();
+	const directoryDialog = page.getByRole('dialog', { name: 'New Directory', exact: true });
+	await directoryDialog.getByLabel('Name', { exact: true }).fill('docs');
+	await directoryDialog.getByLabel('Name', { exact: true }).press('Enter');
+	await expect(sidebar.getByRole('button', { name: 'docs', exact: true })).toBeVisible();
+	expect(statSync(`${root}/docs`).isDirectory()).toBe(true);
+	await sidebar.getByRole('button', { name: 'docs', exact: true }).click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'New File', exact: true }).click();
+	await expect(fileDialog).toContainText('Create in docs');
+	await fileDialog.getByLabel('Name', { exact: true }).fill('notes.md');
+	await expect.poll(async () => {
+		const box = await fileDialog.boundingBox();
+		const viewport = page.viewportSize();
+		return box && viewport && box.x >= 0 && box.x + box.width <= viewport.width;
+	}).toBe(true);
+	await page.screenshot({ path: test.info().outputPath('new-file-dialog.png') });
+	await fileDialog.getByRole('button', { name: 'Create', exact: true }).click();
+	await expect(fileDialog).toBeHidden();
+	expect(readFileSync(`${root}/docs/notes.md`, 'utf8')).toBe('');
+	sidebar = await showSidebar(page);
+	await expect(sidebar.getByRole('button', { name: 'notes.md', exact: true })).toBeVisible();
+	writeFileSync(`${root}/docs/notes.md`, 'keep these contents');
+	await sidebar.getByRole('button', { name: 'notes.md', exact: true }).click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'New File', exact: true }).click();
+	await expect(fileDialog).toContainText('Create in docs');
+	await fileDialog.getByLabel('Name', { exact: true }).fill('notes.md');
+	await fileDialog.getByRole('button', { name: 'Create', exact: true }).click();
+	await expect(fileDialog.getByRole('alert')).toHaveText('A file or directory with that name already exists.');
+	expect(readFileSync(`${root}/docs/notes.md`, 'utf8')).toBe('keep these contents');
+	await fileDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+});
 
 test('file tree offers deletion for files and directories', async ({ page }, { project }) => {
 	const name = `delete-${project.name}`;
