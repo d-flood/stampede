@@ -93,6 +93,7 @@ export type Ticket = {
 	claim?: Claim;
 	worktree?: string;
 	attention?: string;
+	resolver?: string;
 };
 
 export type Run = { rig: string; parallel: number };

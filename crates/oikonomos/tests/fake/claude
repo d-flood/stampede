@@ -135,6 +135,10 @@ def verdict(name, prompt):
     command = shlex.split(binary.group(1)) + [name, reference.group(1)]
     command += ['-m', 'Fake verdict'] if name == 'complete' else ['Fake verdict']
     command += ['--data-dir', data_dir.group(1)] if data_dir else []
+    run(command)
+
+
+def run(command):
     ran = subprocess.run(command, capture_output=True, text=True)
     print(f'fake claude ran {command}: {ran.returncode} {ran.stdout}{ran.stderr}', file=sys.stderr)
 
@@ -205,6 +209,8 @@ for entry in entries[start:]:
         record(entry['session'])
     elif 'verdict' in entry:
         verdict(entry['verdict'], prompt)
+    elif 'run' in entry:
+        run(entry['run'])
     elif 'gate' in entry:
         gate(entry['gate'])
     else:

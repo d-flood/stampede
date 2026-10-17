@@ -327,31 +327,6 @@ async fn a_failing_setup_command_leaves_the_ticket_untaken_with_a_note() {
 }
 
 #[tokio::test]
-async fn merges_run_one_at_a_time_and_a_conflicting_one_is_aborted_and_flagged() {
-    let mut lp = Loop::new("loop-ticket-conflict").await;
-    lp.ok(&["ticket", "add", "work", "1", "--title", "One", "--body", "-"], "Write one.\n");
-    lp.ok(&["ticket", "add", "work", "2", "--title", "Two", "--body", "-"], "Write two.\n");
-    lp.ok(&["epic", "set-setup", "work", ""], "");
-    lp.start(1, "Done").await.unwrap();
-    lp.start(2, "Done").await.unwrap();
-    let (one, two) = (lp.worktree("1"), lp.worktree("2"));
-    fs::write(one.join("README"), "one\n").unwrap();
-    fs::write(two.join("README"), "two\n").unwrap();
-    lp.cli.ok(&one, &["complete", "work/1", "-m", "One"], "");
-    lp.ticket_until(1, |ticket| ticket["status"] == "merged").await;
-    lp.cli.ok(&two, &["complete", "work/2", "-m", "Two"], "");
-    let flagged = lp.ticket_until(2, |ticket| ticket.get("attention").is_some()).await;
-    assert_eq!(flagged["status"], "merging");
-    assert_eq!(flagged["attention"], "Its merge into the Integration Worktree conflicted in README, so Oikonomos aborted it.");
-    let integration = lp.worktree("integration");
-    assert_eq!(output(&integration, &["status", "--porcelain"]), "");
-    assert_eq!(output(&integration, &["log", "--format=%s", "-1"]), "Merge work/1: One");
-    assert_eq!(fs::read_to_string(integration.join("README")).unwrap(), "one\n");
-    assert!(two.exists(), "an unmerged Ticket keeps its worktree");
-    assert_eq!(lp.kinds().iter().filter(|kind| *kind == "merge.failed").count(), 1);
-}
-
-#[tokio::test]
 async fn an_approval_or_a_turn_without_a_verdict_never_completes_the_ticket() {
     for rig in ["Claude Approval", "Codex Approval"] {
         let mut lp = Loop::new("loop-ticket-approval").await;

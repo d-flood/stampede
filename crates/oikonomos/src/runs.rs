@@ -8,18 +8,21 @@ use std::{
 
 use tokio::{
     process::Command,
-    sync::{broadcast::error::RecvError, mpsc, watch},
+    sync::{
+        broadcast::{self, error::RecvError},
+        mpsc, watch,
+    },
 };
 use uuid::Uuid;
 
 use crate::{
     attention::{Attention, Feed, Source, Tab},
-    chats::{self, Chats},
+    chats::{self, Chats, Lifecycle},
     config::{Config, Rig},
     epics::{Author, Epic, Epics, Event, Status},
     git,
     projects::{Project, Projects},
-    templates::TICKET,
+    templates::{RESOLVER, TICKET},
 };
 
 const TAIL: usize = 40;
@@ -55,6 +58,7 @@ impl Runs {
         let utf8 = |path: PathBuf| path.into_os_string().into_string().map_err(|_| io::Error::other("a path is not UTF-8"));
         let (merges, queued) = mpsc::unbounded_channel();
         let (schedule, scheduled) = mpsc::unbounded_channel();
+        let lifecycle = chats.lifecycle();
         let runs = Arc::new(Self {
             data_dir: data_dir.to_owned(),
             worktrees: utf8(fs::canonicalize(data_dir)?.join("worktrees"))?,
@@ -72,22 +76,28 @@ impl Runs {
         });
         runs.reconcile();
         tokio::spawn(Arc::clone(&runs).merge_queued(queued));
-        tokio::spawn(Arc::clone(&runs).schedule(scheduled));
+        tokio::spawn(Arc::clone(&runs).schedule(scheduled, lifecycle));
         for slug in runs.epics.slugs() {
             let _ = runs.merges.send(slug);
         }
         Ok(runs)
     }
 
-    /// Flags every in-progress Ticket whose Chat did not come back with the server, keeping its Claim and worktree.
+    /// Flags every in-progress Ticket whose Chat did not come back with the server, keeping its Claim and worktree,
+    /// and every merging one whose Resolver did not, keeping its merge in progress and the merges after it waiting.
     fn reconcile(&self) {
         let live: HashSet<String> = self.chats.list().into_iter().map(|chat| chat.id).collect();
         for slug in self.epics.slugs() {
             let Ok(epic) = self.epics.get(&slug) else { continue };
             for (&number, ticket) in &epic.tickets {
-                let Some(claim) = ticket.claim.as_ref().filter(|claim| !live.contains(&claim.chat)) else { continue };
-                if ticket.status == Status::InProgress && ticket.attention.is_none() {
-                    let lost = Event::RestoreFailed { ticket: number, chat: claim.chat.clone() };
+                let chat = match ticket.status {
+                    Status::InProgress => ticket.claim.as_ref().map(|claim| &claim.chat),
+                    Status::Merging => ticket.resolver.as_ref(),
+                    _ => None,
+                };
+                let Some(chat) = chat.filter(|chat| !live.contains(*chat)) else { continue };
+                if ticket.attention.is_none() {
+                    let lost = Event::RestoreFailed { ticket: number, chat: chat.clone() };
                     if let Err(error) = self.epics.record(&slug, lost) {
                         eprintln!("cannot flag {slug}/{number}'s missing Chat: {error}");
                     }
@@ -96,10 +106,10 @@ impl Runs {
         }
     }
 
-    /// Steps an Epic's Run whenever the Epic changes, a Chat holding one of its Tickets changes, or a start ends.
-    async fn schedule(self: Arc<Self>, mut scheduled: mpsc::UnboundedReceiver<String>) {
+    /// Steps an Epic's Run whenever the Epic changes, a Chat holding one of its Tickets changes, or a start ends,
+    /// and rechecks a conflicted merge whenever its Resolver's turn ends or its Chat closes.
+    async fn schedule(self: Arc<Self>, mut scheduled: mpsc::UnboundedReceiver<String>, mut lifecycle: broadcast::Receiver<Lifecycle>) {
         let mut changes = self.epics.subscribe();
-        let mut lifecycle = self.chats.lifecycle();
         let mut called = BTreeMap::new();
         let mut slugs = self.epics.slugs();
         loop {
@@ -117,8 +127,20 @@ impl Runs {
                     Err(RecvError::Closed) => break,
                 },
                 event = lifecycle.recv() => match event {
-                    Ok(event) => slugs.extend(self.epics.holding(event.chat())),
-                    Err(RecvError::Lagged(_)) => slugs = self.epics.slugs(),
+                    Ok(event) => {
+                        slugs.extend(self.epics.holding(event.chat()));
+                        if matches!(event, Lifecycle::Status(_, chats::Status::Done) | Lifecycle::Ended(_))
+                            && let Some(slug) = self.epics.resolving(event.chat())
+                        {
+                            let _ = self.merges.send(slug);
+                        }
+                    }
+                    Err(RecvError::Lagged(_)) => {
+                        slugs = self.epics.slugs();
+                        for slug in &slugs {
+                            let _ = self.merges.send(slug.clone());
+                        }
+                    }
                     Err(RecvError::Closed) => break,
                 },
             }
@@ -350,12 +372,28 @@ impl Runs {
         let ticket = &epic.tickets[&number];
         let reference = format!("{}/{number}", epic.slug);
         format!(
-            "{}\n\nYour Ticket is {reference}, on the branch `{branch}`. On this Host `oikonomos` is `{}`; run it by that path if it is not on your PATH.\n\n## {reference}: {}\n\n{}",
+            "{}\n\nYour Ticket is {reference}, on the branch `{branch}`. {}\n\n## {reference}: {}\n\n{}",
             TICKET.opening(&self.data_dir),
-            quote(&self.cli),
+            self.binary(),
             ticket.title,
             ticket.body.trim_end()
         )
+    }
+
+    /// The Resolver Template, then the merge it resolves, which `templates::recognize` shows as what followed `/resolver`.
+    fn resolver_prompt(&self, epic: &Epic, number: u32, commit: &str, files: &str) -> String {
+        let slug = &epic.slug;
+        format!(
+            "{}\n\nYour merge is {slug}/{number}, {}: its commit `{commit}` conflicted in {files} when merged into `{}`. {}",
+            RESOLVER.opening(&self.data_dir),
+            epic.tickets[&number].title,
+            epic_branch(slug),
+            self.binary()
+        )
+    }
+
+    fn binary(&self) -> String {
+        format!("On this Host `oikonomos` is `{}`; run it by that path if it is not on your PATH.", quote(&self.cli))
     }
 
     /// Commits what the Ticket's Chat left uncommitted, records the Verdict, and queues the merge.
@@ -406,12 +444,16 @@ impl Runs {
     async fn merge_queued(self: Arc<Self>, mut queued: mpsc::UnboundedReceiver<String>) {
         while let Some(slug) = queued.recv().await {
             while let Ok(epic) = self.epics.get(&slug) {
-                let settled = if let Some(&number) = epic.queue.first() {
-                    self.merge(&epic, number).await
-                } else if let Some((&number, _)) = epic.tickets.iter().find(|(_, ticket)| ticket.awaits_cleanup()) {
-                    self.clean(&epic, number).await
-                } else {
-                    break;
+                let next = epic.queue.first().map(|&number| (number, epic.tickets[&number].resolver.as_deref()));
+                let settled = match next {
+                    Some((number, None)) => self.merge(&epic, number).await,
+                    Some((number, Some(resolver))) if self.resolved(&epic, number, resolver).await => {
+                        self.epics.record(&slug, Event::MergeResolved { ticket: number })
+                    }
+                    _ => match epic.tickets.iter().find(|(_, ticket)| ticket.awaits_cleanup()) {
+                        Some((&number, _)) => self.clean(&epic, number).await,
+                        None => break,
+                    },
                 };
                 if let Err(error) = settled {
                     eprintln!("cannot settle {slug}: {error}");
@@ -421,30 +463,62 @@ impl Runs {
         }
     }
 
-    /// Merges a completed Ticket into the Integration Worktree, or aborts the merge and flags the Ticket.
+    /// Merges a completed Ticket into the Integration Worktree, leaving a conflicted merge to a Resolver Chat.
     async fn merge(&self, epic: &Epic, number: u32) -> Result<(), String> {
         let slug = &epic.slug;
         let ticket = epic.ticket(number)?;
         let integration = epic.integration.as_deref().ok_or_else(|| format!("{slug} has no Integration Worktree"))?;
         let commit = ticket.commit.as_deref().ok_or_else(|| format!("{slug}/{number} has no completed commit"))?;
         let message = format!("Merge {slug}/{number}: {}", ticket.title);
-        let event = match git::run(integration, &["merge", "--no-ff", "--no-edit", "-m", &message, commit]).await {
-            Ok(_) => Event::Merged { ticket: number },
-            Err(error) => {
-                let conflicts = git::run(integration, &["diff", "--name-only", "--diff-filter=U"]).await.unwrap_or_default();
-                if git::run(integration, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).await.is_ok() {
-                    git::run(integration, &["merge", "--abort"]).await?;
-                }
-                let reason = if conflicts.is_empty() {
-                    format!("Its merge into the Integration Worktree failed: {error}")
-                } else {
-                    let files: Vec<_> = conflicts.lines().collect();
-                    format!("Its merge into the Integration Worktree conflicted in {}, so Oikonomos aborted it.", files.join(", "))
-                };
-                Event::MergeFailed { ticket: number, reason }
-            }
+        let error = match git::run(integration, &["merge", "--no-ff", "--no-edit", "-m", &message, commit]).await {
+            Ok(_) => return self.epics.record(slug, Event::Merged { ticket: number }),
+            Err(error) => error,
         };
-        self.epics.record(slug, event)
+        if git::run(integration, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).await.is_err() {
+            let reason = format!("Its merge into the Integration Worktree failed: {error}");
+            return self.epics.record(slug, Event::MergeFailed { ticket: number, reason });
+        }
+        let conflicts = git::run(integration, &["diff", "--name-only", "--diff-filter=U"]).await.unwrap_or_default();
+        let files = conflicts.lines().collect::<Vec<_>>().join(", ");
+        let Err(error) = self.start_resolver(epic, number, integration, commit, &files).await else { return Ok(()) };
+        git::run(integration, &["merge", "--abort"]).await?;
+        let reason = format!("Its merge into the Integration Worktree conflicted in {files}, so Oikonomos aborted it. {error}");
+        self.epics.record(slug, Event::MergeFailed { ticket: number, reason })
+    }
+
+    /// Starts a Resolver Chat in the Integration Worktree with the live Run's Rig, or the Rig its Ticket was started with.
+    async fn start_resolver(&self, epic: &Epic, number: u32, integration: &Path, commit: &str, files: &str) -> Result<(), String> {
+        let slug = &epic.slug;
+        let claim = epic.ticket(number)?.claim.as_ref();
+        let name = epic.run.as_ref().map(|run| &run.rig).or(claim.map(|claim| &claim.rig));
+        let name = name.ok_or_else(|| format!("{slug}/{number} names no Rig for a Resolver."))?;
+        let rig = self.config.borrow().rigs.iter().find(|rig| rig.name == *name).cloned();
+        let rig = rig.ok_or_else(|| format!("Its Rig {name} is no longer in the config, so Oikonomos could not start a Resolver."))?;
+        let project = self.project(epic).await?;
+        let chat = self
+            .chats
+            .create(&project, integration, &rig, None)
+            .await
+            .map_err(|error| format!("Its Resolver Chat could not start: {error}."))?;
+        if let Err(error) = self.epics.record(slug, Event::MergeConflicted { ticket: number, resolver: chat.id.clone() }) {
+            self.chats.close(&chat.id);
+            return Err(error);
+        }
+        self.chats.send(&chat.id, &self.resolver_prompt(epic, number, commit, files), false, &[]);
+        Ok(())
+    }
+
+    /// Whether the Resolver's turn has ended with the merge committed, HEAD containing the Ticket and nothing left uncommitted.
+    async fn resolved(&self, epic: &Epic, number: u32, resolver: &str) -> bool {
+        if self.chats.list().iter().any(|chat| chat.id == resolver && chat.status != chats::Status::Done) {
+            return false;
+        }
+        let (Some(integration), Some(commit)) = (epic.integration.as_deref(), epic.tickets[&number].commit.as_deref()) else {
+            return false;
+        };
+        git::run(integration, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).await.is_err()
+            && git::run(integration, &["status", "--porcelain"]).await.is_ok_and(|status| status.is_empty())
+            && git::run(integration, &["merge-base", "--is-ancestor", commit, "HEAD"]).await.is_ok()
     }
 
     /// Removes a resolved Ticket's worktree and branch, unless that would lose work.

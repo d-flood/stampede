@@ -19,6 +19,10 @@ pub const TEMPLATES: &[Template] = &[
 /// The first prompt of every Ticket's Chat. The loop sends it, so the slash menu does not offer it.
 pub const TICKET: Template = Template { name: "ticket", description: "work one Ticket", text: include_str!("templates/ticket.md") };
 
+/// The first prompt of a Resolver Chat, which the loop also sends itself.
+pub const RESOLVER: Template =
+    Template { name: "resolver", description: "resolve a Ticket's conflicted merge", text: include_str!("templates/resolver.md") };
+
 impl Template {
     /// The CLI only finds a server on a non-default data directory when told it.
     pub fn opening(&self, data_dir: &Path) -> String {
@@ -43,7 +47,7 @@ pub fn expand<'a>(text: &'a str, data_dir: &Path) -> Cow<'a, str> {
 
 /// The Template a sent text was expanded from, and the text as it was typed.
 pub fn recognize(text: &str, data_dir: &Path) -> Option<(&'static str, String)> {
-    TEMPLATES.iter().chain([&TICKET]).find_map(|template| {
+    TEMPLATES.iter().chain([&TICKET, &RESOLVER]).find_map(|template| {
         let typed = text.strip_prefix(&template.opening(data_dir))?;
         Some(match typed {
             "" => (template.name, format!("/{}", template.name)),

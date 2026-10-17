@@ -44,6 +44,10 @@ pub enum Event {
     Merged { ticket: u32 },
     #[serde(rename = "merge.failed")]
     MergeFailed { ticket: u32, reason: String },
+    #[serde(rename = "merge.conflicted")]
+    MergeConflicted { ticket: u32, resolver: String },
+    #[serde(rename = "merge.resolved")]
+    MergeResolved { ticket: u32 },
     #[serde(rename = "worktree.removed")]
     WorktreeRemoved { ticket: u32 },
     #[serde(rename = "worktree.kept")]
@@ -169,6 +173,8 @@ pub struct Ticket {
     pub worktree: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attention: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolver: Option<String>,
     #[serde(skip)]
     pub commit: Option<String>,
 }
@@ -243,6 +249,7 @@ impl Epic {
                     claim: None,
                     worktree: None,
                     attention: None,
+                    resolver: None,
                     commit: None,
                 });
             }
@@ -295,17 +302,23 @@ impl Epic {
                     ticket.notes.push(Note { author: Author::Agent, text: reason.clone(), at: entry.at });
                 }
             }
-            Event::Merged { ticket: number } => {
+            Event::Merged { ticket: number } | Event::MergeResolved { ticket: number } => {
                 self.queue.retain(|queued| queued != number);
                 if let Some(ticket) = self.tickets.get_mut(number) {
                     ticket.status = Status::Merged;
                     ticket.attention = None;
+                    ticket.resolver = None;
                 }
             }
             Event::MergeFailed { ticket: number, reason } => {
                 self.queue.retain(|queued| queued != number);
                 if let Some(ticket) = self.tickets.get_mut(number) {
                     ticket.attention = Some(reason.clone());
+                }
+            }
+            Event::MergeConflicted { ticket, resolver } => {
+                if let Some(ticket) = self.tickets.get_mut(ticket) {
+                    ticket.resolver = Some(resolver.clone());
                 }
             }
             Event::WorktreeRemoved { ticket } => {
@@ -331,9 +344,15 @@ impl Epic {
             }
             Event::RestoreFailed { ticket, chat } => {
                 if let Some(ticket) = self.tickets.get_mut(ticket) {
-                    ticket.attention = Some(format!(
-                        "Its Chat {chat} did not come back when Oikonomos restarted, so its Claim and worktree are kept and no other Chat takes it."
-                    ));
+                    ticket.attention = Some(if ticket.resolver.as_ref() == Some(chat) {
+                        format!(
+                            "Its Resolver Chat {chat} did not come back when Oikonomos restarted, so its merge waits in the Integration Worktree, and later merges wait for it."
+                        )
+                    } else {
+                        format!(
+                            "Its Chat {chat} did not come back when Oikonomos restarted, so its Claim and worktree are kept and no other Chat takes it."
+                        )
+                    });
                 }
             }
             Event::RunStarted { rig, parallel } => {
@@ -437,6 +456,7 @@ impl Epic {
                     Err(format!("{slug}/{ticket} is {status}; only a merged or skipped Ticket can be moved back to not started"))
                 }
             }
+            Event::RestoreFailed { ticket, chat } if self.ticket(*ticket)?.resolver.as_ref() == Some(chat) => Ok(()),
             Event::StartFailed { ticket, .. } | Event::RestoreFailed { ticket, .. } => {
                 let status = self.ticket(*ticket)?.status;
                 let expected = if matches!(event, Event::StartFailed { .. }) { Status::NotStarted } else { Status::InProgress };
@@ -451,6 +471,19 @@ impl Epic {
             }
             Event::RunChanged { .. } | Event::RunFinished if self.run.is_none() => Err(format!("{slug} has no live Run")),
             Event::Viewed if !self.finished => Err(format!("{slug} has no finished Run to show")),
+            Event::MergeConflicted { ticket, .. } => {
+                if self.ticket(*ticket)?.resolver.is_some() {
+                    Err(format!("{slug}/{ticket} already has a Resolver"))
+                } else if self.queue.first() != Some(ticket) {
+                    Err(format!("{slug}/{ticket} is not the next Ticket to merge"))
+                } else {
+                    Ok(())
+                }
+            }
+            Event::MergeResolved { ticket } => match self.ticket(*ticket)?.resolver {
+                Some(_) => Ok(()),
+                None => Err(format!("{slug}/{ticket} has no Resolver")),
+            },
             _ => Ok(()),
         }
     }
@@ -561,6 +594,13 @@ impl Epics {
         let epics = self.epics.lock().unwrap();
         let mut claims = epics.values().flat_map(|epic| epic.tickets.values().map(move |ticket| (epic, ticket)));
         claims.find(|(_, ticket)| ticket.claim.as_ref().is_some_and(|claim| claim.chat == chat)).map(|(epic, _)| epic.slug.clone())
+    }
+
+    /// The Epic whose conflicted merge `chat` is resolving.
+    pub fn resolving(&self, chat: &str) -> Option<String> {
+        let epics = self.epics.lock().unwrap();
+        let mut resolvers = epics.values().flat_map(|epic| epic.tickets.values().map(move |ticket| (epic, ticket)));
+        resolvers.find(|(_, ticket)| ticket.resolver.as_deref() == Some(chat)).map(|(epic, _)| epic.slug.clone())
     }
 
     pub fn list(&self, project: &Path) -> Vec<Epic> {
@@ -765,6 +805,7 @@ mod tests {
             claim: None,
             worktree: None,
             attention: None,
+            resolver: None,
             commit: None,
         };
         let expected = Epic {
@@ -821,6 +862,11 @@ mod tests {
             (Event::Skipped { ticket: 3, reason: "R".to_owned() }, r#"{"at":9,"kind":"ticket.skipped","ticket":3,"reason":"R"}"#),
             (Event::Merged { ticket: 3 }, r#"{"at":9,"kind":"ticket.merged","ticket":3}"#),
             (Event::MergeFailed { ticket: 3, reason: "R".to_owned() }, r#"{"at":9,"kind":"merge.failed","ticket":3,"reason":"R"}"#),
+            (
+                Event::MergeConflicted { ticket: 3, resolver: "c".to_owned() },
+                r#"{"at":9,"kind":"merge.conflicted","ticket":3,"resolver":"c"}"#,
+            ),
+            (Event::MergeResolved { ticket: 3 }, r#"{"at":9,"kind":"merge.resolved","ticket":3}"#),
             (Event::WorktreeRemoved { ticket: 3 }, r#"{"at":9,"kind":"worktree.removed","ticket":3}"#),
             (Event::WorktreeKept { ticket: 3, reason: "R".to_owned() }, r#"{"at":9,"kind":"worktree.kept","ticket":3,"reason":"R"}"#),
             (Event::Reopened { ticket: 3 }, r#"{"at":9,"kind":"ticket.reopened","ticket":3}"#),
@@ -1134,5 +1180,43 @@ mod tests {
         assert_eq!(live.check(&Event::RunFinished), Ok(()));
         assert_eq!(live.check(&Event::StartFailed { ticket: 2, reason: "R".to_owned() }), Ok(()));
         assert_eq!(live.check(&Event::RestoreFailed { ticket: 1, chat: "chat1".to_owned() }), Ok(()));
+    }
+
+    #[test]
+    fn a_conflicted_merge_holds_the_queue_until_its_resolver_resolves_it() {
+        let conflicted = |number: u32| format!(r#"{{"at":7,"kind":"merge.conflicted","ticket":{number},"resolver":"resolver{number}"}}"#);
+        let lines = [ADDED.to_owned(), ticket(1, &[]), ticket(2, &[1]), ticket(3, &[]), claimed(1), claimed(3), completed(1), completed(3)];
+        let mut epic = folded(&[lines.to_vec(), vec![conflicted(1)]].concat()).unwrap();
+        assert_eq!((epic.tickets[&1].status, epic.tickets[&1].resolver.as_deref()), (Status::Merging, Some("resolver1")));
+        assert_eq!(epic.queue, [1, 3], "later merges wait behind the Resolver");
+        assert_eq!(frontier(&epic), Vec::<u32>::new());
+        assert!(!epic.tickets[&1].awaits_cleanup());
+        let refused = [
+            (Event::MergeConflicted { ticket: 1, resolver: "again".to_owned() }, "loop/1 already has a Resolver"),
+            (Event::MergeConflicted { ticket: 3, resolver: "early".to_owned() }, "loop/3 is not the next Ticket to merge"),
+            (Event::MergeConflicted { ticket: 2, resolver: "idle".to_owned() }, "loop/2 is not the next Ticket to merge"),
+            (Event::MergeResolved { ticket: 3 }, "loop/3 has no Resolver"),
+            (Event::RestoreFailed { ticket: 1, chat: "chat1".to_owned() }, "loop/1 is merging"),
+        ];
+        for (event, error) in refused {
+            assert_eq!(epic.check(&event), Err(error.to_owned()));
+        }
+
+        let lost = Event::RestoreFailed { ticket: 1, chat: "resolver1".to_owned() };
+        assert_eq!(epic.check(&lost), Ok(()), "a Resolver that did not come back is flagged on its Ticket");
+        epic.apply(&Entry { at: 8, event: lost });
+        let flagged = epic.tickets[&1].attention.as_deref().unwrap();
+        assert!(flagged.starts_with("Its Resolver Chat resolver1 did not come back"), "{flagged}");
+        assert_eq!(epic.queue, [1, 3]);
+
+        let resolved = Event::MergeResolved { ticket: 1 };
+        assert_eq!(epic.check(&resolved), Ok(()));
+        epic.apply(&Entry { at: 8, event: resolved });
+        let ticket1 = &epic.tickets[&1];
+        assert_eq!((ticket1.status, ticket1.resolver.as_deref(), ticket1.attention.as_deref()), (Status::Merged, None, None));
+        assert!(ticket1.awaits_cleanup());
+        assert_eq!(epic.queue, [3]);
+        assert_eq!(frontier(&epic), [2], "a resolved merge resolves its Blocker");
+        assert_eq!(epic.check(&Event::MergeConflicted { ticket: 3, resolver: "next".to_owned() }), Ok(()));
     }
 }
