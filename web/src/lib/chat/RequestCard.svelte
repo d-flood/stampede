@@ -51,22 +51,26 @@
 </script>
 
 <section aria-label={request.kind === 'question' ? 'Question' : request.kind === 'plan' ? 'Plan' : 'Approval'} class="card" class:phone={form() === 'phone'}>
-	<h2>{title}</h2>
+	{#if request.kind !== 'question'}<h2>{title}</h2>{/if}
 	{#if request.kind === 'question' && question}
-		<div class="progress">Question {step + 1} of {request.questions.length}</div>
-		<div>{question.question}</div>
-		<div class="options">
-			{#each question.options as option}
-				<button class="option" aria-pressed={selected.includes(option.label)} {disabled} onclick={() => choose(option.label)}>
-					<QuestionOption {option} />
-				</button>
-			{/each}
-			<label>Other…<input aria-label="Other answer" bind:value={other} {disabled} /></label>
-		</div>
-		<div class="actions">
-			<Button variant="primary" disabled={disabled || (!selected.length && !other.trim())} onclick={() => next()}>{step + 1 === request.questions.length ? 'Submit' : 'Next'}</Button>
-			<Button {disabled} onclick={() => next(true)}>Skip</Button>
-		</div>
+		<details open>
+			<summary><h2>{title}</h2><span class="progress">Question {step + 1} of {request.questions.length}</span></summary>
+			<div class="question-body">
+				<div>{question.question}</div>
+				<div class="options">
+					{#each question.options as option}
+						<button class="option" aria-pressed={selected.includes(option.label)} {disabled} onclick={() => choose(option.label)}>
+							<QuestionOption {option} />
+						</button>
+					{/each}
+					<label>Other…<input aria-label="Other answer" bind:value={other} {disabled} /></label>
+				</div>
+				<div class="actions">
+					<Button variant="primary" disabled={disabled || (!selected.length && !other.trim())} onclick={() => next()}>{step + 1 === request.questions.length ? 'Submit' : 'Next'}</Button>
+					<Button {disabled} onclick={() => next(true)}>Skip</Button>
+				</div>
+			</div>
+		</details>
 	{:else if request.kind === 'plan'}
 		<div class="code"><Text item={{ kind: 'text', text: request.plan, streaming: false, phase: 'final' }} /></div>
 		<div class="actions">
@@ -109,6 +113,12 @@
 </section>
 
 <style>
+	.question-body { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-3); }
+	summary { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-height: var(--target-min); list-style: none; cursor: pointer; }
+	summary::-webkit-details-marker { display: none; }
+	summary::before { content: '▸'; color: var(--status-waiting); }
+	details[open] > summary::before { content: '▾'; }
+	summary h2 { flex: 1; overflow-wrap: anywhere; }
 	.options { display: flex; flex-direction: column; gap: var(--space-2); }
 	.option { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); text-align: left; }
 	.progress { color: var(--muted-fg); font-size: var(--font-size-sm); }
