@@ -268,10 +268,7 @@ test('Start on a Frontier Ticket works it with a fake Agent until it is merged',
 	await expect.poll(() => existsSync(`${data}/worktrees/${slug}/1`)).toBe(false);
 	await page.screenshot({ path: test.info().outputPath('merged.png') });
 
-	if (phone) await panel.getByRole('button', { name: /^Chat · done/ }).click();
-	else await panel.getByRole('button', { name: 'Open Chat' }).click();
-	const chat = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
-	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/1`);
+	await expect(page.getByRole('tab', { name: /^Fake Claude Verdict/ })).toHaveCount(0);
 
 	await page.getByRole('tab', { name: `Epic ${slug}` }).click();
 	if (phone) await panel.getByRole('button', { name: `Back to ${slug}` }).click();
@@ -603,8 +600,8 @@ test('a live Run’s worktree Projects sit beside their Project, open on a tap, 
 	expect(cli('', 'ticket', `${slug}/2`).toString()).toContain('Status: merged');
 	await page.screenshot({ path: test.info().outputPath('finished.png') });
 	if (phone) await parent.click();
-	const moved = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab', { name: /^Fake Claude Gated/ });
-	await expect(moved).toHaveCount(2);
-	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/2`);
+	const completed = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab', { name: /^Fake Claude Gated/ });
+	await expect(completed).toHaveCount(0);
+	await expect(chat).toHaveCount(0);
 	await showFiles(await showSidebar(page));
 });

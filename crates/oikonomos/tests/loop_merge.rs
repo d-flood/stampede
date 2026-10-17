@@ -351,7 +351,7 @@ async fn a_restart_recovers_the_resolver_before_the_queue_moves() {
 
     let hello = lp.restart().await;
     assert_eq!(chat(&hello["chats"], &resolver)["status"], "done", "the recorded Resolver is restored, not replaced");
-    assert_eq!(hello["chats"].as_array().unwrap().len(), 4, "three Ticket Chats and one Resolver");
+    assert_eq!(hello["chats"].as_array().unwrap().len(), 3, "two unmerged Ticket Chats and one Resolver");
     assert_eq!(lp.epic["tickets"][1]["resolver"], resolver);
     lp.held("merging").await;
     assert_eq!(lp.log().iter().filter(|entry| entry["kind"] == "merge.conflicted").count(), 1);

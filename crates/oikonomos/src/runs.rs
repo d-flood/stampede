@@ -132,6 +132,11 @@ impl Runs {
             for slug in slugs.drain(..) {
                 self.release(&slug, &mut closing);
                 if let Ok(epic) = self.epics.get(&slug) {
+                    for ticket in epic.tickets.values().filter(|ticket| matches!(ticket.status, Status::Merged | Status::Skipped)) {
+                        if let Some(claim) = &ticket.claim {
+                            self.chats.end(&claim.chat);
+                        }
+                    }
                     for claim in epic.tickets.values().filter_map(|ticket| ticket.claim.as_ref()) {
                         self.limited(&claim.chat);
                     }
@@ -480,6 +485,12 @@ impl Runs {
             if kept {
                 continue;
             }
+            if let Some(Worktree { role: Role::Ticket(number), .. }) = &project.worktree
+                && epic.tickets.get(number).is_some_and(|ticket| matches!(ticket.status, Status::Merged | Status::Skipped))
+            {
+                self.close_project(&project.id);
+                continue;
+            }
             let parent = match &project.worktree {
                 Some(worktree) => Some(worktree.parent.clone()),
                 None => self.project(&epic).await.ok().map(|parent| parent.id),
@@ -505,7 +516,6 @@ impl Runs {
         }
     }
 
-    // Retain finished Chats when their worktree closes, without stopping a Resolver or releasing its Claim.
     fn unnest(&self, id: &str, parent: &str) {
         for terminal in self.terminals.owned(&Owner::Project(id.to_owned())) {
             self.terminals.close(&terminal.id);

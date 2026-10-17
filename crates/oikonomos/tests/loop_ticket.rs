@@ -232,12 +232,7 @@ async fn a_started_ticket_is_worked_merged_and_cleaned_up_and_unblocks_the_next(
     let mut device = connect_async(format!("ws://127.0.0.1:{}/ws", lp.server.port)).await.unwrap().0;
     control(&mut device, json!({ "type": "hello", "deviceId": "second" })).await;
     let hello = received(&mut device, |message| message["type"] == "hello").await;
-    let chat = hello["chats"].as_array().unwrap().iter().find(|chat| chat["id"] == chat_id).unwrap().clone();
-    assert_eq!((&chat["projectId"], &chat["cwd"]), (&json!(lp.project_id), &json!(worktree)));
-    control(&mut device, json!({ "type": "chat.attach", "chatId": chat_id })).await;
-    let items = received(&mut device, |message| message["type"] == "chat.items").await;
-    let first = json!({ "kind": "user", "text": format!("/ticket {ticket}"), "images": 0, "template": "ticket" });
-    assert_eq!(items["items"][0], first, "the Template collapses to /ticket and the Ticket");
+    assert!(hello["chats"].as_array().unwrap().iter().all(|chat| chat["id"] != chat_id));
 
     assert_eq!(lp.ok(&["frontier", "work"], ""), "work/2 Then more\n");
 }
@@ -253,6 +248,15 @@ async fn a_verdict_is_taken_only_inside_its_worktree_and_complete_accepts_a_clea
     let held = lp.ticket_until(1, |ticket| ticket["status"] == "in-progress").await;
     assert_eq!(held["claim"]["chat"], chat_id, "a turn that ends without a Verdict keeps the Claim");
     assert!(lp.ok(&["ticket", "work/1"], "").contains("Status: in progress"));
+
+    control(&mut lp.socket, json!({ "type": "chat.attach", "chatId": chat_id })).await;
+    let items = lp.follow(|message| message["type"] == "chat.items" && message["chatId"] == chat_id).await;
+    let ticket = format!(
+        "Your Ticket is work/1, on the branch `oikonomos/work/1`. On this Host `oikonomos` is `{}`; run it by that path if it is not on your PATH.\n\n## work/1: Nothing to do\n\nAlready done.",
+        env!("CARGO_BIN_EXE_oikonomos")
+    );
+    let first = json!({ "kind": "user", "text": format!("/ticket {ticket}"), "images": 0, "template": "ticket" });
+    assert_eq!(items["items"][0], first, "the Template collapses to /ticket and the Ticket");
 
     let worktree = lp.worktree("1");
     let refusals: [(&Path, &[&str], &str); 4] = [

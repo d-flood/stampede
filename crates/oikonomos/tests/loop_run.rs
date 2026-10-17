@@ -635,7 +635,8 @@ async fn a_paused_run_starts_nothing_through_a_restart_and_a_resume_fills_its_sl
 
 #[tokio::test]
 async fn a_stopped_run_gives_back_its_tickets_and_the_next_run_resumes_each_session_in_its_worktree() {
-    let mut lp = Loop::new("loop-run-stop", &[(1, "")]).await;
+    let gates = tempfile::tempdir().unwrap();
+    let mut lp = Loop::with_env("loop-run-stop", &[(1, "")], vec![("OIKONOMOS_FAKE_GATES", gates.path().into())]).await;
     lp.note_setups();
     lp.run("Resume", 1).await;
     lp.claimed(&[1]).await;
@@ -656,11 +657,14 @@ async fn a_stopped_run_gives_back_its_tickets_and_the_next_run_resumes_each_sess
     assert!(lp.entries("run.finished").is_empty(), "a stopped Run has not finished");
 
     lp.run("Resume", 1).await;
-    lp.finished(1).await;
+    lp.until("the resumed Chat's Verdict gate", |_| gates.path().join("verdict").exists()).await;
     assert_eq!(lp.worktrees(), vec![json!(lp.worktree("1")); 2], "retaken in its old worktree");
     let resumed = lp.chat_of(1);
     assert_eq!(lp.chat_record(&resumed).unwrap()["agentSession"], SESSION);
     assert!(leftovers(&lp.root).iter().any(|process| process.contains(&format!("--resume {SESSION}"))));
+    fs::remove_file(gates.path().join("verdict")).unwrap();
+    lp.finished(1).await;
+    lp.until("the resumed Chat to close", |lp| lp.chat_record(&resumed).is_none()).await;
     assert_eq!(lp.setups(), ["integration", "1"], "its kept worktree is not set up again");
     let sent = lp.sent();
     assert_eq!(sent.len(), 2);
@@ -788,16 +792,13 @@ async fn a_live_runs_worktrees_open_as_projects_beside_its_own_and_close_once_re
     lp.complete(1);
     let changed = lp.message(|message| message["type"] == "projects.changed" && roles(message).len() == 2).await;
     assert!(!roles(&changed).contains(&json!({ "ticket": 1 })), "{changed}");
-    let parent = json!(lp.project_id);
-    lp.until("work/1's Chat to move to the Project its worktree sat beside", |lp| {
-        lp.chat_record(&first).is_some_and(|chat| chat["projectId"] == parent)
-    })
-    .await;
+    lp.until("work/1's Chat to close", |lp| lp.chat_record(&first).is_none()).await;
     lp.complete(2);
     lp.finished(1).await;
     lp.message(|message| message["type"] == "projects.changed" && roles(message).is_empty()).await;
     let second = lp.chat_of(2);
-    lp.until("work/2's Chat to move too", |lp| lp.chat_record(&second).is_some_and(|chat| chat["projectId"] == parent)).await;
+    lp.until("work/2's Chat to close", |lp| lp.chat_record(&second).is_none()).await;
+    assert!(leftovers(&lp.root).iter().all(|process| !process.contains(&first) && !process.contains(&second)));
     assert!(lp.entries("claim.released").is_empty(), "closing a worktree Project gives no Ticket back");
 
     let integration = lp.worktree("integration");
