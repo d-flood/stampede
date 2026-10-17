@@ -1,7 +1,7 @@
 <script lang="ts">
 	import ChatComposer from '#lib/chat/ChatComposer.svelte';
 	import Activity from '#lib/chat/Activity.svelte';
-	import { agentSessions } from '#lib/chat/agents.ts';
+	import { same, subagents as flatten } from '#lib/chat/agents.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import Meters from '#lib/chat/Meters.svelte';
@@ -9,17 +9,19 @@
 	import RequestCard from '#lib/chat/RequestCard.svelte';
 	import Todos from '#lib/chat/Todos.svelte';
 	import Chips from '#lib/chat/Chips.svelte';
+	import Dock from '#lib/chat/Dock.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { onMount } from 'svelte';
 	import { on } from 'svelte/events';
 
-	let { device, chat, items, session, onsession, active, focused = false, ondiff }: { device: Device; chat: Chat; items: Item[]; session: string; onsession(id: string): void; active: boolean; focused?: boolean; ondiff(path: string): void } =
+	let { device, chat, items, opened, onopen, active, focused = false, ondiff }: { device: Device; chat: Chat; items: Item[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void } =
 		$props();
 
-	const sessions = $derived(agentSessions(chat, items));
-	const selected = $derived(sessions.find(({ id }) => id === session) ?? sessions[0]);
+	const subagents = $derived(flatten(items));
+	const selected = $derived(subagents.find(({ path }) => same(path, opened))?.subagent);
+	const current = $derived(selected ?? chat);
 	let requests = $state<Request[]>([]);
 	let attached = $state(false);
 	const request = $derived(requests[0]);
@@ -104,7 +106,7 @@
 </script>
 
 <div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active}>
-	{#if !selected.id}
+	{#if !selected}
 		<Chips agent={chat.agent} settings={chat.settings} {choices} onrun={run}>
 			{#if form() === 'phone' && chat.context}
 				<ContextBar context={chat.context} compact />
@@ -124,28 +126,38 @@
 	{:else}
 		<div class="session-heading"><strong>{selected.task}</strong><span>{selected.status}</span></div>
 	{/if}
-	{#each sessions as entry (entry.id)}
-		<div class="transcript" hidden={entry.id !== selected.id} {@attach follow}>
-			<div class="column">
-				<Transcript items={entry.items} answered={attached && !entry.id ? chat.answeredQuestions : []} activity={entry.activity} {ondiff} />
-				{#if !entry.id}<Queued queued={chat.queued} />{/if}
-			</div>
+	<div class="transcript" hidden={!!selected} {@attach follow}>
+		<div class="column">
+			<Transcript {items} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} {ondiff} />
+			<Queued queued={chat.queued} />
 		</div>
-	{/each}
+	</div>
+	{#if selected}
+		{#key opened.join('/')}
+			<div class="transcript" {@attach follow}>
+				<div class="column">
+					<Transcript items={selected.items} activity={selected.activity} {ondiff} />
+				</div>
+			</div>
+		{/key}
+	{/if}
 	<div class="foot">
-		<Activity status={selected.status} activity={selected.activity} />
+		<Activity status={current.status} activity={current.activity} />
+		{#if subagents.length}
+			<Dock {subagents} {onopen} />
+		{/if}
 		{#if request}
 			{#key request.id}
 				<RequestCard {request} {agent} disabled={!live} onanswer={(chosen) => answer(request, chosen)} />
 			{/key}
 		{/if}
-		{#if !selected.id}
+		{#if !selected}
 			<ChatComposer {device} {chat} {live} {request} {capabilities} {choices} {focused} onrun={run} />
 			{#if form() === 'desktop'}
 				<Meters {chat} />
 			{/if}
 		{:else}
-			<div class="session-footer"><span>Subagent session</span><Button onclick={() => onsession('')}>Return to Main</Button></div>
+			<div class="session-footer"><span>Subagent session</span><Button onclick={() => onopen([])}>Return to Main</Button></div>
 		{/if}
 	</div>
 </div>
