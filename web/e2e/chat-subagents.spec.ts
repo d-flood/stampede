@@ -125,6 +125,16 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(report.locator('strong')).toHaveText('notes.txt');
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 
+	send({ type: 'chat.request', chatId: chatId!, request: { kind: 'command', id: 'review', words: [['touch', 'reviewed.txt']], suggestion: [], sessionPrefixes: true, subagent: 'waiting' } });
+	const approval = panel.getByRole('region', { name: 'Approval' });
+	await expect(approval).toContainText('Asked by Review the file');
+	await pill('Review the file').click();
+	await expect(composer).toBeVisible();
+	await expect(breadcrumb).toHaveCount(0);
+	await expect(approval).toBeFocused();
+	send({ type: 'chat.resolved', chatId: chatId!, requestId: 'review' });
+	await expect(approval).toHaveCount(0);
+
 	await pill('Search deeper').click();
 	await expect(panel.getByText('Deep work.', { exact: true })).toBeVisible();
 	await expect(breadcrumb).toHaveText(/^Main\s*\/\s*Find the file\s*\/\s*Search deeper$/);

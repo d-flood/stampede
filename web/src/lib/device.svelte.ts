@@ -44,12 +44,13 @@ export type Item =
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
 
-export type Request =
+export type Request = (
 	| { kind: 'command'; id: string; words: string[][]; suggestion: string[][]; sessionPrefixes: boolean }
 	| { kind: 'question'; id: string; questions: Question[] }
 	| { kind: 'plan'; id: string; plan: string }
 	| { kind: 'edit'; id: string; path: string; diff: string }
-	| { kind: 'other'; id: string; title: string; detail: string };
+	| { kind: 'other'; id: string; title: string; detail: string }
+) & { subagent?: string };
 
 export type Question = { id: string; header: string; question: string; options: { label: string; description: string; preview?: string }[]; multiSelect: boolean };
 export type AnsweredQuestions = { source?: string; after: number; questions: Question[]; answers: string[][] };

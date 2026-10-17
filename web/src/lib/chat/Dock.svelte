@@ -7,7 +7,7 @@
 	const PILL = 10;
 	const MORE = 3.5;
 
-	let { subagents, onopen }: { subagents: Placed[]; onopen(path: string[]): void } = $props();
+	let { subagents, onopen, onattend }: { subagents: Placed[]; onopen(path: string[]): void; onattend(subagent: string): void } = $props();
 
 	const running = $derived(subagents.filter(({ subagent }) => subagent.status !== 'done'));
 	const finished = $derived(subagents.filter(({ subagent }) => subagent.status === 'done').reverse().sort((a, b) => ended(b) - ended(a)));
@@ -45,7 +45,7 @@
 <section class="dock" aria-label="Subagents">
 	<div class="pills" {@attach measure}>
 		{#each running.slice(0, fits) as { path, subagent } (path.join('/'))}
-			<button class="pill {subagent.status}" style:min-width="{PILL}em" title={subagent.task} onclick={() => onopen(path)}>
+			<button class="pill {subagent.status}" style:min-width="{PILL}em" title={subagent.task} onclick={() => (subagent.status === 'waiting' ? onattend(subagent.id) : onopen(path))}>
 				<span class="mark">{#if subagent.status === 'waiting'}<HandPalmFill />{:else}<CircleNotchBold />{/if}</span>
 				<span class="task">{subagent.task}</span>
 				{#if subagent.startedAt}<span class="clock">{clock(subagent.startedAt)}</span>{/if}
