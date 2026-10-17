@@ -127,7 +127,8 @@
 
 	.identity {
 		display: flex;
-		align-items: flex-start;
+		align-self: center;
+		align-items: center;
 		gap: var(--space-2);
 		min-width: 0;
 	}
@@ -135,7 +136,6 @@
 	.brand {
 		display: flex;
 		flex: none;
-		margin-top: 1px;
 		color: var(--brand);
 	}
 
@@ -237,7 +237,6 @@
 		}
 
 		.identity {
-			align-items: center;
 			gap: var(--space-3);
 		}
 
