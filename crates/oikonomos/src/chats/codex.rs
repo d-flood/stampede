@@ -834,7 +834,7 @@ impl Transcript {
             && let Some((id, plan)) = &self.plan
             && self.plan_resolved.as_ref() != Some(id)
         {
-            let _ = self.events.send(Event::Request(super::Request::Plan { id: id.clone(), plan: plan.clone() }));
+            self.raise(super::RequestKind::Plan { id: id.clone(), plan: plan.clone() });
         }
     }
 
@@ -856,6 +856,11 @@ impl Transcript {
         }
         self.asked.insert(id.clone(), (message["id"].clone(), grant, child));
         id
+    }
+
+    fn raise(&self, kind: super::RequestKind) {
+        let subagent = self.asked.get(kind.id()).and_then(|(_, _, child)| child.clone());
+        let _ = self.events.send(Event::Request(super::Request { kind, subagent }));
     }
 
     fn resolved(&mut self, id: &str) -> Option<(Value, Option<Value>)> {
@@ -1024,7 +1029,7 @@ impl Transcript {
                 let id = self.ask(message, None);
                 let proposed = params["proposedExecpolicyAmendment"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
                 let suggestion = words.iter().map(|part| if !proposed.is_empty() && part.starts_with(&proposed) { proposed.clone() } else { part.clone() }).collect();
-                let _ = self.events.send(Event::Request(super::Request::Command { id, words, suggestion, session_prefixes: false }));
+                self.raise(super::RequestKind::Command { id, words, suggestion, session_prefixes: false });
             }
             Some("item/tool/requestUserInput") => {
                 let id = self.ask(message, None);
@@ -1034,18 +1039,18 @@ impl Transcript {
                 }
                 let questions: Vec<Question> = serde_json::from_value(raw).unwrap_or_default();
                 self.questions.insert(id.clone(), questions.clone());
-                let _ = self.events.send(Event::Request(super::Request::Question { id, questions }));
+                self.raise(super::RequestKind::Question { id, questions });
             }
             Some("item/fileChange/requestApproval") => {
                 let id = self.ask(message, None);
-                let request = match self.edits.get(params["itemId"].as_str().unwrap_or_default()) {
+                let kind = match self.edits.get(params["itemId"].as_str().unwrap_or_default()) {
                     Some(changes) => edit(id, changes),
                     None => {
                         let detail = params["reason"].as_str().unwrap_or_default().to_owned();
-                        super::Request::Other { id, title: "Codex wants to edit files".into(), detail }
+                        super::RequestKind::Other { id, title: "Codex wants to edit files".into(), detail }
                     }
                 };
-                let _ = self.events.send(Event::Request(request));
+                self.raise(kind);
             }
             Some("item/permissions/requestApproval") => {
                 let permissions = &params["permissions"];
@@ -1053,8 +1058,7 @@ impl Transcript {
                 let reason = params["reason"].as_str().unwrap_or_default();
                 let detail = format!("{reason}\n{}", serde_json::to_string_pretty(permissions).unwrap_or_default());
                 let title = "Codex wants more permissions".into();
-                let request = super::Request::Other { id, title, detail: detail.trim().to_owned() };
-                let _ = self.events.send(Event::Request(request));
+                self.raise(super::RequestKind::Other { id, title, detail: detail.trim().to_owned() });
             }
             Some("serverRequest/resolved") => {
                 let id = key(&params["requestId"]);
@@ -1341,7 +1345,7 @@ fn key(id: &Value) -> String {
     id.as_str().map_or_else(|| id.to_string(), str::to_owned)
 }
 
-fn edit(id: String, changes: &Value) -> super::Request {
+fn edit(id: String, changes: &Value) -> super::RequestKind {
     let changes = changes.as_array().map(Vec::as_slice).unwrap_or_default();
     let paths: Vec<&str> = changes.iter().filter_map(|change| change["path"].as_str()).collect();
     let path = paths.join(", ");
@@ -1356,7 +1360,7 @@ fn edit(id: String, changes: &Value) -> super::Request {
             }
         })
         .collect();
-    super::Request::Edit { id, path, diff }
+    super::RequestKind::Edit { id, path, diff }
 }
 
 #[cfg(test)]

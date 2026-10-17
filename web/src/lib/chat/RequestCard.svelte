@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Code from '#lib/chat/Code.svelte';
+	import { icons } from '#lib/chat/icons.ts';
 	import type { Answer, Request } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -7,7 +8,8 @@
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
 	import CaretRight from '~icons/ph/caret-right';
 
-	let { request, agent, disabled, onanswer }: { request: Request; agent: string; disabled: boolean; onanswer(answer: Answer): void } = $props();
+	let { request, agent, asker, disabled, onanswer }: { request: Request; agent: string; asker?: string; disabled: boolean; onanswer(answer: Answer): void } = $props();
+	let card: HTMLElement;
 	let picking = $state(false);
 	let scope = $state<'chat' | 'always'>('chat');
 	let stops = $state<number[]>([]);
@@ -17,6 +19,10 @@
 	let other = $state('');
 	const question = $derived(request.kind === 'question' ? request.questions[step] : undefined);
 	const title = $derived(request.kind === 'command' ? `${agent} wants to run a command` : request.kind === 'edit' ? `${agent} wants to edit a file` : request.kind === 'plan' ? 'Proposed plan' : request.kind === 'question' ? question?.header : request.title);
+
+	export function focus() {
+		card.focus();
+	}
 
 	function quote(word: string) {
 		if (/^[\w@%+=:,./-]+$/.test(word)) return word;
@@ -51,7 +57,8 @@
 	}
 </script>
 
-<section aria-label={request.kind === 'question' ? 'Question' : request.kind === 'plan' ? 'Plan' : 'Approval'} class="card" class:phone={form() === 'phone'}>
+<section aria-label={request.kind === 'question' ? 'Question' : request.kind === 'plan' ? 'Plan' : 'Approval'} class="card" class:phone={form() === 'phone'} tabindex="-1" bind:this={card}>
+	{#if asker}<div class="asker"><icons.subagent />Asked by {asker}</div>{/if}
 	{#if request.kind !== 'question'}<h2>{title}</h2>{/if}
 	{#if request.kind === 'question' && question}
 		<details open>
@@ -123,6 +130,8 @@
 	.options { display: flex; flex-direction: column; gap: var(--space-2); }
 	.option { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); text-align: left; }
 	.progress { color: var(--muted-fg); font-size: var(--font-size-sm); }
+	.asker { display: flex; align-items: center; gap: var(--space-1); color: var(--muted-fg); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+	.asker :global(svg) { flex: none; }
 	.option, .word, input, select { padding: var(--space-2) var(--space-3); min-height: var(--target-min); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg); font: inherit; }
 	button[aria-pressed='true'] { border-color: var(--status-waiting); background: var(--hover); }
 	.word { max-width: 100%; overflow-wrap: anywhere; }

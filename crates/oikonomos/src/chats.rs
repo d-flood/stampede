@@ -356,8 +356,16 @@ pub struct Tokens {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Request {
+    #[serde(flatten)]
+    pub kind: RequestKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
-pub enum Request {
+pub enum RequestKind {
     Command { id: String, words: Vec<Vec<String>>, suggestion: Vec<Vec<String>>, session_prefixes: bool },
     Question { id: String, questions: Vec<Question> },
     Plan { id: String, plan: String },
@@ -367,9 +375,15 @@ pub enum Request {
 
 impl Request {
     pub fn id(&self) -> &str {
+        self.kind.id()
+    }
+}
+
+impl RequestKind {
+    pub fn id(&self) -> &str {
         match self {
-            Request::Command { id, .. } | Request::Edit { id, .. } | Request::Other { id, .. }
-            | Request::Question { id, .. } | Request::Plan { id, .. } => id,
+            RequestKind::Command { id, .. } | RequestKind::Edit { id, .. } | RequestKind::Other { id, .. }
+            | RequestKind::Question { id, .. } | RequestKind::Plan { id, .. } => id,
         }
     }
 }
@@ -1184,19 +1198,19 @@ impl Chats {
         let Some(entry) = self.get(id) else { return };
         let mut transcript = entry.transcript.lock().unwrap();
         let Some(request) = transcript.requests.iter().find(|request| request.id() == request_id) else { return };
-        match (&answer, request) {
-            (Answer::Rules(rules), Request::Command { words, session_prefixes, .. }) => {
+        match (&answer, &request.kind) {
+            (Answer::Rules(rules), RequestKind::Command { words, session_prefixes, .. }) => {
                 if rules.len() != words.len() || rules.iter().any(|rule| rule.scope != rules[0].scope) || rules.iter().zip(words).any(|(rule, words)| {
                     rule.prefix.is_empty() || !words.starts_with(&rule.prefix)
                         || (!session_prefixes && rule.scope == Scope::Chat && rule.prefix != *words)
                 }) { return; }
             }
             (Answer::Rules(_), _) => return,
-            (Answer::Answers(answers), Request::Question { questions, .. }) if answers.len() == questions.len() => {},
+            (Answer::Answers(answers), RequestKind::Question { questions, .. }) if answers.len() == questions.len() => {},
             (Answer::Answers(_), _) => return,
             _ => {},
         }
-        let answered = if let Request::Question { questions, .. } = request {
+        let answered = if let RequestKind::Question { questions, .. } = &request.kind {
             let answers = match &answer {
                 Answer::Answers(answers) => answers.clone(),
                 Answer::Deny { instead: Some(text) } => vec![vec![text.clone()]; questions.len()],

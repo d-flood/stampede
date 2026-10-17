@@ -130,6 +130,7 @@ async fn a_codex_subagents_request_is_answered_from_the_parent_chat() {
     assert_eq!(device.items.iter().find(|item| item["kind"] == "subagent").unwrap()["status"], "waiting");
     let request = device.requests[0].clone();
     assert_eq!(request["kind"], "command");
+    assert_eq!(request["subagent"], child_id);
     device.answer(&request, json!({ "allow": true })).await;
     device.follow(|device| device.status == "done").await;
     assert_eq!(device.statuses, ["working", "waiting", "working", "done"]);
@@ -137,6 +138,50 @@ async fn a_codex_subagents_request_is_answered_from_the_parent_chat() {
     assert_eq!(device.resolved, [request["id"].clone()]);
     close_chat(&mut device.socket, launched.server.root.path(), &launched.chat_id).await;
     assert_eq!(launched.answers(), [json!({ "decision": "accept" })]);
+}
+
+#[tokio::test]
+async fn a_claude_subagents_request_is_answered_from_the_parent_chat() {
+    let spawned: Vec<Value> = include_str!("fixtures/chats/claude-code/subagents.recorded.jsonl")
+        .lines().map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|entry| entry["stdout"]["subtype"] == "task_started" || entry["stdout"]["message"]["content"][0]["name"] == "Agent")
+        .collect();
+    let [spawn, started] = spawned.as_slice() else { panic!("{spawned:?}") };
+    let agent = &started["stdout"]["task_id"];
+    let subagent = &started["stdout"]["tool_use_id"];
+    for by_agent in [false, true] {
+        let mut entries: Vec<Value> = include_str!("fixtures/chats/claude-code/approval.recorded.jsonl")
+            .lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let start = entries.iter().position(|entry| entry["stdout"]["event"]["type"] == "message_start").unwrap();
+        let end = entries.iter().position(|entry| entry["stdout"]["message"]["content"][0]["type"] == "tool_result").unwrap();
+        for entry in &mut entries[start..=end] {
+            if let Some(parent) = entry["stdout"].get_mut("parent_tool_use_id") { *parent = subagent.clone(); }
+            let request = &mut entry["stdout"]["request"];
+            if by_agent && request["subtype"] == "can_use_tool" {
+                request.as_object_mut().unwrap().remove("tool_use_id");
+                request["agent_id"] = agent.clone();
+            }
+        }
+        entries.splice(start..start, [spawn.clone(), started.clone()]);
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("subagent-approval.recorded.jsonl");
+        fs::write(&path, entries.into_iter().map(|entry| entry.to_string() + "\n").collect::<String>()).unwrap();
+        let launched = Launched::new("claude-code", path.to_str().unwrap()).await;
+        let mut device = Device::open(launched.server.port, "parent", &launched.chat_id).await;
+        device.send(COMPOUND).await;
+        device.follow(|device| device.status == "waiting" && !device.requests.is_empty()).await;
+        assert_eq!(device.items.iter().find(|item| item["kind"] == "subagent").unwrap()["status"], "waiting");
+        let request = device.requests[0].clone();
+        assert_eq!(request["kind"], "command");
+        assert_eq!(request["subagent"], *subagent);
+        device.answer(&request, json!({ "allow": true })).await;
+        device.follow(|device| device.status == "done").await;
+        assert_eq!(device.statuses, ["working", "waiting", "working", "done"]);
+        assert_eq!(device.items.iter().find(|item| item["kind"] == "subagent").unwrap()["status"], "working");
+        assert_eq!(device.resolved, [request["id"].clone()]);
+        close_chat(&mut device.socket, launched.server.root.path(), &launched.chat_id).await;
+        assert_eq!(launched.answers(), [json!({ "behavior": "allow" })]);
+    }
 }
 
 #[tokio::test]

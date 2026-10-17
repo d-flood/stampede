@@ -16,7 +16,7 @@
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { on } from 'svelte/events';
 
 	let { device, chat, items, opened, onopen, active, focused = false, ondiff }: { device: Device; chat: Chat; items: Item[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void } =
@@ -28,7 +28,10 @@
 	const current = $derived(selected ?? chat);
 	let requests = $state<Request[]>([]);
 	let attached = $state(false);
-	const request = $derived(requests[0]);
+	let attending = $state<string>();
+	const request = $derived(requests.find(({ subagent }) => subagent && subagent === attending) ?? requests[0]);
+	const asker = $derived(request?.subagent && subagents.find(({ subagent }) => subagent.id === request.subagent)?.subagent.task);
+	let card = $state<RequestCard>();
 	const live = $derived(device.connection === 'connected');
 	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
 	let rewinding = $state(false);
@@ -74,6 +77,13 @@
 
 	function answer(request: Request, answer: Answer) {
 		device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer });
+	}
+
+	async function attend(subagent: string) {
+		onopen([]);
+		attending = subagent;
+		await tick();
+		card?.focus();
 	}
 
 	function run(command: Builtin, value?: string | number) {
@@ -155,11 +165,11 @@
 	<div class="foot">
 		<Activity status={current.status} activity={current.activity} />
 		{#if subagents.length}
-			<Dock {subagents} {onopen} />
+			<Dock {subagents} {onopen} onattend={attend} />
 		{/if}
 		{#if request}
 			{#key request.id}
-				<RequestCard {request} {agent} disabled={!live} onanswer={(chosen) => answer(request, chosen)} />
+				<RequestCard bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} />
 			{/key}
 		{/if}
 		{#if !selected}

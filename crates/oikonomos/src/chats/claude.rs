@@ -24,7 +24,7 @@ use super::{
     holder::{self, Frames},
     html,
     protocol::{self, Message},
-    Request, Image, Scope, AnsweredQuestions, Question, diff, seconds, unified, words,
+    Request, RequestKind, Image, Scope, AnsweredQuestions, Question, diff, seconds, unified, words,
 };
 use crate::{
     config::{Agent, AgentSettings},
@@ -260,6 +260,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                     }
                     Some(Command::Answer(id, answer)) => {
                         let original = transcript.inputs.remove(&id).unwrap_or_default();
+                        transcript.unblock(&id);
                         let response = match answer {
                             Answer::Allow => json!({ "behavior": "allow" }),
                             Answer::Rules(rules) => {
@@ -535,7 +536,7 @@ fn config_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
     }
 }
 
-fn request(id: &str, request: &Value) -> Request {
+fn request(id: &str, request: &Value) -> RequestKind {
     let id = id.to_owned();
     let input = &request["input"];
     let text = |field: &str| input[field].as_str().unwrap_or_default().to_owned();
@@ -548,21 +549,21 @@ fn request(id: &str, request: &Value) -> Request {
                 .filter_map(|rule| rule["ruleContent"].as_str())
                 .flat_map(|rule| words(rule.trim_end_matches(":*"))).collect::<Vec<_>>();
             let suggestion = parts.iter().map(|part| rules.iter().find(|rule| part.starts_with(rule)).unwrap_or(part).clone()).collect();
-            Request::Command { id, words: parts, suggestion, session_prefixes: true }
+            RequestKind::Command { id, words: parts, suggestion, session_prefixes: true }
         }
-        Some("AskUserQuestion") => Request::Question {
+        Some("AskUserQuestion") => RequestKind::Question {
             id, questions: serde_json::from_value(input["questions"].clone()).unwrap_or_default(),
         },
-        Some("ExitPlanMode") => Request::Plan { id, plan: text("plan") },
+        Some("ExitPlanMode") => RequestKind::Plan { id, plan: text("plan") },
         Some("Edit") => {
             let diff = diff(&text("old_string"), &text("new_string"));
-            Request::Edit { id, path: text("file_path"), diff }
+            RequestKind::Edit { id, path: text("file_path"), diff }
         }
-        Some("Write") => Request::Edit { id, path: text("file_path"), diff: diff("", &text("content")) },
+        Some("Write") => RequestKind::Edit { id, path: text("file_path"), diff: diff("", &text("content")) },
         tool => {
             let name = request["display_name"].as_str().or(tool).unwrap_or("a tool");
             let title = request["title"].as_str().map_or_else(|| format!("Claude wants to use {name}"), str::to_owned);
-            Request::Other { id, title, detail: serde_json::to_string_pretty(input).unwrap_or_default() }
+            RequestKind::Other { id, title, detail: serde_json::to_string_pretty(input).unwrap_or_default() }
         }
     }
 }
@@ -620,6 +621,8 @@ struct Transcript {
     snippets: HashMap<String, Item>,
     edits: HashMap<String, bool>,
     subagents: HashMap<String, (Subagent, Transcript)>,
+    issued: HashMap<String, String>,
+    asking: HashMap<String, String>,
     todos: Vec<(String, Todo)>,
     creating: HashSet<String>,
     tasks: HashMap<String, String>,
@@ -667,6 +670,8 @@ impl Transcript {
             snippets: HashMap::new(),
             edits: HashMap::new(),
             subagents: HashMap::new(),
+            issued: HashMap::new(),
+            asking: HashMap::new(),
             todos: Vec::new(),
             creating: HashSet::new(),
             tasks: HashMap::new(),
@@ -829,11 +834,37 @@ impl Transcript {
     }
 
     fn resolve(&mut self, id: &str) {
+        self.unblock(id);
         if self.replaying {
             self.pending.retain(|request| request.id() != id);
         } else {
             let _ = self.events.send(Event::Resolved(id.to_owned()));
         }
+    }
+
+    fn unblock(&mut self, request: &str) {
+        if let Some(subagent) = self.asking.remove(request)
+            && !self.asking.values().any(|other| *other == subagent)
+        {
+            self.subagent_status(&subagent, Status::Working);
+        }
+    }
+
+    fn subagent_status(&mut self, id: &str, status: Status) -> bool {
+        for (key, (subagent, transcript)) in &mut self.subagents {
+            let changed = if key == id {
+                let changed = subagent.status != Status::Done && subagent.status != status;
+                if changed { subagent.status = status; }
+                changed
+            } else {
+                transcript.subagent_status(id, status) && subagent.update()
+            };
+            if changed {
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                return true;
+            }
+        }
+        false
     }
 
     fn report_todos(&mut self) {
@@ -980,6 +1011,9 @@ impl Transcript {
             Some("user") if top => self.results(&message["message"]["content"], &message["tool_use_result"]),
             Some("assistant" | "user") => {
                 if let Some(parent) = message["parent_tool_use_id"].as_str() {
+                    for block in message["message"]["content"].as_array().into_iter().flatten().filter(|block| block["type"] == "tool_use") {
+                        if let Some(tool) = block["id"].as_str() { self.issued.insert(tool.to_owned(), parent.to_owned()); }
+                    }
                     self.route(parent, message);
                 }
             }
@@ -990,8 +1024,15 @@ impl Transcript {
             }
             Some("control_request") if message["request"]["subtype"] == "can_use_tool" => {
                 if let Some(id) = message["request_id"].as_str() {
-                    self.inputs.insert(id.to_owned(), message["request"].clone());
-                    self.ask(request(id, &message["request"]));
+                    let asked = &message["request"];
+                    let agent = asked["agent_id"].as_str().and_then(|agent| self.tasks.get(agent));
+                    let subagent = agent.or_else(|| asked["tool_use_id"].as_str().and_then(|tool| self.issued.get(tool))).cloned();
+                    if let Some(subagent) = &subagent {
+                        self.asking.insert(id.to_owned(), subagent.clone());
+                        self.subagent_status(subagent, Status::Waiting);
+                    }
+                    self.inputs.insert(id.to_owned(), asked.clone());
+                    self.ask(Request { kind: request(id, asked), subagent });
                 }
             }
             Some("control_cancel_request") => self.resolve(message["request_id"].as_str().unwrap_or_default()),
@@ -1024,6 +1065,8 @@ impl Transcript {
                 self.snippets.clear();
                 self.edits.clear();
                 self.subagents.clear();
+                self.issued.clear();
+                self.asking.clear();
                 self.todos.clear();
                 self.creating.clear();
                 self.tasks.clear();
