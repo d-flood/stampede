@@ -8,7 +8,7 @@ test('Editor markers and Agent file changes preserve explicit edits', async ({ p
 	const file = `${project.name}.txt`;
 	await openProject(page, 'alpha');
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: file }).click();
+	await sidebar.getByRole('button', { name: file, exact: true }).click();
 
 	const line = page.locator('.cm-line', { hasText: 'two' });
 	await line.click();

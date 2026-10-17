@@ -140,6 +140,32 @@ pub async fn write(
     .await
 }
 
+pub async fn delete(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Query(query): Query<FileQuery>,
+) -> Result<Response, Failure> {
+    let root = root(&state, &id)?;
+    blocking(move || {
+        let relative = Path::new(&query.path);
+        if !relative.components().all(|part| matches!(part, Component::Normal(_) | Component::CurDir)) {
+            return Err((StatusCode::FORBIDDEN, "Path is outside the Project".to_owned()));
+        }
+        let name = relative.file_name().ok_or_else(|| {
+            (StatusCode::BAD_REQUEST, "Cannot delete the Project directory".to_owned())
+        })?;
+        let parent = relative.parent().unwrap_or(Path::new(""));
+        let path = resolve(&root, &parent.to_string_lossy())?.join(name);
+        if fs::symlink_metadata(&path).map_err(failure)?.is_dir() {
+            fs::remove_dir_all(path).map_err(failure)?;
+        } else {
+            fs::remove_file(path).map_err(failure)?;
+        }
+        Ok(StatusCode::NO_CONTENT.into_response())
+    })
+    .await
+}
+
 pub async fn read_config(State(state): State<AppState>) -> Result<Response, Failure> {
     blocking(move || {
         let bytes = config_bytes(&state.config_path)?;

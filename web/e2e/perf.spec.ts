@@ -93,7 +93,7 @@ test('switching Tab or Project paints within 50 ms, and opening a file within 10
 	const opens = [];
 	for (const file of files) {
 		const sidebar = await showSidebar(page);
-		opens.push(await measure(page, sidebar.getByRole('button', { name: file }), page.getByRole('tab', { name: file })));
+		opens.push(await measure(page, sidebar.getByRole('button', { name: file, exact: true }), page.getByRole('tab', { name: file })));
 	}
 	check('Open file', opens, 100);
 });

@@ -1,13 +1,18 @@
 <script lang="ts">
 	import type { Device } from '#lib/device.svelte.ts';
-	import { list, type Entry } from '#lib/files.svelte.ts';
+	import { list, remove, RequestError, type Entry } from '#lib/files.svelte.ts';
 	import { letters, type Change } from '#lib/git.ts';
+	import Button from '#lib/ui/Button.svelte';
+	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import Menu from '#lib/ui/Menu.svelte';
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import CaretRight from '~icons/ph/caret-right';
+	import DotsThree from '~icons/ph/dots-three';
 	import Eye from '~icons/ph/eye';
 	import EyeSlash from '~icons/ph/eye-slash';
+	import Trash from '~icons/ph/trash';
 
 	type Props = { projectId: string; device: Device; changes: Change[]; onopen(path: string): void };
 
@@ -15,6 +20,10 @@
 
 	let includeIgnored = $state(false);
 	let listings = $state<Record<string, Entry[]>>({});
+	let target = $state<Entry>();
+	let confirming = $state(false);
+	let deleting = $state(false);
+	let error = $state('');
 	const expanded = new SvelteSet<string>();
 	const kinds = $derived(new Map(changes.map((change) => [change.path, change.kind])));
 	const marked = $derived(new Set(changes.flatMap(({ path, from }) => [...parents(path), ...parents(from ?? '')])));
@@ -37,7 +46,12 @@
 	}
 
 	async function load(path: string) {
-		listings[path] = await list(projectId, path, includeIgnored);
+		try {
+			listings[path] = await list(projectId, path, includeIgnored);
+		} catch (error) {
+			if (error instanceof RequestError && error.status === 404) listings[path] = [];
+			else throw error;
+		}
 	}
 
 	function toggle(path: string) {
@@ -54,6 +68,33 @@
 		includeIgnored = !includeIgnored;
 		reload();
 	}
+
+	function confirm(entry: Entry) {
+		if (deleting) return;
+		target = entry;
+		error = '';
+		confirming = true;
+	}
+
+	async function deleteEntry() {
+		if (!target || deleting) return;
+		deleting = true;
+		try {
+			await remove(projectId, target.path);
+			for (const path of expanded) {
+				if (path === target.path || path.startsWith(`${target.path}/`)) {
+					expanded.delete(path);
+					delete listings[path];
+				}
+			}
+			reload();
+			confirming = false;
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : String(cause);
+		} finally {
+			deleting = false;
+		}
+	}
 </script>
 
 {#snippet tree(path: string, depth: number)}
@@ -61,24 +102,44 @@
 		{#each listings[path] ?? [] as entry (entry.path)}
 			{@const open = entry.dir && expanded.has(entry.path)}
 			{@const kind = entry.dir ? undefined : kinds.get(entry.path)}
+			{@const items = [{ label: 'Delete', icon: Trash, onselect: () => confirm(entry) }]}
 			<li>
-				<button
-					class:ignored={entry.ignored}
-					class:changed={kind}
-					style:--depth={depth}
-					style:--git={kind && `var(--git-${kind})`}
-					aria-expanded={entry.dir ? open : undefined}
-					title={kind ? `${entry.path} (${kind})` : entry.path}
-					onclick={() => (entry.dir ? toggle(entry.path) : onopen(entry.path))}
-				>
-					<span class="caret" class:open>{#if entry.dir}<CaretRight />{/if}</span>
-					<span class="name">{entry.name}</span>
-					{#if kind}
-						<span class="mark" aria-hidden="true">{letters[kind]}</span>
-					{:else if entry.dir && marked.has(entry.path)}
-						<span class="mark" aria-hidden="true">•</span>
-					{/if}
-				</button>
+				<div class="row">
+					<Menu context {items}>
+						{#snippet trigger(props)}
+							<button
+								{...props}
+								tabindex={0}
+								class="entry"
+								class:ignored={entry.ignored}
+								class:changed={kind}
+								style:--depth={depth}
+								style:--git={kind && `var(--git-${kind})`}
+								aria-expanded={entry.dir ? open : undefined}
+								title={kind ? `${entry.path} (${kind})` : entry.path}
+								onclick={(event) => {
+									if (event.currentTarget.dataset.state !== 'open') {
+										if (entry.dir) toggle(entry.path);
+										else onopen(entry.path);
+									}
+								}}
+							>
+								<span class="caret" class:open>{#if entry.dir}<CaretRight />{/if}</span>
+								<span class="name">{entry.name}</span>
+								{#if kind}
+									<span class="mark" aria-hidden="true">{letters[kind]}</span>
+								{:else if entry.dir && marked.has(entry.path)}
+									<span class="mark" aria-hidden="true">•</span>
+								{/if}
+							</button>
+						{/snippet}
+					</Menu>
+					<Menu {items}>
+						{#snippet trigger(props)}
+							<IconButton {...props} label={`Actions for ${entry.path}`}><DotsThree /></IconButton>
+						{/snippet}
+					</Menu>
+				</div>
 				{#if open}{@render tree(entry.path, depth + 1)}{/if}
 			</li>
 		{/each}
@@ -98,6 +159,18 @@
 	</header>
 	<div class="tree">{@render tree('', 0)}</div>
 </section>
+
+<Dialog
+	bind:open={confirming}
+	title={target?.dir ? 'Delete directory?' : 'Delete file?'}
+	description={target ? `Permanently delete “${target.path}”${target.dir ? ' and all its contents' : ''}? This cannot be undone.` : ''}
+>
+	{#if error}<p role="alert">{error}</p>{/if}
+	{#snippet actions()}
+		<Button disabled={deleting} onclick={() => (confirming = false)}>Cancel</Button>
+		<Button variant="danger" disabled={deleting} onclick={deleteEntry}>{deleting ? 'Deleting…' : 'Delete'}</Button>
+	{/snippet}
+</Dialog>
 
 <style>
 	section {
@@ -133,11 +206,21 @@
 		list-style: none;
 	}
 
-	button {
+	.row {
 		display: flex;
 		align-items: center;
+	}
+
+	.row:hover {
+		background: var(--hover);
+	}
+
+	.entry {
+		display: flex;
+		flex: 1;
+		align-items: center;
 		gap: var(--space-1);
-		width: 100%;
+		min-width: 0;
 		min-height: var(--target-min);
 		padding: 0 var(--space-3) 0 calc(var(--space-2) + var(--depth) * var(--space-4));
 		border: none;
@@ -148,11 +231,7 @@
 		cursor: pointer;
 	}
 
-	button:hover {
-		background: var(--hover);
-	}
-
-	button:focus-visible {
+	.entry:focus-visible {
 		outline: var(--border-width) solid var(--status-working);
 		outline-offset: calc(-1 * var(--border-width));
 	}

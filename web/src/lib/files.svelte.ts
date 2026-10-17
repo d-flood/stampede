@@ -148,6 +148,12 @@ export async function read(projectId: string, path: string): Promise<Contents> {
 	return json(await fetch(`/api/projects/${projectId}/file?${new URLSearchParams({ path })}`));
 }
 
+export async function remove(projectId: string, path: string): Promise<void> {
+	const response = await fetch(`/api/projects/${projectId}/file?${new URLSearchParams({ path })}`, { method: 'DELETE' });
+	if (!response.ok) throw new RequestError(response.status, await response.text());
+	invalidate(projectId);
+}
+
 async function put<T>(url: string, body: object): Promise<Saved<T>> {
 	const response = await fetch(url, {
 		method: 'PUT',
