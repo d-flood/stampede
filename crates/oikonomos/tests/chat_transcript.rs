@@ -55,6 +55,24 @@ async fn claude_internal_notifications_never_become_user_messages() {
                     fixture.push('\n');
                 }
             }
+            for (index, attachment) in [
+                json!({
+                    "type": "queued_command",
+                    "prompt": notification,
+                    "commandMode": "task-notification",
+                    "origin": { "kind": "task-notification", "producer": "session-task" },
+                }),
+                json!({ "type": "queued_command", "prompt": "Continue with the queued work", "commandMode": "prompt" }),
+            ].into_iter().enumerate() {
+                fixture.push_str(&json!({ "session": {
+                    "type": "attachment",
+                    "sessionId": session,
+                    "uuid": format!("queued-attachment-{index}"),
+                    "attachment": attachment,
+                    "renderedRole": if index == 0 { "system" } else { "user" },
+                } }).to_string());
+                fixture.push('\n');
+            }
             inserted = true;
         }
         fixture.push_str(line);
@@ -75,7 +93,7 @@ async fn claude_internal_notifications_never_become_user_messages() {
     restored.turn(&mut socket, &chat_id, DONE).await;
     server.restart().await;
     let (_, restored) = reattach(&server, &chat_id, restored.items.len()).await;
-    assert_eq!(users(&restored), [user(CLAUDE_PROMPT), user("/compact"), user(DONE)], "session history");
+    assert_eq!(users(&restored), [user(CLAUDE_PROMPT), user("Continue with the queued work"), user("/compact"), user(DONE)], "session history");
 }
 
 #[tokio::test]

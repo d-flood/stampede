@@ -887,7 +887,7 @@ impl Transcript {
                     self.results(&entry["message"]["content"], &entry["toolUseResult"]);
                 }
             },
-            Some("attachment") if entry["attachment"]["type"] == "queued_command" => {
+            Some("attachment") if entry["attachment"]["type"] == "queued_command" && entry["renderedRole"] != "system" => {
                 if let Some(text) = entry["attachment"]["prompt"].as_str() {
                     self.push(Item::User { text: text.to_owned(), images: 0, template: None });
                 }
