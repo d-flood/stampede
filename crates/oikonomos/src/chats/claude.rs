@@ -19,7 +19,7 @@ use toml::value::{Datetime, Offset};
 use uuid::Uuid;
 
 use super::{
-    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Phase, Setting,
+    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
     Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     html,
@@ -1046,10 +1046,13 @@ impl Transcript {
     fn task_notification(&mut self, message: &Value) {
         match message["type"].as_str() {
             Some("system") if message["subtype"] == "task_updated" || message["subtype"] == "task_notification" => {
+                let usage = &message["usage"];
                 self.task_status(
                     message["task_id"].as_str(),
                     message["tool_use_id"].as_str(),
                     message["status"].as_str().or_else(|| message["patch"]["status"].as_str()),
+                    message["summary"].as_str(),
+                    [&usage["duration_ms"], &usage["tool_uses"], &usage["total_tokens"]].map(Value::as_u64),
                 );
             }
             Some("user") => {
@@ -1072,17 +1075,27 @@ impl Transcript {
     fn task_text(&mut self, text: &str) {
         for notification in text.split("<task-notification>").skip(1) {
             if let Some((notification, _)) = notification.split_once("</task-notification>") {
-                self.task_status(tagged(notification, "task-id"), tagged(notification, "tool-use-id"), tagged(notification, "status"));
+                let usage = tagged(notification, "usage").unwrap_or_default();
+                let total = |tag: &str| tagged(usage, tag).and_then(|total| total.trim().parse().ok());
+                self.task_status(
+                    tagged(notification, "task-id"),
+                    tagged(notification, "tool-use-id"),
+                    tagged(notification, "status"),
+                    tagged(notification, "result"),
+                    [total("duration_ms"), total("tool_uses"), total("subagent_tokens").or_else(|| total("total_tokens"))],
+                );
             }
         }
     }
 
-    fn task_status(&mut self, task: Option<&str>, tool: Option<&str>, status: Option<&str>) {
+    /// The text form of a notification carries the report as its result, and its summary only names the agent.
+    fn task_status(&mut self, task: Option<&str>, tool: Option<&str>, status: Option<&str>, report: Option<&str>, totals: [Option<u64>; 3]) {
         let tool = tool.filter(|tool| self.subagents.contains_key(*tool)).or_else(|| task.and_then(|task| self.tasks.get(task).map(String::as_str)));
-        if matches!(status, Some("completed" | "failed" | "stopped"))
+        if let Some(outcome) = outcome(status)
             && let Some((subagent, _)) = tool.and_then(|tool| self.subagents.get_mut(tool))
         {
-            subagent.status = Status::Done;
+            subagent.finish(Some(outcome));
+            reported(subagent, report, totals);
             let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
         }
     }
@@ -1143,7 +1156,7 @@ impl Transcript {
                     for (index, text) in self.said.drain(..) {
                         let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false, phase: Phase::Commentary }));
                     }
-                    self.tool(block);
+                    self.tool(block, &message["timestamp"]);
                 }
                 _ => {}
             }
@@ -1160,7 +1173,7 @@ impl Transcript {
         }
     }
 
-    fn tool(&mut self, block: &Value) {
+    fn tool(&mut self, block: &Value, timestamp: &Value) {
         let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) else { return };
         let input = &block["input"];
         let text = |key: &str| input[key].as_str().unwrap_or_default().to_owned();
@@ -1199,7 +1212,12 @@ impl Transcript {
             "WebFetch" => self.call(ToolKind::Fetch, name, text("url")),
             "WebSearch" => self.call(ToolKind::Web, name, text("query")),
             "Agent" | "Task" => {
-                let (mut subagent, events) = Subagent::new(input["subagent_type"].as_str().map(str::to_owned), text("description"));
+                let replaying = self.replaying || self.history.is_some();
+                let started_at = timestamp.as_str().filter(|_| replaying).and_then(epoch_ms).unwrap_or_else(super::now);
+                let (mut subagent, events) = Subagent::new(id, text("description"), started_at);
+                subagent.name = input["subagent_type"].as_str().map(str::to_owned);
+                subagent.prompt = input["prompt"].as_str().map(str::to_owned);
+                subagent.model = input["model"].as_str().map(str::to_owned);
                 subagent.index = self.push(subagent.item());
                 self.subagents.insert(id.to_owned(), (subagent, Transcript::new(events, &self.cwd)));
             }
@@ -1238,7 +1256,7 @@ impl Transcript {
         match message["type"].as_str() {
             Some("assistant") => {
                 for block in content.as_array().into_iter().flatten().filter(|block| block["type"] == "tool_use") {
-                    self.tool(block);
+                    self.tool(block, &message["timestamp"]);
                 }
             }
             Some("user") => self.results(content, result),
@@ -1286,8 +1304,16 @@ impl Transcript {
                     }
                 }
                 subagent.update();
+                if let Some(model) = result["resolvedModel"].as_str() {
+                    subagent.model = Some(model.to_owned());
+                }
                 if result["isAsync"] != true {
-                    subagent.status = Status::Done;
+                    let texts: Vec<&str> = result["content"].as_array().into_iter().flatten().filter_map(|block| block["text"].as_str()).collect();
+                    let report = Some(texts.join("\n")).filter(|report| !report.is_empty());
+                    let fallback = if block["is_error"] == true { Outcome::Failed } else { Outcome::Completed };
+                    subagent.finish(Some(outcome(result["status"].as_str()).unwrap_or(fallback)));
+                    let totals = [&result["totalDurationMs"], &result["totalToolUseCount"], &result["totalTokens"]].map(Value::as_u64);
+                    reported(subagent, report.as_deref(), totals);
                 }
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
@@ -1396,6 +1422,24 @@ fn hunk(hunk: &Value) -> String {
     text
 }
 
+fn outcome(status: Option<&str>) -> Option<Outcome> {
+    match status? {
+        "completed" => Some(Outcome::Completed),
+        "failed" => Some(Outcome::Failed),
+        "stopped" => Some(Outcome::Stopped),
+        _ => None,
+    }
+}
+
+fn reported(subagent: &mut Subagent, report: Option<&str>, [duration, tools, tokens]: [Option<u64>; 3]) {
+    if let Some(report) = report {
+        subagent.report = Some(report.to_owned());
+    }
+    subagent.duration = duration.or(subagent.duration);
+    subagent.tools = tools.map(|tools| tools as usize).or(subagent.tools);
+    subagent.tokens = tokens.or(subagent.tokens);
+}
+
 fn todo_status(status: &str) -> TodoStatus {
     match status {
         "in_progress" => TodoStatus::Active,
@@ -1469,10 +1513,15 @@ mod subagent_tests {
                         if let Event::Item(index, item) = event { items.insert(index, item); }
                     }
                     let statuses: Vec<_> = items.values().filter_map(|item| match item {
-                        Item::Subagent { task, status, .. } => Some((task.as_str(), *status)),
+                        Item::Subagent { task, status, outcome, .. } => Some((task.as_str(), *status, *outcome)),
                         _ => None,
                     }).collect();
-                    assert_eq!(statuses, [("finished", Status::Done), ("active", Status::Working)], "{status}, recorded: {recorded}, {shape}");
+                    let outcome = match status {
+                        "completed" => Outcome::Completed,
+                        "failed" => Outcome::Failed,
+                        _ => Outcome::Stopped,
+                    };
+                    assert_eq!(statuses, [("finished", Status::Done, Some(outcome)), ("active", Status::Working, None)], "{status}, recorded: {recorded}, {shape}");
                     assert!(!items.values().any(|item| matches!(item, Item::User { .. })));
                 }
             }

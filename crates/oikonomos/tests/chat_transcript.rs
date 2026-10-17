@@ -14,6 +14,7 @@ const CLAUDE_ANSWER: &str = "All steps are done: notes.txt has 3 lines and \"nee
 const CODEX_PROMPT: &str = "Think it over briefly first. Then, in order: run `wc -l notes.txt`, run `wc -l missing.txt` (it will fail), and search the web for \"IANA example domain\". Finally answer in one short sentence.";
 const CODEX_ANSWER: &str = "`notes.txt` has 3 lines, `missing.txt` was absent, and the search found [IANA’s Example Domains page](https://www.iana.org/help/example-domains).";
 const DONE: &str = "Say done in one word.";
+const CLAUDE_SUBAGENT_PROMPT: &str = "Read both /tmp/oikonomos-chat/notes.txt and /tmp/oikonomos-chat/todo.txt. Report which one (or both/neither) contains the word \"needle\". Reply with just the filename(s) and the matching line(s). Breadth: quick.";
 const CLAUDE_EDITS: &str = "Make these changes in order: in notes.txt change `beta` to `BETA` with Edit, create hello.py containing `print(\"hello\")` with Write, and in analysis.ipynb replace the first cell's source with `print(2)` with NotebookEdit. Then answer in one short sentence.";
 const CODEX_EDITS: &str = "Use apply_patch to make these changes: in notes.txt change `beta` to `BETA`, add hello.py containing `print(\"hello\")`, and delete old.txt. Then answer in one short sentence.";
 const NOTES_DIFF: &str = "@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n";
@@ -462,23 +463,44 @@ async fn subagents(agent: &str) {
     assert_eq!(view.children.first().unwrap()["status"], "working");
     assert_eq!(view.children.first().unwrap()["items"], json!([]));
     assert!(view.children.iter().any(|child| child["status"] == "working" && child["items"].as_array().is_some_and(|items| !items.is_empty())));
-    let child = view.items.iter().find(|item| item["kind"] == "subagent").unwrap();
+    let child = view.items.iter().find(|item| item["kind"] == "subagent").unwrap().clone();
     assert_eq!(child["status"], "done");
+    assert!(child["id"].as_str().is_some_and(|id| !id.is_empty()));
+    assert!(child["startedAt"].is_u64());
+    let home = server.root.path().join("home").display().to_string();
+    let finished = |child: &Value, restored: bool| {
+        assert_eq!(child["outcome"], "completed");
+        if agent == "claude-code" {
+            assert_eq!(child["name"], "Explore");
+            assert_eq!(child["task"], "Find file mentioning needle");
+            assert_eq!(child["prompt"], CLAUDE_SUBAGENT_PROMPT.replace("/tmp/oikonomos-chat", &home));
+            let report = "Only notes.txt contains it.\n\n/tmp/oikonomos-chat/notes.txt, line 2: `needle in a haystack`";
+            assert_eq!(child["report"], report.replace("/tmp/oikonomos-chat", &home));
+            assert_eq!(child["model"], "claude-opus-5-5");
+            assert_eq!(child["totals"], json!({ "durationMs": 3456, "tools": 2, "tokens": 14662 }));
+        } else {
+            assert_eq!(child.get("name"), restored.then(|| json!("Heisenberg")).as_ref());
+            assert_eq!(child["task"], "find_needle");
+            assert_eq!(child.get("prompt"), None);
+            assert_eq!(child["report"], "notes.txt mentions “needle”; todo.txt does not.");
+            assert_eq!(child["model"], "gpt-6.1-sol");
+            let mut totals = json!({ "durationMs": 8358, "tools": 3 });
+            if !restored { totals["tokens"] = json!(66760); }
+            assert_eq!(child["totals"], totals);
+        }
+    };
+    finished(&child, false);
     let mut expected = if agent == "claude-code" {
-        assert_eq!(child["name"], "Explore");
-        assert_eq!(child["task"], "Find file mentioning needle");
         json!([{ "kind": "tools", "calls": [
             { "kind": "read", "name": "Read", "detail": "notes.txt" },
             { "kind": "read", "name": "Read", "detail": "todo.txt" },
         ] }])
     } else {
-        assert_eq!(child["task"], "find_needle");
         json!([
             { "kind": "command", "command": "cat notes.txt todo.txt", "status": "ok", "output": "alpha\nneedle in a haystack\nomega\nbuy milk\nwalk the dog\n" },
             { "kind": "thinking", "seconds": 2 },
             { "kind": "command", "command": "cat notes.txt", "status": "ok", "output": "alpha\nneedle in a haystack\nomega\n" },
             { "kind": "command", "command": "cat todo.txt", "status": "ok", "output": "buy milk\nwalk the dog\n" },
-            { "kind": "text", "text": "notes.txt mentions “needle”; todo.txt does not.", "streaming": false, "phase": "final" },
         ])
     };
     assert_eq!(child["items"], expected);
@@ -503,15 +525,19 @@ async fn subagents(agent: &str) {
     view.turn(&mut socket, &chat_id, DONE).await;
     let before = view.items;
     server.restart().await;
-    let (mut socket, restored) = reattach(&server, &chat_id, before.len()).await;
-    let restored_child = restored.items.iter().find(|item| item["kind"] == "subagent").unwrap();
+    let (mut socket, mut restored) = reattach(&server, &chat_id, before.len()).await;
+    let restored_child = |view: &View| view.items.iter().find(|item| item["kind"] == "subagent").unwrap().clone();
     if agent == "codex" {
         expected[1]["seconds"] = json!(0);
-        let mut restored = restored;
-        restored.follow(&mut socket, &chat_id, |view| view.items.iter().find(|item| item["kind"] == "subagent").unwrap()["items"] == expected).await;
+        restored.follow(&mut socket, &chat_id, |view| restored_child(view)["items"] == expected).await;
+        assert_eq!(restored_child(&restored)["startedAt"], 1792186663000u64);
     } else {
-        assert_eq!(restored_child["items"], expected);
-        let mut restored = restored;
+        assert_eq!(restored_child(&restored)["items"], expected);
+        assert_eq!(restored_child(&restored)["startedAt"], 1792186800832u64);
+    }
+    assert_eq!(restored_child(&restored)["id"], child["id"]);
+    finished(&restored_child(&restored), true);
+    if agent == "claude-code" {
         restored.turn(&mut socket, &chat_id, "Set the first task back to pending with your task tool, then say done in one word.").await;
         assert_eq!(restored.todos.last(), Some(&snapshot(&["pending", "done", "done"])));
     }

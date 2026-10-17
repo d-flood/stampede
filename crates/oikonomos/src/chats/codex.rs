@@ -17,7 +17,7 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
 use super::{
-    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Phase, Setting,
+    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
     Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
     html,
 };
@@ -925,13 +925,24 @@ impl Transcript {
         if let Some(child) = response(message).and_then(|id| self.reading.remove(&id))
             && let Some((subagent, transcript)) = self.subagents.get_mut(&child)
         {
-            let turns = message["result"]["thread"]["turns"].as_array().into_iter().flatten();
-            for item in turns.flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
+            let thread = &message["result"]["thread"];
+            let turns = thread["turns"].as_array().map(Vec::as_slice).unwrap_or_default();
+            for item in turns.iter().flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
                 transcript.completed(item, 0);
             }
-            if subagent.update() {
-                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            subagent.update();
+            if let Some(name) = thread["agentRole"].as_str().or(thread["agentNickname"].as_str()) {
+                subagent.name = Some(name.to_owned());
             }
+            if subagent.model.is_none() {
+                subagent.model = thread["model"].as_str().map(str::to_owned);
+            }
+            if let Some(created) = thread["createdAt"].as_u64() {
+                subagent.started_at = created * 1000;
+            }
+            let durations = turns.iter().filter_map(|turn| turn["durationMs"].as_u64());
+            subagent.duration = durations.reduce(|total, duration| total + duration).or(subagent.duration);
+            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             return;
         }
         let params = &message["params"];
@@ -949,6 +960,11 @@ impl Transcript {
             if let Some((subagent, transcript)) = self.subagents.get_mut(thread)
             {
                 transcript.read(message);
+                if message["method"] == "turn/completed"
+                    && let Some(duration) = params["turn"]["durationMs"].as_u64()
+                {
+                    subagent.duration = Some(subagent.duration.unwrap_or_default() + duration);
+                }
                 if subagent.update() {
                     let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
                 }
@@ -1200,19 +1216,21 @@ impl Transcript {
                 self.push(Item::compacted());
             }
             Some("collabAgentToolCall") => {
+                let prompt = item["prompt"].as_str().filter(|_| item["tool"] == "spawnAgent");
                 for thread in item["receiverThreadIds"].as_array().into_iter().flatten().filter_map(Value::as_str) {
-                    if !self.subagents.contains_key(thread) && item["tool"] == "spawnAgent" {
-                        let task = text("prompt");
-                        let (mut subagent, events) = Subagent::new(None, task);
-                        subagent.index = self.push(subagent.item());
-                        self.subagents.insert(thread.to_owned(), (subagent, Transcript::new(thread, &self.cwd, events)));
+                    if let Some(prompt) = prompt {
+                        self.spawn(thread, prompt.lines().next().unwrap_or_default());
                     }
                     if let Some((subagent, _)) = self.subagents.get_mut(thread) {
-                        subagent.status = match item["agentsStates"][thread]["status"].as_str() {
-                            Some("completed" | "errored" | "shutdown" | "notFound") => Status::Done,
-                            Some("waiting") => Status::Waiting,
-                            _ => subagent.status,
-                        };
+                        if let Some(prompt) = prompt {
+                            subagent.prompt.get_or_insert_with(|| prompt.to_owned());
+                        }
+                        let status = item["agentsStates"][thread]["status"].as_str().unwrap_or_default();
+                        if status == "waiting" {
+                            subagent.status = Status::Waiting;
+                        } else if let Some(outcome) = outcome(status) {
+                            subagent.finish(Some(outcome));
+                        }
                         let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
                     }
                 }
@@ -1220,16 +1238,24 @@ impl Transcript {
             Some("subAgentActivity") => {
                 let Some(thread) = item["agentThreadId"].as_str() else { return };
                 match item["kind"].as_str() {
-                    Some("started") if !self.subagents.contains_key(thread) => {
-                        let task = text("agentPath").rsplit('/').next().unwrap_or_default().to_owned();
-                        let (mut subagent, events) = Subagent::new(None, task);
-                        subagent.index = self.push(subagent.item());
-                        self.subagents.insert(thread.to_owned(), (subagent, Transcript::new(thread, &self.cwd, events)));
+                    Some("started") => {
+                        let path = text("agentPath");
+                        let task = path.rsplit('/').next().unwrap_or_default();
+                        self.spawn(thread, task);
+                        if let Some((subagent, _)) = self.subagents.get_mut(thread) {
+                            if !task.is_empty() {
+                                subagent.task = task.to_owned();
+                            }
+                            if let Some(model) = item["model"].as_str() {
+                                subagent.model = Some(model.to_owned());
+                            }
+                            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                        }
                     }
-                    Some("completed" | "interrupted") => {
+                    Some(kind @ ("completed" | "interrupted")) => {
                         if let Some((subagent, _)) = self.subagents.get_mut(thread) {
                             subagent.update();
-                            subagent.status = Status::Done;
+                            subagent.finish(outcome(kind));
                             let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
                         }
                     }
@@ -1238,6 +1264,15 @@ impl Transcript {
             }
             _ => {}
         }
+    }
+
+    fn spawn(&mut self, thread: &str, task: &str) {
+        if self.subagents.contains_key(thread) {
+            return;
+        }
+        let (mut subagent, events) = Subagent::new(thread, task.to_owned(), super::now());
+        subagent.index = self.push(subagent.item());
+        self.subagents.insert(thread.to_owned(), (subagent, Transcript::new(thread, &self.cwd, events)));
     }
 
     fn call(&mut self, kind: ToolKind, name: &str, detail: String) {
@@ -1267,6 +1302,15 @@ fn command(item: &Value) -> Item {
         _ => CommandStatus::Failed,
     };
     Item::Command { command, status, output: item["aggregatedOutput"].as_str().unwrap_or_default().to_owned() }
+}
+
+fn outcome(status: &str) -> Option<Outcome> {
+    match status {
+        "completed" => Some(Outcome::Completed),
+        "errored" => Some(Outcome::Failed),
+        "shutdown" | "interrupted" | "notFound" => Some(Outcome::Stopped),
+        _ => None,
+    }
 }
 
 fn notice(error: &Value) -> Item {

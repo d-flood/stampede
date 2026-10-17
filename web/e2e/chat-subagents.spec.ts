@@ -6,11 +6,11 @@ import { openProject } from './shell.ts';
 test('completed subagents leave the picker and return their selected session to Main', async ({ page }, { project }) => {
 	let route: WebSocketRoute;
 	let chatId: string;
-	const finished: Item = { kind: 'subagent', name: 'Finished', task: 'Old task', status: 'done', items: [] };
-	const active: Item = { kind: 'subagent', name: 'Explore', task: 'Find the file', status: 'working', items: [
+	const finished: Item = { kind: 'subagent', id: 'finished', name: 'Finished', task: 'Old task', status: 'done', items: [] };
+	const active: Item = { kind: 'subagent', id: 'active', name: 'Explore', task: 'Find the file', status: 'working', items: [
 		{ kind: 'text', text: 'Reading the files.', phase: 'commentary', streaming: false }
 	] };
-	const waiting: Item = { kind: 'subagent', name: 'Review', task: 'Review the file', status: 'waiting', items: [] };
+	const waiting: Item = { kind: 'subagent', id: 'waiting', name: 'Review', task: 'Review the file', status: 'waiting', items: [] };
 	const items: Item[] = [finished, active, waiting];
 	await page.routeWebSocket('**/ws', (socket) => {
 		const server = socket.connectToServer();
