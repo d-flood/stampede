@@ -8,6 +8,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	let chatId: string;
 	const now = Date.now();
 	const text = (text: string): Item => ({ kind: 'text', text, phase: 'commentary', streaming: false });
+	const command = (command: string): Item => ({ kind: 'command', command, status: 'ok', output: '' });
 	const old: Subagent = { kind: 'subagent', id: 'old', name: 'Explore', task: 'Old task', status: 'done', outcome: 'completed', startedAt: now - 600_000, totals: { durationMs: 72_000, tools: 14, tokens: 38_000 }, items: [text('Old work.')] };
 	const failed: Subagent = { kind: 'subagent', id: 'failed', name: 'general-purpose', task: 'Broken task', status: 'done', outcome: 'failed', startedAt: now - 300_000, totals: { durationMs: 5_000, tools: 1 }, items: [] };
 	const nested: Subagent = { kind: 'subagent', id: 'nested', name: 'Explore', task: 'Search deeper', status: 'working', startedAt: now, items: [text('Deep work.')] };
@@ -37,7 +38,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(composer).toBeVisible();
 	await expect(dock).toHaveCount(0);
 
-	items = [old, failed, active, waiting];
+	items = [command('ls'), old, active, waiting, command('pwd'), failed];
 	send({ type: 'chat.items', chatId: chatId!, items });
 	const pill = (task: string) => dock.getByRole('button', { name: new RegExp(`^${task}`) });
 	await expect(pill('Find the file')).toBeVisible();
@@ -57,8 +58,35 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	const clock = await pill('Find the file').textContent();
 	await expect.poll(() => pill('Find the file').textContent()).not.toBe(clock);
 
-	await dock.getByRole('button', { name: '2 finished', exact: true }).click();
+	const marker = (text: string) => panel.getByRole('button', { name: new RegExp(`^${text}`) });
+	const spawn = marker('3 Subagents');
+	await expect(panel.locator('details.calls, button.spawn')).toHaveText([/^1 tool call/, '3 Subagents · 2 running', /^1 tool call/, '1 Subagent · done']);
+	const group = panel.locator('details.calls').first();
+	await group.locator('> summary').click();
+	await expect(group).toHaveJSProperty('open', true);
+	await group.locator('> summary').click();
+	await expect(group).toHaveJSProperty('open', false);
+	await expect(spawn).toBeVisible();
+	await spawn.click();
 	const rows = page.getByRole('menuitem');
+	await expect(rows).toHaveCount(3);
+	await expect(rows.nth(0)).toContainText('Old task');
+	await expect(rows.nth(1)).toContainText('Find the file');
+	await expect(rows.nth(2)).toContainText('Review the file');
+	await rows.nth(1).click();
+	await expect(panel.getByText('Reading the files.', { exact: true })).toBeVisible();
+	await expect(composer).toHaveCount(0);
+	await marker('1 Subagent · 1 running').click();
+	await expect(rows).toHaveCount(0);
+	await expect(panel.getByText('Deep work.', { exact: true })).toBeVisible();
+	await panel.getByRole('button', { name: 'Return to Main' }).click();
+	await marker('1 Subagent · done').click();
+	await expect(rows).toHaveCount(0);
+	await expect(panel.locator('.session-heading')).toContainText('Broken task');
+	await expect(composer).toHaveCount(0);
+	await panel.getByRole('button', { name: 'Return to Main' }).click();
+
+	await dock.getByRole('button', { name: '2 finished', exact: true }).click();
 	await expect(rows).toHaveCount(2);
 	await expect(rows.nth(0)).toHaveText(/^\s*Broken task\s*general-purpose\s*failed\s*·\s*5s · 1 tool$/);
 	await expect(rows.nth(1)).toHaveText(/^\s*Old task\s*Explore\s*1m 12s · 14 tools · 38k tokens$/);
@@ -86,6 +114,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(composer).toHaveCount(0);
 	await panel.getByRole('button', { name: 'Return to Main' }).click();
 	await expect(composer).toBeVisible();
+	await expect(spawn).toHaveText('3 Subagents · 1 running');
 
 	await page.reload();
 	await expect(pill('Review the file')).toBeVisible();

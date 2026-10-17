@@ -5,15 +5,16 @@
 	import { icon } from '#lib/chat/icons.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import Notice from '#lib/chat/Notice.svelte';
+	import Spawn from '#lib/chat/Spawn.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Thinking from '#lib/chat/Thinking.svelte';
 	import Tools from '#lib/chat/Tools.svelte';
 	import User from '#lib/chat/User.svelte';
 	import Questions from '#lib/chat/Questions.svelte';
-	import type { AnsweredQuestions, Item } from '#lib/device.svelte.ts';
+	import type { AnsweredQuestions, Item, Subagent } from '#lib/device.svelte.ts';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
-	let { items, answered = [], activity, ondiff }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; ondiff(path: string): void } = $props();
+	let { items, answered = [], activity, path = [], onopen, ondiff }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; ondiff(path: string): void } = $props();
 	const entries = $derived.by(() => {
 		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map((record) => ({ kind: 'questions', record }));
 		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
@@ -24,19 +25,18 @@
 	}
 
 	const runs = $derived(
-		entries.reduce<{ rail: boolean; indices: number[] }[]>((runs, item, index) => {
-			if (item.kind === 'subagent') return runs;
-			const rail = interim(item);
+		entries.reduce<{ kind: 'spawn' | 'rail' | 'plain'; indices: number[] }[]>((runs, item, index) => {
+			const kind = item.kind === 'subagent' ? 'spawn' : interim(item) ? 'rail' : 'plain';
 			const last = runs.at(-1);
-			if (last && last.rail === rail) last.indices.push(index);
-			else runs.push({ rail, indices: [index] });
+			if (last?.kind === kind) last.indices.push(index);
+			else runs.push({ kind, indices: [index] });
 			return runs;
 		}, [])
 	);
 
 	function dot(item: Entry) {
 		if (item.kind === 'text' || item.kind === 'thinking') return 'said';
-		if (item.kind === 'command' || item.kind === 'subagent') return item.status;
+		if (item.kind === 'command') return item.status;
 		return 'done';
 	}
 
@@ -68,7 +68,9 @@
 {/snippet}
 
 {#each runs as run (run.indices[0])}
-	{#if run.rail}
+	{#if run.kind === 'spawn'}
+		<Spawn subagents={run.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} {onopen} />
+	{:else if run.kind === 'rail'}
 		<Calls items={run.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={run === runs.at(-1) ? activity : null}>
 			<div class="rail">
 				{#each run.indices as index (index)}

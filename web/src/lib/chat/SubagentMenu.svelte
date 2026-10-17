@@ -10,9 +10,11 @@
 		open: boolean;
 		trigger: Snippet<[Record<string, unknown>]>;
 		onselect(path: string[]): void;
+		side?: 'top' | 'bottom';
+		align?: 'start' | 'end';
 	};
 
-	let { heading, entries, open = $bindable(), trigger, onselect }: Props = $props();
+	let { heading, entries, open = $bindable(), trigger, onselect, side = 'top', align = 'end' }: Props = $props();
 </script>
 
 <DropdownMenu.Root bind:open>
@@ -22,7 +24,7 @@
 		{/snippet}
 	</DropdownMenu.Trigger>
 	<DropdownMenu.Portal>
-		<DropdownMenu.Content side="top" align="end" sideOffset={4}>
+		<DropdownMenu.Content {side} {align} sideOffset={4}>
 			{#snippet child({ wrapperProps, props })}
 				<div {...wrapperProps}>
 					<div {...props} class="menu">

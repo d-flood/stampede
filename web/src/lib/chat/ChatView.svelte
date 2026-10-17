@@ -128,7 +128,7 @@
 	{/if}
 	<div class="transcript" hidden={!!selected} {@attach follow}>
 		<div class="column">
-			<Transcript {items} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} {ondiff} />
+			<Transcript {items} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} {onopen} {ondiff} />
 			<Queued queued={chat.queued} />
 		</div>
 	</div>
@@ -136,7 +136,7 @@
 		{#key opened.join('/')}
 			<div class="transcript" {@attach follow}>
 				<div class="column">
-					<Transcript items={selected.items} activity={selected.activity} {ondiff} />
+					<Transcript items={selected.items} activity={selected.activity} path={opened} {onopen} {ondiff} />
 				</div>
 			</div>
 		{/key}
