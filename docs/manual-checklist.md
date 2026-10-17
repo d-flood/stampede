@@ -76,3 +76,46 @@ Use a throwaway Project and repeat each applicable item with Claude Code and Cod
 - [ ] Reopen a past session from New Tab and from Search sessions; its history appears.
 
 Run results and unavailable checks: `epic/chats/22-manual-checklist.md`.
+
+## 6. Loop
+
+Use a throwaway Project and repeat with each available real Agent, Claude Code and Codex. Check desktop and the installed Pixel PWA. For restart and simulated Host-reboot checks, use a separate test server, data directory and Agent state; leave the installed service and other sessions running. Record unavailable Agents or Devices separately from passes.
+
+- [ ] `/grill` reaches an agreed plan for a small Epic.
+- [ ] `/spec` creates that Epic with the agreed Brief.
+- [ ] `/tickets` publishes its Tickets with the intended Blockers.
+- [ ] The proposed Setup Command succeeds in a fresh clone.
+- [ ] Confirming the Setup Command records it on the Epic.
+- [ ] Starting a Run at parallel 2 works two unblocked Tickets concurrently.
+- [ ] Each worker is a Chat using its Rig's model, effort and permission mode.
+- [ ] Desktop shows the Integration and Ticket worktree Projects beside their parent.
+- [ ] The phone Projects screen shows the same worktree Projects beside their parent.
+- [ ] Opening a worktree tile shows that worktree's Files, Changes and Ticket Chat.
+- [ ] A pending worker approval appears in its Chat on the Pixel.
+- [ ] Answering the approval on the Pixel lets that worker continue.
+- [ ] A turn ending without a Verdict retains its Claim and Needs attention.
+- [ ] A pending question remains available through the ordinary Chat UI.
+- [ ] A conflicting merge opens a Resolver Chat in the Integration Worktree.
+- [ ] The Resolver Chat uses the Run's Rig settings on desktop and phone.
+- [ ] Resolving the conflict lets the serial merge queue continue.
+- [ ] A TUI started manually in an ordinary Terminal has no Claim or loop status.
+- [ ] Restarting the test server mid-turn preserves its Claims and Agent sessions.
+- [ ] A still-running turn reattaches without receiving duplicate input.
+- [ ] Pausing prevents new Ticket Chats from starting.
+- [ ] Resuming starts the available Frontier Tickets.
+- [ ] Stopping returns in-progress Tickets to the Frontier.
+- [ ] Stopping preserves their worktrees and Agent sessions.
+- [ ] Starting again reuses the kept worktree and session.
+- [ ] Closing an in-progress Chat releases its Claim exactly once.
+- [ ] A simulated Host reboot re-runs an interrupted claimed loop turn once.
+- [ ] An ordinary Chat interrupted by that reboot stays interrupted and Needs attention.
+- [ ] A second interruption of the recovered loop Chat Needs attention without another automatic retry.
+- [ ] A paused Run receives no automatic reboot continuation.
+- [ ] Land is unavailable while a Run or merge is live.
+- [ ] Landing refuses a dirty base checkout without changing it.
+- [ ] Landing a settled Epic puts its commits in the base checkout.
+- [ ] Landing removes the clean Integration Worktree and Epic branch.
+
+2026-10-17: real Codex verification passed planning, parallel 2, approval/question cards, kept-session lifecycle, simulated reboot recovery and deduplication, Resolver merging, and Landing. Claude was unavailable at its session limit; phone UI checks used Pixel 8 Pro emulation, with the physical Pixel and installed PWA unverified.
+
+Run results, observations and unavailable checks: `epic/loop/16-manual-checklist.md`.
