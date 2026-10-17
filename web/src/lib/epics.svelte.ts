@@ -1,4 +1,10 @@
 import type { Device, Epic, Ticket, TicketStatus } from '#lib/device.svelte.ts';
+import type { Component } from 'svelte';
+import CheckCircle from '~icons/ph/check-circle';
+import Circle from '~icons/ph/circle';
+import CircleHalf from '~icons/ph/circle-half';
+import GitMerge from '~icons/ph/git-merge';
+import MinusCircle from '~icons/ph/minus-circle';
 
 export class OpenEpic {
 	ticket = $state<number>();
@@ -73,6 +79,14 @@ export const tones: Record<TicketStatus, string> = {
 	merging: 'var(--ansi-5)',
 	'in-progress': 'var(--status-working)',
 	'not-started': 'var(--muted-fg)'
+};
+
+export const marks: Record<TicketStatus, Component> = {
+	merged: CheckCircle,
+	skipped: MinusCircle,
+	merging: GitMerge,
+	'in-progress': CircleHalf,
+	'not-started': Circle
 };
 
 export function label(status: TicketStatus) {

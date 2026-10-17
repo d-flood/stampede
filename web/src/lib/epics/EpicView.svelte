@@ -6,7 +6,7 @@
 	import Blockers from '#lib/epics/Blockers.svelte';
 	import Progress from '#lib/epics/Progress.svelte';
 	import TicketDetail from '#lib/epics/Ticket.svelte';
-	import { counts, label, land, record, resolved, statuses, toggle, tones, type Edit, type OpenEpic } from '#lib/epics.svelte.ts';
+	import { counts, label, land, marks, record, resolved, statuses, toggle, tones, type Edit, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -17,7 +17,10 @@
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
 	import Minus from '~icons/ph/minus';
+	import Pause from '~icons/ph/pause';
+	import Play from '~icons/ph/play';
 	import Plus from '~icons/ph/plus';
+	import Stop from '~icons/ph/stop';
 
 	type Props = {
 		open: OpenEpic;
@@ -225,15 +228,15 @@
 		{#if live}
 			<div class="controls">
 				{#if live.paused}
-					<Button onclick={() => run({ kind: 'run.resumed' })}>Resume</Button>
+					<Button onclick={() => run({ kind: 'run.resumed' })}><Play /> Resume</Button>
 				{:else}
-					<Button onclick={() => run({ kind: 'run.paused', reason: 'david' })}>Pause</Button>
+					<Button onclick={() => run({ kind: 'run.paused', reason: 'david' })}><Pause /> Pause</Button>
 				{/if}
-				<Button variant="danger" onclick={() => (working.length ? (stopping = true) : run({ kind: 'run.stopped' }))}>Stop</Button>
+				<Button variant="danger" onclick={() => (working.length ? (stopping = true) : run({ kind: 'run.stopped' }))}><Stop /> Stop</Button>
 			</div>
 		{:else}
 			<Button variant="primary" disabled={!rig || epic.setup === null} onclick={() => rig && run({ kind: 'run.started', rig, parallel: open.parallel })}>
-				Start Run
+				<Play /> Start Run
 			</Button>
 			{#if epic.setup === null}<p class="note">Record a Setup Command before starting a Run.</p>{/if}
 		{/if}
@@ -331,7 +334,8 @@
 					<ul class="legend">
 						{#each statuses as status (status)}
 							{#if tally[status]}
-								<li><span class="count" style:--tone={tones[status]}>{tally[status]}</span> {label(status)}</li>
+								{@const Mark = marks[status]}
+								<li><span class="count" style:--tone={tones[status]}><Mark />{tally[status]}</span> {label(status)}</li>
 							{/if}
 						{/each}
 					</ul>
@@ -353,6 +357,7 @@
 					{/if}
 					{#each shown as ticket (ticket.number)}
 						{@const expanded = !phone && open.ticket === ticket.number}
+						{@const Mark = marks[ticket.status]}
 						<button
 							class="row"
 							class:resolved={resolved(ticket.status)}
@@ -365,14 +370,14 @@
 								<span class="text">
 									<span class="title">{ticket.title}</span>
 									<span class="sub" style:--tone={tones[ticket.status]}>
-										{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}{#if holder(ticket)}{' '}· {holder(ticket)}{/if}{#if ticket.claim?.edited}{' '}· edited{/if}
+										<Mark />{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}{#if holder(ticket)}{' '}· {holder(ticket)}{/if}{#if ticket.claim?.edited}{' '}· edited{/if}
 									</span>
 								</span>
 								<CaretRight />
 							{:else}
 								<span class="title">{ticket.title}</span>
 								<span class="number">{ticket.blockers.join(', ')}</span>
-								<span class="status" style:--tone={tones[ticket.status]}>{label(ticket.status)}</span>
+								<span class="status" style:--tone={tones[ticket.status]}><Mark />{label(ticket.status)}</span>
 								<span class="held" class:flagged={!!ticket.attention}>{holder(ticket)}</span>
 							{/if}
 						</button>
@@ -430,7 +435,8 @@
 			<p>Still unresolved:</p>
 			<ul>
 				{#each unresolved as ticket (ticket.number)}
-					<li><span class="number">{ticket.number}</span> {ticket.title} · <span style:color={tones[ticket.status]}>{label(ticket.status)}</span></li>
+					{@const Mark = marks[ticket.status]}
+					<li><span class="number">{ticket.number}</span> {ticket.title} · <span class="mark" style:color={tones[ticket.status]}><Mark />{label(ticket.status)}</span></li>
 				{/each}
 			</ul>
 		</div>
@@ -650,6 +656,14 @@
 		font-variant-numeric: tabular-nums;
 	}
 
+	.count :global(svg),
+	.status :global(svg),
+	.sub :global(svg),
+	.mark :global(svg) {
+		margin-right: var(--space-1);
+		vertical-align: -0.125em;
+	}
+
 	.run {
 		display: flex;
 		flex-wrap: wrap;
@@ -793,7 +807,7 @@
 	}
 
 	.pages :global(svg),
-	.phone .row :global(svg) {
+	.phone .row > :global(svg) {
 		flex: none;
 		color: var(--muted-fg);
 	}

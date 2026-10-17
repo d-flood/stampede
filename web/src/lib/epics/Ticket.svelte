@@ -4,7 +4,7 @@
 	import { rigs } from '#lib/config.svelte.ts';
 	import type { Chat, Device, Epic, Ticket } from '#lib/device.svelte.ts';
 	import Blockers from '#lib/epics/Blockers.svelte';
-	import { label, onFrontier, record, resolved, toggle, tones, type OpenEpic } from '#lib/epics.svelte.ts';
+	import { label, marks, onFrontier, record, resolved, toggle, tones, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
@@ -25,6 +25,7 @@
 	const phone = $derived(form() === 'phone');
 	const authors = { agent: 'Agent', david: 'David', oikonomos: 'Oikonomos' };
 	const others = $derived(epic.tickets.filter((other) => other.number !== ticket.number));
+	const Mark = $derived(marks[ticket.status]);
 	const startable = $derived(!epic.run && onFrontier(epic, ticket));
 	const reopenable = $derived(resolved(ticket.status) || ticket.status === 'in-progress');
 	const edited = $derived(!!ticket.claim?.edited);
@@ -96,7 +97,7 @@
 	{#if phone || edited}
 		<div class="chips">
 			{#if phone}
-				<span style:--tone={tones[ticket.status]}>{label(ticket.status)}</span>
+				<span class="status" style:--tone={tones[ticket.status]}><Mark />{label(ticket.status)}</span>
 				{#if ticket.blockers.length}<span>after {ticket.blockers.join(', ')}</span>{/if}
 			{/if}
 			{#if edited}<span style:--tone="var(--status-waiting)">edited since its Chat started</span>{/if}
@@ -197,6 +198,11 @@
 		border: var(--border-width) solid var(--tone, var(--border));
 		border-radius: 1em;
 		color: var(--tone, var(--muted-fg));
+	}
+
+	.status :global(svg) {
+		margin-right: var(--space-1);
+		vertical-align: -0.125em;
 	}
 
 	.attention {
