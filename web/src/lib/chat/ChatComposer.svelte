@@ -3,8 +3,12 @@
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
-	import Stop from '~icons/ph/stop-fill';
+	import ArrowBendUpRight from '~icons/ph/arrow-bend-up-right';
+	import ListPlus from '~icons/ph/list-plus';
+	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Paperclip from '~icons/ph/paperclip';
+	import Stop from '~icons/ph/stop-fill';
+	import X from '~icons/ph/x';
 
 	let { device, chat, live, request, capabilities, choices, focused = false, onrun }: {
 		device: Device;
@@ -86,7 +90,7 @@
 {#if images.length}
 	<div class="attachments" aria-label="Attachments">
 		{#each images as image, index}
-			<div class="thumbnail"><img src="data:{image.mediaType};base64,{image.data}" alt={image.name} /><button aria-label="Remove {image.name}" onclick={() => (images = images.filter((_, at) => at !== index))}>×</button></div>
+			<div class="thumbnail"><img src="data:{image.mediaType};base64,{image.data}" alt={image.name} /><button aria-label="Remove {image.name}" onclick={() => (images = images.filter((_, at) => at !== index))}><X /></button></div>
 		{/each}
 	</div>
 {/if}
@@ -103,7 +107,7 @@
 			</Button>
 			<span class="gap"></span>
 			<Button disabled={(!text.trim() && !images.length) || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
-				Queue
+				<ListPlus /> Queue
 			</Button>
 			<Button
 				variant="primary"
@@ -111,16 +115,18 @@
 				onmousedown={keepFocus}
 				onclick={() => send(text, false) && clear()}
 			>
-				Steer
+				<ArrowBendUpRight /> Steer
 			</Button>
 		{:else}
 			<Button
 				variant="primary"
+				aria-label="Send"
+				title="Send"
 				disabled={(!text.trim() && !images.length) || !live || reading}
 				onmousedown={keepFocus}
 				onclick={() => send(text, false) && clear()}
 			>
-				Send
+				<PaperPlaneRight />
 			</Button>
 		{/if}
 	{/snippet}
