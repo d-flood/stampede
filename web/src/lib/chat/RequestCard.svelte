@@ -5,6 +5,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
+	import CaretRight from '~icons/ph/caret-right';
 
 	let { request, agent, disabled, onanswer }: { request: Request; agent: string; disabled: boolean; onanswer(answer: Answer): void } = $props();
 	let picking = $state(false);
@@ -54,7 +55,7 @@
 	{#if request.kind !== 'question'}<h2>{title}</h2>{/if}
 	{#if request.kind === 'question' && question}
 		<details open>
-			<summary><h2>{title}</h2><span class="progress">Question {step + 1} of {request.questions.length}</span></summary>
+			<summary><span class="caret"><CaretRight /></span><h2>{title}</h2><span class="progress">Question {step + 1} of {request.questions.length}</span></summary>
 			<div class="question-body">
 				<div>{question.question}</div>
 				<div class="options">
@@ -116,8 +117,8 @@
 	.question-body { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-3); }
 	summary { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-height: var(--target-min); list-style: none; cursor: pointer; }
 	summary::-webkit-details-marker { display: none; }
-	summary::before { content: '▸'; color: var(--status-waiting); }
-	details[open] > summary::before { content: '▾'; }
+	.caret { display: inline-flex; flex: none; width: 1em; color: var(--status-waiting); transition: transform var(--dur-fast); }
+	details[open] > summary > .caret { transform: rotate(90deg); }
 	summary h2 { flex: 1; overflow-wrap: anywhere; }
 	.options { display: flex; flex-direction: column; gap: var(--space-2); }
 	.option { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); text-align: left; }

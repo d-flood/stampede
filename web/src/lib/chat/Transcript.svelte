@@ -2,6 +2,7 @@
 	import Command from '#lib/chat/Command.svelte';
 	import Calls from '#lib/chat/Calls.svelte';
 	import Edit from '#lib/chat/Edit.svelte';
+	import { icon } from '#lib/chat/icons.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import Notice from '#lib/chat/Notice.svelte';
 	import Text from '#lib/chat/Text.svelte';
@@ -38,6 +39,10 @@
 		if (item.kind === 'command' || item.kind === 'subagent') return item.status;
 		return 'done';
 	}
+
+	function marker(item: Entry) {
+		return item.kind === 'questions' ? undefined : icon(item);
+	}
 </script>
 
 {#snippet entry(item: Entry, index: number)}
@@ -67,7 +72,11 @@
 		<Calls items={run.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={run === runs.at(-1) ? activity : null}>
 			<div class="rail">
 				{#each run.indices as index (index)}
-					<div class="step" data-dot={dot(entries[index])}>{@render entry(entries[index], index)}</div>
+					{@const Marker = marker(entries[index])}
+					<div class="step" data-dot={dot(entries[index])}>
+						{#if Marker}<span class="marker"><Marker /></span>{/if}
+						{@render entry(entries[index], index)}
+					</div>
 				{/each}
 			</div>
 		</Calls>
@@ -82,6 +91,7 @@
 	.rail {
 		--indent: var(--space-6);
 		--dot: 9px;
+		--marker: 14px;
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
@@ -99,7 +109,7 @@
 		min-width: 0;
 	}
 
-	.step::before {
+	[data-dot='said']::before {
 		content: '';
 		position: absolute;
 		top: calc(var(--target-min) / 2 - var(--dot) / 2);
@@ -109,32 +119,40 @@
 		height: var(--dot);
 		border: var(--border-width) solid var(--muted-fg);
 		border-radius: 50%;
-		background: var(--muted-fg);
-	}
-
-	[data-dot='said']::before {
 		background: var(--color-bg);
 	}
 
-	[data-dot='ok']::before {
-		border-color: var(--status-done);
-		background: var(--status-done);
+	.marker {
+		position: absolute;
+		top: calc(var(--target-min) / 2 - var(--marker) / 2);
+		left: calc(-1 * var(--indent) - var(--border-width) / 2 - var(--marker) / 2);
+		display: flex;
+		width: var(--marker);
+		height: var(--marker);
+		background: var(--color-bg);
+		color: var(--muted-fg);
 	}
 
-	[data-dot='failed']::before {
-		border-color: var(--ansi-1);
-		background: var(--ansi-1);
+	.marker :global(svg) {
+		width: 100%;
+		height: 100%;
 	}
 
-	[data-dot='waiting']::before {
-		border-color: var(--status-waiting);
-		background: var(--status-waiting);
+	[data-dot='ok'] > .marker {
+		color: var(--status-done);
 	}
 
-	[data-dot='running']::before,
-	[data-dot='working']::before {
-		border-color: var(--status-working);
-		background: var(--status-working);
+	[data-dot='failed'] > .marker {
+		color: var(--ansi-1);
+	}
+
+	[data-dot='waiting'] > .marker {
+		color: var(--status-waiting);
+	}
+
+	[data-dot='running'] > .marker,
+	[data-dot='working'] > .marker {
+		color: var(--status-working);
 		animation: fade 1.6s ease-in-out var(--pulse);
 	}
 

@@ -364,7 +364,7 @@ async fn claude_edits_writes_and_notebook_edits_become_edit_items_live_and_from_
         ] }),
         json!({ "kind": "thinking", "seconds": 1 }),
         edit("notes.txt", NOTES_DIFF, 1, 1),
-        edit("hello.py", HELLO_DIFF, 1, 0),
+        written("hello.py", HELLO_DIFF, 1),
         edit("analysis.ipynb", &notebook.join("\n"), 1, 3),
         text("I changed `beta` to `BETA` in notes.txt, created hello.py with `print(\"hello\")`, and set the first cell of analysis.ipynb to `print(2)`. ✅"),
         user(DONE),
@@ -397,7 +397,7 @@ async fn each_file_of_a_codex_file_change_becomes_an_edit_item_live_and_from_the
             "status": "ok",
             "output": "alpha\nbeta\ngamma\nobsolete\n",
         }),
-        edit("hello.py", HELLO_DIFF, 1, 0),
+        written("hello.py", HELLO_DIFF, 1),
         edit("notes.txt", NOTES_DIFF, 1, 1),
         edit("old.txt", "@@ -1,1 +0,0 @@\n-obsolete\n", 0, 1),
         text("Changed `beta` to `BETA` in `notes.txt`, added `hello.py` containing `print(\"hello\")`, and deleted `old.txt`."),
@@ -526,6 +526,10 @@ fn user(text: &str) -> Value {
 
 fn edit(path: &str, diff: &str, added: usize, removed: usize) -> Value {
     json!({ "kind": "edit", "path": path, "diff": diff, "added": added, "removed": removed })
+}
+
+fn written(path: &str, diff: &str, added: usize) -> Value {
+    json!({ "kind": "edit", "path": path, "diff": diff, "added": added, "removed": 0, "write": true })
 }
 
 fn text(text: &str) -> Value {

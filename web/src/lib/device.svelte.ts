@@ -15,7 +15,7 @@ export type Terminal = {
 	state: 'live' | 'ended';
 };
 
-export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'other'; name: string; detail: string };
+export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'mcp' | 'other'; name: string; detail: string };
 
 export type Item =
 	| { kind: 'user'; text: string; images: number; template?: string }
@@ -24,7 +24,7 @@ export type Item =
 	| { kind: 'tools'; calls: ToolCall[] }
 	| { kind: 'html'; title: string; html: string }
 	| { kind: 'subagent'; name?: string; task: string; status: Status; activity?: string | null; items: Item[] }
-	| { kind: 'edit'; path: string; diff: string; added: number; removed: number }
+	| { kind: 'edit'; path: string; diff: string; added: number; removed: number; write?: true }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
 

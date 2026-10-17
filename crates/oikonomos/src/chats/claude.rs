@@ -618,7 +618,7 @@ struct Transcript {
     activity: super::Activity,
     commands: HashMap<String, (usize, String)>,
     snippets: HashMap<String, Item>,
-    edits: HashSet<String>,
+    edits: HashMap<String, bool>,
     subagents: HashMap<String, (Subagent, Transcript)>,
     todos: Vec<(String, Todo)>,
     creating: HashSet<String>,
@@ -665,7 +665,7 @@ impl Transcript {
             activity: super::Activity::default(),
             commands: HashMap::new(),
             snippets: HashMap::new(),
-            edits: HashSet::new(),
+            edits: HashMap::new(),
             subagents: HashMap::new(),
             todos: Vec::new(),
             creating: HashSet::new(),
@@ -1182,7 +1182,7 @@ impl Transcript {
                 if let Some(item) = html::item(input) {
                     self.snippets.insert(id.to_owned(), item);
                 } else {
-                    self.call(ToolKind::Other, name, input.to_string());
+                    self.call(ToolKind::Mcp, name, input.to_string());
                 }
             }
             "Bash" => {
@@ -1192,7 +1192,7 @@ impl Transcript {
                 self.commands.insert(id.to_owned(), (index, command));
             }
             "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => {
-                self.edits.insert(id.to_owned());
+                self.edits.insert(id.to_owned(), name == "Write");
             }
             "Read" => self.call(ToolKind::Read, name, self.relative(&text("file_path"))),
             "Grep" | "Glob" => self.call(ToolKind::Search, name, text("pattern")),
@@ -1228,6 +1228,7 @@ impl Transcript {
                 }
                 self.report_todos();
             }
+            _ if name.starts_with("mcp__") => self.call(ToolKind::Mcp, name, input.to_string()),
             _ => self.call(ToolKind::Other, name, input.to_string()),
         }
     }
@@ -1265,8 +1266,8 @@ impl Transcript {
                     self.push(item);
                 }
             }
-            if self.edits.remove(id) && block["is_error"] != true {
-                self.edit(result);
+            if let Some(write) = self.edits.remove(id) && block["is_error"] != true {
+                self.edit(result, write);
             }
             if self.creating.remove(id)
                 && let (Some(task), Some(text)) = (result["task"]["id"].as_str(), result["task"]["subject"].as_str())
@@ -1310,7 +1311,7 @@ impl Transcript {
     }
 
     /// A created file's patch is empty, and a notebook edit reports the whole notebook before and after instead.
-    fn edit(&mut self, result: &Value) {
+    fn edit(&mut self, result: &Value, write: bool) {
         let text = |key: &str| result[key].as_str().unwrap_or_default();
         let diff = match result["structuredPatch"].as_array() {
             Some(_) if result["type"] == "create" => unified("", text("content")),
@@ -1319,7 +1320,7 @@ impl Transcript {
         };
         let path = result["filePath"].as_str().unwrap_or(text("notebook_path"));
         if !path.is_empty() {
-            self.push(Item::edit(self.relative(path), diff));
+            self.push(Item::edit(self.relative(path), diff, write));
         }
     }
 
