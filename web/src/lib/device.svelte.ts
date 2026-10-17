@@ -80,7 +80,7 @@ export type TicketStatus = 'not-started' | 'in-progress' | 'merging' | 'merged' 
 
 export type Note = { author: 'agent' | 'david' | 'oikonomos'; text: string; at: number };
 
-export type Claim = { chat: string; rig: string };
+export type Claim = { chat: string; rig: string; edited?: boolean };
 
 export type Ticket = {
 	number: number;

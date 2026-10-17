@@ -4,7 +4,7 @@
 	import { rigs } from '#lib/config.svelte.ts';
 	import type { Chat, Device, Epic, Ticket } from '#lib/device.svelte.ts';
 	import Blockers from '#lib/epics/Blockers.svelte';
-	import { label, onFrontier, record, toggle, tones, type OpenEpic } from '#lib/epics.svelte.ts';
+	import { label, onFrontier, record, resolved, toggle, tones, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import CaretRight from '~icons/ph/caret-right';
@@ -25,6 +25,8 @@
 	const authors = { agent: 'Agent', david: 'David', oikonomos: 'Oikonomos' };
 	const others = $derived(epic.tickets.filter((other) => other.number !== ticket.number));
 	const startable = $derived(onFrontier(epic, ticket));
+	const reopenable = $derived(resolved(ticket.status));
+	const edited = $derived(!!ticket.claim?.edited);
 	const starting = $derived(open.starting.includes(ticket.number));
 	const error = $derived(open.errors[ticket.number]);
 	const choices = $derived(rigs());
@@ -33,6 +35,14 @@
 	let draft = $state('');
 	let adding = $state(false);
 	let unsaved = $state<string>();
+	let reopening = $state(false);
+	let unmoved = $state<string>();
+
+	async function reopen() {
+		reopening = true;
+		unmoved = await record(epic.slug, { kind: 'ticket.reopened', ticket: ticket.number });
+		reopening = false;
+	}
 
 	async function block(number: number) {
 		refused = await record(epic.slug, { kind: 'blockers.set', ticket: ticket.number, blockers: toggle(ticket.blockers, number) });
@@ -71,9 +81,14 @@
 <div class="ticket" class:phone>
 	{#if phone}
 		<h1>{ticket.title}</h1>
+	{/if}
+	{#if phone || edited}
 		<div class="chips">
-			<span style:--tone={tones[ticket.status]}>{label(ticket.status)}</span>
-			{#if ticket.blockers.length}<span>after {ticket.blockers.join(', ')}</span>{/if}
+			{#if phone}
+				<span style:--tone={tones[ticket.status]}>{label(ticket.status)}</span>
+				{#if ticket.blockers.length}<span>after {ticket.blockers.join(', ')}</span>{/if}
+			{/if}
+			{#if edited}<span style:--tone="var(--status-waiting)">edited since its Chat started</span>{/if}
 		</div>
 	{/if}
 	{#if ticket.attention}
@@ -117,11 +132,15 @@
 		<div class="actions">
 			<Button onclick={onedit}>Edit</Button>
 			{#if chat}<Button onclick={() => onchat(chat.id)}>Open Chat</Button>{/if}
+			{#if reopenable}<Button disabled={reopening} onclick={reopen}>Move to not started</Button>{/if}
 			{#if startable}{@render start()}{/if}
 		</div>
 	{:else if startable}
 		{@render start()}
+	{:else if reopenable}
+		<Button disabled={reopening} onclick={reopen}>Move to not started</Button>
 	{/if}
+	{#if unmoved}<p class="error" role="alert">{unmoved}</p>{/if}
 	{#if startable && epic.setup === null}
 		<p class="hint">Record a Setup Command before starting a Ticket.</p>
 	{/if}
@@ -144,8 +163,11 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--space-2);
-		margin-top: calc(-1 * var(--space-2));
 		font-size: var(--font-size-sm);
+	}
+
+	h1 + .chips {
+		margin-top: calc(-1 * var(--space-2));
 	}
 
 	.chips span {

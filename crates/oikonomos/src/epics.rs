@@ -48,6 +48,8 @@ pub enum Event {
     WorktreeRemoved { ticket: u32 },
     #[serde(rename = "worktree.kept")]
     WorktreeKept { ticket: u32, reason: String },
+    #[serde(rename = "ticket.reopened")]
+    Reopened { ticket: u32 },
     #[serde(other)]
     Unknown,
 }
@@ -147,6 +149,9 @@ pub struct Ticket {
 pub struct Claim {
     pub chat: String,
     pub rig: String,
+    /// The body changed after this Claim was made, and nothing told its Chat.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub edited: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -213,6 +218,9 @@ impl Epic {
             Event::BodySet { ticket, body } => {
                 if let Some(ticket) = self.tickets.get_mut(ticket) {
                     ticket.body = body.clone();
+                    if let Some(claim) = &mut ticket.claim {
+                        claim.edited = true;
+                    }
                 }
             }
             Event::BlockersSet { ticket, blockers } => {
@@ -233,7 +241,7 @@ impl Epic {
             Event::Claimed { ticket, chat, rig, worktree } => {
                 if let Some(ticket) = self.tickets.get_mut(ticket) {
                     ticket.status = Status::InProgress;
-                    ticket.claim = Some(Claim { chat: chat.clone(), rig: rig.clone() });
+                    ticket.claim = Some(Claim { chat: chat.clone(), rig: rig.clone(), edited: false });
                     ticket.worktree = Some(worktree.clone());
                     ticket.attention = None;
                 }
@@ -277,6 +285,17 @@ impl Epic {
             Event::WorktreeKept { ticket, reason } => {
                 if let Some(ticket) = self.tickets.get_mut(ticket) {
                     ticket.attention = Some(reason.clone());
+                }
+            }
+            Event::Reopened { ticket } => {
+                if let Some(ticket) = self.tickets.get_mut(ticket) {
+                    if let Some(kept) = ticket.attention.take() {
+                        ticket.notes.push(Note { author: Author::Oikonomos, text: kept, at: entry.at });
+                    }
+                    ticket.status = Status::NotStarted;
+                    ticket.claim = None;
+                    ticket.worktree = None;
+                    ticket.commit = None;
                 }
             }
             Event::EpicAdded { .. } | Event::Unknown => {}
@@ -325,8 +344,10 @@ impl Epic {
                     None => Ok(()),
                 }
             }
-            Event::SetupFailed { ticket } | Event::WorktreeRemoved { ticket } | Event::WorktreeKept { ticket, .. } => {
-                self.ticket(*ticket).map(drop)
+            Event::SetupFailed { ticket } => self.ticket(*ticket).map(drop),
+            Event::WorktreeRemoved { ticket } | Event::WorktreeKept { ticket, .. } => {
+                let status = self.ticket(*ticket)?.status;
+                if status.resolved() { Ok(()) } else { Err(format!("{slug}/{ticket} is {status}, not merged or skipped")) }
             }
             Event::NoteAdded { ticket, text, .. } => {
                 self.ticket(*ticket)?;
@@ -351,6 +372,14 @@ impl Epic {
             Event::Merged { ticket } | Event::MergeFailed { ticket, .. } => {
                 let status = self.ticket(*ticket)?.status;
                 if status == Status::Merging { Ok(()) } else { Err(format!("{slug}/{ticket} is {status}, not merging")) }
+            }
+            Event::Reopened { ticket } => {
+                let status = self.ticket(*ticket)?.status;
+                if status.resolved() {
+                    Ok(())
+                } else {
+                    Err(format!("{slug}/{ticket} is {status}; only a merged or skipped Ticket can be moved back to not started"))
+                }
             }
             _ => Ok(()),
         }
@@ -715,6 +744,7 @@ mod tests {
             (Event::MergeFailed { ticket: 3, reason: "R".to_owned() }, r#"{"at":9,"kind":"merge.failed","ticket":3,"reason":"R"}"#),
             (Event::WorktreeRemoved { ticket: 3 }, r#"{"at":9,"kind":"worktree.removed","ticket":3}"#),
             (Event::WorktreeKept { ticket: 3, reason: "R".to_owned() }, r#"{"at":9,"kind":"worktree.kept","ticket":3,"reason":"R"}"#),
+            (Event::Reopened { ticket: 3 }, r#"{"at":9,"kind":"ticket.reopened","ticket":3}"#),
         ];
         for (event, line) in cases {
             let entry = Entry { at: 9, event };
@@ -801,7 +831,7 @@ mod tests {
         let lines = [ADDED.to_owned(), ticket(1, &[]), event("setup.failed", 1), claimed(1)];
         let epic = folded(&lines).unwrap();
         let held = &epic.tickets[&1];
-        assert_eq!(held.claim, Some(Claim { chat: "chat1".to_owned(), rig: "Claude".to_owned() }));
+        assert_eq!(held.claim, Some(Claim { chat: "chat1".to_owned(), rig: "Claude".to_owned(), edited: false }));
         assert_eq!(held.worktree.as_deref(), Some(Path::new("/w/1")));
         assert_eq!(held.attention, None, "a Claim clears what the failed setup flagged");
 
@@ -827,8 +857,10 @@ mod tests {
             ticket(1, &[]),
             ticket(2, &[1]),
             ticket(3, &[]),
+            ticket(4, &[]),
             claimed(3),
             completed(3),
+            claimed(4),
         ])
         .unwrap();
         let claim = |ticket| Event::Claimed { ticket, chat: "c".to_owned(), rig: "R".to_owned(), worktree: PathBuf::from("/w") };
@@ -841,11 +873,86 @@ mod tests {
             (Event::Merged { ticket: 1 }, "loop/1 is not started, not merging"),
             (Event::BranchCut { base: "main".to_owned(), worktree: PathBuf::from("/w") }, "loop already has its Epic branch"),
             (claim(9), "loop has no Ticket 9"),
+            (Event::Reopened { ticket: 1 }, "loop/1 is not started; only a merged or skipped Ticket can be moved back to not started"),
+            (Event::Reopened { ticket: 4 }, "loop/4 is in progress; only a merged or skipped Ticket can be moved back to not started"),
+            (Event::Reopened { ticket: 3 }, "loop/3 is merging; only a merged or skipped Ticket can be moved back to not started"),
+            (Event::Reopened { ticket: 9 }, "loop has no Ticket 9"),
+            (Event::WorktreeRemoved { ticket: 4 }, "loop/4 is in progress, not merged or skipped"),
+            (Event::WorktreeKept { ticket: 3, reason: "r".to_owned() }, "loop/3 is merging, not merged or skipped"),
         ];
         for (event, error) in refused {
             assert_eq!(epic.check(&event), Err(error.to_owned()));
         }
         assert_eq!(epic.check(&claim(1)), Ok(()));
         assert_eq!(epic.check(&Event::Merged { ticket: 3 }), Ok(()));
+    }
+
+    fn reopened(number: u32) -> String {
+        format!(r#"{{"at":7,"kind":"ticket.reopened","ticket":{number}}}"#)
+    }
+
+    #[test]
+    fn reopening_a_merged_or_skipped_ticket_returns_it_to_the_frontier_without_its_claim() {
+        use Status::*;
+        let base = [ADDED.to_owned(), ticket(1, &[]), ticket(2, &[1])];
+        let merged = vec![claimed(1), completed(1), event("ticket.merged", 1), event("worktree.removed", 1)];
+        let kept = vec![claimed(1), event("ticket.skipped", 1), event("worktree.kept", 1)];
+        let cases: Vec<(&str, Vec<String>)> = vec![
+            ("a merged Ticket", merged.clone()),
+            ("a skipped Ticket whose worktree was kept", kept.clone()),
+            ("a merged Ticket before its cleanup", vec![claimed(1), completed(1), event("ticket.merged", 1)]),
+            ("a Ticket merged a second time", [merged.clone(), vec![reopened(1)], merged.clone()].concat()),
+        ];
+        for (name, events) in cases {
+            let resolved = folded(&[base.to_vec(), events.clone()].concat()).unwrap();
+            assert!(resolved.tickets[&1].status.resolved(), "{name}");
+            assert_eq!(resolved.check(&Event::Reopened { ticket: 1 }), Ok(()), "{name}");
+            let epic = folded(&[base.to_vec(), events, vec![reopened(1)]].concat()).unwrap();
+            assert_eq!(epic.tickets.values().map(|ticket| ticket.status).collect::<Vec<_>>(), [NotStarted, NotStarted], "{name}");
+            assert_eq!(frontier(&epic), [1], "{name}: its dependent waits again");
+            let ticket = &epic.tickets[&1];
+            assert_eq!((&ticket.claim, &ticket.worktree, &ticket.attention, &ticket.commit), (&None, &None, &None, &None), "{name}");
+        }
+
+        let epic = folded(&[base.to_vec(), kept, vec![reopened(1)]].concat()).unwrap();
+        assert_eq!(
+            epic.tickets[&1].notes,
+            [
+                Note { author: Author::Agent, text: "Why 1".to_owned(), at: 6 },
+                Note { author: Author::Oikonomos, text: "Why 1".to_owned(), at: 7 }
+            ],
+            "a kept worktree's flag becomes a Note"
+        );
+
+        let again = r#"{"at":8,"kind":"ticket.claimed","ticket":1,"chat":"again","rig":"Codex","worktree":"/w/1-2"}"#.to_owned();
+        let epic = folded(&[base.to_vec(), merged, vec![reopened(1), again]].concat()).unwrap();
+        let ticket = &epic.tickets[&1];
+        assert_eq!((ticket.status, frontier(&epic)), (InProgress, vec![]));
+        assert_eq!(ticket.claim, Some(Claim { chat: "again".to_owned(), rig: "Codex".to_owned(), edited: false }));
+        assert_eq!(ticket.worktree.as_deref(), Some(Path::new("/w/1-2")));
+    }
+
+    #[test]
+    fn a_body_set_after_the_current_claim_marks_it_edited() {
+        let edit = |number: u32| format!(r#"{{"at":5,"kind":"ticket.body.set","ticket":{number},"body":"Edited"}}"#);
+        let skipped = event("ticket.skipped", 1);
+        let cases: Vec<(&str, Vec<String>, Option<bool>)> = vec![
+            ("an edit with no Claim", vec![edit(1)], None),
+            ("an edit before the Claim", vec![edit(1), claimed(1)], Some(false)),
+            ("an edit after the Claim", vec![claimed(1), edit(1)], Some(true)),
+            ("another Ticket's edit", vec![claimed(1), edit(2)], Some(false)),
+            ("an edit before the Verdict", vec![claimed(1), edit(1), completed(1), event("ticket.merged", 1)], Some(true)),
+            ("an edit after the Verdict", vec![claimed(1), completed(1), edit(1)], Some(true)),
+            ("reopening, which drops the Claim", vec![claimed(1), edit(1), skipped.clone(), reopened(1)], None),
+            ("the next Claim", vec![claimed(1), edit(1), skipped, reopened(1), claimed(1)], Some(false)),
+        ];
+        for (name, events, expected) in cases {
+            let epic = folded(&[vec![ADDED.to_owned(), ticket(1, &[]), ticket(2, &[])], events].concat()).unwrap();
+            assert_eq!(epic.tickets[&1].claim.as_ref().map(|claim| claim.edited), expected, "{name}");
+        }
+
+        let claim = |edited| serde_json::to_value(Claim { chat: "c".to_owned(), rig: "R".to_owned(), edited }).unwrap();
+        assert_eq!(claim(false), serde_json::json!({ "chat": "c", "rig": "R" }));
+        assert_eq!(claim(true), serde_json::json!({ "chat": "c", "rig": "R", "edited": true }));
     }
 }

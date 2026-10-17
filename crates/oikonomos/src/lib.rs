@@ -197,6 +197,7 @@ async fn record_epic(State(state): State<AppState>, Path(slug): Path<String>, Js
         | Event::TicketAdded { .. }
         | Event::BodySet { .. }
         | Event::BlockersSet { .. }
+        | Event::Reopened { .. }
         | Event::Archived => true,
         _ => false,
     };

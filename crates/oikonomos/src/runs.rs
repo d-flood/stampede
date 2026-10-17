@@ -82,8 +82,7 @@ impl Runs {
                 None => self.cut(&epic, project, &setup, number).await?,
             }
         };
-        let worktree = self.worktree(slug, &number.to_string());
-        let branch = ticket_branch(slug, number);
+        let (worktree, branch) = self.fresh(Path::new(&integration), slug, number).await;
         git::run(Path::new(&integration), &["worktree", "add", "-b", &branch, &worktree, &epic_branch(slug)]).await?;
         if let Err(note) = run_setup(&setup, &worktree, "this Ticket's new worktree").await {
             discard(&integration, &worktree, &branch).await;
@@ -102,8 +101,22 @@ impl Runs {
             discard(&integration, &worktree, &branch).await;
             return Err(error);
         }
-        self.chats.send(&chat.id, &self.prompt(&epic, number), false, &[]);
+        self.chats.send(&chat.id, &self.prompt(&epic, number, &branch), false, &[]);
         Ok(chat.id)
+    }
+
+    /// The worktree and branch `<n>`, or `<n>-2`, `<n>-3`… when an earlier Claim on the Ticket left them behind.
+    async fn fresh(&self, repo: &Path, slug: &str, number: u32) -> (String, String) {
+        let mut attempt = 1;
+        loop {
+            let name = if attempt == 1 { number.to_string() } else { format!("{number}-{attempt}") };
+            let (worktree, branch) = (self.worktree(slug, &name), ticket_branch(slug, &name));
+            let exists = git::run(repo, &["rev-parse", "-q", "--verify", &format!("refs/heads/{branch}")]).await.is_ok();
+            if !exists && !Path::new(&worktree).exists() {
+                return (worktree, branch);
+            }
+            attempt += 1;
+        }
     }
 
     /// Cuts the Epic branch from the Project's current branch, checked out in a new Integration Worktree.
@@ -135,13 +148,12 @@ impl Runs {
     }
 
     /// The Ticket Template, then the Ticket itself, which `templates::recognize` shows as what followed `/ticket`.
-    fn prompt(&self, epic: &Epic, number: u32) -> String {
+    fn prompt(&self, epic: &Epic, number: u32, branch: &str) -> String {
         let ticket = &epic.tickets[&number];
         let reference = format!("{}/{number}", epic.slug);
         format!(
-            "{}\n\nYour Ticket is {reference}, on the branch `{}`. On this Host `oikonomos` is `{}`; run it by that path if it is not on your PATH.\n\n## {reference}: {}\n\n{}",
+            "{}\n\nYour Ticket is {reference}, on the branch `{branch}`. On this Host `oikonomos` is `{}`; run it by that path if it is not on your PATH.\n\n## {reference}: {}\n\n{}",
             TICKET.opening(&self.data_dir),
-            ticket_branch(&epic.slug, number),
             quote(&self.cli),
             ticket.title,
             ticket.body.trim_end()
@@ -243,7 +255,8 @@ impl Runs {
         let ticket = epic.ticket(number)?;
         let integration = epic.integration.as_deref().ok_or_else(|| format!("{slug} has no Integration Worktree"))?;
         let worktree = ticket.worktree.as_deref().ok_or_else(|| format!("{slug}/{number} has no Ticket Worktree"))?;
-        let (path, branch) = (worktree.to_string_lossy(), ticket_branch(slug, number));
+        let name = worktree.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+        let (path, branch) = (worktree.to_string_lossy(), ticket_branch(slug, &name));
         let kept = |reason: String| Event::WorktreeKept { ticket: number, reason };
         let event = match git::run(worktree, &["status", "--porcelain"]).await {
             Err(_) if !worktree.exists() => {
@@ -297,8 +310,8 @@ fn epic_branch(slug: &str) -> String {
     format!("oikonomos/{slug}/epic")
 }
 
-fn ticket_branch(slug: &str, number: u32) -> String {
-    format!("oikonomos/{slug}/{number}")
+fn ticket_branch(slug: &str, name: &str) -> String {
+    format!("oikonomos/{slug}/{name}")
 }
 
 /// Runs the Setup Command in a fresh worktree, giving a Note with the end of its output when it fails.

@@ -120,6 +120,20 @@ impl Loop {
         self.follow(|message| message["type"] == "chat.status" && message["chatId"] == chat_id && message["status"] == status).await;
     }
 
+    async fn record(&self, event: &Value) -> (u16, String) {
+        let url = format!("http://127.0.0.1:{}/api/epics/work", self.server.port);
+        let request = reqwest::Client::new().post(url).header("Content-Type", "application/json").body(event.to_string());
+        let response = request.send().await.unwrap();
+        (response.status().as_u16(), response.text().await.unwrap())
+    }
+
+    /// Every first prompt and message the fake Claude Chats were sent.
+    fn prompts(&self) -> Vec<String> {
+        let stdin = fs::read_to_string(self.root.join("home/.claude/fake-received.jsonl")).unwrap();
+        let messages = stdin.lines().map(|line| serde_json::from_str::<Value>(line).unwrap());
+        messages.filter(|message| message["type"] == "user").map(|message| message["message"]["content"].as_str().unwrap().to_owned()).collect()
+    }
+
     fn log(&self) -> Vec<Value> {
         let log = fs::read_to_string(self.root.join("data/epics/work.jsonl")).unwrap();
         log.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
@@ -363,4 +377,58 @@ async fn an_approval_or_a_turn_without_a_verdict_never_completes_the_ticket() {
         assert!(lp.ok(&["ticket", "work/1"], "").contains("Status: in progress"), "{rig}");
         assert_eq!(lp.kinds().last().unwrap(), "ticket.claimed", "{rig}");
     }
+}
+
+#[tokio::test]
+async fn a_reopened_ticket_starts_again_in_a_fresh_worktree_and_an_edit_mid_chat_is_only_marked() {
+    let mut lp = Loop::new("loop-ticket-reopen").await;
+    lp.ok(&["ticket", "add", "work", "1", "--title", "Write work.txt", "--body", "-"], "Write **work.txt**.\n");
+    lp.ok(&["ticket", "add", "work", "2", "--title", "Then more", "--blocked-by", "1", "--body", "-"], "More.\n");
+    lp.ok(&["epic", "set-setup", "work", ""], "");
+    let reopen = json!({ "kind": "ticket.reopened", "ticket": 1 });
+    let refused = |status: &str| (400, format!("work/1 is {status}; only a merged or skipped Ticket can be moved back to not started"));
+    assert_eq!(lp.record(&reopen).await, refused("not started"));
+
+    let first = lp.start(1, "Verdict").await.unwrap();
+    lp.ticket_until(1, |ticket| ticket["status"] == "merged" && ticket.get("worktree").is_none()).await;
+    assert_eq!(lp.ok(&["frontier", "work"], ""), "work/2 Then more\n");
+    assert_eq!(lp.record(&reopen).await, (204, String::new()));
+    let reopened = lp.ticket_until(1, |ticket| ticket["status"] == "not-started").await;
+    assert!(reopened.get("claim").is_none() && reopened.get("worktree").is_none(), "{reopened}");
+    assert_eq!(lp.ok(&["frontier", "work"], ""), "work/1 Write work.txt\n", "its dependent waits for it again");
+
+    let second = lp.start(1, "Done").await.unwrap();
+    assert_ne!(second, first);
+    lp.chat_status(&second, "done").await;
+    let (worktree, integration) = (lp.worktree("1"), lp.worktree("integration"));
+    assert_eq!(output(&worktree, &["rev-parse", "HEAD"]), output(&integration, &["rev-parse", "HEAD"]), "cut from the Epic branch");
+    assert_eq!(fs::read_to_string(worktree.join("work.txt")).unwrap(), "Done by the fake.\n");
+    assert_eq!(lp.record(&reopen).await, refused("in progress"));
+
+    let edit = json!({ "kind": "ticket.body.set", "ticket": 1, "body": "Write work.txt again.\n" });
+    assert_eq!(lp.record(&edit).await, (204, String::new()));
+    let edited = lp.ticket_until(1, |ticket| ticket["claim"]["edited"] == true).await;
+    assert_eq!((&edited["claim"]["chat"], &edited["status"]), (&json!(second), &json!("in-progress")));
+    assert_eq!(lp.prompts().len(), 2, "nothing is sent to the Chat");
+
+    fs::write(worktree.join("notes.txt"), "Left behind.\n").unwrap();
+    lp.cli.ok(&worktree, &["skip", "work/1", "Nothing to do."], "");
+    let kept = lp.ticket_until(1, |ticket| ticket["status"] == "skipped" && ticket.get("attention").is_some()).await;
+    assert_eq!(lp.record(&reopen).await, (204, String::new()));
+    let reopened = lp.ticket_until(1, |ticket| ticket["status"] == "not-started").await;
+    assert_eq!(reopened.get("attention"), None);
+    let note = reopened["notes"].as_array().unwrap().last().unwrap();
+    assert_eq!((&note["author"], &note["text"]), (&json!("oikonomos"), &kept["attention"]), "the kept worktree is Noted");
+
+    let third = lp.start(1, "Verdict").await.unwrap();
+    let merged = lp.ticket_until(1, |ticket| ticket["status"] == "merged" && ticket.get("worktree").is_none()).await;
+    assert_eq!(merged["claim"]["chat"], third);
+    let fresh = lp.worktree("1-2");
+    let claimed: Vec<_> = lp.log().into_iter().filter(|entry| entry["kind"] == "ticket.claimed").map(|entry| entry["worktree"].clone()).collect();
+    assert_eq!(claimed, [json!(worktree), json!(worktree), json!(fresh)], "a kept worktree is never reused");
+    assert!(lp.prompts()[2].contains("on the branch `oikonomos/work/1-2`"));
+    assert_eq!(fs::read_to_string(worktree.join("notes.txt")).unwrap(), "Left behind.\n");
+    assert!(has_branch(&lp.repo, "oikonomos/work/1"));
+    assert!(!fresh.exists() && !has_branch(&lp.repo, "oikonomos/work/1-2"), "the fresh worktree is cleaned up by its own name");
+    assert_eq!(lp.kinds().iter().filter(|kind| *kind == "ticket.reopened").count(), 2);
 }

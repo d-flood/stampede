@@ -37,6 +37,7 @@ export type Edit =
 	| { kind: 'ticket.body.set'; ticket: number; body: string }
 	| { kind: 'blockers.set'; ticket: number; blockers: number[] }
 	| { kind: 'note.added'; ticket: number; author: 'david'; text: string }
+	| { kind: 'ticket.reopened'; ticket: number }
 	| { kind: 'epic.archived' };
 
 export async function record(slug: string, edit: Edit): Promise<string | undefined> {

@@ -280,3 +280,71 @@ test('Start on a Frontier Ticket works it with a fake Agent until it is merged',
 	await page.screenshot({ path: test.info().outputPath('unblocked.png') });
 	await showFiles(await showSidebar(page));
 });
+
+test('a merged Ticket moved back to not started is worked again on the Epic branch, and an edit mid-Chat is marked', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
+	const slug = `reopen-${project.name}`;
+	const data = `${process.env.OIKONOMOS_E2E_ROOT}/data`;
+	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	mkdirSync(root, { recursive: true });
+	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
+	git('init', '-q');
+	git('config', 'user.name', 'oikonomos');
+	git('config', 'user.email', 'e2e@oikonomos.invalid');
+	git('config', 'commit.gpgsign', 'false');
+	writeFileSync(`${root}/README`, 'reopen\n');
+	git('add', 'README');
+	git('commit', '-qm', 'Initial commit');
+	const cli = (stdin: string, ...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', data], { cwd: root, input: stdin });
+	cli('# Reopen\n', 'epic', 'add', slug, '--title', 'Reopen one', '--brief', '-');
+	cli('Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
+	cli('', 'epic', 'set-setup', slug, '');
+
+	await openProject(page, slug);
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
+	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
+	const row = panel.getByRole('region', { name: 'Tickets' }).getByRole('button', { name: /^1\s*The work/ });
+	await row.click();
+	const start = panel.getByRole('button', { name: 'Start', exact: true });
+	const rig = panel.getByRole('combobox', { name: 'Rig' });
+	const reopen = panel.getByRole('button', { name: 'Move to not started' });
+	await expect(reopen).toHaveCount(0);
+	await rig.selectOption('Fake Claude Verdict');
+	await start.click();
+	const status = phone ? panel.locator('.chips') : row;
+	await expect(status).toContainText('merged', { timeout: 15000 });
+	const log = () => readFileSync(`${data}/epics/${slug}.jsonl`, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+	await expect.poll(() => log().at(-1).kind).toBe('worktree.removed');
+
+	await reopen.click();
+	await expect(status).toContainText('not started');
+	await expect(reopen).toHaveCount(0);
+	await expect(start).toBeEnabled();
+	await page.screenshot({ path: test.info().outputPath('reopened.png') });
+	await rig.selectOption('Fake Claude');
+	await start.click();
+	await expect(status).toContainText('in progress', { timeout: 15000 });
+	const claims = log().filter((entry) => entry.kind === 'ticket.claimed');
+	expect(claims).toHaveLength(2);
+	expect(readFileSync(`${claims[1].worktree}/work.txt`, 'utf8')).toBe('Done by the fake.\n');
+
+	const marker = panel.getByText('edited since its Chat started', { exact: true });
+	await expect(marker).toHaveCount(0);
+	await (phone ? panel : panel.getByRole('region', { name: 'Tickets' })).getByRole('button', { name: 'Edit', exact: true }).click();
+	await panel.getByRole('textbox', { name: 'Body' }).click();
+	await page.keyboard.press('ControlOrMeta+a');
+	await page.keyboard.type('Write work.txt, then say so.');
+	await panel.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(marker).toBeVisible();
+	await expect(status).toContainText('in progress');
+	await page.screenshot({ path: test.info().outputPath('edited.png') });
+	if (phone) {
+		await panel.getByRole('button', { name: `Back to ${slug}` }).click();
+		await expect(row).toContainText('in progress · Fake Claude');
+		await expect(row).toContainText('· edited');
+	}
+	expect(log().map((entry) => entry.kind).slice(-4)).toEqual(['worktree.removed', 'ticket.reopened', 'ticket.claimed', 'ticket.body.set']);
+	await showFiles(await showSidebar(page));
+});

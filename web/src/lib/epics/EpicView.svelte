@@ -222,7 +222,7 @@
 								<span class="text">
 									<span class="title">{ticket.title}</span>
 									<span class="sub" style:--tone={tones[ticket.status]}>
-										{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}{#if holder(ticket)}{' '}· {holder(ticket)}{/if}
+										{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}{#if holder(ticket)}{' '}· {holder(ticket)}{/if}{#if ticket.claim?.edited}{' '}· edited{/if}
 									</span>
 								</span>
 								<CaretRight />
