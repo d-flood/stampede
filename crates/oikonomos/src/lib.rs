@@ -37,7 +37,7 @@ use tokio::sync::{broadcast, watch};
 use attention::Feed;
 use chats::Chats;
 use config::{Config, Editor, Font, Keybar, Rig};
-use epics::Epics;
+use epics::{Author, Epics, Event};
 pub use chats::{HoldChatArgs, hold_chat, chat_tools};
 pub use cli::{CliCommand, cli};
 pub use holder::{HoldArgs, hold};
@@ -110,6 +110,7 @@ fn router(state: AppState) -> Router {
         .route("/api/push/subscribe", post(push::subscribe))
         .route("/api/devices/{id}/layout", get(layouts::read).put(layouts::write))
         .route("/api/devices/{id}/closing", post(layouts::closing))
+        .route("/api/epics/{slug}", post(record_epic))
         .route("/api/projects/{id}/tree", get(files::tree))
         .route("/api/projects/{id}/files", get(files::paths))
         .route("/api/projects/{id}/file", get(files::read).head(files::exists).put(files::write))
@@ -181,6 +182,23 @@ async fn set_theme(State(state): State<AppState>, Json(name): Json<String>) -> R
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .map(Json)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+
+async fn record_epic(State(state): State<AppState>, Path(slug): Path<String>, Json(event): Json<Event>) -> Result<StatusCode, files::Failure> {
+    let editable = match &event {
+        Event::NoteAdded { author, .. } => *author == Author::David,
+        Event::BriefSet { .. }
+        | Event::SetupSet { .. }
+        | Event::TicketAdded { .. }
+        | Event::BodySet { .. }
+        | Event::BlockersSet { .. }
+        | Event::Archived => true,
+        _ => false,
+    };
+    if !editable {
+        return Err((StatusCode::FORBIDDEN, "a Device records only David's edits; Epics come from the CLI".to_owned()));
+    }
+    state.epics.record(&slug, event).map(|()| StatusCode::NO_CONTENT).map_err(|error| (StatusCode::BAD_REQUEST, error))
 }
 
 async fn font(State(state): State<AppState>) -> Json<Font> {

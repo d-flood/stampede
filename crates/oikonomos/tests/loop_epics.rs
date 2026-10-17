@@ -125,3 +125,65 @@ async fn a_cli_change_reaches_every_device_subscribed_to_the_epics_project() {
     let edited = changed(&mut socket, 1).await;
     assert_eq!(edited[&worktree_id]["tickets"][0]["body"], "Build the store first.\n");
 }
+
+#[tokio::test]
+async fn a_devices_edits_are_recorded_as_the_events_the_cli_writes() {
+    let server = Server::start("loop-edits").await;
+    let root = server.root.path().to_owned();
+    let cli = Cli { data_dir: root.join("data") };
+    let repo = init(&root, "repo");
+    cli.ok(&repo, &["epic", "add", "loop", "--title", "The loop", "--brief", "-"], "# The loop\n");
+    cli.ok(&repo, &["ticket", "add", "loop", "1", "--title", "The store", "--body", "-"], "Build the store.\n");
+    cli.ok(&repo, &["note", "loop/1", "From an Agent."], "");
+    let log = root.join("data/epics/loop.jsonl");
+    let written = fs::read_to_string(&log).unwrap().lines().count();
+    let mut socket = device(server.port).await;
+    let project_id = open(&mut socket, &repo).await;
+    subscribe(&mut socket, &project_id).await;
+
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{}/api/epics/loop", server.port);
+    let record = async |event: &Value| {
+        let request = client.post(&url).header("Content-Type", "application/json").body(event.to_string());
+        let response = request.send().await.unwrap();
+        (response.status().as_u16(), response.text().await.unwrap())
+    };
+    let edits = [
+        json!({ "kind": "brief.set", "brief": "# The loop, edited\n" }),
+        json!({ "kind": "setup.set", "command": "" }),
+        json!({ "kind": "ticket.added", "ticket": 2, "title": "The tab", "body": "Show it.\n", "blockers": [1] }),
+        json!({ "kind": "ticket.body.set", "ticket": 1, "body": "Build the store first.\n" }),
+        json!({ "kind": "blockers.set", "ticket": 1, "blockers": [] }),
+        json!({ "kind": "note.added", "ticket": 1, "author": "david", "text": "From David." }),
+        json!({ "kind": "epic.archived" }),
+    ];
+    for edit in &edits {
+        assert_eq!(record(edit).await, (204, String::new()), "{edit}");
+        received(&mut socket, "epic.changed").await;
+    }
+    let device_only = "a Device records only David's edits; Epics come from the CLI";
+    let refusals = [
+        (json!({ "kind": "blockers.set", "ticket": 1, "blockers": [2] }), 400, "those Blockers would make a cycle: loop/1 is blocked by loop/2, which is blocked by loop/1"),
+        (json!({ "kind": "ticket.body.set", "ticket": 2, "body": " \n" }), 400, "the body is empty"),
+        (json!({ "kind": "note.added", "ticket": 1, "author": "agent", "text": "Posing." }), 403, device_only),
+        (json!({ "kind": "epic.added", "slug": "loop", "title": "T", "brief": "B", "project": "/" }), 403, device_only),
+        (json!({ "kind": "ticket.merged", "ticket": 1 }), 403, device_only),
+    ];
+    for (event, status, error) in refusals {
+        assert_eq!(record(&event).await, (status, error.to_owned()), "{event}");
+    }
+
+    let recorded: Vec<Value> = fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .skip(written)
+        .map(|line| {
+            let mut entry: Value = serde_json::from_str(line).unwrap();
+            assert!(entry.as_object_mut().unwrap().remove("at").unwrap().is_u64(), "{line}");
+            entry
+        })
+        .collect();
+    assert_eq!(recorded, edits);
+    let ticket = cli.ok(&repo, &["ticket", "loop/1"], "");
+    assert!(ticket.ends_with("Build the store first.\n\n## Notes\n\n- agent: From an Agent.\n- david: From David.\n"), "{ticket}");
+}

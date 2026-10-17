@@ -2,6 +2,7 @@
 	import { editor as settings } from '#lib/config.svelte.ts';
 	import type { Device } from '#lib/device.svelte.ts';
 	import { changeMarkers, setBaseline } from '#lib/editor/changes.ts';
+	import { keybindings } from '#lib/editor/keymap.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { languageServer } from '#lib/editor/lsp-editor.ts';
 	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
@@ -14,7 +15,7 @@
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
-	import { Compartment, EditorState, type Extension } from '@codemirror/state';
+	import { Compartment, EditorState } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
 	import { basicSetup } from 'codemirror';
 	import { onMount } from 'svelte';
@@ -123,10 +124,6 @@
 		view.dispatch({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: 'center' }) });
 		file.cursor = undefined;
 	});
-
-	async function keybindings(name: 'standard' | 'vim'): Promise<Extension> {
-		return name === 'vim' ? (await import('@replit/codemirror-vim')).vim() : [];
-	}
 </script>
 
 <div class="editor" role="tabpanel" hidden={!active}>

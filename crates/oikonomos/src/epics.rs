@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt,
     fs::{self, File, OpenOptions},
     io::{self, Write},
@@ -185,11 +185,13 @@ impl Epic {
     fn check(&self, event: &Event) -> Result<(), String> {
         let slug = &self.slug;
         match event {
-            Event::TicketAdded { ticket, title, blockers, .. } => {
+            Event::BriefSet { brief } => filled(brief, "Brief"),
+            Event::TicketAdded { ticket, title, body, blockers } => {
                 if self.tickets.contains_key(ticket) {
                     return Err(format!("{slug}/{ticket} already exists"));
                 }
                 one_line(title)?;
+                filled(body, "body")?;
                 if blockers.contains(ticket) {
                     return Err(format!("{slug}/{ticket} cannot block itself"));
                 }
@@ -198,13 +200,50 @@ impl Epic {
                     None => Ok(()),
                 }
             }
-            Event::BodySet { ticket, .. } | Event::BlockersSet { ticket, .. } => self.ticket(*ticket).map(drop),
+            Event::BodySet { ticket, body } => {
+                self.ticket(*ticket)?;
+                filled(body, "body")
+            }
+            Event::BlockersSet { ticket, blockers } => {
+                self.ticket(*ticket)?;
+                if blockers.contains(ticket) {
+                    return Err(format!("{slug}/{ticket} cannot block itself"));
+                }
+                if let Some(missing) = blockers.iter().find(|blocker| !self.tickets.contains_key(blocker)) {
+                    return Err(format!("{slug} has no Ticket {missing} to block {slug}/{ticket}"));
+                }
+                let mut seen = BTreeSet::new();
+                match blockers.iter().find_map(|&blocker| self.chain(blocker, *ticket, &mut seen)) {
+                    Some(chain) => {
+                        let chain: Vec<_> = chain.iter().map(|number| format!("{slug}/{number}")).collect();
+                        Err(format!(
+                            "those Blockers would make a cycle: {slug}/{ticket} is blocked by {}",
+                            chain.join(", which is blocked by ")
+                        ))
+                    }
+                    None => Ok(()),
+                }
+            }
             Event::NoteAdded { ticket, text, .. } => {
                 self.ticket(*ticket)?;
-                if text.trim().is_empty() { Err("the Note is empty".to_owned()) } else { Ok(()) }
+                filled(text, "Note")
             }
             _ => Ok(()),
         }
+    }
+
+    fn chain(&self, from: u32, to: u32, seen: &mut BTreeSet<u32>) -> Option<Vec<u32>> {
+        if from == to {
+            return Some(vec![to]);
+        }
+        if !seen.insert(from) {
+            return None;
+        }
+        self.tickets.get(&from)?.blockers.iter().find_map(|&next| {
+            let mut chain = self.chain(next, to, seen)?;
+            chain.insert(0, from);
+            Some(chain)
+        })
     }
 
     pub fn ticket(&self, number: u32) -> Result<&Ticket, String> {
@@ -228,6 +267,10 @@ fn one_line(title: &str) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+fn filled(text: &str, what: &str) -> Result<(), String> {
+    if text.trim().is_empty() { Err(format!("the {what} is empty")) } else { Ok(()) }
 }
 
 fn valid_slug(slug: &str) -> bool {
@@ -421,6 +464,37 @@ mod tests {
             epic.tickets.get_mut(&3).unwrap().status = status;
             assert_eq!(frontier(&epic).contains(&3), status == NotStarted, "{status}");
         }
+    }
+
+    #[test]
+    fn blocker_changes_that_would_make_a_cycle_are_refused_naming_it() {
+        let mut epic = folded(&[ADDED.to_owned(), ticket(1, &[]), ticket(2, &[1]), ticket(3, &[2]), ticket(4, &[])]).unwrap();
+        let cycle = |path: &str| Err(format!("those Blockers would make a cycle: {path}"));
+        let steps: Vec<(u32, &[u32], Result<(), String>)> = vec![
+            (1, &[3], cycle("loop/1 is blocked by loop/3, which is blocked by loop/2, which is blocked by loop/1")),
+            (2, &[1, 3], cycle("loop/2 is blocked by loop/3, which is blocked by loop/2")),
+            (3, &[3], Err("loop/3 cannot block itself".to_owned())),
+            (3, &[9], Err("loop has no Ticket 9 to block loop/3".to_owned())),
+            (9, &[1], Err("loop has no Ticket 9".to_owned())),
+            (4, &[2, 3], Ok(())),
+            (2, &[4], cycle("loop/2 is blocked by loop/4, which is blocked by loop/2")),
+            (2, &[], Ok(())),
+            (1, &[3], Ok(())),
+            (2, &[1], cycle("loop/2 is blocked by loop/1, which is blocked by loop/3, which is blocked by loop/2")),
+            (3, &[], Ok(())),
+            (2, &[1], Ok(())),
+        ];
+        for (number, blockers, expected) in steps {
+            let event = Event::BlockersSet { ticket: number, blockers: blockers.to_vec() };
+            let checked = epic.check(&event);
+            assert_eq!(checked, expected, "{number} after {blockers:?}");
+            if checked.is_ok() {
+                epic.apply(&Entry { at: 9, event });
+            }
+        }
+        let blockers: Vec<_> = epic.tickets.iter().map(|(number, ticket)| (*number, ticket.blockers.clone())).collect();
+        assert_eq!(blockers, [(1, vec![3]), (2, vec![1]), (3, vec![]), (4, vec![2, 3])]);
+        assert_eq!(frontier(&epic), [3]);
     }
 
     #[test]

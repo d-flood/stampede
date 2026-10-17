@@ -266,6 +266,7 @@
 				break;
 			case 'epics.changed':
 				epics[message.projectId] = message.epics;
+				closeArchived(message.projectId);
 				break;
 			case 'epic.changed': {
 				const { epic } = message;
@@ -273,6 +274,7 @@
 				const index = listed.findIndex((other) => other.slug >= epic.slug);
 				if (listed[index]?.slug === epic.slug) listed[index] = epic;
 				else listed.splice(index === -1 ? listed.length : index, 0, epic);
+				closeArchived(message.projectId);
 				break;
 			}
 			case 'fs.changed':
@@ -565,6 +567,11 @@
 	function closeEpic(epic: OpenEpic) {
 		leave(epic.projectId, epic.id);
 		epicTabs[epic.projectId] = epicTabs[epic.projectId].filter((open) => open !== epic);
+	}
+
+	function closeArchived(projectId: string) {
+		const archived = (epics[projectId] ?? []).filter((epic) => epic.archived).map((epic) => epic.slug);
+		for (const epic of (epicTabs[projectId] ?? []).filter((open) => archived.includes(open.slug))) closeEpic(epic);
 	}
 
 	function openConfig() {
