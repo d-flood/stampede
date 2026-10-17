@@ -16,7 +16,9 @@ test('past Claude questions reopen with their full options, previews and answers
 	const entries = [
 		{ type: 'user', uuid: 'prompt', parentUuid: null, sessionId: session, message: { role: 'user', content: 'Review previous choices' } },
 		{ type: 'assistant', uuid: 'question', parentUuid: 'prompt', sessionId: session, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'past-question', name: 'AskUserQuestion', input: { questions } }] } },
-		{ type: 'user', uuid: 'answer', parentUuid: 'question', sessionId: session, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'past-question', content: 'Answered' }] }, toolUseResult: { questions, answers: { 'Which icon mapping?': 'Distinct icons' } } }
+		{ type: 'assistant', uuid: 'parallel-tool', parentUuid: 'question', sessionId: session, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'read', name: 'Read', input: { file_path: 'notes.txt' } }] } },
+		{ type: 'user', uuid: 'answer', parentUuid: 'question', sessionId: session, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'past-question', content: 'Answered' }] }, toolUseResult: { questions, answers: { 'Which icon mapping?': 'Distinct icons' } } },
+		{ type: 'user', uuid: 'parallel-result', parentUuid: 'parallel-tool', sessionId: session, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'read', content: 'Notes' }] } }
 	];
 	writeFileSync(`${sessions}/${session}.jsonl`, entries.map((entry) => JSON.stringify(entry)).join('\n'));
 	await openProject(page, name);

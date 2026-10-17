@@ -887,9 +887,15 @@ impl Transcript {
             if entry.get("parentUuid") == Some(&Value::Null) { complete = true; }
         }
         let boundary = entries.iter().rposition(|entry| entry["type"] == "system" && entry["subtype"] == "compact_boundary");
+        let active_tools: HashSet<&str> = entries.iter().filter(|entry| entry["uuid"].as_str().is_some_and(|id| branch.contains(id)))
+            .flat_map(|entry| entry["message"]["content"].as_array().into_iter().flatten())
+            .filter(|block| block["type"] == "tool_use").filter_map(|block| block["id"].as_str()).collect();
         for (index, entry) in entries.iter().enumerate() {
             if complete && boundary.is_none_or(|boundary| index > boundary) && !branch.is_empty() && matches!(entry["type"].as_str(), Some("user" | "assistant"))
-                && entry["uuid"].as_str().is_some_and(|id| !branch.contains(id)) { continue; }
+                && entry["uuid"].as_str().is_some_and(|id| !branch.contains(id))
+                && !entry["message"]["content"].as_array().into_iter().flatten().any(|block| {
+                    block["type"] == "tool_result" && block["tool_use_id"].as_str().is_some_and(|id| active_tools.contains(id))
+                }) { continue; }
             if until.is_some() && entry["uuid"].as_str() == until {
                 // A compaction recorded just before the replayed turn's prompt belongs to that turn, which replays it.
                 self.compacted = false;

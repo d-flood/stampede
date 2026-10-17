@@ -52,7 +52,9 @@ async fn past_claude_questions_are_recovered_without_duplicating_saved_answers()
     let entries = [
         json!({ "type": "user", "uuid": "prompt", "parentUuid": null, "message": { "role": "user", "content": "Ask me" } }),
         json!({ "type": "assistant", "uuid": "question", "parentUuid": "prompt", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "past-question", "name": "AskUserQuestion", "input": { "questions": questions } }] } }),
+        json!({ "type": "assistant", "uuid": "parallel-tool", "parentUuid": "question", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "read", "name": "Read", "input": { "file_path": "notes.txt" } }] } }),
         json!({ "type": "user", "uuid": "answer", "parentUuid": "question", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "past-question", "content": "Answered" }] }, "toolUseResult": result }),
+        json!({ "type": "user", "uuid": "parallel-result", "parentUuid": "parallel-tool", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "read", "content": "Notes" }] } }),
     ];
     fs::write(sessions(&server).join(format!("{COLOR}.jsonl")), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
     let chat = resume(&mut socket, &project_id, "claude-code", COLOR).await;
