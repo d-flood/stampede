@@ -221,6 +221,12 @@ fn sha(text: &str) -> Option<&str> {
     (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(text)
 }
 
+pub async fn common_dir(dir: &Path) -> Option<PathBuf> {
+    let output = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).await?;
+    let common = PathBuf::from(String::from_utf8(output).ok()?.trim_end_matches('\n'));
+    tokio::fs::canonicalize(common).await.ok()
+}
+
 async fn toplevel(dir: &Path) -> Option<PathBuf> {
     let output = git(dir, &["rev-parse", "--show-toplevel"]).await?;
     let toplevel = PathBuf::from(String::from_utf8(output).ok()?.trim_end_matches('\n'));

@@ -1,8 +1,10 @@
 mod attention;
 mod browser;
 mod chats;
+mod cli;
 mod config;
 mod device;
+mod epics;
 mod files;
 mod git;
 mod holder;
@@ -34,7 +36,9 @@ use tokio::sync::{broadcast, watch};
 use attention::Feed;
 use chats::Chats;
 use config::{Config, Editor, Font, Keybar, Rig};
+use epics::Epics;
 pub use chats::{HoldChatArgs, hold_chat, chat_tools};
+pub use cli::{CliCommand, cli};
 pub use holder::{HoldArgs, hold};
 pub use install::{InstallArgs, UninstallArgs, install, uninstall};
 use language_servers::LanguageServers;
@@ -54,7 +58,7 @@ struct Spa;
 pub struct ServeArgs {
     #[arg(long, default_value_t = 4580)]
     pub port: u16,
-    #[arg(long, value_name = "DIR", default_value_os_t = home().join(".local/share/oikonomos"))]
+    #[arg(long, value_name = "DIR", default_value_os_t = data_dir())]
     pub data_dir: PathBuf,
     #[arg(long, value_name = "FILE", default_value_os_t = home().join(".config/oikonomos/config.toml"))]
     pub config: PathBuf,
@@ -62,6 +66,10 @@ pub struct ServeArgs {
 
 pub(crate) fn home() -> PathBuf {
     std::env::home_dir().expect("HOME is not set")
+}
+
+fn data_dir() -> PathBuf {
+    home().join(".local/share/oikonomos")
 }
 
 #[derive(Clone)]
@@ -117,6 +125,7 @@ fn router(state: AppState) -> Router {
 pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let config = config::watch(&args.config)?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
+    cli::listen(&args.data_dir, Arc::new(Epics::load(&args.data_dir)?))?;
     let projects = Arc::new(Projects::load(&args.data_dir)?);
     let push = Arc::new(Push::load(&args.data_dir)?);
     let languages = Arc::new(LanguageServers::load(&args.data_dir)?);
