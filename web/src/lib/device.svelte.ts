@@ -17,13 +17,29 @@ export type Terminal = {
 
 export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'other'; name: string; detail: string };
 
+export type Subagent = {
+	kind: 'subagent';
+	id: string;
+	name?: string;
+	task: string;
+	status: Status;
+	outcome?: 'completed' | 'failed' | 'stopped';
+	prompt?: string;
+	report?: string;
+	model?: string;
+	startedAt?: number;
+	totals?: { durationMs: number; tools: number; tokens?: number };
+	activity?: string | null;
+	items: Item[];
+};
+
 export type Item =
 	| { kind: 'user'; text: string; images: number; template?: string }
 	| { kind: 'text'; text: string; streaming: boolean; phase: 'commentary' | 'final' }
 	| { kind: 'thinking'; seconds: number; text?: string }
 	| { kind: 'tools'; calls: ToolCall[] }
 	| { kind: 'html'; title: string; html: string }
-	| { kind: 'subagent'; name?: string; task: string; status: Status; activity?: string | null; items: Item[] }
+	| Subagent
 	| { kind: 'edit'; path: string; diff: string; added: number; removed: number }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
