@@ -43,13 +43,23 @@
 		{@const percent = reading ? Math.round(reading.used * 100) : 0}
 		{@const description = details(reading)}
 		<div class="meter" class:high={reading && reading.used >= 0.9} title={description}>
-			<span class="label">{label}</span>
-			<span class="bar" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={reading ? `${percent}% used. ${description}` : description}>
-				<span class="fill" style:width="{Math.min(percent, 100)}%"></span>
+			<span class="ring" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={reading ? percent : undefined} aria-valuetext={reading ? `${percent}% used. ${description}` : description}>
+				<svg viewBox="0 0 40 40" aria-hidden="true">
+					<circle class="track" cx="20" cy="20" r="17" />
+					<circle class="fill" cx="20" cy="20" r="17" pathLength="100" stroke-dasharray="{Math.max(0, Math.min(percent, 100))} 100" transform="rotate(-90 20 20)" />
+				</svg>
+				<span class="percent">{reading ? `${percent}%` : '—'}</span>
 			</span>
-			<span class="percent">{reading ? `${percent}%` : '—'}</span>
+			<span class="label">{label}</span>
 			<span class="age">
 				{reading ? age(reading.readAt) : ''}
+			</span>
+			<span class="reset">
+				{#if reading?.resetsAt !== undefined}
+					Resets <time datetime={new Date(reading.resetsAt).toISOString()}>{new Date(reading.resetsAt).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</time>
+				{:else}
+					Reset time unavailable
+				{/if}
 			</span>
 		</div>
 	{/each}
@@ -58,9 +68,7 @@
 <style>
 	section {
 		display: grid;
-		grid-template-columns: max-content 1fr max-content max-content;
-		align-items: center;
-		gap: var(--space-2) var(--space-3);
+		gap: var(--space-3);
 		margin-top: auto;
 		padding: var(--space-3) var(--space-4) var(--space-4);
 		border-top: var(--border-width) solid var(--border);
@@ -75,28 +83,47 @@
 	}
 
 	.meter {
-		display: contents;
+		display: grid;
+		grid-template-columns: 40px minmax(0, 1fr) max-content;
+		align-items: center;
+		column-gap: var(--space-3);
 	}
 
-	.label {
+	.label,
+	.reset {
 		color: var(--muted-fg);
 	}
 
-	.bar {
-		height: 4px;
-		border-radius: 2px;
-		background: var(--surface-3);
+	.reset {
+		grid-column: 2 / -1;
 	}
 
-	.phone .bar {
-		height: 5px;
+	.ring {
+		display: grid;
+		grid-row: span 2;
+		place-items: center;
+		width: 40px;
+		height: 40px;
+	}
+
+	.ring svg,
+	.percent {
+		grid-area: 1 / 1;
+	}
+
+	.ring svg {
+		width: 100%;
+		height: 100%;
+		fill: none;
+		stroke-width: 3;
+	}
+
+	.track {
+		stroke: var(--surface-3);
 	}
 
 	.fill {
-		display: block;
-		height: 100%;
-		border-radius: inherit;
-		background: var(--ansi-4);
+		stroke: var(--ansi-4);
 	}
 
 	.percent,
@@ -112,7 +139,7 @@
 	}
 
 	.high .fill {
-		background: var(--ansi-3);
+		stroke: var(--ansi-3);
 	}
 
 	.high .percent {
