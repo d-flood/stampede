@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { logos } from '#lib/chat/sessions.ts';
 	import { agentNames, type Agent } from '#lib/config.svelte.ts';
 	import type { Choice, Setting, Settings } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -17,11 +18,12 @@
 
 	const names: Record<Setting, string> = { model: 'Model', effort: 'Effort', mode: 'Mode' };
 	const phone = $derived(form() === 'phone');
+	const Logo = $derived(logos[agent]);
 </script>
 
 <div class="chips" class:phone>
 	{#if !phone}
-		<span class="agent">{agentNames[agent]}</span>
+		<span class="agent"><Logo /> {agentNames[agent]}</span>
 	{/if}
 	{#each ['model', 'effort', 'mode'] as const as setting (setting)}
 		{@const value = settings[setting]}
@@ -70,6 +72,9 @@
 	}
 
 	.agent {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
 		margin-right: var(--space-1);
 		color: var(--muted-fg);
 	}

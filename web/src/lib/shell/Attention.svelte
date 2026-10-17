@@ -5,18 +5,31 @@
 </script>
 
 <script lang="ts">
-	import { tabOf, type Attention } from '#lib/device.svelte.ts';
+	import { logos } from '#lib/chat/sessions.ts';
+	import { tabOf, type Attention, type Chat } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { enable, notifications, type Notifications } from '#lib/push.ts';
 	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import Article from '~icons/ph/article';
 	import Bell from '~icons/ph/bell';
+	import CheckBold from '~icons/ph/check-bold';
+	import CircleNotchBold from '~icons/ph/circle-notch-bold';
+	import HandPalmFill from '~icons/ph/hand-palm-fill';
 
-	type Props = { items: Attention[]; projects: Map<string, string>; onselect(item: Attention): void };
+	type Props = { items: Attention[]; projects: Map<string, string>; chats: Chat[]; onselect(item: Attention): void };
 
-	let { items, projects, onselect }: Props = $props();
+	let { items, projects, chats, onselect }: Props = $props();
+
+	const marks = { working: CircleNotchBold, waiting: HandPalmFill, done: CheckBold };
+
+	function icon(item: Attention) {
+		if (!('chatId' in item)) return Article;
+		const chat = chats.find(({ id }) => id === item.chatId);
+		return chat && logos[chat.agent];
+	}
 
 	const labels = { off: 'Enable notifications', on: 'Notifications on', blocked: 'Notifications blocked' };
 
@@ -39,11 +52,14 @@
 {/snippet}
 
 {#snippet entry(item: Attention)}
+	{@const Icon = icon(item)}
+	{@const Mark = marks[item.status]}
+	<span class="icon">{#if Icon}<Icon />{/if}</span>
 	<span class="label">
 		<strong>{item.label}</strong>
 		<span class="project">in {projects.get(item.projectId)}</span>
 	</span>
-	<Badge tone={item.status}>{item.status}</Badge>
+	<span class="mark {item.status}" role="img" aria-label={item.status} title={item.status}><Mark /></span>
 {/snippet}
 
 {#if form() === 'phone'}
@@ -137,5 +153,27 @@
 
 	.project {
 		color: var(--muted-fg);
+	}
+
+	.icon,
+	.mark {
+		display: inline-flex;
+		flex: none;
+	}
+
+	.icon {
+		width: 1em;
+	}
+
+	.working {
+		color: var(--status-working);
+	}
+
+	.waiting {
+		color: var(--status-waiting);
+	}
+
+	.done {
+		color: var(--status-done);
 	}
 </style>

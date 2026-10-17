@@ -47,6 +47,8 @@
 	import { on } from 'svelte/events';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
+	import FileCode from '~icons/ph/file-code';
+	import Globe from '~icons/ph/globe';
 	import Plus from '~icons/ph/plus';
 	import Power from '~icons/ph/power';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
@@ -135,7 +137,7 @@
 	const label = $derived(focused && projectLabels.get(focused.id));
 	const tabActions: Action[] = $derived.by(() => {
 		const items = tabTarget === 'drawer'
-			? [{ label: 'Terminal', onselect: () => drawer.newTab() }]
+			? [{ label: 'Terminal', icon: TerminalWindow, onselect: () => drawer.newTab() }]
 			: tabTarget ? newTab(tabTarget) : [];
 		return items.flatMap((entry) => {
 			const group = 'heading' in entry ? entry.heading : 'Tabs';
@@ -456,12 +458,12 @@
 
 	function newTab(projectId: string) {
 		const items = rigs()
-			.map((rig) => ({ label: rig.name, onselect: () => launch(rig, projectId) }));
+			.map((rig) => ({ label: rig.name, icon: logos[rig.agent], onselect: () => launch(rig, projectId) }));
 		const terminal = () => device.send({ type: 'terminal.create', projectId });
 		const rest = [
-			{ label: 'Terminal', onselect: terminal },
-			{ label: 'Browser', onselect: () => openBrowser(projectId) },
-			{ label: 'Open file', onselect: () => openPalette('files') }
+			{ label: 'Terminal', icon: TerminalWindow, onselect: terminal },
+			{ label: 'Browser', icon: Globe, onselect: () => openBrowser(projectId) },
+			{ label: 'Open file', icon: FileCode, onselect: () => openPalette('files') }
 		];
 		const recent = (sessions[projectId] ?? []).slice(0, RECENT).map((session) => ({
 			label: session.firstPrompt,
@@ -721,7 +723,7 @@
 
 {#snippet attention()}
 	<ThemeSwitcher />
-	<AttentionList items={attentionList} projects={projectLabels} onselect={(item) => attend(item.projectId, tabOf(item))} />
+	<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
 {/snippet}
 
 {#snippet sidebarPanel()}
