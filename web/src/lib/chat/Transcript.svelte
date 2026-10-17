@@ -1,23 +1,24 @@
 <script lang="ts">
 	import Command from '#lib/chat/Command.svelte';
+	import Calls from '#lib/chat/Calls.svelte';
 	import Edit from '#lib/chat/Edit.svelte';
 	import Html from '#lib/chat/Html.svelte';
 	import Notice from '#lib/chat/Notice.svelte';
-	import Subagent from '#lib/chat/Subagent.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Thinking from '#lib/chat/Thinking.svelte';
 	import Tools from '#lib/chat/Tools.svelte';
 	import User from '#lib/chat/User.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
 
-	let { items, ondiff }: { items: Item[]; ondiff(path: string): void } = $props();
+	let { items, activity, ondiff }: { items: Item[]; activity?: string | null; ondiff(path: string): void } = $props();
 
 	function interim(item: Item) {
-		return !['user', 'html', 'notice'].includes(item.kind) && !(item.kind === 'text' && item.phase === 'final');
+		return !['user', 'text', 'html', 'notice'].includes(item.kind);
 	}
 
 	const runs = $derived(
 		items.reduce<{ rail: boolean; indices: number[] }[]>((runs, item, index) => {
+			if (item.kind === 'subagent') return runs;
 			const rail = interim(item);
 			const last = runs.at(-1);
 			if (last && last.rail === rail) last.indices.push(index);
@@ -48,8 +49,6 @@
 		<Edit {item} {ondiff} />
 	{:else if item.kind === 'command'}
 		<Command {item} />
-	{:else if item.kind === 'subagent'}
-		<Subagent {item} {ondiff} />
 	{:else if item.kind === 'notice'}
 		<Notice {item} />
 	{/if}
@@ -57,11 +56,13 @@
 
 {#each runs as run (run.indices[0])}
 	{#if run.rail}
-		<div class="rail">
-			{#each run.indices as index (index)}
-				<div class="step" class:prose={items[index].kind === 'text'} data-dot={dot(items[index])}>{@render entry(items[index], index)}</div>
-			{/each}
-		</div>
+		<Calls items={run.indices.map((index) => items[index])} activity={run === runs.at(-1) ? activity : null}>
+			<div class="rail">
+				{#each run.indices as index (index)}
+					<div class="step" data-dot={dot(items[index])}>{@render entry(items[index], index)}</div>
+				{/each}
+			</div>
+		</Calls>
 	{:else}
 		{#each run.indices as index (index)}
 			{@render entry(items[index], index)}
@@ -101,10 +102,6 @@
 		border: var(--border-width) solid var(--muted-fg);
 		border-radius: 50%;
 		background: var(--muted-fg);
-	}
-
-	.prose::before {
-		top: calc(0.5lh - var(--dot) / 2);
 	}
 
 	[data-dot='said']::before {

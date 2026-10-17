@@ -21,7 +21,7 @@ export type Item =
 	| { kind: 'thinking'; seconds: number; text?: string }
 	| { kind: 'tools'; calls: ToolCall[] }
 	| { kind: 'html'; title: string; html: string }
-	| { kind: 'subagent'; name?: string; task: string; status: Status; items: Item[] }
+	| { kind: 'subagent'; name?: string; task: string; status: Status; activity?: string | null; items: Item[] }
 	| { kind: 'edit'; path: string; diff: string; added: number; removed: number }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
@@ -65,6 +65,7 @@ export type Chat = {
 	agent: Agent;
 	status: Status;
 	agentSession?: string;
+	activity?: string | null;
 	context: Context | null;
 	tokens: Tokens | null;
 	queued: string[];
@@ -140,6 +141,7 @@ export type ServerMessage =
 	| { type: 'chat.items'; chatId: string; items: Item[] }
 	| { type: 'chat.item'; chatId: string; index: number; item: Item }
 	| { type: 'chat.status'; chatId: string; status: Status }
+	| { type: 'chat.activity'; chatId: string; activity: string | null }
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
 	| { type: 'sessions.listed'; projectId: string; sessions: Session[] }
 	| { type: 'chat.todos'; chatId: string; todos: Todo[] }

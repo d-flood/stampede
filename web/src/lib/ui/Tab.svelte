@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { HTMLButtonAttributes } from 'svelte/elements';
+	import type { AgentSession } from '#lib/chat/agents.ts';
 	import Article from '~icons/ph/article';
 	import CheckBold from '~icons/ph/check-bold';
 	import CircleNotchBold from '~icons/ph/circle-notch-bold';
@@ -23,6 +24,9 @@
 		deleted?: boolean;
 		ended?: boolean;
 		onclose?: () => void;
+		sessions?: AgentSession[];
+		session?: string;
+		onsession?: (id: string) => void;
 	};
 
 	let {
@@ -36,6 +40,9 @@
 		deleted = false,
 		ended = false,
 		onclose,
+		sessions = [],
+		session = '',
+		onsession,
 		...rest
 	}: Props = $props();
 
@@ -44,9 +51,10 @@
 	const marks = { working: CircleNotchBold, waiting: HandPalmFill, done: CheckBold };
 	const Icon = $derived(variant === 'agent' ? agents[agent] : icons[variant]);
 	const Mark = $derived(status && marks[status]);
+	const picker = $derived(active && sessions.length > 1);
 </script>
 
-<div class="tab" class:closable={active && !!onclose}>
+<div class="tab {status ?? ''}" class:closable={active && !!onclose} class:picker>
 	<button role="tab" aria-selected={active} class="select {variant} {status ?? ''}" class:active class:deleted class:ended {...rest}>
 		<Icon />
 		<span class="label">{label}</span>
@@ -54,6 +62,12 @@
 		{#if Mark}<span class="mark" title={status}><Mark /></span>{/if}
 		{#if dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
 	</button>
+	{#if picker}
+		<select aria-label="Session in {label}" value={sessions.some(({ id }) => id === session) ? session : ''}
+			onpointerdown={(event) => event.stopPropagation()} onchange={(event) => onsession?.(event.currentTarget.value)}>
+			{#each sessions as entry (entry.id)}<option value={entry.id}>{entry.label} · {entry.status}</option>{/each}
+		</select>
+	{/if}
 	{#if active && onclose}
 		<button
 			class="close"
@@ -77,6 +91,40 @@
 		min-width: 0;
 		max-width: 14rem;
 	}
+
+	.picker {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		border-right: var(--border-width) solid var(--border);
+		background: var(--color-bg);
+	}
+
+	.picker .select { border-right: none; }
+	.picker .agent::after { display: none; }
+	.picker::after {
+		content: '';
+		position: absolute;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		height: 2px;
+		background: var(--mark);
+	}
+
+	.picker select {
+		min-width: 0;
+		min-height: var(--target-min);
+		margin: 0 var(--space-3) var(--space-1);
+		padding: 0;
+		border: none;
+		background: var(--color-bg);
+		color: var(--color-fg);
+		font: inherit;
+		font-size: var(--font-size-sm);
+		cursor: pointer;
+	}
+
+	.picker .close { top: calc((var(--target-min) + var(--space-2)) / 2); }
 
 	.select {
 		position: relative;

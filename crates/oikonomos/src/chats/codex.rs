@@ -552,6 +552,7 @@ struct Transcript {
     turn: Option<String>,
     streaming: HashMap<String, (usize, String, Phase)>,
     tools: Option<(usize, Vec<ToolCall>)>,
+    activity: super::Activity,
     commands: HashMap<String, usize>,
     subagents: HashMap<String, (Subagent, Transcript)>,
     reading: HashMap<u64, String>,
@@ -621,6 +622,7 @@ impl Transcript {
             turn: None,
             streaming: HashMap::new(),
             tools: None,
+            activity: super::Activity::default(),
             commands: HashMap::new(),
             subagents: HashMap::new(),
             reading: HashMap::new(),
@@ -724,6 +726,7 @@ impl Transcript {
     fn restart(&mut self, started: &Value) {
         let Some(thread) = started["thread"]["id"].as_str() else { return };
         self.thread = thread.to_owned();
+        self.activity.clear(&self.events);
         self.len = 0;
         self.streaming.clear();
         self.tools = None;
@@ -754,6 +757,7 @@ impl Transcript {
     }
 
     fn report(&mut self, status: Status) {
+        if status == Status::Done { self.activity.clear(&self.events); }
         self.status = status;
         let _ = self.events.send(Event::Status(status));
     }
@@ -772,6 +776,7 @@ impl Transcript {
     }
 
     fn resumed(&mut self, turns: &Value) -> Status {
+        self.activity.clear(&self.events);
         let turns = turns.as_array().map(Vec::as_slice).unwrap_or_default();
         let _ = self.events.send(Event::Truncate(0));
         self.len = 0;
@@ -926,8 +931,7 @@ impl Transcript {
                     self.edits.remove(id);
                 }
             }
-            if message["method"] == "item/completed"
-                && let Some((subagent, transcript)) = self.subagents.get_mut(thread)
+            if let Some((subagent, transcript)) = self.subagents.get_mut(thread)
             {
                 transcript.read(message);
                 if subagent.update() {
@@ -941,6 +945,34 @@ impl Transcript {
             }
         }
         let item = &params["item"];
+        if message["method"] == "item/started"
+            && let Some(id) = item["id"].as_str()
+        {
+            let label = match item["type"].as_str() {
+                Some("reasoning") => Some("Thinking…".to_owned()),
+                Some("agentMessage") => Some("Writing response…".to_owned()),
+                Some("commandExecution") => {
+                    let Item::Command { command, .. } = command(item) else { unreachable!() };
+                    Some(format!("Running {command}"))
+                }
+                Some("webSearch") => Some("Searching the web…".to_owned()),
+                Some("mcpToolCall") => Some(format!("Using {}.{}", item["server"].as_str().unwrap_or_default(), item["tool"].as_str().unwrap_or_default())),
+                Some("dynamicToolCall") => Some(format!("Using {}", item["tool"].as_str().unwrap_or_default())),
+                Some("fileChange") => Some("Editing files…".to_owned()),
+                Some("imageView") => Some("Viewing image…".to_owned()),
+                Some("collabAgentToolCall") => Some(match item["tool"].as_str() {
+                    Some("wait") => "Waiting for agents…".to_owned(),
+                    Some("spawnAgent") => "Starting an agent…".to_owned(),
+                    _ => "Coordinating agents…".to_owned(),
+                }),
+                Some("contextCompaction") => Some("Compacting conversation…".to_owned()),
+                _ => None,
+            };
+            if let Some(label) = label { self.activity.start(id, label, &self.events); }
+        }
+        if message["method"] == "item/completed" && let Some(id) = item["id"].as_str() {
+            self.activity.finish(id, &self.events);
+        }
         match message["method"].as_str() {
             Some("thread/tokenUsage/updated") => {
                 let usage = &params["tokenUsage"];
@@ -1014,6 +1046,7 @@ impl Transcript {
             Some("turn/started") => {
                 self.turn = params["turn"]["id"].as_str().map(str::to_owned);
                 self.plan = None;
+                if self.status != Status::Working { self.report(Status::Working); }
             }
             Some("turn/completed") => {
                 self.turn = None;

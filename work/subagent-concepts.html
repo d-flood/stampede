@@ -1,0 +1,258 @@
+<style>
+#agent-concepts { color-scheme: light dark; font: 13px/1.5 system-ui, sans-serif; --ac-bg: light-dark(#fbfbfa,#191a1c); --ac-surface: light-dark(#f0f0ee,#222427); --ac-hover: light-dark(#e7e8e5,#2c2f33); --ac-fg: light-dark(#262a2d,#e6e7e9); --ac-muted: light-dark(#646b70,#a1a7ae); --ac-border: light-dark(#d8dbd8,#383c41); --ac-blue: light-dark(#176aac,#75b9f0); --ac-green: light-dark(#34744c,#8bc5a1); --ac-amber: light-dark(#93640b,#e1b96a); color: var(--ac-fg); }
+#agent-concepts * { box-sizing: border-box; }
+#agent-concepts button { font: inherit; color: inherit; cursor: pointer; }
+#agent-concepts [hidden] { display: none !important; }
+#agent-concepts .stage { min-height: 650px; padding: 8px 0 20px; }
+#agent-concepts .caption { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin: 0 0 16px; }
+#agent-concepts .caption strong { font-size: 18px; font-weight: 600; }
+#agent-concepts .caption span, #agent-concepts .device-label { color: var(--ac-muted); }
+#agent-concepts .pair { display: grid; grid-template-columns: minmax(0,1fr) 280px; gap: 20px; align-items: start; }
+#agent-concepts .device-label { margin-bottom: 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+#agent-concepts .app { background: var(--ac-bg); border: 1px solid var(--ac-border); border-radius: 6px; overflow: hidden; height: 510px; display: flex; flex-direction: column; }
+#agent-concepts .phone { height: 510px; border-radius: 20px; border-width: 2px; position: relative; }
+#agent-concepts .workspace { height: 32px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--ac-border); background: var(--ac-surface); font-size: 11px; color: var(--ac-muted); }
+#agent-concepts .workspace b { color: var(--ac-fg); font-weight: 500; }
+#agent-concepts .workspace .branch { margin-left: auto; font-family: ui-monospace, monospace; }
+#agent-concepts .tabs { display: flex; background: var(--ac-surface); border-bottom: 1px solid var(--ac-border); height: 40px; flex: none; }
+#agent-concepts .tab { position: relative; display: flex; gap: 8px; align-items: center; padding: 0 12px; border-right: 1px solid var(--ac-border); color: var(--ac-muted); font-size: 12px; }
+#agent-concepts .tab.current { background: var(--ac-bg); color: var(--ac-fg); border-top: 2px solid var(--ac-fg); border-bottom: 2px solid var(--ac-blue); margin-bottom: -1px; }
+#agent-concepts .session-mark { color: var(--ac-blue); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+#agent-concepts .session-mark::before, #agent-concepts .dot::before { content: ''; width: 6px; height: 6px; background: currentColor; border-radius: 50%; display: inline-block; flex: none; }
+#agent-concepts .tab-id { font-weight: 600; }
+#agent-concepts .settings { display: flex; gap: 12px; align-items: center; padding: 9px 14px; font-size: 11px; color: var(--ac-muted); border-bottom: 1px solid var(--ac-border); flex: none; }
+#agent-concepts .settings .agents-toggle { margin-left: auto; }
+#agent-concepts .body { display: flex; flex: 1; min-height: 0; }
+#agent-concepts .conversation { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+#agent-concepts .messages { flex: 1; padding: 20px; min-height: 0; }
+#agent-concepts .user { background: var(--ac-surface); padding: 10px 12px; border-radius: 5px; margin: 0 0 20px auto; width: fit-content; max-width: 100%; }
+#agent-concepts .eyebrow { color: var(--ac-muted); font-size: 11px; margin: 0 0 7px; display: flex; gap: 7px; align-items: center; }
+#agent-concepts .messages p { margin: 0 0 14px; }
+#agent-concepts .tool { font: 11px/1.5 ui-monospace, monospace; color: var(--ac-muted); margin: 18px 0; }
+#agent-concepts .working-line { display: flex; align-items: center; gap: 7px; color: var(--ac-blue); font-size: 12px; }
+#agent-concepts .working-line::before { content: ''; border: 2px solid var(--ac-border); border-top-color: var(--ac-blue); border-radius: 50%; width: 11px; height: 11px; }
+#agent-concepts .foot { padding: 0 14px 12px; flex: none; }
+#agent-concepts .composer { min-height: 72px; border: 1px solid var(--ac-border); border-radius: 6px; background: var(--ac-bg); padding: 10px; display: flex; flex-direction: column; justify-content: space-between; gap: 9px; }
+#agent-concepts .placeholder { color: var(--ac-muted); font-size: 12px; }
+#agent-concepts .composer-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ac-muted); font-size: 11px; }
+#agent-concepts .action, #agent-concepts .agents-toggle { background: var(--ac-surface); border: 1px solid var(--ac-border); border-radius: 4px; padding: 4px 9px; }
+#agent-concepts .action { color: var(--ac-fg); font-size: 11px; }
+#agent-concepts button:hover { background: var(--ac-hover); }
+#agent-concepts .meter { font-size: 10px; color: var(--ac-muted); margin-top: 6px; display: flex; justify-content: space-between; }
+#agent-concepts .rail { width: 204px; flex: none; border-left: 1px solid var(--ac-border); background: var(--ac-surface); padding: 12px 10px; display: flex; flex-direction: column; gap: 5px; }
+#agent-concepts .rail-title { display: flex; justify-content: space-between; align-items: center; font-weight: 500; margin: 0 4px 10px; }
+#agent-concepts .count { color: var(--ac-muted); font-size: 11px; font-weight: 400; }
+#agent-concepts .agent { width: 100%; border: 1px solid transparent; background: transparent; text-align: left; padding: 9px; border-radius: 5px; }
+#agent-concepts .agent[aria-pressed="true"] { background: var(--ac-bg); border-color: var(--ac-border); }
+#agent-concepts .agent-top { display: flex; justify-content: space-between; align-items: center; gap: 5px; margin-bottom: 5px; font-size: 12px; font-weight: 500; }
+#agent-concepts .agent small { color: var(--ac-muted); font-size: 11px; display: block; }
+#agent-concepts .dot { display: inline-flex; align-items: center; gap: 5px; color: var(--ac-blue); font-size: 10px; font-weight: 400; }
+#agent-concepts .dot.done { color: var(--ac-green); }
+#agent-concepts .detail { padding: 12px 9px 0; border-top: 1px solid var(--ac-border); margin-top: 10px; font-size: 11px; }
+#agent-concepts .detail-label { color: var(--ac-muted); margin-bottom: 6px; }
+#agent-concepts .detail p { margin: 5px 0 10px; }
+#agent-concepts .detail code { display: block; color: var(--ac-muted); font-size: 10px; overflow-wrap: anywhere; }
+#agent-concepts .text-action { padding: 4px 0; border: 0; background: transparent; color: var(--ac-blue); font-size: 11px; text-align: left; }
+#agent-concepts .phone .tab { flex: 1; justify-content: space-between; padding: 0 12px; }
+#agent-concepts .phone .settings { padding: 8px 12px; }
+#agent-concepts .phone .messages { padding: 16px 14px; }
+#agent-concepts .phone .user { font-size: 12px; }
+#agent-concepts .phone .messages p { font-size: 12px; }
+#agent-concepts .phone .foot { padding: 0 10px 12px; }
+#agent-concepts .phone .action, #agent-concepts .phone .agents-toggle { min-height: 32px; }
+#agent-concepts .sheet { position: absolute; z-index: 3; bottom: 0; left: 0; right: 0; border-top: 1px solid var(--ac-border); border-radius: 14px 14px 0 0; padding: 8px 12px 16px; background: var(--ac-surface); box-shadow: 0 -8px 24px light-dark(#0000000d,#00000026); }
+#agent-concepts .handle { width: 28px; height: 3px; border-radius: 3px; background: var(--ac-border); margin: 0 auto 10px; }
+#agent-concepts .sheet .rail-title { margin-bottom: 3px; }
+#agent-concepts .sheet .agent { padding: 8px; }
+#agent-concepts .sheet .agent small { font-size: 11px; }
+#agent-concepts .close { background: transparent; border: 0; font-size: 16px; min-width: 30px; min-height: 30px; color: var(--ac-muted); }
+#agent-concepts .dock { border: 1px solid var(--ac-border); border-radius: 6px; margin-bottom: 9px; background: var(--ac-surface); }
+#agent-concepts .dock-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; font-size: 11px; gap: 6px; }
+#agent-concepts .dock-chips { display: flex; gap: 6px; padding: 0 8px 8px; flex-wrap: wrap; }
+#agent-concepts .chip { border: 1px solid var(--ac-border); background: var(--ac-bg); padding: 5px 8px; border-radius: 4px; font-size: 11px; display: flex; gap: 6px; align-items: center; }
+#agent-concepts .chip[aria-pressed="true"] { border-color: var(--ac-blue); }
+#agent-concepts .dock .detail { margin: 0 9px; padding: 8px 0 10px; }
+#agent-concepts .dock .detail p { margin: 4px 0 0; }
+#agent-concepts .subtabs { display: flex; gap: 0; padding: 0 10px; background: var(--ac-bg); border-bottom: 1px solid var(--ac-border); flex: none; }
+#agent-concepts .subtab { display: flex; align-items: center; justify-content: center; gap: 7px; border: 0; border-bottom: 2px solid transparent; padding: 9px 10px; background: transparent; color: var(--ac-muted); font-size: 11px; }
+#agent-concepts .subtab[aria-pressed="true"] { color: var(--ac-fg); border-bottom-color: var(--ac-fg); }
+#agent-concepts .thread { padding: 16px 20px; flex: 1; min-height: 0; }
+#agent-concepts .thread-title { font-size: 14px; font-weight: 500; margin: 0 0 4px; }
+#agent-concepts .thread-context { color: var(--ac-muted); font-size: 11px; margin-bottom: 18px; }
+#agent-concepts .thread-output { border-left: 2px solid var(--ac-border); padding-left: 12px; font-size: 12px; }
+#agent-concepts .thread-output p { margin: 8px 0; }
+#agent-concepts .thread-output code { font: 10px ui-monospace, monospace; color: var(--ac-muted); overflow-wrap: anywhere; }
+#agent-concepts .thread-note { color: var(--ac-muted); font-size: 11px; padding: 10px 14px; border-top: 1px solid var(--ac-border); }
+#agent-concepts .phone .thread { padding: 14px; }
+#agent-concepts .phone .subtab { flex: 1; min-height: 40px; }
+#agent-concepts .phone .thread-output { font-size: 12px; }
+#agent-concepts .mobile-agents { padding: 12px; }
+#agent-concepts .mobile-agents .detail { padding: 12px 8px; }
+#agent-concepts .status-summary { font-size: 11px; color: var(--ac-muted); }
+#agent-concepts .app.finished .session-mark { color: var(--ac-green); }
+#agent-concepts .app.finished .tab.current { border-bottom-color: var(--ac-green); }
+#agent-concepts .app.finished .working-line { color: var(--ac-green); }
+#agent-concepts .app.finished .working-line::before { border-color: var(--ac-green); }
+@media (max-width: 860px) { #agent-concepts .pair { grid-template-columns: minmax(0,1fr); } #agent-concepts .mobile-preview { width: 280px; max-width: 100%; } #agent-concepts .stage { min-height: 1180px; } }
+@media (max-width: 500px) { #agent-concepts .desktop-preview { display:none; } #agent-concepts .mobile-preview { width: 100%; max-width: 360px; margin: auto; } #agent-concepts .stage { min-height: 650px; } #agent-concepts .caption { gap: 4px; flex-direction: column; } }
+@media (pointer: coarse) { #agent-concepts button { min-height: 44px !important; } #agent-concepts .app, #agent-concepts .phone { height: 580px; } }
+</style>
+<div id="agent-concepts">
+  <div class="viz-carousel" aria-label="Subagent interface concepts">
+    <section class="stage" data-variant="Crew rail" aria-label="Crew rail concept">
+      <div class="caption"><strong>Crew rail</strong><span>Always visible beside the conversation.</span></div>
+      <div class="pair"><div class="desktop-preview"><div class="device-label">Desktop</div><div class="app" data-layout="rail" data-device="desktop"></div></div><div class="mobile-preview"><div class="device-label">Mobile · agents sheet open</div><div class="app phone" data-layout="rail" data-device="mobile"></div></div></div>
+    </section>
+    <section class="stage" data-variant="Activity dock" aria-label="Activity dock concept" hidden>
+      <div class="caption"><strong>Activity dock</strong><span>A compact crew, anchored above the composer.</span></div>
+      <div class="pair"><div class="desktop-preview"><div class="device-label">Desktop</div><div class="app" data-layout="dock" data-device="desktop"></div></div><div class="mobile-preview"><div class="device-label">Mobile · expanded dock</div><div class="app phone" data-layout="dock" data-device="mobile"></div></div></div>
+    </section>
+    <section class="stage" data-variant="Agent tabs" aria-label="Agent tabs concept" hidden>
+      <div class="caption"><strong>Agent tabs</strong><span>Each agent gets a conversation within this chat.</span></div>
+      <div class="pair"><div class="desktop-preview"><div class="device-label">Desktop · review selected</div><div class="app" data-layout="tabs" data-device="desktop"></div></div><div class="mobile-preview"><div class="device-label">Mobile · agent switcher</div><div class="app phone" data-layout="tabs" data-device="mobile"></div></div></div>
+    </section>
+  </div>
+</div>
+<template id="ac-chrome">
+  <div class="workspace"><b>oikonomos</b><span>/</span><span>workspace</span><span class="branch">⑂ main</span></div>
+  <div class="tabs"><div class="tab current"><span class="tab-id">✳ Chat</span><span class="session-mark" aria-live="polite">Working</span></div><div class="tab other-tab">⌘ Terminal</div></div>
+  <div class="settings"><span>Codex</span><span>High</span><span>Default</span><button class="agents-toggle cursor-interaction" type="button" data-toggle-sheet>Agents <span class="agent-count">2 active</span></button></div>
+</template>
+<template id="ac-conversation">
+  <div class="conversation"><div class="messages"><div class="user">Give subagents a home outside the transcript.</div><div class="eyebrow">✳ Codex <span>· now</span></div><p>I’m updating the chat layout and checking how resumed sessions report activity.</p><div class="tool">› Read ChatView.svelte<br>› Read Tab.svelte</div><div class="working-line" aria-live="polite">Updating the chat layout</div></div></div>
+</template>
+<template id="ac-composer">
+  <div class="foot"><div class="composer"><div class="placeholder">Add a follow-up…</div><div class="composer-bottom"><span>＋ &nbsp; / commands</span><button class="action cursor-interaction" data-session type="button">■ Stop</button></div></div><div class="meter"><span>42% context</span><span>main · connected</span></div></div>
+</template>
+<template id="ac-agent-list">
+  <button class="agent cursor-interaction" type="button" data-agent="review" aria-pressed="true"><span class="agent-top">Review <span class="dot" data-child-status>Working</span></span><small>Review activity state</small></button>
+  <button class="agent cursor-interaction" type="button" data-agent="tests" aria-pressed="false"><span class="agent-top">Tests <span class="dot" data-child-status>Working</span></span><small>Check resumed sessions</small></button>
+  <button class="agent cursor-interaction" type="button" data-agent="explore" aria-pressed="false"><span class="agent-top">Explore <span class="dot done">Done</span></span><small>Map transcript components</small></button>
+</template>
+<template id="ac-detail">
+  <div class="detail" aria-live="polite"><div class="detail-label">Latest · <span data-agent-name>Review</span></div><p data-agent-detail>Tracing which status reaches the tab after a finished chat resumes.</p><code data-agent-file>web/src/lib/ui/Tab.svelte</code><button class="text-action cursor-interaction" type="button" data-inspect>Open conversation ↗</button></div>
+</template>
+<script>
+(() => {
+  const root = document.getElementById('agent-concepts');
+  const data = {
+    review: { name: 'Review', task: 'Review activity state', detail: 'Tracing which status reaches the tab after a finished chat resumes.', file: 'web/src/lib/ui/Tab.svelte' },
+    tests: { name: 'Tests', task: 'Check resumed sessions', detail: 'Checking the transition from done to working when a follow-up starts.', file: 'web/e2e/tabs.spec.ts' },
+    explore: { name: 'Explore', task: 'Map transcript components', detail: 'Found the subagent transcript embedded at its creation point. Ready to move it into a persistent view.', file: 'web/src/lib/chat/Subagent.svelte' }
+  };
+  const clone = id => document.getElementById(id).content.cloneNode(true);
+  for (const app of root.querySelectorAll('.app')) {
+    const mobile = app.dataset.device === 'mobile';
+    const layout = app.dataset.layout;
+    const state = { working: true, selected: 'review', expanded: true, page: 'agents' };
+    app.setAttribute('aria-label', `${layout === 'rail' ? 'Crew rail' : layout === 'dock' ? 'Activity dock' : 'Agent tabs'} ${mobile ? 'mobile' : 'desktop'}`);
+    app.append(clone('ac-chrome'));
+    if (mobile) app.querySelector('.other-tab').remove();
+    const body = document.createElement('div');
+    body.className = 'body';
+    body.append(clone('ac-conversation'));
+    app.append(body);
+    const conversation = body.querySelector('.conversation');
+    conversation.append(clone('ac-composer'));
+    const list = () => clone('ac-agent-list');
+    const detail = () => clone('ac-detail');
+    let sheet;
+    let thread;
+    let switcher;
+    if (layout === 'rail' && !mobile) {
+      const rail = document.createElement('aside');
+      rail.className = 'rail';
+      rail.innerHTML = '<div class="rail-title">Agents <span class="count">3 total</span></div>';
+      rail.append(list(), detail());
+      body.append(rail);
+      app.querySelector('[data-toggle-sheet]').hidden = true;
+    } else if (layout === 'rail') {
+      sheet = document.createElement('div');
+      sheet.className = 'sheet';
+      sheet.innerHTML = '<div class="handle"></div><div class="rail-title">Agents <button class="close cursor-interaction" aria-label="Close agents" data-close-sheet type="button">×</button></div>';
+      sheet.append(list(), detail());
+      app.append(sheet);
+    } else if (layout === 'dock') {
+      const dock = document.createElement('div');
+      dock.className = 'dock';
+      dock.innerHTML = '<div class="dock-head"><span>↳ Agents · <span class="agent-count">2 active</span></span><button class="text-action cursor-interaction" type="button" data-expand>Collapse</button></div><div class="dock-chips"><button class="chip cursor-interaction" type="button" data-agent="review" aria-pressed="true"><span class="dot" data-child-status>Review</span></button><button class="chip cursor-interaction" type="button" data-agent="tests" aria-pressed="false"><span class="dot" data-child-status>Tests</span></button><button class="chip cursor-interaction" type="button" data-agent="explore" aria-pressed="false"><span class="dot done">Explore ✓</span></button></div>';
+      dock.append(detail());
+      conversation.querySelector('.foot').prepend(dock);
+      app.querySelector('[data-toggle-sheet]').hidden = true;
+      if (mobile) conversation.querySelector('.tool').hidden = true;
+    } else {
+      switcher = document.createElement('div');
+      switcher.className = 'subtabs';
+      switcher.innerHTML = mobile
+        ? '<button class="subtab cursor-interaction" data-page="chat" type="button" aria-pressed="false">Chat <span class="dot"></span></button><button class="subtab cursor-interaction" data-page="agents" type="button" aria-pressed="true">Agents · 3</button>'
+        : '<button class="subtab cursor-interaction" data-page="chat" type="button" aria-pressed="false">Chat</button><button class="subtab cursor-interaction" data-agent="review" type="button" aria-pressed="true">Review <span class="dot" data-child-status></span></button><button class="subtab cursor-interaction" data-agent="tests" type="button" aria-pressed="false">Tests <span class="dot" data-child-status></span></button><button class="subtab cursor-interaction" data-agent="explore" type="button" aria-pressed="false">Explore <span class="dot done">✓</span></button>';
+      app.insertBefore(switcher, body);
+      thread = document.createElement('div');
+      thread.className = 'conversation agent-thread';
+      if (mobile) {
+        thread.innerHTML = '<div class="mobile-agents"></div>';
+        thread.firstElementChild.append(list(), detail());
+      } else {
+        thread.innerHTML = '<div class="thread"><div class="eyebrow">↳ Agent conversation</div><div class="thread-title" data-agent-task>Review activity state</div><div class="thread-context">Assigned by Codex · <span data-agent-name>Review</span></div><div class="thread-output"><div class="eyebrow" data-agent-name>Review</div><p data-agent-detail>Tracing which status reaches the tab after a finished chat resumes.</p><code data-agent-file>web/src/lib/ui/Tab.svelte</code></div></div>';
+      }
+      const note = document.createElement('div');
+      note.className = 'thread-note';
+      note.textContent = 'Parent chat continues while you inspect an agent.';
+      thread.append(note, clone('ac-composer'));
+      body.append(thread);
+      app.querySelector('[data-toggle-sheet]').hidden = true;
+    }
+    function render() {
+      const selected = data[state.selected];
+      app.classList.toggle('finished', !state.working);
+      app.querySelectorAll('.session-mark').forEach(el => el.textContent = state.working ? 'Working' : 'Done');
+      app.querySelectorAll('.agent-count').forEach(el => el.textContent = state.working ? '2 active' : 'all done');
+      app.querySelectorAll('[data-session]').forEach(el => el.textContent = state.working ? '■ Stop' : 'Resume →');
+      app.querySelectorAll('.working-line').forEach(el => el.textContent = state.working ? 'Updating the chat layout' : 'Turn finished');
+      app.querySelectorAll('[data-agent]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.agent === state.selected && state.page !== 'chat')));
+      app.querySelectorAll('[data-child-status]').forEach(el => {
+        el.classList.toggle('done', !state.working);
+        if (!el.closest('.chip') && !el.closest('.subtab')) el.textContent = state.working ? 'Working' : 'Done';
+      });
+      app.querySelectorAll('[data-agent-name]').forEach(el => el.textContent = selected.name);
+      app.querySelectorAll('[data-agent-task]').forEach(el => el.textContent = selected.task);
+      app.querySelectorAll('[data-agent-detail]').forEach(el => el.textContent = selected.detail);
+      app.querySelectorAll('[data-agent-file]').forEach(el => el.textContent = selected.file);
+      if (sheet) {
+        sheet.hidden = !state.expanded;
+        app.querySelector('[data-toggle-sheet]').setAttribute('aria-expanded', String(state.expanded));
+      }
+      if (layout === 'dock') {
+        app.querySelector('.dock .detail').hidden = !state.expanded;
+        app.querySelector('[data-expand]').textContent = state.expanded ? 'Collapse' : 'Expand';
+      }
+      if (thread) {
+        conversation.hidden = state.page !== 'chat';
+        thread.hidden = state.page === 'chat';
+        app.querySelectorAll('[data-page]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.page === state.page)));
+      }
+    }
+    app.addEventListener('click', e => {
+      const button = e.target.closest('button');
+      if (!button) return;
+      if (button.hasAttribute('data-session')) { state.working = !state.working; if (sheet) state.expanded = false; }
+      if (button.hasAttribute('data-agent')) { state.selected = button.dataset.agent; state.page = 'agents'; state.expanded = true; }
+      if (button.hasAttribute('data-toggle-sheet') || button.hasAttribute('data-close-sheet') || button.hasAttribute('data-expand')) state.expanded = !state.expanded;
+      if (button.hasAttribute('data-page')) state.page = button.dataset.page;
+      if (button.hasAttribute('data-inspect')) {
+        const output = app.querySelector('[data-agent-detail]');
+        output.textContent = `${data[state.selected].detail} Reading the latest events and comparing the state transitions.`;
+        button.textContent = 'Conversation open · latest output';
+        return;
+      }
+      render();
+    });
+    render();
+    if (globalThis.Tweak) {
+      const tweak = new Tweak({ container: app, onChange: render });
+      tweak.addToggle(state, 'working', { label: 'Chat working' });
+      if (layout !== 'tabs') tweak.addToggle(state, 'expanded', { label: 'Agent detail open' });
+    }
+  }
+})();
+</script>

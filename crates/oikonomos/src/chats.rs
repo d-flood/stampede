@@ -54,6 +54,8 @@ pub enum Item {
         name: Option<String>,
         task: String,
         status: Status,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        activity: Option<String>,
         items: Vec<Item>,
     },
     Notice { notice: Notice, text: String },
@@ -169,6 +171,7 @@ struct Subagent {
     name: Option<String>,
     task: String,
     status: Status,
+    activity: Option<String>,
     events: UnboundedReceiver<Event>,
     items: Vec<Item>,
 }
@@ -176,25 +179,57 @@ struct Subagent {
 impl Subagent {
     fn new(name: Option<String>, task: String) -> (Self, UnboundedSender<Event>) {
         let (sender, events) = mpsc::unbounded_channel();
-        (Self { index: 0, name, task, status: Status::Working, events, items: Vec::new() }, sender)
+        (Self { index: 0, name, task, status: Status::Working, activity: None, events, items: Vec::new() }, sender)
     }
 
     fn update(&mut self) -> bool {
         let mut changed = false;
         while let Ok(event) = self.events.try_recv() {
-            if let Event::Item(index, item) = event {
-                match self.items.get_mut(index) {
-                    Some(existing) => *existing = item,
-                    None => self.items.push(item),
+            match event {
+                Event::Item(index, item) => {
+                    match self.items.get_mut(index) {
+                        Some(existing) => *existing = item,
+                        None => self.items.push(item),
+                    }
                 }
-                changed = true;
+                Event::Activity(activity) => self.activity = activity,
+                Event::Status(status) => self.status = status,
+                _ => continue,
             }
+            changed = true;
         }
         changed
     }
 
     fn item(&self) -> Item {
-        Item::Subagent { name: self.name.clone(), task: self.task.clone(), status: self.status, items: self.items.clone() }
+        Item::Subagent { name: self.name.clone(), task: self.task.clone(), status: self.status, activity: self.activity.clone().filter(|_| self.status != Status::Done), items: self.items.clone() }
+    }
+}
+
+#[derive(Default)]
+struct Activity(Vec<(String, String)>);
+
+impl Activity {
+    fn start(&mut self, id: &str, label: String, events: &UnboundedSender<Event>) {
+        self.0.retain(|(other, _)| other != id);
+        self.0.push((id.to_owned(), label));
+        self.report(events);
+    }
+
+    fn finish(&mut self, id: &str, events: &UnboundedSender<Event>) {
+        let before = self.0.len();
+        self.0.retain(|(other, _)| other != id);
+        if before != self.0.len() { self.report(events); }
+    }
+
+    fn clear(&mut self, events: &UnboundedSender<Event>) {
+        if self.0.is_empty() { return; }
+        self.0.clear();
+        self.report(events);
+    }
+
+    fn report(&self, events: &UnboundedSender<Event>) {
+        let _ = events.send(Event::Activity(self.0.last().map(|(_, label)| label.clone())));
     }
 }
 
@@ -307,6 +342,7 @@ pub enum Event {
     ResumeAt(Option<String>),
     PlanResolved(String),
     Status(Status),
+    Activity(Option<String>),
     /// Appends the Item when its index is the transcript's length, and replaces the one there otherwise.
     Item(usize, Item),
     /// Replaces whichever of the Chat's context fill and token counts it carries.
@@ -435,6 +471,8 @@ pub struct Chat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_resolved: Option<String>,
     pub status: Status,
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
     pub viewed_since_done: bool,
     #[serde(default)]
     pub context: Option<Context>,
@@ -488,6 +526,7 @@ pub async fn sessions(cwd: &Path, claude: &Rig, codex: &Rig) -> Vec<Session> {
 pub enum Change {
     Chats(String),
     Status(String, Status),
+    Activity(String, Option<String>),
     Queued(String, Vec<String>),
     Truncated(String),
     Item { chat_id: String, seq: u64, index: usize, item: Item },
@@ -594,6 +633,7 @@ impl Chats {
             resume_at: None,
             plan_resolved: None,
             status: Status::Done,
+            activity: None,
             viewed_since_done: true,
             context: None,
             tokens: None,
@@ -684,6 +724,13 @@ impl Chats {
         };
         while let Some(event) = events.recv().await {
             match event {
+                Event::Activity(activity) => {
+                    let mut chat = entry.chat.lock().unwrap();
+                    if chat.activity != activity {
+                        chat.activity = activity.clone();
+                        let _ = self.changed.send(Change::Activity(id.clone(), activity));
+                    }
+                }
                 Event::PlanResolved(id) => {
                     let mut chat = entry.chat.lock().unwrap();
                     chat.plan_resolved = Some(id);
@@ -794,6 +841,8 @@ impl Chats {
                 }
                 Event::Reset => {
                     let mut chat = entry.chat.lock().unwrap();
+                    chat.activity = None;
+                    let _ = self.changed.send(Change::Activity(id.clone(), None));
                     chat.context = None;
                     chat.tokens = None;
                     chat.queued.clear();
@@ -832,6 +881,10 @@ impl Chats {
             return;
         }
         chat.status = status;
+        if status == Status::Done {
+            chat.activity = None;
+            let _ = self.changed.send(Change::Activity(chat.id.clone(), None));
+        }
         let id = chat.id.clone();
         if status == Status::Done {
             chat.viewed_since_done = self.shown(&id);

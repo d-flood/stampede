@@ -579,6 +579,7 @@ struct Transcript {
     phase: Phase,
     said: Vec<(usize, String)>,
     tools: Option<(usize, Vec<ToolCall>)>,
+    activity: super::Activity,
     commands: HashMap<String, (usize, String)>,
     snippets: HashMap<String, Item>,
     edits: HashSet<String>,
@@ -624,6 +625,7 @@ impl Transcript {
             phase: Phase::Final,
             said: Vec::new(),
             tools: None,
+            activity: super::Activity::default(),
             commands: HashMap::new(),
             snippets: HashMap::new(),
             edits: HashSet::new(),
@@ -774,6 +776,7 @@ impl Transcript {
     }
 
     fn report(&mut self, status: Status) {
+        if status == Status::Done { self.activity.clear(&self.events); }
         self.status = status;
         if !self.replaying {
             let _ = self.events.send(Event::Status(status));
@@ -867,7 +870,7 @@ impl Transcript {
         }
         match entry["type"].as_str() {
             Some("system") if entry["subtype"] == "compact_boundary" => self.compacted = true,
-            Some("user") => match entry["message"]["content"].as_str() {
+            Some("user") if entry["promptSource"] != "system" => match entry["message"]["content"].as_str() {
                 Some(content) => {
                     if let Some(text) = prompt(content) {
                         self.checkpoint(entry);
@@ -978,6 +981,7 @@ impl Transcript {
             }
             Some("control_response") => self.answered(&message["response"]),
             Some("conversation_reset") => {
+                self.activity.clear(&self.events);
                 self.call = None;
                 self.window = None;
                 self.len = 0;
@@ -1078,6 +1082,19 @@ impl Transcript {
         let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) else { return };
         let input = &block["input"];
         let text = |key: &str| input[key].as_str().unwrap_or_default().to_owned();
+        if !self.replaying {
+            let label = match name {
+                "Bash" => format!("Running {}", text("command")),
+                "Read" => format!("Reading {}", self.relative(&text("file_path"))),
+                "Grep" | "Glob" => format!("Searching {}", text("pattern")),
+                "WebFetch" => format!("Fetching {}", text("url")),
+                "WebSearch" => format!("Searching the web for {}", text("query")),
+                "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => format!("Editing {}", self.relative(&text("file_path"))),
+                "Agent" | "Task" => format!("Starting agent: {}", text("description")),
+                _ => format!("Using {name}"),
+            };
+            self.activity.start(id, label, &self.events);
+        }
         match name {
             html::CLAUDE_TOOL => {
                 if let Some(item) = html::item(input) {
@@ -1150,6 +1167,7 @@ impl Transcript {
     fn results(&mut self, content: &Value, result: &Value) {
         for block in content.as_array().into_iter().flatten().filter(|block| block["type"] == "tool_result") {
             let Some(id) = block["tool_use_id"].as_str() else { continue };
+            self.activity.finish(id, &self.events);
             if let Some(item) = self.snippets.remove(id) {
                 if block["is_error"] != true {
                     self.push(item);
@@ -1236,6 +1254,21 @@ impl Transcript {
             return self.called(&event["message"]);
         }
         let Some(block) = event["index"].as_u64() else { return };
+        let activity_id = format!("block:{block}");
+        if event["type"] == "content_block_start" {
+            let content = &event["content_block"];
+            match content["type"].as_str() {
+                Some("thinking") => self.activity.start(&activity_id, "Thinking…".to_owned(), &self.events),
+                Some("text") => self.activity.start(&activity_id, "Writing response…".to_owned(), &self.events),
+                Some("tool_use") => {
+                    if let (Some(id), Some(name)) = (content["id"].as_str(), content["name"].as_str()) {
+                        self.activity.start(id, format!("Using {name}"), &self.events);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if event["type"] == "content_block_stop" { self.activity.finish(&activity_id, &self.events); }
         match event["type"].as_str() {
             Some("content_block_start") if event["content_block"]["type"] == "text" => {
                 let text = event["content_block"]["text"].as_str().unwrap_or_default().to_owned();
@@ -1316,12 +1349,16 @@ mod html_tests {
                     "type": "tool_result", "tool_use_id": "snippet", "is_error": denied, "content": "done",
                 }] } });
                 if recorded { transcript.recorded(&assistant); } else { transcript.read(&assistant); }
-                assert!(received.try_recv().is_err());
+                assert!(!std::iter::from_fn(|| received.try_recv().ok()).any(|event| matches!(event, Event::Item(..))));
                 if recorded { transcript.recorded(&result); } else { transcript.read(&result); }
+                let items: Vec<_> = std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+                    Event::Item(index, item) => Some((index, item)),
+                    _ => None,
+                }).collect();
                 if denied {
-                    assert!(received.try_recv().is_err());
+                    assert!(items.is_empty());
                 } else {
-                    assert!(matches!(received.try_recv().unwrap(), Event::Item(0, item) if Some(&item) == html::item(&arguments).as_ref()));
+                    assert!(matches!(items.as_slice(), [(0, item)] if Some(item) == html::item(&arguments).as_ref()));
                 }
                 assert!(transcript.snippets.is_empty());
             }

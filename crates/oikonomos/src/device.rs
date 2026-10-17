@@ -248,6 +248,9 @@ async fn connect(
                 Ok(chats::Change::Status(chat_id, status)) => {
                     send(&device.outgoing, json!({ "type": "chat.status", "chatId": chat_id, "status": status }));
                 }
+                Ok(chats::Change::Activity(chat_id, activity)) => {
+                    send(&device.outgoing, json!({ "type": "chat.activity", "chatId": chat_id, "activity": activity }));
+                }
                 Ok(chats::Change::Truncated(chat_id)) => {
                     if device.attached.contains_key(&chat_id) {
                         device.attach_chat(chat_id);

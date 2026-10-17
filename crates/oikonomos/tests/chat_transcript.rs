@@ -28,6 +28,218 @@ struct View {
 }
 
 #[tokio::test]
+async fn claude_internal_notifications_never_become_user_messages() {
+    let directory = tempfile::tempdir().unwrap();
+    let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/claude-code/tools.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let mut fixture = String::new();
+    let mut inserted = false;
+    let notification = "<task-notification>\n<task-id>background-agent</task-id>\n<status>completed</status>\n<summary>Agent finished</summary>\n</task-notification>";
+    for line in recording.lines() {
+        let entry: Value = serde_json::from_str(line).unwrap();
+        if !inserted && entry["stdout"]["type"] == "result" {
+            let session = entry["stdout"]["session_id"].clone();
+            for (index, content) in [json!(notification), json!([{ "type": "text", "text": notification }])].into_iter().enumerate() {
+                for (key, session_key) in [("stdout", "session_id"), ("session", "sessionId")] {
+                    let mut message = json!({
+                        "type": "user",
+                        "message": { "role": "user", "content": content },
+                        "uuid": format!("internal-notification-{index}"),
+                        "parent_tool_use_id": null,
+                        "origin": { "kind": "task-notification", "producer": "session-task" },
+                        "promptSource": "system",
+                        "turnOrigin": "task_notification",
+                        "timestamp": "2026-10-17T05:47:19.559Z",
+                    });
+                    message[session_key] = session.clone();
+                    fixture.push_str(&json!({ key: message }).to_string());
+                    fixture.push('\n');
+                }
+            }
+            inserted = true;
+        }
+        fixture.push_str(line);
+        fixture.push('\n');
+    }
+    assert!(inserted);
+    let path = directory.path().join("notifications.jsonl");
+    fs::write(&path, fixture).unwrap();
+    let (mut server, mut socket, chat_id) = launch("claude-code", path.to_str().unwrap()).await;
+    let mut view = View::default();
+    view.turn(&mut socket, &chat_id, CLAUDE_PROMPT).await;
+    let users = |view: &View| view.items.iter().filter(|item| item["kind"] == "user").cloned().collect::<Vec<_>>();
+    assert_eq!(users(&view), [user(CLAUDE_PROMPT)], "live notifications");
+    server.restart().await;
+    let (mut socket, mut restored) = reattach(&server, &chat_id, view.items.len()).await;
+    assert_eq!(users(&restored), [user(CLAUDE_PROMPT)], "holder replay");
+    restored.turn(&mut socket, &chat_id, "/compact").await;
+    restored.turn(&mut socket, &chat_id, DONE).await;
+    server.restart().await;
+    let (_, restored) = reattach(&server, &chat_id, restored.items.len()).await;
+    assert_eq!(users(&restored), [user(CLAUDE_PROMPT), user("/compact"), user(DONE)], "session history");
+}
+
+#[tokio::test]
+async fn commands_are_visible_before_their_results_arrive() {
+    for agent in ["codex", "claude-code"] {
+        let directory = tempfile::tempdir().unwrap();
+        let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/{agent}/tools.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let mut gated = String::new();
+        let mut inserted = false;
+        for line in recording.lines() {
+            gated.push_str(line);
+            gated.push('\n');
+            let entry: Value = serde_json::from_str(line).unwrap();
+            let message = &entry["stdout"];
+            let command = if agent == "codex" {
+                message["method"] == "item/started" && message["params"]["item"]["type"] == "commandExecution"
+            } else {
+                message["type"] == "assistant" && message["message"]["content"].as_array().is_some_and(|blocks| blocks.iter().any(|block| block["name"] == "Bash"))
+            };
+            if command && !inserted {
+                gated.push_str("{\"gate\":\"command\"}\n");
+                inserted = true;
+            }
+        }
+        assert!(inserted, "{agent}: no command in the fixture");
+        let fixture = directory.path().join("tools.jsonl");
+        fs::write(&fixture, gated).unwrap();
+        let (_server, mut socket, chat_id) = launch_with_gates(agent, fixture.to_str().unwrap(), Some(directory.path())).await;
+        control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Run the tools" })).await;
+        timeout(Duration::from_secs(5), async {
+            while !directory.path().join("command").exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.unwrap();
+        loop {
+            let message = next_control(&mut socket, "chat.item").await;
+            if message["item"]["kind"] == "command" && message["item"]["command"] == "wc -l notes.txt" { break; }
+        }
+        control(&mut socket, json!({ "type": "chat.attach", "chatId": chat_id })).await;
+        let snapshot = next_control(&mut socket, "chat.items").await;
+        assert!(snapshot["items"].as_array().unwrap().iter().any(|item| item["kind"] == "command" && item["command"] == "wc -l notes.txt"), "{agent}: current command is missing before completion: {snapshot}");
+        fs::remove_file(directory.path().join("command")).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn current_activity_is_reported_before_a_step_completes() {
+    for agent in ["codex", "claude-code"] {
+        for thinking in [true, false] {
+            let directory = tempfile::tempdir().unwrap();
+            let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/{agent}/tools.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+            let mut gated = String::new();
+            let mut inserted = false;
+            let mut turns = 0;
+            for line in recording.lines() {
+                gated.push_str(line);
+                gated.push('\n');
+                let entry: Value = serde_json::from_str(line).unwrap();
+                let message = &entry["stdout"];
+                if agent == "codex" && message["method"] == "turn/started" {
+                    turns += 1;
+                    if turns == 2 && !thinking { gated.push_str("{\"gate\":\"compacting\"}\n"); }
+                }
+                let step = if agent == "codex" {
+                    message["method"] == "item/started" && message["params"]["item"]["type"] == if thinking { "reasoning" } else { "webSearch" }
+                } else if thinking {
+                    message["type"] == "stream_event" && message["event"]["type"] == "content_block_start" && message["event"]["content_block"]["type"] == "thinking"
+                } else {
+                    message["type"] == "assistant" && message["message"]["content"].as_array().is_some_and(|blocks| blocks.iter().any(|block| block["name"] == "Read"))
+                };
+                if step && !inserted {
+                    gated.push_str("{\"gate\":\"activity\"}\n");
+                    inserted = true;
+                }
+            }
+            assert!(inserted, "{agent}: no matching step");
+            let fixture = directory.path().join("tools.jsonl");
+            fs::write(&fixture, gated).unwrap();
+            let (_server, mut socket, chat_id) = launch_with_gates(agent, fixture.to_str().unwrap(), Some(directory.path())).await;
+            control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Run the tools" })).await;
+            timeout(Duration::from_secs(5), async {
+                while !directory.path().join("activity").exists() {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }).await.unwrap();
+            let expected = if thinking { "Thinking" } else if agent == "codex" { "Searching" } else { "Reading" };
+            loop {
+                let message = next_control(&mut socket, "chat.activity").await;
+                if message["activity"].as_str().is_some_and(|activity| activity.starts_with(expected)) { break; }
+            }
+            control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+            let snapshot = next_control(&mut socket, "hello").await;
+            let chat = snapshot["chats"].as_array().unwrap().iter().find(|chat| chat["id"] == chat_id).unwrap();
+            assert!(chat["activity"].as_str().is_some_and(|activity| activity.starts_with(expected)), "{agent}: expected {expected} before completion: {chat}");
+            fs::remove_file(directory.path().join("activity")).unwrap();
+            if agent == "codex" && !thinking {
+                timeout(Duration::from_secs(5), async {
+                    while !directory.path().join("compacting").exists() {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                }).await.unwrap();
+                loop {
+                    let message = next_control(&mut socket, "chat.status").await;
+                    if message["status"] == "working" { break; }
+                }
+                control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+                let snapshot = next_control(&mut socket, "hello").await;
+                let chat = snapshot["chats"].as_array().unwrap().iter().find(|chat| chat["id"] == chat_id).unwrap();
+                assert_eq!(chat["status"], "working", "a turn started after completion must reactivate the tab");
+                fs::remove_file(directory.path().join("compacting")).unwrap();
+            }
+            loop {
+                let status = next_control(&mut socket, "chat.status").await;
+                if status["status"] == "done" { break; }
+            }
+            control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+            let snapshot = next_control(&mut socket, "hello").await;
+            let chat = snapshot["chats"].as_array().unwrap().iter().find(|chat| chat["id"] == chat_id).unwrap();
+            assert!(chat["activity"].is_null(), "{agent}: completed activity is still current: {chat}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_codex_subagent_reports_its_current_command_before_completion() {
+    let directory = tempfile::tempdir().unwrap();
+    let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/codex/subagents.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let mut gated = String::new();
+    let mut inserted = false;
+    for line in recording.lines() {
+        let entry: Value = serde_json::from_str(line).unwrap();
+        if entry.get("gate").is_some() { continue; }
+        gated.push_str(line);
+        gated.push('\n');
+        let message = &entry["stdout"];
+        if !inserted && message["method"] == "item/started" && message["params"]["item"]["command"].as_str().is_some_and(|command| command.contains("cat notes.txt todo.txt")) {
+            gated.push_str("{\"gate\":\"activity\"}\n");
+            inserted = true;
+        }
+    }
+    assert!(inserted);
+    let fixture = directory.path().join("subagents.jsonl");
+    fs::write(&fixture, gated).unwrap();
+    let (_server, mut socket, chat_id) = launch_with_gates("codex", fixture.to_str().unwrap(), Some(directory.path())).await;
+    control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Find needle using a subagent and track the steps." })).await;
+    timeout(Duration::from_secs(5), async {
+        while !directory.path().join("activity").exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await.unwrap();
+    loop {
+        let message = next_control(&mut socket, "chat.item").await;
+        if message["item"]["kind"] == "subagent" && message["item"]["activity"] == "Running cat notes.txt todo.txt" { break; }
+    }
+    control(&mut socket, json!({ "type": "chat.attach", "chatId": chat_id })).await;
+    let snapshot = next_control(&mut socket, "chat.items").await;
+    let child = snapshot["items"].as_array().unwrap().iter().find(|item| item["kind"] == "subagent").unwrap();
+    assert_eq!(child["status"], "working");
+    assert_eq!(child["activity"], "Running cat notes.txt todo.txt");
+    assert!(child["items"].as_array().unwrap().iter().any(|item| item["kind"] == "command" && item["status"] == "running"));
+    fs::remove_file(directory.path().join("activity")).unwrap();
+}
+
+#[tokio::test]
 async fn claude_tools_thinking_and_commands_normalize_alike_live_and_from_the_session_file() {
     let (mut server, mut socket, chat_id) = launch("claude-code", "tools").await;
     let mut view = View::default();
@@ -307,6 +519,10 @@ fn said(text: &str) -> Value {
 }
 
 async fn launch(agent: &str, fixture: &str) -> (Server, Socket, String) {
+    launch_with_gates(agent, fixture, None).await
+}
+
+async fn launch_with_gates(agent: &str, fixture: &str, gates: Option<&std::path::Path>) -> (Server, Socket, String) {
     let config = format!(
         r#"
 [[rig]]
@@ -317,7 +533,11 @@ env = {{ OIKONOMOS_FAKE_FIXTURE = "{fixture}" }}
 "#
     );
     let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
-    let server = Server::with_env("chat-transcript", &config, vec![("PATH", path.into())]).await;
+    let mut environment = vec![("PATH", path.into())];
+    if let Some(gates) = gates {
+        environment.push(("OIKONOMOS_FAKE_GATES", gates.as_os_str().to_owned()));
+    }
+    let server = Server::with_env("chat-transcript", &config, environment).await;
     let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
     control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
     next_control(&mut socket, "hello").await;
@@ -345,9 +565,12 @@ async fn reattach(server: &Server, chat_id: &str, len: usize) -> (Socket, View) 
 impl View {
     async fn turn(&mut self, socket: &mut Socket, chat_id: &str, text: &str) {
         control(socket, json!({ "type": "chat.send", "chatId": chat_id, "text": text })).await;
-        let ended = self.statuses.len() + 2;
-        self.follow(socket, chat_id, |view| view.statuses.len() == ended).await;
-        assert_eq!(self.statuses[ended - 2..], ["working", "done"]);
+        let (statuses, items) = (self.statuses.len(), self.items.len());
+        self.follow(socket, chat_id, |view| {
+            view.statuses.len() > statuses && view.statuses.last().is_some_and(|status| status == "done")
+                && view.items[items..].iter().any(|item| item["kind"] == "user")
+        }).await;
+        assert_eq!(self.statuses[statuses], "working");
     }
 
     async fn follow(&mut self, socket: &mut Socket, chat_id: &str, until: impl Fn(&Self) -> bool) {

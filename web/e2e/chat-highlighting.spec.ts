@@ -58,6 +58,8 @@ test('chat highlights commands, tool arguments, and both sides of inline diffs',
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const command = panel.locator('.command').first();
+	await expect(command).toBeHidden();
+	await panel.locator('.calls > summary').click();
 	await expect(command).toHaveText('$ printf \'%s\\n\' "$HOME"');
 	await colored(command.getByText("'%s\\n'", { exact: true }), '--ansi-2');
 	transcript[0] = { kind: 'command', command: 'printf "updated"', status: 'ok', output: 'plain output' };

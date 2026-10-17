@@ -3,6 +3,7 @@
 	import { OpenBrowser } from '#lib/browser.svelte.ts';
 	import Browser from '#lib/shell/Browser.svelte';
 	import { ago, logos } from '#lib/chat/sessions.ts';
+	import { agentSessions } from '#lib/chat/agents.ts';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import {
 		connect,
@@ -10,6 +11,7 @@
 		type Attention,
 		type Chat,
 		type Epic,
+		type Item,
 		type Project,
 		type Reading,
 		type ServerMessage,
@@ -59,6 +61,8 @@
 	let projects = $state<Project[]>([]);
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let chats = $state<Record<string, Chat[]>>({});
+	let chatItems = $state<Record<string, Item[]>>({});
+	let chatSessions = $state<Record<string, string>>({});
 	let sessions = $state<Record<string, Session[]>>({});
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
@@ -187,12 +191,32 @@
 				break;
 			}
 			case 'chats.changed':
+				for (const chat of chats[message.projectId] ?? []) {
+					if (!message.chats.some(({ id }) => id === chat.id)) {
+						delete chatItems[chat.id];
+						delete chatSessions[chat.id];
+					}
+				}
 				chats[message.projectId] = message.chats;
 				break;
 			case 'chat.status':
 				for (const chat of Object.values(chats).flat()) {
 					if (chat.id === message.chatId) chat.status = message.status;
 				}
+				break;
+			case 'chat.activity':
+				for (const chat of Object.values(chats).flat()) {
+					if (chat.id === message.chatId) chat.activity = message.activity;
+				}
+				break;
+			case 'chat.items': {
+				chatItems[message.chatId] = message.items;
+				const chat = Object.values(chats).flat().find(({ id }) => id === message.chatId);
+				if (chat && !agentSessions(chat, message.items).some(({ id }) => id === chatSessions[chat.id])) delete chatSessions[chat.id];
+				break;
+			}
+			case 'chat.item':
+				(chatItems[message.chatId] ??= [])[message.index] = message.item;
 				break;
 			case 'chat.meters':
 				for (const chat of Object.values(chats).flat()) {
@@ -684,6 +708,7 @@
 									{/snippet}
 								</Menu>
 							{:else if chat}
+								{@const sessions = agentSessions(chat, chatItems[chat.id] ?? [])}
 								<Menu context items={[{ label: 'Close', onselect: () => closeChat(chat) }]}>
 									{#snippet trigger(props)}
 										<Tab
@@ -691,8 +716,11 @@
 											data-tab={id}
 											variant="agent"
 											agent={chat.agent}
-											status={chat.status}
+											status={chat.status === 'done' ? sessions.find(({ status }) => status !== 'done')?.status ?? 'done' : chat.status}
 											label={chat.rig}
+											{sessions}
+											session={chatSessions[chat.id] ?? ''}
+											onsession={(id) => (chatSessions[chat.id] = id)}
 											active={id === group.active}
 											onclose={() => closeChat(chat)}
 											onclick={() => {
@@ -842,6 +870,9 @@
 							<ChatView
 								{device}
 								{chat}
+								items={chatItems[chat.id] ?? []}
+								session={chatSessions[chat.id] ?? ''}
+								onsession={(id) => (chatSessions[chat.id] = id)}
 								active={showing(chat.id)}
 								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}
 							/>

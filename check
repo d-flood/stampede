@@ -75,7 +75,24 @@ cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
 name = "Fake Claude Subagent $form"
 agent = "claude-code"
 env = { OIKONOMOS_FAKE_FIXTURE = "subagents", OIKONOMOS_FAKE_GATES = "$OIKONOMOS_E2E_ROOT/subagent-$form", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude" }
+
+[[rig]]
+name = "Fake Codex Subagent $form"
+agent = "codex"
+env = { OIKONOMOS_FAKE_FIXTURE = "subagents", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
 EOF
+for agent in claude codex; do
+mkdir "$OIKONOMOS_E2E_ROOT/activity-$agent-$form"
+kind="$agent"
+if [[ "$agent" == claude ]]; then kind=claude-code; fi
+cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
+
+[[rig]]
+name = "Activity $agent $form"
+agent = "$kind"
+env = { OIKONOMOS_FAKE_FIXTURE = "$OIKONOMOS_E2E_ROOT/activity-$agent-$form/tools.jsonl", OIKONOMOS_FAKE_GATES = "$OIKONOMOS_E2E_ROOT/activity-$agent-$form", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
+EOF
+done
 done
 
 cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF

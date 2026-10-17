@@ -100,6 +100,10 @@ test('a Chat folds tools, thinking, commands and a long first prompt into lines 
 
 	const tools = panel.locator('summary', { hasText: 'Read 2 files · searched the web · used ToolSearch' });
 	const search = panel.getByRole('listitem').filter({ hasText: 'IANA example domain' });
+	const calls = panel.locator('.calls > summary');
+	await expect(calls).toContainText('7 tool calls');
+	await expect(tools).toBeHidden();
+	await calls.click();
 	await expect(tools).toBeVisible();
 	await expect(search).toBeHidden();
 	await tools.click();
@@ -277,6 +281,8 @@ for (const agent of ['Claude', 'Codex']) {
 		await expect(tab.getByTitle('done')).toBeVisible();
 
 		const card = panel.locator('.edit').filter({ hasText: 'Edited notes.txt' });
+		await expect(card).toBeHidden();
+		await panel.locator('.calls > summary').click();
 		await expect(card).toContainText('+1 −1');
 		const added = card.getByText('+BETA');
 		if (project.name === 'pixel') {
@@ -477,7 +483,7 @@ async function finishElsewhere(name: string) {
 }
 
 
-test('a Chat pins todos above its transcript and expands subagent activity', async ({ page }, { project }) => {
+test('a Chat pins todos and opens subagent sessions from its active tab', async ({ page }, { project }) => {
 	const name = `subagent-${project.name}`;
 	const root = process.env.OIKONOMOS_E2E_ROOT!;
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
@@ -505,17 +511,145 @@ test('a Chat pins todos above its transcript and expands subagent activity', asy
 	unlinkSync(`${root}/subagent-${project.name}/todos`);
 	await expect(tab.getByTitle('done')).toBeVisible();
 	await expect(todos.locator('summary')).toHaveText('Todos 3 of 3');
-	const child = panel.locator('details').filter({ has: page.locator('summary', { hasText: 'Explore · Find file mentioning needle' }) });
-	await expect(child.locator(':scope > summary')).toContainText('↳ Explore · Find file mentioning needle');
-	await expect(child.locator('summary .status')).toHaveText('done');
-	await expect(child.getByText('Read 2 files')).toBeHidden();
-	await child.locator(':scope > summary').click();
-	await expect(child.getByText('Read 2 files')).toBeVisible();
-	await child.getByText('Read 2 files').click();
-	await expect(child.getByRole('listitem')).toHaveText(['Read notes.txt', 'Read todo.txt']);
+	await expect(panel.getByText('Explore · Find file mentioning needle')).toHaveCount(0);
+	const picker = page.getByRole('combobox', { name: new RegExp('^Session in Fake Claude Subagent') });
+	await expect(picker.getByRole('option')).toHaveText(['Main · done', '↳ Explore · done']);
+	await picker.selectOption({ label: '↳ Explore · done' });
+	const session = page.locator('.panel[role="tabpanel"]:visible');
+	await expect(session.getByText('Find file mentioning needle', { exact: true })).toBeVisible();
+	await expect(session.getByRole('textbox', { name: 'Composer' })).toHaveCount(0);
+	await session.locator('.transcript:visible .calls > summary').click();
+	await session.getByText('Read 2 files').click();
+	await expect(session.getByRole('listitem')).toHaveText(['Read notes.txt', 'Read todo.txt']);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+	await expect(picker).toHaveCount(0);
+	await tab.click();
+	await expect(picker).not.toHaveValue('');
+	await expect(session.getByText('Find file mentioning needle', { exact: true })).toBeVisible();
+	await session.getByRole('button', { name: 'Return to Main' }).click();
+	await expect(picker).toHaveValue('');
+	await expect(session.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 	await tab.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
 	await expect(tab).toHaveCount(0);
+});
+
+for (const agent of ['claude', 'codex']) {
+	test(`${agent} shows current activity before completion and clears it afterward`, async ({ page }, { project }) => {
+		const name = `activity-${agent}-${project.name}`;
+		const root = process.env.OIKONOMOS_E2E_ROOT;
+		const gates = `${root}/${name}`;
+		const kind = agent === 'claude' ? 'claude-code' : 'codex';
+		const recording = readFileSync(fileURLToPath(new URL(`../../crates/oikonomos/tests/fixtures/chats/${kind}/tools.recorded.jsonl`, import.meta.url)), 'utf8');
+		const inserted = new Set<string>();
+		let turns = 0;
+		const entries = recording.trim().split('\n').flatMap((line) => {
+			const entry = JSON.parse(line);
+			if (entry.stdin?.method === 'turn/start') turns++;
+			const message = entry.stdout;
+			let gate: string | undefined;
+			if (agent === 'codex') {
+				if (message?.method === 'item/started') {
+					gate = ({ reasoning: 'thinking', commandExecution: 'command', webSearch: 'tool' } as Record<string, string>)[message.params.item.type];
+				}
+				if (turns === 2 && message?.method === 'turn/started') gate = 'resume';
+			} else {
+				if (message?.type === 'stream_event' && message.event.type === 'content_block_start' && message.event.content_block.type === 'thinking') gate = 'thinking';
+				if (message?.type === 'assistant') {
+					if (message.message.content.some((block: { name?: string }) => block.name === 'Read')) gate = 'tool';
+					if (message.message.content.some((block: { name?: string }) => block.name === 'Bash')) gate = 'command';
+				}
+			}
+			if (!gate || inserted.has(gate)) return [entry];
+			inserted.add(gate);
+			return [entry, { gate }];
+		});
+		writeFileSync(`${gates}/tools.jsonl`, entries.map((entry) => JSON.stringify(entry)).join('\n'));
+		mkdirSync(`${root}/projects/${name}`);
+		await openProject(page, name);
+		await page.getByRole('button', { name: 'New Tab' }).click();
+		await page.getByRole('menuitem', { name: `Activity ${agent} ${project.name}`, exact: true }).click();
+		const tab = page.getByRole('tab', { name: new RegExp(`^Activity ${agent}`) });
+		const panel = page.locator('.panel[role="tabpanel"]:visible');
+		const activity = panel.getByRole('status', { name: 'Current activity' });
+		await panel.getByRole('textbox', { name: 'Composer' }).fill('Run the tools');
+		await panel.getByRole('button', { name: 'Send' }).click();
+		const stages = agent === 'codex' ? ['thinking', 'command', 'tool'] : ['thinking', 'tool', 'command'];
+		for (const stage of stages) {
+			await expect.poll(() => existsSync(`${gates}/${stage}`)).toBe(true);
+			await expect(activity).toContainText(stage === 'thinking' ? 'Thinking' : stage === 'command' ? 'Running wc -l notes.txt' : agent === 'codex' ? 'Searching the web' : 'Reading');
+			await expect(tab.getByTitle('working')).toBeVisible();
+			if (stage !== 'thinking') {
+				const calls = panel.locator('.calls > summary').last();
+				await expect(calls).toContainText(/\d+ tool calls?/);
+				await expect(calls.locator('.latest')).toHaveText(await activity.locator('.label').innerText());
+				await expect(panel.locator('.calls[open]')).toHaveCount(0);
+			}
+			await expect.poll(() => activity.locator('.spinner').evaluate((element) => getComputedStyle(element).animationName)).toMatch(/spin$/);
+			unlinkSync(`${gates}/${stage}`);
+		}
+		await expect(tab.getByTitle('done')).toBeVisible();
+		await expect(activity).toHaveCount(0);
+		if (agent === 'codex') {
+			await page.getByRole('button', { name: 'New Tab' }).click();
+			await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+			const chatId = await tab.getAttribute('data-tab');
+			await page.evaluate((chatId) => new Promise<void>((resolve) => {
+				const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
+				socket.onopen = () => socket.send(JSON.stringify({ type: 'chat.send', chatId, text: 'Say done in one word.', queue: false }));
+				socket.onmessage = ({ data }) => {
+					if (typeof data === 'string' && JSON.parse(data).type === 'chat.status') { socket.close(); resolve(); }
+				};
+			}), chatId);
+			await expect.poll(() => existsSync(`${gates}/resume`)).toBe(true);
+			await expect(tab.getByTitle('working')).toBeVisible();
+			await tab.click();
+			await expect(activity).toBeVisible();
+			unlinkSync(`${gates}/resume`);
+			await expect(tab.getByTitle('done')).toBeVisible();
+			await expect(activity).toHaveCount(0);
+		}
+	});
+}
+
+test('a Codex subagent gets its own full session in the selected tab', async ({ page }, { project }) => {
+	const name = `codex-subagent-${project.name}`;
+	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`);
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: `Fake Codex Subagent ${project.name}`, exact: true }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Codex Subagent/ });
+	const panel = page.locator('.panel[role="tabpanel"]:visible');
+	await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await expect(tab.getByTitle('done')).toBeVisible();
+	const picker = page.getByRole('combobox', { name: /^Session in Fake Codex Subagent/ });
+	await expect(picker.getByRole('option')).toHaveCount(2);
+	await picker.selectOption({ index: 1 });
+	await expect(panel.getByText('notes.txt mentions “needle”; todo.txt does not.', { exact: true })).toBeVisible();
+	await expect(panel.getByRole('textbox', { name: 'Composer' })).toHaveCount(0);
+	const calls = panel.locator('.transcript:visible .calls > summary');
+	await expect(calls).toContainText('3 tool calls');
+	await calls.click();
+	await expect.poll(() => picker.evaluate((element) => {
+		const parent = element.parentElement!.getBoundingClientRect();
+		const bounds = element.getBoundingClientRect();
+		return bounds.left >= parent.left && bounds.right <= parent.right && bounds.bottom <= parent.bottom;
+	})).toBe(true);
+	const viewport = page.viewportSize()!;
+	await page.setViewportSize({ width: viewport.width, height: project.name === 'pixel' ? 400 : 250 });
+	const transcript = panel.locator('.transcript:visible');
+	await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+	await transcript.evaluate((element) => (element.scrollTop = 0));
+	await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBe(0);
+	await picker.selectOption({ index: 0 });
+	await picker.selectOption({ index: 1 });
+	await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBe(0);
+	await page.setViewportSize(viewport);
+	await page.screenshot({ path: test.info().outputPath('subagent-session.png') });
+	await panel.getByRole('button', { name: 'Return to Main' }).click();
+	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 });
 
 for (const agent of ['Claude', 'Codex']) {
