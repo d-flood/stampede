@@ -30,7 +30,7 @@
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
-	import type { Scope } from '#lib/shell/Palette.svelte';
+	import type { Action, Scope } from '#lib/shell/Palette.svelte';
 	import Projects from '#lib/shell/Projects.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
 	import Sidebar, { showing as sectionShowing, type Section } from '#lib/shell/Sidebar.svelte';
@@ -87,6 +87,8 @@
 	const closingTicket = $derived(closingChat && heldBy(epics[closingChat.projectId] ?? [], closingChat.id));
 	let picking = $state(false);
 	let palette = $state<Scope>();
+	let tabTarget = $state<string>();
+	let afterPalette: (() => void) | undefined;
 	let unfocused = $state(false);
 	let directories = $state<string[]>([]);
 	let screen = $state(1);
@@ -131,6 +133,23 @@
 	const shownChats = $derived(foreground ? chatTabs.filter((chat) => showing(chat.id)).map((chat) => chat.id) : []);
 	const shownEpics = $derived(foreground ? openEpics.filter((epic) => showing(epic.id)).map((epic) => epic.slug) : []);
 	const label = $derived(focused && projectLabels.get(focused.id));
+	const tabActions: Action[] = $derived.by(() => {
+		const items = tabTarget === 'drawer'
+			? [{ label: 'Terminal', onselect: () => drawer.newTab() }]
+			: tabTarget ? newTab(tabTarget) : [];
+		return items.flatMap((entry) => {
+			const group = 'heading' in entry ? entry.heading : 'Tabs';
+			const items = 'items' in entry ? entry.items : [entry];
+			return items.map((item) => ({
+				...item,
+				group,
+				run: () => {
+					afterPalette = item.onselect;
+					palette = undefined;
+				}
+			}));
+		});
+	});
 	const titles = $derived([
 		{ title: 'Projects' },
 		{ title: label ?? 'Tabs' },
@@ -189,8 +208,12 @@
 			case 'terminal.created': {
 				const { owner, id } = message.terminal;
 				if (owner !== 'drawer') {
+					terminals[owner.project] ??= [];
+					const owned = terminals[owner.project];
+					if (!owned.some((terminal) => terminal.id === id)) owned.push(message.terminal);
 					place(owner.project, id);
 					choose(owner.project, id);
+					if (owner.project === focused?.id) slide(1);
 				}
 				break;
 			}
@@ -253,10 +276,15 @@
 					if (chat.id === message.chatId) chat.settings = message.settings;
 				}
 				break;
-			case 'chat.created':
+			case 'chat.created': {
+				chats[message.chat.projectId] ??= [];
+				const owned = chats[message.chat.projectId];
+				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
 				place(message.chat.projectId, message.chat.id);
 				choose(message.chat.projectId, message.chat.id);
+				if (message.chat.projectId === focused?.id) slide(1);
 				break;
+			}
 			case 'sessions.listed':
 				sessions[message.projectId] = message.sessions;
 				break;
@@ -553,6 +581,35 @@
 		device.send({ type: 'terminal.close', terminalId });
 	}
 
+	function openTabPicker() {
+		tabTarget = drawer.ownsFocus() ? 'drawer' : focused?.id;
+		if (!tabTarget) return;
+		if (tabTarget !== 'drawer') device.send({ type: 'sessions.list', projectId: tabTarget });
+		palette = 'tabs';
+	}
+
+	function finishTabSelection(event: Event) {
+		if (!afterPalette) return;
+		event.preventDefault();
+		const open = afterPalette;
+		afterPalette = undefined;
+		open();
+	}
+
+	function closeActiveTab() {
+		if (drawer.ownsFocus()) return drawer.closeActiveTab();
+		if (!focused || !activeTab) return;
+		const file = fileTabs.find((file) => file.id === activeTab);
+		const browser = browserTabs.find((browser) => browser.id === activeTab);
+		const epic = openEpics.find((epic) => epic.id === activeTab);
+		const chat = chatTabs.find((chat) => chat.id === activeTab);
+		if (file) closeFile(file);
+		else if (browser) closeBrowser(browser);
+		else if (epic) closeEpic(epic);
+		else if (chat) closeChat(chat);
+		else closeTab(focused.id, activeTab);
+	}
+
 	function closeChat(chat: Chat, confirmed = false) {
 		if (!confirmed && (chat.status === 'working' || heldBy(epics[chat.projectId] ?? [], chat.id))) {
 			closingChat = chat;
@@ -801,7 +858,7 @@
 					{@const projectId = focused.id}
 					<Menu items={newTab(projectId)} onopen={() => device.send({ type: 'sessions.list', projectId })}>
 						{#snippet trigger(props)}
-							<IconButton {...props} label="New Tab"><Plus /></IconButton>
+							<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
 						{/snippet}
 					</Menu>
 				{/if}
@@ -825,7 +882,7 @@
 		<div class="tabs">
 			{#each Object.values(browsers).flat() as browser (browser.id)}
 				<div class="view" hidden={!showing(browser.id)} style:grid-column={column(browser.id)} onfocusin={() => choose(browser.projectId, browser.id)}>
-					{#if showing(browser.id) || warm()}<Browser {browser} />{/if}
+					{#if showing(browser.id) || warm()}<Browser {browser} focused={browser.id === activeTab} />{/if}
 				</div>
 			{/each}
 			{#each Object.values(epicTabs).flat() as epic (epic.id)}
@@ -898,6 +955,7 @@
 								session={chatSessions[chat.id] ?? ''}
 								onsession={(id) => (chatSessions[chat.id] = id)}
 								active={showing(chat.id)}
+								focused={chat.id === activeTab}
 								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}
 							/>
 						{/await}
@@ -1020,6 +1078,8 @@
 
 <Leader
 	ontab={jump}
+	onnew={openTabPicker}
+	onclose={closeActiveTab}
 	onpalette={() => openPalette('all')}
 	onrig={launch}
 	onsplit={() => activeTab && move(activeTab, side === 'left' ? 'right' : 'left')}
@@ -1027,22 +1087,25 @@
 
 <Dialog
 	bind:open={() => !!palette, (open) => !open && (palette = undefined)}
-	title={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions' }[palette ?? 'all']}
+	oncloseautofocus={finishTabSelection}
+	title={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[palette ?? 'all']}
 >
 	{#if palette}
 		{#await import('#lib/shell/Palette.svelte') then { default: Palette }}
-			<Palette
-				scope={palette}
-				{projects}
-				labels={projectLabels}
-				{focused}
-				actions={[{ label: 'Open config', run: openConfig }]}
-				sessions={focused && sessions[focused.id]}
-				onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
-				onrig={(launcher) => (launch(launcher), (palette = undefined))}
-				onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
-				onsession={(session) => focused && (reopen(focused.id, session), (palette = undefined))}
-			/>
+			{#key palette}
+				<Palette
+					scope={palette}
+					{projects}
+					labels={projectLabels}
+					{focused}
+					actions={palette === 'tabs' ? tabActions : [{ label: 'Open config', run: openConfig }]}
+					sessions={focused && sessions[focused.id]}
+					onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
+					onrig={(launcher) => (launch(launcher), (palette = undefined))}
+					onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
+					onsession={(session) => focused && (reopen(focused.id, session), (palette = undefined))}
+				/>
+			{/key}
 		{/await}
 	{/if}
 </Dialog>

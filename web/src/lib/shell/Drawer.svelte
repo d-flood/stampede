@@ -32,7 +32,10 @@
 				if (message.drawer) terminals = message.terminals;
 				break;
 			case 'terminal.created':
-				if (message.terminal.owner === 'drawer') chosen = message.terminal.id;
+				if (message.terminal.owner === 'drawer') {
+					if (!terminals.some((terminal) => terminal.id === message.terminal.id)) terminals.push(message.terminal);
+					chosen = message.terminal.id;
+				}
 				break;
 			case 'terminal.title':
 				for (const terminal of terminals) {
@@ -55,6 +58,18 @@
 		else panel.focus();
 	}
 
+	export function ownsFocus() {
+		return open && panel.contains(document.activeElement);
+	}
+
+	export function newTab() {
+		device.send({ type: 'terminal.create', owner: 'drawer' });
+	}
+
+	export function closeActiveTab() {
+		if (active) closeTab(active.id);
+	}
+
 	function keydown(event: KeyboardEvent) {
 		if (event.code !== 'Backquote' || !event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
 		event.preventDefault();
@@ -67,6 +82,7 @@
 			const index = terminals.findIndex((terminal) => terminal.id === terminalId);
 			const neighbor = terminals[index + 1] ?? terminals[index - 1];
 			if (neighbor) chosen = neighbor.id;
+			else panel.focus();
 		}
 		device.send({ type: 'terminal.close', terminalId });
 	}
@@ -93,9 +109,9 @@
 				</Menu>
 			{/each}
 		</div>
-		<Menu items={[{ label: 'Terminal', onselect: () => device.send({ type: 'terminal.create', owner: 'drawer' }) }]}>
+		<Menu items={[{ label: 'Terminal', onselect: newTab }]}>
 			{#snippet trigger(props)}
-				<IconButton {...props} label="New Drawer Tab"><Plus /></IconButton>
+				<IconButton {...props} label="New Drawer Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
 			{/snippet}
 		</Menu>
 		{#if form() === 'phone'}

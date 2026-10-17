@@ -883,6 +883,7 @@ impl Transcript {
 
     /// A compaction is recorded before the prompt that asked for it, so its notice waits for that prompt.
     fn recorded(&mut self, entry: &Value) {
+        self.task_notification(entry);
         if entry["isSidechain"] == true || entry["isMeta"] == true || entry["isCompactSummary"] == true {
             return;
         }
@@ -926,21 +927,12 @@ impl Transcript {
     }
 
     fn read(&mut self, message: &Value) {
+        self.task_notification(message);
         let top = message["parent_tool_use_id"].is_null();
         match message["type"].as_str() {
             Some("system") if message["subtype"] == "task_started" => {
                 if let (Some(task), Some(tool)) = (message["task_id"].as_str(), message["tool_use_id"].as_str()) {
                     self.tasks.insert(task.to_owned(), tool.to_owned());
-                }
-            }
-            Some("system") if message["subtype"] == "task_updated" || message["subtype"] == "task_notification" => {
-                let tool = message["tool_use_id"].as_str().or_else(|| message["task_id"].as_str().and_then(|task| self.tasks.get(task).map(String::as_str)));
-                let status = message["status"].as_str().or_else(|| message["patch"]["status"].as_str());
-                if matches!(status, Some("completed" | "failed" | "stopped"))
-                    && let Some((subagent, _)) = tool.and_then(|tool| self.subagents.get_mut(tool))
-                {
-                    subagent.status = Status::Done;
-                    let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
                 }
             }
             Some("system") if message["subtype"] == "compact_boundary" => {
@@ -1021,6 +1013,50 @@ impl Transcript {
                 let _ = self.events.send(Event::Truncate(0));
             }
             _ => {}
+        }
+    }
+
+    fn task_notification(&mut self, message: &Value) {
+        match message["type"].as_str() {
+            Some("system") if message["subtype"] == "task_updated" || message["subtype"] == "task_notification" => {
+                self.task_status(
+                    message["task_id"].as_str(),
+                    message["tool_use_id"].as_str(),
+                    message["status"].as_str().or_else(|| message["patch"]["status"].as_str()),
+                );
+            }
+            Some("user") => {
+                let content = &message["message"]["content"];
+                if let Some(text) = content.as_str() {
+                    self.task_text(text);
+                } else {
+                    for block in content.as_array().into_iter().flatten() {
+                        if let Some(text) = block["text"].as_str() { self.task_text(text); }
+                    }
+                }
+            }
+            Some("attachment") if message["attachment"]["type"] == "queued_command" => {
+                if let Some(text) = message["attachment"]["prompt"].as_str() { self.task_text(text); }
+            }
+            _ => {}
+        }
+    }
+
+    fn task_text(&mut self, text: &str) {
+        for notification in text.split("<task-notification>").skip(1) {
+            if let Some((notification, _)) = notification.split_once("</task-notification>") {
+                self.task_status(tagged(notification, "task-id"), tagged(notification, "tool-use-id"), tagged(notification, "status"));
+            }
+        }
+    }
+
+    fn task_status(&mut self, task: Option<&str>, tool: Option<&str>, status: Option<&str>) {
+        let tool = tool.filter(|tool| self.subagents.contains_key(*tool)).or_else(|| task.and_then(|task| self.tasks.get(task).map(String::as_str)));
+        if matches!(status, Some("completed" | "failed" | "stopped"))
+            && let Some((subagent, _)) = tool.and_then(|tool| self.subagents.get_mut(tool))
+        {
+            subagent.status = Status::Done;
+            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
         }
     }
 
@@ -1202,6 +1238,7 @@ impl Transcript {
                 self.report_todos();
             }
             if let Some((subagent, transcript)) = self.subagents.get_mut(id) {
+                if let Some(task) = result["agentId"].as_str() { self.tasks.insert(task.to_owned(), id.to_owned()); }
                 if let Some(history) = &self.history
                     && let Some(agent) = result["agentId"].as_str()
                 {
@@ -1348,6 +1385,62 @@ fn prompt(content: &str) -> Option<String> {
         Some(args) if !args.is_empty() => format!("{name} {args}"),
         _ => name.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod subagent_tests {
+    use super::*;
+
+    #[test]
+    fn background_completion_is_restored_without_hiding_active_agents() {
+        for status in ["completed", "failed", "stopped"] {
+            for recorded in [false, true] {
+                for shape in ["system", "updated", "text", "blocks", "attachment"] {
+                    let (events, mut received) = mpsc::unbounded_channel();
+                    let mut transcript = Transcript::new(events, Path::new("/project"));
+                    let mut entries = Vec::new();
+                    for id in ["finished", "active"] {
+                        entries.push(json!({ "type": "assistant", "message": { "content": [{
+                            "type": "tool_use", "id": id, "name": "Agent", "input": { "description": id },
+                        }] } }));
+                        let mut result = json!({ "type": "user", "message": { "content": [{
+                            "type": "tool_result", "tool_use_id": id, "content": "Async agent launched successfully.",
+                        }] } });
+                        result[if recorded { "toolUseResult" } else { "tool_use_result" }] = json!({ "isAsync": true, "agentId": format!("agent-{id}") });
+                        entries.push(result);
+                    }
+                    let notification = format!("<task-notification>\n<task-id>agent-finished</task-id>\n<status>{status}</status>\n</task-notification>");
+                    entries.push(match shape {
+                        "system" => json!({ "type": "system", "subtype": "task_notification", "task_id": "agent-finished", "tool_use_id": "resumed-tool", "status": status }),
+                        "updated" => json!({ "type": "system", "subtype": "task_updated", "tool_use_id": "finished", "patch": { "status": status } }),
+                        "text" => json!({ "type": "user", "promptSource": "system", "message": { "content": notification } }),
+                        "blocks" => json!({ "type": "user", "promptSource": "system", "message": { "content": [{ "type": "text", "text": notification }] } }),
+                        _ => json!({ "type": "attachment", "isMeta": true, "renderedRole": "system", "attachment": { "type": "queued_command", "prompt": notification } }),
+                    });
+                    if recorded {
+                        let directory = tempfile::tempdir().unwrap();
+                        let project = directory.path().join("projects/test");
+                        fs::create_dir_all(&project).unwrap();
+                        fs::write(project.join("session.jsonl"), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+                        let env = BTreeMap::from([("CLAUDE_CONFIG_DIR".to_owned(), directory.path().to_str().unwrap().to_owned())]);
+                        transcript.history(&env, "session", None);
+                    } else {
+                        for entry in entries { transcript.read(&entry); }
+                    }
+                    let mut items = BTreeMap::new();
+                    while let Ok(event) = received.try_recv() {
+                        if let Event::Item(index, item) = event { items.insert(index, item); }
+                    }
+                    let statuses: Vec<_> = items.values().filter_map(|item| match item {
+                        Item::Subagent { task, status, .. } => Some((task.as_str(), *status)),
+                        _ => None,
+                    }).collect();
+                    assert_eq!(statuses, [("finished", Status::Done), ("active", Status::Working)], "{status}, recorded: {recorded}, {shape}");
+                    assert!(!items.values().any(|item| matches!(item, Item::User { .. })));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

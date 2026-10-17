@@ -11,9 +11,10 @@
 		description?: string;
 		children?: Snippet;
 		actions?: Snippet;
+		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { open = $bindable(false), full = false, title, description, children, actions }: Props = $props();
+	let { open = $bindable(false), full = false, title, description, children, actions, oncloseautofocus }: Props = $props();
 </script>
 
 <Dialog.Root bind:open>
@@ -23,7 +24,7 @@
 				<div {...props} class="overlay"></div>
 			{/snippet}
 		</Dialog.Overlay>
-		<Dialog.Content>
+	<Dialog.Content onCloseAutoFocus={oncloseautofocus}>
 			{#snippet child({ props })}
 				<div {...props} class="dialog" class:full class:footed={!!actions}>
 					<div class="heading">

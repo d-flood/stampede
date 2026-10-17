@@ -73,7 +73,7 @@
 			class="close"
 			type="button"
 			aria-label="Close {label}"
-			title="Close {label}"
+			title="Close {label} (Ctrl/Cmd+W)"
 			onpointerdown={(event) => event.stopPropagation()}
 			onclick={(event) => {
 				event.stopPropagation();

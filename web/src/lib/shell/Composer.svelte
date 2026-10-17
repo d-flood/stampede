@@ -6,6 +6,7 @@
 	type Props = {
 		id: string;
 		disabled?: boolean;
+		focused?: boolean;
 		placeholder?: string;
 		menu?: Snippet<[string, (text: string) => void]>;
 		onkeydown?: (event: KeyboardEvent) => void;
@@ -14,7 +15,7 @@
 		actions?: Snippet<[text: string, clear: () => void]>;
 	};
 
-	let { id, disabled = false, placeholder, onsend, actions, menu, onkeydown }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, onsend, actions, menu, onkeydown }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? '');
@@ -55,6 +56,7 @@
 <div class="composer" class:boxed={actions} class:phone>
 	{@render menu?.(text, replace)}
 	<textarea
+		{@attach (element) => { if (focused) element.focus(); }}
 		bind:this={box}
 		bind:value={text}
 		oninput={keep}

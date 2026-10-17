@@ -307,8 +307,19 @@
 	}
 
 	function keydown(event: KeyboardEvent) {
-		if (event.isComposing || ended) return;
-		if (event.key.toLowerCase() === 'v' && (event.ctrlKey || event.metaKey) && !event.altKey) {
+		if (event.isComposing) return;
+		const key = event.key.toLowerCase();
+		if (key === 'c' && !event.altKey && ((event.ctrlKey && event.shiftKey && !event.metaKey) || (event.metaKey && !event.ctrlKey && !event.shiftKey))) {
+			event.preventDefault();
+			event.stopPropagation();
+			const text = view?.getSelection();
+			if (text) navigator.clipboard.writeText(text).catch(() => (copying = text));
+		} else if (key === 'c' && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+			event.preventDefault();
+			event.stopPropagation();
+			if (!ended) input('\x03');
+		} else if (ended) return;
+		else if (key === 'v' && (event.ctrlKey || event.metaKey) && !event.altKey) {
 			event.stopPropagation();
 			view?.textarea?.focus();
 		} else if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
@@ -348,7 +359,7 @@
 	</div>
 	{@render children?.()}
 	<div class="view">
-		<div class="terminal" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
+		<div class="terminal" title="Copy selection (Ctrl+Shift+C or Cmd+C)" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
 		{#if form() === 'phone'}
 			<div
 				class="rail"

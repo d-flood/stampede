@@ -15,7 +15,7 @@
 	import { onMount } from 'svelte';
 	import { on } from 'svelte/events';
 
-	let { device, chat, items, session, onsession, active, ondiff }: { device: Device; chat: Chat; items: Item[]; session: string; onsession(id: string): void; active: boolean; ondiff(path: string): void } =
+	let { device, chat, items, session, onsession, active, focused = false, ondiff }: { device: Device; chat: Chat; items: Item[]; session: string; onsession(id: string): void; active: boolean; focused?: boolean; ondiff(path: string): void } =
 		$props();
 
 	const sessions = $derived(agentSessions(chat, items));
@@ -137,7 +137,7 @@
 			{/key}
 		{/if}
 		{#if !selected.id}
-			<ChatComposer {device} {chat} {live} {request} {capabilities} {choices} onrun={run} />
+			<ChatComposer {device} {chat} {live} {request} {capabilities} {choices} {focused} onrun={run} />
 			{#if form() === 'desktop'}
 				<Meters {chat} />
 			{/if}

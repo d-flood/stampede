@@ -38,11 +38,15 @@ async fn a_codex_chat_streams_a_turn_and_closing_stops_its_proxy() {
     assert!(running.iter().any(|process| process.contains("/tests/fake/codex app-server proxy")), "{running:?}");
 
     close_chat(&mut socket, server.root.path(), chat_id).await;
-    let methods: Vec<Value> = received(&server).iter().map(|message| message["method"].clone()).collect();
+    let received = received(&server);
+    let methods: Vec<Value> = received.iter().map(|message| message["method"].clone()).collect();
     assert_eq!(
         methods,
         ["initialize", "initialized", "thread/start", "model/list", "skills/list", "turn/start", "thread/unsubscribe"]
     );
+    assert_eq!(received[2]["params"]["approvalPolicy"], "on-request");
+    assert_eq!(received[2]["params"]["sandbox"], "workspace-write");
+    assert_eq!(received[2]["params"]["approvalsReviewer"], "auto_review");
 }
 
 #[tokio::test]

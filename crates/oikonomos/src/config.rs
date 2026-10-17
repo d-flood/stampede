@@ -101,7 +101,8 @@ pub struct Rig {
 
 impl Rig {
     pub fn settings(&self) -> AgentSettings {
-        AgentSettings { model: self.model.clone(), effort: self.effort.clone(), mode: self.mode.clone() }
+        let mode = self.mode.clone().or_else(|| (self.agent == Agent::Codex).then(|| "approve-for-me".to_owned()));
+        AgentSettings { model: self.model.clone(), effort: self.effort.clone(), mode }
     }
 }
 
@@ -499,7 +500,7 @@ command = "codex"
             [
                 AgentSettings { model: text("opus"), effort: text("xhigh"), mode: text("acceptEdits") },
                 AgentSettings { mode: text("full-access"), ..AgentSettings::default() },
-                AgentSettings::default(),
+                AgentSettings { mode: text("approve-for-me"), ..AgentSettings::default() },
             ]
         );
         assert_eq!(config.rigs[0].env["CLAUDE_CONFIG_DIR"], "~/.claude-alt");

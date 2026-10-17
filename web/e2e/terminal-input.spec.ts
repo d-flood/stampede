@@ -12,21 +12,59 @@ test.afterEach(async ({ page }) => {
 
 async function terminal(page: Page) {
 	const input: string[] = [];
-	page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {
-		if (typeof payload !== 'string' && payload[0] === 2) input.push(payload.subarray(5).toString());
-	}));
+	let created = '';
+	page.on('websocket', (socket) => {
+		socket.on('framesent', ({ payload }) => {
+			if (typeof payload !== 'string' && payload[0] === 2) input.push(payload.subarray(5).toString());
+		});
+		socket.on('framereceived', ({ payload }) => {
+			if (typeof payload !== 'string') return;
+			const message = JSON.parse(payload);
+			if (message.type === 'terminal.created') created = message.terminal.id;
+		});
+	});
 	await openProject(page, test.info().project.name === 'desktop' ? 'alpha' : 'beta');
 	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab');
 	const count = await tabs.count();
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal' }).click();
 	await expect(tabs).toHaveCount(count + 1);
-	await expect(tabs.last()).toHaveAttribute('aria-selected', 'true');
+	await expect.poll(() => created).not.toBe('');
+	await expect(page.locator(`[data-tab="${created}"]`)).toHaveAttribute('aria-selected', 'true');
 	await expect(page.locator('.terminal:visible canvas')).toBeVisible();
-	await expect.poll(() => screen(page)).toMatch(/\S/);
+	await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/\S/);
 	await expect.poll(() => page.evaluate(() => window.terminal?.hasBracketedPaste())).toBe(true);
 	return input;
 }
+
+test('terminal interrupt stays in the terminal and copy sends no terminal input', async ({ page, context }) => {
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+	const input = await terminal(page);
+	const tab = page.locator('[data-tab][aria-selected="true"]').first();
+	const id = await tab.getAttribute('data-tab');
+	for (const target of ['[contenteditable="true"]', 'textarea']) {
+		await page.locator(`.terminal:visible ${target}`).focus();
+		await page.evaluate(async () => {
+			await navigator.clipboard.writeText('unchanged');
+			window.terminal!.select(0, 0, 1);
+		});
+		input.length = 0;
+		await page.keyboard.press('Control+C');
+		await expect.poll(() => input.join('')).toBe('\x03');
+		await expect(page.locator(`[data-tab="${id}"]`)).toHaveAttribute('aria-selected', 'true');
+		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('unchanged');
+		const selected = await page.evaluate(() => {
+			window.terminal!.select(0, 0, 1);
+			return window.terminal!.getSelection();
+		});
+		expect(selected).not.toBe('');
+		input.length = 0;
+		await page.keyboard.press('Control+Shift+C');
+		await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(selected);
+		expect(input.join('')).toBe('');
+		await expect(page.locator(`[data-tab="${id}"]`)).toHaveAttribute('aria-selected', 'true');
+	}
+});
 
 test('terminal paste protects multiline input from either focus target', async ({ page, context }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);

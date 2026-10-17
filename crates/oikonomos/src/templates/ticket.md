@@ -11,6 +11,7 @@ You hold one Ticket of an Epic, named with its reference, such as chat-ui/4, at 
 7. Record exactly one Verdict, from this directory, as your last act:
    - `oikonomos complete <epic>/<n> -m "<commit message>"` commits everything you left uncommitted, new files included, with that message, and hands the Ticket to Oikonomos to merge. You need not commit first. A clean tree is accepted, so a Ticket with no diff can still be completed.
    - `oikonomos skip <epic>/<n> "<reason>"` retires a Ticket the codebase has already made moot. The reason becomes its Note.
+   - Keep messages terse, ~12 words or fewer.
 
 ## Hard rules
 

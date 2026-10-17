@@ -4,6 +4,47 @@ import { openProject, showSidebar } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
+test('multiline selections keep editor text visible', async ({ page }, { project }) => {
+	const name = `selection-${project.name}`;
+	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	mkdirSync(root);
+	writeFileSync(`${root}/selection.txt`, 'Selected text must remain visible.\nAcross multiple lines.\nIncluding this final line.\n');
+	await openProject(page, name);
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'selection.txt', exact: true }).click();
+	const editor = page.locator('.editor:not([hidden])');
+	const line = editor.locator('.cm-line').first();
+	const foreground = await line.evaluate((element) => getComputedStyle(element).color);
+	const paintedText = async () => {
+		const screenshot = await line.screenshot();
+		return page.evaluate(async ({ png, foreground }) => {
+			const image = new Image();
+			image.src = `data:image/png;base64,${png}`;
+			await image.decode();
+			const canvas = document.createElement('canvas');
+			canvas.width = image.width;
+			canvas.height = image.height;
+			const context = canvas.getContext('2d')!;
+			context.drawImage(image, 0, 0);
+			const pixels = context.getImageData(0, 0, image.width, image.height).data;
+			const rgb = foreground.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+			let count = 0;
+			for (let offset = 0; offset < pixels.length; offset += 4) {
+				if (rgb.every((value, channel) => Math.abs(pixels[offset + channel] - value) < 20)) count++;
+			}
+			return count;
+		}, { png: screenshot.toString('base64'), foreground });
+	};
+	const unselected = await paintedText();
+	expect(unselected).toBeGreaterThan(20);
+	await editor.locator('.cm-content').focus();
+	await page.keyboard.press('ControlOrMeta+a');
+	await expect(editor.locator('.cm-selectionBackground')).not.toHaveCount(0);
+	await page.screenshot({ path: test.info().outputPath('multiline-selection.png') });
+	await expect.poll(paintedText).toBeGreaterThan(unselected * 0.7);
+	await expect.poll(paintedText).toBeLessThan(unselected * 1.3);
+});
+
 test('line wrapping defaults to Markdown and toggles per editor without losing edits', async ({ page }, { project }) => {
 	const name = `wrapping-${project.name}`;
 	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;

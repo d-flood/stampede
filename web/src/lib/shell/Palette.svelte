@@ -1,6 +1,7 @@
 <script lang="ts" module>
-	export type Scope = 'all' | 'files' | 'sessions';
-	export type Action = { label: string; run(): void };
+	import type { Component } from 'svelte';
+	export type Scope = 'all' | 'files' | 'sessions' | 'tabs';
+	export type Action = { label: string; run(): void; group?: string; icon?: Component; hint?: string };
 </script>
 
 <script lang="ts">
@@ -11,7 +12,6 @@
 	import { split } from '#lib/git.ts';
 	import { Command } from 'bits-ui';
 	import fuzzysort, { type Key } from 'fuzzysort';
-	import type { Component } from 'svelte';
 
 	type Props = {
 		scope: Scope;
@@ -34,13 +34,22 @@
 	const all = $derived(scope === 'all');
 	const files = $derived.by(() => {
 		const snapshot = focused && listing(focused.id).snapshot;
-		if (!snapshot || (all && !query)) return [];
+		if (!snapshot || scope === 'tabs' || (all && !query)) return [];
 		return fuzzysort.go(query, snapshot, { limit: 50, threshold: 0 }).map(({ target: path }) => {
 			const { name, dir } = split(path);
 			return { value: `file:${path}`, parent: dir, label: name, onselect: () => onfile(path) };
 		});
 	});
-	const groups: { heading: string; entries: Entry[] }[] = $derived([
+	const tabGroups = $derived.by(() => {
+		const groups = new Map<string, Entry[]>();
+		for (const [index, action] of find(actions, (action) => action.label).entries()) {
+			const heading = action.group ?? 'Tabs';
+			if (!groups.has(heading)) groups.set(heading, []);
+			groups.get(heading)!.push({ value: `tab:${index}`, label: action.label, icon: action.icon, hint: action.hint, onselect: action.run });
+		}
+		return Array.from(groups, ([heading, entries]) => ({ heading, entries }));
+	});
+	const groups: { heading: string; entries: Entry[] }[] = $derived(scope === 'tabs' ? tabGroups : [
 		{
 			heading: 'Projects',
 			entries: find(all ? projects : [], (project) => labels.get(project.id)).map((project) => ({
@@ -84,14 +93,14 @@
 	}
 </script>
 
-<Command.Root label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions' }[scope]} shouldFilter={false} loop>
+<Command.Root label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[scope]} shouldFilter={false} loop>
 	<Command.Input
-		placeholder={{ all: 'Switch Project, launch a Rig, or open a file', files: 'Find a file', sessions: 'Find a session by its first prompt' }[scope]}
+		placeholder={{ all: 'Switch Project, launch a Rig, or open a file', files: 'Find a file', sessions: 'Find a session by its first prompt', tabs: 'Choose what to open' }[scope]}
 		autocomplete="off"
 		spellcheck={false}
 	>
 		{#snippet child({ props })}
-			<input {...props} class="query" bind:value={query} />
+			<input {...props} class="query" bind:value={query} {@attach (element) => element.focus()} />
 		{/snippet}
 	</Command.Input>
 	<Command.List>

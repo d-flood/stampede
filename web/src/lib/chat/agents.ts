@@ -8,7 +8,7 @@ export function agentSessions(chat: Chat, items: Item[]): AgentSession[] {
 		items.forEach((item, index) => {
 			if (item.kind !== 'subagent') return;
 			const id = `${parent}/${index}`;
-			sessions.push({ id, label: `${'↳ '.repeat(depth)}${item.name || item.task}`, task: item.task, status: item.status, activity: item.activity, items: item.items });
+			if (item.status !== 'done') sessions.push({ id, label: `${'↳ '.repeat(depth)}${item.name || item.task}`, task: item.task, status: item.status, activity: item.activity, items: item.items });
 			visit(item.items, id, depth + 1);
 		});
 	}

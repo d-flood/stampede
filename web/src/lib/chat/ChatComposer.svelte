@@ -6,10 +6,11 @@
 	import Stop from '~icons/ph/stop-fill';
 	import Paperclip from '~icons/ph/paperclip';
 
-	let { device, chat, live, request, capabilities, choices, onrun }: {
+	let { device, chat, live, request, capabilities, choices, focused = false, onrun }: {
 		device: Device;
 		chat: Chat;
 		live: boolean;
+		focused?: boolean;
 		request?: Request;
 		capabilities: Capabilities;
 		choices: Record<Setting, Choice[]>;
@@ -90,7 +91,7 @@
 	</div>
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
-<Composer bind:this={composer} id={chat.id} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onkeydown={(event) => slash?.key(event)}>
+<Composer bind:this={composer} id={chat.id} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onkeydown={(event) => slash?.key(event)}>
 	{#snippet menu(text, replace)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
 	{/snippet}

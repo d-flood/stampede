@@ -4,19 +4,9 @@ Grill the user relentlessly about a plan or design until you reach a shared unde
 
 Map the plan as a **design tree**: every decision branches into the decisions that hang off it.
 
-Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask *now* without guessing at answers you haven't heard yet. Ask the whole frontier in one round: number each question and give your recommended answer. Then wait for the user's answers before the next round.
+Work the tree in **rounds** using the ask user question tool. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask *now* without guessing at answers you haven't heard yet. Ask the whole frontier in one round. For each question, indicate your recommended answer.
 
-**Keep a round's questions simple.** Batching only works when each question stands alone and can be answered in a sentence or two. A question that needs discussion before it can be answered (weighing a trade-off, reacting to something you'd have to show first) belongs in a round of its own, asked alone. A short round with one real question beats a batch the user has to untangle.
-
-Format each question like so:
-
-```
-❓ **Q1** - **<question title>**: <question body, might be multiple paragraphs, including multiple choices>
-
-➡️ <your recommended answer>
-```
-
-**Do not use the ask user question tool.** Questions go in your message, in the format above.
+**Keep a round's questions simple.** A question that needs discussion before it can be answered (weighing a trade-off, reacting to something you'd have to show first) belongs in a round of its own, asked **without** the question tool so it can be discussed before locking it in.
 
 Each round the user answers reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier and ask the next round. A question whose answer depends on another question still open in this round belongs to a *later* round, not this one.
 
@@ -24,7 +14,7 @@ Finding *facts* is your job, never the user's. When a frontier question needs a 
 
 The session is done when the frontier is empty: every branch of the design tree visited, nothing left silently assumed. Do not act on the plan until the user confirms you have reached a shared understanding.
 
-**Do not write a spec or Tickets** when the grilling is complete. The user sends `/spec` when they want the Brief, and `/tickets` when they want the Tickets.
+**Do not write a spec or tickets** when the grilling is complete. The user sends `/spec` when they want the Brief, and `/tickets` when they want the Tickets.
 
 ## The domain model
 
@@ -42,25 +32,7 @@ Most repos have a single context:
 └── src/
 ```
 
-If a `GLOSSARY-MAP.md` exists at the root, the repo has multiple contexts. The map points to where each one lives:
-
-```
-/
-├── GLOSSARY-MAP.md
-├── docs/
-│   └── adr/                          ← system-wide decisions
-├── src/
-│   ├── ordering/
-│   │   ├── GLOSSARY.md
-│   │   └── docs/adr/                 ← context-specific decisions
-│   └── billing/
-│       ├── GLOSSARY.md
-│       └── docs/adr/
-```
-
-Older repos may name these `CONTEXT.md` and `CONTEXT-MAP.md`. Look for the `GLOSSARY` names first and fall back to the `CONTEXT` names only when no `GLOSSARY` file exists; a legacy file you find is the glossary, and you update it in place. When multiple contexts exist, infer which one the current topic relates to. If unclear, ask.
-
-Read the glossary and the ADRs in the area the plan touches before your first round.
+Read the glossary and the ADRs in the area the plan touches before your first round. ADRs should not be seen as absolute, but they do require user consent to override. Don't let them become stale, delete or update in place.
 
 Create files lazily, only when you have something to write. If no glossary exists under either name, create `GLOSSARY.md` at the root when the first term is resolved. If no `docs/adr/` exists, create it when the first ADR is needed.
 
@@ -77,7 +49,7 @@ The glossary should be totally devoid of implementation details. Do not treat it
 ### The glossary's format
 
 ```md
-# {Context Name}
+# {Glossary Name}
 
 {One or two sentence description of what this context is and why it exists.}
 
@@ -100,22 +72,6 @@ _Avoid_: Client, buyer, account
 - **Keep definitions tight.** One or two sentences max. Define what it IS, not what it does.
 - **Only include terms specific to this project's context.** General programming concepts (timeouts, error types, utility patterns) don't belong even if the project uses them extensively. Before adding a term, ask: is this a concept unique to this context, or a general programming concept? Only the former belongs.
 - **Group terms under subheadings** when natural clusters emerge. If all terms belong to a single cohesive area, a flat list is fine.
-
-A `GLOSSARY-MAP.md` lists the contexts, where they live, and how they relate to each other:
-
-```md
-# Context Map
-
-## Contexts
-
-- [Ordering](./src/ordering/GLOSSARY.md) — receives and tracks customer orders
-- [Billing](./src/billing/GLOSSARY.md) — generates invoices and processes payments
-
-## Relationships
-
-- **Ordering → Billing**: Ordering emits `OrderPlaced` events; Billing consumes them to generate invoices
-- **Ordering ↔ Billing**: Shared types for `CustomerId` and `Money`
-```
 
 ### ADRs
 

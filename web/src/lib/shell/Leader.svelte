@@ -2,9 +2,9 @@
 	import { leader, rigs, type Rig } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 
-	type Props = { ontab(index: number): void; onpalette(): void; onrig(rig: Rig): void; onsplit(): void };
+	type Props = { ontab(index: number): void; onnew(): void; onclose(): void; onpalette(): void; onrig(rig: Rig): void; onsplit(): void };
 
-	let { ontab, onpalette, onrig, onsplit }: Props = $props();
+	let { ontab, onnew, onclose, onpalette, onrig, onsplit }: Props = $props();
 
 	const modifiers = ['Control', 'Shift', 'Alt', 'AltGraph', 'Meta'];
 	let pending = $state<'leader' | 'rig'>();
@@ -24,7 +24,17 @@
 	// Capture on window runs before ghostty-web's and CodeMirror's own keydown
 	// handlers, so neither the PTY nor the editor sees the leader or its next key.
 	function keydown(event: KeyboardEvent) {
-		if (event.isComposing || (!pending && !pressed(event))) return;
+		if (event.isComposing || event.defaultPrevented) return;
+		const key = event.key.toLowerCase();
+		if (!pending && (event.ctrlKey !== event.metaKey) && !event.altKey && !event.shiftKey && (key === 't' || key === 'w')) {
+			event.preventDefault();
+			event.stopPropagation();
+			if (event.repeat || (event.target instanceof Element && event.target.closest('[role="dialog"], [role="alertdialog"], [role="menu"]'))) return;
+			if (key === 't') onnew();
+			else onclose();
+			return;
+		}
+		if (!pending && !pressed(event)) return;
 		event.preventDefault();
 		event.stopPropagation();
 		if (!pending) pending = 'leader';

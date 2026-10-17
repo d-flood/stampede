@@ -7,7 +7,7 @@
 	import ArrowClockwise from '~icons/ph/arrow-clockwise';
 	import ArrowSquareOut from '~icons/ph/arrow-square-out';
 
-	let { browser }: { browser: OpenBrowser } = $props();
+	let { browser, focused = false }: { browser: OpenBrowser; focused?: boolean } = $props();
 	let address = $state('http://localhost:5173');
 	let src = $state('');
 	let pending = $state(false);
@@ -102,7 +102,7 @@
 <div class="browser" role="tabpanel" aria-label="Browser">
 	<form onsubmit={(event) => { event.preventDefault(); navigate(); }}>
 		<IconButton label="Reload preview" type="button" disabled={!src || pending} onclick={reloadPreview}><ArrowClockwise /></IconButton>
-		<input aria-label="Host address" bind:value={address} placeholder="http://localhost:5173" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="url" />
+		<input aria-label="Host address" bind:value={address} placeholder="http://localhost:5173" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="url" {@attach (element) => { if (focused) element.focus(); }} />
 		<Button type="submit" disabled={pending}>{pending ? 'Opening…' : 'Go'}</Button>
 		<IconButton label="Open preview in new window" type="button" disabled={!src} onclick={() => window.open(src, '_blank', 'noopener')}><ArrowSquareOut /></IconButton>
 	</form>

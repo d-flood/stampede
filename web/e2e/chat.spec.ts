@@ -367,17 +367,18 @@ test('four Usage window meters show their readings and turn amber from 90%', asy
 	await expect(high).toHaveAttribute('aria-valuenow', '91');
 	await expect(usage.getByText('91%')).toBeVisible();
 	await expect.poll(() => filledWith(high, '--ansi-3')).toBe(true);
-	await expect.poll(() => filledWith(usage.getByRole('meter', { name: 'Claude · week' }), '--ansi-4')).toBe(true);
-	await expect(usage.getByText(/^(now|\d+[mhd])$/)).toHaveCount(4);
+	await expect.poll(() => filledWith(usage.getByRole('meter', { name: 'Claude · week' }), '--brand')).toBe(true);
+	await expect(usage.locator('.age')).toHaveCount(2);
+	await expect(usage.locator('.age').first()).toHaveText(/^(just now|\d+[mhd] ago)$/);
 });
 
 function filledWith(meter: Locator, token: string) {
 	return meter.evaluate((element, token) => {
-		const probe = document.body.appendChild(document.createElement('i'));
+		const probe = element.appendChild(document.createElement('i'));
 		probe.style.color = `var(${token})`;
 		const color = getComputedStyle(probe).color;
 		probe.remove();
-		return getComputedStyle(element.firstElementChild!).backgroundColor === color;
+		return getComputedStyle(element.querySelector('.fill')!).stroke === color;
 	}, token);
 }
 
@@ -483,7 +484,7 @@ async function finishElsewhere(name: string) {
 }
 
 
-test('a Chat pins todos and opens subagent sessions from its active tab', async ({ page }, { project }) => {
+test('a Chat pins todos and hides completed subagent sessions', async ({ page }, { project }) => {
 	const name = `subagent-${project.name}`;
 	const root = process.env.OIKONOMOS_E2E_ROOT!;
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
@@ -513,23 +514,13 @@ test('a Chat pins todos and opens subagent sessions from its active tab', async 
 	await expect(todos.locator('summary')).toHaveText('Todos 3 of 3');
 	await expect(panel.getByText('Explore · Find file mentioning needle')).toHaveCount(0);
 	const picker = page.getByRole('combobox', { name: new RegExp('^Session in Fake Claude Subagent') });
-	await expect(picker.getByRole('option')).toHaveText(['Main · done', '↳ Explore · done']);
-	await picker.selectOption({ label: '↳ Explore · done' });
-	const session = page.locator('.panel[role="tabpanel"]:visible');
-	await expect(session.getByText('Find file mentioning needle', { exact: true })).toBeVisible();
-	await expect(session.getByRole('textbox', { name: 'Composer' })).toHaveCount(0);
-	await session.locator('.transcript:visible .calls > summary').click();
-	await session.getByText('Read 2 files').click();
-	await expect(session.getByRole('listitem')).toHaveText(['Read notes.txt', 'Read todo.txt']);
+	await expect(picker).toHaveCount(0);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
 	await expect(picker).toHaveCount(0);
 	await tab.click();
-	await expect(picker).not.toHaveValue('');
-	await expect(session.getByText('Find file mentioning needle', { exact: true })).toBeVisible();
-	await session.getByRole('button', { name: 'Return to Main' }).click();
-	await expect(picker).toHaveValue('');
-	await expect(session.getByRole('textbox', { name: 'Composer' })).toBeVisible();
+	await expect(picker).toHaveCount(0);
+	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 	await tab.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
 	await expect(tab).toHaveCount(0);
@@ -613,7 +604,7 @@ for (const agent of ['claude', 'codex']) {
 	});
 }
 
-test('a Codex subagent gets its own full session in the selected tab', async ({ page }, { project }) => {
+test('a completed Codex subagent is hidden from the selected tab', async ({ page }, { project }) => {
 	const name = `codex-subagent-${project.name}`;
 	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
@@ -625,30 +616,8 @@ test('a Codex subagent gets its own full session in the selected tab', async ({ 
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(tab.getByTitle('done')).toBeVisible();
 	const picker = page.getByRole('combobox', { name: /^Session in Fake Codex Subagent/ });
-	await expect(picker.getByRole('option')).toHaveCount(2);
-	await picker.selectOption({ index: 1 });
-	await expect(panel.getByText('notes.txt mentions “needle”; todo.txt does not.', { exact: true })).toBeVisible();
-	await expect(panel.getByRole('textbox', { name: 'Composer' })).toHaveCount(0);
-	const calls = panel.locator('.transcript:visible .calls > summary');
-	await expect(calls).toContainText('3 tool calls');
-	await calls.click();
-	await expect.poll(() => picker.evaluate((element) => {
-		const parent = element.parentElement!.getBoundingClientRect();
-		const bounds = element.getBoundingClientRect();
-		return bounds.left >= parent.left && bounds.right <= parent.right && bounds.bottom <= parent.bottom;
-	})).toBe(true);
-	const viewport = page.viewportSize()!;
-	await page.setViewportSize({ width: viewport.width, height: project.name === 'pixel' ? 400 : 250 });
-	const transcript = panel.locator('.transcript:visible');
-	await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-	await transcript.evaluate((element) => (element.scrollTop = 0));
-	await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBe(0);
-	await picker.selectOption({ index: 0 });
-	await picker.selectOption({ index: 1 });
-	await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBe(0);
-	await page.setViewportSize(viewport);
-	await page.screenshot({ path: test.info().outputPath('subagent-session.png') });
-	await panel.getByRole('button', { name: 'Return to Main' }).click();
+	await expect(picker).toHaveCount(0);
+	await expect(panel.getByText('notes.txt mentions “needle” and has 3 lines.', { exact: true })).toBeVisible();
 	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 });
 
