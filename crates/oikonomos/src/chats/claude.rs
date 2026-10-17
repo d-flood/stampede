@@ -979,13 +979,8 @@ impl Transcript {
             Some("assistant") if top => self.assistant(message, &message["thinking_duration_ms"], true),
             Some("user") if top => self.results(&message["message"]["content"], &message["tool_use_result"]),
             Some("assistant" | "user") => {
-                let result = &message["tool_use_result"];
-                let parent = message["parent_tool_use_id"].as_str().and_then(|parent| self.subagents.get_mut(parent));
-                if let Some((subagent, transcript)) = parent {
-                    transcript.nested(message, result);
-                    if subagent.update() {
-                        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
-                    }
+                if let Some(parent) = message["parent_tool_use_id"].as_str() {
+                    self.route(parent, message);
                 }
             }
             Some("command_lifecycle") if message["state"] != "queued" => {
@@ -1041,6 +1036,21 @@ impl Transcript {
             }
             _ => {}
         }
+    }
+
+    fn route(&mut self, parent: &str, message: &Value) -> bool {
+        for (id, (subagent, transcript)) in &mut self.subagents {
+            if id == parent {
+                transcript.nested(message, &message["tool_use_result"]);
+            } else if !transcript.route(parent, message) {
+                continue;
+            }
+            if subagent.update() {
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
+            return true;
+        }
+        false
     }
 
     fn task_notification(&mut self, message: &Value) {
@@ -1300,9 +1310,11 @@ impl Transcript {
                 {
                     let path = history.with_extension("").join("subagents").join(format!("agent-{agent}.jsonl"));
                     let contents = fs::read_to_string(path).unwrap_or_default();
+                    transcript.history = Some(history.clone());
                     for entry in contents.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
                         transcript.nested(&entry, &entry["toolUseResult"]);
                     }
+                    transcript.history = None;
                 }
                 subagent.update();
                 if let Some(model) = result["resolvedModel"].as_str() {
@@ -1527,6 +1539,41 @@ mod subagent_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn nested_subagents_fill_and_finish_at_any_depth() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        let messages = [
+            json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "content": [{
+                "type": "tool_use", "id": "A", "name": "Agent", "input": { "description": "outer" },
+            }] } }),
+            json!({ "type": "assistant", "parent_tool_use_id": "A", "message": { "content": [{
+                "type": "tool_use", "id": "B", "name": "Agent", "input": { "description": "inner" },
+            }] } }),
+            json!({ "type": "assistant", "parent_tool_use_id": "B", "message": { "content": [{
+                "type": "tool_use", "id": "read", "name": "Read", "input": { "file_path": "/project/notes.txt" },
+            }] } }),
+            json!({ "type": "user", "parent_tool_use_id": "B", "message": { "content": [{
+                "type": "tool_result", "tool_use_id": "read", "content": "notes",
+            }] } }),
+            json!({ "type": "user", "parent_tool_use_id": "A", "message": { "content": [{
+                "type": "tool_result", "tool_use_id": "B", "content": [{ "type": "text", "text": "Found." }],
+            }] }, "tool_use_result": {
+                "status": "completed", "content": [{ "type": "text", "text": "Found." }],
+                "totalDurationMs": 1000, "totalToolUseCount": 1, "totalTokens": 500,
+            } }),
+        ];
+        for message in messages { transcript.read(&message); }
+        let outer = std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+            Event::Item(_, Item::Subagent { id, items, .. }) if id == "A" => Some(items),
+            _ => None,
+        }).last().unwrap();
+        let [Item::Subagent { id, status, outcome, items, .. }] = outer.as_slice() else { panic!("{outer:?}") };
+        assert_eq!((id.as_str(), *status, *outcome), ("B", Status::Done, Some(Outcome::Completed)));
+        let read = ToolCall { kind: ToolKind::Read, name: "Read".to_owned(), detail: "notes.txt".to_owned() };
+        assert!(matches!(items.as_slice(), [Item::Tools { calls }] if calls == &[read]), "{items:?}");
     }
 }
 
