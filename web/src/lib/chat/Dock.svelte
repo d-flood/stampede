@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { clock, type Placed } from '#lib/chat/agents.ts';
+	import { icons } from '#lib/chat/icons.ts';
 	import SubagentMenu from '#lib/chat/SubagentMenu.svelte';
+	import SubagentSheet from '#lib/chat/SubagentSheet.svelte';
+	import { form } from '#lib/form.ts';
 	import CircleNotchBold from '~icons/ph/circle-notch-bold';
 	import HandPalmFill from '~icons/ph/hand-palm-fill';
 
@@ -19,6 +22,14 @@
 	});
 	let more = $state(false);
 	let list = $state(false);
+	let sheet = $state(false);
+	const summary = $derived(
+		[
+			['running', subagents.filter(({ subagent }) => subagent.status === 'working').length],
+			['waiting', subagents.filter(({ subagent }) => subagent.status === 'waiting').length],
+			['finished', finished.length]
+		].filter(([, count]) => count)
+	);
 
 	function ended({ subagent }: Placed) {
 		return (subagent.startedAt ?? 0) + (subagent.totals?.durationMs ?? 0);
@@ -43,20 +54,28 @@
 {/snippet}
 
 <section class="dock" aria-label="Subagents">
-	<div class="pills" {@attach measure}>
-		{#each running.slice(0, fits) as { path, subagent } (path.join('/'))}
-			<button class="pill {subagent.status}" style:min-width="{PILL}em" title={subagent.task} onclick={() => (subagent.status === 'waiting' ? onattend(subagent.id) : onopen(path))}>
-				<span class="mark">{#if subagent.status === 'waiting'}<HandPalmFill />{:else}<CircleNotchBold />{/if}</span>
-				<span class="task">{subagent.task}</span>
-				{#if subagent.startedAt}<span class="clock">{clock(subagent.startedAt)}</span>{/if}
-			</button>
-		{/each}
-		{#if fits < running.length}
-			<SubagentMenu heading="Running" entries={running} bind:open={more} trigger={overflow} onselect={onopen} />
+	{#if form() === 'phone'}
+		<button class="bar" onclick={() => (sheet = true)}>
+			<span class="icon"><icons.subagent /></span>
+			<span class="summary">{#each summary as [label, count], index (label)}{#if index}{' · '}{/if}<span class:asking={label === 'waiting'}>{count} {label}</span>{/each}</span>
+		</button>
+		<SubagentSheet title="Subagents" groups={[{ heading: 'Running', entries: running }, { heading: 'Finished', entries: finished }].filter(({ entries }) => entries.length)} bind:open={sheet} {onopen} {onattend} />
+	{:else}
+		<div class="pills" {@attach measure}>
+			{#each running.slice(0, fits) as { path, subagent } (path.join('/'))}
+				<button class="pill {subagent.status}" style:min-width="{PILL}em" title={subagent.task} onclick={() => (subagent.status === 'waiting' ? onattend(subagent.id) : onopen(path))}>
+					<span class="mark">{#if subagent.status === 'waiting'}<HandPalmFill />{:else}<CircleNotchBold />{/if}</span>
+					<span class="task">{subagent.task}</span>
+					{#if subagent.startedAt}<span class="clock">{clock(subagent.startedAt)}</span>{/if}
+				</button>
+			{/each}
+			{#if fits < running.length}
+				<SubagentMenu heading="Running" entries={running} bind:open={more} trigger={overflow} onselect={onopen} />
+			{/if}
+		</div>
+		{#if finished.length}
+			<SubagentMenu heading="Finished" entries={finished} bind:open={list} trigger={chip} onselect={onopen} />
 		{/if}
-	</div>
-	{#if finished.length}
-		<SubagentMenu heading="Finished" entries={finished} bind:open={list} trigger={chip} onselect={onopen} />
 	{/if}
 </section>
 
@@ -67,7 +86,11 @@
 	.pill { flex: 0 1 auto; max-width: 22em; }
 	.more { flex: none; justify-content: center; }
 	.chip { color: var(--muted-fg); }
-	.pill:hover, .chip:hover { background: var(--hover); }
+	.bar { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--target-min); padding: 0 var(--space-3); border: var(--border-width) solid var(--border); border-radius: calc(var(--target-min) / 2); background: var(--surface-1); color: var(--color-fg); font: inherit; white-space: nowrap; cursor: pointer; }
+	.icon { display: inline-flex; flex: none; color: var(--muted-fg); }
+	.summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+	.asking { color: var(--status-waiting); }
+	.pill:hover, .chip:hover, .bar:hover { background: var(--hover); }
 	.mark { display: inline-flex; flex: none; color: var(--status-working); }
 	.working .mark { animation: spin 1s linear var(--pulse); }
 	.waiting { border-color: var(--status-waiting); background: color-mix(in oklab, var(--status-waiting) 16%, transparent); }

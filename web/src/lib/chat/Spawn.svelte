@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { icons } from '#lib/chat/icons.ts';
 	import SubagentMenu from '#lib/chat/SubagentMenu.svelte';
+	import SubagentSheet from '#lib/chat/SubagentSheet.svelte';
 	import type { Subagent } from '#lib/device.svelte.ts';
+	import { form } from '#lib/form.ts';
 
-	let { subagents, path, onopen }: { subagents: Subagent[]; path: string[]; onopen(path: string[]): void } = $props();
+	let { subagents, path, onopen, onattend }: { subagents: Subagent[]; path: string[]; onopen(path: string[]): void; onattend(subagent: string): void } = $props();
 
 	const entries = $derived(subagents.map((subagent) => ({ path: [...path, subagent.id], subagent })));
 	const running = $derived(subagents.filter(({ status }) => status !== 'done').length);
@@ -18,6 +20,9 @@
 
 {#if entries.length === 1}
 	{@render marker({ onclick: () => onopen(entries[0].path) })}
+{:else if form() === 'phone'}
+	{@render marker({ onclick: () => (open = true) })}
+	<SubagentSheet title={text} groups={[{ entries }]} bind:open {onopen} {onattend} />
 {:else}
 	<SubagentMenu heading="Subagents" {entries} bind:open trigger={marker} onselect={onopen} side="bottom" align="start" />
 {/if}

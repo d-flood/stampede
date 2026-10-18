@@ -142,7 +142,7 @@
 	{/if}
 	<div class="transcript" hidden={!!selected} {@attach follow}>
 		<div class="column">
-			<Transcript {items} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} {onopen} {ondiff} />
+			<Transcript {items} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} {onopen} onattend={attend} {ondiff} />
 			<Queued queued={chat.queued} />
 		</div>
 	</div>
@@ -151,7 +151,7 @@
 			<div class="transcript" {@attach follow}>
 				<div class="column">
 					{#if selected.prompt}<Prompt prompt={selected.prompt} />{/if}
-					<Transcript items={selected.items} activity={selected.activity} path={opened} {onopen} {ondiff} />
+					<Transcript items={selected.items} activity={selected.activity} path={opened} {onopen} onattend={attend} {ondiff} />
 					{#if selected.report}
 						<section class="report" aria-label="Report">
 							<span class="label">Report</span>
