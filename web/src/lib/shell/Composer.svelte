@@ -11,12 +11,13 @@
 		draft?: string;
 		menu?: Snippet<[string, (text: string) => void]>;
 		onkeydown?: (event: KeyboardEvent) => void;
+		onpaste?: (event: ClipboardEvent) => void;
 		onsend?(text: string, enter: boolean): boolean;
 		/** Replaces Insert and Send, and boxes the Composer in a Chat's column. */
 		actions?: Snippet<[text: string, clear: () => void]>;
 	};
 
-	let { id, disabled = false, focused = false, placeholder, draft, onsend, actions, menu, onkeydown }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, draft, onsend, actions, menu, onkeydown, onpaste }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
@@ -62,6 +63,7 @@
 		bind:value={text}
 		oninput={keep}
 		{onkeydown}
+		{onpaste}
 		aria-label="Composer"
 		{placeholder}
 		rows={actions ? (phone ? 2 : 1) : 3}

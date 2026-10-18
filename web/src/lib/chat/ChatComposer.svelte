@@ -30,10 +30,25 @@
 	let error = $state('');
 	let reading = $state(false);
 
-	async function attach() {
-		error = '';
+	function choose() {
 		const files = [...(picker.files ?? [])];
 		picker.value = '';
+		void attach(files);
+	}
+
+	function paste(event: ClipboardEvent) {
+		const files = [...(event.clipboardData?.items ?? [])]
+			.filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+			.map((item) => item.getAsFile())
+			.filter((file) => file !== null);
+		if (!files.length) return;
+		event.preventDefault();
+		void attach(files);
+	}
+
+	async function attach(files: File[]) {
+		if (!live || reading || request || !files.length) return;
+		error = '';
 		if (files.length + images.length > 20) { error = 'Attach up to 20 images.'; return; }
 		if (files.some((file) => !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type))) { error = 'Choose PNG, JPEG, GIF or WebP images.'; return; }
 		if (files.some((file) => file.size > 5 * 1024 * 1024)) { error = 'Each image must be 5 MB or smaller.'; return; }
@@ -88,7 +103,7 @@
 	}
 </script>
 
-<input bind:this={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple aria-label="Attach images" hidden onchange={attach} />
+<input bind:this={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple aria-label="Attach images" hidden onchange={choose} />
 {#if images.length}
 	<div class="attachments" aria-label="Attachments">
 		{#each images as image, index}
@@ -97,7 +112,7 @@
 	</div>
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onkeydown={(event) => slash?.key(event)}>
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onkeydown={(event) => slash?.key(event)} onpaste={paste}>
 	{#snippet menu(text, replace)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
 	{/snippet}
