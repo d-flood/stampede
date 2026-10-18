@@ -33,6 +33,25 @@ mode = "read-only"
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 #[tokio::test]
+async fn a_claude_rig_without_a_mode_launches_in_auto_mode() {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = directory.path().join("auto.synthetic.jsonl");
+    let recorded = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/chats/claude-code/rig-fields.recorded.jsonl");
+    fs::write(&fixture, fs::read_to_string(recorded).unwrap().replace("\"plan\"", "\"auto\"")).unwrap();
+    let config = CONFIG.replace("mode = \"plan\"\n", "").replace("\"rig-fields\"", &format!("{:?}", fixture));
+    let (server, mut socket, project_id) = open_with_config(&config).await;
+    let chat = create(&mut socket, &project_id, "claude").await;
+    assert_eq!(chat["settings"], json!({ "model": "sonnet", "effort": "low", "mode": "auto" }));
+
+    let chat_id = chat["id"].as_str().unwrap();
+    let (_, items) = chat_turn(&mut socket, chat_id, &chat["status"], "Reply with the single word: ready").await;
+    assert_eq!(items.last().unwrap()["text"], "ready");
+    let record: Value = serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{chat_id}.json"))).unwrap()).unwrap();
+    assert_eq!(record["settings"]["mode"], "auto");
+    close_chat(&mut socket, server.root.path(), chat_id).await;
+}
+
+#[tokio::test]
 async fn a_claude_chat_starts_with_its_rigs_model_effort_and_mode() {
     let (server, mut socket, project_id) = open().await;
     let chat = create(&mut socket, &project_id, "claude").await;
@@ -88,8 +107,12 @@ async fn a_codex_chat_starts_its_thread_with_its_rigs_model_effort_and_mode() {
 }
 
 async fn open() -> (Server, Socket, Value) {
+    open_with_config(CONFIG).await
+}
+
+async fn open_with_config(config: &str) -> (Server, Socket, Value) {
     let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
-    let server = Server::with_env("rig-fields", CONFIG, vec![("PATH", path.into())]).await;
+    let server = Server::with_env("rig-fields", config, vec![("PATH", path.into())]).await;
     let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
     control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
     next_control(&mut socket, "hello").await;

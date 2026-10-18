@@ -222,6 +222,19 @@ impl Loop {
         assert_eq!(output(&integration, &["status", "--porcelain"]), "");
         assert!(!merging(&integration));
         assert!(!self.worktree("2").exists() && !self.worktree("3").exists());
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let mut device = connect(self.server.port).await;
+                let hello = received(&mut device, "hello").await;
+                if !hello["chats"].as_array().unwrap().iter().any(|chat| chat["id"] == resolver) {
+                    break;
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the merged Ticket's Resolver Chat should close automatically");
+        assert!(!self.root.join(format!("data/chats/{resolver}.json")).exists(), "the closed Resolver must not return after a restart");
     }
 }
 
@@ -298,6 +311,16 @@ async fn a_conflicted_merge_is_resolved_by_a_resolver_chat_while_later_merges_wa
 
     lp.send(&resolver, "Keep both.").await;
     lp.resolved(&resolver, false).await;
+    timeout(Duration::from_secs(3), async {
+        loop {
+            let changed = received(&mut device, "chats.changed").await;
+            if !changed["chats"].as_array().unwrap().iter().any(|chat| chat["id"] == resolver) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("connected Devices should be told to remove the Resolver's tab");
 }
 
 #[tokio::test]

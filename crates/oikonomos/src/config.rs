@@ -101,7 +101,10 @@ pub struct Rig {
 
 impl Rig {
     pub fn settings(&self) -> AgentSettings {
-        let mode = self.mode.clone().or_else(|| (self.agent == Agent::Codex).then(|| "approve-for-me".to_owned()));
+        let mode = self.mode.clone().or_else(|| Some(match self.agent {
+            Agent::ClaudeCode => "auto",
+            Agent::Codex => "approve-for-me",
+        }.to_owned()));
         AgentSettings { model: self.model.clone(), effort: self.effort.clone(), mode }
     }
 }
@@ -465,6 +468,15 @@ mod tests {
         let legacy = format!("{text}command = 'unused'\nargs = ['ignored']\nresume = 'unused {{session}}'\n");
         assert_eq!(Config::parse(&legacy).unwrap().rigs, [rig]);
         assert!(check(&format!("{text}modle = 'opus'\n")).is_some());
+    }
+
+    #[test]
+    fn configured_rigs_use_the_same_permission_defaults_as_fallback_rigs() {
+        let defaults = Config::default();
+        for agent in [Agent::ClaudeCode, Agent::Codex] {
+            let config = Config::parse(&format!("[[rig]]\nname = 'Mine'\nagent = '{}'\n", agent.name())).unwrap();
+            assert_eq!(config.rigs[0].settings(), defaults.rig_for(agent).settings());
+        }
     }
 
     #[test]

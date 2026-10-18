@@ -793,7 +793,7 @@ impl Runs {
                 let settled = match next {
                     Some((number, None)) => self.merge(&epic, number).await,
                     Some((number, Some(resolver))) if self.resolved(&epic, number, resolver).await => {
-                        self.epics.record(&slug, Event::MergeResolved { ticket: number })
+                        self.epics.record(&slug, Event::MergeResolved { ticket: number }).map(|()| self.chats.close(resolver))
                     }
                     _ => match epic.tickets.iter().find(|(_, ticket)| ticket.awaits_cleanup()) {
                         Some((&number, _)) => self.clean(&epic, number).await,
