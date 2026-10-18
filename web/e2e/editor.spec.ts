@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { openProject, showSidebar } from './shell.ts';
 

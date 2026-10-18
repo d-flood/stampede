@@ -93,6 +93,11 @@ impl Server {
 
     pub async fn stop(&mut self) {
         self.child.kill().await.unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while TcpStream::connect(("127.0.0.1", self.port)).await.is_ok() {
+            assert!(Instant::now() < deadline, "the stopped server's listener remained open");
+            sleep(Duration::from_millis(10)).await;
+        }
     }
 
     pub fn pid(&self) -> u32 {

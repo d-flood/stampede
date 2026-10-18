@@ -1,5 +1,6 @@
 import type { Item, ServerMessage } from '#lib/device.svelte.ts';
-import { expect, test, type WebSocketRoute } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
+import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { closeProject, openProject } from './shell.ts';
 
@@ -41,16 +42,24 @@ test('chat follows messages until scrolled up and resumes at the bottom', async 
 		await expect.poll(distance).toBeLessThan(2);
 	}
 
-	await transcript.evaluate((node) => { node.scrollTop -= 300; });
+	await scroll(false);
 	await expect.poll(distance).toBeGreaterThan(250);
 	const top = await transcript.evaluate((node) => node.scrollTop);
 	await append(2);
 	await expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(top);
 	await expect.poll(distance).toBeGreaterThan(500);
 
-	await transcript.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+	await scroll(true);
 	await expect.poll(distance).toBeLessThan(2);
 	await append(3);
 	await expect.poll(distance).toBeLessThan(2);
+
+	async function scroll(bottom: boolean) {
+		await transcript.evaluate((node, bottom) => new Promise<void>((resolve) => {
+			node.addEventListener('scroll', () => resolve(), { once: true });
+			node.scrollTop = bottom ? node.scrollHeight : node.scrollTop - 300;
+		}), bottom);
+	}
+
 	await closeProject(page, name);
 });

@@ -1,14 +1,16 @@
 import { defineConfig, devices } from '@playwright/test';
-import { fileURLToPath } from 'node:url';
+import { hardwareLaunchOptions } from './e2e/gpu.ts';
 
-const fakes = fileURLToPath(new URL('../crates/oikonomos/tests/fake', import.meta.url));
-const port = process.env.OIKONOMOS_E2E_PORT;
-const root = process.env.OIKONOMOS_E2E_ROOT;
-if (!port || !root) throw new Error('Run Playwright through ./check e2e');
+if (!process.env.OIKONOMOS_E2E_ROOT || !process.env.OIKONOMOS_E2E_BINARY) {
+	throw new Error('Run Playwright through ./check e2e');
+}
 
 export default defineConfig({
 	testDir: 'e2e',
-	use: { baseURL: `http://127.0.0.1:${port}` },
+	fullyParallel: true,
+	workers: 2,
+	reporter: 'dot',
+	use: { launchOptions: hardwareLaunchOptions },
 	projects: [
 		{
 			name: 'desktop',
@@ -18,10 +20,5 @@ export default defineConfig({
 			name: 'pixel',
 			use: { ...devices['Pixel 8 Pro'], viewport: { width: 448, height: 998 } }
 		}
-	],
-	webServer: {
-		command: `../target/release/oikonomos serve --port ${port} --data-dir "${root}/data" --config "${root}/config.toml"`,
-		url: `http://127.0.0.1:${port}/api/version`,
-		env: { PATH: `${fakes}:${process.env.PATH}` }
-	}
+	]
 });

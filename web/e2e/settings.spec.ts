@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
 import { openProject, screen, showSidebar } from './shell.ts';
 
 test('text size defaults, changes, persists, and resets', async ({ page }, { project }) => {

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
 import { openProject, screen } from './shell.ts';
 
 test('a Terminal runs echo hi and a deep link reveals its Tab', async ({ page }, { project }) => {

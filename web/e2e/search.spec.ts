@@ -1,4 +1,5 @@
-import { expect, test, type WebSocketRoute } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
+import type { WebSocketRoute } from '@playwright/test';
 import { openProject, showSidebar } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });

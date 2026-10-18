@@ -1,10 +1,11 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
+import type { Locator, Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openProject, showSidebar } from './shell.ts';
 
-const oikonomos = fileURLToPath(new URL('../../target/release/oikonomos', import.meta.url));
+const oikonomos = process.env.OIKONOMOS_E2E_BINARY ?? fileURLToPath(new URL('../../target/debug/oikonomos', import.meta.url));
 
 test('an Epic made through the CLI shows live in the Epics section, its Tab and its Tickets', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';

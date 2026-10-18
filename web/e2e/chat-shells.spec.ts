@@ -1,5 +1,6 @@
 import type { Item, ServerMessage } from '#lib/device.svelte.ts';
-import { expect, test, type WebSocketRoute } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
+import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { openProject } from './shell.ts';
 

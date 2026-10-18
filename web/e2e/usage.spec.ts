@@ -1,5 +1,5 @@
 import type { Reading, ServerMessage } from '#lib/device.svelte.ts';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
 import { showSidebar } from './shell.ts';
 
 test('usage groups agents into rows, fits narrow screens, and updates reset countdowns', async ({ page }, { project }) => {

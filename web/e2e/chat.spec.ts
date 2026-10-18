@@ -1,5 +1,6 @@
 import type { ServerMessage } from '#lib/device.svelte.ts';
-import { expect, test, type Locator } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
+import type { Locator } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

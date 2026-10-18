@@ -1,5 +1,5 @@
 {
 	"extends": "$app/tsconfig",
-	"include": ["src", "e2e", "*"],
+	"include": ["src", "e2e", "tests", "*"],
 	"exclude": ["src/service-worker"]
 }

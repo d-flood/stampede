@@ -1,14 +1,7 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
+import type { Page } from '@playwright/test';
 import { openProject, screen } from './shell.ts';
 
-test.afterEach(async ({ page }) => {
-	const tab = page.locator('[data-tab][aria-selected="true"]').first();
-	if (!(await tab.count())) return;
-	const id = await tab.getAttribute('data-tab');
-	await tab.click({ button: 'right' });
-	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
-	await expect(page.locator(`[data-tab="${id}"]`)).toHaveCount(0);
-});
 
 async function terminal(page: Page) {
 	const input: string[] = [];

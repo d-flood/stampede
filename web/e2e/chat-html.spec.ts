@@ -1,5 +1,5 @@
 import type { Item, ServerMessage } from '#lib/device.svelte.ts';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
 import { mkdirSync } from 'node:fs';
 import { closeProject, openProject } from './shell.ts';
 

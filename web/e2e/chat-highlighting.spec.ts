@@ -1,5 +1,6 @@
 import type { Item, Request, ServerMessage } from '#lib/device.svelte.ts';
-import { expect, test, type Locator, type WebSocketRoute } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
+import type { Locator, WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { closeProject, openProject } from './shell.ts';
 
@@ -57,7 +58,7 @@ test('chat highlights commands, tool arguments, and both sides of inline diffs',
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
-	const command = panel.locator('.command').first();
+	const command = panel.locator('.transcript .command').first();
 	await expect(command).toBeHidden();
 	await panel.locator('.calls > summary').click();
 	await expect(command).toHaveText('$ printf \'%s\\n\' "$HOME"');
@@ -65,23 +66,23 @@ test('chat highlights commands, tool arguments, and both sides of inline diffs',
 	transcript[0] = { kind: 'command', command: 'printf "updated"', status: 'ok', output: 'plain output' };
 	route!.send(JSON.stringify({ type: 'chat.item', chatId: chatId!, index: 0, item: transcript[0] }));
 	await colored(command.getByText('"updated"', { exact: true }), '--ansi-2');
-	const pnpm = panel.locator('.command').filter({ hasText: 'pnpm -C' });
+	const pnpm = panel.locator('.transcript .command').filter({ hasText: 'pnpm -C' });
 	await colored(pnpm.getByText('pnpm', { exact: true }), '--ansi-4');
 	await colored(pnpm.getByText('-C', { exact: true }), '--ansi-3');
-	const sed = panel.locator('.command').filter({ hasText: 'sed -n' });
+	const sed = panel.locator('.transcript .command').filter({ hasText: 'sed -n' });
 	await colored(sed.getByText('sed', { exact: true }), '--ansi-4');
 	await colored(sed.getByText("'1,125p'", { exact: true }), '--ansi-2');
-	const pipeline = panel.locator('.command').filter({ hasText: 'ps -eo' });
+	const pipeline = panel.locator('.transcript .command').filter({ hasText: 'ps -eo' });
 	await colored(pipeline.getByText('ps', { exact: true }), '--ansi-4');
 	await colored(pipeline.getByText('rg', { exact: true }), '--ansi-4');
 	await colored(pipeline.getByText('|', { exact: true }), '--muted-fg');
-	const chained = panel.locator('.command').filter({ hasText: 'cat web/e2e' });
+	const chained = panel.locator('.transcript .command').filter({ hasText: 'cat web/e2e' });
 	await colored(chained.getByText('head', { exact: true }), '--ansi-4');
 	await colored(chained.getByText('git', { exact: true }), '--ansi-4');
-	const inline = panel.locator('.command').filter({ hasText: 'import json' });
+	const inline = panel.locator('.transcript .command').filter({ hasText: 'import json' });
 	await colored(inline.getByText('import', { exact: true }), '--ansi-5');
 	await colored(inline.getByText('head', { exact: true }), '--ansi-4');
-	const heredoc = panel.locator('.command').filter({ hasText: 'for line' });
+	const heredoc = panel.locator('.transcript .command').filter({ hasText: 'for line' });
 	await colored(heredoc.getByText('for', { exact: true }), '--ansi-5');
 	await colored(heredoc.getByText('echo', { exact: true }), '--ansi-4');
 	await panel.getByText('Used example', { exact: true }).click();

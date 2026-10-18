@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
+import type { Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { closeProject, openProject, showSidebar } from './shell.ts';
 

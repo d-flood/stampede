@@ -1,12 +1,12 @@
 import type { Item, ServerMessage } from '#lib/device.svelte.ts';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures.ts';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { closeProject, openProject } from './shell.ts';
 
 function publish(path: string, title: string): Extract<Item, { kind: 'media' }> {
-	const output = execFileSync(process.env.OIKONOMOS_E2E_BINARY ?? fileURLToPath(new URL('../../target/release/oikonomos', import.meta.url)), [
+	const output = execFileSync(process.env.OIKONOMOS_E2E_BINARY ?? fileURLToPath(new URL('../../target/debug/oikonomos', import.meta.url)), [
 		'chat-tools', '--data-dir', `${process.env.OIKONOMOS_E2E_ROOT}/data`
 	], { input: JSON.stringify({ id: 1, method: 'tools/call', params: { name: 'render_media', arguments: { path, title } } }) + '\n' });
 	const result = JSON.parse(output.toString()).result;
