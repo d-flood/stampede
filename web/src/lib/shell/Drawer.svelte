@@ -9,6 +9,7 @@
 	import Tab from '#lib/ui/Tab.svelte';
 	import { onMount, tick } from 'svelte';
 	import Plus from '~icons/ph/plus';
+	import TerminalWindow from '~icons/ph/terminal-window';
 	import X from '~icons/ph/x';
 
 	let { device, open = $bindable(false) }: { device: Device; open?: boolean } = $props();
@@ -109,7 +110,7 @@
 				</Menu>
 			{/each}
 		</div>
-		<Menu items={[{ label: 'Terminal', onselect: newTab }]}>
+		<Menu items={[{ label: 'Terminal', icon: TerminalWindow, onselect: newTab }]}>
 			{#snippet trigger(props)}
 				<IconButton {...props} label="New Drawer Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
 			{/snippet}

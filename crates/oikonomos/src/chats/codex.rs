@@ -17,7 +17,7 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
 use super::{
-    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Phase, Setting,
+    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
     Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
     html,
 };
@@ -838,7 +838,7 @@ impl Transcript {
             && let Some((id, plan)) = &self.plan
             && self.plan_resolved.as_ref() != Some(id)
         {
-            let _ = self.events.send(Event::Request(super::Request::Plan { id: id.clone(), plan: plan.clone() }));
+            self.raise(super::RequestKind::Plan { id: id.clone(), plan: plan.clone() });
         }
     }
 
@@ -860,6 +860,11 @@ impl Transcript {
         }
         self.asked.insert(id.clone(), (message["id"].clone(), grant, child));
         id
+    }
+
+    fn raise(&self, kind: super::RequestKind) {
+        let subagent = self.asked.get(kind.id()).and_then(|(_, _, child)| child.clone());
+        let _ = self.events.send(Event::Request(super::Request { kind, subagent }));
     }
 
     fn resolved(&mut self, id: &str) -> Option<(Value, Option<Value>)> {
@@ -929,13 +934,24 @@ impl Transcript {
         if let Some(child) = response(message).and_then(|id| self.reading.remove(&id))
             && let Some((subagent, transcript)) = self.subagents.get_mut(&child)
         {
-            let turns = message["result"]["thread"]["turns"].as_array().into_iter().flatten();
-            for item in turns.flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
+            let thread = &message["result"]["thread"];
+            let turns = thread["turns"].as_array().map(Vec::as_slice).unwrap_or_default();
+            for item in turns.iter().flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
                 transcript.completed(item, 0);
             }
-            if subagent.update() {
-                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            subagent.update();
+            if let Some(name) = thread["agentRole"].as_str().or(thread["agentNickname"].as_str()) {
+                subagent.name = Some(name.to_owned());
             }
+            if subagent.model.is_none() {
+                subagent.model = thread["model"].as_str().map(str::to_owned);
+            }
+            if let Some(created) = thread["createdAt"].as_u64() {
+                subagent.started_at = created * 1000;
+            }
+            let durations = turns.iter().filter_map(|turn| turn["durationMs"].as_u64());
+            subagent.duration = durations.reduce(|total, duration| total + duration).or(subagent.duration);
+            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             return;
         }
         let params = &message["params"];
@@ -953,6 +969,11 @@ impl Transcript {
             if let Some((subagent, transcript)) = self.subagents.get_mut(thread)
             {
                 transcript.read(message);
+                if message["method"] == "turn/completed"
+                    && let Some(duration) = params["turn"]["durationMs"].as_u64()
+                {
+                    subagent.duration = Some(subagent.duration.unwrap_or_default() + duration);
+                }
                 if subagent.update() {
                     let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
                 }
@@ -1012,7 +1033,7 @@ impl Transcript {
                 let id = self.ask(message, None);
                 let proposed = params["proposedExecpolicyAmendment"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
                 let suggestion = words.iter().map(|part| if !proposed.is_empty() && part.starts_with(&proposed) { proposed.clone() } else { part.clone() }).collect();
-                let _ = self.events.send(Event::Request(super::Request::Command { id, words, suggestion, session_prefixes: false }));
+                self.raise(super::RequestKind::Command { id, words, suggestion, session_prefixes: false });
             }
             Some("item/tool/requestUserInput") => {
                 let id = self.ask(message, None);
@@ -1022,18 +1043,18 @@ impl Transcript {
                 }
                 let questions: Vec<Question> = serde_json::from_value(raw).unwrap_or_default();
                 self.questions.insert(id.clone(), questions.clone());
-                let _ = self.events.send(Event::Request(super::Request::Question { id, questions }));
+                self.raise(super::RequestKind::Question { id, questions });
             }
             Some("item/fileChange/requestApproval") => {
                 let id = self.ask(message, None);
-                let request = match self.edits.get(params["itemId"].as_str().unwrap_or_default()) {
+                let kind = match self.edits.get(params["itemId"].as_str().unwrap_or_default()) {
                     Some(changes) => edit(id, changes),
                     None => {
                         let detail = params["reason"].as_str().unwrap_or_default().to_owned();
-                        super::Request::Other { id, title: "Codex wants to edit files".into(), detail }
+                        super::RequestKind::Other { id, title: "Codex wants to edit files".into(), detail }
                     }
                 };
-                let _ = self.events.send(Event::Request(request));
+                self.raise(kind);
             }
             Some("item/permissions/requestApproval") => {
                 let permissions = &params["permissions"];
@@ -1041,8 +1062,7 @@ impl Transcript {
                 let reason = params["reason"].as_str().unwrap_or_default();
                 let detail = format!("{reason}\n{}", serde_json::to_string_pretty(permissions).unwrap_or_default());
                 let title = "Codex wants more permissions".into();
-                let request = super::Request::Other { id, title, detail: detail.trim().to_owned() };
-                let _ = self.events.send(Event::Request(request));
+                self.raise(super::RequestKind::Other { id, title, detail: detail.trim().to_owned() });
             }
             Some("serverRequest/resolved") => {
                 let id = key(&params["requestId"]);
@@ -1173,7 +1193,7 @@ impl Transcript {
                         Some("delete") => unified(diff, ""),
                         _ => diff.to_owned(),
                     };
-                    self.push(Item::edit(relative(&self.cwd, path), diff));
+                    self.push(Item::edit(relative(&self.cwd, path), diff, kind["type"] == "add"));
                 }
             }
             Some("webSearch") => {
@@ -1198,7 +1218,7 @@ impl Transcript {
                     return;
                 }
                 let name = format!("{}.{}", text("server"), text("tool"));
-                self.call(ToolKind::Other, &name, item["arguments"].to_string());
+                self.call(ToolKind::Mcp, &name, item["arguments"].to_string());
             }
             Some("dynamicToolCall") => self.call(ToolKind::Other, &text("tool"), item["arguments"].to_string()),
             Some("imageView") => self.call(ToolKind::Read, "imageView", text("path")),
@@ -1206,19 +1226,21 @@ impl Transcript {
                 self.push(Item::compacted());
             }
             Some("collabAgentToolCall") => {
+                let prompt = item["prompt"].as_str().filter(|_| item["tool"] == "spawnAgent");
                 for thread in item["receiverThreadIds"].as_array().into_iter().flatten().filter_map(Value::as_str) {
-                    if !self.subagents.contains_key(thread) && item["tool"] == "spawnAgent" {
-                        let task = text("prompt");
-                        let (mut subagent, events) = Subagent::new(None, task);
-                        subagent.index = self.push(subagent.item());
-                        self.subagents.insert(thread.to_owned(), (subagent, Transcript::new(thread, &self.cwd, events)));
+                    if let Some(prompt) = prompt {
+                        self.spawn(thread, prompt.lines().next().unwrap_or_default());
                     }
                     if let Some((subagent, _)) = self.subagents.get_mut(thread) {
-                        subagent.status = match item["agentsStates"][thread]["status"].as_str() {
-                            Some("completed" | "errored" | "shutdown" | "notFound") => Status::Done,
-                            Some("waiting") => Status::Waiting,
-                            _ => subagent.status,
-                        };
+                        if let Some(prompt) = prompt {
+                            subagent.prompt.get_or_insert_with(|| prompt.to_owned());
+                        }
+                        let status = item["agentsStates"][thread]["status"].as_str().unwrap_or_default();
+                        if status == "waiting" {
+                            subagent.status = Status::Waiting;
+                        } else if let Some(outcome) = outcome(status) {
+                            subagent.finish(Some(outcome));
+                        }
                         let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
                     }
                 }
@@ -1226,16 +1248,24 @@ impl Transcript {
             Some("subAgentActivity") => {
                 let Some(thread) = item["agentThreadId"].as_str() else { return };
                 match item["kind"].as_str() {
-                    Some("started") if !self.subagents.contains_key(thread) => {
-                        let task = text("agentPath").rsplit('/').next().unwrap_or_default().to_owned();
-                        let (mut subagent, events) = Subagent::new(None, task);
-                        subagent.index = self.push(subagent.item());
-                        self.subagents.insert(thread.to_owned(), (subagent, Transcript::new(thread, &self.cwd, events)));
+                    Some("started") => {
+                        let path = text("agentPath");
+                        let task = path.rsplit('/').next().unwrap_or_default();
+                        self.spawn(thread, task);
+                        if let Some((subagent, _)) = self.subagents.get_mut(thread) {
+                            if !task.is_empty() {
+                                subagent.task = task.to_owned();
+                            }
+                            if let Some(model) = item["model"].as_str() {
+                                subagent.model = Some(model.to_owned());
+                            }
+                            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                        }
                     }
-                    Some("completed" | "interrupted") => {
+                    Some(kind @ ("completed" | "interrupted")) => {
                         if let Some((subagent, _)) = self.subagents.get_mut(thread) {
                             subagent.update();
-                            subagent.status = Status::Done;
+                            subagent.finish(outcome(kind));
                             let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
                         }
                     }
@@ -1264,6 +1294,15 @@ impl Transcript {
         if matches!(item, Item::Command { status: CommandStatus::Running, .. }) {
             self.commands.insert(id.to_owned(), (index, item));
         }
+    }
+
+    fn spawn(&mut self, thread: &str, task: &str) {
+        if self.subagents.contains_key(thread) {
+            return;
+        }
+        let (mut subagent, events) = Subagent::new(thread, task.to_owned(), super::now());
+        subagent.index = self.push(subagent.item());
+        self.subagents.insert(thread.to_owned(), (subagent, Transcript::new(thread, &self.cwd, events)));
     }
 
     fn call(&mut self, kind: ToolKind, name: &str, detail: String) {
@@ -1295,6 +1334,15 @@ fn command(item: &Value) -> Item {
     Item::Command { command, status, output: item["aggregatedOutput"].as_str().unwrap_or_default().to_owned() }
 }
 
+fn outcome(status: &str) -> Option<Outcome> {
+    match status {
+        "completed" => Some(Outcome::Completed),
+        "errored" => Some(Outcome::Failed),
+        "shutdown" | "interrupted" | "notFound" => Some(Outcome::Stopped),
+        _ => None,
+    }
+}
+
 fn notice(error: &Value) -> Item {
     let message = error["message"].as_str().unwrap_or_default();
     let api: Option<Value> = serde_json::from_str(message).ok();
@@ -1323,7 +1371,7 @@ fn key(id: &Value) -> String {
     id.as_str().map_or_else(|| id.to_string(), str::to_owned)
 }
 
-fn edit(id: String, changes: &Value) -> super::Request {
+fn edit(id: String, changes: &Value) -> super::RequestKind {
     let changes = changes.as_array().map(Vec::as_slice).unwrap_or_default();
     let paths: Vec<&str> = changes.iter().filter_map(|change| change["path"].as_str()).collect();
     let path = paths.join(", ");
@@ -1338,7 +1386,7 @@ fn edit(id: String, changes: &Value) -> super::Request {
             }
         })
         .collect();
-    super::Request::Edit { id, path, diff }
+    super::RequestKind::Edit { id, path, diff }
 }
 
 #[cfg(test)]

@@ -19,12 +19,12 @@ use toml::value::{Datetime, Offset};
 use uuid::Uuid;
 
 use super::{
-    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Phase, Setting,
+    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
     Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     html,
     protocol::{self, Message},
-    Request, Image, Scope, AnsweredQuestions, Question, diff, seconds, unified, words,
+    Request, RequestKind, Image, Scope, AnsweredQuestions, Question, diff, seconds, unified, words,
 };
 use crate::{
     config::{Agent, AgentSettings},
@@ -260,6 +260,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                     }
                     Some(Command::Answer(id, answer)) => {
                         let original = transcript.inputs.remove(&id).unwrap_or_default();
+                        transcript.unblock(&id);
                         let response = match answer {
                             Answer::Allow => json!({ "behavior": "allow" }),
                             Answer::Rules(rules) => {
@@ -535,7 +536,7 @@ fn config_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
     }
 }
 
-fn request(id: &str, request: &Value) -> Request {
+fn request(id: &str, request: &Value) -> RequestKind {
     let id = id.to_owned();
     let input = &request["input"];
     let text = |field: &str| input[field].as_str().unwrap_or_default().to_owned();
@@ -548,21 +549,21 @@ fn request(id: &str, request: &Value) -> Request {
                 .filter_map(|rule| rule["ruleContent"].as_str())
                 .flat_map(|rule| words(rule.trim_end_matches(":*"))).collect::<Vec<_>>();
             let suggestion = parts.iter().map(|part| rules.iter().find(|rule| part.starts_with(rule)).unwrap_or(part).clone()).collect();
-            Request::Command { id, words: parts, suggestion, session_prefixes: true }
+            RequestKind::Command { id, words: parts, suggestion, session_prefixes: true }
         }
-        Some("AskUserQuestion") => Request::Question {
+        Some("AskUserQuestion") => RequestKind::Question {
             id, questions: serde_json::from_value(input["questions"].clone()).unwrap_or_default(),
         },
-        Some("ExitPlanMode") => Request::Plan { id, plan: text("plan") },
+        Some("ExitPlanMode") => RequestKind::Plan { id, plan: text("plan") },
         Some("Edit") => {
             let diff = diff(&text("old_string"), &text("new_string"));
-            Request::Edit { id, path: text("file_path"), diff }
+            RequestKind::Edit { id, path: text("file_path"), diff }
         }
-        Some("Write") => Request::Edit { id, path: text("file_path"), diff: diff("", &text("content")) },
+        Some("Write") => RequestKind::Edit { id, path: text("file_path"), diff: diff("", &text("content")) },
         tool => {
             let name = request["display_name"].as_str().or(tool).unwrap_or("a tool");
             let title = request["title"].as_str().map_or_else(|| format!("Claude wants to use {name}"), str::to_owned);
-            Request::Other { id, title, detail: serde_json::to_string_pretty(input).unwrap_or_default() }
+            RequestKind::Other { id, title, detail: serde_json::to_string_pretty(input).unwrap_or_default() }
         }
     }
 }
@@ -619,8 +620,10 @@ struct Transcript {
     commands: HashMap<String, (usize, String, String)>,
     snippets: HashMap<String, Item>,
     media: HashSet<String>,
-    edits: HashSet<String>,
+    edits: HashMap<String, bool>,
     subagents: HashMap<String, (Subagent, Transcript)>,
+    issued: HashMap<String, String>,
+    asking: HashMap<String, String>,
     todos: Vec<(String, Todo)>,
     creating: HashSet<String>,
     tasks: HashMap<String, String>,
@@ -667,8 +670,10 @@ impl Transcript {
             commands: HashMap::new(),
             snippets: HashMap::new(),
             media: HashSet::new(),
-            edits: HashSet::new(),
+            edits: HashMap::new(),
             subagents: HashMap::new(),
+            issued: HashMap::new(),
+            asking: HashMap::new(),
             todos: Vec::new(),
             creating: HashSet::new(),
             tasks: HashMap::new(),
@@ -831,11 +836,37 @@ impl Transcript {
     }
 
     fn resolve(&mut self, id: &str) {
+        self.unblock(id);
         if self.replaying {
             self.pending.retain(|request| request.id() != id);
         } else {
             let _ = self.events.send(Event::Resolved(id.to_owned()));
         }
+    }
+
+    fn unblock(&mut self, request: &str) {
+        if let Some(subagent) = self.asking.remove(request)
+            && !self.asking.values().any(|other| *other == subagent)
+        {
+            self.subagent_status(&subagent, Status::Working);
+        }
+    }
+
+    fn subagent_status(&mut self, id: &str, status: Status) -> bool {
+        for (key, (subagent, transcript)) in &mut self.subagents {
+            let changed = if key == id {
+                let changed = subagent.status != Status::Done && subagent.status != status;
+                if changed { subagent.status = status; }
+                changed
+            } else {
+                transcript.subagent_status(id, status) && subagent.update()
+            };
+            if changed {
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                return true;
+            }
+        }
+        false
     }
 
     fn report_todos(&mut self) {
@@ -981,13 +1012,11 @@ impl Transcript {
             Some("assistant") if top => self.assistant(message, &message["thinking_duration_ms"], true),
             Some("user") if top => self.results(&message["message"]["content"], &message["tool_use_result"]),
             Some("assistant" | "user") => {
-                let result = &message["tool_use_result"];
-                let parent = message["parent_tool_use_id"].as_str().and_then(|parent| self.subagents.get_mut(parent));
-                if let Some((subagent, transcript)) = parent {
-                    transcript.nested(message, result);
-                    if subagent.update() {
-                        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                if let Some(parent) = message["parent_tool_use_id"].as_str() {
+                    for block in message["message"]["content"].as_array().into_iter().flatten().filter(|block| block["type"] == "tool_use") {
+                        if let Some(tool) = block["id"].as_str() { self.issued.insert(tool.to_owned(), parent.to_owned()); }
                     }
+                    self.route(parent, message);
                 }
             }
             Some("command_lifecycle") if message["state"] != "queued" => {
@@ -997,8 +1026,15 @@ impl Transcript {
             }
             Some("control_request") if message["request"]["subtype"] == "can_use_tool" => {
                 if let Some(id) = message["request_id"].as_str() {
-                    self.inputs.insert(id.to_owned(), message["request"].clone());
-                    self.ask(request(id, &message["request"]));
+                    let asked = &message["request"];
+                    let agent = asked["agent_id"].as_str().and_then(|agent| self.tasks.get(agent));
+                    let subagent = agent.or_else(|| asked["tool_use_id"].as_str().and_then(|tool| self.issued.get(tool))).cloned();
+                    if let Some(subagent) = &subagent {
+                        self.asking.insert(id.to_owned(), subagent.clone());
+                        self.subagent_status(subagent, Status::Waiting);
+                    }
+                    self.inputs.insert(id.to_owned(), asked.clone());
+                    self.ask(Request { kind: request(id, asked), subagent });
                 }
             }
             Some("control_cancel_request") => self.resolve(message["request_id"].as_str().unwrap_or_default()),
@@ -1032,6 +1068,8 @@ impl Transcript {
                 self.media.clear();
                 self.edits.clear();
                 self.subagents.clear();
+                self.issued.clear();
+                self.asking.clear();
                 self.todos.clear();
                 self.creating.clear();
                 self.tasks.clear();
@@ -1046,13 +1084,31 @@ impl Transcript {
         }
     }
 
+    fn route(&mut self, parent: &str, message: &Value) -> bool {
+        for (id, (subagent, transcript)) in &mut self.subagents {
+            if id == parent {
+                transcript.nested(message, &message["tool_use_result"]);
+            } else if !transcript.route(parent, message) {
+                continue;
+            }
+            if subagent.update() {
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
+            return true;
+        }
+        false
+    }
+
     fn task_notification(&mut self, message: &Value) {
         match message["type"].as_str() {
             Some("system") if message["subtype"] == "task_updated" || message["subtype"] == "task_notification" => {
+                let usage = &message["usage"];
                 self.task_status(
                     message["task_id"].as_str(),
                     message["tool_use_id"].as_str(),
                     message["status"].as_str().or_else(|| message["patch"]["status"].as_str()),
+                    message["summary"].as_str(),
+                    [&usage["duration_ms"], &usage["tool_uses"], &usage["total_tokens"]].map(Value::as_u64),
                 );
             }
             Some("user") => {
@@ -1075,23 +1131,32 @@ impl Transcript {
     fn task_text(&mut self, text: &str) {
         for notification in text.split("<task-notification>").skip(1) {
             if let Some((notification, _)) = notification.split_once("</task-notification>") {
-                self.task_status(tagged(notification, "task-id"), tagged(notification, "tool-use-id"), tagged(notification, "status"));
+                let usage = tagged(notification, "usage").unwrap_or_default();
+                let total = |tag: &str| tagged(usage, tag).and_then(|total| total.trim().parse().ok());
+                self.task_status(
+                    tagged(notification, "task-id"),
+                    tagged(notification, "tool-use-id"),
+                    tagged(notification, "status"),
+                    tagged(notification, "result"),
+                    [total("duration_ms"), total("tool_uses"), total("subagent_tokens").or_else(|| total("total_tokens"))],
+                );
             }
         }
     }
 
-    fn task_status(&mut self, task: Option<&str>, tool: Option<&str>, status: Option<&str>) {
+    fn task_status(&mut self, task: Option<&str>, tool: Option<&str>, status: Option<&str>, report: Option<&str>, totals: [Option<u64>; 3]) {
         for (subagent, transcript) in self.subagents.values_mut() {
-            transcript.task_status(task, tool, status);
+            transcript.task_status(task, tool, status, report, totals);
             if subagent.update() {
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
         }
         let tool = tool.filter(|tool| self.subagents.contains_key(*tool) || self.commands.contains_key(*tool))
             .or_else(|| task.and_then(|task| self.tasks.get(task).map(String::as_str))).map(str::to_owned);
-        if matches!(status, Some("completed" | "failed" | "stopped")) {
+        if let Some(outcome) = outcome(status) {
             if let Some((subagent, _)) = tool.as_ref().and_then(|tool| self.subagents.get_mut(tool)) {
-                subagent.status = Status::Done;
+                subagent.finish(Some(outcome));
+                reported(subagent, report, totals);
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
             if let Some((index, command, output)) = tool.as_ref().and_then(|tool| self.commands.remove(tool)) {
@@ -1157,7 +1222,7 @@ impl Transcript {
                     for (index, text) in self.said.drain(..) {
                         let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false, phase: Phase::Commentary }));
                     }
-                    self.tool(block);
+                    self.tool(block, &message["timestamp"]);
                 }
                 _ => {}
             }
@@ -1174,7 +1239,7 @@ impl Transcript {
         }
     }
 
-    fn tool(&mut self, block: &Value) {
+    fn tool(&mut self, block: &Value, timestamp: &Value) {
         let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) else { return };
         let input = &block["input"];
         let text = |key: &str| input[key].as_str().unwrap_or_default().to_owned();
@@ -1197,7 +1262,7 @@ impl Transcript {
                 if let Some(item) = html::item(input) {
                     self.snippets.insert(id.to_owned(), item);
                 } else {
-                    self.call(ToolKind::Other, name, input.to_string());
+                    self.call(ToolKind::Mcp, name, input.to_string());
                 }
             }
             "Bash" => {
@@ -1207,14 +1272,19 @@ impl Transcript {
                 self.commands.insert(id.to_owned(), (index, command, String::new()));
             }
             "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => {
-                self.edits.insert(id.to_owned());
+                self.edits.insert(id.to_owned(), name == "Write");
             }
             "Read" => self.call(ToolKind::Read, name, self.relative(&text("file_path"))),
             "Grep" | "Glob" => self.call(ToolKind::Search, name, text("pattern")),
             "WebFetch" => self.call(ToolKind::Fetch, name, text("url")),
             "WebSearch" => self.call(ToolKind::Web, name, text("query")),
             "Agent" | "Task" => {
-                let (mut subagent, events) = Subagent::new(input["subagent_type"].as_str().map(str::to_owned), text("description"));
+                let replaying = self.replaying || self.history.is_some();
+                let started_at = timestamp.as_str().filter(|_| replaying).and_then(epoch_ms).unwrap_or_else(super::now);
+                let (mut subagent, events) = Subagent::new(id, text("description"), started_at);
+                subagent.name = input["subagent_type"].as_str().map(str::to_owned);
+                subagent.prompt = input["prompt"].as_str().map(str::to_owned);
+                subagent.model = input["model"].as_str().map(str::to_owned);
                 subagent.index = self.push(subagent.item());
                 self.subagents.insert(id.to_owned(), (subagent, Transcript::new(events, &self.cwd)));
             }
@@ -1243,6 +1313,7 @@ impl Transcript {
                 }
                 self.report_todos();
             }
+            _ if name.starts_with("mcp__") => self.call(ToolKind::Mcp, name, input.to_string()),
             _ => self.call(ToolKind::Other, name, input.to_string()),
         }
     }
@@ -1253,7 +1324,7 @@ impl Transcript {
         match message["type"].as_str() {
             Some("assistant") => {
                 for block in content.as_array().into_iter().flatten().filter(|block| block["type"] == "tool_use") {
-                    self.tool(block);
+                    self.tool(block, &message["timestamp"]);
                 }
             }
             Some("user") => self.results(content, result),
@@ -1285,8 +1356,8 @@ impl Transcript {
             {
                 self.push(item);
             }
-            if self.edits.remove(id) && block["is_error"] != true {
-                self.edit(result);
+            if let Some(write) = self.edits.remove(id) && block["is_error"] != true {
+                self.edit(result, write);
             }
             if self.creating.remove(id)
                 && let (Some(task), Some(text)) = (result["task"]["id"].as_str(), result["task"]["subject"].as_str())
@@ -1301,13 +1372,23 @@ impl Transcript {
                 {
                     let path = history.with_extension("").join("subagents").join(format!("agent-{agent}.jsonl"));
                     let contents = fs::read_to_string(path).unwrap_or_default();
+                    transcript.history = Some(history.clone());
                     for entry in contents.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
                         transcript.nested(&entry, &entry["toolUseResult"]);
                     }
+                    transcript.history = None;
                 }
                 subagent.update();
+                if let Some(model) = result["resolvedModel"].as_str() {
+                    subagent.model = Some(model.to_owned());
+                }
                 if result["isAsync"] != true {
-                    subagent.status = Status::Done;
+                    let texts: Vec<&str> = result["content"].as_array().into_iter().flatten().filter_map(|block| block["text"].as_str()).collect();
+                    let report = Some(texts.join("\n")).filter(|report| !report.is_empty());
+                    let fallback = if block["is_error"] == true { Outcome::Failed } else { Outcome::Completed };
+                    subagent.finish(Some(outcome(result["status"].as_str()).unwrap_or(fallback)));
+                    let totals = [&result["totalDurationMs"], &result["totalToolUseCount"], &result["totalTokens"]].map(Value::as_u64);
+                    reported(subagent, report.as_deref(), totals);
                 }
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
@@ -1339,7 +1420,7 @@ impl Transcript {
     }
 
     /// A created file's patch is empty, and a notebook edit reports the whole notebook before and after instead.
-    fn edit(&mut self, result: &Value) {
+    fn edit(&mut self, result: &Value, write: bool) {
         let text = |key: &str| result[key].as_str().unwrap_or_default();
         let diff = match result["structuredPatch"].as_array() {
             Some(_) if result["type"] == "create" => unified("", text("content")),
@@ -1348,7 +1429,7 @@ impl Transcript {
         };
         let path = result["filePath"].as_str().unwrap_or(text("notebook_path"));
         if !path.is_empty() {
-            self.push(Item::edit(self.relative(path), diff));
+            self.push(Item::edit(self.relative(path), diff, write));
         }
     }
 
@@ -1423,6 +1504,24 @@ fn hunk(hunk: &Value) -> String {
         text.push('\n');
     }
     text
+}
+
+fn outcome(status: Option<&str>) -> Option<Outcome> {
+    match status? {
+        "completed" => Some(Outcome::Completed),
+        "failed" => Some(Outcome::Failed),
+        "stopped" => Some(Outcome::Stopped),
+        _ => None,
+    }
+}
+
+fn reported(subagent: &mut Subagent, report: Option<&str>, [duration, tools, tokens]: [Option<u64>; 3]) {
+    if let Some(report) = report {
+        subagent.report = Some(report.to_owned());
+    }
+    subagent.duration = duration.or(subagent.duration);
+    subagent.tools = tools.map(|tools| tools as usize).or(subagent.tools);
+    subagent.tokens = tokens.or(subagent.tokens);
 }
 
 fn todo_status(status: &str) -> TodoStatus {
@@ -1534,14 +1633,54 @@ mod subagent_tests {
                         if let Event::Item(index, item) = event { items.insert(index, item); }
                     }
                     let statuses: Vec<_> = items.values().filter_map(|item| match item {
-                        Item::Subagent { task, status, .. } => Some((task.as_str(), *status)),
+                        Item::Subagent { task, status, outcome, .. } => Some((task.as_str(), *status, *outcome)),
                         _ => None,
                     }).collect();
-                    assert_eq!(statuses, [("finished", Status::Done), ("active", Status::Working)], "{status}, recorded: {recorded}, {shape}");
+                    let outcome = match status {
+                        "completed" => Outcome::Completed,
+                        "failed" => Outcome::Failed,
+                        _ => Outcome::Stopped,
+                    };
+                    assert_eq!(statuses, [("finished", Status::Done, Some(outcome)), ("active", Status::Working, None)], "{status}, recorded: {recorded}, {shape}");
                     assert!(!items.values().any(|item| matches!(item, Item::User { .. })));
                 }
             }
         }
+    }
+
+    #[test]
+    fn nested_subagents_fill_and_finish_at_any_depth() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        let messages = [
+            json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "content": [{
+                "type": "tool_use", "id": "A", "name": "Agent", "input": { "description": "outer" },
+            }] } }),
+            json!({ "type": "assistant", "parent_tool_use_id": "A", "message": { "content": [{
+                "type": "tool_use", "id": "B", "name": "Agent", "input": { "description": "inner" },
+            }] } }),
+            json!({ "type": "assistant", "parent_tool_use_id": "B", "message": { "content": [{
+                "type": "tool_use", "id": "read", "name": "Read", "input": { "file_path": "/project/notes.txt" },
+            }] } }),
+            json!({ "type": "user", "parent_tool_use_id": "B", "message": { "content": [{
+                "type": "tool_result", "tool_use_id": "read", "content": "notes",
+            }] } }),
+            json!({ "type": "user", "parent_tool_use_id": "A", "message": { "content": [{
+                "type": "tool_result", "tool_use_id": "B", "content": [{ "type": "text", "text": "Found." }],
+            }] }, "tool_use_result": {
+                "status": "completed", "content": [{ "type": "text", "text": "Found." }],
+                "totalDurationMs": 1000, "totalToolUseCount": 1, "totalTokens": 500,
+            } }),
+        ];
+        for message in messages { transcript.read(&message); }
+        let outer = std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+            Event::Item(_, Item::Subagent { id, items, .. }) if id == "A" => Some(items),
+            _ => None,
+        }).last().unwrap();
+        let [Item::Subagent { id, status, outcome, items, .. }] = outer.as_slice() else { panic!("{outer:?}") };
+        assert_eq!((id.as_str(), *status, *outcome), ("B", Status::Done, Some(Outcome::Completed)));
+        let read = ToolCall { kind: ToolKind::Read, name: "Read".to_owned(), detail: "notes.txt".to_owned() };
+        assert!(matches!(items.as_slice(), [Item::Tools { calls }] if calls == &[read]), "{items:?}");
     }
 }
 

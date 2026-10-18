@@ -32,7 +32,7 @@ pub use holder::{HoldChatArgs, hold_chat};
 pub use html::{ChatToolsArgs, serve as chat_tools};
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
+#[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
 pub enum Item {
     User {
         text: String,
@@ -49,18 +49,54 @@ pub enum Item {
     Tools { calls: Vec<ToolCall> },
     Html { title: String, html: String },
     Media { title: String, asset: String },
-    Edit { path: String, diff: String, added: usize, removed: usize },
+    Edit {
+        path: String,
+        diff: String,
+        added: usize,
+        removed: usize,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        write: bool,
+    },
     Command { command: String, status: CommandStatus, output: String },
     Subagent {
+        id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
         task: String,
         status: Status,
         #[serde(skip_serializing_if = "Option::is_none")]
+        outcome: Option<Outcome>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        report: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        started_at: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        totals: Option<Totals>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         activity: Option<String>,
         items: Vec<Item>,
     },
     Notice { notice: Notice, text: String },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Outcome {
+    Completed,
+    Failed,
+    Stopped,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Totals {
+    pub duration_ms: u64,
+    pub tools: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -77,6 +113,7 @@ pub enum ToolKind {
     Search,
     Fetch,
     Web,
+    Mcp,
     Other,
 }
 
@@ -114,9 +151,9 @@ impl Item {
         Item::Notice { notice: Notice::Interrupted, text: "Interrupted".to_owned() }
     }
 
-    fn edit(path: String, diff: String) -> Self {
+    fn edit(path: String, diff: String, write: bool) -> Self {
         let count = |sign: char| diff.lines().skip_while(|line| !line.starts_with("@@")).filter(|line| line.starts_with(sign)).count();
-        Item::Edit { path, added: count('+'), removed: count('-'), diff }
+        Item::Edit { path, added: count('+'), removed: count('-'), diff, write }
     }
 }
 
@@ -170,18 +207,47 @@ pub enum TodoStatus {
 
 struct Subagent {
     index: usize,
+    id: String,
     name: Option<String>,
     task: String,
     status: Status,
+    outcome: Option<Outcome>,
+    prompt: Option<String>,
+    report: Option<String>,
+    model: Option<String>,
+    started_at: u64,
+    finished_at: u64,
+    duration: Option<u64>,
+    tools: Option<usize>,
+    tokens: Option<u64>,
     activity: Option<String>,
     events: UnboundedReceiver<Event>,
     items: Vec<Item>,
 }
 
 impl Subagent {
-    fn new(name: Option<String>, task: String) -> (Self, UnboundedSender<Event>) {
+    fn new(id: &str, task: String, started_at: u64) -> (Self, UnboundedSender<Event>) {
         let (sender, events) = mpsc::unbounded_channel();
-        (Self { index: 0, name, task, status: Status::Working, activity: None, events, items: Vec::new() }, sender)
+        let subagent = Self {
+            index: 0,
+            id: id.to_owned(),
+            name: None,
+            task,
+            status: Status::Working,
+            outcome: None,
+            prompt: None,
+            report: None,
+            model: None,
+            started_at,
+            finished_at: started_at,
+            duration: None,
+            tools: None,
+            tokens: None,
+            activity: None,
+            events,
+            items: Vec::new(),
+        };
+        (subagent, sender)
     }
 
     fn update(&mut self) -> bool {
@@ -195,7 +261,9 @@ impl Subagent {
                     }
                 }
                 Event::Activity(activity) => self.activity = activity,
+                Event::Status(Status::Done) => self.finish(None),
                 Event::Status(status) => self.status = status,
+                Event::Meters(_, Some(tokens)) => self.tokens = Some(tokens.input + tokens.output),
                 _ => continue,
             }
             changed = true;
@@ -203,9 +271,50 @@ impl Subagent {
         changed
     }
 
-    fn item(&self) -> Item {
-        Item::Subagent { name: self.name.clone(), task: self.task.clone(), status: self.status, activity: self.activity.clone().filter(|_| self.status != Status::Done), items: self.items.clone() }
+    fn finish(&mut self, outcome: Option<Outcome>) {
+        if self.status != Status::Done {
+            self.finished_at = now();
+        }
+        self.status = Status::Done;
+        self.outcome = outcome.or(self.outcome);
     }
+
+    /// A final-phase text is the Subagent's report, not one of its items.
+    fn item(&self) -> Item {
+        let done = self.status == Status::Done;
+        let report = self.items.iter().rev().find_map(|item| match item {
+            Item::Text { text, phase: Phase::Final, .. } => Some(text.clone()),
+            _ => None,
+        });
+        let items: Vec<Item> = self.items.iter().filter(|item| !matches!(item, Item::Text { phase: Phase::Final, .. })).cloned().collect();
+        let totals = done.then(|| Totals {
+            duration_ms: self.duration.unwrap_or(self.finished_at.saturating_sub(self.started_at)),
+            tools: self.tools.unwrap_or_else(|| items.iter().map(|item| match item {
+                Item::Tools { calls } => calls.len(),
+                Item::Command { .. } | Item::Edit { .. } | Item::Html { .. } => 1,
+                _ => 0,
+            }).sum()),
+            tokens: self.tokens,
+        });
+        Item::Subagent {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            task: self.task.clone(),
+            status: self.status,
+            outcome: self.outcome.filter(|_| done),
+            prompt: self.prompt.clone(),
+            report: self.report.clone().or(report),
+            model: self.model.clone(),
+            started_at: self.started_at,
+            totals,
+            activity: self.activity.clone().filter(|_| !done),
+            items,
+        }
+    }
+}
+
+fn now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64)
 }
 
 #[derive(Default)]
@@ -248,8 +357,16 @@ pub struct Tokens {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Request {
+    #[serde(flatten)]
+    pub kind: RequestKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
-pub enum Request {
+pub enum RequestKind {
     Command { id: String, words: Vec<Vec<String>>, suggestion: Vec<Vec<String>>, session_prefixes: bool },
     Question { id: String, questions: Vec<Question> },
     Plan { id: String, plan: String },
@@ -259,9 +376,15 @@ pub enum Request {
 
 impl Request {
     pub fn id(&self) -> &str {
+        self.kind.id()
+    }
+}
+
+impl RequestKind {
+    pub fn id(&self) -> &str {
         match self {
-            Request::Command { id, .. } | Request::Edit { id, .. } | Request::Other { id, .. }
-            | Request::Question { id, .. } | Request::Plan { id, .. } => id,
+            RequestKind::Command { id, .. } | RequestKind::Edit { id, .. } | RequestKind::Other { id, .. }
+            | RequestKind::Question { id, .. } | RequestKind::Plan { id, .. } => id,
         }
     }
 }
@@ -1076,19 +1199,19 @@ impl Chats {
         let Some(entry) = self.get(id) else { return };
         let mut transcript = entry.transcript.lock().unwrap();
         let Some(request) = transcript.requests.iter().find(|request| request.id() == request_id) else { return };
-        match (&answer, request) {
-            (Answer::Rules(rules), Request::Command { words, session_prefixes, .. }) => {
+        match (&answer, &request.kind) {
+            (Answer::Rules(rules), RequestKind::Command { words, session_prefixes, .. }) => {
                 if rules.len() != words.len() || rules.iter().any(|rule| rule.scope != rules[0].scope) || rules.iter().zip(words).any(|(rule, words)| {
                     rule.prefix.is_empty() || !words.starts_with(&rule.prefix)
                         || (!session_prefixes && rule.scope == Scope::Chat && rule.prefix != *words)
                 }) { return; }
             }
             (Answer::Rules(_), _) => return,
-            (Answer::Answers(answers), Request::Question { questions, .. }) if answers.len() == questions.len() => {},
+            (Answer::Answers(answers), RequestKind::Question { questions, .. }) if answers.len() == questions.len() => {},
             (Answer::Answers(_), _) => return,
             _ => {},
         }
-        let answered = if let Request::Question { questions, .. } = request {
+        let answered = if let RequestKind::Question { questions, .. } = &request.kind {
             let answers = match &answer {
                 Answer::Answers(answers) => answers.clone(),
                 Answer::Deny { instead: Some(text) } => vec![vec![text.clone()]; questions.len()],

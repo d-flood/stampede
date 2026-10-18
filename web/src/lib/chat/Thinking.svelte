@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Item } from '#lib/device.svelte.ts';
+	import CaretRight from '~icons/ph/caret-right';
 
 	let { item }: { item: Extract<Item, { kind: 'thinking' }> } = $props();
 
@@ -8,7 +9,7 @@
 
 {#if item.text}
 	<details class="thinking">
-		<summary>{label}</summary>
+		<summary><span class="caret"><CaretRight /></span>{label}</summary>
 		<div class="text">{item.text}</div>
 	</details>
 {:else}
@@ -39,13 +40,15 @@
 		display: none;
 	}
 
-	summary::before {
-		content: '▸';
-		font-style: normal;
+	.caret {
+		display: inline-flex;
+		flex: none;
+		width: 1em;
+		transition: transform var(--dur-fast);
 	}
 
-	details[open] > summary::before {
-		content: '▾';
+	details[open] > summary > .caret {
+		transform: rotate(90deg);
 	}
 
 	summary:hover {

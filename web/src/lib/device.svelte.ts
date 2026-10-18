@@ -15,7 +15,23 @@ export type Terminal = {
 	state: 'live' | 'ended';
 };
 
-export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'other'; name: string; detail: string };
+export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'mcp' | 'other'; name: string; detail: string };
+
+export type Subagent = {
+	kind: 'subagent';
+	id: string;
+	name?: string;
+	task: string;
+	status: Status;
+	outcome?: 'completed' | 'failed' | 'stopped';
+	prompt?: string;
+	report?: string;
+	model?: string;
+	startedAt?: number;
+	totals?: { durationMs: number; tools: number; tokens?: number };
+	activity?: string | null;
+	items: Item[];
+};
 
 export type Item =
 	| { kind: 'user'; text: string; images: number; template?: string }
@@ -24,17 +40,18 @@ export type Item =
 	| { kind: 'tools'; calls: ToolCall[] }
 	| { kind: 'html'; title: string; html: string }
 	| { kind: 'media'; title: string; asset: string }
-	| { kind: 'subagent'; name?: string; task: string; status: Status; activity?: string | null; items: Item[] }
-	| { kind: 'edit'; path: string; diff: string; added: number; removed: number }
+	| Subagent
+	| { kind: 'edit'; path: string; diff: string; added: number; removed: number; write?: true }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
 
-export type Request =
+export type Request = (
 	| { kind: 'command'; id: string; words: string[][]; suggestion: string[][]; sessionPrefixes: boolean }
 	| { kind: 'question'; id: string; questions: Question[] }
 	| { kind: 'plan'; id: string; plan: string }
 	| { kind: 'edit'; id: string; path: string; diff: string }
-	| { kind: 'other'; id: string; title: string; detail: string };
+	| { kind: 'other'; id: string; title: string; detail: string }
+) & { subagent?: string };
 
 export type Question = { id: string; header: string; question: string; options: { label: string; description: string; preview?: string }[]; multiSelect: boolean };
 export type AnsweredQuestions = { source?: string; after: number; questions: Question[]; answers: string[][] };

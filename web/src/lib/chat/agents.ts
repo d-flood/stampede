@@ -1,17 +1,38 @@
-import type { Chat, Item, Status } from '#lib/device.svelte.ts';
+import { count } from '#lib/chat/count.ts';
+import type { Item, Subagent } from '#lib/device.svelte.ts';
+import { createSubscriber } from 'svelte/reactivity';
 
-export type AgentSession = { id: string; label: string; task: string; status: Status; activity?: string | null; items: Item[] };
+export type Placed = { path: string[]; subagent: Subagent };
 
-export function agentSessions(chat: Chat, items: Item[]): AgentSession[] {
-	const sessions: AgentSession[] = [{ id: '', label: 'Main', task: chat.rig, status: chat.status, activity: chat.activity, items }];
-	function visit(items: Item[], parent: string, depth: number) {
-		items.forEach((item, index) => {
-			if (item.kind !== 'subagent') return;
-			const id = `${parent}/${index}`;
-			if (item.status !== 'done') sessions.push({ id, label: `${'↳ '.repeat(depth)}${item.name || item.task}`, task: item.task, status: item.status, activity: item.activity, items: item.items });
-			visit(item.items, id, depth + 1);
-		});
-	}
-	visit(items, '', 1);
-	return sessions;
+export function subagents(items: Item[], parent: string[] = []): Placed[] {
+	return items.flatMap((item) => {
+		if (item.kind !== 'subagent') return [];
+		const path = [...parent, item.id];
+		return [{ path, subagent: item }, ...subagents(item.items, path)];
+	});
+}
+
+export function same(a: string[], b: string[]) {
+	return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+const tick = createSubscriber((update) => {
+	const timer = setInterval(update, 1000);
+	return () => clearInterval(timer);
+});
+
+export function clock(startedAt: number) {
+	tick();
+	const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+	const pad = (value: number) => String(value).padStart(2, '0');
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}:${pad(seconds % 60)}`;
+	return `${Math.floor(minutes / 60)}:${pad(minutes % 60)}:${pad(seconds % 60)}`;
+}
+
+export function totals({ durationMs, tools, tokens }: NonNullable<Subagent['totals']>) {
+	const seconds = Math.round(durationMs / 1000);
+	const minutes = Math.floor(seconds / 60);
+	const duration = minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+	return [duration, `${tools} ${tools === 1 ? 'tool' : 'tools'}`, tokens !== undefined && `${count(tokens)} tokens`].filter(Boolean).join(' · ');
 }

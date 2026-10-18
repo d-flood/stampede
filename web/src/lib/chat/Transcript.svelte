@@ -2,18 +2,20 @@
 	import Command from '#lib/chat/Command.svelte';
 	import Calls from '#lib/chat/Calls.svelte';
 	import Edit from '#lib/chat/Edit.svelte';
+	import { icon } from '#lib/chat/icons.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import Media from '#lib/chat/Media.svelte';
 	import Notice from '#lib/chat/Notice.svelte';
+	import Spawn from '#lib/chat/Spawn.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Thinking from '#lib/chat/Thinking.svelte';
 	import Tools from '#lib/chat/Tools.svelte';
 	import User from '#lib/chat/User.svelte';
 	import Questions from '#lib/chat/Questions.svelte';
-	import type { AnsweredQuestions, Item } from '#lib/device.svelte.ts';
+	import type { AnsweredQuestions, Item, Subagent } from '#lib/device.svelte.ts';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
-	let { items, answered = [], activity, ondiff }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; ondiff(path: string): void } = $props();
+	let { items, answered = [], activity, path = [], onopen, onattend, ondiff }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void } = $props();
 	const entries = $derived.by(() => {
 		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map((record) => ({ kind: 'questions', record }));
 		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
@@ -24,20 +26,23 @@
 	}
 
 	const runs = $derived(
-		entries.reduce<{ rail: boolean; indices: number[] }[]>((runs, item, index) => {
-			if (item.kind === 'subagent') return runs;
-			const rail = interim(item);
+		entries.reduce<{ kind: 'spawn' | 'rail' | 'plain'; indices: number[] }[]>((runs, item, index) => {
+			const kind = item.kind === 'subagent' ? 'spawn' : interim(item) ? 'rail' : 'plain';
 			const last = runs.at(-1);
-			if (last && last.rail === rail) last.indices.push(index);
-			else runs.push({ rail, indices: [index] });
+			if (last?.kind === kind) last.indices.push(index);
+			else runs.push({ kind, indices: [index] });
 			return runs;
 		}, [])
 	);
 
 	function dot(item: Entry) {
 		if (item.kind === 'text' || item.kind === 'thinking') return 'said';
-		if (item.kind === 'command' || item.kind === 'subagent') return item.status;
+		if (item.kind === 'command') return item.status;
 		return 'done';
+	}
+
+	function marker(item: Entry) {
+		return item.kind === 'questions' ? undefined : icon(item);
 	}
 </script>
 
@@ -66,11 +71,17 @@
 {/snippet}
 
 {#each runs as run (run.indices[0])}
-	{#if run.rail}
+	{#if run.kind === 'spawn'}
+		<Spawn subagents={run.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} {onopen} {onattend} />
+	{:else if run.kind === 'rail'}
 		<Calls items={run.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={run === runs.at(-1) ? activity : null}>
 			<div class="rail">
 				{#each run.indices as index (index)}
-					<div class="step" data-dot={dot(entries[index])}>{@render entry(entries[index], index)}</div>
+					{@const Marker = marker(entries[index])}
+					<div class="step" data-dot={dot(entries[index])}>
+						{#if Marker}<span class="marker"><Marker /></span>{/if}
+						{@render entry(entries[index], index)}
+					</div>
 				{/each}
 			</div>
 		</Calls>
@@ -85,6 +96,7 @@
 	.rail {
 		--indent: var(--space-6);
 		--dot: 9px;
+		--marker: 14px;
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
@@ -102,7 +114,7 @@
 		min-width: 0;
 	}
 
-	.step::before {
+	[data-dot='said']::before {
 		content: '';
 		position: absolute;
 		top: calc(var(--target-min) / 2 - var(--dot) / 2);
@@ -112,32 +124,40 @@
 		height: var(--dot);
 		border: var(--border-width) solid var(--muted-fg);
 		border-radius: 50%;
-		background: var(--muted-fg);
-	}
-
-	[data-dot='said']::before {
 		background: var(--color-bg);
 	}
 
-	[data-dot='ok']::before {
-		border-color: var(--status-done);
-		background: var(--status-done);
+	.marker {
+		position: absolute;
+		top: calc(var(--target-min) / 2 - var(--marker) / 2);
+		left: calc(-1 * var(--indent) - var(--border-width) / 2 - var(--marker) / 2);
+		display: flex;
+		width: var(--marker);
+		height: var(--marker);
+		background: var(--color-bg);
+		color: var(--muted-fg);
 	}
 
-	[data-dot='failed']::before {
-		border-color: var(--ansi-1);
-		background: var(--ansi-1);
+	.marker :global(svg) {
+		width: 100%;
+		height: 100%;
 	}
 
-	[data-dot='waiting']::before {
-		border-color: var(--status-waiting);
-		background: var(--status-waiting);
+	[data-dot='ok'] > .marker {
+		color: var(--status-done);
 	}
 
-	[data-dot='running']::before,
-	[data-dot='working']::before {
-		border-color: var(--status-working);
-		background: var(--status-working);
+	[data-dot='failed'] > .marker {
+		color: var(--ansi-1);
+	}
+
+	[data-dot='waiting'] > .marker {
+		color: var(--status-waiting);
+	}
+
+	[data-dot='running'] > .marker,
+	[data-dot='working'] > .marker {
+		color: var(--status-working);
 		animation: fade 1.6s ease-in-out var(--pulse);
 	}
 

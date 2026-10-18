@@ -3,7 +3,7 @@
 	import { OpenBrowser } from '#lib/browser.svelte.ts';
 	import Browser from '#lib/shell/Browser.svelte';
 	import { ago, logos } from '#lib/chat/sessions.ts';
-	import { agentSessions } from '#lib/chat/agents.ts';
+	import { same, subagents } from '#lib/chat/agents.ts';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import {
 		connect,
@@ -47,6 +47,8 @@
 	import { on } from 'svelte/events';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
+	import FileCode from '~icons/ph/file-code';
+	import Globe from '~icons/ph/globe';
 	import Plus from '~icons/ph/plus';
 	import Power from '~icons/ph/power';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
@@ -62,7 +64,7 @@
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let chats = $state<Record<string, Chat[]>>({});
 	let chatItems = $state<Record<string, Item[]>>({});
-	let chatSessions = $state<Record<string, string>>({});
+	let openSubagents = $state<Record<string, string[]>>({});
 	let sessions = $state<Record<string, Session[]>>({});
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
@@ -135,7 +137,7 @@
 	const label = $derived(focused && projectLabels.get(focused.id));
 	const tabActions: Action[] = $derived.by(() => {
 		const items = tabTarget === 'drawer'
-			? [{ label: 'Terminal', onselect: () => drawer.newTab() }]
+			? [{ label: 'Terminal', icon: TerminalWindow, onselect: () => drawer.newTab() }]
 			: tabTarget ? newTab(tabTarget) : [];
 		return items.flatMap((entry) => {
 			const group = 'heading' in entry ? entry.heading : 'Tabs';
@@ -231,7 +233,7 @@
 				for (const chat of gone) {
 					if (Object.values(chats).flat().some(({ id }) => id === chat.id)) continue;
 					delete chatItems[chat.id];
-					delete chatSessions[chat.id];
+					delete openSubagents[chat.id];
 				}
 				break;
 			}
@@ -247,8 +249,8 @@
 				break;
 			case 'chat.items': {
 				chatItems[message.chatId] = message.items;
-				const chat = Object.values(chats).flat().find(({ id }) => id === message.chatId);
-				if (chat && !agentSessions(chat, message.items).some(({ id }) => id === chatSessions[chat.id])) delete chatSessions[chat.id];
+				const opened = openSubagents[message.chatId];
+				if (opened && !subagents(message.items).some(({ path }) => same(path, opened))) delete openSubagents[message.chatId];
 				break;
 			}
 			case 'chat.item':
@@ -456,12 +458,12 @@
 
 	function newTab(projectId: string) {
 		const items = rigs()
-			.map((rig) => ({ label: rig.name, onselect: () => launch(rig, projectId) }));
+			.map((rig) => ({ label: rig.name, icon: logos[rig.agent], onselect: () => launch(rig, projectId) }));
 		const terminal = () => device.send({ type: 'terminal.create', projectId });
 		const rest = [
-			{ label: 'Terminal', onselect: terminal },
-			{ label: 'Browser', onselect: () => openBrowser(projectId) },
-			{ label: 'Open file', onselect: () => openPalette('files') }
+			{ label: 'Terminal', icon: TerminalWindow, onselect: terminal },
+			{ label: 'Browser', icon: Globe, onselect: () => openBrowser(projectId) },
+			{ label: 'Open file', icon: FileCode, onselect: () => openPalette('files') }
 		];
 		const recent = (sessions[projectId] ?? []).slice(0, RECENT).map((session) => ({
 			label: session.firstPrompt,
@@ -721,7 +723,7 @@
 
 {#snippet attention()}
 	<ThemeSwitcher />
-	<AttentionList items={attentionList} projects={projectLabels} onselect={(item) => attend(item.projectId, tabOf(item))} />
+	<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
 {/snippet}
 
 {#snippet sidebarPanel()}
@@ -786,7 +788,6 @@
 									{/snippet}
 								</Menu>
 							{:else if chat}
-								{@const sessions = agentSessions(chat, chatItems[chat.id] ?? [])}
 								<Menu context items={[{ label: 'Close', onselect: () => closeChat(chat) }]}>
 									{#snippet trigger(props)}
 										<Tab
@@ -794,11 +795,8 @@
 											data-tab={id}
 											variant="agent"
 											agent={chat.agent}
-											status={chat.status === 'done' ? sessions.find(({ status }) => status !== 'done')?.status ?? 'done' : chat.status}
+											status={chat.status === 'done' ? subagents(chatItems[chat.id] ?? []).find(({ subagent }) => subagent.status !== 'done')?.subagent.status ?? 'done' : chat.status}
 											label={chat.rig}
-											{sessions}
-											session={chatSessions[chat.id] ?? ''}
-											onsession={(id) => (chatSessions[chat.id] = id)}
 											active={id === group.active}
 											onclose={() => closeChat(chat)}
 											onclick={() => {
@@ -952,8 +950,8 @@
 								{device}
 								{chat}
 								items={chatItems[chat.id] ?? []}
-								session={chatSessions[chat.id] ?? ''}
-								onsession={(id) => (chatSessions[chat.id] = id)}
+								opened={openSubagents[chat.id] ?? []}
+								onopen={(path) => (openSubagents[chat.id] = path)}
 								active={showing(chat.id)}
 								focused={chat.id === activeTab}
 								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}

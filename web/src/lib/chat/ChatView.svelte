@@ -1,7 +1,7 @@
 <script lang="ts">
 	import ChatComposer from '#lib/chat/ChatComposer.svelte';
 	import Activity from '#lib/chat/Activity.svelte';
-	import { agentSessions } from '#lib/chat/agents.ts';
+	import { same, subagents as flatten } from '#lib/chat/agents.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import Meters from '#lib/chat/Meters.svelte';
@@ -10,20 +10,29 @@
 	import Shells from '#lib/chat/Shells.svelte';
 	import Todos from '#lib/chat/Todos.svelte';
 	import Chips from '#lib/chat/Chips.svelte';
+	import Dock from '#lib/chat/Dock.svelte';
+	import Prompt from '#lib/chat/Prompt.svelte';
+	import SubagentHeader from '#lib/chat/SubagentHeader.svelte';
+	import Text from '#lib/chat/Text.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { on } from 'svelte/events';
 
-	let { device, chat, items, session, onsession, active, focused = false, ondiff }: { device: Device; chat: Chat; items: Item[]; session: string; onsession(id: string): void; active: boolean; focused?: boolean; ondiff(path: string): void } =
+	let { device, chat, items, opened, onopen, active, focused = false, ondiff }: { device: Device; chat: Chat; items: Item[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void } =
 		$props();
 
-	const sessions = $derived(agentSessions(chat, items));
-	const selected = $derived(sessions.find(({ id }) => id === session) ?? sessions[0]);
+	const subagents = $derived(flatten(items));
+	const selected = $derived(subagents.find(({ path }) => same(path, opened))?.subagent);
+	const trail = $derived(subagents.filter(({ path }) => path.length < opened.length && same(path, opened.slice(0, path.length))));
+	const current = $derived(selected ?? chat);
 	let requests = $state<Request[]>([]);
 	let attached = $state(false);
-	const request = $derived(requests[0]);
+	let attending = $state<string>();
+	const request = $derived(requests.find(({ subagent }) => subagent && subagent === attending) ?? requests[0]);
+	const asker = $derived(request?.subagent && subagents.find(({ subagent }) => subagent.id === request.subagent)?.subagent.task);
+	let card = $state<RequestCard>();
 	const live = $derived(device.connection === 'connected');
 	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
 	let rewinding = $state(false);
@@ -71,6 +80,13 @@
 		device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer });
 	}
 
+	async function attend(subagent: string) {
+		onopen([]);
+		attending = subagent;
+		await tick();
+		card?.focus();
+	}
+
 	function run(command: Builtin, value?: string | number) {
 		if (command === 'rewind' && value === undefined) { rewinding = true; return; }
 		rewinding = false;
@@ -105,7 +121,7 @@
 </script>
 
 <div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active}>
-	{#if !selected.id}
+	{#if !selected}
 		<Chips agent={chat.agent} settings={chat.settings} {choices} onrun={run}>
 			{#if form() === 'phone' && chat.context}
 				<ContextBar context={chat.context} compact />
@@ -123,40 +139,57 @@
 		{/if}
 		<Todos todos={chat.todos} working={chat.status === 'working'} />
 	{:else}
-		<div class="session-heading"><strong>{selected.task}</strong><span>{selected.status}</span></div>
+		<SubagentHeader subagent={selected} {trail} {onopen} />
 	{/if}
-	{#each sessions as entry (entry.id)}
-		<div class="transcript" hidden={entry.id !== selected.id} {@attach follow}>
-			<div class="column">
-				<Transcript items={entry.items} answered={attached && !entry.id ? chat.answeredQuestions : []} activity={entry.activity} {ondiff} />
-				{#if !entry.id}<Queued queued={chat.queued} />{/if}
-			</div>
+	<div class="transcript" hidden={!!selected} {@attach follow}>
+		<div class="column">
+			<Transcript {items} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} {onopen} onattend={attend} {ondiff} />
+			<Queued queued={chat.queued} />
 		</div>
-	{/each}
+	</div>
+	{#if selected}
+		{#key opened.join('/')}
+			<div class="transcript" {@attach follow}>
+				<div class="column">
+					{#if selected.prompt}<Prompt prompt={selected.prompt} />{/if}
+					<Transcript items={selected.items} activity={selected.activity} path={opened} {onopen} onattend={attend} {ondiff} />
+					{#if selected.report}
+						<section class="report" aria-label="Report">
+							<span class="label">Report</span>
+							<Text item={{ kind: 'text', text: selected.report, streaming: false, phase: 'final' }} />
+						</section>
+					{/if}
+				</div>
+			</div>
+		{/key}
+	{/if}
 	<div class="foot">
 		<Shells {items} />
-		<Activity status={selected.status} activity={selected.activity} />
+		<Activity status={current.status} activity={current.activity} />
+		{#if subagents.length}
+			<Dock {subagents} {onopen} onattend={attend} />
+		{/if}
 		{#if request}
 			{#key request.id}
-				<RequestCard {request} {agent} disabled={!live} onanswer={(chosen) => answer(request, chosen)} />
+				<RequestCard bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} />
 			{/key}
 		{/if}
-		{#if !selected.id}
+		{#if !selected}
 			<ChatComposer {device} {chat} {live} {request} {capabilities} {choices} {focused} onrun={run} />
 			{#if form() === 'desktop'}
 				<Meters {chat} />
 			{/if}
 		{:else}
-			<div class="session-footer"><span>Subagent session</span><Button onclick={() => onsession('')}>Return to Main</Button></div>
+			<div class="subagent"><span>Subagent</span><Button onclick={() => onopen([])}>Back to Main</Button></div>
 		{/if}
 	</div>
 </div>
 
 <style>
-	.session-heading, .session-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); }
-	.session-heading { border-bottom: var(--border-width) solid var(--border); }
-	.session-heading strong { min-width: 0; overflow-wrap: anywhere; }
-	.session-heading span, .session-footer span { color: var(--muted-fg); }
+	.subagent { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); }
+	.subagent span, .report .label { color: var(--muted-fg); }
+	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }
+	.report .label { font-size: var(--font-size-sm); }
 	.transcript[hidden] { display: none; }
 	.rewind { display: flex; flex-direction: column; flex: none; gap: var(--space-2); max-height: 45vh; padding: var(--space-3); overflow-y: auto; }
 	.rewind p { margin: 0; color: var(--muted-fg); }

@@ -9,7 +9,7 @@ test('running shells stay visible across sessions and disappear when finished', 
 	const command = `pnpm dev --host 0.0.0.0 --port 5173 ${'long-argument-'.repeat(20)}`;
 	const shell: Item = { kind: 'command', command, status: 'running', output: 'Server ready\n' };
 	const watcher: Item = { kind: 'command', command: 'pnpm test --watch', status: 'running', output: 'Watching files' };
-	const child: Item = { kind: 'subagent', name: 'Builder', task: 'Build the app', status: 'working', items: [watcher] };
+	const child: Item = { kind: 'subagent', id: 'builder', name: 'Builder', task: 'Build the app', status: 'working', items: [watcher] };
 	const items: Item[] = [shell, child, { kind: 'text', text: 'The server is running.', phase: 'final', streaming: false }];
 	await page.routeWebSocket('**/ws', (socket) => {
 		route = socket;
@@ -35,7 +35,11 @@ test('running shells stay visible across sessions and disappear when finished', 
 	await expect(shells.getByText('Server ready', { exact: true })).toBeVisible();
 	await expect.poll(() => shells.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 	await expect.poll(() => shells.locator('summary').first().evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(project.name === 'pixel' ? 48 : 26);
-	await page.getByRole('combobox', { name: 'Session in Fake Claude' }).selectOption({ label: '↳ Builder · working' });
+	const dock = panel.getByRole('region', { name: 'Subagents' });
+	if (project.name === 'pixel') {
+		await dock.getByRole('button').click();
+		await page.getByRole('dialog', { name: 'Subagents' }).getByRole('button', { name: /^Build the app/ }).click();
+	} else await dock.getByRole('button', { name: /^Build the app/ }).click();
 	await expect(shells.getByText('Server ready', { exact: true })).toBeVisible();
 	await page.screenshot({ path: test.info().outputPath('running-shells.png') });
 	await page.reload();
