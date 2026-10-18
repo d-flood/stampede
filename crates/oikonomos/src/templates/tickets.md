@@ -13,7 +13,7 @@ Look for prefactoring that makes the change easy: "Make the change easy, then ma
 ## 3. Draft the slices
 
 - Each slice is a narrow but COMPLETE path through every layer (schema, API, UI, checks), demoable or verifiable on its own.
-- Each fits a single fresh context window.
+- Each uses most of a fresh context window, not merely fits one: merge neighbouring slices that touch the same modules into one Ticket, and stage their acceptance criteria.
 - Prefactoring goes first.
 - A single mechanical change with codebase-wide blast radius is a wide refactor instead (below).
 
