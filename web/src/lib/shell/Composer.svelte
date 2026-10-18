@@ -8,6 +8,7 @@
 		disabled?: boolean;
 		focused?: boolean;
 		placeholder?: string;
+		draft?: string;
 		menu?: Snippet<[string, (text: string) => void]>;
 		onkeydown?: (event: KeyboardEvent) => void;
 		onsend?(text: string, enter: boolean): boolean;
@@ -15,15 +16,15 @@
 		actions?: Snippet<[text: string, clear: () => void]>;
 	};
 
-	let { id, disabled = false, focused = false, placeholder, onsend, actions, menu, onkeydown }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, draft, onsend, actions, menu, onkeydown }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
-	let text = $derived(localStorage.getItem(key) ?? '');
+	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
 	let box: HTMLTextAreaElement;
 	const phone = $derived(form() === 'phone');
 
 	function keep() {
-		if (text) localStorage.setItem(key, text);
+		if (text || draft) localStorage.setItem(key, text);
 		else localStorage.removeItem(key);
 	}
 

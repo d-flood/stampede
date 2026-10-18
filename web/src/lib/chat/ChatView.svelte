@@ -20,13 +20,15 @@
 	import { onMount, tick } from 'svelte';
 	import { on } from 'svelte/events';
 
-	let { device, chat, items, opened, onopen, active, focused = false, ondiff }: { device: Device; chat: Chat; items: Item[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void } =
+	let { device, chat, chats, onchat, items, opened, onopen, active, focused = false, ondiff }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void } =
 		$props();
 
 	const subagents = $derived(flatten(items));
 	const selected = $derived(subagents.find(({ path }) => same(path, opened))?.subagent);
 	const trail = $derived(subagents.filter(({ path }) => path.length < opened.length && same(path, opened.slice(0, path.length))));
 	const current = $derived(selected ?? chat);
+	const source = $derived(chats.find(({ id }) => id === chat.handoffFrom));
+	const handoffs = $derived(chats.filter(({ handoffFrom }) => handoffFrom === chat.id));
 	let requests = $state<Request[]>([]);
 	let attached = $state(false);
 	let attending = $state<string>();
@@ -127,6 +129,12 @@
 				<ContextBar context={chat.context} compact />
 			{/if}
 		</Chips>
+		{#if source || handoffs.length}
+			<div class="handoffs" aria-label="Chat handoffs">
+				{#if source}<Button onclick={() => onchat(source)}>Source Chat · {source.rig}</Button>{/if}
+				{#each handoffs as target (target.id)}<Button onclick={() => onchat(target)}>New Chat · {target.rig}</Button>{/each}
+			</div>
+		{/if}
 		{#if rewinding}
 			<section class="rewind" aria-label="Rewind">
 				<strong>Rewind to before a message</strong>
@@ -175,7 +183,7 @@
 			{/key}
 		{/if}
 		{#if !selected}
-			<ChatComposer {device} {chat} {live} {request} {capabilities} {choices} {focused} onrun={run} />
+			<ChatComposer {device} {chat} {live} {request} {capabilities} {choices} handoffAvailable={attached && items.some((item) => item.kind === 'user')} {focused} onrun={run} />
 			{#if form() === 'desktop'}
 				<Meters {chat} />
 			{/if}
@@ -186,6 +194,7 @@
 </div>
 
 <style>
+	.handoffs { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: var(--border-width) solid var(--border); font-size: var(--font-size-sm); }
 	.subagent { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); }
 	.subagent span, .report .label { color: var(--muted-fg); }
 	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }

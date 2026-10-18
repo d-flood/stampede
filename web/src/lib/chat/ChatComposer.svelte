@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Handoff from '#lib/chat/Handoff.svelte';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
 	import Composer from '#lib/shell/Composer.svelte';
@@ -10,10 +11,11 @@
 	import Stop from '~icons/ph/stop-fill';
 	import X from '~icons/ph/x';
 
-	let { device, chat, live, request, capabilities, choices, focused = false, onrun }: {
+	let { device, chat, live, request, capabilities, choices, handoffAvailable, focused = false, onrun }: {
 		device: Device;
 		chat: Chat;
 		live: boolean;
+		handoffAvailable: boolean;
 		focused?: boolean;
 		request?: Request;
 		capabilities: Capabilities;
@@ -95,12 +97,13 @@
 	</div>
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
-<Composer bind:this={composer} id={chat.id} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onkeydown={(event) => slash?.key(event)}>
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onkeydown={(event) => slash?.key(event)}>
 	{#snippet menu(text, replace)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
 	{/snippet}
 	{#snippet actions(text: string, clear: () => void)}
 		<Button aria-label="Attach image" title="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
+		<Handoff {device} {chat} available={handoffAvailable} />
 		{#if working}
 			<Button aria-label="Interrupt" title="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
 				<span class="stop"><Stop /></span>
@@ -122,6 +125,7 @@
 				variant="primary"
 				aria-label="Send"
 				title="Send"
+				style="min-width: calc(2 * (1.2em + 2 * var(--space-3) + 2 * var(--border-width)))"
 				disabled={(!text.trim() && !images.length) || !live || reading}
 				onmousedown={keepFocus}
 				onclick={() => send(text, false) && clear()}

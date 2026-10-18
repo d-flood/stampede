@@ -62,6 +62,8 @@ enum Control {
     Detach { channel: u32 },
     #[serde(rename = "chat.create")]
     CreateChat { project_id: String, rig: String },
+    #[serde(rename = "chat.handoff")]
+    HandoffChat { chat_id: String, rig: String, #[serde(default)] focus: String },
     #[serde(rename = "chat.resume")]
     ResumeChat { project_id: String, agent: Agent, session_id: String },
     #[serde(rename = "sessions.list")]
@@ -396,6 +398,33 @@ impl Device {
                     Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
                     Err(error) => eprintln!("cannot create a chat: {error}"),
                 }
+            }
+            Control::HandoffChat { chat_id, rig, focus } => {
+                let result = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned()
+                    .ok_or_else(|| std::io::Error::other("The target Rig is no longer configured."))
+                    .and_then(|rig| self.chats.prepare_handoff(&chat_id, &focus).map(|(source, result)| (rig, source, result)));
+                let (rig, source, result) = match result {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        send(&self.outgoing, json!({ "type": "chat.handoff.error", "chatId": chat_id, "error": error.to_string() }));
+                        return;
+                    }
+                };
+                let chats = Arc::clone(&self.chats);
+                let projects = Arc::clone(&self.projects);
+                let outgoing = self.outgoing.clone();
+                tokio::spawn(async move {
+                    let result = async {
+                        let text = result.await.map_err(|_| std::io::Error::other("The source Chat closed before the handoff finished."))??;
+                        let project = projects.list().iter().find(|project| project.id == source.project_id).cloned()
+                            .ok_or_else(|| std::io::Error::other("The source Project is no longer open."))?;
+                        chats.create_handoff(&project, &source, &rig, text).await
+                    }.await;
+                    match result {
+                        Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat })),
+                        Err(error) => send(&outgoing, json!({ "type": "chat.handoff.error", "chatId": chat_id, "error": error.to_string() })),
+                    }
+                });
             }
             Control::ResumeChat { project_id, agent, session_id } => {
                 let projects = self.projects.list();

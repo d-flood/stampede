@@ -949,6 +949,8 @@
 							<ChatView
 								{device}
 								{chat}
+								chats={allChats}
+								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); slide(1); }}
 								items={chatItems[chat.id] ?? []}
 								opened={openSubagents[chat.id] ?? []}
 								onopen={(path) => (openSubagents[chat.id] = path)}

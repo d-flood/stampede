@@ -23,6 +23,9 @@ pub const TICKET: Template = Template { name: "ticket", description: "work one T
 pub const RESOLVER: Template =
     Template { name: "resolver", description: "resolve a Ticket's conflicted merge", text: include_str!("templates/resolver.md") };
 
+pub const HANDOFF: Template =
+    Template { name: "handoff", description: "prepare context for a new Chat", text: include_str!("templates/handoff.md") };
+
 impl Template {
     pub fn opening(&self, data_dir: &Path) -> String {
         let text = self.text.trim_end();
@@ -53,7 +56,7 @@ pub fn expand<'a>(text: &'a str, data_dir: &Path) -> Cow<'a, str> {
 
 /// The Template a sent text was expanded from, and the text as it was typed.
 pub fn recognize(text: &str, data_dir: &Path) -> Option<(&'static str, String)> {
-    TEMPLATES.iter().chain([&TICKET, &RESOLVER]).find_map(|template| {
+    TEMPLATES.iter().chain([&TICKET, &RESOLVER, &HANDOFF]).find_map(|template| {
         let typed = text.strip_prefix(&template.opening(data_dir))?;
         Some(match typed {
             "" => (template.name, format!("/{}", template.name)),

@@ -93,6 +93,8 @@ export type Chat = {
 	todos: Todo[];
 	answeredQuestions: AnsweredQuestions[];
 	settings: Settings;
+	handoffFrom?: string;
+	draft?: string;
 };
 
 export type Reading = { agent: Agent; window: 'five-hour' | 'weekly'; used: number; resetsAt?: number; readAt: number };
@@ -164,6 +166,7 @@ export type ServerMessage =
 	| { type: 'terminal.attached'; terminalId: string; channel: number; cols: number; rows: number }
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
 	| { type: 'chat.created'; chat: Chat }
+	| { type: 'chat.handoff.error'; chatId: string; error: string }
 	| { type: 'chats.changed'; projectId: string; chats: Chat[] }
 	| { type: 'chat.items'; chatId: string; items: Item[] }
 	| { type: 'chat.item'; chatId: string; index: number; item: Item }
@@ -207,6 +210,7 @@ export type ClientMessage =
 	| { type: 'terminal.focus'; terminalId: string }
 	| { type: 'terminal.detach'; channel: number }
 	| { type: 'chat.create'; projectId: string; rig: string }
+	| { type: 'chat.handoff'; chatId: string; rig: string; focus: string }
 	| { type: 'chat.resume'; projectId: string; agent: Agent; sessionId: string }
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }

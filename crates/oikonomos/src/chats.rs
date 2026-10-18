@@ -18,6 +18,7 @@ use base64ct::{Base64, Encoding};
 use tokio::sync::{
     broadcast,
     mpsc::{self, UnboundedReceiver, UnboundedSender},
+    oneshot,
 };
 use uuid::Uuid;
 
@@ -628,6 +629,10 @@ pub struct Chat {
     pub todos: Vec<Todo>,
     #[serde(default)]
     pub answered_questions: Vec<AnsweredQuestions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -732,6 +737,12 @@ struct Transcript {
     items: Vec<Item>,
     requests: Vec<Request>,
     reported: Status,
+    handoff: Option<Handoff>,
+}
+
+struct Handoff {
+    after: usize,
+    reply: oneshot::Sender<io::Result<String>>,
 }
 
 impl Chats {
@@ -778,6 +789,18 @@ impl Chats {
 
     /// Starts a Chat owned by `project` that runs in `cwd`: the Project's own directory, or a Ticket Worktree.
     pub async fn create(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>) -> io::Result<Chat> {
+        self.start(project, cwd, rig, session, None).await
+    }
+
+    pub async fn create_handoff(self: &Arc<Self>, project: &Project, source: &Chat, rig: &Rig, text: String) -> io::Result<Chat> {
+        self.start(project, &source.cwd, rig, None, Some((source.id.clone(), text))).await
+    }
+
+    async fn start(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>) -> io::Result<Chat> {
+        let (handoff_from, draft) = match handoff {
+            Some((source, text)) => (Some(source), Some(text)),
+            None => (None, None),
+        };
         let chat = Chat {
             id: format!("{:016x}", Uuid::new_v4().as_u64_pair().1),
             project_id: project.id.clone(),
@@ -798,6 +821,8 @@ impl Chats {
             queued_images: Vec::new(),
             todos: Vec::new(),
             answered_questions: Vec::new(),
+            handoff_from,
+            draft,
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
@@ -863,7 +888,7 @@ impl Chats {
     }
 
     fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>) {
-        let transcript = Transcript { recoverable: false, seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status };
+        let transcript = Transcript { recoverable: false, seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status, handoff: None };
         let entry = Arc::new(Entry {
             chat: Mutex::new(chat),
             transcript: Mutex::new(transcript),
@@ -949,6 +974,18 @@ impl Chats {
                             transcript.requests.iter().map(|request| request.id().to_owned()).collect();
                         for request_id in pending {
                             self.resolve(&mut transcript, &id, &request_id);
+                        }
+                        if let Some(handoff) = transcript.handoff.take() {
+                            let items = &transcript.items[handoff.after.min(transcript.items.len())..];
+                            let failed = items.iter().any(|item| matches!(item, Item::Notice { notice: Notice::Error | Notice::Interrupted | Notice::Limit, .. }));
+                            let text = items.iter().filter_map(|item| match item {
+                                Item::Text { text, streaming: false, phase: Phase::Final } => Some(text.as_str()),
+                                _ => None,
+                            }).collect::<Vec<_>>().join("\n\n");
+                            let result = if failed || text.trim().is_empty() {
+                                Err(io::Error::other("The Agent did not finish a handoff. Try again when the Chat is ready."))
+                            } else { Ok(text) };
+                            let _ = handoff.reply.send(result);
                         }
                     }
                     self.settle(&entry, &transcript);
@@ -1156,12 +1193,42 @@ impl Chats {
         Some(self.get(id)?.capabilities.lock().unwrap().clone())
     }
 
+    pub fn prepare_handoff(&self, id: &str, focus: &str) -> io::Result<(Chat, oneshot::Receiver<io::Result<String>>)> {
+        let entry = self.get(id).ok_or_else(|| io::Error::other("The source Chat is no longer open."))?;
+        let mut transcript = entry.transcript.lock().unwrap();
+        let chat = entry.chat.lock().unwrap();
+        if chat.status != Status::Done || transcript.reported != Status::Done || !transcript.requests.is_empty() || !chat.queued.is_empty() || transcript.handoff.is_some() {
+            return Err(io::Error::other("Wait for the source Chat to finish before preparing a handoff."));
+        }
+        if !transcript.items.iter().any(|item| matches!(item, Item::User { .. })) {
+            return Err(io::Error::other("Send a message before preparing a handoff."));
+        }
+        let source = chat.clone();
+        drop(chat);
+        let mut prompt = templates::HANDOFF.opening(&self.data_dir);
+        if !focus.trim().is_empty() { prompt.push_str(&format!("\n\nFocus: {}", focus.trim())); }
+        let (reply, result) = oneshot::channel();
+        transcript.handoff = Some(Handoff { after: transcript.items.len(), reply });
+        transcript.recoverable = false;
+        transcript.reported = Status::Working;
+        self.settle(&entry, &transcript);
+        entry.driver.send(&prompt, &[]);
+        Ok((source, result))
+    }
+
     /// Sends `text` now, or with `queue` holds it until the running turn ends.
     pub fn send(&self, id: &str, text: &str, queue: bool, images: &[Image]) {
         if images.iter().map(|image| image.data.len()).sum::<usize>() > 20 * 1024 * 1024 * 4 / 3 + 4 || images.len() > 20 || !images.iter().all(Image::valid) || (text.trim().is_empty() && images.is_empty()) { return; }
         let Some(entry) = self.get(id) else { return };
         let mut transcript = entry.transcript.lock().unwrap();
         let mut chat = entry.chat.lock().unwrap();
+        if let Some(handoff) = transcript.handoff.take() {
+            let _ = handoff.reply.send(Err(io::Error::other("Handoff cancelled because another message was sent.")));
+        }
+        if chat.draft.take().is_some() {
+            self.save(&chat);
+            let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+        }
         if queue && chat.status != Status::Done {
             while chat.queued_images.len() < chat.queued.len() { chat.queued_images.push(Vec::new()); }
             chat.queued.push(text.to_owned());
@@ -1179,6 +1246,9 @@ impl Chats {
     pub fn interrupt(&self, id: &str) {
         let Some(entry) = self.get(id) else { return };
         let mut transcript = entry.transcript.lock().unwrap();
+        if let Some(handoff) = transcript.handoff.take() {
+            let _ = handoff.reply.send(Err(io::Error::other("Handoff interrupted.")));
+        }
         transcript.recoverable = false;
         let mut chat = entry.chat.lock().unwrap();
         if !chat.queued.is_empty() {
