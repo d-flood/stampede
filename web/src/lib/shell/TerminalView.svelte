@@ -101,13 +101,13 @@
 
 	// ghostty-web can't change its theme after open(), so a new look gets a
 	// new view, re-attached for a fresh snapshot.
-	function open({ theme, fontFamily, scrollback }: Appearance) {
+	function open({ theme, fontFamily, fontSize, scrollback }: Appearance) {
 		const replaced = view;
 		replaced?.dispose();
 		const element = document.createElement('div');
 		container.replaceChildren(element);
 		// ghostty-web measures scrollback in bytes; reserve 4 KB per configured row.
-		const next = new Terminal({ ...size, theme, fontFamily, disableStdin: ended, scrollback: scrollback * 4096 });
+		const next = new Terminal({ ...size, theme, fontFamily, fontSize, disableStdin: ended, scrollback: scrollback * 4096 });
 		fit = new FitAddon();
 		next.loadAddon(fit);
 		next.open(element);

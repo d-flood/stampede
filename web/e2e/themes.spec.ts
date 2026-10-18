@@ -21,6 +21,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await page.keyboard.type(`echo theme-before-${project.name}`);
 	await page.keyboard.press('Enter');
 	await expect.poll(() => screen(page)).toMatch(new RegExp(`^theme-before-${project.name}$`, 'm'));
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
@@ -33,6 +34,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	else await dracula.click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Dracula');
+	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.theme?.background)).toBe('#282a36');
 	await expect.poll(() => screen(page)).toMatch(new RegExp(`^theme-before-${project.name}$`, 'm'));
@@ -43,6 +45,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	expect(readFileSync(`${process.env.OIKONOMOS_E2E_ROOT}/config.toml`, 'utf8')).toContain('theme = "Dracula"');
 
 	await page.reload();
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Dracula');
 	await expect.poll(() => screen(page)).toMatch(new RegExp(`^theme-after-${project.name}$`, 'm'));
 	await page.getByRole('button', { name: 'Change theme' }).click();
@@ -58,6 +61,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await page.screenshot({ path: test.info().outputPath('theme-picker.png') });
 	await page.keyboard.press('Escape');
 	await expect(dialog).toBeHidden();
+	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
 
 	if (project.name === 'desktop') {
 		const sidebar = await showSidebar(page);

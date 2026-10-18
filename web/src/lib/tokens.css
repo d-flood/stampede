@@ -83,9 +83,10 @@
 	--space-3: 9px;
 	--space-4: 12px;
 	--space-6: 18px;
-	--font-size-sm: 11px;
-	--font-size-md: 13px;
-	--font-size-lg: 15px;
+	--font-size-base: var(--text-size, 13px);
+	--font-size-sm: calc(var(--font-size-base) - 2px);
+	--font-size-md: var(--font-size-base);
+	--font-size-lg: calc(var(--font-size-base) + 2px);
 	--border-width: 1px;
 	--shadow-float: 0 1px 2px color-mix(in oklab, var(--ansi-0) 30%, transparent),
 		0 8px 20px -6px color-mix(in oklab, var(--ansi-0) 45%, transparent);
@@ -124,6 +125,12 @@
 @media (pointer: coarse) {
 	:root {
 		--target-min: 48px;
+	}
+}
+
+@media (pointer: coarse) and (max-width: 767px) {
+	:root {
+		--font-size-base: var(--text-size, 16px);
 	}
 }
 

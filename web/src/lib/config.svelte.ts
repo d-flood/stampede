@@ -1,5 +1,6 @@
 import type { ITheme } from 'ghostty-web';
 import { MediaQuery } from 'svelte/reactivity';
+import { loadTextSize, textSize } from '#lib/typography.svelte.ts';
 
 type Palette = {
 	background: string;
@@ -15,7 +16,7 @@ type Font = { family: string; faces: { url: string; weight: string; style: strin
 type EditorSettings = { keymap: 'standard' | 'vim' };
 type Keybar = { extra: string[] };
 
-export type Appearance = { theme: ITheme; fontFamily: string; scrollback: number };
+export type Appearance = { theme: ITheme; fontFamily: string; fontSize: number; scrollback: number };
 export type Agent = 'claude-code' | 'codex';
 export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 export type Rig = { name: string; agent: Agent; shortcut?: string };
@@ -40,6 +41,7 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export async function loadConfig() {
+	loadTextSize();
 	const [theme, font, rigs, settings, leaderKey, keys, lines, listed] = await Promise.all([
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
@@ -138,6 +140,7 @@ export function appearance(): Appearance {
 			brightWhite: ansi(15)
 		},
 		fontFamily: token('--font-mono'),
+		fontSize: textSize(15),
 		scrollback
 	};
 }
