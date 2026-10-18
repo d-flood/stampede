@@ -96,7 +96,7 @@ async fn a_codex_chat_starts_its_thread_with_its_rigs_model_effort_and_mode() {
                 "tools.update_plan": { "enabled": true },
                 "mcp_servers.oikonomos_chat": {
                     "command": env!("CARGO_BIN_EXE_oikonomos"),
-                    "args": ["chat-tools", "--data-dir", server.root.path().join("data")],
+                    "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat["id"]],
                 },
             },
             "approvalPolicy": "on-request",

@@ -1,5 +1,6 @@
 mod claude;
 mod codex;
+mod delegation;
 mod holder;
 mod html;
 mod protocol;
@@ -31,6 +32,7 @@ use crate::{
 };
 pub use holder::{HoldChatArgs, hold_chat};
 pub use html::{ChatToolsArgs, serve as chat_tools};
+pub use delegation::listen as listen_delegations;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
@@ -83,7 +85,7 @@ pub enum Item {
     Notice { notice: Notice, text: String },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Outcome {
     Completed,
@@ -91,7 +93,7 @@ pub enum Outcome {
     Stopped,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Totals {
     pub duration_ms: u64,
@@ -506,6 +508,7 @@ pub trait Driver: Send + Sync {
     fn answer(&self, request_id: &str, answer: Answer);
     fn run(&self, builtin: Builtin);
     fn close(&self);
+    fn delegated(&self, item: Item);
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -631,6 +634,8 @@ pub struct Chat {
     pub answered_questions: Vec<AnsweredQuestions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handoff_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft: Option<String>,
 }
@@ -767,7 +772,14 @@ impl Chats {
     }
 
     pub fn list(&self) -> Vec<Chat> {
-        self.chats.lock().unwrap().iter().map(|entry| entry.chat.lock().unwrap().clone()).collect()
+        self.chats.lock().unwrap().iter().map(|entry| entry.chat.lock().unwrap().clone()).filter(|chat| chat.parent.is_none()).collect()
+    }
+
+    fn children(&self, id: &str) -> Vec<String> {
+        self.chats.lock().unwrap().iter().filter_map(|entry| {
+            let chat = entry.chat.lock().unwrap();
+            (chat.parent.as_deref() == Some(id)).then(|| chat.id.clone())
+        }).collect()
     }
 
     pub fn owned(&self, project_id: &str) -> Vec<Chat> {
@@ -789,21 +801,21 @@ impl Chats {
 
     /// Starts a Chat owned by `project` that runs in `cwd`: the Project's own directory, or a Ticket Worktree.
     pub async fn create(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>) -> io::Result<Chat> {
-        self.start(project, cwd, rig, session, None).await
+        self.start(&project.id, cwd, rig, session, None, None).await
     }
 
     pub async fn create_handoff(self: &Arc<Self>, project: &Project, source: &Chat, rig: &Rig, text: String) -> io::Result<Chat> {
-        self.start(project, &source.cwd, rig, None, Some((source.id.clone(), text))).await
+        self.start(&project.id, &source.cwd, rig, None, Some((source.id.clone(), text)), None).await
     }
 
-    async fn start(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>) -> io::Result<Chat> {
+    async fn start(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>, parent: Option<String>) -> io::Result<Chat> {
         let (handoff_from, draft) = match handoff {
             Some((source, text)) => (Some(source), Some(text)),
             None => (None, None),
         };
         let chat = Chat {
             id: format!("{:016x}", Uuid::new_v4().as_u64_pair().1),
-            project_id: project.id.clone(),
+            project_id: project_id.to_owned(),
             rig: rig.name.clone(),
             agent: rig.agent,
             cwd: cwd.to_owned(),
@@ -822,6 +834,7 @@ impl Chats {
             todos: Vec::new(),
             answered_questions: Vec::new(),
             handoff_from,
+            parent,
             draft,
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
@@ -833,7 +846,7 @@ impl Chats {
             Agent::Codex if session.is_some() => codex::resume(&self.data_dir, &chat, &rig.env)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-            Agent::Codex => codex::start(&self.data_dir, &chat.cwd, &rig.env, &chat.settings.chosen)
+            Agent::Codex => codex::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env, &chat.settings.chosen)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
         };
@@ -879,7 +892,12 @@ impl Chats {
                     .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             };
             match reattached {
-                Ok((driver, events)) => self.adopt(chat, driver, events),
+                Ok((driver, events)) => {
+                    let parent = chat.parent.clone();
+                    let id = chat.id.clone();
+                    self.adopt(chat, driver, events);
+                    if parent.is_some() { self.close(&id); }
+                },
                 Err(error) => eprintln!("cannot restore chat {}: {error}", chat.id),
             }
         }
@@ -1109,12 +1127,12 @@ impl Chats {
             chat.viewed_since_done = self.shown(&id);
         }
         self.save(&chat);
-        let item = chat.attention();
+        let item = chat.parent.is_none().then(|| chat.attention());
         drop(chat);
         let _ = self.changed.send(Change::Status(id.clone(), status));
         let _ = self.lifecycle.send(Lifecycle::Status(id.clone(), status));
         self.refresh_attention();
-        if status != Status::Working {
+        if status != Status::Working && let Some(item) = item {
             self.attention.call(item, self.showing(&id));
         }
     }
@@ -1244,6 +1262,9 @@ impl Chats {
 
     /// Stops the running turn and drops what was queued behind it.
     pub fn interrupt(&self, id: &str) {
+        for child in self.children(id) {
+            self.close(&child);
+        }
         let Some(entry) = self.get(id) else { return };
         let mut transcript = entry.transcript.lock().unwrap();
         if let Some(handoff) = transcript.handoff.take() {
@@ -1266,6 +1287,12 @@ impl Chats {
     }
 
     pub fn answer(&self, id: &str, request_id: &str, answer: Answer) {
+        if let Some((child, request)) = request_id.split_once('/')
+            && self.get(child).is_some_and(|entry| entry.chat.lock().unwrap().parent.as_deref() == Some(id))
+        {
+            self.answer(child, request, answer);
+            return;
+        }
         let Some(entry) = self.get(id) else { return };
         let mut transcript = entry.transcript.lock().unwrap();
         let Some(request) = transcript.requests.iter().find(|request| request.id() == request_id) else { return };
@@ -1310,6 +1337,9 @@ impl Chats {
     }
 
     pub fn close(&self, id: &str) {
+        for child in self.children(id) {
+            self.close(&child);
+        }
         if let Some(entry) = self.get(id) {
             entry.driver.close();
         }

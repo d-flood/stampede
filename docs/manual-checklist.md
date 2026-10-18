@@ -34,6 +34,8 @@ Use a throwaway Project and repeat each applicable item with Claude Code and Cod
 
 - [ ] Every Rig opens a Chat from New Tab, the Palette and shortcuts, on desktop and phone; model, effort, mode and account match the Rig.
 - [ ] Start a TUI manually in a Terminal; it receives no Oikonomos hooks, status, attention, resume or handoff controls.
+- [ ] Ask a Claude Code Rig to review with Codex and fix issues; the review appears as a subagent, and Claude receives its findings and applies fixes. Repeat with Codex calling Claude Code.
+- [ ] Answer a delegated rig’s approval in the calling Chat; stopping the caller stops its delegated work.
 - [ ] A running turn shows working.
 - [ ] A pending request shows waiting.
 - [ ] A finished turn shows done.

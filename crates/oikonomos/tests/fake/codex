@@ -8,6 +8,8 @@ import sys
 import time
 from pathlib import Path
 
+from rig_tools import delegate
+
 stdin = sys.stdin.buffer.raw
 stdout = sys.stdout.buffer
 HERE = '/tmp/oikonomos-chat'
@@ -228,7 +230,7 @@ def check(message, recorded):
         fail('thread/start without tools.update_plan.enabled')
     if method in ('thread/start', 'thread/resume'):
         mcp = params.get('config', {}).get('mcp_servers.oikonomos_chat', {})
-        if not Path(mcp.get('command', '')).is_file() or mcp.get('args', [])[:2] != ['chat-tools', '--data-dir'] or len(mcp['args']) != 3 or not Path(mcp['args'][2]).is_absolute():
+        if not Path(mcp.get('command', '')).is_file() or mcp.get('args', [])[:2] != ['chat-tools', '--data-dir'] or len(mcp['args']) != 5 or mcp['args'][3] != '--chat-id' or not mcp['args'][4] or not Path(mcp['args'][2]).is_absolute():
             fail(f'{method} without chat HTML server: {mcp}')
     if method == 'thread/start' and os.path.realpath(params.get('cwd') or '') != os.path.realpath(os.getcwd()):
         fail(f'thread/start cwd {params.get("cwd")} is not the proxy cwd {os.getcwd()}')
@@ -242,6 +244,7 @@ def proxy():
     ids = {}
     index = 0
     images = []
+    mcp = None
     while index < len(entries):
         entry = entries[index]
         if 'stdin' in entry:
@@ -252,10 +255,15 @@ def proxy():
                 index = resume(entries, message['params']['threadId'])
                 entry = entries[index]
             check(message, entry['stdin'])
+            if message.get('method') in ('thread/start', 'thread/resume'):
+                mcp = message['params']['config']['mcp_servers.oikonomos_chat']
             if message.get('method') in ('turn/start', 'turn/steer'):
                 images = [item for item in message['params']['input'] if item['type'] in ('image', 'localImage')]
             if 'id' in message:
                 ids[entry['stdin']['id']] = message['id']
+        elif 'delegate' in entry:
+            result = delegate(mcp, entry['delegate'])
+            send({'method': 'item/completed', 'params': {'threadId': entry['thread'], 'turnId': entry['turn'], 'item': {'type': 'mcpToolCall', 'id': 'rig-review', 'server': 'oikonomos_chat', 'tool': 'delegate_to_rig', 'arguments': entry['delegate'], 'status': 'completed', 'result': result}}})
         elif 'gate' in entry:
             gate(entry['gate'])
         elif 'daemon' in entry:

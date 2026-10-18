@@ -65,6 +65,7 @@ enum Command {
     Answer(String, Answer),
     Run(Builtin),
     Close,
+    Delegated(Item),
 }
 
 impl Driver for Claude {
@@ -86,6 +87,10 @@ impl Driver for Claude {
 
     fn run(&self, builtin: Builtin) {
         let _ = self.commands.send(Command::Run(builtin));
+    }
+
+    fn delegated(&self, item: Item) {
+        let _ = self.commands.send(Command::Delegated(item));
     }
 
     fn close(&self) {
@@ -137,8 +142,8 @@ async fn launch(
         .chain(env.iter().map(|(name, value)| (name.as_str(), value.as_str())))
         .chain(SDK_ENV)
         .chain([("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true")]);
-    let tools = ["--mcp-config".to_owned(), json!({ "mcpServers": { html::SERVER: html::config(data_dir) } }).to_string(),
-        "--allowedTools".to_owned(), format!("{},{}", html::CLAUDE_TOOL, crate::media::CLAUDE_TOOL)];
+    let tools = ["--mcp-config".to_owned(), json!({ "mcpServers": { html::SERVER: html::config(data_dir, id) } }).to_string(),
+        "--allowedTools".to_owned(), format!("{},{},{},{}", html::CLAUDE_TOOL, crate::media::CLAUDE_TOOL, super::delegation::CLAUDE_LIST, super::delegation::CLAUDE_TOOL)];
     let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.claude_flags()).chain(tools);
     let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
     let rewind = at.into_iter().flat_map(|at| ["--resume-session-at".to_owned(), at.to_owned()]);
@@ -225,6 +230,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                             break;
                         }
                     }
+                    Some(Command::Delegated(item)) => transcript.delegated(item),
                     Some(Command::Retry) => {
                         if let Some(content) = transcript.last_input.clone() {
                             let message = json!({ "type": "user", "message": { "role": "user", "content": content },
@@ -620,8 +626,10 @@ struct Transcript {
     commands: HashMap<String, (usize, String, String)>,
     snippets: HashMap<String, Item>,
     media: HashSet<String>,
+    delegating: HashSet<String>,
     edits: HashMap<String, bool>,
     subagents: HashMap<String, (Subagent, Transcript)>,
+    delegated: HashMap<String, usize>,
     issued: HashMap<String, String>,
     asking: HashMap<String, String>,
     todos: Vec<(String, Todo)>,
@@ -670,8 +678,10 @@ impl Transcript {
             commands: HashMap::new(),
             snippets: HashMap::new(),
             media: HashSet::new(),
+            delegating: HashSet::new(),
             edits: HashMap::new(),
             subagents: HashMap::new(),
+            delegated: HashMap::new(),
             issued: HashMap::new(),
             asking: HashMap::new(),
             todos: Vec::new(),
@@ -808,6 +818,17 @@ impl Transcript {
             self.settings.chosen.mode = Some(mode.to_owned());
             self.applied.mode = Some(mode.to_owned());
             self.report_settings();
+        }
+    }
+
+    fn delegated(&mut self, item: Item) {
+        let Item::Subagent { id, .. } = &item else { return };
+        if let Some(&index) = self.delegated.get(id) {
+            let _ = self.events.send(Event::Item(index, item));
+        } else {
+            let id = id.clone();
+            let index = self.push(item);
+            self.delegated.insert(id, index);
         }
     }
 
@@ -1039,6 +1060,11 @@ impl Transcript {
             }
             Some("control_cancel_request") => self.resolve(message["request_id"].as_str().unwrap_or_default()),
             Some("result") => {
+                if message["is_error"] == true || message["subtype"].as_str().is_some_and(|subtype| subtype.starts_with("error")) {
+                    let errors = message["errors"].as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join("\n");
+                    let text = if errors.is_empty() { format!("Claude Code did not complete the turn: {}", message["subtype"].as_str().unwrap_or("error")) } else { errors };
+                    self.push(Item::Notice { notice: Notice::Error, text });
+                }
                 self.total(&message["modelUsage"]);
                 // A steer Claude has not started yet runs as a turn of its own after this result.
                 if self.steering.is_empty() {
@@ -1066,8 +1092,10 @@ impl Transcript {
                 self.commands.clear();
                 self.snippets.clear();
                 self.media.clear();
+                self.delegating.clear();
                 self.edits.clear();
                 self.subagents.clear();
+                self.delegated.clear();
                 self.issued.clear();
                 self.asking.clear();
                 self.todos.clear();
@@ -1257,6 +1285,7 @@ impl Transcript {
             self.activity.start(id, label, &self.events);
         }
         match name {
+            super::delegation::CLAUDE_TOOL => { self.delegating.insert(id.to_owned()); }
             crate::media::CLAUDE_TOOL => { self.media.insert(id.to_owned()); }
             html::CLAUDE_TOOL => {
                 if let Some(item) = html::item(input) {
@@ -1349,6 +1378,15 @@ impl Transcript {
             if let Some(item) = self.snippets.remove(id) {
                 if block["is_error"] != true {
                     self.push(item);
+                }
+            }
+            if self.delegating.remove(id)
+                && let Some(item) = super::delegation::item(block)
+            {
+                if let Item::Subagent { id, .. } = &item
+                    && !self.delegated.contains_key(id)
+                {
+                    self.delegated(item);
                 }
             }
             if self.media.remove(id) && block["is_error"] != true

@@ -15,12 +15,14 @@ const LIMIT: usize = 256 * 1024;
 pub struct ChatToolsArgs {
     #[arg(long, value_name = "DIR", default_value_os_t = crate::data_dir())]
     pub data_dir: PathBuf,
+    #[arg(long)]
+    pub chat_id: Option<String>,
 }
 
-pub fn config(data_dir: &Path) -> Value {
+pub fn config(data_dir: &Path, chat_id: &str) -> Value {
     json!({
         "command": std::env::current_exe().expect("cannot locate oikonomos"),
-        "args": ["chat-tools", "--data-dir", std::path::absolute(data_dir).expect("cannot locate data directory")],
+        "args": ["chat-tools", "--data-dir", std::path::absolute(data_dir).expect("cannot locate data directory"), "--chat-id", chat_id],
     })
 }
 
@@ -41,7 +43,8 @@ pub fn item(arguments: &Value) -> Option<Item> {
     Some(Item::Html { title: snippet.title, html: snippet.html })
 }
 
-fn reply(request: &Value, data_dir: &Path) -> Option<Value> {
+fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
+    let data_dir = &args.data_dir;
     let id = request.get("id")?;
     let result = match request["method"].as_str() {
         Some("initialize") => json!({
@@ -50,7 +53,7 @@ fn reply(request: &Value, data_dir: &Path) -> Option<Value> {
             "serverInfo": { "name": SERVER, "version": env!("CARGO_PKG_VERSION") },
         }),
         Some("ping") => json!({}),
-        Some("tools/list") => json!({ "tools": [{
+        Some("tools/list") => json!({ "tools": [super::delegation::list_tool(), super::delegation::tool(), {
             "name": TOOL,
             "description": "Render an HTML snippet inline in Oikonomos chat. Use for diagrams, charts, tables, and visual explanations instead of ASCII art. Supply self-contained HTML with inline CSS, SVG, and optional inline JavaScript. It runs in an isolated sandbox: no network, external assets, parent-page access, forms, or popups. Make layouts responsive for narrow mobile screens. Do not repeat the HTML in a code block.",
             "inputSchema": {
@@ -77,6 +80,9 @@ fn reply(request: &Value, data_dir: &Path) -> Option<Value> {
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
         }] }),
+        Some("tools/call") if matches!(request["params"]["name"].as_str(), Some(super::delegation::LIST | super::delegation::TOOL)) => {
+            super::delegation::call(args, request["params"].clone())
+        }
         Some("tools/call") if request["params"]["name"] == TOOL => {
             let valid = item(&request["params"]["arguments"]).is_some();
             json!({
@@ -97,7 +103,7 @@ pub fn serve(args: ChatToolsArgs) -> io::Result<()> {
     for line in io::stdin().lock().lines() {
         let line = line?;
         let response = match serde_json::from_str::<Value>(&line) {
-            Ok(request) => reply(&request, &args.data_dir),
+            Ok(request) => reply(&request, &args),
             Err(_) => Some(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": "Parse error" } })),
         };
         if let Some(response) = response {

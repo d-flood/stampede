@@ -161,7 +161,7 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
     assert_eq!(methods, ["initialize", "initialized", "thread/resume", "model/list", "skills/list", "turn/start", "thread/unsubscribe"]);
     assert_eq!(received[2]["params"], json!({ "threadId": THREAD, "config": {
         "tools.update_plan": { "enabled": true },
-        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools", "--data-dir", server.root.path().join("data")] },
+        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id] },
     } }));
 }
 

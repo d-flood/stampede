@@ -45,6 +45,7 @@ enum Request {
     Answer(String, Answer),
     Run(Builtin),
     Close,
+    Delegated(Item),
 }
 
 impl Driver for Codex {
@@ -68,6 +69,10 @@ impl Driver for Codex {
         let _ = self.requests.send(Request::Run(builtin));
     }
 
+    fn delegated(&self, item: Item) {
+        let _ = self.requests.send(Request::Delegated(item));
+    }
+
     fn close(&self) {
         let _ = self.requests.send(Request::Close);
     }
@@ -75,16 +80,18 @@ impl Driver for Codex {
 
 pub async fn start(
     data_dir: &Path,
+    chat_id: &str,
     cwd: &Path,
     env: &BTreeMap<String, String>,
     settings: &AgentSettings,
 ) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let started = connection.call("thread/start", thread(data_dir, cwd, settings)).await?;
+    let started = connection.call("thread/start", thread(data_dir, chat_id, cwd, settings)).await?;
     let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
     let _ = events.send(Event::Session(thread.to_owned()));
     let mut transcript = Transcript::new(thread, cwd, events);
+    transcript.chat_id = chat_id.to_owned();
     transcript.settings = current(&started);
     Ok((run(connection, proxy, transcript, data_dir, cwd, env), received))
 }
@@ -93,6 +100,7 @@ pub async fn resume(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>
     let thread = chat.agent_session.as_deref().ok_or_else(|| io::Error::other("the chat has no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(thread, &chat.cwd, events);
+    transcript.chat_id = chat.id.clone();
     transcript.status = chat.status;
     transcript.settings = chat.settings.clone();
     transcript.plan_resolved = chat.plan_resolved.clone();
@@ -107,7 +115,7 @@ async fn rejoin(
     transcript: &mut Transcript,
 ) -> io::Result<(Connection, Child)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "config": tool_config(data_dir) })).await?;
+    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "config": tool_config(data_dir, &transcript.chat_id) })).await?;
     let mut replay = Vec::new();
     let resumed = loop {
         let message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;
@@ -251,6 +259,7 @@ fn run(
                         input.extend(transcript.skill(&text));
                         let _ = connection.send(&mut transcript, Value::Array(input)).await;
                     }
+                    Some(Request::Delegated(item)) => transcript.delegated(item),
                     Some(Request::Retry) => {
                         if let Some(input) = transcript.last_input.clone() {
                             let _ = connection.send(&mut transcript, input).await;
@@ -352,7 +361,7 @@ fn run(
                         }
                     }
                     Some(Request::Run(Builtin::Clear)) if transcript.idle() => {
-                        match connection.call("thread/start", thread(&data_dir, &cwd, &AgentSettings::default())).await {
+                        match connection.call("thread/start", thread(&data_dir, &transcript.chat_id, &cwd, &AgentSettings::default())).await {
                             Ok(started) => {
                                 let previous = json!({ "threadId": transcript.thread });
                                 let _ = connection.call("thread/unsubscribe", previous).await;
@@ -434,8 +443,8 @@ fn readings(snapshot: &Value) -> Vec<Reading> {
     windows.collect()
 }
 
-fn thread(data_dir: &Path, cwd: &Path, settings: &AgentSettings) -> Value {
-    let mut params = json!({ "cwd": cwd, "config": tool_config(data_dir) });
+fn thread(data_dir: &Path, chat_id: &str, cwd: &Path, settings: &AgentSettings) -> Value {
+    let mut params = json!({ "cwd": cwd, "config": tool_config(data_dir, chat_id) });
     if let Some(model) = &settings.model {
         params["model"] = json!(model);
     }
@@ -450,8 +459,8 @@ fn thread(data_dir: &Path, cwd: &Path, settings: &AgentSettings) -> Value {
     params
 }
 
-fn tool_config(data_dir: &Path) -> Value {
-    json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.oikonomos_chat": html::config(data_dir) })
+fn tool_config(data_dir: &Path, chat_id: &str) -> Value {
+    json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.oikonomos_chat": html::config(data_dir, chat_id) })
 }
 
 fn codex(cwd: &Path, env: &BTreeMap<String, String>) -> Command {
@@ -560,6 +569,7 @@ fn response(message: &Value) -> Option<u64> {
 struct Transcript {
     last_input: Option<Value>,
     thread: String,
+    chat_id: String,
     cwd: PathBuf,
     events: UnboundedSender<Event>,
     len: usize,
@@ -571,6 +581,7 @@ struct Transcript {
     activity: super::Activity,
     commands: HashMap<String, (usize, Item)>,
     subagents: HashMap<String, (Subagent, Transcript)>,
+    delegated: HashMap<String, usize>,
     reading: HashMap<u64, String>,
     previous: u64,
     steering: HashMap<u64, Value>,
@@ -631,6 +642,7 @@ impl Transcript {
         Self {
             last_input: None,
             thread: thread.to_owned(),
+            chat_id: String::new(),
             cwd: cwd.to_owned(),
             events,
             len: 0,
@@ -642,6 +654,7 @@ impl Transcript {
             activity: super::Activity::default(),
             commands: HashMap::new(),
             subagents: HashMap::new(),
+            delegated: HashMap::new(),
             reading: HashMap::new(),
             previous: 0,
             steering: HashMap::new(),
@@ -749,6 +762,7 @@ impl Transcript {
         self.tools = None;
         self.commands.clear();
         self.subagents.clear();
+        self.delegated.clear();
         self.reading.clear();
         self.asked.clear();
         self.edits.clear();
@@ -779,6 +793,17 @@ impl Transcript {
         let _ = self.events.send(Event::Status(status));
     }
 
+    fn delegated(&mut self, item: Item) {
+        let Item::Subagent { id, .. } = &item else { return };
+        if let Some(&index) = self.delegated.get(id) {
+            let _ = self.events.send(Event::Item(index, item));
+        } else {
+            let id = id.clone();
+            let index = self.push(item);
+            self.delegated.insert(id, index);
+        }
+    }
+
     fn push(&mut self, item: Item) -> usize {
         let index = self.len;
         self.len += 1;
@@ -802,6 +827,7 @@ impl Transcript {
         self.streaming.clear();
         self.commands.clear();
         self.subagents.clear();
+        self.delegated.clear();
         self.reading.clear();
         self.steering.clear();
         self.unsteered = None;
@@ -1206,6 +1232,16 @@ impl Transcript {
                 }
             }
             Some("mcpToolCall") => {
+                if item["server"] == html::SERVER && item["tool"] == super::delegation::TOOL {
+                    if let Some(delegated) = super::delegation::item(&item["result"]) {
+                        if let Item::Subagent { id, .. } = &delegated
+                            && !self.delegated.contains_key(id)
+                        {
+                            self.delegated(delegated);
+                        }
+                    }
+                    return;
+                }
                 if item["server"] == html::SERVER
                     && item["status"] == "completed" && item["result"]["isError"] != true
                     && let Some(snippet) = match item["tool"].as_str() {
@@ -1460,7 +1496,7 @@ mod tests {
     #[test]
     fn approve_for_me_starts_with_automatic_review_inside_the_workspace() {
         let settings = AgentSettings { mode: Some("approve-for-me".to_owned()), ..AgentSettings::default() };
-        let params = thread(Path::new("/data"), Path::new("/project"), &settings);
+        let params = thread(Path::new("/data"), "chat", Path::new("/project"), &settings);
         assert_eq!(params["approvalPolicy"], "on-request");
         assert_eq!(params["sandbox"], "workspace-write");
         assert_eq!(params["approvalsReviewer"], "auto_review");
