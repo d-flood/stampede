@@ -4,6 +4,8 @@
 	import Browser from '#lib/shell/Browser.svelte';
 	import { ago, logos } from '#lib/chat/sessions.ts';
 	import { same, subagents } from '#lib/chat/agents.ts';
+	import Html from '#lib/chat/Html.svelte';
+	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import {
 		connect,
@@ -64,6 +66,9 @@
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let chats = $state<Record<string, Chat[]>>({});
 	let chatItems = $state<Record<string, Item[]>>({});
+	let htmlPreview = $state<HtmlItem>();
+	let htmlDialog = $state<HTMLDialogElement>();
+	setHtmlPreview((item) => htmlPreview = item);
 	let openSubagents = $state<Record<string, string[]>>({});
 	let sessions = $state<Record<string, Session[]>>({});
 	let attentionList = $state<Attention[]>([]);
@@ -1067,6 +1072,12 @@
 
 <Drawer bind:this={drawer} bind:open={drawerOpen} {device} />
 
+{#if htmlPreview}
+	<dialog bind:this={htmlDialog} class="html-preview" aria-label={htmlPreview.title} onclose={() => htmlPreview = undefined} {@attach (node) => { node.showModal(); }}>
+		<Html item={htmlPreview} full onclose={() => htmlDialog?.close()} />
+	</dialog>
+{/if}
+
 {#if device.connection === 'reconnecting'}
 	<div class="reconnecting" role="status"><WifiSlash /> Reconnecting…</div>
 {:else if updateAvailable}
@@ -1158,6 +1169,20 @@
 </Dialog>
 
 <style>
+	.html-preview {
+		inset: 0;
+		width: 100%;
+		max-width: none;
+		height: 100%;
+		max-height: none;
+		margin: 0;
+		padding: 0;
+		overflow: hidden;
+		border: 0;
+		background: var(--surface-1);
+		color: var(--color-fg);
+	}
+
 	.shell {
 		display: flex;
 		height: 100dvh;

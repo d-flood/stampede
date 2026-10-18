@@ -38,7 +38,8 @@ test('chat HTML is responsive, isolated, interactive, and restored on reload', a
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	const frame = page.locator('iframe[title="Research workflow"]');
+	const block = page.getByRole('region', { name: 'Research workflow' });
+	const frame = block.locator('iframe');
 	const content = frame.contentFrame();
 	await expect(content.getByText('Collect', { exact: true })).toBeVisible();
 	await expect(content.locator('body')).toHaveAttribute('data-isolated', 'yes');
@@ -57,6 +58,34 @@ test('chat HTML is responsive, isolated, interactive, and restored on reload', a
 	await expect.poll(() => frame.evaluate((node) => node.clientHeight)).toBe(initial);
 	const panel = page.getByRole('tabpanel').filter({ has: frame });
 	await expect.poll(() => panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+	await block.getByRole('button', { name: 'Full screen', exact: true }).click();
+	const preview = page.getByRole('dialog', { name: 'Research workflow' });
+	const fullFrame = preview.locator('iframe');
+	const fullContent = fullFrame.contentFrame();
+	await expect(fullContent.getByText('Collect', { exact: true })).toBeVisible();
+	await expect(fullFrame).toHaveAttribute('sandbox', 'allow-scripts');
+	await expect(fullContent.locator('body')).toHaveAttribute('data-isolated', 'yes');
+	await expect(fullContent.locator('body')).toHaveAttribute('data-network', 'blocked');
+	await fullContent.getByRole('button', { name: 'Details' }).click();
+	if (project.name === 'pixel') await page.setViewportSize({ width: 998, height: 448 });
+	await expect.poll(() => preview.evaluate((node) => {
+		const bounds = node.getBoundingClientRect();
+		return bounds.x === 0 && bounds.y === 0 && bounds.width === innerWidth && bounds.height === innerHeight;
+	})).toBe(true);
+	await expect.poll(() => fullContent.locator('.flow').evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length)).toBe(3);
+	await expect.poll(() => fullFrame.evaluate((node) => {
+		const bounds = node.getBoundingClientRect();
+		return bounds.width === innerWidth && Math.abs(bounds.bottom - innerHeight) <= 1;
+	})).toBe(true);
+	await expect(fullContent.getByText('Additional context')).toBeVisible();
+	await preview.getByRole('button', { name: 'Close full screen' }).click();
+	await expect(preview).not.toBeVisible();
+	if (project.name === 'desktop') await expect(block.getByRole('button', { name: 'Full screen', exact: true })).toBeFocused();
+	if (project.name === 'pixel') await page.setViewportSize({ width: 448, height: 998 });
+	await expect.poll(() => frame.evaluate((node) => node.clientHeight)).toBe(initial);
+	await block.getByRole('button', { name: 'Full screen', exact: true }).click();
+	await preview.getByRole('button', { name: 'Close full screen' }).press('Escape');
+	await expect(preview).not.toBeVisible();
 	await page.reload();
 	await expect(content.getByText('Publish', { exact: true })).toBeVisible();
 	await closeProject(page, name);
