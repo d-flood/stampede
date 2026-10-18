@@ -14,7 +14,7 @@
 	import type { AnsweredQuestions, Item, Subagent } from '#lib/device.svelte.ts';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
-	let { items, answered = [], activity, path = [], onopen, ondiff }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; ondiff(path: string): void } = $props();
+	let { items, answered = [], activity, path = [], onopen, onattend, ondiff }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void } = $props();
 	const entries = $derived.by(() => {
 		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map((record) => ({ kind: 'questions', record }));
 		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
@@ -69,7 +69,7 @@
 
 {#each runs as run (run.indices[0])}
 	{#if run.kind === 'spawn'}
-		<Spawn subagents={run.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} {onopen} />
+		<Spawn subagents={run.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} {onopen} {onattend} />
 	{:else if run.kind === 'rail'}
 		<Calls items={run.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={run === runs.at(-1) ? activity : null}>
 			<div class="rail">
