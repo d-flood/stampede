@@ -8,7 +8,7 @@
 	import { logos } from '#lib/chat/sessions.ts';
 	import { tabOf, type Attention, type Chat } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { enable, notifications, type Notifications } from '#lib/push.ts';
+	import { disable, enable, notifications, type Notifications } from '#lib/push.ts';
 	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
@@ -31,16 +31,29 @@
 		return chat && logos[chat.agent];
 	}
 
-	const labels = { off: 'Enable notifications', on: 'Notifications on', blocked: 'Notifications blocked' };
+	const labels = { off: 'Enable notifications', on: 'Disable notifications', blocked: 'Notifications blocked' };
 
 	let push = $state<Notifications>('unsupported');
+	let pending = $state(false);
+	let failed = $state(false);
+	const pushDisabled = $derived(pending || push === 'blocked');
+	const pushLabel = $derived(failed ? `Retry ${push === 'on' ? 'disabling' : 'enabling'} notifications` : push === 'unsupported' ? '' : labels[push]);
 	let sheet = $state(false);
 	let open = $state(false);
 	const Dropdown = $derived(dropdown());
 	notifications().then((state) => (push = state));
 
 	async function notify() {
-		push = await enable();
+		if (pending) return;
+		pending = true;
+		failed = false;
+		try {
+			push = await (push === 'on' ? disable() : enable());
+		} catch {
+			failed = true;
+		} finally {
+			pending = false;
+		}
 	}
 </script>
 
@@ -75,13 +88,13 @@
 			{/each}
 		</ul>
 		{#if push !== 'unsupported'}
-			<Button disabled={push !== 'off'} onclick={notify}>{labels[push]}</Button>
+			<Button disabled={pushDisabled} onclick={notify}>{pushLabel}</Button>
 		{/if}
 	</Dialog>
 {:else if Dropdown}
 	<Dropdown
 		{items}
-		push={push === 'unsupported' ? undefined : { label: labels[push], disabled: push !== 'off', onselect: notify }}
+		push={push === 'unsupported' ? undefined : { label: pushLabel, disabled: pushDisabled, onselect: notify }}
 		bind:open
 		{trigger}
 		{entry}

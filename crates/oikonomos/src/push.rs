@@ -93,6 +93,12 @@ impl Push {
         self.save(&subscriptions);
     }
 
+    fn unsubscribe(&self, browser_id: &str) {
+        let mut subscriptions = self.subscriptions.lock().unwrap();
+        subscriptions.retain(|subscription| subscription.browser_id != browser_id);
+        self.save(&subscriptions);
+    }
+
     fn save(&self, subscriptions: &[Subscription]) {
         let tmp = self.file.with_extension("json.tmp");
         let saved = serde_json::to_vec_pretty(subscriptions)
@@ -173,5 +179,16 @@ pub async fn subscribe(State(state): State<AppState>, Json(subscription): Json<S
         return StatusCode::BAD_REQUEST;
     }
     state.push.subscribe(subscription);
+    StatusCode::NO_CONTENT
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Unsubscribe {
+    browser_id: String,
+}
+
+pub async fn unsubscribe(State(state): State<AppState>, Json(request): Json<Unsubscribe>) -> StatusCode {
+    state.push.unsubscribe(&request.browser_id);
     StatusCode::NO_CONTENT
 }

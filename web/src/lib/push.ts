@@ -22,10 +22,24 @@ export async function enable(): Promise<Notifications> {
 	return 'on';
 }
 
+export async function disable(): Promise<Notifications> {
+	const registration = await navigator.serviceWorker.getRegistration();
+	const subscription = await registration?.pushManager.getSubscription();
+	await subscription?.unsubscribe();
+	const response = await fetch('/api/push/subscribe', {
+		method: 'DELETE',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ browserId: browserId() })
+	});
+	if (!response.ok) throw new Error('Could not disable notifications');
+	return 'off';
+}
+
 async function subscribe(subscription: PushSubscription) {
-	await fetch('/api/push/subscribe', {
+	const response = await fetch('/api/push/subscribe', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ browserId: browserId(), subscription })
 	});
+	if (!response.ok) throw new Error('Could not enable notifications');
 }
