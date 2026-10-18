@@ -103,6 +103,7 @@ fn router(state: AppState) -> Router {
         .route("/api/browser", post(browser::open))
         .route("/api/theme", get(theme).put(set_theme))
         .route("/api/themes", get(theme_names))
+        .route("/api/themes/{name}", get(preview_theme))
         .route("/api/font", get(font))
         .route("/api/rigs", get(rigs))
         .route("/api/templates", get(templates))
@@ -196,6 +197,14 @@ async fn theme_names() -> Result<Json<Vec<String>>, files::Failure> {
 
 async fn set_theme(State(state): State<AppState>, Json(name): Json<String>) -> Result<Json<Theme>, files::Failure> {
     tokio::task::spawn_blocking(move || config::write_theme(&state.config_path, &name))
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+
+async fn preview_theme(Path(name): Path<String>) -> Result<Json<Theme>, files::Failure> {
+    tokio::task::spawn_blocking(move || Theme::resolve(&name))
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .map(Json)

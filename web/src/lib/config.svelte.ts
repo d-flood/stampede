@@ -30,6 +30,8 @@ let offered = $state.raw<Template[]>([]);
 let chord = $state('ctrl+space');
 let extras = $state.raw<string[]>([]);
 let scrollback = $state(10_000);
+let savedTheme: ThemeResponse | undefined;
+let previewing = false;
 
 export const editor = $state<EditorSettings>({ keymap: 'standard' });
 export const selectedTheme = $state<{ name: string | null }>({ name: null });
@@ -56,7 +58,9 @@ export async function loadConfig() {
 	chord = leaderKey;
 	extras = keys.extra;
 	scrollback = lines;
-	applyTheme(theme);
+	savedTheme = theme;
+	selectedTheme.name = theme.name;
+	if (!previewing) applyTheme(theme);
 	const style = document.documentElement.style;
 	for (const face of faces) document.fonts.delete(face);
 	faces = font.faces.map(({ url, weight, style }) => new FontFace(font.family, `url("${url}")`, { weight, style }));
@@ -68,7 +72,6 @@ export async function loadConfig() {
 }
 
 function applyTheme(theme: ThemeResponse) {
-	selectedTheme.name = theme.name;
 	const style = document.documentElement.style;
 	for (const scheme of ['light', 'dark'] as const) {
 		const palette = theme[scheme];
@@ -89,7 +92,35 @@ export async function selectTheme(name: string) {
 		body: JSON.stringify(name)
 	});
 	if (!response.ok) throw new Error(await response.text());
-	applyTheme(await response.json());
+	const theme: ThemeResponse = await response.json();
+	savedTheme = theme;
+	selectedTheme.name = theme.name;
+	if (!previewing) applyTheme(theme);
+}
+
+export function beginThemePreview() {
+	previewing = true;
+	let active = true;
+	let request = 0;
+	return {
+		async preview(name: string) {
+			const current = ++request;
+			try {
+				const theme = await get<ThemeResponse>(`/api/themes/${encodeURIComponent(name)}`);
+				if (!active || current !== request) return false;
+				applyTheme(theme);
+				return true;
+			} catch (error) {
+				if (!active || current !== request) return false;
+				throw error;
+			}
+		},
+		end() {
+			active = false;
+			previewing = false;
+			if (savedTheme) applyTheme(savedTheme);
+		}
+	};
 }
 
 export function rigs(): Rig[] {

@@ -26,12 +26,35 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	const dracula = dialog.getByRole('option', { name: /^Dracula(?: Current theme)?$/ });
+	const config = `${process.env.OIKONOMOS_E2E_ROOT}/config.toml`;
+	const original = readFileSync(config, 'utf8');
+	const originalBackground = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
 	await search.fill('no-theme-matches-this');
 	await expect(dialog).toContainText('No matching themes');
 	await search.fill('Dracula');
 	await expect(dracula).toBeVisible();
 	if (project.name === 'desktop') await search.press('Enter');
 	else await dracula.click();
+	await expect(dialog).toBeVisible();
+	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
+	await expect.poll(() => page.evaluate(() => window.terminal?.options.theme?.background)).toBe('#282a36');
+	expect(readFileSync(config, 'utf8')).toBe(original);
+	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Default');
+	await dialog.getByRole('button', { name: 'Next theme', exact: true }).click();
+	await expect(dialog.locator('.preview')).toContainText('Dracula+');
+	await dialog.getByRole('button', { name: 'Next theme', exact: true }).click();
+	await expect(dialog.locator('.preview strong')).toHaveText('Dracula');
+	await expect(dialog.getByRole('button', { name: 'Apply theme', exact: true })).toBeEnabled();
+	await dialog.getByRole('button', { name: 'Previous theme', exact: true }).click();
+	await expect(dialog.locator('.preview')).toContainText('Dracula+');
+	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(dialog).toBeHidden();
+	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(originalBackground);
+	expect(readFileSync(config, 'utf8')).toBe(original);
+	await page.getByRole('button', { name: 'Change theme' }).click();
+	await search.fill('Dracula');
+	await dracula.click();
+	await dialog.getByRole('button', { name: 'Apply theme', exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Dracula');
 	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
@@ -51,6 +74,10 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	await dialog.getByRole('combobox', { name: 'Search themes' }).fill('Dracula');
 	await expect(dracula.getByLabel('Current theme')).toBeVisible();
+	await search.fill('Alabaster');
+	await dialog.getByRole('option', { name: 'Alabaster', exact: true }).click();
+	await expect(dialog.getByRole('button', { name: 'Apply theme', exact: true })).toBeEnabled();
+	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(247, 247, 247)');
 	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 	if (project.name === 'pixel') {
 		await expect.poll(() => dialog.evaluate((element) => {
@@ -61,6 +88,8 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await page.screenshot({ path: test.info().outputPath('theme-picker.png') });
 	await page.keyboard.press('Escape');
 	await expect(dialog).toBeHidden();
+	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
+	await expect.poll(() => page.evaluate(() => window.terminal?.options.theme?.background)).toBe('#282a36');
 	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
 
 	if (project.name === 'desktop') {
@@ -68,4 +97,73 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 		await sidebar.getByRole('button', { name: 'greeting.ts', exact: true }).click();
 		await expect.poll(() => page.locator('.cm-editor').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
 	}
+});
+
+test('late previews cannot replace a newer preview or restore after closing', async ({ page }, { project }) => {
+	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await page.getByRole('button', { name: 'Change theme' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
+	const search = dialog.getByRole('combobox', { name: 'Search themes' });
+	const original = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
+	let release!: () => void;
+	const gate = new Promise<void>((resolve) => { release = resolve; });
+	await page.route('**/api/themes/Dracula', async (route) => {
+		const response = await route.fetch();
+		await gate;
+		await route.fulfill({ response });
+	});
+	await search.fill('Dracula');
+	await dialog.getByRole('option', { name: 'Dracula', exact: true }).click();
+	await expect(dialog.getByRole('button', { name: 'Apply theme', exact: true })).toBeDisabled();
+	await search.fill('Alabaster');
+	await dialog.getByRole('option', { name: 'Alabaster', exact: true }).click();
+	await expect(dialog.getByRole('button', { name: 'Apply theme', exact: true })).toBeEnabled();
+	const late = page.waitForResponse('**/api/themes/Dracula');
+	release();
+	await (await late).finished();
+	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(247, 247, 247)');
+	await page.unroute('**/api/themes/Dracula');
+	let releaseClosed!: () => void;
+	const closedGate = new Promise<void>((resolve) => { releaseClosed = resolve; });
+	await page.route('**/api/themes/Dracula', async (route) => {
+		const response = await route.fetch();
+		await closedGate;
+		await route.fulfill({ response });
+	});
+	await search.fill('Dracula');
+	await dialog.getByRole('option', { name: 'Dracula', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(dialog).toBeHidden();
+	const closed = page.waitForResponse('**/api/themes/Dracula');
+	releaseClosed();
+	await (await closed).finished();
+	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(original);
+});
+
+test('preview and save failures leave the saved theme intact', async ({ page }, { project }) => {
+	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await page.getByRole('button', { name: 'Change theme' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
+	const search = dialog.getByRole('combobox', { name: 'Search themes' });
+	const original = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
+	const config = `${process.env.OIKONOMOS_E2E_ROOT}/config.toml`;
+	const saved = readFileSync(config, 'utf8');
+	await page.route('**/api/themes/Dracula', (route) => route.fulfill({ status: 400, body: 'Invalid theme' }));
+	await search.fill('Dracula');
+	await dialog.getByRole('option', { name: 'Dracula', exact: true }).click();
+	await expect(dialog.getByRole('alert')).toBeVisible();
+	await expect(dialog.getByRole('button', { name: 'Apply theme', exact: true })).toBeDisabled();
+	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(original);
+	await search.fill('Alabaster');
+	await dialog.getByRole('option', { name: 'Alabaster', exact: true }).click();
+	await expect(dialog.getByRole('button', { name: 'Apply theme', exact: true })).toBeEnabled();
+	await page.route('**/api/theme', (route) => route.fulfill({ status: 500, body: 'Could not save theme.' }));
+	await dialog.getByRole('button', { name: 'Apply theme', exact: true }).click();
+	await expect(dialog.getByRole('alert')).toHaveText('Could not save theme.');
+	expect(readFileSync(config, 'utf8')).toBe(saved);
+	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(dialog).toBeHidden();
+	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(original);
 });

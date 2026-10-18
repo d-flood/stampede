@@ -33,6 +33,15 @@ async fn themes_are_listed_saved_and_reloaded_without_rewriting_other_settings()
     assert_eq!(names.iter().filter(|name| *name == "Dracula").count(), 1);
     assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
 
+    let saved = get(&client, &format!("{api}/theme")).await;
+    let preview = get(&client, &format!("{api}/themes/Custom%20Theme")).await;
+    assert_eq!(preview["name"], "Custom Theme");
+    assert_eq!(preview["dark"]["background"], "#123456");
+    assert_eq!(get(&client, &format!("{api}/theme")).await, saved);
+    assert_eq!(fs::read_to_string(server.root.path().join("config.toml")).unwrap(), original);
+    let invalid = client.get(format!("{api}/themes/.invalid")).send().await.unwrap();
+    assert_eq!(invalid.status(), 400);
+
     let response = select(&client, &api, "Dracula").await;
     assert!(response.status().is_success());
     let selected: Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();

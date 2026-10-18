@@ -26,7 +26,7 @@
 	bind:open
 	full={form() === 'phone'}
 	title="Choose a theme"
-	description="Applies to the UI, editor, and terminals on every device."
+	description="Preview themes here. Apply to save on every device; closing restores your saved theme."
 >
 	{#if Picker}<Picker onselect={() => (open = false)} />{/if}
 </Dialog>
