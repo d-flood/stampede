@@ -87,7 +87,7 @@ async fn a_codex_chat_starts_its_thread_with_its_rigs_model_effort_and_mode() {
     let methods: Vec<&Value> = received.iter().map(|message| &message["method"]).collect();
     assert_eq!(methods, ["initialize", "initialized", "thread/start", "model/list", "skills/list", "thread/unsubscribe"]);
     assert_eq!(
-        received[2]["params"],
+        common::without_storage(&received[2]["params"]),
         json!({
             "cwd": server.root.path().join("home"),
             "model": "gpt-6-luna",
@@ -97,6 +97,7 @@ async fn a_codex_chat_starts_its_thread_with_its_rigs_model_effort_and_mode() {
                 "mcp_servers.oikonomos_chat": {
                     "command": env!("CARGO_BIN_EXE_oikonomos"),
                     "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat["id"]],
+                    "tool_timeout_sec": 86400,
                 },
             },
             "approvalPolicy": "on-request",

@@ -81,6 +81,17 @@ pub fn scrollback_path(data_dir: &Path, id: &str) -> PathBuf {
     data_dir.join("terminals").join(format!("{id}.scrollback"))
 }
 
+pub fn test_owner_alive() -> bool {
+    let Ok(owner) = std::env::var("OIKONOMOS_TEST_OWNER") else { return true };
+    let Some((pid, started)) = owner.split_once(':') else { return false };
+    if !pid.bytes().all(|byte| byte.is_ascii_digit()) { return false }
+    fs::read_to_string(format!("/proc/{pid}/stat")).ok().is_some_and(|stat| {
+        stat.rsplit_once(") ").is_some_and(|(_, fields)| {
+            !fields.starts_with('Z') && fields.split_whitespace().nth(19) == Some(started)
+        })
+    })
+}
+
 struct Files {
     socket: PathBuf,
     record: PathBuf,
@@ -111,7 +122,8 @@ impl Drop for Files {
 
 pub fn hold(args: HoldArgs) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(args.data_dir.join("terminals"))?;
-    let listener = UnixListener::bind(socket_path(&args.data_dir, &args.id))?;
+    let address = crate::unix::path(&socket_path(&args.data_dir, &args.id))?;
+    let listener = UnixListener::bind(&address)?;
     let files = Files {
         socket: socket_path(&args.data_dir, &args.id),
         record: record_path(&args.data_dir, &args.id),
@@ -296,6 +308,12 @@ fn run(
                 conns.remove(&id);
             }
             Event::Tick => {
+                if !files.record.exists() || !test_owner_alive() {
+                    if let Some(pid) = pid {
+                        let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGHUP);
+                    }
+                    break;
+                }
                 if changed && saved.elapsed() >= SAVE_INTERVAL {
                     changed = false;
                     saved = Instant::now();

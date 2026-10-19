@@ -111,6 +111,9 @@ impl Server {
 }
 
 async fn spawn(root: &Path, port: u16, env: &[(&str, OsString)]) -> Child {
+    let pid = std::process::id();
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+    let started = stat.rsplit_once(") ").unwrap().1.split_whitespace().nth(19).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_oikonomos"))
         .args(["serve", "--port", &port.to_string(), "--data-dir"])
         .arg(root.join("data"))
@@ -118,6 +121,8 @@ async fn spawn(root: &Path, port: u16, env: &[(&str, OsString)]) -> Child {
         .arg(root.join("config.toml"))
         .env("SHELL", "/bin/bash")
         .env("HOME", root.join("home"))
+        .env("OIKONOMOS_TEST_ROOT", root)
+        .env("OIKONOMOS_TEST_OWNER", format!("{pid}:{started}"))
         .envs(env.iter().map(|(name, value)| (name, value)))
         .stdout(Stdio::null())
         .kill_on_drop(true)
@@ -133,14 +138,14 @@ async fn spawn(root: &Path, port: u16, env: &[(&str, OsString)]) -> Child {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let data_dir = self.root.path().join("data");
-        let _ = std::process::Command::new("pkill")
-            .arg("-f")
-            .arg(format!("oikonomos hold --data-dir {}", data_dir.display()))
-            .status();
-        let _ = std::process::Command::new("pkill")
-            .arg("-f")
-            .arg(format!("hold-chat --data-dir {}", data_dir.display()))
+        let _ = self.child.start_kill();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while matches!(self.child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = std::process::Command::new("python3")
+            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/check_cleanup.py"))
+            .arg(self.root.path())
             .status();
     }
 }
@@ -321,6 +326,16 @@ pub async fn close_chat(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
 /// Every process but the server that names the test's root in its command line or runs inside it.
 pub fn leftovers(root: &Path) -> Vec<String> {
     processes(root).into_iter().map(|(_, cmdline)| cmdline).collect()
+}
+
+pub fn without_storage(params: &Value) -> Value {
+    let mut params = params.clone();
+    if let Some(config) = params.get_mut("config").and_then(Value::as_object_mut) {
+        config.remove("shell_environment_policy.set");
+        config.remove("sandbox_workspace_write.writable_roots");
+    }
+    if let Some(policy) = params.get_mut("sandboxPolicy").and_then(Value::as_object_mut) { policy.remove("writableRoots"); }
+    params
 }
 
 pub fn reboot(root: &Path) {

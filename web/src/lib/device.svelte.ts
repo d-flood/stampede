@@ -126,7 +126,7 @@ export type Ticket = {
 	releasing?: boolean;
 };
 
-export type Run = { rig: string; parallel: number; paused?: { reason: 'david' } | { reason: 'usage'; agent: Agent; window: 'five-hour' | 'weekly'; resetsAt?: number } };
+export type Run = { rig: string; parallel: number; paused?: { reason: 'david' } | { reason: 'storage'; message: string } | { reason: 'usage'; agent: Agent; window: 'five-hour' | 'weekly'; resetsAt?: number } };
 
 export type Epic = {
 	slug: string;

@@ -156,6 +156,10 @@ def gate(name):
 
 
 args = sys.argv[1:]
+if (capture := os.environ.get('OIKONOMOS_FAKE_ENVIRONMENT')) and os.environ.get('OIKONOMOS_SCRATCH'):
+    with open(capture, 'a') as output:
+        json.dump({name: os.environ.get(name) for name in ['TMPDIR', 'CLAUDE_CODE_TMPDIR', 'NODE_COMPILE_CACHE', 'CARGO_TARGET_DIR']}, output)
+        output.write('\n')
 for flag, value in FLAGS.items():
     if flag not in args or args.index(flag) + 1 >= len(args) or args[args.index(flag) + 1] != value:
         fail(f'{flag} {value} is missing from {args}')

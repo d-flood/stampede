@@ -30,6 +30,7 @@ struct Settings {
     keybar: Keybar,
     language_servers: LanguageServers,
     r#loop: Loop,
+    storage: Storage,
 }
 
 impl Default for Settings {
@@ -45,6 +46,7 @@ impl Default for Settings {
             keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
             r#loop: Loop::default(),
+            storage: Storage::default(),
         }
     }
 }
@@ -59,6 +61,20 @@ struct Loop {
 impl Default for Loop {
     fn default() -> Self {
         Self { pause_at: 0.9 }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Storage {
+    pub min_free_gib: u64,
+    pub cache_max_gib: u64,
+    pub cache_max_age_days: u64,
+}
+
+impl Default for Storage {
+    fn default() -> Self {
+        Self { min_free_gib: 2, cache_max_gib: 8, cache_max_age_days: 7 }
     }
 }
 
@@ -210,6 +226,7 @@ pub struct Config {
     pub keybar: Keybar,
     pub language_servers: LanguageServers,
     pub pause_at: f64,
+    pub storage: Storage,
 }
 
 impl Default for Config {
@@ -225,6 +242,7 @@ impl Default for Config {
             keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
             pause_at: Loop::default().pause_at,
+            storage: Storage::default(),
         }
     }
 }
@@ -263,6 +281,7 @@ impl Config {
             keybar,
             language_servers,
             r#loop,
+            storage,
         } = toml::from_str(text)?;
         Ok(Self {
             roots: roots.into_iter().map(expand).collect(),
@@ -275,6 +294,7 @@ impl Config {
             keybar,
             language_servers,
             pause_at: r#loop.pause_at,
+            storage,
         })
     }
 
@@ -507,6 +527,14 @@ pub fn watch(path: &Path) -> io::Result<watch::Receiver<Arc<Config>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_limits_have_defaults_and_can_be_configured() {
+        assert_eq!(Config::parse("").unwrap().storage, Storage::default());
+        let config = Config::parse("[storage]\nmin_free_gib = 4\ncache_max_gib = 12\ncache_max_age_days = 3\n").unwrap();
+        assert_eq!(config.storage, Storage { min_free_gib: 4, cache_max_gib: 12, cache_max_age_days: 3 });
+        assert!(check("[storage]\nmin_free_gib = -1\n").is_some());
+    }
 
     #[test]
     fn rig_editor_preserves_other_settings_and_private_fields() {

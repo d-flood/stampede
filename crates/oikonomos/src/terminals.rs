@@ -400,7 +400,8 @@ fn read_record(path: &Path) -> io::Result<Record> {
 }
 
 async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHalf, Option<Title>)> {
-    let socket = UnixStream::connect(holder::socket_path(data_dir, id)).await?;
+    let address = crate::unix::path(&holder::socket_path(data_dir, id))?;
+    let socket = UnixStream::connect(&address).await?;
     let (reader, writer) = socket.into_split();
     let codec = LengthDelimitedCodec::builder().max_frame_length(protocol::MAX_FRAME).new_codec();
     let mut frames = FramedRead::new(reader, codec);

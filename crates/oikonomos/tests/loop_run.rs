@@ -17,6 +17,45 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+#[tokio::test]
+async fn low_storage_pauses_before_creating_worktrees_and_recovers_after_a_config_change() {
+    let config = format!("{RIGS}\n[storage]\nmin_free_gib = 1000000\n");
+    let mut lp = Loop::with_rigs("space", &[(1, "")], &config).await;
+    fs::create_dir_all(lp.root.join("data/storage/cache/old")).unwrap();
+    fs::write(lp.root.join("data/storage/cache/old/build"), vec![0; 8192]).unwrap();
+    lp.run("Done", 1).await;
+    lp.until("a storage pause", |lp| lp.entries("run.paused").iter().any(|entry| entry["reason"] == "storage")).await;
+    assert!(lp.claims().is_empty());
+    assert!(!lp.worktree("integration").exists());
+    let pause = lp.entries("run.paused").pop().unwrap();
+    assert!(pause["message"].as_str().unwrap().contains("Largest consumers:"));
+    lp.restart().await;
+    assert!(lp.claims().is_empty());
+    fs::write(lp.root.join("config.toml"), config.replace("1000000", "0")).unwrap();
+    lp.claimed(&[1]).await;
+    assert!(!lp.entries("run.resumed").is_empty());
+}
+
+#[tokio::test]
+async fn setup_commands_share_the_repository_build_target_and_clean_their_temporary_files() {
+    let lp = Loop::new("setup-storage", &[(1, "")]).await;
+    fs::write(lp.repo.join("Cargo.toml"), "[workspace]\n").unwrap();
+    git(&lp.repo, &["add", "Cargo.toml"]);
+    git(&lp.repo, &["commit", "-qm", "Add manifest"]);
+    let output = lp.root.join("setup-storage");
+    let command = format!("printf '%s|%s\\n' \"$CARGO_TARGET_DIR\" \"$TMPDIR\" >> {}; touch \"$TMPDIR/build-output\"", output.display());
+    lp.ok(&["epic", "set-setup", "work", &command], "");
+    lp.run("Done", 1).await;
+    lp.claimed(&[1]).await;
+    let lines = fs::read_to_string(output).unwrap();
+    let setups: Vec<_> = lines.lines().map(|line| line.split_once('|').unwrap()).collect();
+    assert_eq!(setups.len(), 2);
+    for (target, temporary) in setups {
+        assert_eq!(Path::new(target), lp.repo.join("target"));
+        assert!(!Path::new(temporary).exists());
+    }
+}
+
 const RIGS: &str = r#"
 [[rig]]
 name = "Verdict"

@@ -215,8 +215,8 @@ async fn codex_built_ins_ride_the_next_turn_or_reach_the_daemon_as_requests() {
     let path = "/home/user/.codex/skills/.system/openai-docs/SKILL.md";
     let skill = json!({ "type": "skill", "name": "openai-docs", "path": path });
     assert_eq!(
-        params[6],
-        &json!({
+        common::without_storage(params[6]),
+        json!({
             "threadId": first,
             "input": [{ "type": "text", "text": SKILL, "text_elements": [] }, skill],
             "model": "gpt-6-luna",
@@ -228,9 +228,9 @@ async fn codex_built_ins_ride_the_next_turn_or_reach_the_daemon_as_requests() {
         })
     );
     assert_eq!(params[7], &json!({ "threadId": first }));
-    assert_eq!(params[8], &json!({ "cwd": cwd, "config": {
+    assert_eq!(common::without_storage(params[8]), json!({ "cwd": cwd, "config": {
         "tools.update_plan": { "enabled": true },
-        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id] },
+        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id], "tool_timeout_sec": 86400 },
     } }));
     assert_eq!(params[9], &json!({ "threadId": first }));
     assert_eq!(record(&server, &chat_id)["agentSession"], second);

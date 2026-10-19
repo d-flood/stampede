@@ -45,6 +45,8 @@ async fn a_codex_chat_resumes_its_thread_through_server_restarts() {
     let project_id = next_control(&mut socket, "project.opened").await["projectId"].clone();
     control(&mut socket, json!({ "type": "chat.create", "projectId": project_id, "rig": "codex" })).await;
     let chat_id = next_control(&mut socket, "chat.created").await["chat"]["id"].as_str().unwrap().to_owned();
+    let scratch = server.root.path().join("data/storage/scratch").join(&chat_id);
+    fs::write(scratch.join("keep"), "survives restart").unwrap();
     control(&mut socket, json!({ "type": "chat.attach", "chatId": chat_id })).await;
     assert_eq!(next_control(&mut socket, "chat.items").await["items"], json!([]));
     let mut view = View::default();
@@ -56,6 +58,7 @@ async fn a_codex_chat_resumes_its_thread_through_server_restarts() {
     server.stop().await;
     fs::remove_file(gates.path().join("stop")).unwrap();
     server.restart().await;
+    assert_eq!(fs::read_to_string(scratch.join("keep")).unwrap(), "survives restart");
 
     let (mut socket, mut view) = reconnect(server.port, &chat_id).await;
     assert_eq!(view.status, "working");
@@ -128,13 +131,13 @@ async fn a_codex_chat_resumes_its_thread_through_server_restarts() {
             "thread/unsubscribe",
         ]
     );
-    assert_eq!(received[8]["params"], json!({ "threadId": THREAD, "config": {
+    assert_eq!(common::without_storage(&received[8]["params"]), json!({ "threadId": THREAD, "config": {
         "tools.update_plan": { "enabled": true },
-        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id] },
+        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id], "tool_timeout_sec": 86400 },
     } }));
-    assert_eq!(received[14]["params"], json!({ "threadId": THREAD, "config": {
+    assert_eq!(common::without_storage(&received[14]["params"]), json!({ "threadId": THREAD, "config": {
         "tools.update_plan": { "enabled": true },
-        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id] },
+        "mcp_servers.oikonomos_chat": { "command": env!("CARGO_BIN_EXE_oikonomos"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id], "tool_timeout_sec": 86400 },
     } }));
 }
 

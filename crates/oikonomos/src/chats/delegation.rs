@@ -92,7 +92,8 @@ fn error(message: impl ToString) -> Value {
 
 pub fn call(args: &ChatToolsArgs, params: Value) -> Value {
     let exchange = || -> io::Result<Value> {
-        let mut stream = UnixStream::connect(socket_path(&args.data_dir))?;
+        let address = crate::unix::path(&socket_path(&args.data_dir))?;
+        let mut stream = UnixStream::connect(&address)?;
         let request = json!({ "chat_id": args.chat_id, "name": params["name"], "arguments": params["arguments"] });
         writeln!(stream, "{request}")?;
         let mut reply = String::new();
@@ -108,7 +109,8 @@ pub fn listen(data_dir: &Path, chats: Arc<Chats>, config: watch::Receiver<Arc<Co
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
         _ => {}
     }
-    let listener = UnixListener::bind(path)?;
+    let address = crate::unix::path(&path)?;
+    let listener = UnixListener::bind(&address)?;
     tokio::spawn(async move {
         loop {
             match listener.accept().await {

@@ -18,10 +18,12 @@ mod push;
 mod runs;
 mod rigs;
 mod search;
+mod storage;
 mod templates;
 mod terminals;
 mod themes;
 mod usage;
+mod unix;
 mod watcher;
 
 use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
@@ -179,7 +181,10 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("oikonomos listening on http://{}", listener.local_addr()?);
     let state = AppState { media_dir: args.data_dir.join("media"), terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs };
-    axum::serve(listener, router(state)).await
+    axum::serve(listener, router(state)).with_graceful_shutdown(async {
+        if std::env::var_os("OIKONOMOS_TEST_OWNER").is_none() { std::future::pending::<()>().await; }
+        while holder::test_owner_alive() { tokio::time::sleep(std::time::Duration::from_millis(100)).await; }
+    }).await
 }
 
 async fn version() -> Json<Value> {

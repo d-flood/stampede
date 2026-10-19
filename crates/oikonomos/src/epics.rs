@@ -114,6 +114,7 @@ pub enum Event {
 #[serde(tag = "reason", rename_all = "lowercase")]
 pub enum Pause {
     David,
+    Storage { message: String },
     Usage {
         agent: Agent,
         window: Window,
@@ -564,7 +565,7 @@ impl Epic {
             }
             Event::RunResumed => {
                 let Some(run) = &mut self.run else { return };
-                if let Some(Pause::Usage { .. }) = run.paused.take() {
+                if let Some(Pause::Usage { .. } | Pause::Storage { .. }) = run.paused.take() {
                     self.unpause(Some(Continuation::Due));
                 }
             }
@@ -729,7 +730,7 @@ impl Epic {
             Event::RunPaused { pause } if self.run.as_ref().is_some_and(|run| run.paused.as_ref() == Some(pause)) => {
                 Err(format!("{slug}'s Run is already paused"))
             }
-            Event::RunPaused { pause: Pause::Usage { .. } }
+            Event::RunPaused { pause: Pause::Usage { .. } | Pause::Storage { .. } }
                 if self.run.as_ref().is_some_and(|run| run.paused == Some(Pause::David)) =>
             {
                 Err(format!("David paused {slug}'s Run"))

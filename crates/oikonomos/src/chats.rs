@@ -750,6 +750,7 @@ struct Entry {
     transcript: Mutex<Transcript>,
     capabilities: Mutex<Capabilities>,
     driver: Box<dyn Driver>,
+    _storage: crate::storage::Session,
 }
 
 struct Transcript {
@@ -855,22 +856,23 @@ impl Chats {
             draft,
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
+        let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, cwd, &rig.env).await?;
         write_record(&self.data_dir, &chat)?;
         let started = match rig.agent {
-            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env, &chat.settings.chosen, session)
+            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen, session)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-            Agent::Codex if session.is_some() => codex::resume(&self.data_dir, &chat, &rig.env)
+            Agent::Codex if session.is_some() => codex::resume(&self.data_dir, &chat, &storage.env)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-            Agent::Codex => codex::start(&self.data_dir, &chat.id, &chat.cwd, &rig.env, &chat.settings.chosen)
+            Agent::Codex => codex::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
         };
         let (driver, events) = started.inspect_err(|_| {
             let _ = fs::remove_file(record_path(&self.data_dir, &chat.id));
         })?;
-        self.adopt(chat.clone(), driver, events);
+        self.adopt(chat.clone(), driver, events, storage);
         let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
         Ok(chat)
     }
@@ -894,6 +896,11 @@ impl Chats {
         chats.sort_by_key(|chat| chat.created);
         for chat in chats {
             let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
+            let storage = match crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, &chat.cwd, &env).await {
+                Ok(storage) => storage,
+                Err(error) => { eprintln!("cannot restore storage for chat {}: {error}", chat.id); continue }
+            };
+            let env = &storage.env;
             let reattached = match chat.agent {
                 Agent::ClaudeCode => match claude::reattach(&self.data_dir, &chat, &env).await {
                     Err(error)
@@ -912,7 +919,7 @@ impl Chats {
                 Ok((driver, events)) => {
                     let parent = chat.parent.clone();
                     let id = chat.id.clone();
-                    self.adopt(chat, driver, events);
+                    self.adopt(chat, driver, events, storage);
                     if parent.is_some() { self.close(&id); }
                 },
                 Err(error) => eprintln!("cannot restore chat {}: {error}", chat.id),
@@ -922,9 +929,10 @@ impl Chats {
         Ok(())
     }
 
-    fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>) {
+    fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>, storage: crate::storage::Session) {
         let transcript = Transcript { recoverable: false, seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status, handoff: None, questions: HashMap::new() };
         let entry = Arc::new(Entry {
+            _storage: storage,
             chat: Mutex::new(chat),
             transcript: Mutex::new(transcript),
             capabilities: Mutex::default(),

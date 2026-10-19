@@ -86,7 +86,7 @@ pub async fn start(
     settings: &AgentSettings,
 ) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let started = connection.call("thread/start", thread(data_dir, chat_id, cwd, settings)).await?;
+    let started = connection.call("thread/start", thread(data_dir, chat_id, cwd, settings, env)).await?;
     let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
     let _ = events.send(Event::Session(thread.to_owned()));
@@ -115,7 +115,7 @@ async fn rejoin(
     transcript: &mut Transcript,
 ) -> io::Result<(Connection, Child)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "config": tool_config(data_dir, &transcript.chat_id) })).await?;
+    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "config": tool_config(data_dir, &transcript.chat_id, env) })).await?;
     let mut replay = Vec::new();
     let resumed = loop {
         let message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;
@@ -225,7 +225,11 @@ pub async fn models(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Ve
 }
 
 async fn connect(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Connection, Child)> {
-    let daemon = codex(cwd, env).args(["app-server", "daemon", "start"]).stdout(Stdio::null()).status().await?;
+    let mut daemon = codex(cwd, env);
+    if env.contains_key("OIKONOMOS_SCRATCH") {
+        for name in crate::storage::ENVIRONMENT { daemon.env_remove(name); }
+    }
+    let daemon = daemon.args(["app-server", "daemon", "start"]).stdout(Stdio::null()).status().await?;
     if !daemon.success() {
         return Err(io::Error::other(format!("codex app-server daemon start: {daemon}")));
     }
@@ -256,6 +260,7 @@ fn run(
 ) -> Codex {
     let (requests, mut pending) = mpsc::unbounded_channel();
     let (data_dir, cwd, env) = (data_dir.to_owned(), cwd.to_owned(), env.clone());
+    transcript.storage_roots = writable_roots(&env);
     tokio::spawn(async move {
         // The proxy outlives a daemon that has gone until it next relays something.
         let mut heartbeat = interval(HEARTBEAT);
@@ -378,7 +383,7 @@ fn run(
                         }
                     }
                     Some(Request::Run(Builtin::Clear)) if transcript.idle() => {
-                        match connection.call("thread/start", thread(&data_dir, &transcript.chat_id, &cwd, &AgentSettings::default())).await {
+                        match connection.call("thread/start", thread(&data_dir, &transcript.chat_id, &cwd, &AgentSettings::default(), &env)).await {
                             Ok(started) => {
                                 let previous = json!({ "threadId": transcript.thread });
                                 let _ = connection.call("thread/unsubscribe", previous).await;
@@ -460,8 +465,8 @@ fn readings(snapshot: &Value) -> Vec<Reading> {
     windows.collect()
 }
 
-fn thread(data_dir: &Path, chat_id: &str, cwd: &Path, settings: &AgentSettings) -> Value {
-    let mut params = json!({ "cwd": cwd, "config": tool_config(data_dir, chat_id) });
+fn thread(data_dir: &Path, chat_id: &str, cwd: &Path, settings: &AgentSettings, env: &BTreeMap<String, String>) -> Value {
+    let mut params = json!({ "cwd": cwd, "config": tool_config(data_dir, chat_id, env) });
     if let Some(model) = &settings.model {
         params["model"] = json!(model);
     }
@@ -476,10 +481,21 @@ fn thread(data_dir: &Path, chat_id: &str, cwd: &Path, settings: &AgentSettings) 
     params
 }
 
-fn tool_config(data_dir: &Path, chat_id: &str) -> Value {
+fn tool_config(data_dir: &Path, chat_id: &str, env: &BTreeMap<String, String>) -> Value {
     let mut config = html::config(data_dir, chat_id);
     config["tool_timeout_sec"] = json!(86400);
-    json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.oikonomos_chat": config })
+    let environment: BTreeMap<_, _> = crate::storage::ENVIRONMENT.into_iter().filter_map(|name| env.get(name).map(|value| (name, value))).collect();
+    let mut config = json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.oikonomos_chat": config });
+    if !environment.is_empty() {
+        config["shell_environment_policy.set"] = json!(environment);
+        config["sandbox_workspace_write.writable_roots"] = json!(writable_roots(env));
+    }
+    config
+}
+
+fn writable_roots(env: &BTreeMap<String, String>) -> Vec<String> {
+    ["OIKONOMOS_SCRATCH", "OIKONOMOS_CACHE", "CARGO_TARGET_DIR"].into_iter()
+        .filter_map(|name| env.get(name)).filter(|path| Path::new(path).is_absolute()).cloned().collect()
 }
 
 fn codex(cwd: &Path, env: &BTreeMap<String, String>) -> Command {
@@ -590,6 +606,7 @@ struct Transcript {
     thread: String,
     chat_id: String,
     cwd: PathBuf,
+    storage_roots: Vec<String>,
     events: UnboundedSender<Event>,
     len: usize,
     checkpoints: HashMap<usize, String>,
@@ -663,6 +680,7 @@ impl Transcript {
             thread: thread.to_owned(),
             chat_id: String::new(),
             cwd: cwd.to_owned(),
+            storage_roots: Vec::new(),
             events,
             len: 0,
             checkpoints: HashMap::new(),
@@ -760,6 +778,9 @@ impl Transcript {
         if let Some((approval, sandbox, reviewer)) = mode.as_deref().and_then(codex_policy) {
             turn["approvalPolicy"] = json!(approval);
             turn["sandboxPolicy"] = json!({ "type": policy_type(sandbox) });
+            if sandbox == "workspace-write" && !self.storage_roots.is_empty() {
+                turn["sandboxPolicy"]["writableRoots"] = json!(self.storage_roots);
+            }
             turn["approvalsReviewer"] = json!(reviewer);
         }
         self.applying = pending.iter().map(|&setting| (setting, self.settings.get(setting).clone())).collect();
@@ -1515,7 +1536,7 @@ mod tests {
     #[test]
     fn approve_for_me_starts_with_automatic_review_inside_the_workspace() {
         let settings = AgentSettings { mode: Some("approve-for-me".to_owned()), ..AgentSettings::default() };
-        let params = thread(Path::new("/data"), "chat", Path::new("/project"), &settings);
+        let params = thread(Path::new("/data"), "chat", Path::new("/project"), &settings, &BTreeMap::new());
         assert_eq!(params["approvalPolicy"], "on-request");
         assert_eq!(params["sandbox"], "workspace-write");
         assert_eq!(params["approvalsReviewer"], "auto_review");
@@ -1537,6 +1558,7 @@ mod tests {
     fn mode_changes_update_the_reviewer_and_plan_preserves_it() {
         let (events, _received) = mpsc::unbounded_channel();
         let mut transcript = Transcript::new("thread", Path::new("/project"), events);
+        transcript.storage_roots = vec!["/storage/scratch".to_owned(), "/project/target".to_owned()];
         for (mode, approval, sandbox, reviewer) in [
             ("approve-for-me", "on-request", "workspaceWrite", "auto_review"),
             ("default", "on-request", "workspaceWrite", "user"),
@@ -1550,6 +1572,11 @@ mod tests {
             transcript.overrides(&mut turn);
             assert_eq!(turn["approvalPolicy"], approval);
             assert_eq!(turn["sandboxPolicy"]["type"], sandbox);
+            if sandbox == "workspaceWrite" {
+                assert_eq!(turn["sandboxPolicy"]["writableRoots"], json!(["/storage/scratch", "/project/target"]));
+            } else {
+                assert!(turn["sandboxPolicy"].get("writableRoots").is_none());
+            }
             assert_eq!(turn["approvalsReviewer"], reviewer);
         }
         transcript.choose(Setting::Mode, "plan".to_owned());

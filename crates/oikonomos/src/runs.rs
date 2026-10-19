@@ -38,6 +38,7 @@ const TAIL: usize = 40;
 /// The loop: Runs that start Tickets in their own worktrees, take their Verdicts, and merge them one at a time.
 pub struct Runs {
     data_dir: PathBuf,
+    storage: crate::storage::Storage,
     worktrees: String,
     cli: String,
     epics: Arc<Epics>,
@@ -73,6 +74,7 @@ impl Runs {
         let lifecycle = chats.lifecycle();
         let runs = Arc::new(Self {
             data_dir: data_dir.to_owned(),
+            storage: crate::storage::Storage::new(data_dir),
             worktrees: utf8(fs::canonicalize(data_dir)?.join("worktrees"))?,
             cli: utf8(env::current_exe()?)?,
             epics,
@@ -128,6 +130,7 @@ impl Runs {
         let mut closing = HashSet::new();
         let mut resets = BTreeMap::new();
         let mut slugs = self.epics.slugs();
+        let mut maintenance = tokio::time::interval(Duration::from_secs(60));
         loop {
             for slug in slugs.drain(..) {
                 self.release(&slug, &mut closing);
@@ -152,6 +155,15 @@ impl Runs {
             }
             let reset = resets.values().min().map(|&at: &u64| Duration::from_millis(at.saturating_sub(now())));
             tokio::select! {
+                _ = maintenance.tick() => {
+                    let storage = self.storage.clone();
+                    let settings = self.config.borrow().storage.clone();
+                    match tokio::task::spawn_blocking(move || storage.maintain(&settings)).await {
+                        Ok(Ok(())) => {},
+                        result => eprintln!("cannot maintain temporary storage: {result:?}"),
+                    }
+                    slugs = self.epics.slugs();
+                },
                 Ok(()) = readings.changed() => slugs = self.epics.slugs(),
                 Ok(()) = config.changed() => slugs = self.epics.slugs(),
                 () = sleep(reset.unwrap_or_default()), if reset.is_some() => slugs = resets.keys().cloned().collect(),
@@ -229,7 +241,9 @@ impl Runs {
             let (runs, slug, rig) = (Arc::clone(self), slug.to_owned(), run.rig.clone());
             tokio::spawn(async move {
                 if let Err(reason) = runs.take(&slug, number, &rig).await {
-                    runs.start_failed(&slug, number, reason);
+                    let storage_paused = runs.epics.get(&slug).is_ok_and(|epic| epic.run.as_ref()
+                        .is_some_and(|run| matches!(run.paused, Some(Pause::Storage { .. }))));
+                    if !storage_paused { runs.start_failed(&slug, number, reason); }
                 }
                 drop(starting);
             });
@@ -305,7 +319,8 @@ impl Runs {
         resets.remove(slug);
         let Ok(epic) = self.epics.get(slug) else { return };
         let Some(run) = epic.run.as_ref().filter(|run| !epic.archived && run.paused != Some(Pause::David)) else { return };
-        let over = self.over(&epic, run);
+        let project = epic.project.parent().unwrap_or(&epic.project);
+        let over = self.storage_pressure(project).await.map(|message| Pause::Storage { message }).or_else(|| self.over(&epic, run));
         let recorded = match (&run.paused, &over) {
             (None, Some(pause)) => match self.epics.record(slug, Event::RunPaused { pause: pause.clone() }) {
                 Ok(()) => {
@@ -314,9 +329,10 @@ impl Runs {
                 }
                 error => error,
             },
+            (Some(Pause::Storage { .. }), Some(Pause::Storage { .. })) => Ok(()),
             (Some(paused), Some(pause)) if paused != pause => self.epics.record(slug, Event::RunPaused { pause: pause.clone() }),
             (Some(_), None) => self.epics.record_if(slug, Event::RunResumed, |epic| match epic.run.as_ref().and_then(|run| run.paused.as_ref()) {
-                Some(Pause::Usage { .. }) => Ok(()),
+                Some(Pause::Usage { .. } | Pause::Storage { .. }) => Ok(()),
                 _ => Err(format!("{slug}'s Run is no longer paused for usage")),
             }),
             _ => Ok(()),
@@ -326,6 +342,16 @@ impl Runs {
         }
         if let Some(Pause::Usage { resets_at: Some(at), .. }) = over {
             resets.insert(slug.to_owned(), at);
+        }
+    }
+
+    async fn storage_pressure(&self, project: &Path) -> Option<String> {
+        let storage = self.storage.clone();
+        let project = project.to_owned();
+        let minimum = self.config.borrow().storage.min_free_gib;
+        match tokio::task::spawn_blocking(move || storage.pressure(&project, minimum)).await {
+            Ok(Ok(message)) => message,
+            result => Some(format!("Could not check available disk space: {result:?}")),
         }
     }
 
@@ -580,6 +606,12 @@ impl Runs {
     /// up if the Run stops before the Claim is recorded.
     async fn begin(&self, slug: &str, number: u32, project: &Project, rig: &Rig, run: bool) -> Result<String, String> {
         let epic = self.epics.get(slug)?;
+        if let Some(message) = self.storage_pressure(Path::new(&project.path)).await {
+            if run {
+                let _ = self.epics.record(slug, Event::RunPaused { pause: Pause::Storage { message: message.clone() } });
+            }
+            return Err(message);
+        }
         let Some(setup) = epic.setup.clone() else {
             return Err(format!(
                 "{slug} has no Setup Command yet; record one, \"\" when a fresh worktree needs nothing, before starting its Tickets"
@@ -623,7 +655,7 @@ impl Runs {
                     discard(&integration, &worktree, &branch).await;
                     return Err(format!("Oikonomos could not check out the submodules of {slug}/{number}'s new worktree: {error}"));
                 }
-                if let Err(note) = run_setup(&setup, &worktree, "this Ticket's new worktree").await {
+                if let Err(note) = run_setup(&self.storage, &setup, &worktree, "this Ticket's new worktree").await {
                     discard(&integration, &worktree, &branch).await;
                     return Err(self.setup_failed(slug, number, note));
                 }
@@ -689,7 +721,7 @@ impl Runs {
             discard(&project.path, &worktree, &branch).await;
             return Err(format!("Oikonomos could not check out the submodules of {slug}'s new Integration Worktree: {error}"));
         }
-        if let Err(note) = run_setup(setup, &worktree, "the Epic's new Integration Worktree").await {
+        if let Err(note) = run_setup(&self.storage, setup, &worktree, "the Epic's new Integration Worktree").await {
             discard(&project.path, &worktree, &branch).await;
             return Err(self.setup_failed(slug, number, note));
         }
@@ -972,13 +1004,18 @@ fn ticket_branch(slug: &str, name: &str) -> String {
 }
 
 /// Runs the Setup Command in a fresh worktree, giving a Note with the end of its output when it fails.
-async fn run_setup(command: &str, worktree: &str, place: &str) -> Result<(), String> {
+async fn run_setup(storage: &crate::storage::Storage, command: &str, worktree: &str, place: &str) -> Result<(), String> {
     if command.trim().is_empty() {
         return Ok(());
     }
+    let owner = format!("setup-{}", Uuid::new_v4());
+    let storage = storage.prepare(&owner, Path::new(worktree), &BTreeMap::new()).await.map_err(|error| error.to_string())?;
     let output = Command::new("sh")
         .args(["-c", command])
         .current_dir(worktree)
+        .envs(&storage.env)
+        .process_group(0)
+        .kill_on_drop(true)
         .stdin(Stdio::null())
         .output()
         .await

@@ -54,7 +54,8 @@ impl Drop for Socket {
 pub fn hold_chat(args: HoldChatArgs) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(args.data_dir.join("chats"))?;
     let path = socket_path(&args.data_dir, &args.id);
-    let listener = UnixListener::bind(&path)?;
+    let address = crate::unix::path(&path)?;
+    let listener = UnixListener::bind(&address)?;
     let _socket = Socket(path);
     // SAFETY: no other threads exist yet.
     if let ForkResult::Parent { .. } = unsafe { fork() }? {
@@ -62,7 +63,8 @@ pub fn hold_chat(args: HoldChatArgs) -> Result<(), Box<dyn Error>> {
         std::process::exit(0);
     }
     setsid()?;
-    run(listener, &args.cwd, &args.command)
+    let _leases = crate::storage::inherited_leases()?;
+    run(listener, &args.cwd, &args.command, &args.data_dir.join("chats").join(format!("{}.json", args.id)))
 }
 
 enum Event {
@@ -71,9 +73,10 @@ enum Event {
     Connected(UnixStream),
     Received(Message),
     Closed(u64),
+    Tick,
 }
 
-fn run(listener: UnixListener, cwd: &Path, command: &[String]) -> Result<(), Box<dyn Error>> {
+fn run(listener: UnixListener, cwd: &Path, command: &[String], record: &Path) -> Result<(), Box<dyn Error>> {
     let mut child = Command::new(&command[0])
         .args(&command[1..])
         .current_dir(cwd)
@@ -87,6 +90,10 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String]) -> Result<(), Box
     let stdout = child.stdout.take().unwrap();
 
     let (events, received) = mpsc::channel();
+    let tx = events.clone();
+    thread::spawn(move || {
+        while tx.send(Event::Tick).is_ok() { thread::sleep(std::time::Duration::from_millis(250)); }
+    });
     let tx = events.clone();
     thread::spawn(move || {
         for line in BufReader::new(stdout).split(b'\n') {
@@ -129,6 +136,12 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String]) -> Result<(), Box
                 buffer.push(frame);
             }
             Event::Exited => break,
+            Event::Tick => {
+                if !record.exists() || !crate::holder::test_owner_alive() {
+                    let _ = killpg(group, Signal::SIGTERM);
+                    break;
+                }
+            }
             Event::Connected(stream) => {
                 next_id += 1;
                 if let Ok(conn) = accept(next_id, stream, events.clone(), &buffer) {
@@ -215,7 +228,8 @@ pub async fn spawn<'a>(
 
 /// Connects to a Chat holder, returning how many buffered frames it replays before streaming live.
 pub async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHalf, usize)> {
-    let socket = tokio::net::UnixStream::connect(socket_path(data_dir, id)).await?;
+    let address = crate::unix::path(&socket_path(data_dir, id))?;
+    let socket = tokio::net::UnixStream::connect(&address).await?;
     let (reader, writer) = socket.into_split();
     let codec = LengthDelimitedCodec::builder().max_frame_length(crate::protocol::MAX_FRAME).new_codec();
     let mut frames = FramedRead::new(reader, codec);

@@ -44,6 +44,8 @@ async fn a_claude_chat_streams_on_through_a_server_restart() {
     let project_id = next_control(&mut socket, "project.opened").await["projectId"].clone();
     control(&mut socket, json!({ "type": "chat.create", "projectId": project_id, "rig": "claude" })).await;
     let chat_id = next_control(&mut socket, "chat.created").await["chat"]["id"].as_str().unwrap().to_owned();
+    let scratch = server.root.path().join("data/storage/scratch").join(&chat_id);
+    fs::write(scratch.join("keep"), "survives restart").unwrap();
     control(&mut socket, json!({ "type": "chat.attach", "chatId": chat_id })).await;
     let mut view = View::default();
     assert_eq!(next_control(&mut socket, "chat.items").await["items"], json!([]));
@@ -59,6 +61,7 @@ async fn a_claude_chat_streams_on_through_a_server_restart() {
     fs::remove_file(gates.path().join("stop")).unwrap();
     gated(gates.path(), "restart").await;
     server.restart().await;
+    assert_eq!(fs::read_to_string(scratch.join("keep")).unwrap(), "survives restart");
 
     let (mut socket, status, attention, mut view) = reconnect(server.port, &chat_id).await;
     assert_eq!(status, "working");

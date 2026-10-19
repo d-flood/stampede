@@ -230,6 +230,9 @@
 			<div class="settings">{@render settings(epic)}</div>
 		{/if}
 		{#if live}
+			{#if live.paused?.reason === 'storage'}
+				<p class="note error" role="status">{live.paused.message} New Tickets wait; active Chats continue.</p>
+			{/if}
 			<div class="controls">
 				{#if live.paused}
 					<Button onclick={() => run({ kind: 'run.resumed' })}><Play /> Resume</Button>
@@ -761,6 +764,7 @@
 		margin: 0;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
+		overflow-wrap: anywhere;
 	}
 
 	.run .error {

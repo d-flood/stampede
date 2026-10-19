@@ -7,6 +7,7 @@ import time
 
 root = sys.argv[1].encode()
 marker = b"OIKONOMOS_E2E_ROOT=" + root
+test_marker = b"OIKONOMOS_TEST_ROOT=" + root
 
 
 def processes():
@@ -15,7 +16,8 @@ def processes():
         if not entry.name.isdigit() or int(entry.name) in (os.getpid(), os.getppid()):
             continue
         try:
-            if marker in (entry / 'environ').read_bytes().split(b'\0') or root in (entry / 'cmdline').read_bytes():
+            environment = (entry / 'environ').read_bytes().split(b'\0')
+            if marker in environment or test_marker in environment:
                 found.append(int(entry.name))
         except (FileNotFoundError, PermissionError, ProcessLookupError):
             pass

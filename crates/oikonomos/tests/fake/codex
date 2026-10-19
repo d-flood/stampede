@@ -229,6 +229,10 @@ def check(message, recorded):
     if method == 'thread/start' and params.get('config', {}).get('tools.update_plan', {}).get('enabled') is not True:
         fail('thread/start without tools.update_plan.enabled')
     if method in ('thread/start', 'thread/resume'):
+        if capture := os.environ.get('OIKONOMOS_FAKE_ENVIRONMENT'):
+            with open(capture, 'a') as output:
+                json.dump(params.get('config', {}).get('shell_environment_policy.set', {}), output)
+                output.write('\n')
         mcp = params.get('config', {}).get('mcp_servers.oikonomos_chat', {})
         if not Path(mcp.get('command', '')).is_file() or mcp.get('args', [])[:2] != ['chat-tools', '--data-dir'] or len(mcp['args']) != 5 or mcp['args'][3] != '--chat-id' or not mcp['args'][4] or not Path(mcp['args'][2]).is_absolute():
             fail(f'{method} without chat HTML server: {mcp}')

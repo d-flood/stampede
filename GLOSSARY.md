@@ -113,7 +113,7 @@ One pass of the loop over an Epic, starting a Chat for each Frontier Ticket up t
 _Avoid_: job, batch, execution, cycle
 
 **Paused**:
-True of a Run that starts no new Chats while those already working carry on, either by hand or because its Agent's usage ran out, in which case it resumes once usage resets.
+True of a Run that starts no new Chats while those already working carry on, either by hand, because its Agent's usage ran out, or because storage is low. Automatic pauses resume once usage resets or enough space is available.
 _Avoid_: stopped, suspended, halted
 
 **Claim**:

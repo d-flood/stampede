@@ -262,7 +262,8 @@ pub fn cli(command: CliCommand) -> Result<(), String> {
     let unreachable = |error: io::Error| {
         format!("cannot reach the Oikonomos server at {}: {error}; is it running with this --data-dir?", path.display())
     };
-    let mut stream = UnixStream::connect(&path).map_err(unreachable)?;
+    let address = crate::unix::path(&path).map_err(unreachable)?;
+    let mut stream = UnixStream::connect(&address).map_err(unreachable)?;
     let mut line = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
     line.push(b'\n');
     stream.write_all(&line).map_err(unreachable)?;
@@ -339,7 +340,8 @@ pub fn bind(data_dir: &Path) -> io::Result<UnixListener> {
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
         _ => {}
     }
-    UnixListener::bind(&path)
+    let address = crate::unix::path(&path)?;
+    UnixListener::bind(&address)
 }
 
 pub fn listen(listener: UnixListener, epics: Arc<Epics>, runs: Arc<Runs>) {
