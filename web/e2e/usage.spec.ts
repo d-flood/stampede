@@ -71,6 +71,40 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	await expect(usage.getByRole('meter')).toHaveCount(3);
 	const copilot = usage.getByRole('group', { name: 'Copilot', exact: true });
 	const consumption = copilot.locator('.amount');
+	async function checkNarrowBilling(name: string) {
+		const viewport = page.viewportSize()!;
+		const height = (await copilot.boundingBox())!.height;
+		const resizer = page.getByRole('separator', { name: 'Resize sidebar' });
+		for (const width of project.name === 'desktop' ? [640, 384, 320, 256, 208, 160] : [448, 360, 320]) {
+			if (project.name === 'desktop') {
+				await resizer.focus();
+				while (Number(await resizer.getAttribute('aria-valuenow')) > width) await page.keyboard.press('ArrowLeft');
+			} else await page.setViewportSize({ ...viewport, width });
+			await expect.poll(() => copilot.evaluate((element, height) => {
+				const billing = element.querySelector('.billing')!;
+				const bounds = billing.getBoundingClientRect();
+				const lines = [...billing.children].filter((child) => child.getClientRects().length);
+				return {
+					grows: element.getBoundingClientRect().height > height + 1,
+					overflows: lines.some((child) => child.scrollWidth > child.clientWidth || child.getBoundingClientRect().right > bounds.right + 1),
+					wraps: getComputedStyle(element).getPropertyValue('--compact').trim() === '1' && (lines.length > 2 || lines.some((child) => child.getBoundingClientRect().height > parseFloat(getComputedStyle(child).lineHeight) + 1))
+				};
+			}, height)).toEqual({ grows: false, overflows: false, wraps: false });
+		}
+		if (name === 'cost') {
+			await copilot.locator('.billing').focus();
+			await page.clock.runFor(500);
+			await expect(tooltip).toHaveText('Reported cost; some usage may be missing');
+			await page.keyboard.press('Escape');
+			await page.clock.runFor(100);
+			await expect(tooltip).toBeHidden();
+		}
+		await copilot.screenshot({ path: test.info().outputPath(`copilot-${name}-narrow.png`) });
+		if (project.name === 'desktop') {
+			await resizer.focus();
+			await page.keyboard.press('End');
+		} else await page.setViewportSize(viewport);
+	}
 	await expect(consumption).toHaveText('$12.345');
 	await expect(copilot.locator('.credits')).toHaveText('1,234.5 credits');
 	await expect(copilot.getByText('This billing period', { exact: true })).toBeVisible();
@@ -137,6 +171,7 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	await page.setViewportSize(viewport);
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await usage.screenshot({ path: test.info().outputPath('usage.png') });
+	await checkNarrowBilling('monthly');
 	update([...readings.slice(0, 3), { ...readings[3], consumption: { amount: 0, unit: 'credits' } }]);
 	await expect(consumption).toHaveText('$0.00');
 	await expect(copilot.locator('.credits')).toHaveText('0 credits');
@@ -145,19 +180,22 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	update([...readings.slice(0, 3), { agent: 'copilot', window: 'monthly', readAt: now }]);
 	await expect(consumption).toHaveText('Usage unavailable');
 	await expect(copilot.getByText('Billing usage not reported', { exact: true })).toBeVisible();
+	await checkNarrowBilling('unavailable');
 	update([...readings.slice(0, 3), { agent: 'copilot', window: 'monthly', readAt: now },
 		{ agent: 'copilot', window: 'session', chatId: 'first', consumption: { amount: 12.5, unit: 'credits' }, readAt: now },
 		{ agent: 'copilot', window: 'session', chatId: 'second', consumption: { amount: 2.5, unit: 'credits' }, partial: true, readAt: now }
 	]);
 	await expect(consumption).toHaveText('$0.15 reported');
 	await expect(copilot.locator('.credits')).toHaveText('15 credits');
-	await expect(copilot.getByText('Recorded sessions', { exact: true })).toBeVisible();
+	await expect(copilot.locator('.period')).toHaveCount(0);
 	await expect(copilot.locator('.cycle')).toHaveCount(0);
 	await copilot.screenshot({ path: test.info().outputPath('copilot-cost.png') });
+	await checkNarrowBilling('cost');
 	update([...readings.slice(0, 3), { agent: 'copilot', window: 'session', chatId: 'first', consumption: { amount: 9, unit: 'requests' }, readAt: now }]);
 	await expect(consumption).toHaveText('9 requests');
-	await expect(copilot.getByText('Recorded sessions', { exact: true })).toBeVisible();
+	await expect(copilot.locator('.period')).toHaveCount(0);
 	await expect(copilot.getByText('Cost not reported', { exact: true })).toBeVisible();
+	await checkNarrowBilling('requests');
 	await page.clock.fastForward(minute);
 	await expect(usage.locator('.countdown').first()).toHaveText('(in 3h 8m)');
 	update([{ ...readings[0], resetsAt: now + 2 * minute }]);

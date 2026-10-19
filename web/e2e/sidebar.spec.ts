@@ -50,7 +50,7 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', async
 	await expect(firstRing).toHaveAttribute('data-delay-duration', '0');
 	await firstRing.hover();
 	const tooltip = page.getByRole('tooltip');
-	await expect(tooltip).toContainText('Claude · 5h');
+	await expect(tooltip).toHaveText(await usage.locator('.reset').first().evaluate((element) => [...element.children].map((child) => child.textContent).join(' ') || element.textContent!));
 	await expect.poll(() => tooltip.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
 		const style = getComputedStyle(element);
@@ -61,7 +61,7 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', async
 	await page.keyboard.press('Escape');
 	await expect(tooltip).toBeHidden();
 	await usage.getByRole('meter', { name: 'Claude · week', exact: true }).focus();
-	await expect(tooltip).toContainText('Claude · Weekly');
+	await expect(tooltip).toHaveText(await usage.locator('.reset').nth(1).evaluate((element) => [...element.children].map((child) => child.textContent).join(' ') || element.textContent!));
 	await page.keyboard.press('Escape');
 	await expect(tooltip).toBeHidden();
 	await resizer.focus();

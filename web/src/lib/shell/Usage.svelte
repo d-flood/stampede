@@ -97,33 +97,45 @@
 				{@const sessions = currentSessions.filter((reading) => reading.consumption?.unit === unit)}
 				{@const consumption = reading?.consumption ?? (sessions.length ? { amount: sessions.reduce((total, reading) => total + reading.consumption!.amount, 0), unit } : undefined)}
 				{@const partial = !reading?.consumption && (sessions.some((reading) => reading.partial) || sessions.length < currentSessions.length)}
-				<div class="billing">
-					<span class="amount">
-						{#if consumption}
-							{#if consumption.unit === 'credits'}
-								{cost(consumption.amount)}
-								{#if partial}<span class="unit">reported</span>{/if}
-							{:else}
-								{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-								<span class="unit">{consumption.unit}</span>
+				{@const description = [
+					partial ? 'Reported cost; some usage may be missing' : '',
+					!reading?.consumption && consumption?.unit === 'requests' ? 'Cost not reported' : '',
+					reading?.consumption ? 'This billing period' : !sessions.length ? 'Billing usage not reported' : '',
+					reading?.consumption && reading.startsAt !== undefined && reading.resetsAt !== undefined ? `${periodDate(reading.startsAt)} – ${periodDate(reading.resetsAt)}` : ''
+				].filter(Boolean).join('\n')}
+				<Tooltip text={description} disabled={!compact || !description}>
+					{#snippet children(props)}
+						<div {...props} class="billing">
+							<span class="amount">
+								{#if consumption}
+									{#if consumption.unit === 'credits'}
+										{cost(consumption.amount)}
+										{#if partial}<span class="unit reported">reported</span>{/if}
+									{:else}
+										{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+										<span class="unit">{consumption.unit}</span>
+									{/if}
+								{:else}
+									<span class="unavailable-prefix">Usage{' '}</span>unavailable
+								{/if}
+							</span>
+							{#if consumption?.unit === 'credits'}
+								<span class="credits">{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })} credits</span>
 							{/if}
-						{:else}
-							Usage unavailable
-						{/if}
-					</span>
-					{#if consumption?.unit === 'credits'}
-						<span class="credits">{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })} credits</span>
-					{/if}
-					<span class="period">{reading?.consumption ? 'This billing period' : sessions.length ? 'Recorded sessions' : 'Billing usage not reported'}</span>
-					{#if !reading?.consumption && consumption?.unit === 'requests'}<span class="cost-unavailable">Cost not reported</span>{/if}
-					{#if reading?.consumption && reading.startsAt !== undefined && reading.resetsAt !== undefined}
-						<span class="cycle">
-							<time datetime={new Date(reading.startsAt).toISOString()}>{periodDate(reading.startsAt)}</time>
-							–
-							<time datetime={new Date(reading.resetsAt).toISOString()}>{periodDate(reading.resetsAt)}</time>
-						</span>
-					{/if}
-				</div>
+							{#if reading?.consumption || !sessions.length}
+								<span class="period">{reading?.consumption ? 'This billing period' : 'Billing usage not reported'}</span>
+							{/if}
+							{#if !reading?.consumption && consumption?.unit === 'requests'}<span class="cost-unavailable">Cost not reported</span>{/if}
+							{#if reading?.consumption && reading.startsAt !== undefined && reading.resetsAt !== undefined}
+								<span class="cycle">
+									<time datetime={new Date(reading.startsAt).toISOString()}>{periodDate(reading.startsAt)}</time>
+									–
+									<time datetime={new Date(reading.resetsAt).toISOString()}>{periodDate(reading.resetsAt)}</time>
+								</span>
+							{/if}
+						</div>
+					{/snippet}
+				</Tooltip>
 			{:else}
 				{#each windows as { window, label: period, name } (window)}
 					{@const reading = readings.find((reading) => reading.agent === agent && reading.window === window)}
@@ -342,6 +354,10 @@
 	}
 
 	@container (max-width: 16rem) {
+		.amount {
+			font-size: var(--font-size-sm);
+		}
+
 		section:not(.phone) .identity > div,
 		section:not(.phone) .label,
 		section:not(.phone) .reset {
@@ -361,6 +377,23 @@
 
 		.reset time {
 			display: none;
+		}
+
+		.billing .period,
+		.billing .cycle,
+		.cost-unavailable,
+		.reported,
+		.unavailable-prefix {
+			display: none;
+		}
+
+		.amount {
+			flex-wrap: nowrap;
+			white-space: nowrap;
+		}
+
+		.credits {
+			white-space: nowrap;
 		}
 	}
 

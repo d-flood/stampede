@@ -1,10 +1,83 @@
 mod common;
 
-use std::{fs, os::unix::fs::symlink};
+use std::{fs, os::unix::fs::{PermissionsExt, symlink}};
 
 use common::{Server, control, next_control};
 use serde_json::json;
 use tokio_tungstenite::connect_async;
+
+#[tokio::test]
+async fn copying_preserves_contents_without_overwriting_or_following_symlinks() {
+    let server = Server::start("copy-files-").await;
+    let root = server.root.path().join("project");
+    let outside = server.root.path().join("outside");
+    fs::create_dir_all(root.join("folder/nested")).unwrap();
+    fs::create_dir(root.join("destination")).unwrap();
+    fs::create_dir(&outside).unwrap();
+    fs::write(root.join("folder/nested/binary.dat"), [0, 255, 128]).unwrap();
+    fs::write(root.join("run.sh"), "echo copied").unwrap();
+    fs::set_permissions(root.join("run.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(root.join(".hidden"), "hidden").unwrap();
+    fs::write(outside.join("keep.txt"), "keep").unwrap();
+    symlink(&outside, root.join("folder/external")).unwrap();
+    symlink("missing", root.join("folder/dangling")).unwrap();
+    symlink(&outside, root.join("external")).unwrap();
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "copy-files" })).await;
+    next_control(&mut socket, "hello").await;
+    control(&mut socket, json!({ "type": "project.open", "path": root })).await;
+    let opened = next_control(&mut socket, "project.opened").await;
+    let id = opened["projectId"].as_str().unwrap();
+    let api = format!("http://127.0.0.1:{}/api/projects/{id}/file/copy", server.port);
+    let client = reqwest::Client::new();
+    for (path, destination, expected) in [
+        ("run.sh", "destination", "destination/run.sh"),
+        ("run.sh", "destination", "destination/run copy.sh"),
+        ("run.sh", "", "run copy.sh"),
+        ("run.sh", "", "run copy 2.sh"),
+        (".hidden", "", ".hidden copy"),
+        ("folder", "", "folder copy"),
+        ("folder", "destination", "destination/folder"),
+    ] {
+        let response = client.post(&api)
+            .header("content-type", "application/json")
+            .body(json!({ "path": path, "destination": destination }).to_string())
+            .send().await.unwrap();
+        assert_eq!(response.status(), 201, "{path} -> {destination}");
+        let body: serde_json::Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+        assert_eq!(body["path"], expected);
+    }
+    for path in ["run.sh", "run copy.sh", "run copy 2.sh", "destination/run.sh", "destination/run copy.sh"] {
+        assert_eq!(fs::read_to_string(root.join(path)).unwrap(), "echo copied");
+        assert_eq!(fs::metadata(root.join(path)).unwrap().permissions().mode() & 0o777, 0o755);
+    }
+    for path in ["folder copy", "destination/folder"] {
+        assert_eq!(fs::read(root.join(path).join("nested/binary.dat")).unwrap(), [0, 255, 128]);
+        assert_eq!(fs::read_link(root.join(path).join("external")).unwrap(), outside);
+        assert_eq!(fs::read_link(root.join(path).join("dangling")).unwrap().to_str(), Some("missing"));
+    }
+    for (path, destination, status) in [
+        ("", "", 400),
+        ("../outside/keep.txt", "", 403),
+        ("external/keep.txt", "", 403),
+        ("run.sh", "../outside", 403),
+        ("run.sh", "external", 403),
+        ("folder", "folder", 400),
+        ("folder", "folder/nested", 400),
+        ("missing", "", 404),
+        ("run.sh", "missing", 404),
+        ("run.sh", "run.sh", 400),
+    ] {
+        let response = client.post(&api)
+            .header("content-type", "application/json")
+            .body(json!({ "path": path, "destination": destination }).to_string())
+            .send().await.unwrap();
+        assert_eq!(response.status().as_u16(), status, "{path} -> {destination}");
+    }
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 1);
+    assert_eq!(fs::read_to_string(outside.join("keep.txt")).unwrap(), "keep");
+    assert_eq!(fs::read_dir(root.join("folder/nested")).unwrap().count(), 1);
+}
 
 #[tokio::test]
 async fn image_previews_return_bytes_with_image_types_and_stay_within_the_project() {

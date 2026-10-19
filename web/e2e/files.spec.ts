@@ -4,6 +4,73 @@ import { openProject, showSidebar } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
+test('menus copy files and directories without replacing existing contents', async ({ page }, { project }) => {
+	const name = `copy-${project.name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+	mkdirSync(`${root}/source/nested`, { recursive: true });
+	mkdirSync(`${root}/destination`);
+	writeFileSync(`${root}/source/nested/child.txt`, 'nested contents');
+	writeFileSync(`${root}/notes.txt`, 'original contents');
+	writeFileSync(`${root}/destination/notes.txt`, 'existing contents');
+	await openProject(page, name);
+	const sidebar = await showSidebar(page);
+	const tree = sidebar.getByRole('group', { name: 'File tree', exact: true });
+	await tree.click({ button: 'right', position: { x: 10, y: 10 } });
+	await expect(page.getByRole('menuitem', { name: 'Paste', exact: true })).toHaveAttribute('aria-disabled', 'true');
+	await page.keyboard.press('Escape');
+	if (project.name === 'pixel') {
+		await sidebar.getByRole('button', { name: 'Actions for notes.txt', exact: true }).tap();
+	} else {
+		await sidebar.getByRole('button', { name: 'notes.txt', exact: true }).click({ button: 'right' });
+	}
+	await page.getByRole('menuitem', { name: 'Copy', exact: true }).click();
+	await sidebar.getByRole('button', { name: 'Actions for destination', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Paste', exact: true }).click();
+	await expect(sidebar.getByRole('button', { name: 'notes copy.txt', exact: true })).toBeVisible();
+	expect(readFileSync(`${root}/destination/notes.txt`, 'utf8')).toBe('existing contents');
+	expect(readFileSync(`${root}/destination/notes copy.txt`, 'utf8')).toBe('original contents');
+	await sidebar.getByRole('button', { name: 'source', exact: true }).click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'Copy', exact: true }).click();
+	await tree.click({ button: 'right', position: { x: 10, y: await tree.evaluate((element) => element.clientHeight - 8) } });
+	await page.getByRole('menuitem', { name: 'Paste', exact: true }).click();
+	const duplicate = sidebar.getByRole('button', { name: 'source copy', exact: true });
+	await expect(duplicate).toBeVisible();
+	expect(readFileSync(`${root}/source copy/nested/child.txt`, 'utf8')).toBe('nested contents');
+});
+
+test('keyboard copy and paste use the focused entry and support retry after failure', async ({ page }, { project }) => {
+	const name = `copy-keys-${project.name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+	mkdirSync(`${root}/destination`, { recursive: true });
+	writeFileSync(`${root}/notes.txt`, 'keyboard contents');
+	await openProject(page, name);
+	const sidebar = await showSidebar(page);
+	const file = sidebar.getByRole('button', { name: 'notes.txt', exact: true });
+	const folder = sidebar.getByRole('button', { name: 'destination', exact: true });
+	await file.focus();
+	await file.press('Control+c');
+	await folder.focus();
+	await folder.press('Control+v');
+	await expect(sidebar.getByRole('button', { name: 'notes.txt', exact: true })).toHaveCount(2);
+	expect(readFileSync(`${root}/destination/notes.txt`, 'utf8')).toBe('keyboard contents');
+	await folder.press('Control+v');
+	await expect(sidebar.getByRole('button', { name: 'notes copy.txt', exact: true })).toBeVisible();
+	const child = sidebar.getByRole('button', { name: 'notes copy.txt', exact: true });
+	await child.focus();
+	await child.press('Meta+c');
+	const tree = sidebar.getByRole('group', { name: 'File tree', exact: true });
+	await tree.focus();
+	await page.route('**/api/projects/*/file/copy', (route) => route.fulfill({ status: 403, body: 'Permission denied' }));
+	await tree.press('Meta+v');
+	await expect(sidebar.getByRole('alert')).toHaveText('Permission denied');
+	expect(existsSync(`${root}/notes copy.txt`)).toBe(false);
+	await page.unroute('**/api/projects/*/file/copy');
+	await tree.press('Meta+v');
+	await expect(sidebar.getByRole('alert')).toHaveCount(0);
+	await expect.poll(() => existsSync(`${root}/notes copy.txt`)).toBe(true);
+	expect(readFileSync(`${root}/notes copy.txt`, 'utf8')).toBe('keyboard contents');
+});
+
 test('context menus create files and directories in the selected location', async ({ page }, { project }) => {
 	const name = `create-${project.name}`;
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;

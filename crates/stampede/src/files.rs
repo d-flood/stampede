@@ -47,6 +47,12 @@ pub struct Create {
 }
 
 #[derive(Deserialize)]
+pub struct Copy {
+    path: String,
+    destination: String,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigSave {
     content: String,
@@ -218,6 +224,86 @@ pub async fn delete(
         Ok(StatusCode::NO_CONTENT.into_response())
     })
     .await
+}
+
+pub async fn copy(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Json(copy): Json<Copy>,
+) -> Result<Response, Failure> {
+    let root = root(&state, &id)?;
+    blocking(move || {
+        let relative = Path::new(&copy.path);
+        if !relative.components().all(|part| matches!(part, Component::Normal(_))) {
+            return Err((StatusCode::FORBIDDEN, "Invalid path within the Project".to_owned()));
+        }
+        let name = relative.file_name().ok_or_else(|| (StatusCode::BAD_REQUEST, "No name".to_owned()))?;
+        let parent = relative.parent().unwrap_or(Path::new(""));
+        let source = resolve(&root, &parent.to_string_lossy())?.join(name);
+        let metadata = fs::symlink_metadata(&source).map_err(failure)?;
+        let destination = resolve(&root, &copy.destination)?;
+        if metadata.is_dir() && destination.starts_with(&source) {
+            return Err((StatusCode::BAD_REQUEST, "Cannot copy a directory into itself".to_owned()));
+        }
+        let name = name.to_string_lossy();
+        let (stem, extension) = if metadata.is_dir() {
+            (name.as_ref(), String::new())
+        } else {
+            match name.rsplit_once('.') {
+                Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
+                _ => (name.as_ref(), String::new()),
+            }
+        };
+        for number in 0.. {
+            let name = match number {
+                0 => name.to_string(),
+                1 => format!("{stem} copy{extension}"),
+                _ => format!("{stem} copy {number}{extension}"),
+            };
+            match copy_entry(&source, &destination.join(&name)) {
+                Ok(()) => return Ok((StatusCode::CREATED, Json(json!({ "path": if copy.destination.is_empty() {
+                    name
+                } else {
+                    format!("{}/{name}", copy.destination)
+                } }))).into_response()),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(failure(error)),
+            }
+        }
+        unreachable!()
+    })
+    .await
+}
+
+fn copy_entry(source: &Path, destination: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(source)?;
+    if metadata.is_symlink() {
+        return std::os::unix::fs::symlink(fs::read_link(source)?, destination);
+    }
+    if metadata.is_dir() {
+        fs::create_dir(destination)?;
+        let result = (|| {
+            for entry in fs::read_dir(source)? {
+                let entry = entry?;
+                copy_entry(&entry.path(), &destination.join(entry.file_name()))?;
+            }
+            fs::set_permissions(destination, metadata.permissions())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_dir_all(destination);
+        }
+        return result;
+    }
+    if !metadata.is_file() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Only files, directories, and symlinks can be copied"));
+    }
+    let mut source = fs::File::open(source)?;
+    let mut output = fs::OpenOptions::new().write(true).create_new(true).open(destination)?;
+    let result = io::copy(&mut source, &mut output).and_then(|_| output.set_permissions(metadata.permissions()));
+    if result.is_err() {
+        let _ = fs::remove_file(destination);
+    }
+    result
 }
 
 pub async fn read_config(State(state): State<AppState>) -> Result<Response, Failure> {

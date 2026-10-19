@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Device } from '#lib/device.svelte.ts';
-	import { create, list, remove, RequestError, type Entry } from '#lib/files.svelte.ts';
+	import { copy, create, list, remove, RequestError, type Entry } from '#lib/files.svelte.ts';
 	import { letters, type Change } from '#lib/git.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
@@ -9,6 +9,8 @@
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import CaretRight from '~icons/ph/caret-right';
+	import Clipboard from '~icons/ph/clipboard';
+	import Copy from '~icons/ph/copy';
 	import DotsThree from '~icons/ph/dots-three';
 	import Eye from '~icons/ph/eye';
 	import EyeSlash from '~icons/ph/eye-slash';
@@ -31,6 +33,11 @@
 	let name = $state('');
 	let creating = $state(false);
 	let createError = $state('');
+	let copied = $state<Entry>();
+	let pasting = $state(false);
+	let pasteError = $state('');
+	let treeElement: HTMLDivElement;
+	let focused: Entry | undefined;
 	const expanded = new SvelteSet<string>();
 	const kinds = $derived(new Map(changes.map((change) => [change.path, change.kind])));
 	const marked = $derived(new Set(changes.flatMap(({ path, from }) => [...parents(path), ...parents(from ?? '')])));
@@ -86,8 +93,43 @@
 	function creationItems(path: string) {
 		return [
 			{ label: 'New File', icon: FilePlus, onselect: () => startCreate(path, false) },
-			{ label: 'New Directory', icon: FolderPlus, onselect: () => startCreate(path, true) }
+			{ label: 'New Directory', icon: FolderPlus, onselect: () => startCreate(path, true) },
+			{ label: 'Paste', icon: Clipboard, disabled: !copied || pasting, onselect: () => paste(path) }
 		];
+	}
+
+	function copyEntry(entry: Entry) {
+		copied = entry;
+		pasteError = '';
+	}
+
+	async function paste(path: string) {
+		if (!copied || pasting) return;
+		pasting = true;
+		pasteError = '';
+		try {
+			await copy(projectId, copied.path, path);
+			if (path) expanded.add(path);
+			reload();
+		} catch (cause) {
+			pasteError = cause instanceof Error ? cause.message : String(cause);
+		} finally {
+			pasting = false;
+		}
+	}
+
+	function keydown(event: KeyboardEvent) {
+		if (event.defaultPrevented || event.isComposing || event.altKey || event.shiftKey || event.ctrlKey === event.metaKey) return;
+		if (!(event.target instanceof HTMLElement) || !treeElement?.contains(event.target)) return;
+		const entry = event.target === treeElement ? undefined : focused;
+		const key = event.key.toLowerCase();
+		if (key === 'c' && entry) {
+			event.preventDefault();
+			if (!event.repeat) copyEntry(entry);
+		} else if (key === 'v' && copied) {
+			event.preventDefault();
+			if (!event.repeat) paste(entry?.dir ? entry.path : entry?.path.slice(0, Math.max(entry.path.lastIndexOf('/'), 0)) ?? '');
+		}
 	}
 
 	function startCreate(path: string, dir: boolean) {
@@ -139,16 +181,22 @@
 	}
 </script>
 
+<svelte:window onkeydown={keydown} />
+
 {#snippet tree(path: string, depth: number)}
 	<ul>
 		{#each listings[path] ?? [] as entry (entry.path)}
 			{@const open = entry.dir && expanded.has(entry.path)}
 			{@const kind = entry.dir ? undefined : kinds.get(entry.path)}
 			{@const changed = kind ?? (entry.dir && marked.has(entry.path) ? 'modified' : undefined)}
-			{@const items = [{ label: 'Delete', icon: Trash, onselect: () => confirm(entry) }]}
+			{@const items = [
+				{ label: 'Copy', icon: Copy, onselect: () => copyEntry(entry) },
+				...creationItems(entry.dir ? entry.path : path),
+				{ label: 'Delete', icon: Trash, onselect: () => confirm(entry) }
+			]}
 			<li>
-				<div class="row">
-					<Menu context items={[...creationItems(entry.dir ? entry.path : path), ...items]}>
+				<div class="row" onfocusin={() => (focused = entry)}>
+					<Menu context {items}>
 						{#snippet trigger(props)}
 							<button
 								{...props}
@@ -202,9 +250,10 @@
 	</header>
 	<Menu context items={creationItems('')}>
 		{#snippet trigger(props)}
-			<div {...props} class="tree" role="group" aria-label="File tree">{@render tree('', 0)}</div>
+			<div {...props} bind:this={treeElement} class="tree" role="group" aria-label="File tree" aria-busy={pasting}>{@render tree('', 0)}</div>
 		{/snippet}
 	</Menu>
+	{#if pasteError}<p role="alert">{pasteError}</p>{/if}
 </section>
 
 <Dialog

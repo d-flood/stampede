@@ -168,6 +168,16 @@ export async function create(projectId: string, path: string, dir: boolean): Pro
 	invalidate(projectId);
 }
 
+export async function copy(projectId: string, path: string, destination: string): Promise<{ path: string }> {
+	const result = await json<{ path: string }>(await fetch(`/api/projects/${projectId}/file/copy`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ path, destination })
+	}));
+	invalidate(projectId);
+	return result;
+}
+
 async function put<T>(url: string, body: object): Promise<Saved<T>> {
 	const response = await fetch(url, {
 		method: 'PUT',
