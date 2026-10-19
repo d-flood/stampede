@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+
+RUST_MINIMUM=1.90
+ZIG_SERIES=0.16
+NODE_MINIMUM=22.17
+NODE_SERIES=24
+PNPM_MINIMUM=9
+HTTPS_PORT=8443
+
+shell_path=$PATH
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+sudo_steps=()
+next_steps=()
+
+fail() { echo "setup: $*" >&2; exit 1; }
+at_least() { [[ $(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1) == "$2" ]]; }
+version_of() { "$@" 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1; }
+
+[[ $(uname -s) == Linux ]] || fail "Stampede needs Linux with systemd"
+case $(uname -m) in
+    x86_64) zig_arch=x86_64 node_arch=x64 ;;
+    aarch64|arm64) zig_arch=aarch64 node_arch=arm64 ;;
+    *) fail "unsupported architecture $(uname -m)" ;;
+esac
+
+missing=()
+command -v cc >/dev/null || missing+=(build-essential)
+command -v git >/dev/null || missing+=(git)
+command -v curl >/dev/null || missing+=(curl)
+command -v xz >/dev/null || missing+=(xz-utils)
+python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null || missing+=(python3)
+if (( ${#missing[@]} )); then
+    echo "Install the base packages first, then rerun ./setup:" >&2
+    if command -v apt-get >/dev/null; then
+        echo "  sudo apt-get install -y ${missing[*]}" >&2
+    else
+        echo "  ${missing[*]} (with your package manager)" >&2
+    fi
+    exit 1
+fi
+systemctl --user show-environment >/dev/null 2>&1 \
+    || fail "no systemd user session; log in normally (desktop or SSH), not through su or sudo"
+
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+mkdir -p "$HOME/.local/bin"
+
+fetch() {
+    echo "Downloading $1"
+    curl -fL --proto '=https' --progress-bar -o "$scratch/$2" "$1"
+    echo "$3  $scratch/$2" | sha256sum --check --quiet
+}
+
+link() {
+    if [[ -e $2 && ! -L $2 ]]; then
+        fail "$2 exists and is not a symlink; remove it or put a suitable $(basename "$2") earlier on PATH"
+    fi
+    ln -sfn "$1" "$2"
+}
+
+if ! at_least "$(version_of rustc --version)" $RUST_MINIMUM; then
+    if command -v rustup >/dev/null; then
+        rustup update stable
+    else
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    fi
+    at_least "$(version_of rustc --version)" $RUST_MINIMUM \
+        || fail "rustc $RUST_MINIMUM+ is required; run: rustup default stable"
+fi
+
+if [[ $(zig version 2>/dev/null) != $ZIG_SERIES.* ]]; then
+    read -r version url sha < <(curl -fsSL https://ziglang.org/download/index.json | python3 -c '
+import json, sys
+index = json.load(sys.stdin)
+version = max((v for v in index if v.startswith(sys.argv[1] + ".")), key=lambda v: [int(n) for n in v.split(".")])
+entry = index[version][sys.argv[2] + "-linux"]
+print(version, entry["tarball"], entry["shasum"])' $ZIG_SERIES $zig_arch) || fail "cannot read the Zig release index"
+    name=$(basename "$url" .tar.xz)
+    fetch "$url" zig.tar.xz "$sha"
+    mkdir -p "$HOME/.local/zig"
+    rm -rf "$HOME/.local/zig/$name"
+    tar -C "$HOME/.local/zig" -xJf "$scratch/zig.tar.xz"
+    link "$HOME/.local/zig/$name/zig" "$HOME/.local/bin/zig"
+    [[ $(zig version) == $ZIG_SERIES.* ]] || fail "zig $ZIG_SERIES is installed but another zig comes first on PATH"
+fi
+
+if ! at_least "$(version_of node --version)" $NODE_MINIMUM; then
+    base=https://nodejs.org/dist/latest-v$NODE_SERIES.x
+    read -r sha name < <(curl -fsSL $base/SHASUMS256.txt | grep -E "  node-v[0-9.]+-linux-$node_arch\.tar\.xz$") || fail "cannot read the Node.js release index"
+    fetch "$base/$name" node.tar.xz "$sha"
+    mkdir -p "$HOME/.local/node"
+    rm -rf "$HOME/.local/node/${name%.tar.xz}"
+    tar -C "$HOME/.local/node" -xJf "$scratch/node.tar.xz"
+    for tool in node npm npx; do
+        link "$HOME/.local/node/${name%.tar.xz}/bin/$tool" "$HOME/.local/bin/$tool"
+    done
+fi
+
+if ! at_least "$(version_of pnpm --version)" $PNPM_MINIMUM; then
+    npm install --global --prefix "$HOME/.local" pnpm
+fi
+
+if ! command -v claude >/dev/null; then
+    next_steps+=("Optional: install Claude Code with: curl -fsSL https://claude.ai/install.sh | bash")
+elif [[ ! -e ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json && -z ${ANTHROPIC_API_KEY:-} ]]; then
+    next_steps+=("Log in to Claude Code: run claude, then /login")
+fi
+if ! command -v codex >/dev/null; then
+    next_steps+=("Optional: install Codex with: npm install --global --prefix ~/.local @openai/codex")
+elif ! codex login status >/dev/null 2>&1; then
+    next_steps+=("Log in to Codex: codex login")
+fi
+
+access_given=
+for argument in "$@"; do
+    [[ $argument == --local-only || $argument == --https-port* ]] && access_given=1
+done
+unit=$HOME/.config/systemd/user/stampede.service
+tailnet_name=
+access=()
+if ! command -v tailscale >/dev/null; then
+    next_steps+=("Optional, for phones and other computers: install Tailscale (https://tailscale.com/download/linux), then rerun ./setup")
+else
+    read -r state certificates tailnet_name < <(tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    status = json.load(sys.stdin)
+except ValueError:
+    status = {}
+print(status.get("BackendState") or "Unknown", len(status.get("CertDomains") or []), (status.get("Self") or {}).get("DNSName", "").rstrip(".") or "-")') || true
+    operator=$(tailscale debug prefs 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin).get("OperatorUser", ""))' 2>/dev/null) || true
+    if [[ ${state:-} != Running ]]; then
+        sudo_steps+=("sudo tailscale up")
+    elif [[ ${certificates:-0} == 0 ]]; then
+        next_steps+=("Enable MagicDNS and HTTPS Certificates for your tailnet at https://login.tailscale.com/admin/dns, then rerun ./setup")
+    elif [[ $operator != "$USER" && $EUID != 0 ]]; then
+        sudo_steps+=("sudo tailscale set --operator=$USER")
+    elif [[ -z $access_given && $(sed -n 's/^HttpsPort=//p' "$unit" 2>/dev/null) =~ ^0?$ ]]; then
+        access=(--https-port $HTTPS_PORT)
+    fi
+    if (( ${#sudo_steps[@]} )); then
+        next_steps+=("After the sudo commands, rerun ./setup to serve Stampede over the tailnet")
+    fi
+fi
+
+./rebuild "${access[@]}" "$@"
+
+[[ -e /var/lib/systemd/linger/$USER ]] || sudo_steps=("sudo loginctl enable-linger $USER" "${sudo_steps[@]}")
+https_port=$(sed -n 's/^HttpsPort=//p' "$unit")
+if [[ $https_port != 0 && -n $tailnet_name && $tailnet_name != - ]]; then
+    echo "Tailnet: https://$tailnet_name:$https_port"
+fi
+if [[ :$shell_path: != *":$HOME/.local/bin:"* || :$shell_path: != *":$HOME/.cargo/bin:"* ]]; then
+    next_steps+=("Open a new shell so ~/.local/bin and ~/.cargo/bin are on your PATH")
+fi
+if (( ${#sudo_steps[@]} )); then
+    echo
+    echo "Run with sudo:"
+    printf '  %s\n' "${sudo_steps[@]}"
+fi
+if (( ${#next_steps[@]} )); then
+    echo
+    echo "Next:"
+    printf '  • %s\n' "${next_steps[@]}"
+fi

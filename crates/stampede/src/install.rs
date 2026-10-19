@@ -40,31 +40,34 @@ struct Installed {
 pub fn install(args: InstallArgs) -> io::Result<()> {
     let user = user()?;
     let path = unit_path(&args.unit_name);
-    let added_linger = !Path::new("/var/lib/systemd/linger").join(&user).exists()
-        || installed(&path).is_ok_and(|installed| installed.added_linger);
-    let unit = unit(&args, added_linger)?;
+    let lingering = Path::new("/var/lib/systemd/linger").join(&user).exists();
+    let kept_linger = lingering && installed(&path).is_ok_and(|installed| installed.added_linger);
     let https = format!("--https={}", args.https_port);
     let target = format!("http://127.0.0.1:{}", args.port);
-    let mut commands = vec![
-        vec!["systemctl", "--user", "daemon-reload"],
-        vec!["systemctl", "--user", "enable", "--now", &args.unit_name],
-        vec!["loginctl", "enable-linger", &user],
+    let linger = ["loginctl", "enable-linger", &user];
+    let serve = ["tailscale", "serve", "--bg", &https, &target];
+    let commands = [
+        &["systemctl", "--user", "daemon-reload"][..],
+        &["systemctl", "--user", "enable", "--now", &args.unit_name],
     ];
-    if !args.local_only {
-        commands.push(vec!["tailscale", "serve", "--bg", &https, &target]);
-    }
     if args.dry_run {
+        let unit = unit(&args, !lingering || kept_linger)?;
         let dir = path.parent().unwrap().display();
         print!("mkdir -p {dir}\ncat > {} <<'EOF'\n{unit}EOF\n", path.display());
         println!();
-        for command in commands {
+        for command in commands.into_iter().chain([&linger[..]]).chain((!args.local_only).then_some(&serve[..])) {
             println!("{}", command.join(" "));
         }
         return Ok(());
     }
+    let added_linger = kept_linger || (!lingering && attempt(&linger, &format!("sudo loginctl enable-linger {user}")));
     fs::create_dir_all(path.parent().unwrap())?;
-    fs::write(&path, unit)?;
-    commands.iter().try_for_each(|command| run(command))
+    fs::write(&path, unit(&args, added_linger)?)?;
+    commands.iter().try_for_each(|command| run(command))?;
+    if !args.local_only {
+        attempt(&serve, &format!("sudo tailscale set --operator={user} && {}", serve.join(" ")));
+    }
+    Ok(())
 }
 
 pub fn uninstall(args: UninstallArgs) -> io::Result<()> {
@@ -166,6 +169,12 @@ fn run(command: &[&str]) -> io::Result<()> {
     } else {
         Err(io::Error::other(format!("`{}` {status}", command.join(" "))))
     }
+}
+
+fn attempt(command: &[&str], remedy: &str) -> bool {
+    run(command)
+        .inspect_err(|error| eprintln!("stampede: warning: {error}; to finish, run: {remedy}"))
+        .is_ok()
 }
 
 fn unit_path(name: &str) -> PathBuf {
