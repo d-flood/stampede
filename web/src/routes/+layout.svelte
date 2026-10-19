@@ -1,8 +1,11 @@
 <script lang="ts">
+	import { hostName } from '#lib/config.svelte.ts';
 	import '#lib/tokens.css';
 
 	let { children } = $props();
 </script>
+
+<svelte:head><title>{hostName() ?? 'Oikonomos'}</title></svelte:head>
 
 {@render children()}
 

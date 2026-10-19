@@ -18,6 +18,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Settings {
+    name: Option<String>,
     roots: Vec<PathBuf>,
     leader: String,
     scrollback: usize,
@@ -35,6 +36,7 @@ struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            name: None,
             roots: vec!["~/repos".into()],
             leader: "ctrl+space".to_owned(),
             scrollback: 10_000,
@@ -200,6 +202,7 @@ pub struct LanguageServers {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
+    pub name: Option<String>,
     pub roots: Vec<PathBuf>,
     pub leader: String,
     pub scrollback: usize,
@@ -215,6 +218,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            name: None,
             roots: Settings::default().roots.into_iter().map(expand).collect(),
             leader: Settings::default().leader,
             scrollback: Settings::default().scrollback,
@@ -253,6 +257,7 @@ pub struct Face {
 impl Config {
     fn parse(text: &str) -> Result<Self, toml::de::Error> {
         let Settings {
+            name,
             roots,
             leader,
             scrollback,
@@ -265,6 +270,7 @@ impl Config {
             r#loop,
         } = toml::from_str(text)?;
         Ok(Self {
+            name: name.map(|name| name.trim().to_owned()).filter(|name| !name.is_empty()),
             roots: roots.into_iter().map(expand).collect(),
             leader,
             scrollback,
@@ -330,6 +336,17 @@ pub fn write_theme(path: &Path, name: &str) -> Result<Theme, Error> {
     Ok(theme)
 }
 
+pub fn write_host_name(path: &Path, name: Option<&str>) -> Result<Option<String>, Error> {
+    let name = name.map(str::trim).filter(|name| !name.is_empty());
+    let text = match fs::read_to_string(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        text => text?,
+    };
+    let text = with_host_name(text, name)?;
+    fs::write(path, text)?;
+    Ok(name.map(str::to_owned))
+}
+
 pub fn write_rig(path: &Path, original: Option<&str>, mut rig: Rig) -> Result<Vec<Rig>, Error> {
     let mut text = match fs::read_to_string(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
@@ -388,6 +405,29 @@ fn with_theme(mut text: String, name: &str) -> Result<String, Error> {
     match setting.theme {
         Some(theme) => text.replace_range(theme.span(), &value),
         None => text.insert_str(0, &format!("theme = {value}\n")),
+    }
+    Config::parse(&text)?;
+    Ok(text)
+}
+
+fn with_host_name(mut text: String, name: Option<&str>) -> Result<String, Error> {
+    #[derive(Deserialize)]
+    struct Setting {
+        name: Option<toml::Spanned<String>>,
+    }
+
+    let setting: Setting = toml::from_str(&text)?;
+    let value = name.map(|name| toml::Value::String(name.to_owned()).to_string());
+    match (setting.name, value) {
+        (Some(old), Some(value)) => text.replace_range(old.span(), &value),
+        (None, Some(value)) => text.insert_str(0, &format!("name = {value}\n")),
+        (Some(old), None) => {
+            let span = old.span();
+            let start = text[..span.start].rfind('\n').map_or(0, |newline| newline + 1);
+            let end = text[span.end..].find('\n').map_or(text.len(), |newline| span.end + newline + 1);
+            text.replace_range(start..end, "");
+        }
+        (None, None) => {}
     }
     Config::parse(&text)?;
     Ok(text)
