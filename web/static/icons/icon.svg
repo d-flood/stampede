@@ -15,12 +15,6 @@
 		<circle id="eye" cx="238" cy="24" r="5.5" fill="#2A1D14" />
 	</defs>
 	<rect width="512" height="512" rx="112" fill="#EFE7D9" />
-	<g fill="#DCCAB4">
-		<circle cx="93" cy="372" r="22" />
-		<circle cx="125" cy="392" r="30" />
-		<circle cx="167" cy="404" r="20" />
-		<circle cx="99" cy="410" r="16" />
-	</g>
 	<g transform="translate(67 74) scale(0.58) rotate(7 140 140)">
 		<use href="#far" fill="#6E3A1C" />
 		<use href="#near" fill="#A9521F" />

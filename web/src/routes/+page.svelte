@@ -22,7 +22,7 @@
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
-	import { invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
+	import { image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
@@ -981,6 +981,10 @@
 							{#if file instanceof OpenDiff}
 								{#await import('#lib/shell/Diff.svelte') then { default: Diff }}
 									<Diff diff={file} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
+								{/await}
+							{:else if image(file.path) && !/\.svg$/i.test(file.path)}
+								{#await import('#lib/shell/ImageView.svelte') then { default: ImageView }}
+									<ImageView {file} {device} {active} />
 								{/await}
 							{:else}
 								{#await editor() then { default: Editor }}

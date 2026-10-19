@@ -12,6 +12,10 @@ type Saved<T = { hash: string }> = (T & { conflict?: undefined }) | { conflict: 
 
 export type Invalid = { line: number | null; message: string };
 
+export function image(path: string): boolean {
+	return /\.(avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i.test(path);
+}
+
 export class OpenFile {
 	projectId: string;
 	path: string;

@@ -39,6 +39,7 @@ const loaders: Record<string, Load> = {
 	pyi: python,
 	css: async () => (await import('@codemirror/lang-css')).css(),
 	html: async () => (await import('@codemirror/lang-html')).html(),
+	svg: async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/xml')).xml),
 	json: async () => (await import('@codemirror/lang-json')).json(),
 	md: markdown,
 	markdown,

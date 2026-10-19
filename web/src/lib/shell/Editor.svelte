@@ -13,6 +13,7 @@
 	import { baseline, type Git } from '#lib/git.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
+	import ImagePreview from '#lib/shell/ImagePreview.svelte';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import { Compartment, EditorState } from '@codemirror/state';
@@ -39,12 +40,16 @@
 	let view = $state.raw<EditorView>();
 	let note = $state<string>();
 	let wrap = $state(false);
+	const svg = $derived(/\.svg$/i.test(file.path) && !(file instanceof OpenConfig));
+	let rendered = $state(false);
+	let content = $state<string>();
 	const sync = new Sync(() => file, () => view);
 	const keys = new Compartment();
 	const wrapping = new Compartment();
 
 	onMount(() => {
 		let disposed = false;
+		rendered = svg && !file.cursor;
 		wrap = /\.(md|markdown)$/i.test(file.path);
 		Promise.all([file.read(), language(file.path)]).then(
 			([contents, syntax]) => {
@@ -53,6 +58,7 @@
 					note = 'binary file';
 					return;
 				}
+				if (svg) content = contents.content;
 				view = new EditorView({
 					parent: container,
 					state: EditorState.create({
@@ -66,6 +72,9 @@
 							syntax,
 							theme,
 							sync.listener,
+							svg ? EditorView.updateListener.of((update) => {
+								if (update.docChanged) content = update.state.doc.toString();
+							}) : [],
 							languageServer(servers, file.projectId, file.path, true)
 						]
 					})
@@ -114,20 +123,21 @@
 
 	$effect(() => {
 		const current = view;
-		if (current) servers.displayed(current, displayed);
+		if (current) servers.displayed(current, displayed && !rendered);
 	});
 
 	$effect(() => {
-		if (active && (view || note)) painted(file.id);
+		if (active && (note || (!rendered && view))) painted(file.id);
 	});
 
 	$effect(() => {
-		if (focused && view && form() === 'desktop') view.focus();
+		if (focused && !rendered && view && form() === 'desktop') view.focus();
 	});
 
 	$effect(() => {
 		const cursor = file.cursor;
 		if (!view || !cursor) return;
+		rendered = false;
 		const { doc } = view.state;
 		const line = doc.line(Math.min(Math.max(cursor.line, 1), doc.lines));
 		const anchor = Math.min(line.from + cursor.column - 1, line.to);
@@ -137,14 +147,18 @@
 </script>
 
 <div class="editor" role="tabpanel" hidden={!active}>
-	<div class="toolbar">
+	<div class="toolbar" class:svg>
 		<span class="path" title={file.path}>{file.path}</span>
 		{#if file.deleted}<span class="deleted">deleted on disk</span>{/if}
-		<ServerSwitch {servers} projectId={file.projectId} path={file.path} attached />
-		{#if view}
+		{#if svg}
+			<Button aria-pressed={rendered} variant={rendered ? 'primary' : 'default'} onclick={() => rendered = true}>Rendered</Button>
+			<Button aria-pressed={!rendered} variant={rendered ? 'default' : 'primary'} onclick={() => rendered = false}>Source</Button>
+		{/if}
+		{#if !rendered}<ServerSwitch {servers} projectId={file.projectId} path={file.path} attached />{/if}
+		{#if view && !rendered}
 			<Button aria-label="Line wrapping" aria-pressed={wrap} variant={wrap ? 'primary' : 'default'} onclick={toggleWrap}>Wrap</Button>
 		{/if}
-		{#if form() === 'phone' && view}
+		{#if (form() === 'phone' || rendered) && view}
 			<Button onclick={() => sync.write()} disabled={!file.dirty}><FloppyDisk /> Save</Button>
 		{/if}
 	</div>
@@ -156,9 +170,15 @@
 			<code>{line ? `Line ${line}: ` : ''}{message}</code>
 		</div>
 	{/if}
-	<div class="content" bind:this={container}>
+	<div class="content" hidden={rendered} bind:this={container}>
 		{#if note}<p>{note}</p>{/if}
 	</div>
+	{#if rendered}
+		<div class="content">
+			{#if note}<p role="alert">{note}</p>
+			{:else if content !== undefined}<ImagePreview {file} {device} {active} {content} />{/if}
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -190,6 +210,14 @@
 		font-size: var(--font-size-sm);
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.toolbar.svg {
+		flex-wrap: wrap;
+	}
+
+	.toolbar.svg .path {
+		flex-basis: 8rem;
 	}
 
 	.deleted {
@@ -228,6 +256,10 @@
 	.content {
 		flex: 1;
 		min-height: 0;
+	}
+
+	.content[hidden] {
+		display: none;
 	}
 
 	p {

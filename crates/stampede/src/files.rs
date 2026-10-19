@@ -7,7 +7,7 @@ use std::{
 use axum::{
     Json,
     extract::{Path as Param, Query, State},
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use ignore::WalkBuilder;
@@ -105,6 +105,30 @@ pub async fn exists(
     blocking(move || {
         let status = if resolve(&root, &query.path)?.is_file() { StatusCode::OK } else { StatusCode::NOT_FOUND };
         Ok(status.into_response())
+    })
+    .await
+}
+
+pub async fn image(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Query(query): Query<FileQuery>,
+) -> Result<Response, Failure> {
+    let root = root(&state, &id)?;
+    blocking(move || {
+        let path = resolve(&root, &query.path)?;
+        let mime = mime_guess::from_path(&query.path).first_or_octet_stream();
+        if mime.type_() != "image" {
+            return Err((StatusCode::UNSUPPORTED_MEDIA_TYPE, "Not an image file".to_owned()));
+        }
+        let _ = state.opened.send((id, path.clone()));
+        let bytes = fs::read(path).map_err(failure)?;
+        Ok(([
+            (header::CONTENT_TYPE, mime.as_ref()),
+            (header::CACHE_CONTROL, "no-store"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::CONTENT_SECURITY_POLICY, "sandbox; default-src 'none'"),
+        ], bytes).into_response())
     })
     .await
 }

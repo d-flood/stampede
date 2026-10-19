@@ -126,6 +126,7 @@ fn router(state: AppState) -> Router {
         .route("/api/epics/{slug}/land", post(land_epic))
         .route("/api/projects/{id}/tree", get(files::tree))
         .route("/api/projects/{id}/files", get(files::paths))
+        .route("/api/projects/{id}/image", get(files::image))
         .route("/api/projects/{id}/file", get(files::read).head(files::exists).put(files::write).post(files::create).delete(files::delete))
         .route("/api/projects/{id}/git", get(git::status))
         .route("/api/projects/{id}/git/head", get(git::head))
