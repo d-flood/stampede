@@ -116,7 +116,7 @@
 				<Button {disabled} onclick={() => (picking = false)}>Back</Button>
 			{:else}
 				<Button variant="primary" {disabled} onclick={() => onanswer({ allow: true })}>Allow</Button>
-				{#if request.kind === 'command'}<Button {disabled} onclick={() => (picking = true)}>Always allow</Button>{/if}
+				{#if request.kind === 'command' && request.allowRules !== false}<Button {disabled} onclick={() => (picking = true)}>Always allow</Button>{/if}
 			{/if}
 			<Button variant="danger" {disabled} onclick={() => onanswer({ allow: false })}>Deny</Button>
 		</div>

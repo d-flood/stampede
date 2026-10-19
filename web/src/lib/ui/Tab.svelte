@@ -1,4 +1,6 @@
 <script lang="ts">
+	import type { Agent } from '#lib/config.svelte.ts';
+	import { logos } from '#lib/chat/sessions.ts';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 	import Article from '~icons/ph/article';
 	import CheckBold from '~icons/ph/check-bold';
@@ -9,13 +11,11 @@
 	import HandPalmFill from '~icons/ph/hand-palm-fill';
 	import TerminalWindow from '~icons/ph/terminal-window';
 	import X from '~icons/ph/x';
-	import Claude from '~icons/simple-icons/claude';
-	import OpenAI from '~icons/simple-icons/openai';
 
 	type Props = HTMLButtonAttributes & {
 		variant: 'agent' | 'terminal' | 'editor' | 'diff' | 'browser' | 'epic';
 		label: string;
-		agent?: 'claude-code' | 'codex';
+		agent?: Agent;
 		against?: string;
 		status?: 'working' | 'waiting' | 'done';
 		active?: boolean;
@@ -40,9 +40,8 @@
 	}: Props = $props();
 
 	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe, epic: Article };
-	const agents = { 'claude-code': Claude, codex: OpenAI };
 	const marks = { working: CircleNotchBold, waiting: HandPalmFill, done: CheckBold };
-	const Icon = $derived(variant === 'agent' ? agents[agent] : icons[variant]);
+	const Icon = $derived(variant === 'agent' ? logos[agent] : icons[variant]);
 	const Mark = $derived(status && marks[status]);
 </script>
 

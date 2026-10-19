@@ -15,7 +15,6 @@ use tokio::{
     process,
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
 };
-use toml::value::{Datetime, Offset};
 use uuid::Uuid;
 
 use super::{
@@ -456,29 +455,11 @@ pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
         let limits = &response["response"]["rate_limits"];
         let readings = WINDOWS.into_iter().filter_map(|(window, name)| {
             let used = limits[name]["utilization"].as_f64()? / 100.0;
-            Some(Reading::new(Agent::ClaudeCode, window, used, limits[name]["resets_at"].as_str().and_then(epoch_ms)))
+            Some(Reading::new(Agent::ClaudeCode, window, used, limits[name]["resets_at"].as_str().and_then(super::epoch_ms)))
         });
         return Ok(readings.collect());
     }
     Err(io::Error::other("claude ended without answering get_usage"))
-}
-
-fn epoch_ms(time: &str) -> Option<u64> {
-    let time: Datetime = time.parse().ok()?;
-    let (date, clock) = (time.date?, time.time?);
-    let offset = match time.offset? {
-        Offset::Z => 0,
-        Offset::Custom { minutes } => i64::from(minutes),
-    };
-    let (month, day) = (i64::from(date.month), i64::from(date.day));
-    let year = i64::from(date.year) - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let of_era = year - era * 400;
-    let of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
-    let days = era * 146_097 + of_era * 365 + of_era / 4 - of_era / 100 + of_year - 719_468;
-    let minutes = (days * 24 + i64::from(clock.hour)) * 60 + i64::from(clock.minute) - offset;
-    let seconds = minutes * 60 + i64::from(clock.second.unwrap_or(0));
-    u64::try_from(seconds * 1000 + i64::from(clock.nanosecond.unwrap_or(0) / 1_000_000)).ok()
 }
 
 async fn send(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, text: &str, images: &[Image]) -> io::Result<()> {
@@ -605,7 +586,7 @@ fn request(id: &str, request: &Value) -> RequestKind {
                 .filter_map(|rule| rule["ruleContent"].as_str())
                 .flat_map(|rule| words(rule.trim_end_matches(":*"))).collect::<Vec<_>>();
             let suggestion = parts.iter().map(|part| rules.iter().find(|rule| part.starts_with(rule)).unwrap_or(part).clone()).collect();
-            RequestKind::Command { id, words: parts, suggestion, session_prefixes: true }
+            RequestKind::Command { id, words: parts, suggestion, session_prefixes: true, allow_rules: None }
         }
         Some("AskUserQuestion") => RequestKind::Question {
             id, questions: serde_json::from_value(input["questions"].clone()).unwrap_or_default(),
@@ -1354,7 +1335,7 @@ impl Transcript {
             "WebSearch" => self.call(ToolKind::Web, name, text("query")),
             "Agent" | "Task" => {
                 let replaying = self.replaying || self.history.is_some();
-                let started_at = timestamp.as_str().filter(|_| replaying).and_then(epoch_ms).unwrap_or_else(super::now);
+                let started_at = timestamp.as_str().filter(|_| replaying).and_then(super::epoch_ms).unwrap_or_else(super::now);
                 let (mut subagent, events) = Subagent::new(id, text("description"), started_at);
                 subagent.name = input["subagent_type"].as_str().map(str::to_owned);
                 subagent.prompt = input["prompt"].as_str().map(str::to_owned);

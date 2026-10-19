@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+import uuid
+
+root = Path(os.environ.get('STAMPEDE_TEST_ROOT', os.environ.get('STAMPEDE_E2E_ROOT', '/tmp')))
+state = root / 'copilot'
+state.mkdir(parents=True, exist_ok=True)
+fixture = os.environ.get('STAMPEDE_FAKE_FIXTURE', 'simple-turn')
+session = None
+history = []
+model = 'claude-sonnet-4.6'
+effort = 'medium'
+waiting = None
+
+
+def send(message):
+    payload = json.dumps(message).encode()
+    sys.stdout.buffer.write(f'Content-Length: {len(payload)}\r\n\r\n'.encode() + payload)
+    sys.stdout.buffer.flush()
+
+
+def reply(request, result):
+    send({'jsonrpc': '2.0', 'id': request['id'], 'result': result})
+
+
+def event(kind, data):
+    value = {'id': str(uuid.uuid4()), 'timestamp': '2026-10-19T12:00:00Z', 'parentId': history[-1]['id'] if history else None, 'type': kind, 'data': data}
+    if kind not in ['assistant.message_delta', 'session.idle', 'permission.requested', 'user_input.requested']:
+        history.append(value)
+        (state / f'{session}.json').write_text(json.dumps(history))
+    send({'jsonrpc': '2.0', 'method': 'session.event', 'params': {'sessionId': session, 'event': value}})
+
+
+def finish(text='Welcome—**glad** you’re here.'):
+    message = str(uuid.uuid4())
+    event('assistant.message_delta', {'messageId': message, 'deltaContent': text[:8]})
+    event('assistant.message_delta', {'messageId': message, 'deltaContent': text[8:]})
+    event('assistant.message', {'messageId': message, 'content': text})
+    event('session.idle', {})
+
+
+while True:
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            sys.exit(0)
+        if line in [b'\r\n', b'\n']:
+            break
+        key, value = line.decode().strip().split(':', 1)
+        headers[key.lower()] = value.strip()
+    request = json.loads(sys.stdin.buffer.read(int(headers['content-length'])))
+    with (state / 'received.jsonl').open('a') as log:
+        log.write(json.dumps(request) + '\n')
+    method = request.get('method', '')
+    params = request.get('params', {})
+    if method == 'connect':
+        reply(request, {'ok': True, 'protocolVersion': 3, 'version': '1.0.100'})
+    elif method == 'ping':
+        reply(request, {'message': '', 'timestamp': '2026-10-19T12:00:00Z', 'protocolVersion': 3})
+    elif method == 'auth.getStatus':
+        reply(request, {'isAuthenticated': fixture != 'unauthenticated'})
+    elif method in ['models.list', 'server.models.list']:
+        reply(request, {'models': [{'id': 'claude-sonnet-4.6', 'name': 'Claude Sonnet 4.6', 'capabilities': {'supports': {'vision': True, 'reasoningEffort': True}, 'limits': {'max_context_window_tokens': 200000}}, 'supportedReasoningEfforts': ['low', 'medium', 'high'], 'defaultReasoningEffort': 'medium'}]})
+    elif method in ['session.create', 'session.resume']:
+        session = params['sessionId']
+        path = state / f'{session}.json'
+        history = json.loads(path.read_text()) if path.exists() else []
+        model = params.get('model', model)
+        effort = params.get('reasoningEffort', effort)
+        reply(request, {'sessionId': session})
+    elif method == 'session.model.getCurrent':
+        reply(request, {'modelId': model, 'reasoningEffort': effort})
+    elif method == 'session.getMessages':
+        reply(request, {'events': history})
+    elif method == 'session.list':
+        reply(request, {'sessions': [{'sessionId': 'saved-copilot-session', 'startTime': '2026-10-18T12:00:00Z', 'modifiedTime': '2026-10-19T12:00:00Z', 'summary': 'A saved Copilot conversation', 'isRemote': False}] if fixture == 'sessions' else []})
+    elif method == 'session.send':
+        message = str(uuid.uuid4())
+        reply(request, {'messageId': message})
+        event('user.message', {'messageId': message, 'content': params['prompt'], 'attachments': params.get('attachments', [])})
+        if fixture == 'approval':
+            waiting = 'approval'
+            event('tool.execution_start', {'toolCallId': 'shell', 'toolName': 'bash', 'arguments': {'command': 'git status'}})
+            event('permission.requested', {'requestId': 'approval', 'permissionRequest': {'kind': 'shell', 'fullCommandText': 'git status', 'toolCallId': 'shell', 'intention': 'Inspect working tree'}})
+        elif fixture == 'question':
+            waiting = 'question'
+            send({'jsonrpc': '2.0', 'id': 900001, 'method': 'userInput.request', 'params': {'sessionId': session, 'question': 'Which format?', 'choices': ['JSON', 'CSV'], 'allowFreeform': True}})
+        elif fixture == 'interrupt':
+            event('assistant.message_delta', {'messageId': 'stream', 'deltaContent': 'Still working'})
+        elif fixture == 'tools':
+            event('tool.execution_start', {'toolCallId': 'shell', 'toolName': 'bash', 'arguments': {'command': 'git status'}})
+            event('tool.execution_complete', {'toolCallId': 'shell', 'success': True, 'result': {'content': 'clean'}})
+            event('tool.execution_start', {'toolCallId': 'edit', 'toolName': 'edit', 'arguments': {'path': str(Path.cwd() / 'file.txt'), 'old_str': 'old', 'new_str': 'new'}})
+            event('tool.execution_complete', {'toolCallId': 'edit', 'success': True})
+            event('assistant.usage', {'inputTokens': 120, 'outputTokens': 25})
+            event('session.usage_info', {'currentTokens': 145, 'tokenLimit': 200000, 'messagesLength': 2})
+            finish()
+        elif fixture == 'error':
+            event('session.error', {'message': 'Copilot request failed', 'errorType': 'fatal'})
+        else:
+            finish()
+    elif method == 'session.permissions.handlePendingPermissionRequest':
+        reply(request, {})
+        decision = params.get('result', {})
+        approved = decision.get('kind') in ['approve-once', 'approved']
+        event('tool.execution_complete', {'toolCallId': 'shell', 'success': approved, 'result': {'content': 'clean'} if approved else None, 'error': None if approved else {'message': 'Denied'}})
+        waiting = None
+        finish('Approved.' if approved else 'Denied.')
+    elif method == '' and request.get('id') == 900001:
+        waiting = None
+        finish('Selected format.')
+    elif method == 'session.abort':
+        reply(request, {})
+        waiting = None
+        event('session.idle', {})
+    elif method == 'session.model.switchTo':
+        model = params['modelId']
+        effort = params.get('reasoningEffort', effort)
+        reply(request, {})
+    elif method == 'session.history.compact':
+        reply(request, {'success': True, 'messagesRemoved': 0, 'tokensRemoved': 0})
+        event('session.compaction_complete', {'success': True})
+    elif method == 'session.history.truncate':
+        at = next(i for i, entry in enumerate(history) if entry['id'] == params['eventId'])
+        removed = len(history) - at
+        history = history[:at]
+        (state / f'{session}.json').write_text(json.dumps(history))
+        reply(request, {'eventsRemoved': removed})
+    elif method == 'session.history.clearContext':
+        history = []
+        (state / f'{session}.json').write_text('[]')
+        reply(request, {})
+    elif method in ['session.disconnect', 'session.destroy']:
+        reply(request, {})
+    elif method == 'session.skills.list':
+        reply(request, {'skills': []})
+    elif method == 'session.skills.reload':
+        reply(request, {'skills': []})
+    elif method == 'server.shutdown':
+        reply(request, {})
+        break
+    elif 'id' in request:
+        reply(request, {})

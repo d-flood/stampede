@@ -2,8 +2,9 @@ import type { Agent } from '#lib/config.svelte.ts';
 import type { Component } from 'svelte';
 import Claude from '~icons/simple-icons/claude';
 import OpenAI from '~icons/simple-icons/openai';
+import Copilot from '~icons/simple-icons/githubcopilot';
 
-export const logos: Record<Agent, Component> = { 'claude-code': Claude, codex: OpenAI };
+export const logos: Record<Agent, Component> = { 'claude-code': Claude, codex: OpenAI, copilot: Copilot };
 
 const units: [Intl.RelativeTimeFormatUnit, number][] = [
 	['year', 31_536_000],

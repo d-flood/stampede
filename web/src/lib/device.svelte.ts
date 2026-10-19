@@ -46,7 +46,7 @@ export type Item =
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
 
 export type Request = (
-	| { kind: 'command'; id: string; words: string[][]; suggestion: string[][]; sessionPrefixes: boolean }
+	| { kind: 'command'; id: string; words: string[][]; suggestion: string[][]; sessionPrefixes: boolean; allowRules?: boolean }
 	| { kind: 'question'; id: string; questions: Question[] }
 	| { kind: 'plan'; id: string; plan: string }
 	| { kind: 'edit'; id: string; path: string; diff: string }

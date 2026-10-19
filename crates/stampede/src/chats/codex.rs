@@ -1107,7 +1107,7 @@ impl Transcript {
                 let id = self.ask(message, None);
                 let proposed = params["proposedExecpolicyAmendment"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
                 let suggestion = words.iter().map(|part| if !proposed.is_empty() && part.starts_with(&proposed) { proposed.clone() } else { part.clone() }).collect();
-                self.raise(super::RequestKind::Command { id, words, suggestion, session_prefixes: false });
+                self.raise(super::RequestKind::Command { id, words, suggestion, session_prefixes: false, allow_rules: None });
             }
             Some("item/tool/requestUserInput") => {
                 let id = self.ask(message, None);

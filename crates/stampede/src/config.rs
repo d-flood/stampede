@@ -122,6 +122,7 @@ impl Rig {
         let (name, mode) = match agent {
             Agent::ClaudeCode => ("Claude Code", "auto"),
             Agent::Codex => ("Codex", "approve-for-me"),
+            Agent::Copilot => ("GitHub Copilot", "default"),
         };
         Self {
             name: name.to_owned(),
@@ -138,6 +139,7 @@ impl Rig {
         let mode = self.mode.clone().or_else(|| Some(match self.agent {
             Agent::ClaudeCode => "auto",
             Agent::Codex => "approve-for-me",
+            Agent::Copilot => "default",
         }.to_owned()));
         AgentSettings { model: self.model.clone(), effort: self.effort.clone(), mode }
     }
@@ -181,6 +183,7 @@ pub fn codex_policy(mode: &str) -> Option<(&'static str, &'static str, &'static 
 pub enum Agent {
     ClaudeCode,
     Codex,
+    Copilot,
 }
 
 impl Agent {
@@ -188,6 +191,7 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "claude-code",
             Agent::Codex => "codex",
+            Agent::Copilot => "copilot",
         }
     }
 
@@ -196,6 +200,7 @@ impl Agent {
         match self {
             Agent::ClaudeCode => &["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
             Agent::Codex => &["read-only", "default", "approve-for-me", "full-access"],
+            Agent::Copilot => &["default", "full-access"],
         }
     }
 }
@@ -741,7 +746,7 @@ mod tests {
     #[test]
     fn configured_rigs_use_the_same_permission_defaults_as_fallback_rigs() {
         let defaults = Config::default();
-        for agent in [Agent::ClaudeCode, Agent::Codex] {
+        for agent in [Agent::ClaudeCode, Agent::Codex, Agent::Copilot] {
             let config = Config::parse(&format!("[[rig]]\nname = 'Mine'\nagent = '{}'\n", agent.name())).unwrap();
             assert_eq!(config.rigs[0].settings(), defaults.rig_for(agent).settings());
         }

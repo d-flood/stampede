@@ -17,8 +17,8 @@ type EditorSettings = { keymap: 'standard' | 'vim' };
 type Keybar = { extra: string[] };
 
 export type Appearance = { theme: ITheme; fontFamily: string; fontSize: number; scrollback: number };
-export type Agent = 'claude-code' | 'codex';
-export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
+export type Agent = 'claude-code' | 'codex' | 'copilot';
+export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex', copilot: 'GitHub Copilot' };
 export type Rig = { name: string; agent: Agent; shortcut?: string; model?: string; effort?: string; mode?: string };
 export type Template = { name: string; description: string };
 

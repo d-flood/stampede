@@ -4,7 +4,7 @@ use axum::{Json, extract::{Query, State}, http::StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{AppState, chats::{Choice, claude, codex}, config::{self, Agent, Rig}, files::Failure};
+use crate::{AppState, chats::{Choice, claude, codex, copilot}, config::{self, Agent, Rig}, files::Failure};
 
 #[derive(Deserialize)]
 pub struct Selection {
@@ -24,6 +24,7 @@ pub async fn options(State(state): State<AppState>, Query(selection): Query<Sele
         match selection.agent {
             Agent::ClaudeCode => claude::options(&cwd, &rig.env, &settings).await,
             Agent::Codex => codex::options(&cwd, &rig.env, &settings).await,
+            Agent::Copilot => copilot::options(&cwd, &rig.env, &settings).await,
         }
     }).await.map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Provider took too long to list models. Try again.".to_owned()))?
         .map_err(|error| (StatusCode::BAD_GATEWAY, error.to_string()))?;
@@ -36,6 +37,10 @@ pub async fn options(State(state): State<AppState>, Query(selection): Query<Sele
             Agent::Codex => (
                 model["model"].as_str()?, model["displayName"].as_str().or(model["model"].as_str())?,
                 model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(|effort| effort["reasoningEffort"].as_str()).collect(),
+            ),
+            Agent::Copilot => (
+                model["id"].as_str()?, model["name"].as_str().or(model["id"].as_str())?,
+                model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect(),
             ),
         };
         Some(json!({ "value": value, "label": label, "efforts": efforts }))

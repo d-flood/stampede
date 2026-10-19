@@ -60,7 +60,7 @@
 		agent = rig?.agent ?? 'claude-code';
 		model = rig?.model ?? '';
 		effort = rig?.effort ?? '';
-		mode = rig?.mode ?? (agent === 'claude-code' ? 'auto' : 'approve-for-me');
+		mode = rig?.mode ?? defaultMode(agent);
 		saved = false;
 		void load();
 	}
@@ -69,9 +69,13 @@
 		agent = value;
 		model = '';
 		effort = '';
-		mode = agent === 'claude-code' ? 'auto' : 'approve-for-me';
+		mode = defaultMode(agent);
 		saved = false;
 		void load();
+	}
+
+	function defaultMode(provider: Agent) {
+		return { 'claude-code': 'auto', codex: 'approve-for-me', copilot: 'default' }[provider];
 	}
 
 	async function save() {

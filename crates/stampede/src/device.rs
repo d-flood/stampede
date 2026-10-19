@@ -647,13 +647,13 @@ impl Device {
         };
         let cwd = PathBuf::from(&project.path);
         let config = self.config.borrow();
-        let (claude, codex) = (config.rig_for(Agent::ClaudeCode), config.rig_for(Agent::Codex));
+        let (claude, codex, copilot) = (config.rig_for(Agent::ClaudeCode), config.rig_for(Agent::Codex), config.rig_for(Agent::Copilot));
         drop(config);
         let chats = self.chats.list().into_iter().map(|chat| chat.agent_session);
         let live: HashSet<String> = chats.flatten().collect();
         let outgoing = self.outgoing.clone();
         tokio::spawn(async move {
-            let mut sessions = chats::sessions(&cwd, &claude, &codex).await;
+            let mut sessions = chats::sessions(&cwd, &claude, &codex, &copilot).await;
             sessions.retain(|session| !live.contains(&session.session_id));
             send(&outgoing, json!({ "type": "sessions.listed", "projectId": project_id, "sessions": sessions }));
         });

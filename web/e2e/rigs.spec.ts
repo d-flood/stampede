@@ -249,3 +249,30 @@ test('rig deletion can be cancelled and retried while preserving existing chats'
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	await expect(rig.locator('option[value="Fake Claude"]')).toHaveCount(0);
 });
+
+test('Copilot rigs use CLI models and open a chat', async ({ page, request }) => {
+	await openProject(page, 'alpha');
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+	await dialog.getByRole('combobox', { name: 'Provider', exact: true }).selectOption('copilot');
+	const model = dialog.getByRole('combobox', { name: 'Model', exact: true });
+	await expect(model).toBeEnabled();
+	await model.selectOption('claude-sonnet-4.6');
+	await dialog.getByRole('combobox', { name: 'Effort level', exact: true }).selectOption('high');
+	await expect(dialog.getByRole('combobox', { name: 'Permission mode', exact: true })).toHaveValue('default');
+	await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Copilot');
+	await expect.poll(() => dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+	await dialog.getByRole('button', { name: 'Save rig', exact: true }).click();
+	await expect(dialog.getByRole('status')).toHaveText('Rig saved.');
+	const rigs = await (await request.get('/api/rigs')).json();
+	expect(rigs.find((rig: { name: string }) => rig.name === 'Copilot')).toMatchObject({ agent: 'copilot', model: 'claude-sonnet-4.6', effort: 'high', mode: 'default' });
+	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Copilot', exact: true }).click();
+	await expect(page.getByRole('tab', { name: /^Copilot/ }).getByTitle('done')).toBeVisible();
+	const composer = page.getByRole('textbox', { name: 'Composer', exact: true });
+	await composer.fill('Hello');
+	await page.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect(page.getByText('Welcome—glad you’re here.', { exact: true })).toBeVisible();
+	await expect.poll(() => page.getByRole('tabpanel').filter({ has: composer }).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});

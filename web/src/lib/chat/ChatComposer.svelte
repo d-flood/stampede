@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { agentNames } from '#lib/config.svelte.ts';
 	import Handoff from '#lib/chat/Handoff.svelte';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
@@ -69,7 +70,7 @@
 	}
 
 	const working = $derived(chat.status !== 'done' && !request);
-	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
+	const agent = $derived(chat.agent === 'claude-code' ? 'Claude' : agentNames[chat.agent]);
 
 	function send(text: string, queue: boolean) {
 		if (!live || reading || (!text.trim() && !images.length)) return false;

@@ -1,5 +1,6 @@
 pub(crate) mod claude;
 pub(crate) mod codex;
+pub(crate) mod copilot;
 mod delegation;
 mod holder;
 mod html;
@@ -371,7 +372,14 @@ pub struct Request {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
 pub enum RequestKind {
-    Command { id: String, words: Vec<Vec<String>>, suggestion: Vec<Vec<String>>, session_prefixes: bool },
+    Command {
+        id: String,
+        words: Vec<Vec<String>>,
+        suggestion: Vec<Vec<String>>,
+        session_prefixes: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        allow_rules: Option<bool>,
+    },
     Question { id: String, questions: Vec<Question> },
     Plan { id: String, plan: String },
     Edit { id: String, path: String, diff: String },
@@ -674,12 +682,12 @@ impl Session {
     }
 }
 
-/// Both Agents' past sessions in `cwd`, newest first, found through each Agent's Rig.
-pub async fn sessions(cwd: &Path, claude: &Rig, codex: &Rig) -> Vec<Session> {
+pub async fn sessions(cwd: &Path, claude: &Rig, codex: &Rig, copilot: &Rig) -> Vec<Session> {
     let mut sessions = Vec::new();
     for (agent, listed) in [
         (Agent::ClaudeCode, claude::sessions(cwd, &claude.env)),
         (Agent::Codex, codex::sessions(cwd, &codex.env).await),
+        (Agent::Copilot, copilot::sessions(cwd, &copilot.env).await),
     ] {
         match listed {
             Ok(listed) => sessions.extend(listed),
@@ -883,6 +891,9 @@ impl Chats {
             Agent::Codex => codex::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+            Agent::Copilot => copilot::start(&self.data_dir, &chat, &storage.env)
+                .await
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
         };
         let (driver, events) = started.inspect_err(|_| {
             let _ = fs::remove_file(record_path(&self.data_dir, &chat.id));
@@ -927,6 +938,9 @@ impl Chats {
                 }
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
                 Agent::Codex => codex::resume(&self.data_dir, &chat, &env)
+                    .await
+                    .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+                Agent::Copilot => copilot::start(&self.data_dir, &chat, &env)
                     .await
                     .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             };
@@ -1345,6 +1359,7 @@ impl Chats {
         let mut transcript = entry.transcript.lock().unwrap();
         let Some(request) = transcript.requests.iter().find(|request| request.id() == request_id) else { return };
         match (&answer, &request.kind) {
+            (Answer::Rules(_), RequestKind::Command { allow_rules: Some(false), .. }) => return,
             (Answer::Rules(rules), RequestKind::Command { words, session_prefixes, .. }) => {
                 if rules.len() != words.len() || rules.iter().any(|rule| rule.scope != rules[0].scope) || rules.iter().zip(words).any(|(rule, words)| {
                     rule.prefix.is_empty() || !words.starts_with(&rule.prefix)
@@ -1469,6 +1484,7 @@ pub async fn usage(rig: &Rig) -> io::Result<Vec<Reading>> {
     match rig.agent {
         Agent::ClaudeCode => claude::usage(&rig.env).await,
         Agent::Codex => codex::usage(&rig.env).await,
+        Agent::Copilot => Ok(Vec::new()),
     }
 }
 
@@ -1554,4 +1570,22 @@ fn diff(old: &str, new: &str) -> String {
     let removed = old.lines().map(|line| format!("-{line}\n"));
     let added = new.lines().map(|line| format!("+{line}\n"));
     removed.chain(added).collect()
+}
+
+fn epoch_ms(time: &str) -> Option<u64> {
+    let time: toml::value::Datetime = time.parse().ok()?;
+    let (date, clock) = (time.date?, time.time?);
+    let offset = match time.offset? {
+        toml::value::Offset::Z => 0,
+        toml::value::Offset::Custom { minutes } => i64::from(minutes),
+    };
+    let (month, day) = (i64::from(date.month), i64::from(date.day));
+    let year = i64::from(date.year) - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let of_era = year - era * 400;
+    let of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let days = era * 146_097 + of_era * 365 + of_era / 4 - of_era / 100 + of_year - 719_468;
+    let minutes = (days * 24 + i64::from(clock.hour)) * 60 + i64::from(clock.minute) - offset;
+    let seconds = minutes * 60 + i64::from(clock.second.unwrap_or(0));
+    u64::try_from(seconds * 1000 + i64::from(clock.nanosecond.unwrap_or(0) / 1_000_000)).ok()
 }
