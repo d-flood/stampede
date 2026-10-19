@@ -8,21 +8,36 @@
 
 	let { readings }: { readings: Reading[] } = $props();
 
+	const windows = [
+		{ window: 'five-hour', label: '5h', name: '5h' },
+		{ window: 'weekly', label: 'Weekly', name: 'week' }
+	] as const;
 	const agents = [
 		{ agent: 'claude-code', label: 'Claude', Logo: Claude },
 		{ agent: 'codex', label: 'Codex', Logo: OpenAI }
 	] as const;
-	const windows = [
-		{ window: 'five-hour', label: '5h' },
-		{ window: 'weekly', label: 'Weekly' }
-	] as const;
+
+	const visibleAgents = $derived(agents.filter(({ agent }) => readings.some((reading) => reading.agent === agent && reading.used !== undefined)));
 
 	let now = $state(Date.now());
+	let section: HTMLElement;
+	let compact = $state(false);
 
 	onMount(() => {
 		const timer = setInterval(() => (now = Date.now()), 30_000);
-		return () => clearInterval(timer);
+		const observer = new ResizeObserver(() => {
+			compact = getComputedStyle(section.querySelector('.agent') ?? section).getPropertyValue('--compact').trim() === '1';
+		});
+		observer.observe(section);
+		return () => {
+			clearInterval(timer);
+			observer.disconnect();
+		};
 	});
+
+	function resetTime(resetsAt: number) {
+		return new Date(resetsAt).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+	}
 
 	function age(readAt: number) {
 		const minutes = Math.floor((now - readAt) / 60_000);
@@ -43,17 +58,17 @@
 	}
 
 	function details(reading: Reading | undefined) {
-		if (!reading) return 'No usage reading available';
+		if (!reading) return '';
 		const updated = `Last updated: ${new Date(reading.readAt).toLocaleString()}`;
 		const reset = reading.resetsAt === undefined
-			? 'Reset time unavailable'
+			? ''
 			: `Resets: ${new Date(reading.resetsAt).toLocaleString()}`;
-		return `${updated}\n${reset}`;
+		return [updated, reset].filter(Boolean).join('\n');
 	}
 </script>
 
-<section aria-label="Usage windows" class:phone={form() === 'phone'}>
-	{#each agents as { agent, label, Logo } (agent)}
+<section bind:this={section} aria-label="Usage windows" class:phone={form() === 'phone'}>
+	{#each visibleAgents as { agent, label, Logo } (agent)}
 		{@const updated = Math.max(0, ...readings.filter((reading) => reading.agent === agent).map((reading) => reading.readAt))}
 		<div class="agent {agent}" role="group" aria-label={label}>
 			<div class="identity">
@@ -63,32 +78,34 @@
 					<div class="age">{updated ? age(updated) : ''}</div>
 				</div>
 			</div>
-			{#each windows as { window, label: period } (window)}
+			{#each windows as { window, label: period, name } (window)}
 				{@const reading = readings.find((reading) => reading.agent === agent && reading.window === window)}
-				{@const percent = reading ? Math.round(reading.used * 100) : 0}
-				{@const description = details(reading)}
-				<div class="meter" class:high={reading && reading.used >= 0.9}>
-					<Tooltip delayDuration={0} text={`${label} · ${period}${reading ? ` · ${percent}% used` : ''}\n${description}`}>
-						{#snippet children(props)}
-							<span {...props} class="ring" role="meter" aria-label="{label} · {window === 'weekly' ? 'week' : '5h'}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={reading ? percent : undefined} aria-valuetext={reading ? `${percent}% used. ${description}` : description}>
-								<svg viewBox="0 0 40 40" aria-hidden="true">
-									<circle class="track" cx="20" cy="20" r="17" />
-									<circle class="fill" cx="20" cy="20" r="17" pathLength="100" stroke-dasharray="{Math.max(0, Math.min(percent, 100))} 100" transform="rotate(-90 20 20)" />
-								</svg>
-								<span class="percent">{reading ? `${percent}%` : '—'}</span>
-							</span>
-						{/snippet}
-					</Tooltip>
-					<span class="label">{period}</span>
-					<span class="reset">
+				{@const used = reading?.used}
+				{#if used !== undefined}
+					{@const percent = Math.round(used * 100)}
+					{@const description = details(reading)}
+					{@const reset = reading?.resetsAt === undefined ? '' : `${resetTime(reading.resetsAt)} (${until(reading.resetsAt)})`}
+					<div class="meter" style:grid-column={window === 'weekly' ? 3 : 2} class:high={used >= 0.9}>
+						<Tooltip delayDuration={0} text={reset} disabled={!compact || !reset}>
+							{#snippet children(props)}
+								<span {...props} class="ring" role="meter" aria-label="{label} · {name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% used. ${description}`}>
+									<svg viewBox="0 0 40 40" aria-hidden="true">
+										<circle class="track" cx="20" cy="20" r="17" />
+										<circle class="fill" cx="20" cy="20" r="17" pathLength="100" stroke-dasharray="{Math.max(0, Math.min(percent, 100))} 100" transform="rotate(-90 20 20)" />
+									</svg>
+									<span class="percent">{percent}%</span>
+								</span>
+							{/snippet}
+						</Tooltip>
+						<span class="label">{period}</span>
 						{#if reading?.resetsAt !== undefined}
-							<time aria-label="Resets {new Date(reading.resetsAt).toLocaleString()}" datetime={new Date(reading.resetsAt).toISOString()}>{new Date(reading.resetsAt).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</time>
-							<span class="countdown">({until(reading.resetsAt)})</span>
-						{:else}
-							Reset unavailable
+							<span class="reset">
+								<time aria-label="Resets {new Date(reading.resetsAt).toLocaleString()}" datetime={new Date(reading.resetsAt).toISOString()}>{resetTime(reading.resetsAt)}</time>
+								<span class="countdown">({until(reading.resetsAt)})</span>
+							</span>
 						{/if}
-					</span>
-				</div>
+					</div>
+				{/if}
 			{/each}
 		</div>
 	{/each}
@@ -104,6 +121,10 @@
 		container-type: inline-size;
 	}
 
+	section:not(:has(.agent)) {
+		display: none;
+	}
+
 	.phone {
 		margin-top: 0;
 		border-top: none;
@@ -111,11 +132,12 @@
 	}
 
 	.agent {
+		--compact: 0;
 		display: grid;
-		grid-template-columns: 82px repeat(2, minmax(0, 1fr));
+		grid-template-columns: max-content repeat(2, minmax(0, 1fr));
 		align-items: start;
-		gap: var(--space-3);
-		padding: var(--space-6) 0;
+		gap: var(--space-2);
+		padding: var(--space-3) 0;
 	}
 
 	.agent + .agent {
@@ -252,6 +274,16 @@
 		}
 	}
 
+	@container (max-width: 24rem) {
+		.agent {
+			--compact: 1;
+		}
+
+		.reset time {
+			display: none;
+		}
+	}
+
 	@container (min-width: 32rem) {
 		.agent {
 			grid-template-columns: 132px repeat(2, minmax(0, 1fr));
@@ -273,6 +305,7 @@
 
 		.ring {
 			grid-row: span 2;
+			align-self: start;
 			width: 44px;
 			height: 44px;
 		}

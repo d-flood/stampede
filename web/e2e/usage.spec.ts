@@ -39,19 +39,17 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	if (project.name === 'desktop') {
 		await usage.getByRole('meter', { name: 'Claude · 5h' }).hover();
 		const tooltip = page.getByRole('tooltip');
-		await expect(tooltip).toContainText('Claude · 5h · 100% used');
-		await expect(tooltip).toContainText('Last updated:');
-		await expect(tooltip).toContainText('Resets:');
+		await expect(tooltip).toContainText('(in 3h 9m)');
 		await page.keyboard.press('Escape');
 		await page.clock.runFor(100);
 		await expect(tooltip).toBeHidden();
 		await page.mouse.move(900, 400);
 	}
 	await expect(usage.getByRole('group')).toHaveCount(2);
-	await expect(usage.getByRole('meter')).toHaveCount(4);
+	await expect(usage.getByRole('meter')).toHaveCount(3);
 	await expect(usage.locator('.countdown')).toHaveText(['(in 3h 9m)', '(in 6d 14h)', '(in 4d 20h)']);
-	await expect(usage.getByRole('meter', { name: 'Codex · 5h' })).toHaveText('—');
-	await expect(usage.getByText('Reset unavailable')).toHaveCount(1);
+	await expect(usage.getByRole('meter', { name: 'Codex · 5h' })).toHaveCount(0);
+	await expect(usage.getByText('Reset unavailable')).toHaveCount(0);
 	await expect(usage.getByRole('group', { name: 'Claude', exact: true }).locator('.age')).toHaveText('2m ago');
 	await expect(usage.getByRole('group', { name: 'Codex', exact: true }).locator('.age')).toHaveText('just now');
 	for (const colorScheme of ['dark', 'light'] as const) {
@@ -78,7 +76,7 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 			await expect(agent.locator('.brand svg')).toBeVisible();
 			await expect.poll(() => agent.evaluate((element) => {
 				const logo = getComputedStyle(element.querySelector('.brand svg')!).color;
-				const fill = getComputedStyle(element.querySelectorAll('.fill')[1]).stroke;
+				const fill = getComputedStyle(element.querySelector('.meter:last-child .fill')!).stroke;
 				return logo === fill;
 			})).toBe(true);
 		}
@@ -90,11 +88,12 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 		await expect.poll(() => usage.evaluate((element) => {
 			const bounds = element.getBoundingClientRect();
 			return element.scrollWidth <= element.clientWidth && [...element.querySelectorAll('.identity, .ring, .label, time, .countdown')].every((node) => {
+				if (!node.checkVisibility()) return true;
 				const rect = node.getBoundingClientRect();
 				return rect.left >= bounds.left && rect.right <= bounds.right && rect.top >= bounds.top && rect.bottom <= bounds.bottom;
 			}) && [...element.querySelectorAll('.agent')].every((agent) => {
-				const [first, second] = agent.querySelectorAll('.ring');
-				return Math.abs(first.getBoundingClientRect().top - second.getBoundingClientRect().top) < 1;
+				const rings = [...agent.querySelectorAll('.ring')];
+				return rings.every((ring) => Math.abs(ring.getBoundingClientRect().top - rings[0].getBoundingClientRect().top) < 1);
 			});
 		})).toBe(true);
 	}
@@ -110,7 +109,7 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	await page.clock.fastForward(minute);
 	await expect(usage.locator('.countdown')).toHaveText('(now)');
 	update([]);
-	await expect(usage.getByText('—', { exact: true })).toHaveCount(4);
+	await expect(usage).toBeHidden();
 	await expect(usage.locator('.countdown')).toHaveCount(0);
-	await expect(usage.getByText('Reset unavailable')).toHaveCount(4);
+	await expect(usage.getByText('Reset unavailable')).toHaveCount(0);
 });

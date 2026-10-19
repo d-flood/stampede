@@ -131,8 +131,6 @@
 	}
 
 	.boxed {
-		flex-direction: row;
-		align-items: flex-end;
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg);
 	}
@@ -142,7 +140,6 @@
 	}
 
 	.boxed textarea {
-		flex: 1;
 		max-height: 40vh;
 		padding: var(--space-1) var(--space-2);
 		border: none;
@@ -153,6 +150,7 @@
 
 	.boxed .actions {
 		align-items: center;
+		flex-wrap: wrap;
 	}
 
 	.boxed.phone {
@@ -175,9 +173,5 @@
 
 	.boxed.phone textarea:focus-visible {
 		border-color: var(--status-working);
-	}
-
-	.boxed.phone .actions {
-		flex-wrap: wrap;
 	}
 </style>
