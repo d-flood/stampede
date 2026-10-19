@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { agentNames, rigs, saveRig, type Agent } from '#lib/config.svelte.ts';
+	import { agentNames, deleteRig, rigs, saveRig, type Agent } from '#lib/config.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Dialog from '#lib/ui/Dialog.svelte';
 
 	type Model = { value: string; label: string; efforts: string[] };
 	type Options = { models: Model[]; modes: { value: string; label: string }[]; settings?: { model?: string; effort?: string } };
@@ -17,6 +18,10 @@
 	let saving = $state(false);
 	let error = $state('');
 	let saved = $state(false);
+	let confirming = $state(false);
+	let deleting = $state(false);
+	let deleteError = $state('');
+	const busy = $derived(saving || deleting);
 	let request = 0;
 	const efforts = $derived(options.models.find((choice) => choice.value === model)?.efforts ?? []);
 
@@ -84,15 +89,29 @@
 			saving = false;
 		}
 	}
+
+	async function remove() {
+		deleting = true;
+		deleteError = '';
+		try {
+			await deleteRig(selected);
+			confirming = false;
+			choose('');
+		} catch (failure) {
+			deleteError = failure instanceof Error ? failure.message : 'Could not delete rig.';
+		} finally {
+			deleting = false;
+		}
+	}
 </script>
 
 <div class="rig-editor">
 	<label for="editing-rig">Rig</label>
-	<select id="editing-rig" value={selected} disabled={saving} onchange={(event) => choose(event.currentTarget.value)}>
+	<select id="editing-rig" value={selected} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
 		<option value="">New rig</option>
 		{#each rigs() as rig (rig.name)}<option value={rig.name}>{rig.name}</option>{/each}
 	</select>
-	<fieldset disabled={saving}>
+	<fieldset disabled={busy}>
 		<label for="rig-name">Name</label>
 		<input id="rig-name" bind:value={name} required placeholder="e.g. Reviewer" oninput={() => (saved = false)} />
 		<label for="rig-provider">Provider</label>
@@ -118,12 +137,21 @@
 		</select>
 	</fieldset>
 	{#if loading}<p role="status">Loading provider choices…</p>{/if}
-	{#if error}<p role="alert">{error}</p><Button disabled={loading || saving} onclick={load}>Reload choices</Button>{/if}
+	{#if error}<p role="alert">{error}</p><Button disabled={loading || busy} onclick={load}>Reload choices</Button>{/if}
 	<div class="actions">
 		{#if saved}<span role="status">Rig saved.</span>{/if}
-		<Button variant="primary" disabled={loading || saving || !name.trim() || !options.models.length || !options.modes.length} onclick={save}>{saving ? 'Saving…' : 'Save rig'}</Button>
+		{#if selected}<Button variant="danger" disabled={busy} onclick={() => { deleteError = ''; confirming = true; }}>Delete rig</Button>{/if}
+		<Button variant="primary" disabled={loading || busy || !name.trim() || !options.models.length || !options.modes.length} onclick={save}>{saving ? 'Saving…' : 'Save rig'}</Button>
 	</div>
 </div>
+
+<Dialog bind:open={confirming} title="Delete rig?" description={`Delete “${selected}”? Existing chats will be kept.`}>
+	{#if deleteError}<p role="alert">{deleteError}</p>{/if}
+	{#snippet actions()}
+		<Button disabled={deleting} onclick={() => (confirming = false)}>Cancel</Button>
+		<Button variant="danger" disabled={deleting} onclick={remove}>{deleting ? 'Deleting…' : 'Delete'}</Button>
+	{/snippet}
+</Dialog>
 
 <style>
 	.rig-editor,
@@ -171,6 +199,7 @@
 
 	.actions {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		justify-content: flex-end;
 		gap: var(--space-2);

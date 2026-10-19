@@ -416,26 +416,49 @@ pub fn write_rig(path: &Path, original: Option<&str>, mut rig: Rig) -> Result<Ve
         ("rig".to_owned(), toml::Value::Array(vec![value])),
     ]))?;
     if let Some(name) = original {
-        #[derive(Deserialize)]
-        struct Document { rig: Vec<toml::Spanned<BTreeMap<String, toml::Spanned<toml::Value>>>> }
-        #[derive(Deserialize)]
-        struct Environments { rig: Vec<Environment> }
-        #[derive(Deserialize)]
-        struct Environment { #[serde(default)] env: BTreeMap<String, toml::Spanned<String>> }
-        let document: Document = toml::from_str(&text)?;
-        let environments: Environments = toml::from_str(&text)?;
         let index = current.rigs.iter().position(|rig| rig.name == name).unwrap();
-        let old = &document.rig[index];
-        let end = old.get_ref().values().map(|field| field.span().end)
-            .chain(environments.rig[index].env.values().map(|field| field.span().end))
-            .max().unwrap_or(old.span().end);
-        text.replace_range(old.span().start..end, replacement.trim_end());
+        text.replace_range(rig_range(&text, index)?, replacement.trim_end());
     } else {
+        if current.rigs.is_empty() {
+            let document: BTreeMap<toml::Spanned<String>, toml::Spanned<toml::Value>> = toml::from_str(&text)?;
+            if let Some((key, value)) = document.iter().find(|(key, _)| key.get_ref() == "rig") {
+                text.replace_range(key.span().start..value.span().end, "");
+            }
+        }
         text.push_str(&format!("\n{replacement}"));
     }
     let updated = Config::parse(&text)?;
     fs::write(path, text)?;
     Ok(updated.rigs)
+}
+
+pub fn delete_rig(path: &Path, name: &str) -> Result<Vec<Rig>, Error> {
+    let mut text = fs::read_to_string(path)?;
+    let current = Config::parse(&text)?;
+    let index = current.rigs.iter().position(|rig| rig.name == name).ok_or("Rig no longer exists; reopen the editor")?;
+    text.replace_range(rig_range(&text, index)?, "");
+    if current.rigs.len() == 1 {
+        text.insert_str(0, "rig = []\n");
+    }
+    let updated = Config::parse(&text)?;
+    fs::write(path, text)?;
+    Ok(updated.rigs)
+}
+
+fn rig_range(text: &str, index: usize) -> Result<std::ops::Range<usize>, Error> {
+    #[derive(Deserialize)]
+    struct Document { rig: Vec<toml::Spanned<BTreeMap<String, toml::Spanned<toml::Value>>>> }
+    #[derive(Deserialize)]
+    struct Environments { rig: Vec<Environment> }
+    #[derive(Deserialize)]
+    struct Environment { #[serde(default)] env: BTreeMap<String, toml::Spanned<String>> }
+    let document: Document = toml::from_str(text)?;
+    let environments: Environments = toml::from_str(text)?;
+    let old = &document.rig[index];
+    let end = old.get_ref().values().map(|field| field.span().end)
+        .chain(environments.rig[index].env.values().map(|field| field.span().end))
+        .max().unwrap_or(old.span().end);
+    Ok(old.span().start..end)
 }
 
 fn with_theme(mut text: String, name: &str) -> Result<String, Error> {
@@ -675,6 +698,33 @@ mod tests {
                 invalid.name = name.to_owned();
                 assert!(write_rig(&path, original, invalid).is_err());
                 assert_eq!(fs::read_to_string(&path).unwrap(), before);
+            }
+        }
+    }
+
+    #[test]
+    fn deleting_rigs_preserves_settings_and_keeps_an_empty_list_on_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        for environment in ["env = { CODEX_HOME = '/tmp/alternate' }\n", "[rig.env]\nCODEX_HOME = '/tmp/alternate'\n", "[rig.env]\n"] {
+            let original = format!("# Keep this\nroots = []\n[[rig]]\nname = 'First'\nagent = 'codex'\n{environment}\n[[rig]]\nname = 'Second'\nagent = 'claude-code'\n\n[editor]\nkeymap = 'vim'\n");
+            for first in ["First", "Second"] {
+                fs::write(&path, &original).unwrap();
+                let remaining = delete_rig(&path, first).unwrap();
+                assert_eq!(remaining.len(), 1);
+                assert_ne!(remaining[0].name, first);
+                let saved = fs::read_to_string(&path).unwrap();
+                assert!(saved.contains("# Keep this\nroots = []"), "{saved}");
+                assert!(saved.contains("[editor]\nkeymap = 'vim'"), "{saved}");
+                assert!(delete_rig(&path, first).is_err());
+                assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+                assert!(delete_rig(&path, &remaining[0].name).unwrap().is_empty());
+                let saved = fs::read_to_string(&path).unwrap();
+                Config::seed_rigs(&path).unwrap();
+                assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+                assert!(Config::load(&path).unwrap().rigs.is_empty());
+                let added = Rig::starter(Agent::Codex);
+                assert_eq!(write_rig(&path, None, added.clone()).unwrap(), [added]);
             }
         }
     }

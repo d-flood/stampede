@@ -154,6 +154,16 @@ export async function saveRig(settings: { original?: string; name: string; agent
 	configured = await response.json();
 }
 
+export async function deleteRig(name: string) {
+	const response = await fetch('/api/rigs', {
+		method: 'DELETE',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(name)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	configured = await response.json();
+}
+
 export function templates(): Template[] {
 	return offered;
 }

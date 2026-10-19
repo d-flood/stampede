@@ -109,7 +109,7 @@ fn router(state: AppState) -> Router {
         .route("/api/themes", get(theme_names))
         .route("/api/themes/{name}", get(preview_theme))
         .route("/api/font", get(font))
-        .route("/api/rigs", get(rigs).put(rigs::save))
+        .route("/api/rigs", get(rigs).put(rigs::save).delete(rigs::delete))
         .route("/api/rigs/options", get(rigs::options))
         .route("/api/templates", get(templates))
         .route("/api/editor", get(editor))
