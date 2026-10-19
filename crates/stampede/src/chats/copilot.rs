@@ -13,8 +13,8 @@ use github_copilot_sdk::{
     SessionConfig, SessionEvent, SessionId, SessionListFilter, SetModelOptions,
     handler::{PermissionHandler, PermissionResult, UserInputHandler, UserInputResponse},
     session::Session as CopilotSession,
-    rpc::ModelListRequest,
-    session_events::{ProviderMonthlyUsageScope, ProviderMonthlyUsageState, ProviderQuotaState, ProviderQuotaUnit, SessionQuotaObservationData},
+    rpc::{EventsReadDirection, ModelListRequest, SessionsReadPersistedEventsRequest},
+    session_events::{AiCreditsStatus, ProviderMonthlyUsageScope, ProviderMonthlyUsageState, ProviderQuotaState, ProviderQuotaUnit, SessionQuotaObservationData, UsageGetMetricsResult},
 };
 use serde_json::{Value, json};
 use tokio::{
@@ -125,7 +125,12 @@ pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
         let result = rpc(session.rpc().quota().refresh()).await.map(|quota| readings(quota.provider_quotas.as_deref().unwrap_or_default()));
         let _ = rpc(session.disconnect()).await;
         let _ = rpc(connection.client.delete_session(session.id())).await;
-        result
+        let mut readings = result?;
+        match recorded_costs(&connection.client).await {
+            Ok(costs) => readings.extend(costs),
+            Err(error) => eprintln!("cannot read Copilot recorded usage: {error}"),
+        }
+        Ok(readings)
     }.await;
     connection.close().await;
     result
@@ -151,6 +156,55 @@ fn readings(providers: &[ProviderQuotaState]) -> Vec<Reading> {
         }
     }
     vec![reading]
+}
+
+async fn report_cost(session: &CopilotSession, chat_id: &str, events: &UnboundedSender<Event>) {
+    let Ok(metrics) = rpc(session.rpc().usage().get_metrics()).await else { return };
+    let reading = session_cost(session.id(), Some(chat_id), &metrics);
+    let _ = events.send(Event::Usage(vec![reading]));
+}
+
+fn session_cost(session_id: &SessionId, chat_id: Option<&str>, metrics: &UsageGetMetricsResult) -> Reading {
+    let mut reading = Reading::new(Agent::Copilot, Window::Session, 0.0, None);
+    reading.used = None;
+    reading.chat_id = chat_id.map(str::to_owned);
+    reading.session_id = Some(session_id.to_string());
+    reading.partial = metrics.ai_credits_status != Some(AiCreditsStatus::Complete);
+    if !matches!(metrics.ai_credits_status, Some(AiCreditsStatus::Unavailable | AiCreditsStatus::Unknown))
+        && let Some(amount) = metrics.total_nano_aiu.filter(|amount| amount.is_finite() && *amount >= 0.0)
+        && (amount > 0.0 || metrics.ai_credits_status.is_some()) {
+        reading.consumption = Some(Consumption { amount: amount / 1e9, unit: Unit::Credits });
+    }
+    if reading.consumption.is_none() && metrics.total_user_requests >= 0 {
+        reading.consumption = Some(Consumption { amount: metrics.total_user_requests as f64, unit: Unit::Requests });
+        reading.partial = false;
+    }
+    reading
+}
+
+async fn recorded_costs(client: &Client) -> io::Result<Vec<Reading>> {
+    let mut readings = Vec::new();
+    for session in rpc(client.list_sessions(None)).await?.into_iter().filter(|session| !session.is_remote) {
+        let mut cursor = None;
+        loop {
+            let page = match rpc(client.rpc().sessions().read_persisted_events(SessionsReadPersistedEventsRequest {
+                session_id: session.session_id.clone(), direction: Some(EventsReadDirection::Backward), max: Some(100), cursor,
+            })).await {
+                Ok(page) => page,
+                Err(error) => { eprintln!("cannot read Copilot session usage: {error}"); break; }
+            };
+            let snapshot = page.events.iter().rev()
+                .filter(|event| matches!(event.event_type.as_str(), "session.usage_checkpoint" | "session.shutdown"))
+                .find_map(|event| serde_json::from_value::<UsageGetMetricsResult>(event.data["accountingSnapshot"].clone()).ok());
+            if let Some(metrics) = snapshot {
+                readings.push(session_cost(&session.session_id, None, &metrics));
+                break;
+            }
+            if !page.has_more { break; }
+            cursor = Some(page.cursor);
+        }
+    }
+    Ok(readings)
 }
 
 pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
@@ -268,6 +322,10 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
         Some((id, efforts))
     }).collect();
     let _ = transcript.events.send(Event::Session(session.id().to_string()));
+    if let Ok(quota) = rpc(session.rpc().quota().get()).await {
+        let _ = transcript.events.send(Event::Usage(readings(quota.provider_quotas.as_deref().unwrap_or_default())));
+    }
+    report_cost(&session, &chat.id, &transcript.events).await;
     for event in history { transcript.read(&event, true); }
     transcript.finish();
     if chat.agent_session.is_some() && chat.status != Status::Done {
@@ -316,7 +374,11 @@ async fn drive(
                     }
                     Ok(())
                 }
-                Some(Action::Run(builtin)) => run(&connection.client, &location, &mut session, &mut subscribed, &mut transcript, builtin).await,
+                Some(Action::Run(builtin)) => {
+                    let result = run(&connection.client, &location, &mut session, &mut subscribed, &mut transcript, builtin).await;
+                    if result.is_ok() { report_cost(&session, &location.chat.id, &transcript.events).await; }
+                    result
+                }
                 Some(Action::Delegated(item)) => { transcript.push(item); Ok(()) }
                 Some(Action::Close) | None => {
                     pending.clear();
@@ -339,6 +401,9 @@ async fn drive(
             event = subscribed.recv() => match event {
                 Ok(event) => {
                     transcript.read(&event, false);
+                    if matches!(event.event_type.as_str(), "assistant.usage" | "session.idle") {
+                        report_cost(&session, &location.chat.id, &transcript.events).await;
+                    }
                     if transcript.status == Status::Done { resolve(&mut pending, &transcript.events); }
                     Ok(())
                 }

@@ -18,9 +18,14 @@ waiting = None
 
 def observation(amount=1234.5):
     value = {'provider': {'id': 'copilot', 'label': 'GitHub Copilot', 'kind': 'copilot'}, 'quotaId': 'premium_interactions', 'unit': 'ai_credits', 'accessState': 'allowed', 'capacityState': 'unlimited', 'observationKind': 'account_snapshot'}
-    if fixture != 'usage-missing':
+    if fixture not in ['usage-missing', 'cost-unavailable', 'usage-partial']:
         value['monthlyUsage'] = {'state': 'unavailable' if fixture == 'usage-unavailable' else 'available', 'scope': 'user', 'unit': 'requests' if fixture == 'usage-requests' else 'ai_credits', 'consumedQuantity': 0 if fixture == 'usage-zero' else amount, 'cycleStart': '2026-10-01T00:00:00Z', 'resetOn': '2026-11-01T00:00:00Z'}
     return value
+
+
+def metrics():
+    calls = sum(entry['type'] == 'assistant.usage' for entry in history)
+    return {'aiCreditsStatus': 'unavailable' if fixture == 'cost-unavailable' else 'partial' if fixture == 'usage-partial' else 'complete', 'totalNanoAiu': calls * 2500000000, 'totalPremiumRequestCost': calls, 'totalUserRequests': calls, 'totalApiDurationMs': 10, 'sessionStartTime': '2026-10-19T12:00:00Z', 'lastCallInputTokens': 120, 'lastCallOutputTokens': 25, 'modelMetrics': {}, 'codeChanges': {'filesModified': [], 'filesModifiedCount': 0, 'linesAdded': 0, 'linesRemoved': 0}}
 
 
 def send(message):
@@ -46,6 +51,7 @@ def finish(text='Welcome—**glad** you’re here.'):
     event('assistant.message_delta', {'messageId': message, 'deltaContent': text[:8]})
     event('assistant.message_delta', {'messageId': message, 'deltaContent': text[8:]})
     event('assistant.message', {'messageId': message, 'content': text})
+    event('session.usage_checkpoint', {'totalNanoAiu': metrics()['totalNanoAiu'], 'accountingSnapshot': metrics()})
     event('session.idle', {})
 
 
@@ -70,8 +76,10 @@ while True:
         reply(request, {'message': '', 'timestamp': '2026-10-19T12:00:00Z', 'protocolVersion': 3})
     elif method == 'auth.getStatus':
         reply(request, {'isAuthenticated': fixture != 'unauthenticated'})
-    elif method == 'session.quota.refresh':
+    elif method in ['session.quota.refresh', 'session.quota.get']:
         reply(request, {'snapshots': {}, 'isFreeUser': False, 'isTbbUser': True, 'planTier': 'business', 'premiumRequestsBillable': False, 'modelCostColumnVisible': False, 'delegateAvailable': True, 'canSignupForCopilotFree': False, 'dynamicWorkflowsEnabled': True, 'dynamicWorkflowsUiVisible': False, 'providerQuotas': [observation()]})
+    elif method == 'session.usage.getMetrics':
+        reply(request, metrics())
     elif method in ['models.list', 'server.models.list']:
         reply(request, {'models': [{'id': 'claude-sonnet-4.6', 'name': 'Claude Sonnet 4.6', 'capabilities': {'supports': {'vision': True, 'reasoningEffort': True}, 'limits': {'max_context_window_tokens': 200000}}, 'supportedReasoningEfforts': ['low', 'medium', 'high'], 'defaultReasoningEffort': 'medium'}]})
     elif method in ['session.create', 'session.resume']:
@@ -91,7 +99,16 @@ while True:
     elif method == 'session.getMessages':
         reply(request, {'events': history})
     elif method == 'session.list':
-        reply(request, {'sessions': [{'sessionId': 'saved-copilot-session', 'startTime': '2026-10-18T12:00:00Z', 'modifiedTime': '2026-10-19T12:00:00Z', 'summary': 'A saved Copilot conversation', 'isRemote': False}] if fixture == 'sessions' else []})
+        ids = ['saved-copilot-session'] if fixture == 'sessions' else ['closed-copilot-session'] if fixture == 'historical-cost' else [path.stem for path in state.glob('*.json')]
+        reply(request, {'sessions': [{'sessionId': id, 'startTime': '2026-10-18T12:00:00Z', 'modifiedTime': '2026-10-19T12:00:00Z', 'summary': 'A saved Copilot conversation', 'isRemote': False} for id in ids]})
+    elif method == 'sessions.readPersistedEvents':
+        if fixture == 'historical-cost':
+            snapshot = {**metrics(), 'totalNanoAiu': 3432400000, 'totalUserRequests': 1}
+            events = [{'id': str(uuid.uuid4()), 'type': kind, 'timestamp': '2026-10-19T12:00:00Z', 'parentId': None, 'data': {'accountingSnapshot': snapshot}} for kind in ['session.usage_checkpoint', 'session.shutdown']] if params.get('cursor') else []
+            reply(request, {'events': events, 'cursor': 'older', 'cursorStatus': 'ok', 'hasMore': not bool(params.get('cursor'))})
+        else:
+            path = state / f"{params['sessionId']}.json"
+            reply(request, {'events': json.loads(path.read_text()) if path.exists() else [], 'cursor': 'end', 'cursorStatus': 'ok', 'hasMore': False})
     elif method == 'session.send':
         message = str(uuid.uuid4())
         reply(request, {'messageId': message})
@@ -105,7 +122,7 @@ while True:
             send({'jsonrpc': '2.0', 'id': 900001, 'method': 'userInput.request', 'params': {'sessionId': session, 'question': 'Which format?', 'choices': ['JSON', 'CSV'], 'allowFreeform': True}})
         elif fixture == 'interrupt':
             event('assistant.message_delta', {'messageId': 'stream', 'deltaContent': 'Still working'})
-        elif fixture == 'tools':
+        elif fixture in ['tools', 'usage-missing', 'usage-partial', 'cost-unavailable']:
             event('tool.execution_start', {'toolCallId': 'shell', 'toolName': 'bash', 'arguments': {'command': 'git status'}})
             event('tool.execution_complete', {'toolCallId': 'shell', 'success': True, 'result': {'content': 'clean'}})
             event('tool.execution_start', {'toolCallId': 'edit', 'toolName': 'edit', 'arguments': {'path': str(Path.cwd() / 'file.txt'), 'old_str': 'old', 'new_str': 'new'}})

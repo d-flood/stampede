@@ -99,7 +99,7 @@ export type Chat = {
 	draft?: string;
 };
 
-export type Reading = { agent: Agent; window: 'five-hour' | 'weekly' | 'monthly'; used?: number; consumption?: { amount: number; unit: 'credits' | 'requests' | 'tokens' }; startsAt?: number; resetsAt?: number; readAt: number };
+export type Reading = { agent: Agent; window: 'five-hour' | 'weekly' | 'monthly' | 'session'; used?: number; consumption?: { amount: number; unit: 'credits' | 'requests' | 'tokens' }; chatId?: string; sessionId?: string; partial?: boolean; startsAt?: number; resetsAt?: number; readAt: number };
 
 export type Session = { agent: Agent; sessionId: string; firstPrompt: string; updatedAt: number };
 

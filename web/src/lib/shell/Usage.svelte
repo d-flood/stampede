@@ -19,7 +19,7 @@
 		{ agent: 'copilot', label: 'Copilot', Logo: Copilot }
 	] as const;
 
-	const visibleAgents = $derived(agents.filter(({ agent }) => readings.some((reading) => reading.agent === agent && (agent === 'copilot' ? reading.consumption !== undefined : reading.used !== undefined))));
+	const visibleAgents = $derived(agents.filter(({ agent }) => readings.some((reading) => reading.agent === agent && (agent === 'copilot' || reading.used !== undefined))));
 
 	let now = $state(Date.now());
 	let section: HTMLElement;
@@ -43,6 +43,12 @@
 
 	function periodDate(at: number) {
 		return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+	}
+
+	function cost(credits: number) {
+		const dollars = credits / 100;
+		if (dollars > 0 && dollars < 0.0001) return '<$0.0001';
+		return dollars.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 4 });
 	}
 
 	function age(readAt: number) {
@@ -86,16 +92,31 @@
 			</div>
 			{#if agent === 'copilot'}
 				{@const reading = readings.find((reading) => reading.agent === agent && reading.window === 'monthly')}
-				{@const consumption = reading?.consumption}
+				{@const currentSessions = readings.filter((reading) => reading.agent === agent && reading.window === 'session')}
+				{@const unit = currentSessions.some((reading) => reading.consumption?.unit === 'credits') ? 'credits' : 'requests'}
+				{@const sessions = currentSessions.filter((reading) => reading.consumption?.unit === unit)}
+				{@const consumption = reading?.consumption ?? (sessions.length ? { amount: sessions.reduce((total, reading) => total + reading.consumption!.amount, 0), unit } : undefined)}
+				{@const partial = !reading?.consumption && (sessions.some((reading) => reading.partial) || sessions.length < currentSessions.length)}
 				<div class="billing">
 					<span class="amount">
 						{#if consumption}
-							{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-							<span class="unit">{consumption.unit}</span>
+							{#if consumption.unit === 'credits'}
+								{cost(consumption.amount)}
+								{#if partial}<span class="unit">reported</span>{/if}
+							{:else}
+								{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+								<span class="unit">{consumption.unit}</span>
+							{/if}
+						{:else}
+							Usage unavailable
 						{/if}
 					</span>
-					<span class="period">This billing period</span>
-					{#if reading?.startsAt !== undefined && reading?.resetsAt !== undefined}
+					{#if consumption?.unit === 'credits'}
+						<span class="credits">{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })} credits</span>
+					{/if}
+					<span class="period">{reading?.consumption ? 'This billing period' : sessions.length ? 'Recorded sessions' : 'Billing usage not reported'}</span>
+					{#if !reading?.consumption && consumption?.unit === 'requests'}<span class="cost-unavailable">Cost not reported</span>{/if}
+					{#if reading?.consumption && reading.startsAt !== undefined && reading.resetsAt !== undefined}
 						<span class="cycle">
 							<time datetime={new Date(reading.startsAt).toISOString()}>{periodDate(reading.startsAt)}</time>
 							–
@@ -189,6 +210,8 @@
 	}
 
 	.unit,
+	.credits,
+	.cost-unavailable,
 	.period,
 	.cycle {
 		color: var(--muted-fg);

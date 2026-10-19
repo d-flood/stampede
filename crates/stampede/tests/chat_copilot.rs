@@ -20,11 +20,97 @@ async fn billing_usage(socket: &mut Socket) -> Value {
     timeout(Duration::from_secs(10), async {
         loop {
             let message = next_control(socket, "usage.changed").await;
-            if let Some(reading) = message["readings"].as_array().unwrap().iter().find(|reading| reading["agent"] == "copilot") {
+            if let Some(reading) = message["readings"].as_array().unwrap().iter().find(|reading| reading["agent"] == "copilot" && reading["window"] == "monthly") {
                 return reading.clone();
             }
         }
     }).await.expect("Copilot billing usage never arrived")
+}
+
+async fn session_cost(socket: &mut Socket, chat_id: &Value, amount: Option<f64>) -> Value {
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let message = next_control(socket, "usage.changed").await;
+            if message["readings"].as_array().unwrap().iter().any(|reading| reading["chatId"] == *chat_id && reading["window"] == "session" && reading["consumption"]["amount"].as_f64() == amount) {
+                return message;
+            }
+        }
+    }).await.expect("Copilot session cost never arrived")
+}
+
+#[tokio::test]
+async fn copilot_reports_session_cost_without_monthly_usage_and_restores_it() {
+    let (mut server, mut socket, chat) = launch("usage-missing", "default").await;
+    let mut watcher = device(server.port).await;
+    session_cost(&mut watcher, &chat["id"], Some(0.0)).await;
+    chat_turn(&mut socket, chat["id"].as_str().unwrap(), &chat["status"], "Use tools").await;
+    let first = session_cost(&mut watcher, &chat["id"], Some(2.5)).await;
+    let cost = first["readings"].as_array().unwrap().iter().find(|reading| reading["chatId"] == chat["id"]).unwrap();
+    assert_eq!(cost["consumption"]["unit"], "credits");
+    assert!(cost.get("used").is_none());
+    server.restart().await;
+    session_cost(&mut device(server.port).await, &chat["id"], Some(2.5)).await;
+}
+
+#[tokio::test]
+async fn copilot_distinguishes_unavailable_and_partial_session_costs() {
+    for fixture in ["cost-unavailable", "usage-partial"] {
+        let (server, mut socket, chat) = launch(fixture, "default").await;
+        chat_turn(&mut socket, chat["id"].as_str().unwrap(), &chat["status"], "Use tools").await;
+        let mut watcher = device(server.port).await;
+        let report = session_cost(&mut watcher, &chat["id"], if fixture == "cost-unavailable" { Some(1.0) } else { Some(2.5) }).await;
+        let reading = report["readings"].as_array().unwrap().iter().find(|reading| reading["chatId"] == chat["id"]).unwrap();
+        if fixture == "usage-partial" { assert_eq!(reading["partial"], true); }
+        else { assert_eq!(reading["consumption"]["unit"], "requests"); }
+    }
+}
+
+#[tokio::test]
+async fn copilot_tracks_costs_for_each_chat_and_keeps_closed_chats() {
+    let (server, mut socket, first) = launch("usage-missing", "default").await;
+    control(&mut socket, json!({ "type": "chat.create", "projectId": first["projectId"], "rig": "Copilot" })).await;
+    let second = next_control(&mut socket, "chat.created").await["chat"].clone();
+    control(&mut socket, json!({ "type": "chat.attach", "chatId": second["id"] })).await;
+    next_control(&mut socket, "chat.items").await;
+    let mut watcher = device(server.port).await;
+    session_cost(&mut watcher, &second["id"], Some(0.0)).await;
+    for chat in [&first, &second] {
+        chat_turn(&mut socket, chat["id"].as_str().unwrap(), &chat["status"], "Use tools").await;
+        session_cost(&mut watcher, &chat["id"], Some(2.5)).await;
+    }
+    let mut late = device(server.port).await;
+    let report = session_cost(&mut late, &second["id"], Some(2.5)).await;
+    let costs: Vec<_> = report["readings"].as_array().unwrap().iter().filter(|reading| reading["window"] == "session").collect();
+    assert_eq!(costs.len(), 2);
+    assert_eq!(costs.iter().map(|reading| reading["consumption"]["amount"].as_f64().unwrap()).sum::<f64>(), 5.0);
+    control(&mut socket, json!({ "type": "chat.close", "chatId": first["id"] })).await;
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let message = next_control(&mut socket, "chats.changed").await;
+            if message["chats"].as_array().unwrap().iter().all(|chat| chat["id"] != first["id"]) { break; }
+        }
+    }).await.unwrap();
+    let report = session_cost(&mut device(server.port).await, &first["id"], Some(2.5)).await;
+    assert!(report["readings"].as_array().unwrap().iter().any(|reading| reading["chatId"] == second["id"] && reading["consumption"]["amount"] == 2.5));
+}
+
+#[tokio::test]
+async fn copilot_reads_closed_session_costs_without_opening_a_chat_or_counting_snapshots_twice() {
+    let config = "[[rig]]\nname = 'Copilot'\nagent = 'copilot'\nenv = { STAMPEDE_FAKE_FIXTURE = 'historical-cost' }\n";
+    let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
+    let server = Server::with_env("copilot-history", config, vec![("PATH", path.into())]).await;
+    let mut watcher = device(server.port).await;
+    let report = timeout(Duration::from_secs(10), async {
+        loop {
+            let message = next_control(&mut watcher, "usage.changed").await;
+            if message["readings"].as_array().unwrap().iter().any(|reading| reading["consumption"]["amount"] == 3.4324) { break message; }
+        }
+    }).await.expect("closed session cost never arrived");
+    let sessions: Vec<_> = report["readings"].as_array().unwrap().iter().filter(|reading| reading["window"] == "session").collect();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["sessionId"], "closed-copilot-session");
+    assert_eq!(sessions[0]["consumption"]["unit"], "credits");
+    assert!(!received(&server).iter().any(|message| message["method"] == "session.resume" || message["method"] == "session.send"));
 }
 
 #[tokio::test]
@@ -58,7 +144,12 @@ async fn copilot_updates_billing_consumption_and_retains_it_for_new_devices() {
     let mut watcher = device(server.port).await;
     assert_eq!(billing_usage(&mut watcher).await["consumption"]["amount"], 1234.5);
     chat_turn(&mut socket, chat["id"].as_str().unwrap(), &chat["status"], "Use tools").await;
-    let updated = billing_usage(&mut watcher).await;
+    let updated = timeout(Duration::from_secs(10), async {
+        loop {
+            let reading = billing_usage(&mut watcher).await;
+            if reading["consumption"]["amount"] == 1250.75 { break reading; }
+        }
+    }).await.unwrap();
     assert_eq!(updated["consumption"], json!({ "amount": 1250.75, "unit": "credits" }));
     assert_eq!(updated["window"], "monthly");
     assert_eq!(updated["resetsAt"], 1793491200000_u64);

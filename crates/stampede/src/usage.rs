@@ -23,6 +23,7 @@ pub enum Window {
     FiveHour,
     Weekly,
     Monthly,
+    Session,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -50,6 +51,12 @@ pub struct Reading {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub consumption: Option<Consumption>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub starts_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resets_at: Option<u64>,
@@ -59,7 +66,7 @@ pub struct Reading {
 impl Reading {
     pub fn new(agent: Agent, window: Window, used: f64, resets_at: Option<u64>) -> Self {
         let read_at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64);
-        Self { agent, window, used: Some(used), consumption: None, starts_at: None, resets_at, read_at }
+        Self { agent, window, used: Some(used), consumption: None, chat_id: None, session_id: None, partial: false, starts_at: None, resets_at, read_at }
     }
 }
 
@@ -83,9 +90,15 @@ impl Usage {
             return;
         }
         self.readings.send_modify(|current| {
-            for reading in readings {
-                match current.iter_mut().find(|old| old.agent == reading.agent && old.window == reading.window) {
-                    Some(old) => *old = reading,
+            for mut reading in readings {
+                match current.iter_mut().find(|old| old.agent == reading.agent && old.window == reading.window && old.session_id == reading.session_id) {
+                    Some(old) => {
+                        if reading.window == Window::Session && old.consumption.as_ref().is_some_and(|old| old.unit == Unit::Credits && reading.consumption.as_ref().is_none_or(|new| new.unit != Unit::Credits || new.amount < old.amount)) {
+                            continue;
+                        }
+                        reading.chat_id = reading.chat_id.or_else(|| old.chat_id.clone());
+                        *old = reading;
+                    }
                     None => current.push(reading),
                 }
             }

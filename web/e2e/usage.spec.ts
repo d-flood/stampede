@@ -70,7 +70,8 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	await expect(usage.getByRole('meter')).toHaveCount(3);
 	const copilot = usage.getByRole('group', { name: 'Copilot', exact: true });
 	const consumption = copilot.locator('.amount');
-	await expect(consumption).toHaveText('1,234.5 credits');
+	await expect(consumption).toHaveText('$12.345');
+	await expect(copilot.locator('.credits')).toHaveText('1,234.5 credits');
 	await expect(copilot.getByText('This billing period', { exact: true })).toBeVisible();
 	await expect(copilot.locator('.cycle')).toHaveText('Oct 1 – Nov 1');
 	await expect(copilot.getByRole('meter')).toHaveCount(0);
@@ -116,7 +117,7 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 		await page.setViewportSize({ ...viewport, width });
 		await expect.poll(() => usage.evaluate((element) => {
 			const bounds = element.getBoundingClientRect();
-			const outside = [...element.querySelectorAll('.identity, .ring, .label, time, .countdown, .amount, .period, .cycle')].filter((node) => {
+			const outside = [...element.querySelectorAll('.identity, .ring, .label, time, .countdown, .amount, .credits, .period, .cycle')].filter((node) => {
 				if (!node.getClientRects().length) return false;
 				const rect = node.getBoundingClientRect();
 				return rect.left < bounds.left || rect.right > bounds.right || rect.top < bounds.top || rect.bottom > bounds.bottom;
@@ -136,11 +137,26 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await usage.screenshot({ path: test.info().outputPath('usage.png') });
 	update([...readings.slice(0, 3), { ...readings[3], consumption: { amount: 0, unit: 'credits' } }]);
-	await expect(consumption).toHaveText('0 credits');
+	await expect(consumption).toHaveText('$0.00');
+	await expect(copilot.locator('.credits')).toHaveText('0 credits');
 	update([...readings.slice(0, 3), { ...readings[3], consumption: { amount: 75.5, unit: 'requests' } }]);
 	await expect(consumption).toHaveText('75.5 requests');
 	update([...readings.slice(0, 3), { agent: 'copilot', window: 'monthly', readAt: now }]);
-	await expect(copilot).toHaveCount(0);
+	await expect(consumption).toHaveText('Usage unavailable');
+	await expect(copilot.getByText('Billing usage not reported', { exact: true })).toBeVisible();
+	update([...readings.slice(0, 3), { agent: 'copilot', window: 'monthly', readAt: now },
+		{ agent: 'copilot', window: 'session', chatId: 'first', consumption: { amount: 12.5, unit: 'credits' }, readAt: now },
+		{ agent: 'copilot', window: 'session', chatId: 'second', consumption: { amount: 2.5, unit: 'credits' }, partial: true, readAt: now }
+	]);
+	await expect(consumption).toHaveText('$0.15 reported');
+	await expect(copilot.locator('.credits')).toHaveText('15 credits');
+	await expect(copilot.getByText('Recorded sessions', { exact: true })).toBeVisible();
+	await expect(copilot.locator('.cycle')).toHaveCount(0);
+	await copilot.screenshot({ path: test.info().outputPath('copilot-cost.png') });
+	update([...readings.slice(0, 3), { agent: 'copilot', window: 'session', chatId: 'first', consumption: { amount: 9, unit: 'requests' }, readAt: now }]);
+	await expect(consumption).toHaveText('9 requests');
+	await expect(copilot.getByText('Recorded sessions', { exact: true })).toBeVisible();
+	await expect(copilot.getByText('Cost not reported', { exact: true })).toBeVisible();
 	await page.clock.fastForward(minute);
 	await expect(usage.locator('.countdown').first()).toHaveText('(in 3h 8m)');
 	update([{ ...readings[0], resetsAt: now + 2 * minute }]);
