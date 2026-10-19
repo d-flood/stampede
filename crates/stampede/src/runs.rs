@@ -369,7 +369,7 @@ impl Runs {
             let latest = readings.iter().find(|reading| (reading.agent, reading.window) == (*agent, *window));
             let waiting = match resets_at {
                 Some(at) => *at > now,
-                None => latest.is_none_or(|reading| reading.used >= config.pause_at && reading.resets_at.is_none_or(|at| at > now)),
+                None => latest.is_none_or(|reading| reading.used.is_some_and(|used| used >= config.pause_at) && reading.resets_at.is_none_or(|at| at > now)),
             };
             if waiting {
                 return Some(Pause::Usage {
@@ -383,7 +383,7 @@ impl Runs {
             .into_iter()
             .filter(|reading| {
                 (agents.contains(&reading.agent) || paused_window == Some((reading.agent, reading.window)))
-                    && reading.used >= config.pause_at && reading.resets_at.is_none_or(|at| at > now)
+                    && reading.used.is_some_and(|used| used >= config.pause_at) && reading.resets_at.is_none_or(|at| at > now)
             })
             .max_by_key(|reading| reading.resets_at.unwrap_or(u64::MAX))
             .map(|reading| Pause::Usage { agent: reading.agent, window: reading.window, resets_at: reading.resets_at })

@@ -22,6 +22,21 @@ const READING: Duration = Duration::from_secs(30);
 pub enum Window {
     FiveHour,
     Weekly,
+    Monthly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Unit {
+    Credits,
+    Requests,
+    Tokens,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Consumption {
+    pub amount: f64,
+    pub unit: Unit,
 }
 
 /// Times are milliseconds since the Unix epoch.
@@ -30,7 +45,12 @@ pub enum Window {
 pub struct Reading {
     pub agent: Agent,
     pub window: Window,
-    pub used: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consumption: Option<Consumption>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub starts_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resets_at: Option<u64>,
     pub read_at: u64,
@@ -39,7 +59,7 @@ pub struct Reading {
 impl Reading {
     pub fn new(agent: Agent, window: Window, used: f64, resets_at: Option<u64>) -> Self {
         let read_at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64);
-        Self { agent, window, used, resets_at, read_at }
+        Self { agent, window, used: Some(used), consumption: None, starts_at: None, resets_at, read_at }
     }
 }
 
@@ -81,7 +101,7 @@ pub fn spawn(usage: Arc<Usage>, config: watch::Receiver<Arc<Config>>) {
         loop {
             ticks.tick().await;
             let rigs = config.borrow().rigs.clone();
-            for agent in [Agent::ClaudeCode, Agent::Codex] {
+            for agent in [Agent::ClaudeCode, Agent::Codex, Agent::Copilot] {
                 let Some(rig) = rigs.iter().find(|rig| rig.agent == agent).cloned() else { continue };
                 let usage = Arc::clone(&usage);
                 tokio::spawn(async move {

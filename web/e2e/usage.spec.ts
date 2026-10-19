@@ -10,7 +10,8 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	const readings: Reading[] = [
 		{ agent: 'claude-code', window: 'five-hour', used: 1, readAt: now - 2 * minute, resetsAt: now + 3 * hour + 9 * minute },
 		{ agent: 'claude-code', window: 'weekly', used: 0.12, readAt: now - 2 * minute, resetsAt: now + 6 * day + 14 * hour + 59 * minute },
-		{ agent: 'codex', window: 'weekly', used: 0.43, readAt: now, resetsAt: now + 4 * day + 20 * hour + 15 * minute }
+		{ agent: 'codex', window: 'weekly', used: 0.43, readAt: now, resetsAt: now + 4 * day + 20 * hour + 15 * minute },
+		{ agent: 'copilot', window: 'monthly', consumption: { amount: 1234.5, unit: 'credits' }, readAt: now, startsAt: Date.parse('2026-10-01T00:00:00Z'), resetsAt: Date.parse('2026-11-01T00:00:00Z') }
 	];
 	let update: (readings: Reading[]) => void = () => {};
 	await page.clock.install({ time: now });
@@ -35,18 +36,46 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 		usage = (await showSidebar(page)).getByRole('region', { name: 'Usage windows' });
 	}
 	await expect(usage).toBeInViewport();
-	await page.clock.pauseAt(now + 5_000);
 	if (project.name === 'desktop') {
-		await usage.getByRole('meter', { name: 'Claude · 5h' }).hover();
-		const tooltip = page.getByRole('tooltip');
-		await expect(tooltip).toContainText('(in 3h 9m)');
-		await page.keyboard.press('Escape');
+		await page.getByRole('separator', { name: 'Resize sidebar' }).focus();
+		await page.keyboard.press('End');
+	}
+	await page.clock.pauseAt(now + 5_000);
+	const meter = usage.getByRole('meter', { name: 'Claude · 5h' });
+	const tooltip = page.getByRole('tooltip');
+	await expect(usage.locator('.reset').first()).toBeVisible();
+	await meter.hover();
+	await meter.focus();
+	await page.clock.runFor(500);
+	await expect(tooltip).toBeHidden();
+	if (project.name === 'desktop') {
+		const reset = `${await usage.locator('time').first().textContent()} ${await usage.locator('.countdown').first().textContent()}`;
+		const resizer = page.getByRole('separator', { name: 'Resize sidebar' });
+		await resizer.focus();
+		await page.keyboard.press('Home');
+		await expect(usage.locator('.reset').first()).toBeHidden();
+		await meter.hover();
+		await expect(tooltip).toHaveText(reset);
+		await resizer.focus();
+		await page.keyboard.press('End');
+		await expect(usage.locator('.reset').first()).toBeVisible();
 		await page.clock.runFor(100);
 		await expect(tooltip).toBeHidden();
 		await page.mouse.move(900, 400);
+		await meter.focus();
+		await page.clock.runFor(500);
+		await expect(tooltip).toBeHidden();
 	}
-	await expect(usage.getByRole('group')).toHaveCount(2);
+	await expect(usage.getByRole('group')).toHaveCount(3);
 	await expect(usage.getByRole('meter')).toHaveCount(3);
+	const copilot = usage.getByRole('group', { name: 'Copilot', exact: true });
+	const consumption = copilot.locator('.amount');
+	await expect(consumption).toHaveText('1,234.5 credits');
+	await expect(copilot.getByText('This billing period', { exact: true })).toBeVisible();
+	await expect(copilot.locator('.cycle')).toHaveText('Oct 1 – Nov 1');
+	await expect(copilot.getByRole('meter')).toHaveCount(0);
+	await expect(copilot.locator('.brand svg')).toBeVisible();
+	await expect.poll(() => copilot.evaluate((element) => element.getBoundingClientRect().top >= element.previousElementSibling!.getBoundingClientRect().bottom)).toBe(true);
 	await expect(usage.locator('.countdown')).toHaveText(['(in 3h 9m)', '(in 6d 14h)', '(in 4d 20h)']);
 	await expect(usage.getByRole('meter', { name: 'Codex · 5h' })).toHaveCount(0);
 	await expect(usage.getByText('Reset unavailable')).toHaveCount(0);
@@ -87,19 +116,31 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 		await page.setViewportSize({ ...viewport, width });
 		await expect.poll(() => usage.evaluate((element) => {
 			const bounds = element.getBoundingClientRect();
-			return element.scrollWidth <= element.clientWidth && [...element.querySelectorAll('.identity, .ring, .label, time, .countdown')].every((node) => {
-				if (!node.checkVisibility()) return true;
+			const outside = [...element.querySelectorAll('.identity, .ring, .label, time, .countdown, .amount, .period, .cycle')].filter((node) => {
+				if (!node.getClientRects().length) return false;
 				const rect = node.getBoundingClientRect();
-				return rect.left >= bounds.left && rect.right <= bounds.right && rect.top >= bounds.top && rect.bottom <= bounds.bottom;
-			}) && [...element.querySelectorAll('.agent')].every((agent) => {
+				return rect.left < bounds.left || rect.right > bounds.right || rect.top < bounds.top || rect.bottom > bounds.bottom;
+			}).map((node) => `${node.className}: ${node.textContent}`);
+			const misaligned = [...element.querySelectorAll('.agent')].filter((agent) => {
 				const rings = [...agent.querySelectorAll('.ring')];
-				return rings.every((ring) => Math.abs(ring.getBoundingClientRect().top - rings[0].getBoundingClientRect().top) < 1);
-			});
-		})).toBe(true);
+				return rings.some((ring) => Math.abs(ring.getBoundingClientRect().top - rings[0].getBoundingClientRect().top) >= 1);
+			}).map((agent) => agent.getAttribute('aria-label'));
+			const overlapping = [...element.querySelectorAll('.agent')].filter((agent) => {
+				const meter = agent.querySelector('.ring, .billing')!.getBoundingClientRect();
+				return [...agent.querySelectorAll('.name, .age')].some((node) => node.getBoundingClientRect().right >= meter.left);
+			}).map((agent) => agent.getAttribute('aria-label'));
+			return { overflow: element.scrollWidth > element.clientWidth, outside, misaligned, overlapping };
+		})).toEqual({ overflow: false, outside: [], misaligned: [], overlapping: [] });
 	}
 	await page.setViewportSize(viewport);
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await usage.screenshot({ path: test.info().outputPath('usage.png') });
+	update([...readings.slice(0, 3), { ...readings[3], consumption: { amount: 0, unit: 'credits' } }]);
+	await expect(consumption).toHaveText('0 credits');
+	update([...readings.slice(0, 3), { ...readings[3], consumption: { amount: 75.5, unit: 'requests' } }]);
+	await expect(consumption).toHaveText('75.5 requests');
+	update([...readings.slice(0, 3), { agent: 'copilot', window: 'monthly', readAt: now }]);
+	await expect(copilot).toHaveCount(0);
 	await page.clock.fastForward(minute);
 	await expect(usage.locator('.countdown').first()).toHaveText('(in 3h 8m)');
 	update([{ ...readings[0], resetsAt: now + 2 * minute }]);
@@ -110,6 +151,5 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	await expect(usage.locator('.countdown')).toHaveText('(now)');
 	update([]);
 	await expect(usage).toBeHidden();
-	await expect(usage.locator('.countdown')).toHaveCount(0);
-	await expect(usage.getByText('Reset unavailable')).toHaveCount(0);
+	await expect(usage.getByRole('group')).toHaveCount(0);
 });

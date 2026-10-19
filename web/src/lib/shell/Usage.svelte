@@ -5,6 +5,7 @@
 	import { onMount } from 'svelte';
 	import Claude from '~icons/simple-icons/claude';
 	import OpenAI from '~icons/simple-icons/openai';
+	import Copilot from '~icons/simple-icons/githubcopilot';
 
 	let { readings }: { readings: Reading[] } = $props();
 
@@ -14,10 +15,11 @@
 	] as const;
 	const agents = [
 		{ agent: 'claude-code', label: 'Claude', Logo: Claude },
-		{ agent: 'codex', label: 'Codex', Logo: OpenAI }
+		{ agent: 'codex', label: 'Codex', Logo: OpenAI },
+		{ agent: 'copilot', label: 'Copilot', Logo: Copilot }
 	] as const;
 
-	const visibleAgents = $derived(agents.filter(({ agent }) => readings.some((reading) => reading.agent === agent && reading.used !== undefined)));
+	const visibleAgents = $derived(agents.filter(({ agent }) => readings.some((reading) => reading.agent === agent && (agent === 'copilot' ? reading.consumption !== undefined : reading.used !== undefined))));
 
 	let now = $state(Date.now());
 	let section: HTMLElement;
@@ -37,6 +39,10 @@
 
 	function resetTime(resetsAt: number) {
 		return new Date(resetsAt).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+	}
+
+	function periodDate(at: number) {
+		return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
 	}
 
 	function age(readAt: number) {
@@ -78,35 +84,56 @@
 					<div class="age">{updated ? age(updated) : ''}</div>
 				</div>
 			</div>
-			{#each windows as { window, label: period, name } (window)}
-				{@const reading = readings.find((reading) => reading.agent === agent && reading.window === window)}
-				{@const used = reading?.used}
-				{#if used !== undefined}
-					{@const percent = Math.round(used * 100)}
-					{@const description = details(reading)}
-					{@const reset = reading?.resetsAt === undefined ? '' : `${resetTime(reading.resetsAt)} (${until(reading.resetsAt)})`}
-					<div class="meter" style:grid-column={window === 'weekly' ? 3 : 2} class:high={used >= 0.9}>
-						<Tooltip delayDuration={0} text={reset} disabled={!compact || !reset}>
-							{#snippet children(props)}
-								<span {...props} class="ring" role="meter" aria-label="{label} · {name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% used. ${description}`}>
-									<svg viewBox="0 0 40 40" aria-hidden="true">
-										<circle class="track" cx="20" cy="20" r="17" />
-										<circle class="fill" cx="20" cy="20" r="17" pathLength="100" stroke-dasharray="{Math.max(0, Math.min(percent, 100))} 100" transform="rotate(-90 20 20)" />
-									</svg>
-									<span class="percent">{percent}%</span>
-								</span>
-							{/snippet}
-						</Tooltip>
-						<span class="label">{period}</span>
-						{#if reading?.resetsAt !== undefined}
-							<span class="reset">
-								<time aria-label="Resets {new Date(reading.resetsAt).toLocaleString()}" datetime={new Date(reading.resetsAt).toISOString()}>{resetTime(reading.resetsAt)}</time>
-								<span class="countdown">({until(reading.resetsAt)})</span>
-							</span>
+			{#if agent === 'copilot'}
+				{@const reading = readings.find((reading) => reading.agent === agent && reading.window === 'monthly')}
+				{@const consumption = reading?.consumption}
+				<div class="billing">
+					<span class="amount">
+						{#if consumption}
+							{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+							<span class="unit">{consumption.unit}</span>
 						{/if}
-					</div>
-				{/if}
-			{/each}
+					</span>
+					<span class="period">This billing period</span>
+					{#if reading?.startsAt !== undefined && reading?.resetsAt !== undefined}
+						<span class="cycle">
+							<time datetime={new Date(reading.startsAt).toISOString()}>{periodDate(reading.startsAt)}</time>
+							–
+							<time datetime={new Date(reading.resetsAt).toISOString()}>{periodDate(reading.resetsAt)}</time>
+						</span>
+					{/if}
+				</div>
+			{:else}
+				{#each windows as { window, label: period, name } (window)}
+					{@const reading = readings.find((reading) => reading.agent === agent && reading.window === window)}
+					{@const used = reading?.used}
+					{#if used !== undefined}
+						{@const percent = Math.round(used * 100)}
+						{@const description = details(reading)}
+						{@const reset = reading?.resetsAt === undefined ? '' : `${resetTime(reading.resetsAt)} (${until(reading.resetsAt)})`}
+						<div class="meter" style:grid-column={window === 'weekly' ? 3 : 2} class:high={used >= 0.9}>
+							<Tooltip delayDuration={0} text={reset} disabled={!compact || !reset}>
+								{#snippet children(props)}
+									<span {...props} class="ring" role="meter" aria-label="{label} · {name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% used. ${description}`}>
+										<svg viewBox="0 0 40 40" aria-hidden="true">
+											<circle class="track" cx="20" cy="20" r="17" />
+											<circle class="fill" cx="20" cy="20" r="17" pathLength="100" stroke-dasharray="{Math.max(0, Math.min(percent, 100))} 100" transform="rotate(-90 20 20)" />
+										</svg>
+										<span class="percent">{percent}%</span>
+									</span>
+								{/snippet}
+							</Tooltip>
+							<span class="label">{period}</span>
+							{#if reading?.resetsAt !== undefined}
+								<span class="reset">
+									<time aria-label="Resets {new Date(reading.resetsAt).toLocaleString()}" datetime={new Date(reading.resetsAt).toISOString()}>{resetTime(reading.resetsAt)}</time>
+									<span class="countdown">({until(reading.resetsAt)})</span>
+								</span>
+							{/if}
+						</div>
+					{/if}
+				{/each}
+			{/if}
 		</div>
 	{/each}
 </section>
@@ -144,12 +171,44 @@
 		border-top: var(--border-width) solid var(--border);
 	}
 
+	.billing {
+		display: grid;
+		grid-column: span 2;
+		gap: var(--space-1);
+		min-width: 0;
+	}
+
+	.amount {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0 var(--space-1);
+		font-family: var(--font-mono);
+		font-size: var(--font-size-md);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.unit,
+	.period,
+	.cycle {
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.unit {
+		font-family: var(--font-ui);
+	}
+
 	.claude-code {
 		--brand: #d97757;
 	}
 
 	.codex {
 		--brand: #52669e;
+	}
+
+	.copilot {
+		--brand: var(--color-fg);
 	}
 
 	.identity {

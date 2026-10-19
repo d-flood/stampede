@@ -257,7 +257,7 @@ test('Copilot rigs use CLI models and open a chat', async ({ page, request }) =>
 	await dialog.getByRole('combobox', { name: 'Provider', exact: true }).selectOption('copilot');
 	const model = dialog.getByRole('combobox', { name: 'Model', exact: true });
 	await expect(model).toBeEnabled();
-	await model.selectOption('claude-sonnet-4.6');
+	await model.selectOption('gemini-3.8-flash');
 	await dialog.getByRole('combobox', { name: 'Effort level', exact: true }).selectOption('high');
 	await expect(dialog.getByRole('combobox', { name: 'Permission mode', exact: true })).toHaveValue('default');
 	await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Copilot');
@@ -265,7 +265,7 @@ test('Copilot rigs use CLI models and open a chat', async ({ page, request }) =>
 	await dialog.getByRole('button', { name: 'Save rig', exact: true }).click();
 	await expect(dialog.getByRole('status')).toHaveText('Rig saved.');
 	const rigs = await (await request.get('/api/rigs')).json();
-	expect(rigs.find((rig: { name: string }) => rig.name === 'Copilot')).toMatchObject({ agent: 'copilot', model: 'claude-sonnet-4.6', effort: 'high', mode: 'default' });
+	expect(rigs.find((rig: { name: string }) => rig.name === 'Copilot')).toMatchObject({ agent: 'copilot', model: 'gemini-3.8-flash', effort: 'high', mode: 'default' });
 	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Copilot', exact: true }).click();

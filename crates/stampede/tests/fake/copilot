@@ -16,6 +16,13 @@ effort = 'medium'
 waiting = None
 
 
+def observation(amount=1234.5):
+    value = {'provider': {'id': 'copilot', 'label': 'GitHub Copilot', 'kind': 'copilot'}, 'quotaId': 'premium_interactions', 'unit': 'ai_credits', 'accessState': 'allowed', 'capacityState': 'unlimited', 'observationKind': 'account_snapshot'}
+    if fixture != 'usage-missing':
+        value['monthlyUsage'] = {'state': 'unavailable' if fixture == 'usage-unavailable' else 'available', 'scope': 'user', 'unit': 'requests' if fixture == 'usage-requests' else 'ai_credits', 'consumedQuantity': 0 if fixture == 'usage-zero' else amount, 'cycleStart': '2026-10-01T00:00:00Z', 'resetOn': '2026-11-01T00:00:00Z'}
+    return value
+
+
 def send(message):
     payload = json.dumps(message).encode()
     sys.stdout.buffer.write(f'Content-Length: {len(payload)}\r\n\r\n'.encode() + payload)
@@ -63,6 +70,8 @@ while True:
         reply(request, {'message': '', 'timestamp': '2026-10-19T12:00:00Z', 'protocolVersion': 3})
     elif method == 'auth.getStatus':
         reply(request, {'isAuthenticated': fixture != 'unauthenticated'})
+    elif method == 'session.quota.refresh':
+        reply(request, {'snapshots': {}, 'isFreeUser': False, 'isTbbUser': True, 'planTier': 'business', 'premiumRequestsBillable': False, 'modelCostColumnVisible': False, 'delegateAvailable': True, 'canSignupForCopilotFree': False, 'dynamicWorkflowsEnabled': True, 'dynamicWorkflowsUiVisible': False, 'providerQuotas': [observation()]})
     elif method in ['models.list', 'server.models.list']:
         reply(request, {'models': [{'id': 'claude-sonnet-4.6', 'name': 'Claude Sonnet 4.6', 'capabilities': {'supports': {'vision': True, 'reasoningEffort': True}, 'limits': {'max_context_window_tokens': 200000}}, 'supportedReasoningEfforts': ['low', 'medium', 'high'], 'defaultReasoningEffort': 'medium'}]})
     elif method in ['session.create', 'session.resume']:
@@ -72,6 +81,11 @@ while True:
         model = params.get('model', model)
         effort = params.get('reasoningEffort', effort)
         reply(request, {'sessionId': session})
+    elif method == 'session.model.list':
+        models = [{'id': 'claude-sonnet-4.6', 'name': 'Claude Sonnet 4.6', 'supportedReasoningEfforts': ['low', 'medium', 'high']}]
+        if params.get('skipCache'):
+            models.append({'id': 'gemini-3.8-flash', 'name': 'Gemini 3.8 Flash', 'supportedReasoningEfforts': ['low', 'high']})
+        reply(request, {'list': models})
     elif method == 'session.model.getCurrent':
         reply(request, {'modelId': model, 'reasoningEffort': effort})
     elif method == 'session.getMessages':
@@ -97,6 +111,7 @@ while True:
             event('tool.execution_start', {'toolCallId': 'edit', 'toolName': 'edit', 'arguments': {'path': str(Path.cwd() / 'file.txt'), 'old_str': 'old', 'new_str': 'new'}})
             event('tool.execution_complete', {'toolCallId': 'edit', 'success': True})
             event('assistant.usage', {'inputTokens': 120, 'outputTokens': 25})
+            event('session.quota_observation', {'observation': observation(1250.75)})
             event('session.usage_info', {'currentTokens': 145, 'tokenLimit': 200000, 'messagesLength': 2})
             finish()
         elif fixture == 'error':

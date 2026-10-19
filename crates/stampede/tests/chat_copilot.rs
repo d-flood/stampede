@@ -9,6 +9,62 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+async fn device(port: u16) -> Socket {
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "usage-watcher" })).await;
+    next_control(&mut socket, "hello").await;
+    socket
+}
+
+async fn billing_usage(socket: &mut Socket) -> Value {
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let message = next_control(socket, "usage.changed").await;
+            if let Some(reading) = message["readings"].as_array().unwrap().iter().find(|reading| reading["agent"] == "copilot") {
+                return reading.clone();
+            }
+        }
+    }).await.expect("Copilot billing usage never arrived")
+}
+
+#[tokio::test]
+async fn copilot_polls_billing_period_consumption_without_a_model_call() {
+    for fixture in ["simple-turn", "usage-zero", "usage-requests", "usage-unavailable", "usage-missing"] {
+        let config = format!("[[rig]]\nname = 'Copilot'\nagent = 'copilot'\nenv = {{ STAMPEDE_FAKE_FIXTURE = '{fixture}' }}\n");
+        let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
+        let server = Server::with_env("copilot-usage", &config, vec![("PATH", path.into())]).await;
+        let mut socket = device(server.port).await;
+        let reading = billing_usage(&mut socket).await;
+        assert_eq!(reading["window"], "monthly");
+        assert!(reading.get("used").is_none());
+        if fixture == "usage-unavailable" || fixture == "usage-missing" {
+            assert!(reading.get("consumption").is_none());
+        } else {
+            assert_eq!(reading["consumption"], json!({ "amount": if fixture == "usage-zero" { 0.0 } else { 1234.5 }, "unit": if fixture == "usage-requests" { "requests" } else { "credits" } }));
+        }
+        if fixture != "usage-missing" {
+            assert_eq!(reading["startsAt"], 1790812800000_u64);
+            assert_eq!(reading["resetsAt"], 1793491200000_u64);
+        }
+        let calls = received(&server);
+        assert!(calls.iter().any(|call| call["method"] == "session.quota.refresh"));
+        assert!(!calls.iter().any(|call| call["method"] == "session.send"));
+    }
+}
+
+#[tokio::test]
+async fn copilot_updates_billing_consumption_and_retains_it_for_new_devices() {
+    let (server, mut socket, chat) = launch("tools", "default").await;
+    let mut watcher = device(server.port).await;
+    assert_eq!(billing_usage(&mut watcher).await["consumption"]["amount"], 1234.5);
+    chat_turn(&mut socket, chat["id"].as_str().unwrap(), &chat["status"], "Use tools").await;
+    let updated = billing_usage(&mut watcher).await;
+    assert_eq!(updated["consumption"], json!({ "amount": 1250.75, "unit": "credits" }));
+    assert_eq!(updated["window"], "monthly");
+    assert_eq!(updated["resetsAt"], 1793491200000_u64);
+    assert_eq!(billing_usage(&mut device(server.port).await).await, updated);
+}
+
 async fn launch(fixture: &str, mode: &str) -> (Server, Socket, Value) {
     let config = format!("[[rig]]\nname = 'Copilot'\nagent = 'copilot'\nmode = '{mode}'\nenv = {{ STAMPEDE_FAKE_FIXTURE = '{fixture}' }}\n");
     let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
@@ -68,7 +124,7 @@ async fn copilot_streams_using_existing_cli_auth_and_closes_its_process() {
     assert_eq!(items(&mut socket, &chat).await["items"], json!(transcript));
     close_chat(&mut socket, server.root.path(), id).await;
     let received = received(&server);
-    let create = received.iter().find(|message| message["method"] == "session.create").unwrap();
+    let create = received.iter().find(|message| message["method"] == "session.create" && message["params"]["streaming"] == true).unwrap();
     assert_eq!(create["params"]["streaming"], true);
     assert_eq!(create["params"]["requestPermission"], true);
     assert_eq!(create["params"]["workingDirectory"], server.root.path().join("home").display().to_string());
@@ -231,4 +287,17 @@ async fn copilot_settings_compaction_rewind_and_clear_use_sdk_operations() {
     let after: Value = serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{id}.json"))).unwrap()).unwrap();
     assert_ne!(before["agentSession"], after["agentSession"]);
     close_chat(&mut socket, server.root.path(), id).await;
+}
+
+#[tokio::test]
+async fn copilot_uses_the_fresh_session_catalog_in_rigs_and_chat_models() {
+    let (server, mut socket, chat) = launch("simple-turn", "default").await;
+    let capabilities = next_control(&mut socket, "chat.capabilities").await["capabilities"].clone();
+    let response = reqwest::Client::new().get(format!("http://127.0.0.1:{}/api/rigs/options?agent=copilot&rig=Copilot", server.port)).send().await.unwrap();
+    let response: Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
+    let models: Vec<&Value> = response["models"].as_array().unwrap().iter().map(|model| &model["value"]).collect();
+    assert_eq!(models, [&json!("claude-sonnet-4.6"), &json!("gemini-3.8-flash")]);
+    assert_eq!(response["models"][1]["efforts"], json!(["low", "high"]));
+    assert_eq!(capabilities["models"], json!(["claude-sonnet-4.6", "gemini-3.8-flash"]));
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
 }

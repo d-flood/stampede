@@ -13,6 +13,8 @@ use github_copilot_sdk::{
     SessionConfig, SessionEvent, SessionId, SessionListFilter, SetModelOptions,
     handler::{PermissionHandler, PermissionResult, UserInputHandler, UserInputResponse},
     session::Session as CopilotSession,
+    rpc::ModelListRequest,
+    session_events::{ProviderMonthlyUsageScope, ProviderMonthlyUsageState, ProviderQuotaState, ProviderQuotaUnit, SessionQuotaObservationData},
 };
 use serde_json::{Value, json};
 use tokio::{
@@ -27,7 +29,7 @@ use super::{
     Context, Driver, Event, Image, Item, Notice, Phase, Question, Request, RequestKind, Session,
     Settings, Status, Tokens, ToolCall, ToolKind, html, relative, unified, words,
 };
-use crate::config::{Agent, AgentSettings};
+use crate::{config::{Agent, AgentSettings}, usage::{Consumption, Reading, Unit, Window}};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -90,24 +92,65 @@ async fn rpc<T>(future: impl std::future::Future<Output = Result<T, github_copil
 pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &AgentSettings) -> io::Result<(Vec<Value>, AgentSettings)> {
     let mut connection = Connection::open(cwd, env).await?;
     let result = async {
-        let models = rpc(connection.client.list_models()).await?;
         let mut config = SessionConfig::default().deny_all_permissions().with_working_directory(cwd);
         if let Some(model) = &settings.model { config = config.with_model(model); }
         if let Some(effort) = &settings.effort { config = config.with_reasoning_effort(effort); }
         let session = rpc(connection.client.create_session(config)).await?;
-        let current = rpc(session.rpc().model().get_current()).await;
+        let result = async {
+            let models = models(&session).await?;
+            let current = rpc(session.rpc().model().get_current()).await?;
+            let chosen = AgentSettings {
+                model: current.model_id.or_else(|| settings.model.clone()),
+                effort: current.reasoning_effort.or_else(|| settings.effort.clone()),
+                mode: settings.mode.clone(),
+            };
+            Ok((models, chosen))
+        }.await;
         let _ = rpc(session.disconnect()).await;
         let _ = rpc(connection.client.delete_session(session.id())).await;
-        let current = current?;
-        let chosen = AgentSettings {
-            model: current.model_id.or_else(|| settings.model.clone()),
-            effort: current.reasoning_effort.or_else(|| settings.effort.clone()),
-            mode: settings.mode.clone(),
-        };
-        Ok((models.into_iter().map(|model| serde_json::to_value(model).unwrap()).collect(), chosen))
+        result
     }.await;
     connection.close().await;
     result
+}
+
+async fn models(session: &CopilotSession) -> io::Result<Vec<Value>> {
+    rpc(session.rpc().model().list_with_params(ModelListRequest { skip_cache: Some(true) })).await.map(|catalog| catalog.list)
+}
+
+pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
+    let mut connection = Connection::open(&crate::home(), env).await?;
+    let result = async {
+        let session = rpc(connection.client.create_session(SessionConfig::default().deny_all_permissions().with_working_directory(crate::home()))).await?;
+        let result = rpc(session.rpc().quota().refresh()).await.map(|quota| readings(quota.provider_quotas.as_deref().unwrap_or_default()));
+        let _ = rpc(session.disconnect()).await;
+        let _ = rpc(connection.client.delete_session(session.id())).await;
+        result
+    }.await;
+    connection.close().await;
+    result
+}
+
+fn readings(providers: &[ProviderQuotaState]) -> Vec<Reading> {
+    let mut reading = Reading::new(Agent::Copilot, Window::Monthly, 0.0, None);
+    reading.used = None;
+    if let Some(monthly) = providers.iter().filter(|quota| quota.provider.id == "copilot").find_map(|quota| quota.monthly_usage.as_ref())
+        && monthly.scope == ProviderMonthlyUsageScope::User {
+        reading.starts_at = monthly.cycle_start.as_deref().and_then(super::epoch_ms);
+        reading.resets_at = monthly.reset_on.as_deref().and_then(super::epoch_ms);
+        reading.read_at = monthly.queried_at.as_deref().and_then(super::epoch_ms).unwrap_or(reading.read_at);
+        if monthly.state == ProviderMonthlyUsageState::Available
+            && let Some(amount) = monthly.consumed_quantity.filter(|amount| amount.is_finite() && *amount >= 0.0)
+            && let Some(unit) = match monthly.unit {
+                ProviderQuotaUnit::AiCredits => Some(Unit::Credits),
+                ProviderQuotaUnit::Requests => Some(Unit::Requests),
+                ProviderQuotaUnit::Tokens => Some(Unit::Tokens),
+                _ => None,
+            } {
+            reading.consumption = Some(Consumption { amount, unit });
+        }
+    }
+    vec![reading]
 }
 
 pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
@@ -205,21 +248,25 @@ async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: A
 
 pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Copilot, UnboundedReceiver<Event>)> {
     let connection = Connection::open(&chat.cwd, env).await?;
-    let models = rpc(connection.client.list_models()).await?;
     let (interactions, pending) = mpsc::unbounded_channel();
     let handlers = Arc::new(Handlers(interactions));
     let session = open_session(&connection.client, data_dir, chat, handlers.clone()).await?;
     let subscribed = session.subscribe();
+    let models = models(&session).await?;
     let history = if chat.agent_session.is_some() { rpc(session.get_events()).await? } else { Vec::new() };
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(&chat.cwd, events, chat.settings.clone());
-    transcript.capabilities.models = models.iter().map(|model| model.id.clone()).collect();
+    transcript.capabilities.models = models.iter().filter_map(|model| model["id"].as_str().map(str::to_owned)).collect();
     transcript.capabilities.modes = Agent::Copilot.modes().iter().map(|mode| Choice::mode(mode)).collect();
     if let Ok(current) = rpc(session.rpc().model().get_current()).await {
         transcript.settings.chosen.model = current.model_id.or(transcript.settings.chosen.model);
         transcript.settings.chosen.effort = current.reasoning_effort.or(transcript.settings.chosen.effort);
     }
-    transcript.efforts = models.into_iter().map(|model| (model.id, model.supported_reasoning_efforts.unwrap_or_default())).collect();
+    transcript.efforts = models.iter().filter_map(|model| {
+        let id = model["id"].as_str()?.to_owned();
+        let efforts = model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+        Some((id, efforts))
+    }).collect();
     let _ = transcript.events.send(Event::Session(session.id().to_string()));
     for event in history { transcript.read(&event, true); }
     transcript.finish();
@@ -487,6 +534,12 @@ impl Transcript {
                 self.tokens.input += data["inputTokens"].as_u64().unwrap_or(0);
                 self.tokens.output += data["outputTokens"].as_u64().unwrap_or(0);
                 let _ = self.events.send(Event::Meters(None, Some(self.tokens)));
+            }
+            "session.quota_observation" if !history => {
+                if let Some(data) = event.typed_data::<SessionQuotaObservationData>()
+                    && data.observation.provider.id == "copilot" && data.observation.monthly_usage.is_some() {
+                    let _ = self.events.send(Event::Usage(readings(&[data.observation])));
+                }
             }
             "session.usage_info" => {
                 if let (Some(used), Some(window)) = (data["currentTokens"].as_u64(), data["tokenLimit"].as_u64()) {

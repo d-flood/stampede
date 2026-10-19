@@ -99,7 +99,7 @@ export type Chat = {
 	draft?: string;
 };
 
-export type Reading = { agent: Agent; window: 'five-hour' | 'weekly'; used: number; resetsAt?: number; readAt: number };
+export type Reading = { agent: Agent; window: 'five-hour' | 'weekly' | 'monthly'; used?: number; consumption?: { amount: number; unit: 'credits' | 'requests' | 'tokens' }; startsAt?: number; resetsAt?: number; readAt: number };
 
 export type Session = { agent: Agent; sessionId: string; firstPrompt: string; updatedAt: number };
 
@@ -126,7 +126,7 @@ export type Ticket = {
 	releasing?: boolean;
 };
 
-export type Run = { rig: string; parallel: number; paused?: { reason: 'david' } | { reason: 'storage'; message: string } | { reason: 'usage'; agent: Agent; window: 'five-hour' | 'weekly'; resetsAt?: number } };
+export type Run = { rig: string; parallel: number; paused?: { reason: 'david' } | { reason: 'storage'; message: string } | { reason: 'usage'; agent: Agent; window: Reading['window']; resetsAt?: number } };
 
 export type Epic = {
 	slug: string;

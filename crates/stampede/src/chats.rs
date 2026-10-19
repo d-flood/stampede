@@ -1484,7 +1484,7 @@ pub async fn usage(rig: &Rig) -> io::Result<Vec<Reading>> {
     match rig.agent {
         Agent::ClaudeCode => claude::usage(&rig.env).await,
         Agent::Codex => codex::usage(&rig.env).await,
-        Agent::Copilot => Ok(Vec::new()),
+        Agent::Copilot => copilot::usage(&rig.env).await,
     }
 }
 
