@@ -15,7 +15,7 @@ use tokio::{
 };
 
 use crate::{
-    epics::{Author, Epic, Epics, Event},
+    epics::{Author, Epic, Epics, Event, Tag},
     git,
     runs::Runs,
 };
@@ -160,6 +160,8 @@ pub enum TicketCommand {
         /// The numbers of the Tickets of the same Epic that must be merged or skipped before this one can be taken, separated by commas, such as 1,3. Leave it out when nothing blocks the Ticket.
         #[arg(long, value_name = "N,...", value_delimiter = ',')]
         blocked_by: Vec<u32>,
+        #[arg(long, value_enum, value_delimiter = ',', help = "Optional Ticket tags")]
+        tags: Vec<Tag>,
         /// A Markdown file holding the Ticket's body, which is what the Chat that works the Ticket is given. Pass - to read the body from standard input instead.
         #[arg(long, value_name = "FILE")]
         body: PathBuf,
@@ -176,6 +178,15 @@ pub enum TicketCommand {
         /// A Markdown file holding the new body. Pass - to read it from standard input instead.
         #[arg(value_name = "FILE")]
         body: PathBuf,
+        #[command(flatten)]
+        connection: Connection,
+    },
+    #[command(about = "Replace a Ticket's tags; omit tags to clear them")]
+    SetTags {
+        #[arg(value_name = "EPIC/N")]
+        reference: Reference,
+        #[arg(value_enum, value_delimiter = ',')]
+        tags: Vec<Tag>,
         #[command(flatten)]
         connection: Connection,
     },
@@ -215,11 +226,13 @@ enum Request {
     #[serde(rename = "epic.set-setup")]
     SetSetup { epic: String, setup: String },
     #[serde(rename = "ticket.add")]
-    AddTicket { epic: String, ticket: u32, title: String, blockers: Vec<u32>, body: String },
+    AddTicket { epic: String, ticket: u32, title: String, blockers: Vec<u32>, body: String, #[serde(default)] tags: Vec<Tag> },
     #[serde(rename = "ticket")]
     Ticket { epic: String, ticket: u32 },
     #[serde(rename = "ticket.set-body")]
     SetBody { epic: String, ticket: u32, body: String },
+    #[serde(rename = "ticket.set-tags")]
+    SetTags { epic: String, ticket: u32, tags: Vec<Tag> },
     #[serde(rename = "brief")]
     Brief { epic: String },
     #[serde(rename = "note")]
@@ -276,13 +289,17 @@ fn request(command: CliCommand) -> Result<(Connection, Request), String> {
             (connection, Request::SetBrief { epic, brief: read(&brief, "Brief")? })
         }
         CliCommand::Epic(EpicCommand::SetSetup { epic, setup, connection }) => (connection, Request::SetSetup { epic, setup }),
-        CliCommand::Ticket(TicketArgs { command: Some(TicketCommand::Add { epic, number, title, blocked_by, body, connection }), .. }) => {
+        CliCommand::Ticket(TicketArgs { command: Some(TicketCommand::Add { epic, number, title, blocked_by, tags, body, connection }), .. }) => {
             let body = read(&body, "body")?;
-            (connection, Request::AddTicket { epic, ticket: number, title, blockers: blocked_by, body })
+            (connection, Request::AddTicket { epic, ticket: number, title, blockers: blocked_by, tags, body })
         }
         CliCommand::Ticket(TicketArgs { command: Some(TicketCommand::SetBody { reference, body, connection }), .. }) => {
             let Reference { epic, ticket } = reference;
             (connection, Request::SetBody { epic, ticket, body: read(&body, "body")? })
+        }
+        CliCommand::Ticket(TicketArgs { command: Some(TicketCommand::SetTags { reference, tags, connection }), .. }) => {
+            let Reference { epic, ticket } = reference;
+            (connection, Request::SetTags { epic, ticket, tags })
         }
         CliCommand::Ticket(TicketArgs { command: None, reference, connection }) => {
             let Reference { epic, ticket } = reference.expect("clap requires a reference without a subcommand");
@@ -371,14 +388,18 @@ async fn handle(epics: &Epics, runs: &Runs, request: Request) -> Result<String, 
             epics.record(&epic, Event::SetupSet { command: setup })?;
             Ok(format!("Recorded the Setup Command of {epic}."))
         }
-        Request::AddTicket { epic, ticket, title, blockers, body } => {
-            epics.record(&epic, Event::TicketAdded { ticket, title, body, blockers })?;
+        Request::AddTicket { epic, ticket, title, blockers, body, tags } => {
+            epics.record(&epic, Event::TicketAdded { ticket, title, body, blockers, tags })?;
             Ok(format!("Added {epic}/{ticket}."))
         }
         Request::Ticket { epic, ticket } => show(&epics.get(&epic)?, ticket),
         Request::SetBody { epic, ticket, body } => {
             epics.record(&epic, Event::BodySet { ticket, body })?;
             Ok(format!("Replaced the body of {epic}/{ticket}."))
+        }
+        Request::SetTags { epic, ticket, tags } => {
+            epics.record(&epic, Event::TagsSet { ticket, tags })?;
+            Ok(format!("Replaced the tags of {epic}/{ticket}."))
         }
         Request::Brief { epic } => Ok(epics.get(&epic)?.brief),
         Request::Note { epic, ticket, text } => {
@@ -401,8 +422,15 @@ fn show(epic: &Epic, number: u32) -> Result<String, String> {
     let status = |blocker| epic.tickets.get(blocker).map_or("missing".to_owned(), |blocker| blocker.status.to_string());
     let blockers: Vec<_> = ticket.blockers.iter().map(|blocker| format!("{slug}/{blocker} ({})", status(blocker))).collect();
     let blockers = if blockers.is_empty() { "nothing".to_owned() } else { blockers.join(", ") };
+    let mut metadata = String::new();
+    if !ticket.tags.is_empty() {
+        metadata.push_str(&format!("Tags: {}\n", ticket.tags.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")));
+    }
+    if let Some(rig) = &ticket.rig {
+        metadata.push_str(&format!("Rig: {rig}\n"));
+    }
     let mut text = format!(
-        "# {slug}/{number}: {}\n\nStatus: {}\nBlocked by: {blockers}\n\n{}\n",
+        "# {slug}/{number}: {}\n\nStatus: {}\nBlocked by: {blockers}\n{metadata}\n{}\n",
         ticket.title,
         ticket.status,
         ticket.body.trim_end()

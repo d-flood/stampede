@@ -128,7 +128,7 @@ async fn a_cli_change_reaches_every_device_subscribed_to_the_epics_project() {
 
 #[tokio::test]
 async fn a_devices_edits_are_recorded_as_the_events_the_cli_writes() {
-    let server = Server::start("loop-edits").await;
+    let server = Server::with_config("loop-edits", "[[rig]]\nname = 'Chosen'\nagent = 'codex'\n").await;
     let root = server.root.path().to_owned();
     let cli = Cli { data_dir: root.join("data") };
     let repo = init(&root, "repo");
@@ -154,6 +154,9 @@ async fn a_devices_edits_are_recorded_as_the_events_the_cli_writes() {
         json!({ "kind": "ticket.added", "ticket": 2, "title": "The tab", "body": "Show it.\n", "blockers": [1] }),
         json!({ "kind": "ticket.body.set", "ticket": 1, "body": "Build the store first.\n" }),
         json!({ "kind": "blockers.set", "ticket": 1, "blockers": [] }),
+        json!({ "kind": "ticket.tags.set", "ticket": 1, "tags": ["routine", "judgment", "frontend-design"] }),
+        json!({ "kind": "ticket.rig.set", "ticket": 1, "rig": "Chosen" }),
+        json!({ "kind": "ticket.rig.set", "ticket": 1, "rig": null }),
         json!({ "kind": "note.added", "ticket": 1, "author": "david", "text": "From David." }),
         json!({ "kind": "epic.archived" }),
     ];
@@ -165,6 +168,9 @@ async fn a_devices_edits_are_recorded_as_the_events_the_cli_writes() {
     let refusals = [
         (json!({ "kind": "blockers.set", "ticket": 1, "blockers": [2] }), 400, "those Blockers would make a cycle: loop/1 is blocked by loop/2, which is blocked by loop/1"),
         (json!({ "kind": "ticket.body.set", "ticket": 2, "body": " \n" }), 400, "the body is empty"),
+        (json!({ "kind": "ticket.tags.set", "ticket": 1, "tags": ["routine", "routine"] }), 400, "Ticket tags must be unique"),
+        (json!({ "kind": "ticket.rig.set", "ticket": 1, "rig": "Missing" }), 400, "there is no Rig Missing in the config"),
+        (json!({ "kind": "ticket.rig.set", "ticket": 9, "rig": null }), 400, "loop has no Ticket 9"),
         (json!({ "kind": "note.added", "ticket": 1, "author": "agent", "text": "Posing." }), 403, device_only),
         (json!({ "kind": "epic.added", "slug": "loop", "title": "T", "brief": "B", "project": "/" }), 403, device_only),
         (json!({ "kind": "ticket.merged", "ticket": 1 }), 403, device_only),

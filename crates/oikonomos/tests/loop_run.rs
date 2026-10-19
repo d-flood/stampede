@@ -326,6 +326,40 @@ fn has_epic(items: &Value) -> bool {
     items.as_array().unwrap().iter().any(|item| item["epic"] == "work")
 }
 
+#[tokio::test]
+async fn ticket_rigs_override_the_run_default_and_survive_a_restart() {
+    let mut lp = Loop::new("trigs", &[(1, ""), (2, ""), (3, "")]).await;
+    for (ticket, rig) in [(1, Some("Codex Done")), (2, Some("Done Again")), (3, Some("Done Again")), (3, None)] {
+        lp.record(json!({ "kind": "ticket.rig.set", "ticket": ticket, "rig": rig })).await.unwrap();
+    }
+    lp.restart().await;
+    lp.run("Done", 3).await;
+    lp.claimed(&[1, 2, 3]).await;
+    assert_eq!(lp.claim(1)["rig"], "Codex Done");
+    assert_eq!(lp.claim(2)["rig"], "Done Again");
+    assert_eq!(lp.claim(3)["rig"], "Done");
+    assert_eq!(lp.chat_record(&lp.chat_of(1)).unwrap()["agent"], "codex");
+    assert!(lp.record(json!({ "kind": "ticket.rig.set", "ticket": 1, "rig": null })).await.unwrap_err().contains("in progress"));
+}
+
+#[tokio::test]
+async fn selecting_another_agent_for_a_returned_ticket_keeps_its_worktree() {
+    let mut lp = Loop::new("trchange", &[(1, "")]).await;
+    lp.run("Done", 1).await;
+    lp.claimed(&[1]).await;
+    let first = lp.claim(1);
+    lp.record(json!({ "kind": "run.paused", "reason": "david" })).await.unwrap();
+    lp.close(1).await;
+    lp.record(json!({ "kind": "ticket.rig.set", "ticket": 1, "rig": "Codex Done" })).await.unwrap();
+    lp.record(json!({ "kind": "run.resumed" })).await.unwrap();
+    lp.claimed(&[1, 1]).await;
+    let second = lp.claim(1);
+    assert_eq!(second["rig"], "Codex Done");
+    assert_eq!(second["worktree"], first["worktree"]);
+    assert_ne!(second["chat"], first["chat"]);
+    assert_eq!(lp.chat_record(&lp.chat_of(1)).unwrap()["agent"], "codex");
+}
+
 /// The attention feed as a newly connected Device sees it.
 async fn feed(port: u16) -> Value {
     let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await.unwrap();
@@ -933,6 +967,18 @@ async fn usage_resets_resume_normal_done_and_waiting_chats_without_continuing_th
         assert_eq!(lp.sent().len(), 1, "{ending}");
         assert!(lp.entries("turn.cut").is_empty(), "{ending}");
     }
+}
+
+#[tokio::test]
+async fn usage_from_a_ticket_rig_pauses_a_run_with_another_default_agent() {
+    let fixture = UsageFixture::new("limit", None);
+    let lp = Loop::with_rigs("trusage", &[(1, "")], &fixture.rigs).await;
+    lp.record(json!({ "kind": "ticket.rig.set", "ticket": 1, "rig": "Usage" })).await.unwrap();
+    lp.run("Codex Done", 1).await;
+    fixture.gated("reset").await;
+    lp.until("the assigned Rig's usage pause", |lp| !lp.entries("run.paused").is_empty()).await;
+    assert_eq!(lp.claim(1)["rig"], "Usage");
+    assert_eq!(lp.entries("run.paused")[0]["agent"], "claude-code");
 }
 
 #[tokio::test]

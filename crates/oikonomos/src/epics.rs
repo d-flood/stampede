@@ -23,7 +23,15 @@ pub enum Event {
     #[serde(rename = "setup.set")]
     SetupSet { command: String },
     #[serde(rename = "ticket.added")]
-    TicketAdded { ticket: u32, title: String, body: String, blockers: Vec<u32> },
+    TicketAdded {
+        ticket: u32, title: String, body: String, blockers: Vec<u32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tags: Vec<Tag>,
+    },
+    #[serde(rename = "ticket.tags.set")]
+    TagsSet { ticket: u32, tags: Vec<Tag> },
+    #[serde(rename = "ticket.rig.set")]
+    RigSet { ticket: u32, rig: Option<String> },
     #[serde(rename = "ticket.body.set")]
     BodySet { ticket: u32, body: String },
     #[serde(rename = "blockers.set")]
@@ -158,6 +166,24 @@ pub enum Status {
     Skipped,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum Tag {
+    Routine,
+    Judgment,
+    FrontendDesign,
+}
+
+impl fmt::Display for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(match self {
+            Self::Routine => "routine",
+            Self::Judgment => "judgment",
+            Self::FrontendDesign => "frontend-design",
+        })
+    }
+}
+
 impl Status {
     pub fn resolved(self) -> bool {
         matches!(self, Status::Merged | Status::Skipped)
@@ -236,6 +262,10 @@ pub struct Ticket {
     pub title: String,
     pub body: String,
     pub blockers: Vec<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<Tag>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rig: Option<String>,
     pub status: Status,
     pub notes: Vec<Note>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -337,11 +367,13 @@ impl Epic {
         match &entry.event {
             Event::BriefSet { brief } => self.brief = brief.clone(),
             Event::SetupSet { command } => self.setup = Some(command.clone()),
-            Event::TicketAdded { ticket, title, body, blockers } => {
+            Event::TicketAdded { ticket, title, body, blockers, tags } => {
                 self.tickets.entry(*ticket).or_insert_with(|| Ticket {
                     title: title.clone(),
                     body: body.clone(),
                     blockers: blockers.clone(),
+                    tags: tags.clone(),
+                    rig: None,
                     status: Status::NotStarted,
                     notes: Vec::new(),
                     claim: None,
@@ -352,6 +384,17 @@ impl Epic {
                     releasing: false,
                     kept: None,
                 });
+            }
+            Event::TagsSet { ticket, tags } => {
+                if let Some(ticket) = self.tickets.get_mut(ticket) {
+                    ticket.tags = tags.clone();
+                }
+            }
+            Event::RigSet { ticket, rig } => {
+                if let Some(ticket) = self.tickets.get_mut(ticket) {
+                    ticket.rig = rig.clone();
+                    ticket.attention = None;
+                }
             }
             Event::BodySet { ticket, body } => {
                 if let Some(ticket) = self.tickets.get_mut(ticket) {
@@ -561,12 +604,13 @@ impl Epic {
         let slug = &self.slug;
         match event {
             Event::BriefSet { brief } => filled(brief, "Brief"),
-            Event::TicketAdded { ticket, title, body, blockers } => {
+            Event::TicketAdded { ticket, title, body, blockers, tags } => {
                 if self.tickets.contains_key(ticket) {
                     return Err(format!("{slug}/{ticket} already exists"));
                 }
                 one_line(title)?;
                 filled(body, "body")?;
+                check_tags(tags)?;
                 if blockers.contains(ticket) {
                     return Err(format!("{slug}/{ticket} cannot block itself"));
                 }
@@ -574,6 +618,17 @@ impl Epic {
                     Some(missing) => Err(format!("{slug} has no Ticket {missing} to block {slug}/{ticket}; add Tickets in dependency order")),
                     None => Ok(()),
                 }
+            }
+            Event::TagsSet { ticket, tags } => {
+                self.ticket(*ticket)?;
+                check_tags(tags)
+            }
+            Event::RigSet { ticket, rig } => {
+                let status = self.ticket(*ticket)?.status;
+                if status != Status::NotStarted {
+                    return Err(format!("{slug}/{ticket} is {status}; its Rig can change only while not started"));
+                }
+                rig.as_ref().map_or(Ok(()), |rig| filled(rig, "Rig"))
             }
             Event::BodySet { ticket, body } => {
                 self.ticket(*ticket)?;
@@ -763,6 +818,13 @@ fn one_line(title: &str) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+fn check_tags(tags: &[Tag]) -> Result<(), String> {
+    if tags.iter().collect::<BTreeSet<_>>().len() != tags.len() {
+        return Err("Ticket tags must be unique".to_owned());
+    }
+    Ok(())
 }
 
 fn filled(text: &str, what: &str) -> Result<(), String> {
@@ -1034,6 +1096,8 @@ mod tests {
             title: "T1".to_owned(),
             body: "Edited".to_owned(),
             blockers: vec![],
+            tags: vec![],
+            rig: None,
             status: Status::NotStarted,
             notes: vec![
                 Note { author: Author::Agent, text: "First".to_owned(), at: 6 },
@@ -1081,7 +1145,7 @@ mod tests {
             (Event::BriefSet { brief: "B".to_owned() }, r#"{"at":9,"kind":"brief.set","brief":"B"}"#),
             (Event::SetupSet { command: "pnpm install".to_owned() }, r#"{"at":9,"kind":"setup.set","command":"pnpm install"}"#),
             (
-                Event::TicketAdded { ticket: 3, title: "T".to_owned(), body: "B".to_owned(), blockers: vec![1, 2] },
+                Event::TicketAdded { ticket: 3, title: "T".to_owned(), body: "B".to_owned(), blockers: vec![1, 2], tags: vec![] },
                 r#"{"at":9,"kind":"ticket.added","ticket":3,"title":"T","body":"B","blockers":[1,2]}"#,
             ),
             (Event::BodySet { ticket: 3, body: "B".to_owned() }, r#"{"at":9,"kind":"ticket.body.set","ticket":3,"body":"B"}"#),

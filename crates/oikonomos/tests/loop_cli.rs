@@ -6,6 +6,38 @@ use common::{Cli, Server, git, init};
 use serde_json::Value;
 
 #[tokio::test]
+async fn ticket_tags_are_optional_overlapping_validated_and_persistent() {
+    let mut server = Server::start("ticket-tags").await;
+    let root = server.root.path().to_owned();
+    let cli = Cli { data_dir: root.join("data") };
+    let repo = init(&root, "repo");
+    cli.ok(&repo, &["epic", "add", "tags", "--title", "Tags", "--brief", "-"], "Brief");
+    for (number, tags) in [(1, ""), (2, "routine"), (3, "routine,judgment,frontend-design")] {
+        let number = number.to_string();
+        let mut args = vec!["ticket", "add", "tags", &number, "--title", "Work", "--body", "-"];
+        if !tags.is_empty() {
+            args.extend(["--tags", tags]);
+        }
+        cli.ok(&repo, &args, "Body");
+    }
+    assert!(!cli.ok(&repo, &["ticket", "tags/1"], "").contains("Tags:"));
+    assert!(cli.ok(&repo, &["ticket", "tags/2"], "").contains("Tags: routine\n"));
+    assert!(cli.ok(&repo, &["ticket", "tags/3"], "").contains("Tags: routine, judgment, frontend-design\n"));
+    for tags in ["unknown", "routine,routine"] {
+        let error = cli.refused(&repo, &["ticket", "add", "tags", "4", "--title", "Bad", "--tags", tags, "--body", "-"], "Body");
+        assert!(error.contains(if tags == "unknown" { "invalid value" } else { "must be unique" }), "{error}");
+    }
+    cli.ok(&repo, &["ticket", "set-tags", "tags/2", "judgment,frontend-design"], "");
+    cli.ok(&repo, &["ticket", "set-tags", "tags/3"], "");
+    let before = cli.ok(&repo, &["ticket", "tags/2"], "");
+    assert!(before.contains("Tags: judgment, frontend-design\n"));
+    assert!(!cli.ok(&repo, &["ticket", "tags/3"], "").contains("Tags:"));
+    server.restart().await;
+    assert_eq!(cli.ok(&repo, &["ticket", "tags/2"], ""), before);
+    assert!(!cli.ok(&repo, &["ticket", "tags/3"], "").contains("Tags:"));
+}
+
+#[tokio::test]
 async fn the_cli_publishes_and_reads_an_epic_through_the_server() {
     let mut server = Server::start("loop-cli").await;
     let root = server.root.path().to_owned();

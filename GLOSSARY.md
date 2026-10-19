@@ -90,6 +90,12 @@ _Avoid_: task, issue, story, card
 One of _not started_, _in progress_ (held by a Chat), _merging_ (complete and waiting for or undergoing its merge), _merged_, or _skipped_.
 _Avoid_: state, stage, column
 
+**Ticket tag**:
+One of _Routine_ (predictable implementation), _Judgment_ (autonomous decisions), or _Frontend design_ (visual or interaction design). A Ticket can have none or several; tags describe its work without selecting a Rig.
+
+**Ticket Rig**:
+An optional saved Rig choice for a Ticket, overriding the Run's default when its Chat starts. Clearing it restores the default; it can be changed while the Ticket is not started.
+
 **Blocker**:
 A Ticket that must be merged into its Epic's branch, or skipped, before another Ticket may be taken.
 _Avoid_: dependency, prerequisite, parent

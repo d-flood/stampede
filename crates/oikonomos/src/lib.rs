@@ -219,6 +219,8 @@ async fn record_epic(State(state): State<AppState>, Path(slug): Path<String>, Js
         | Event::SetupSet { .. }
         | Event::TicketAdded { .. }
         | Event::BodySet { .. }
+        | Event::TagsSet { .. }
+        | Event::RigSet { .. }
         | Event::BlockersSet { .. }
         | Event::Reopened { .. }
         | Event::Archived
@@ -232,7 +234,7 @@ async fn record_epic(State(state): State<AppState>, Path(slug): Path<String>, Js
     if !editable {
         return Err((StatusCode::FORBIDDEN, "a Device records only David's edits; Epics come from the CLI".to_owned()));
     }
-    if let Event::RunStarted { rig, .. } | Event::RunChanged { rig: Some(rig), .. } = &event
+    if let Event::RunStarted { rig, .. } | Event::RunChanged { rig: Some(rig), .. } | Event::RigSet { rig: Some(rig), .. } = &event
         && !state.config.borrow().rigs.iter().any(|other| other.name == *rig)
     {
         return Err((StatusCode::BAD_REQUEST, format!("there is no Rig {rig} in the config")));

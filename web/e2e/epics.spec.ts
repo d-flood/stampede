@@ -111,6 +111,62 @@ async function openTicket(panel: Locator, phone: boolean, number: number) {
 	if (!phone) await expect(row).toHaveAttribute('aria-expanded', 'true');
 }
 
+test('Ticket tags and rigs can be chosen independently and persist on desktop and phone', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
+	const slug = `tags-${project.name}`;
+	const panel = await epicTab(page, slug, ['Routine work', 'Build it.\n'], ['Design work', 'Design it.\n', '1']);
+	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	const cli = (...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', `${process.env.OIKONOMOS_E2E_ROOT}/data`], { cwd: root });
+	cli('ticket', 'set-tags', `${slug}/1`, 'routine');
+	cli('ticket', 'set-tags', `${slug}/2`, 'judgment,frontend-design');
+	const tickets = panel.getByRole('region', { name: 'Tickets' });
+	const first = tickets.getByRole('combobox', { name: 'Rig for ticket 1', exact: true });
+	const second = tickets.getByRole('combobox', { name: 'Rig for ticket 2', exact: true });
+	await expect(first).toHaveValue('');
+	await expect(second).toHaveValue('');
+	await expect(tickets.locator('.tags')).toHaveText(['Routine', 'JudgmentFrontend design']);
+	await first.selectOption('Fake Claude');
+	await second.selectOption('Fake Codex');
+	await expect(first).toBeEnabled();
+	await expect(second).toBeEnabled();
+	await expect(panel.getByRole('region', { name: 'Body' })).toHaveCount(0);
+	await page.reload();
+	await expect(first).toHaveValue('Fake Claude');
+	await expect(second).toHaveValue('Fake Codex');
+	await expect(tickets.locator('.tags')).toHaveText(['Routine', 'JudgmentFrontend design']);
+	await expect.poll(() => tickets.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+	await expect.poll(async () => {
+		const bounds = await second.boundingBox();
+		const viewport = page.viewportSize();
+		return !!bounds && !!viewport && bounds.width > 0 && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width;
+	}).toBe(true);
+	await page.screenshot({ path: test.info().outputPath('ticket-tags-and-rigs.png') });
+	await second.selectOption('');
+	await expect(second).toBeEnabled();
+	await page.reload();
+	await expect(first).toHaveValue('Fake Claude');
+	await expect(second).toHaveValue('');
+	await openTicket(panel, phone, 2);
+	const tags = panel.getByRole('group', { name: 'Tags', exact: true });
+	await expect(tags.getByRole('button', { name: 'Routine', exact: true })).toHaveAttribute('aria-pressed', 'false');
+	await tags.getByRole('button', { name: 'Routine', exact: true }).click();
+	await expect(tags.getByRole('button', { name: 'Routine', exact: true })).toHaveAttribute('aria-pressed', 'true');
+	await page.reload();
+	await openTicket(panel, phone, 2);
+	await expect(tags.getByRole('button', { name: 'Routine', exact: true })).toHaveAttribute('aria-pressed', 'true');
+	for (const name of ['Routine', 'Judgment', 'Frontend design']) {
+		await tags.getByRole('button', { name, exact: true }).click();
+		await expect(tags.getByRole('button', { name, exact: true })).toHaveAttribute('aria-pressed', 'false');
+	}
+	if (phone) await panel.getByRole('button', { name: `Back to ${slug}` }).click();
+	else await tickets.getByRole('button', { name: /^2\s*Design work/ }).click();
+	await expect(tickets.locator('.tags').nth(1)).toBeEmpty();
+	await expect(second).toHaveValue('');
+	const invalid = await page.request.post(`/api/epics/${slug}`, { data: { kind: 'ticket.tags.set', ticket: 1, tags: ['other'] } });
+	expect(invalid.status()).toBe(422);
+	await showFiles(await showSidebar(page));
+});
+
 test('a Ticket body and David’s Note, edited in the Epic tab, persist across a reload', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
 	const slug = `edits-${project.name}`;
@@ -259,7 +315,7 @@ test('Start on a Frontier Ticket works it with a fake Agent until it is merged',
 	await expect(panel.getByText('Record a Setup Command before starting a Ticket.')).toBeVisible();
 	cli('', 'epic', 'set-setup', slug, '');
 	await expect(start).toBeEnabled();
-	await (phone ? panel : tickets).getByRole('combobox', { name: 'Rig' }).selectOption('Fake Claude Verdict');
+	await (phone ? panel : tickets).getByRole('combobox', { name: 'Rig', exact: true }).selectOption('Fake Claude Verdict');
 	await start.click();
 
 	const status = phone ? panel.locator('.chips') : row;
@@ -315,7 +371,7 @@ test('a merged Ticket moved back to not started is worked again on the Epic bran
 	const row = panel.getByRole('region', { name: 'Tickets' }).getByRole('button', { name: /^1\s*The work/ });
 	await row.click();
 	const start = panel.getByRole('button', { name: 'Start', exact: true });
-	const rig = (phone ? panel : panel.getByRole('region', { name: 'Tickets' })).getByRole('combobox', { name: 'Rig' });
+	const rig = (phone ? panel : panel.getByRole('region', { name: 'Tickets' })).getByRole('combobox', { name: 'Rig', exact: true });
 	const reopen = panel.getByRole('button', { name: 'Move to not started' });
 	await expect(reopen).toHaveCount(0);
 	await rig.selectOption('Fake Claude Verdict');
@@ -352,7 +408,7 @@ test('a merged Ticket moved back to not started is worked again on the Epic bran
 		await expect(row).toContainText('in progress · Fake Claude');
 		await expect(row).toContainText('· edited');
 	}
-	expect(log().map((entry) => entry.kind).slice(-4)).toEqual(['worktree.removed', 'ticket.reopened', 'ticket.claimed', 'ticket.body.set']);
+	expect(log().map((entry) => entry.kind).slice(-5)).toEqual(['worktree.removed', 'ticket.reopened', 'ticket.rig.set', 'ticket.claimed', 'ticket.body.set']);
 	await showFiles(await showSidebar(page));
 });
 

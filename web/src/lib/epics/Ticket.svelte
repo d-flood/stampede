@@ -2,8 +2,10 @@
 	import { ago } from '#lib/chat/sessions.ts';
 	import Text from '#lib/chat/Text.svelte';
 	import { rigs } from '#lib/config.svelte.ts';
-	import type { Chat, Device, Epic, Ticket } from '#lib/device.svelte.ts';
+	import type { Chat, Device, Epic, Ticket, TicketTag } from '#lib/device.svelte.ts';
 	import Blockers from '#lib/epics/Blockers.svelte';
+	import RigSelect from '#lib/epics/RigSelect.svelte';
+	import Tags from '#lib/epics/Tags.svelte';
 	import { label, marks, onFrontier, record, resolved, toggle, tones, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -32,7 +34,10 @@
 	const starting = $derived(open.starting.includes(ticket.number));
 	const error = $derived(open.errors[ticket.number]);
 	const choices = $derived(rigs());
-	const rig = $derived(choices.some((choice) => choice.name === open.rig) ? open.rig : choices[0]?.name);
+	const defaultRig = $derived(choices.some((choice) => choice.name === open.rig) ? open.rig : choices[0]?.name);
+	const rig = $derived(ticket.rig ?? defaultRig);
+	let tagging = $state(false);
+	let tagError = $state<string>();
 	let refused = $state<string>();
 	let draft = $state('');
 	let adding = $state(false);
@@ -56,6 +61,12 @@
 		refused = await record(epic.slug, { kind: 'blockers.set', ticket: ticket.number, blockers: toggle(ticket.blockers, number) });
 	}
 
+	async function tag(tags: TicketTag[]) {
+		tagging = true;
+		tagError = await record(epic.slug, { kind: 'ticket.tags.set', ticket: ticket.number, tags });
+		tagging = false;
+	}
+
 	async function add(event: SubmitEvent) {
 		event.preventDefault();
 		if (adding || !draft.trim()) return;
@@ -72,17 +83,13 @@
 
 {#snippet start()}
 	<div class="start">
-		<label>
+		<div class="rig">
 			<span>Rig</span>
-			<select value={rig} disabled={starting} onchange={(event) => (open.rig = event.currentTarget.value)}>
-				{#each choices as choice (choice.name)}
-					<option value={choice.name}>{choice.name}</option>
-				{/each}
-			</select>
-		</label>
+			<RigSelect {open} {ticket} {defaultRig} disabled={starting} />
+		</div>
 		<Button
 			variant="primary"
-			disabled={!rig || epic.setup === null || starting}
+			disabled={!choices.some((choice) => choice.name === rig) || epic.setup === null || starting || open.savingRigs.includes(ticket.number)}
 			onclick={() => rig && open.start(device, ticket.number, rig)}
 		>
 			{starting ? 'Starting…' : 'Start'}
@@ -117,6 +124,11 @@
 	{/if}
 	<section aria-label="Body">
 		<Text item={{ kind: 'text', text: ticket.body, streaming: false, phase: 'final' }} />
+	</section>
+	<section aria-label="Tags">
+		<h2>Tags</h2>
+		<Tags tags={ticket.tags ?? []} onchange={tag} disabled={tagging} />
+		{#if tagError}<p role="alert">{tagError}</p>{/if}
 	</section>
 	{#if others.length}
 		<section aria-label="Blockers">
@@ -231,6 +243,7 @@
 	}
 
 	section[aria-label='Notes'],
+	section[aria-label='Tags'],
 	section[aria-label='Blockers'] {
 		display: flex;
 		flex-direction: column;
@@ -295,21 +308,16 @@
 		margin-left: auto;
 	}
 
-	.start label {
+	.start .rig {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
 		color: var(--muted-fg);
 	}
 
-	select {
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-2);
-		color: var(--color-fg);
-		font: inherit;
+	.rig > :global(div) {
+		flex: 1;
+		min-width: 0;
 	}
 
 	.hint {
@@ -329,7 +337,4 @@
 		align-items: stretch;
 	}
 
-	.phone .start label select {
-		flex: 1;
-	}
 </style>

@@ -102,6 +102,7 @@ export type Reading = { agent: Agent; window: 'five-hour' | 'weekly'; used: numb
 export type Session = { agent: Agent; sessionId: string; firstPrompt: string; updatedAt: number };
 
 export type TicketStatus = 'not-started' | 'in-progress' | 'merging' | 'merged' | 'skipped';
+export type TicketTag = 'routine' | 'judgment' | 'frontend-design';
 
 export type Note = { author: 'agent' | 'david' | 'oikonomos'; text: string; at: number };
 
@@ -112,6 +113,8 @@ export type Ticket = {
 	title: string;
 	body: string;
 	blockers: number[];
+	tags?: TicketTag[];
+	rig?: string;
 	status: TicketStatus;
 	notes: Note[];
 	claim?: Claim;

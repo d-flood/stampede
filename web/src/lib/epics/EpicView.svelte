@@ -2,11 +2,13 @@
 	import { ago } from '#lib/chat/sessions.ts';
 	import Text from '#lib/chat/Text.svelte';
 	import { rigs } from '#lib/config.svelte.ts';
-	import type { Chat, Device, Epic, Ticket } from '#lib/device.svelte.ts';
+	import type { Chat, Device, Epic, Ticket, TicketTag } from '#lib/device.svelte.ts';
 	import Blockers from '#lib/epics/Blockers.svelte';
+	import RigSelect from '#lib/epics/RigSelect.svelte';
+	import Tags from '#lib/epics/Tags.svelte';
 	import Progress from '#lib/epics/Progress.svelte';
 	import TicketDetail from '#lib/epics/Ticket.svelte';
-	import { counts, label, land, marks, record, resolved, statuses, toggle, tones, type Edit, type OpenEpic } from '#lib/epics.svelte.ts';
+	import { counts, label, land, marks, record, resolved, statuses, ticketTags, toggle, tones, type Edit, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -60,6 +62,7 @@
 	let draft = $state('');
 	let title = $state('');
 	let blockers = $state<number[]>([]);
+	let tags = $state<TicketTag[]>([]);
 	let setup = $state<string>();
 	let error = $state<string>();
 	let saving = $state(false);
@@ -77,6 +80,7 @@
 		draft = text;
 		title = '';
 		blockers = [];
+		tags = [];
 		error = undefined;
 		returnTo = open.page;
 		open.page = page;
@@ -101,7 +105,7 @@
 		if (open.page === 'edit-brief') save({ kind: 'brief.set', brief: draft }, back);
 		else if (open.page === 'edit-ticket' && ticket) save({ kind: 'ticket.body.set', ticket: ticket.number, body: draft }, back);
 		else if (open.page === 'new-ticket' && title.trim()) {
-			save({ kind: 'ticket.added', ticket: next, title: title.trim(), body: draft, blockers }, back);
+			save({ kind: 'ticket.added', ticket: next, title: title.trim(), body: draft, blockers, tags }, back);
 		}
 	}
 
@@ -235,7 +239,7 @@
 				<Button variant="danger" onclick={() => (working.length ? (stopping = true) : run({ kind: 'run.stopped' }))}><Stop /> Stop</Button>
 			</div>
 		{:else}
-			<Button variant="primary" disabled={!rig || epic.setup === null} onclick={() => rig && run({ kind: 'run.started', rig, parallel: open.parallel })}>
+			<Button variant="primary" disabled={!rig || epic.setup === null || open.savingRigs.length > 0} onclick={() => rig && run({ kind: 'run.started', rig, parallel: open.parallel })}>
 				<Play /> Start Run
 			</Button>
 			{#if epic.setup === null}<p class="note">Record a Setup Command before starting a Run.</p>{/if}
@@ -302,6 +306,10 @@
 		{@render editing(`${epic.slug}/${next}`, 'Add', !!draft.trim() && !!title.trim())}
 		<div class="fields">
 			<input bind:value={title} aria-label="Title" placeholder="Title" autocomplete="off" />
+			<div class="field">
+				<span>Tags</span>
+				<Tags {tags} onchange={(value) => (tags = value)} />
+			</div>
 			{#if tickets.length}
 				<div class="field">
 					<span>Blocked by</span>
@@ -358,29 +366,39 @@
 					{#each shown as ticket (ticket.number)}
 						{@const expanded = !phone && open.ticket === ticket.number}
 						{@const Mark = marks[ticket.status]}
-						<button
-							class="row"
-							class:resolved={resolved(ticket.status)}
-							class:expanded
-							aria-expanded={phone ? undefined : expanded}
-							onclick={() => (open.ticket = expanded ? undefined : ticket.number)}
-						>
-							<span class="number">{ticket.number}</span>
-							{#if phone}
-								<span class="text">
-									<span class="title">{ticket.title}</span>
-									<span class="sub" style:--tone={tones[ticket.status]}>
-										<Mark />{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}{#if holder(ticket)}{' '}· {holder(ticket)}{/if}{#if ticket.claim?.edited}{' '}· edited{/if}
+						<div class="ticket-entry">
+							<button
+								class="row"
+								class:resolved={resolved(ticket.status)}
+								class:expanded
+								aria-expanded={phone ? undefined : expanded}
+								onclick={() => (open.ticket = expanded ? undefined : ticket.number)}
+							>
+								<span class="number">{ticket.number}</span>
+								{#if phone}
+									<span class="text">
+										<span class="title">{ticket.title}</span>
+										<span class="sub" style:--tone={tones[ticket.status]}>
+											<Mark />{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}{#if holder(ticket)}{' '}· {holder(ticket)}{/if}{#if ticket.claim?.edited}{' '}· edited{/if}
+										</span>
 									</span>
-								</span>
-								<CaretRight />
-							{:else}
-								<span class="title">{ticket.title}</span>
-								<span class="number">{ticket.blockers.join(', ')}</span>
-								<span class="status" style:--tone={tones[ticket.status]}><Mark />{label(ticket.status)}</span>
-								<span class="held" class:flagged={!!ticket.attention}>{holder(ticket)}</span>
-							{/if}
-						</button>
+									<CaretRight />
+								{:else}
+									<span class="title">{ticket.title}</span>
+									<span class="number">{ticket.blockers.join(', ')}</span>
+									<span class="status" style:--tone={tones[ticket.status]}><Mark />{label(ticket.status)}</span>
+									<span class="held" class:flagged={!!ticket.attention}>{holder(ticket)}</span>
+								{/if}
+							</button>
+							<div class="ticket-options">
+								<div class="tags" aria-label="Ticket tags">
+									{#each ticket.tags ?? [] as tag}<span title={ticketTags[tag].description}>{ticketTags[tag].label}</span>{/each}
+								</div>
+								<div class="ticket-rig">
+									<RigSelect {open} {ticket} defaultRig={epic.run?.rig ?? rig} label={`Rig for ticket ${ticket.number}`} disabled={open.starting.includes(ticket.number)} />
+								</div>
+							</div>
+						</div>
 						{#if expanded}
 							<div class="detail">
 								<TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} {open} chat={chatOf(ticket)} {device} {onchat} />
@@ -851,6 +869,63 @@
 		color: var(--color-fg);
 		font: inherit;
 		text-align: left;
+	}
+
+	.ticket-entry {
+		border-bottom: var(--border-width) solid var(--border);
+	}
+
+	.ticket-entry > .row {
+		box-sizing: border-box;
+		width: 100%;
+	}
+
+	.ticket-options {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-2);
+		padding: 0 var(--space-4) var(--space-2) calc(2.5rem + var(--space-4) + var(--space-3));
+	}
+
+	.tags {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-1);
+	}
+
+	.tags span {
+		padding: 1px var(--space-2);
+		border: var(--border-width) solid var(--border);
+		border-radius: 1em;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.ticket-rig {
+		width: 12rem;
+		max-width: 100%;
+		margin-left: auto;
+	}
+
+	.phone .ticket-entry {
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-lg);
+	}
+
+	.phone .ticket-entry > .row {
+		border: none;
+	}
+
+	.phone .ticket-options {
+		align-items: stretch;
+		flex-direction: column;
+		padding: 0 var(--space-3) var(--space-3);
+	}
+
+	.phone .ticket-rig {
+		width: 100%;
 	}
 
 	button.row {

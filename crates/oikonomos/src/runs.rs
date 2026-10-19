@@ -265,9 +265,10 @@ impl Runs {
         }
     }
 
-    /// The Run's step: starts a Ticket with the Run's Rig, in the open Project that checks out the Epic's repository.
     async fn take(&self, slug: &str, number: u32, rig: &str) -> Result<String, String> {
-        let project = self.project(&self.epics.get(slug)?).await?;
+        let epic = self.epics.get(slug)?;
+        let project = self.project(&epic).await?;
+        let rig = epic.ticket(number)?.rig.as_deref().unwrap_or(rig);
         let found = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned();
         let rig = found.ok_or_else(|| format!("The Run's Rig {rig} is no longer in the config, so Oikonomos could not start a Chat."))?;
         self.begin(slug, number, &project, &rig, true).await
@@ -304,7 +305,7 @@ impl Runs {
         resets.remove(slug);
         let Ok(epic) = self.epics.get(slug) else { return };
         let Some(run) = epic.run.as_ref().filter(|run| !epic.archived && run.paused != Some(Pause::David)) else { return };
-        let over = self.over(run);
+        let over = self.over(&epic, run);
         let recorded = match (&run.paused, &over) {
             (None, Some(pause)) => match self.epics.record(slug, Event::RunPaused { pause: pause.clone() }) {
                 Ok(()) => {
@@ -328,9 +329,12 @@ impl Runs {
         }
     }
 
-    fn over(&self, run: &Run) -> Option<Pause> {
+    fn over(&self, epic: &Epic, run: &Run) -> Option<Pause> {
         let config = self.config.borrow();
-        let agent = config.rigs.iter().find(|rig| rig.name == run.rig).map(|rig| rig.agent);
+        let names = epic.tickets.values().filter(|ticket| !ticket.status.resolved()).map(|ticket| {
+            ticket.claim.as_ref().map(|claim| claim.rig.as_str()).or(ticket.rig.as_deref()).unwrap_or(&run.rig)
+        });
+        let agents: Vec<_> = names.filter_map(|name| config.rigs.iter().find(|rig| rig.name == name).map(|rig| rig.agent)).collect();
         let readings = self.usage.readings();
         let now = now();
         let mut paused_window = None;
@@ -352,7 +356,7 @@ impl Runs {
         readings
             .into_iter()
             .filter(|reading| {
-                (Some(reading.agent) == agent || paused_window == Some((reading.agent, reading.window)))
+                (agents.contains(&reading.agent) || paused_window == Some((reading.agent, reading.window)))
                     && reading.used >= config.pause_at && reading.resets_at.is_none_or(|at| at > now)
             })
             .max_by_key(|reading| reading.resets_at.unwrap_or(u64::MAX))
@@ -582,6 +586,11 @@ impl Runs {
             ));
         };
         let ticket = epic.ticket(number)?;
+        let selected = ticket.rig.as_ref().map(|name| {
+            self.config.borrow().rigs.iter().find(|rig| rig.name == *name).cloned()
+                .ok_or_else(|| format!("The Ticket's Rig {name} is no longer in the config."))
+        }).transpose()?;
+        let rig = selected.as_ref().unwrap_or(rig);
         if !epic.frontier().any(|(other, _)| other == number) {
             let unresolved = |blocker: &&u32| epic.tickets.get(blocker).is_none_or(|blocker| !blocker.status.resolved());
             let blockers: Vec<_> = ticket.blockers.iter().filter(unresolved).map(|blocker| format!("{slug}/{blocker}")).collect();
@@ -630,7 +639,7 @@ impl Runs {
         if let Err(error) = live(&self.epics.get(slug)?) {
             return abandon(error).await;
         }
-        let resume = ticket.kept.as_ref().filter(|_| kept.is_some());
+        let resume = ticket.kept.as_ref().filter(|_| kept.is_some()).filter(|resume| selected.is_none() || resume.agent == rig.agent);
         let rig = match resume {
             Some(resume) if resume.agent != rig.agent => self.config.borrow().rig_for(resume.agent),
             _ => rig.clone(),

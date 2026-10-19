@@ -1,4 +1,4 @@
-import type { Device, Epic, Ticket, TicketStatus } from '#lib/device.svelte.ts';
+import type { Device, Epic, Ticket, TicketStatus, TicketTag } from '#lib/device.svelte.ts';
 import type { Component } from 'svelte';
 import CheckCircle from '~icons/ph/check-circle';
 import Circle from '~icons/ph/circle';
@@ -14,6 +14,7 @@ export class OpenEpic {
 	parallel = $state(1);
 	showRun = $state(false);
 	starting = $state<number[]>([]);
+	savingRigs = $state<number[]>([]);
 	errors = $state<Record<number, string>>({});
 
 	constructor(public projectId: string, public slug: string) {}
@@ -41,7 +42,9 @@ export class OpenEpic {
 export type Edit =
 	| { kind: 'brief.set'; brief: string }
 	| { kind: 'setup.set'; command: string }
-	| { kind: 'ticket.added'; ticket: number; title: string; body: string; blockers: number[] }
+	| { kind: 'ticket.added'; ticket: number; title: string; body: string; blockers: number[]; tags?: TicketTag[] }
+	| { kind: 'ticket.tags.set'; ticket: number; tags: TicketTag[] }
+	| { kind: 'ticket.rig.set'; ticket: number; rig: string | null }
 	| { kind: 'ticket.body.set'; ticket: number; body: string }
 	| { kind: 'blockers.set'; ticket: number; blockers: number[] }
 	| { kind: 'note.added'; ticket: number; author: 'david'; text: string }
@@ -70,6 +73,12 @@ async function post(url: string, init: RequestInit): Promise<string | undefined>
 export function toggle(blockers: number[], number: number) {
 	return blockers.includes(number) ? blockers.filter((other) => other !== number) : [...blockers, number].sort((a, b) => a - b);
 }
+
+export const ticketTags: Record<TicketTag, { label: string; description: string }> = {
+	routine: { label: 'Routine', description: 'Clear contract, predictable implementation' },
+	judgment: { label: 'Judgment', description: 'Requires autonomous decisions during implementation' },
+	'frontend-design': { label: 'Frontend design', description: 'Includes visual or interaction design' }
+};
 
 export const statuses: TicketStatus[] = ['merged', 'skipped', 'merging', 'in-progress', 'not-started'];
 

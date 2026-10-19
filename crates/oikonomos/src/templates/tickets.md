@@ -19,6 +19,8 @@ Look for prefactoring that makes the change easy: "Make the change easy, then ma
 
 Give each Ticket its Blockers; a Ticket with none can be taken immediately.
 
+Give each Ticket zero or more of these tags, independently: `routine` (a clear contract and predictable implementation), `judgment` (requires autonomous decisions during implementation), and `frontend-design` (includes visual or interaction design). Tags may overlap; leave them empty when none apply. For `judgment`, name the open decisions and their constraints in the Contract. Tags describe the work; David chooses its Rig.
+
 When the Brief has user stories, **every story is covered by exactly one Ticket**: the one that makes it true end to end. Check coverage both ways: every story in the Brief appears on some Ticket, and every story cited on a Ticket exists in the Brief. Report any story you could not place and why, rather than dropping it or splitting it so that no single Ticket delivers it.
 
 ## 4. Publish
@@ -26,12 +28,12 @@ When the Brief has user stories, **every story is covered by exactly one Ticket*
 Publish each slice with the Ticket template below. Number the Tickets from 1, in dependency order, since a Blocker must already exist when the Ticket it blocks is added:
 
 ```sh
-oikonomos ticket add <epic> <n> --title "<one-line title>" --blocked-by 1,3 --body - <<'EOF'
+oikonomos ticket add <epic> <n> --title "<one-line title>" --blocked-by 1,3 --tags judgment,frontend-design --body - <<'EOF'
 <the Ticket's body>
 EOF
 ```
 
-Leave out `--blocked-by` when nothing blocks the Ticket. Quote the heredoc's delimiter, as above, so that the shell leaves the body's backticks and dollar signs alone. Once every Ticket is added, `oikonomos frontier <epic>` should list exactly the Tickets that nothing blocks. To revise a published Ticket, pipe its whole new body to `oikonomos ticket set-body <epic>/<n> -`, which replaces the old one.
+Leave out `--blocked-by` when nothing blocks the Ticket, and `--tags` when none apply; the tags above are an example, not defaults. Quote the heredoc's delimiter, as above, so that the shell leaves the body's backticks and dollar signs alone. Once every Ticket is added, `oikonomos frontier <epic>` should list exactly the Tickets that nothing blocks. To revise a published Ticket, pipe its whole new body to `oikonomos ticket set-body <epic>/<n> -`, which replaces the old one. Replace its tags with `oikonomos ticket set-tags <epic>/<n> routine,frontend-design`, or omit the tags to clear them.
 
 Write each Ticket for an implementer less capable than you. The Chat that works it is given the Ticket's body and can read the Brief, and nothing else of this conversation. Assume it will not re-derive context, will follow instructions literally, and will creep in scope unless fenced. Carry every decision you have already made into the Ticket, as constraints and contracts, not prescriptive diffs.
 
