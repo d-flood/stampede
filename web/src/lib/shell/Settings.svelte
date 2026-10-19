@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { selectedTheme } from '#lib/config.svelte.ts';
+	import { hostName, saveHostName, selectedTheme } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import RigEditor from '#lib/shell/RigEditor.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
@@ -10,11 +10,30 @@
 	import Gear from '~icons/ph/gear';
 
 	let open = $state(false);
+	let refusal = $state<string | null>(null);
+
+	async function rename(input: HTMLInputElement) {
+		try {
+			await saveHostName(input.value.trim() || null);
+			refusal = null;
+			input.value = hostName() ?? '';
+		} catch (error) {
+			refusal = (error as Error).message;
+		}
+	}
 </script>
 
 <IconButton label="Settings" aria-haspopup="dialog" aria-expanded={open} onclick={() => (open = true)}><Gear /></IconButton>
 <Dialog bind:open full={form() === 'phone'} title="Settings">
 	<div class="settings">
+		<section aria-labelledby="host-name-label">
+			<div class="row">
+				<label id="host-name-label" for="host-name">Host name</label>
+				<input id="host-name" type="text" placeholder="Oikonomos" value={hostName() ?? ''} onchange={(event) => rename(event.currentTarget)} aria-describedby="host-name-help" />
+			</div>
+			<p id="host-name-help">Names this Host's installed app and windows on every device. Installed apps pick up a new name within about a day.</p>
+			{#if refusal}<p role="alert">{refusal}</p>{/if}
+		</section>
 		<section aria-labelledby="text-size-label">
 			<div class="row">
 				<label id="text-size-label" for="text-size">Text size</label>
@@ -85,7 +104,8 @@
 		line-height: 1.5;
 	}
 
-	select {
+	select,
+	input {
 		min-height: var(--target-min);
 		padding: var(--space-1) var(--space-2);
 		border: var(--border-width) solid var(--border);
@@ -95,7 +115,12 @@
 		font: inherit;
 	}
 
-	select:focus-visible {
+	input {
+		min-width: 0;
+	}
+
+	select:focus-visible,
+	input:focus-visible {
 		outline: var(--border-width) solid var(--status-working);
 		outline-offset: var(--border-width);
 	}
