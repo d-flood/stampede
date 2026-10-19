@@ -104,6 +104,7 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/version", get(version))
         .route("/api/browser", post(browser::open))
+        .route("/api/host-name", get(host_name).put(set_host_name))
         .route("/api/theme", get(theme).put(set_theme))
         .route("/api/themes", get(theme_names))
         .route("/api/themes/{name}", get(preview_theme))
@@ -133,6 +134,7 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/git/show", get(git::show))
         .route("/api/lsp/log", get(language_servers::log))
         .route("/fonts/host/{index}", get(host_font))
+        .route("/manifest.webmanifest", get(manifest))
         .route("/ws", get(device::upgrade))
         .fallback(spa)
         .with_state(state)
@@ -189,6 +191,35 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
 
 async fn version() -> Json<Value> {
     Json(json!({ "version": env!("CARGO_PKG_VERSION"), "buildId": env!("OIKONOMOS_BUILD_ID") }))
+}
+
+async fn host_name(State(state): State<AppState>) -> Json<Option<String>> {
+    Json(state.config.borrow().name.clone())
+}
+
+async fn set_host_name(State(state): State<AppState>, Json(name): Json<Option<String>>) -> Result<Json<Option<String>>, files::Failure> {
+    tokio::task::spawn_blocking(move || config::write_host_name(&state.config_path, name.as_deref()))
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+
+async fn manifest(State(state): State<AppState>) -> Response {
+    let name = state.config.borrow().name.clone().unwrap_or_else(|| "Oikonomos".to_owned());
+    let manifest = json!({
+        "name": name,
+        "short_name": name,
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "icons": [
+            { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+            { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+            { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+        ]
+    });
+    ([(header::CONTENT_TYPE, "application/manifest+json"), (header::CACHE_CONTROL, "no-cache")], manifest.to_string()).into_response()
 }
 
 async fn theme(State(state): State<AppState>) -> Json<Theme> {

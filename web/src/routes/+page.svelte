@@ -6,7 +6,7 @@
 	import { same, subagents } from '#lib/chat/agents.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
-	import { rigs, type Rig } from '#lib/config.svelte.ts';
+	import { hostName, rigs, type Rig } from '#lib/config.svelte.ts';
 	import {
 		connect,
 		tabOf,
@@ -158,7 +158,7 @@
 		});
 	});
 	const titles = $derived([
-		{ title: 'Projects' },
+		{ title: 'Projects', sub: hostName() ?? undefined },
 		{ title: label ?? 'Tabs' },
 		{ title: sectionShowing(section, focused && git[focused.id]).label, sub: label }
 	]);

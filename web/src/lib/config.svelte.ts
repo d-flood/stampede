@@ -30,6 +30,7 @@ let offered = $state.raw<Template[]>([]);
 let chord = $state('ctrl+space');
 let extras = $state.raw<string[]>([]);
 let scrollback = $state(10_000);
+let named = $state<string | null>(null);
 let savedTheme: ThemeResponse | undefined;
 let previewing = false;
 
@@ -44,7 +45,8 @@ async function get<T>(path: string): Promise<T> {
 
 export async function loadConfig() {
 	loadTextSize();
-	const [theme, font, rigs, settings, leaderKey, keys, lines, listed] = await Promise.all([
+	const [name, theme, font, rigs, settings, leaderKey, keys, lines, listed] = await Promise.all([
+		get<string | null>('/api/host-name'),
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
 		get<Rig[]>('/api/rigs'),
@@ -54,6 +56,7 @@ export async function loadConfig() {
 		get<number>('/api/scrollback'),
 		get<Template[]>('/api/templates')
 	]);
+	named = name;
 	editor.keymap = settings.keymap;
 	chord = leaderKey;
 	extras = keys.extra;
@@ -96,6 +99,20 @@ export async function selectTheme(name: string) {
 	savedTheme = theme;
 	selectedTheme.name = theme.name;
 	if (!previewing) applyTheme(theme);
+}
+
+export function hostName(): string | null {
+	return named;
+}
+
+export async function saveHostName(name: string | null) {
+	const response = await fetch('/api/host-name', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(name)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	named = await response.json();
 }
 
 export function beginThemePreview() {
