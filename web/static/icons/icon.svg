@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="57 51 392 392">
 	<defs>
 		<path id="far" d="M182 143 L217 208 L244 212 L244 230 L196 230 L158 157 Z" />
 		<g id="near">
@@ -8,26 +8,38 @@
 			<path d="M203 30 C203 10 223 2 245 8 L284 22 C294 26 292 42 282 44 L245 52 C223 56 203 50 203 30 Z" />
 			<path d="M106 144 L134 156 L108 222 L136 226 L136 244 L78 244 L80 222 Z" />
 		</g>
-		<g id="outline" fill="#EFE7D9" stroke="#EFE7D9" stroke-width="20" stroke-linejoin="round">
+		<g id="outline" stroke="#000" stroke-width="20" stroke-linejoin="round">
 			<use href="#far" />
 			<use href="#near" />
 		</g>
 		<circle id="eye" cx="238" cy="24" r="5.5" fill="#2A1D14" />
+		<use id="middle-gap" href="#outline" transform="translate(261 82) scale(0.6) rotate(7 140 140)" />
+		<use id="front-gap" href="#outline" transform="translate(123 186) scale(0.92) rotate(7 140 140)" />
+		<mask id="behind-middle" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+			<rect width="512" height="512" fill="#fff" />
+			<use href="#middle-gap" />
+			<use href="#front-gap" />
+		</mask>
+		<mask id="behind-front" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+			<rect width="512" height="512" fill="#fff" />
+			<use href="#front-gap" />
+		</mask>
 	</defs>
-	<rect width="512" height="512" rx="112" fill="#EFE7D9" />
-	<g transform="translate(67 74) scale(0.58) rotate(7 140 140)">
-		<use href="#far" fill="#6E3A1C" />
-		<use href="#near" fill="#A9521F" />
-		<use href="#eye" />
+	<g mask="url(#behind-middle)">
+		<g transform="translate(67 74) scale(0.58) rotate(7 140 140)">
+			<use href="#far" fill="#6E3A1C" />
+			<use href="#near" fill="#A9521F" />
+			<use href="#eye" />
+		</g>
 	</g>
-	<g transform="translate(261 82) scale(0.6) rotate(7 140 140)">
-		<use href="#outline" />
-		<use href="#far" fill="#6E3A1C" />
-		<use href="#near" fill="#B8581F" />
-		<use href="#eye" />
+	<g mask="url(#behind-front)">
+		<g transform="translate(261 82) scale(0.6) rotate(7 140 140)">
+			<use href="#far" fill="#6E3A1C" />
+			<use href="#near" fill="#B8581F" />
+			<use href="#eye" />
+		</g>
 	</g>
 	<g transform="translate(123 186) scale(0.92) rotate(7 140 140)">
-		<use href="#outline" />
 		<use href="#far" fill="#954F27" />
 		<use href="#near" fill="#EB6D25" />
 		<use href="#eye" />
