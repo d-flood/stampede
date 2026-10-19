@@ -1,6 +1,38 @@
 import { expect, test } from './fixtures.ts';
 import { openProject, screen, showSidebar } from './shell.ts';
 
+test('JetBrains Mono loads for UI text and controls', async ({ page }) => {
+	await page.goto('/');
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+	for (const element of [
+		page.locator('body'), settings, settings.locator('h2'),
+		settings.locator('#host-name'), settings.locator('#text-size'),
+		settings.getByRole('button', { name: 'Done', exact: true }),
+		settings.locator('.preview span'), settings.locator('.preview code')
+	]) {
+		await expect(element).toHaveCSS('font-family', /^"?JetBrains Mono/);
+	}
+	const faces = await page.evaluate(async () => Promise.all(
+		['400', '700', 'italic 400', 'italic 700'].map(async (style) => {
+			const loaded = await document.fonts.load(`${style} 16px "JetBrains Mono"`);
+			return loaded.length > 0 && loaded.every((face) => face.status === 'loaded');
+		})
+	));
+	expect(faces).toEqual([true, true, true, true]);
+	const session = await page.context().newCDPSession(page);
+	try {
+		await session.send('DOM.enable');
+		await session.send('CSS.enable');
+		const { root } = await session.send('DOM.getDocument');
+		const { nodeId } = await session.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#host-name-help' });
+		await expect.poll(async () => (await session.send('CSS.getPlatformFontsForNode', { nodeId })).fonts)
+			.toEqual([expect.objectContaining({ familyName: 'JetBrains Mono', isCustomFont: true })]);
+	} finally {
+		await session.detach();
+	}
+});
+
 test('text size defaults, changes, persists, and resets', async ({ page }, { project }) => {
 	const defaultSize = project.name === 'pixel' ? 16 : 13;
 	await page.goto('/');

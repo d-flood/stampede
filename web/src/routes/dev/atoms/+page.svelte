@@ -56,7 +56,7 @@
 	<Section title="Fonts">
 		<p class="mono">JetBrains Mono: 0O 1lI {'{}'} =&gt; != <b>bold</b> <i>italic</i></p>
 		<p class="mono">Nerd symbols: {'\uf07b \ue725 \uf09b \ue0b0 \u{f02a2}'}</p>
-		<p>system-ui for the rest of the UI</p>
+		<p>The same font throughout the UI</p>
 	</Section>
 
 	<Section title="Button">

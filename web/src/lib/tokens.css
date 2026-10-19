@@ -72,7 +72,7 @@
 	--git-untracked: var(--ansi-2);
 	--git-deleted: var(--ansi-1);
 
-	--font-ui: system-ui, sans-serif;
+	--font-ui: var(--font-mono);
 	--font-mono: 'JetBrains Mono', 'Symbols Nerd Font Mono', monospace;
 
 	--radius-sm: 2px;
