@@ -32,6 +32,8 @@ pub enum Event {
     TagsSet { ticket: u32, tags: Vec<Tag> },
     #[serde(rename = "ticket.rig.set")]
     RigSet { ticket: u32, rig: Option<String> },
+    #[serde(rename = "rig.renamed")]
+    RigRenamed { original: String, name: String },
     #[serde(rename = "ticket.body.set")]
     BodySet { ticket: u32, body: String },
     #[serde(rename = "blockers.set")]
@@ -550,6 +552,23 @@ impl Epic {
                     run.parallel = parallel.unwrap_or(run.parallel);
                 }
             }
+            Event::RigRenamed { original, name } => {
+                if let Some(run) = &mut self.run
+                    && run.rig == *original
+                {
+                    run.rig = name.clone();
+                }
+                for ticket in self.tickets.values_mut() {
+                    if ticket.rig.as_ref() == Some(original) {
+                        ticket.rig = Some(name.clone());
+                    }
+                    if let Some(claim) = &mut ticket.claim
+                        && claim.rig == *original
+                    {
+                        claim.rig = name.clone();
+                    }
+                }
+            }
             Event::RunFinished => {
                 self.run = None;
                 self.call = Some(Call::Finished);
@@ -883,6 +902,19 @@ impl Epics {
         self.epics.lock().unwrap().keys().cloned().collect()
     }
 
+    pub fn rename_rig(&self, original: &str, name: &str) -> Result<(), String> {
+        for slug in self.slugs() {
+            let epic = self.get(&slug)?;
+            if epic.run.as_ref().is_some_and(|run| run.rig == original)
+                || epic.tickets.values().any(|ticket| ticket.rig.as_deref() == Some(original)
+                    || ticket.claim.as_ref().is_some_and(|claim| claim.rig == original))
+            {
+                self.record(&slug, Event::RigRenamed { original: original.to_owned(), name: name.to_owned() })?;
+            }
+        }
+        Ok(())
+    }
+
     /// The Epic with a Ticket claimed by `chat`.
     pub fn holding(&self, chat: &str) -> Option<String> {
         let epics = self.epics.lock().unwrap();
@@ -1001,6 +1033,32 @@ mod tests {
 
     fn frontier(epic: &Epic) -> Vec<u32> {
         epic.frontier().map(|(number, _)| number).collect()
+    }
+
+    #[test]
+    fn renaming_a_rig_preserves_run_ticket_and_claim_choices_after_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let epics = Epics::load(dir.path()).unwrap();
+        epics.add("loop", "The loop", "Brief", Path::new("/repo")).unwrap();
+        epics.record("loop", Event::SetupSet { command: String::new() }).unwrap();
+        for ticket in 1..=3 {
+            epics.record("loop", Event::TicketAdded {
+                ticket, title: format!("T{ticket}"), body: "Body".to_owned(), blockers: vec![], tags: vec![],
+            }).unwrap();
+            epics.record("loop", Event::RigSet { ticket, rig: Some(if ticket == 3 { "Other" } else { "Original" }.to_owned()) }).unwrap();
+        }
+        epics.record("loop", Event::Claimed { ticket: 1, chat: "chat".to_owned(), rig: "Original".to_owned(), worktree: PathBuf::from("/repo/1") }).unwrap();
+        epics.record("loop", Event::RunStarted { rig: "Original".to_owned(), parallel: 2 }).unwrap();
+        epics.rename_rig("Original", "Reviewer").unwrap();
+        let reloaded = Epics::load(dir.path()).unwrap();
+        for epics in [&epics, &reloaded] {
+            let epic = epics.get("loop").unwrap();
+            assert_eq!(epic.run.unwrap().rig, "Reviewer");
+            assert_eq!(epic.tickets[&1].claim.as_ref().unwrap().rig, "Reviewer");
+            assert_eq!(epic.tickets[&1].rig.as_deref(), Some("Reviewer"));
+            assert_eq!(epic.tickets[&2].rig.as_deref(), Some("Reviewer"));
+            assert_eq!(epic.tickets[&3].rig.as_deref(), Some("Other"));
+        }
     }
 
     #[test]

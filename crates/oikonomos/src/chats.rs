@@ -793,6 +793,21 @@ impl Chats {
         self.chats.lock().unwrap().iter().map(|entry| entry.chat.lock().unwrap().clone()).filter(|chat| chat.parent.is_none()).collect()
     }
 
+    pub fn rename_rig(&self, original: &str, name: &str) -> io::Result<()> {
+        for entry in self.chats.lock().unwrap().iter() {
+            let mut chat = entry.chat.lock().unwrap();
+            if chat.rig == original {
+                let mut renamed = chat.clone();
+                name.clone_into(&mut renamed.rig);
+                write_record(&self.data_dir, &renamed)?;
+                *chat = renamed;
+                let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+            }
+        }
+        self.refresh_attention();
+        Ok(())
+    }
+
     fn children(&self, id: &str) -> Vec<String> {
         self.chats.lock().unwrap().iter().filter_map(|entry| {
             let chat = entry.chat.lock().unwrap();

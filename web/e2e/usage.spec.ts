@@ -36,6 +36,17 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	}
 	await expect(usage).toBeInViewport();
 	await page.clock.pauseAt(now + 5_000);
+	if (project.name === 'desktop') {
+		await usage.getByRole('meter', { name: 'Claude · 5h' }).hover();
+		const tooltip = page.getByRole('tooltip');
+		await expect(tooltip).toContainText('Claude · 5h · 100% used');
+		await expect(tooltip).toContainText('Last updated:');
+		await expect(tooltip).toContainText('Resets:');
+		await page.keyboard.press('Escape');
+		await page.clock.runFor(100);
+		await expect(tooltip).toBeHidden();
+		await page.mouse.move(900, 400);
+	}
 	await expect(usage.getByRole('group')).toHaveCount(2);
 	await expect(usage.getByRole('meter')).toHaveCount(4);
 	await expect(usage.locator('.countdown')).toHaveText(['(in 3h 9m)', '(in 6d 14h)', '(in 4d 20h)']);

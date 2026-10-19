@@ -55,7 +55,7 @@
 	let width = $state(320);
 	let drag = $state<{ x: number; width: number }>();
 	const maximum = $derived(Math.min(640, viewport * 0.6));
-	const minimum = $derived(Math.min(240, maximum));
+	const minimum = $derived(Math.min(160, maximum));
 	const size = $derived(Math.min(maximum, Math.max(minimum, width)));
 
 	function resize(value: number) {
@@ -180,6 +180,7 @@
 
 	.sections {
 		display: flex;
+		flex-wrap: wrap;
 		margin: 0 var(--space-2);
 		padding: var(--space-1);
 		border: var(--border-width) solid var(--border);
@@ -188,7 +189,7 @@
 	}
 
 	.sections button {
-		flex: 1;
+		flex: 1 0 auto;
 		min-height: var(--target-min);
 		border: none;
 		border-radius: var(--radius-sm);

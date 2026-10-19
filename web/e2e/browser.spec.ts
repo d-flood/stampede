@@ -123,7 +123,7 @@ test('Browser Tabs proxy a Vite app with HMR and survive reopening', async ({ pa
 		await expect.poll(() => page.frames().some((frame) => frame.url() === src)).toBe(true);
 		if (project.name === 'desktop') {
 			await browser.getByRole('textbox', { name: 'Host address' }).click();
-			await page.keyboard.press('Control+Space');
+			await page.keyboard.press('Control+;');
 			await page.keyboard.press('s');
 			await expect(page.getByRole('tablist', { name: 'Right Tabs' }).getByRole('tab', { name: `localhost:${listening.port}` })).toHaveAttribute('aria-selected', 'true');
 		}

@@ -207,7 +207,7 @@ pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<
     Ok(sessions)
 }
 
-pub async fn models(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Value>> {
+pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &AgentSettings) -> io::Result<(Vec<Value>, AgentSettings)> {
     let (mut connection, mut proxy) = connect(cwd, env).await?;
     let result = async {
         let mut models = Vec::new();
@@ -218,7 +218,15 @@ pub async fn models(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Ve
             cursor = listed["nextCursor"].clone();
             if cursor.is_null() { break; }
         }
-        Ok(models)
+        let config = connection.call("config/read", json!({ "includeLayers": false, "cwd": cwd })).await?;
+        let default = models.iter().find(|model| model["isDefault"] == true);
+        let model = settings.model.as_deref().or(config["config"]["model"].as_str())
+            .or_else(|| default.and_then(|model| model["model"].as_str()));
+        let listed = models.iter().find(|listed| listed["model"].as_str() == model);
+        let effort = settings.effort.as_deref().or(config["config"]["model_reasoning_effort"].as_str())
+            .or_else(|| listed.and_then(|model| model["defaultReasoningEffort"].as_str()));
+        let settings = AgentSettings { model: model.map(str::to_owned), effort: effort.map(str::to_owned), mode: settings.mode.clone() };
+        Ok((models, settings))
     }.await;
     let _ = proxy.kill().await;
     result

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Reading } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import Tooltip from '#lib/ui/Tooltip.svelte';
 	import { onMount } from 'svelte';
 	import Claude from '~icons/simple-icons/claude';
 	import OpenAI from '~icons/simple-icons/openai';
@@ -66,14 +67,18 @@
 				{@const reading = readings.find((reading) => reading.agent === agent && reading.window === window)}
 				{@const percent = reading ? Math.round(reading.used * 100) : 0}
 				{@const description = details(reading)}
-				<div class="meter" class:high={reading && reading.used >= 0.9} title={description}>
-					<span class="ring" role="meter" aria-label="{label} · {window === 'weekly' ? 'week' : '5h'}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={reading ? percent : undefined} aria-valuetext={reading ? `${percent}% used. ${description}` : description}>
-						<svg viewBox="0 0 40 40" aria-hidden="true">
-							<circle class="track" cx="20" cy="20" r="17" />
-							<circle class="fill" cx="20" cy="20" r="17" pathLength="100" stroke-dasharray="{Math.max(0, Math.min(percent, 100))} 100" transform="rotate(-90 20 20)" />
-						</svg>
-						<span class="percent">{reading ? `${percent}%` : '—'}</span>
-					</span>
+				<div class="meter" class:high={reading && reading.used >= 0.9}>
+					<Tooltip delayDuration={0} text={`${label} · ${period}${reading ? ` · ${percent}% used` : ''}\n${description}`}>
+						{#snippet children(props)}
+							<span {...props} class="ring" role="meter" aria-label="{label} · {window === 'weekly' ? 'week' : '5h'}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={reading ? percent : undefined} aria-valuetext={reading ? `${percent}% used. ${description}` : description}>
+								<svg viewBox="0 0 40 40" aria-hidden="true">
+									<circle class="track" cx="20" cy="20" r="17" />
+									<circle class="fill" cx="20" cy="20" r="17" pathLength="100" stroke-dasharray="{Math.max(0, Math.min(percent, 100))} 100" transform="rotate(-90 20 20)" />
+								</svg>
+								<span class="percent">{reading ? `${percent}%` : '—'}</span>
+							</span>
+						{/snippet}
+					</Tooltip>
 					<span class="label">{period}</span>
 					<span class="reset">
 						{#if reading?.resetsAt !== undefined}
@@ -235,8 +240,15 @@
 			grid-template-columns: 18px repeat(2, minmax(0, 1fr));
 		}
 
-		section:not(.phone) .identity > div {
+		section:not(.phone) .identity > div,
+		section:not(.phone) .label,
+		section:not(.phone) .reset {
 			display: none;
+		}
+
+		section:not(.phone) .meter {
+			grid-template-columns: 32px;
+			justify-content: center;
 		}
 	}
 

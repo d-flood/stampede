@@ -178,6 +178,7 @@ impl Chats {
             let (status, activity, items, finished) = {
                 let transcript = entry.transcript.lock().unwrap();
                 let chat = entry.chat.lock().unwrap();
+                report.rig = chat.rig.clone();
                 report.model = chat.settings.chosen.model.clone();
                 report.totals.duration_ms = super::now().saturating_sub(report.started_at);
                 report.totals.tokens = chat.tokens.map(|tokens| tokens.input + tokens.output);

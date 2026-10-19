@@ -6,6 +6,7 @@ import os
 import select
 import sys
 import time
+import tomllib
 from pathlib import Path
 
 from rig_tools import ask, delegate
@@ -188,6 +189,11 @@ def read(expected):
             continue
         if message.get('method') == 'thread/list' != expected.get('method'):
             list_threads(message)
+            continue
+        if message.get('method') == 'config/read' != expected.get('method'):
+            path = daemon().parent / 'config.toml'
+            config = tomllib.loads(path.read_text()) if path.exists() else {}
+            send({'id': message['id'], 'result': {'config': config, 'origins': {}, 'layers': None}})
             continue
         if message.get('method') != expected.get('method') and message.get('method') in answers():
             answer(message)

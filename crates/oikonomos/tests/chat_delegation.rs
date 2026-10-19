@@ -80,6 +80,79 @@ async fn review(agent: &str, target: &str) {
 }
 
 #[tokio::test]
+async fn starter_rigs_are_editable_discoverable_and_delegatable_and_survive_restart() {
+    let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
+    let mut server = Server::with_env("starter-rigs", "", vec![
+        ("PATH", path.into()), ("OIKONOMOS_FAKE_FIXTURE", "simple-turn".into()),
+    ]).await;
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{}/api/rigs", server.port);
+    let rigs: Value = serde_json::from_slice(&client.get(&url).send().await.unwrap().bytes().await.unwrap()).unwrap();
+    assert_eq!(rigs[0]["name"], "Claude Code");
+    assert_eq!(rigs[1]["name"], "Codex");
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "test" })).await;
+    next_control(&mut socket, "hello").await;
+    control(&mut socket, json!({ "type": "project.open", "path": "~" })).await;
+    let project = next_control(&mut socket, "project.opened").await["projectId"].clone();
+    control(&mut socket, json!({ "type": "chat.create", "projectId": project, "rig": "Claude Code" })).await;
+    let source = next_control(&mut socket, "chat.created").await["chat"].clone();
+    let response = client.put(&url).header("Content-Type", "application/json")
+        .body(json!({ "original": "Codex", "name": "Reviewer", "agent": "codex", "mode": "approve-for-me" }).to_string())
+        .send().await.unwrap();
+    assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    let listed = call(&server, &source, "list_rigs", json!({})).await;
+    let listed: Value = serde_json::from_str(listed["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(listed[1]["name"], "Reviewer");
+    let result = call(&server, &source, "delegate_to_rig", json!({
+        "rig": "Reviewer", "task": "Greet the reader in one short sentence with one word in **bold**. Use no names and no tools.",
+    })).await;
+    assert_eq!(result["isError"], false);
+    assert_eq!(result["structuredContent"]["outcome"], "completed");
+    assert_eq!(result["structuredContent"]["rig"], "Reviewer");
+    close_chat(&mut socket, server.root.path(), source["id"].as_str().unwrap()).await;
+    let saved = fs::read_to_string(server.root.path().join("config.toml")).unwrap();
+    server.restart().await;
+    assert_eq!(fs::read_to_string(server.root.path().join("config.toml")).unwrap(), saved);
+    let rigs: Value = serde_json::from_slice(&client.get(&url).send().await.unwrap().bytes().await.unwrap()).unwrap();
+    assert_eq!(rigs.as_array().unwrap().len(), 2);
+    assert_eq!(rigs[1]["name"], "Reviewer");
+}
+
+#[tokio::test]
+async fn saved_rig_names_are_discoverable_and_can_be_used_for_delegation_after_renaming() {
+    let (server, mut socket, source, _fixtures) = launch("claude-code", "codex", false).await;
+    let client = reqwest::Client::new();
+    for (original, name, agent, model, effort, mode) in [
+        (Some("source"), "Writer", "claude-code", "opus", "high", "auto"),
+        (Some("target"), "Careful Reviewer", "codex", "gpt-6-luna", "low", "read-only"),
+        (None, "Quick Reviewer", "codex", "gpt-6-luna", "low", "read-only"),
+    ] {
+        let response = client.put(format!("http://127.0.0.1:{}/api/rigs", server.port))
+            .header("Content-Type", "application/json")
+            .body(json!({ "original": original, "name": name, "agent": agent, "model": model, "effort": effort, "mode": mode }).to_string())
+            .send().await.unwrap();
+        assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    }
+    let record: Value = serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{}.json", source["id"].as_str().unwrap()))).unwrap()).unwrap();
+    assert_eq!(record["rig"], "Writer");
+    let rigs = call(&server, &source, "list_rigs", json!({})).await;
+    let rigs: Value = serde_json::from_str(rigs["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(rigs[0]["name"], "Writer");
+    assert_eq!(rigs[1]["name"], "Careful Reviewer");
+    assert_eq!(rigs[2]["name"], "Quick Reviewer");
+    let worker = tool(&server, &source, "delegate_to_rig", json!({ "rig": "Careful Reviewer", "task": TASK })).await;
+    gate(&server, "review").await;
+    fs::remove_file(server.root.path().join("home/review")).unwrap();
+    let output = timeout(Duration::from_secs(10), worker.wait_with_output()).await.unwrap().unwrap();
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["result"]["isError"], false);
+    assert_eq!(result["result"]["structuredContent"]["outcome"], "completed");
+    assert_eq!(result["result"]["structuredContent"]["report"], FINDING);
+    close_chat(&mut socket, server.root.path(), source["id"].as_str().unwrap()).await;
+}
+
+#[tokio::test]
 async fn delegation_discovers_rigs_and_rejects_invalid_tasks_without_starting_children() {
     let (server, mut socket, source, _fixtures) = launch("claude-code", "codex", false).await;
     let rigs = call(&server, &source, "list_rigs", json!({})).await;

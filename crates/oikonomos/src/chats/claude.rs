@@ -98,9 +98,9 @@ impl Driver for Claude {
     }
 }
 
-pub async fn models(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Value>> {
+pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &AgentSettings) -> io::Result<(Vec<Value>, AgentSettings)> {
     let mut child = process::Command::new("claude")
-        .args(ARGS).envs(env).envs(SDK_ENV).current_dir(cwd)
+        .args(ARGS).args(settings.claude_flags()).envs(env).envs(SDK_ENV).current_dir(cwd)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
         .kill_on_drop(true).spawn()?;
     let result = async {
@@ -108,20 +108,41 @@ pub async fn models(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Ve
         let initialize = json!({ "type": "control_request", "request_id": "models", "request": { "subtype": "initialize" } });
         writer.write_all(format!("{initialize}\n").as_bytes()).await?;
         let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let mut models = Vec::new();
         while let Some(line) = lines.next_line().await? {
             let message: Value = serde_json::from_str(&line)?;
-            if message["type"] == "control_response" && message["response"]["request_id"] == "models" {
+            if message["type"] == "control_response" {
                 let response = &message["response"];
+                let id = response["request_id"].as_str().unwrap_or_default();
+                if !["models", "settings"].contains(&id) { continue; }
                 if response["subtype"] != "success" {
                     return Err(io::Error::other(response.to_string()));
                 }
-                return Ok(response["response"]["models"].as_array().cloned().unwrap_or_default());
+                if id == "models" {
+                    models = response["response"]["models"].as_array().cloned().unwrap_or_default();
+                    let request = json!({ "type": "control_request", "request_id": "settings", "request": { "subtype": "get_settings" } });
+                    writer.write_all(format!("{request}\n").as_bytes()).await?;
+                } else {
+                    let applied = &response["response"]["applied"];
+                    let settings = AgentSettings {
+                        model: applied["model"].as_str().map(|model| model_alias(&models, model)),
+                        effort: applied["effort"].as_str().map(str::to_owned),
+                        mode: settings.mode.clone(),
+                    };
+                    return Ok((models, settings));
+                }
             }
         }
         Err(io::Error::other("Claude Code closed before listing models"))
     }.await;
     let _ = child.kill().await;
     result
+}
+
+fn model_alias(models: &[Value], model: &str) -> String {
+    let listed = models.iter().find(|listed| listed["value"] == model);
+    let resolved = || models.iter().find(|listed| listed["value"] != "default" && listed["resolvedModel"] == model);
+    listed.or_else(resolved).and_then(|listed| listed["value"].as_str()).unwrap_or(model).to_owned()
 }
 
 pub async fn start(
@@ -809,12 +830,7 @@ impl Transcript {
     }
 
     fn alias(&self, model: &str) -> String {
-        let listed = self.models.iter().find(|listed| listed["value"] == model);
-        let resolved = || {
-            let mut aliases = self.models.iter().filter(|listed| listed["value"] != "default");
-            aliases.find(|listed| listed["resolvedModel"] == model)
-        };
-        listed.or_else(resolved).and_then(|listed| listed["value"].as_str()).unwrap_or(model).to_owned()
+        model_alias(&self.models, model)
     }
 
     fn changed(&self, setting: Setting) {

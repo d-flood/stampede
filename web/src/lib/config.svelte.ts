@@ -27,7 +27,7 @@ let revision = $state(0);
 let faces: FontFace[] = [];
 let configured = $state.raw<Rig[]>([]);
 let offered = $state.raw<Template[]>([]);
-let chord = $state('ctrl+space');
+let chord = $state('ctrl+;');
 let extras = $state.raw<string[]>([]);
 let scrollback = $state(10_000);
 let named = $state<string | null>(null);
@@ -144,7 +144,7 @@ export function rigs(): Rig[] {
 	return configured;
 }
 
-export async function saveRig(settings: { original?: string; agent: Agent; model?: string; effort?: string; mode: string }) {
+export async function saveRig(settings: { original?: string; name: string; agent: Agent; model?: string; effort?: string; mode: string }) {
 	const response = await fetch('/api/rigs', {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },

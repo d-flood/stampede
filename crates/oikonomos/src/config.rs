@@ -39,7 +39,7 @@ impl Default for Settings {
         Self {
             name: None,
             roots: vec!["~/repos".into()],
-            leader: "ctrl+space".to_owned(),
+            leader: "ctrl+;".to_owned(),
             scrollback: 10_000,
             theme: Theme::default(),
             font: Fonts::default(),
@@ -118,6 +118,22 @@ pub struct Rig {
 }
 
 impl Rig {
+    fn starter(agent: Agent) -> Self {
+        let (name, mode) = match agent {
+            Agent::ClaudeCode => ("Claude Code", "auto"),
+            Agent::Codex => ("Codex", "approve-for-me"),
+        };
+        Self {
+            name: name.to_owned(),
+            agent,
+            env: BTreeMap::new(),
+            shortcut: None,
+            model: None,
+            effort: None,
+            mode: Some(mode.to_owned()),
+        }
+    }
+
     pub fn settings(&self) -> AgentSettings {
         let mode = self.mode.clone().or_else(|| Some(match self.agent {
             Agent::ClaudeCode => "auto",
@@ -306,22 +322,27 @@ impl Config {
 
     /// The first Rig for an Agent, or the Agent's defaults when no Rig runs it.
     pub fn rig_for(&self, agent: Agent) -> Rig {
-        if let Some(rig) = self.rigs.iter().find(|rig| rig.agent == agent) {
-            return rig.clone();
-        }
-        let (name, mode) = match agent {
-            Agent::ClaudeCode => ("Claude Code", "auto"),
-            Agent::Codex => ("Codex", "approve-for-me"),
+        self.rigs.iter().find(|rig| rig.agent == agent).cloned().unwrap_or_else(|| Rig::starter(agent))
+    }
+
+    fn seed_rigs(path: &Path) -> Result<(), Error> {
+        let mut text = match fs::read_to_string(path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+            text => text?,
         };
-        Rig {
-            name: name.to_owned(),
-            agent,
-            env: BTreeMap::new(),
-            shortcut: None,
-            model: None,
-            effort: None,
-            mode: Some(mode.to_owned()),
+        Self::parse(&text)?;
+        let document: toml::Table = toml::from_str(&text)?;
+        if document.contains_key("rig") {
+            return Ok(());
         }
+        let rigs = [Agent::ClaudeCode, Agent::Codex].map(Rig::starter);
+        let addition = toml::to_string(&toml::Table::from_iter([
+            ("rig".to_owned(), toml::Value::try_from(rigs)?),
+        ]))?;
+        text.push_str(&format!("\n{addition}"));
+        fs::create_dir_all(path.parent().unwrap_or(Path::new("/")))?;
+        fs::write(path, text)?;
+        Ok(())
     }
 
     fn load(path: &Path) -> Result<Self, Error> {
@@ -373,15 +394,18 @@ pub fn write_rig(path: &Path, original: Option<&str>, mut rig: Rig) -> Result<Ve
         text => text?,
     };
     let current = Config::parse(&text)?;
+    rig.name = rig.name.trim().to_owned();
+    if rig.name.is_empty() {
+        return Err("Rig name is required".into());
+    }
+    if current.rigs.iter().any(|other| other.name == rig.name && Some(other.name.as_str()) != original) {
+        return Err("A Rig with this name already exists".into());
+    }
     if let Some(name) = original {
         let old = current.rigs.iter().find(|rig| rig.name == name).ok_or("Rig no longer exists; reopen the editor")?;
-        rig.name = old.name.clone();
         rig.env = if old.agent == rig.agent { old.env.clone() } else { current.rig_for(rig.agent).env };
         rig.shortcut = old.shortcut.clone();
     } else {
-        if current.rigs.iter().any(|other| other.name == rig.name) {
-            return Err("A Rig with these settings already exists".into());
-        }
         rig.env = current.rig_for(rig.agent).env;
     }
     let mut value = toml::Value::try_from(&rig)?;
@@ -523,7 +547,7 @@ fn face((index, path): (usize, PathBuf)) -> Result<Face, Error> {
 
 pub fn watch(path: &Path) -> io::Result<watch::Receiver<Arc<Config>>> {
     let path = std::path::absolute(path)?;
-    let config = Config::load(&path).unwrap_or_else(|error| {
+    let config = Config::seed_rigs(&path).and_then(|()| Config::load(&path)).unwrap_or_else(|error| {
         eprintln!("config {}: {error}", path.display());
         Config::default()
     });
@@ -569,6 +593,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn starter_rigs_are_saved_once_and_editable_like_other_rigs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new/config.toml");
+        Config::seed_rigs(&path).unwrap();
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.rigs, [Rig::starter(Agent::ClaudeCode), Rig::starter(Agent::Codex)]);
+        let mut rig = config.rigs[0].clone();
+        rig.name = "Writer".to_owned();
+        rig.model = Some("sonnet".to_owned());
+        rig.effort = Some("low".to_owned());
+        rig.mode = Some("plan".to_owned());
+        write_rig(&path, Some("Claude Code"), rig.clone()).unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
+        Config::seed_rigs(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+        assert_eq!(Config::load(&path).unwrap().rigs, [rig, config.rigs[1].clone()]);
+    }
+
+    #[test]
+    fn starter_rigs_preserve_existing_configuration_and_explicit_rig_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "# Mine\nroots = []\n[editor]\nkeymap = 'vim'\n";
+        fs::write(&path, original).unwrap();
+        Config::seed_rigs(&path).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().starts_with(original));
+        assert_eq!(Config::load(&path).unwrap().rigs.len(), 2);
+        for text in ["rig = []\n", "[[rig]]\nname = 'Mine'\nagent = 'codex'\n"] {
+            fs::write(&path, text).unwrap();
+            Config::seed_rigs(&path).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        }
+        fs::write(&path, "[invalid").unwrap();
+        assert!(Config::seed_rigs(&path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "[invalid");
+    }
+
+    #[test]
     fn storage_limits_have_defaults_and_can_be_configured() {
         assert_eq!(Config::parse("").unwrap().storage, Storage::default());
         let config = Config::parse("[storage]\nmin_free_gib = 4\ncache_max_gib = 12\ncache_max_age_days = 3\n").unwrap();
@@ -588,7 +650,9 @@ mod tests {
         rig.mode = Some("default".to_owned());
         rig.env.clear();
         rig.shortcut = None;
+        rig.name = " Reviewer ".to_owned();
         let saved = write_rig(&path, Some("Mine"), rig).unwrap();
+        assert_eq!(saved[0].name, "Reviewer");
         assert_eq!(saved[0].env["CODEX_HOME"], "/tmp/alternate");
         assert_eq!(saved[0].shortcut.as_deref(), Some("c"));
         assert_eq!(saved[0].model.as_deref(), Some("a-model"));
@@ -605,6 +669,14 @@ mod tests {
         invalid.mode = Some("invalid".to_owned());
         assert!(write_rig(&path, Some("Another"), invalid).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        for original in [None, Some("Reviewer")] {
+            for name in ["", "   ", "Another"] {
+                let mut invalid = saved[0].clone();
+                invalid.name = name.to_owned();
+                assert!(write_rig(&path, original, invalid).is_err());
+                assert_eq!(fs::read_to_string(&path).unwrap(), before);
+            }
+        }
     }
 
     #[test]

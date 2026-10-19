@@ -2,10 +2,10 @@
 	import { Tooltip } from 'bits-ui';
 	import type { Snippet } from 'svelte';
 
-	let { text, children }: { text: string; children: Snippet<[Record<string, unknown>]> } = $props();
+	let { text, delayDuration = 400, children }: { text: string; delayDuration?: number; children: Snippet<[Record<string, unknown>]> } = $props();
 </script>
 
-<Tooltip.Provider delayDuration={400}>
+<Tooltip.Provider {delayDuration}>
 	<Tooltip.Root>
 		<Tooltip.Trigger>
 			{#snippet child({ props })}
@@ -13,10 +13,10 @@
 			{/snippet}
 		</Tooltip.Trigger>
 		<Tooltip.Portal>
-			<Tooltip.Content sideOffset={4}>
+			<Tooltip.Content sideOffset={4} collisionPadding={8}>
 				{#snippet child({ wrapperProps, props })}
 					<div {...wrapperProps}>
-						<div {...props} class="tooltip">{text}</div>
+						<div {...props} class="tooltip" role="tooltip">{text}</div>
 					</div>
 				{/snippet}
 			</Tooltip.Content>
@@ -26,7 +26,9 @@
 
 <style>
 	.tooltip {
-		padding: var(--space-1) var(--space-2);
+		z-index: 50;
+		max-width: min(28rem, calc(100vw - 16px));
+		padding: var(--space-2) var(--space-3);
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-sm);
 		background: var(--surface-3);
@@ -34,5 +36,7 @@
 		color: var(--color-fg);
 		font-family: var(--font-ui);
 		font-size: var(--font-size-sm);
+		line-height: 1.5;
+		white-space: pre-line;
 	}
 </style>

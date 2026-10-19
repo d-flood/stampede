@@ -19,7 +19,7 @@ async fn select(client: &reqwest::Client, api: &str, name: &str) -> reqwest::Res
 
 #[tokio::test]
 async fn themes_are_listed_saved_and_reloaded_without_rewriting_other_settings() {
-    let original = "# café\nroots = []\n\"theme\" = '''light:Alabaster,dark:Dracula''' # keep this\n\n[editor]\nkeymap = 'vim'\n";
+    let original = "# café\nroots = []\nrig = []\n\"theme\" = '''light:Alabaster,dark:Dracula''' # keep this\n\n[editor]\nkeymap = 'vim'\n";
     let mut server = Server::with_config("themes-", original).await;
     let user = server.root.path().join("home/.config/ghostty/themes");
     fs::create_dir_all(&user).unwrap();

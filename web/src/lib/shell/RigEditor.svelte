@@ -4,9 +4,10 @@
 	import Button from '#lib/ui/Button.svelte';
 
 	type Model = { value: string; label: string; efforts: string[] };
-	type Options = { models: Model[]; modes: { value: string; label: string }[] };
+	type Options = { models: Model[]; modes: { value: string; label: string }[]; settings?: { model?: string; effort?: string } };
 
 	let selected = $state('');
+	let name = $state('');
 	let agent = $state<Agent>('claude-code');
 	let model = $state('');
 	let effort = $state('');
@@ -33,7 +34,13 @@
 			if (!response.ok) throw new Error(await response.text());
 			const listed: Options = await response.json();
 			if (!listed.models.length) throw new Error('Provider reported no models.');
-			if (current === request) options = listed;
+			if (current === request) {
+				options = listed;
+				if (rigs().some((rig) => rig.name === selected && rig.agent === agent)) {
+					model ||= listed.settings?.model ?? '';
+					effort ||= listed.settings?.effort ?? '';
+				}
+			}
 		} catch (failure) {
 			if (current === request) error = failure instanceof Error ? failure.message : 'Could not load provider choices.';
 		} finally {
@@ -41,9 +48,10 @@
 		}
 	}
 
-	function choose(name: string) {
-		selected = name;
-		const rig = rigs().find((rig) => rig.name === name);
+	function choose(value: string) {
+		selected = value;
+		const rig = rigs().find((rig) => rig.name === value);
+		name = rig?.name ?? '';
 		agent = rig?.agent ?? 'claude-code';
 		model = rig?.model ?? '';
 		effort = rig?.effort ?? '';
@@ -66,8 +74,9 @@
 		error = '';
 		saved = false;
 		try {
-			await saveRig({ original: selected || undefined, agent, model: model || undefined, effort: effort || undefined, mode });
-			if (!selected) selected = rigs().at(-1)!.name;
+			await saveRig({ original: selected || undefined, name, agent, model: model || undefined, effort: effort || undefined, mode });
+			name = name.trim();
+			selected = name;
 			saved = true;
 		} catch (failure) {
 			error = failure instanceof Error ? failure.message : 'Could not save rig.';
@@ -84,6 +93,8 @@
 		{#each rigs() as rig (rig.name)}<option value={rig.name}>{rig.name}</option>{/each}
 	</select>
 	<fieldset disabled={saving}>
+		<label for="rig-name">Name</label>
+		<input id="rig-name" bind:value={name} required placeholder="e.g. Reviewer" oninput={() => (saved = false)} />
 		<label for="rig-provider">Provider</label>
 		<select id="rig-provider" value={agent} onchange={(event) => provider(event.currentTarget.value as Agent)}>
 			{#each Object.entries(agentNames) as [value, label]}<option {value}>{label}</option>{/each}
@@ -110,7 +121,7 @@
 	{#if error}<p role="alert">{error}</p><Button disabled={loading || saving} onclick={load}>Reload choices</Button>{/if}
 	<div class="actions">
 		{#if saved}<span role="status">Rig saved.</span>{/if}
-		<Button variant="primary" disabled={loading || saving || !options.models.length || !options.modes.length} onclick={save}>{saving ? 'Saving…' : 'Save rig'}</Button>
+		<Button variant="primary" disabled={loading || saving || !name.trim() || !options.models.length || !options.modes.length} onclick={save}>{saving ? 'Saving…' : 'Save rig'}</Button>
 	</div>
 </div>
 
@@ -133,7 +144,9 @@
 		font-size: var(--font-size-sm);
 	}
 
-	select {
+	select,
+	input {
+		box-sizing: border-box;
 		width: 100%;
 		min-width: 0;
 		min-height: var(--target-min);
@@ -145,7 +158,8 @@
 		font: inherit;
 	}
 
-	select:focus-visible {
+	select:focus-visible,
+	input:focus-visible {
 		outline: var(--border-width) solid var(--status-working);
 		outline-offset: var(--border-width);
 	}

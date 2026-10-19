@@ -418,13 +418,13 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
 	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(1);
 
-	await page.keyboard.press('Control+Space');
+	await page.keyboard.press('Control+;');
 	await page.keyboard.press('p');
 	await page.getByPlaceholder('Switch Project, launch a Rig, or open a file').fill('Fake Claude');
 	await page.getByRole('option', { name: 'Fake Claude', exact: true }).click();
 	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(2);
 
-	await page.keyboard.press('Control+Space');
+	await page.keyboard.press('Control+;');
 	await page.keyboard.press('r');
 	await expect(page.getByRole('status').filter({ hasText: 'Fake Claude' })).toBeVisible();
 	await page.keyboard.press('c');

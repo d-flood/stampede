@@ -19,10 +19,11 @@ pub async fn options(State(state): State<AppState>, Query(selection): Query<Sele
             .cloned().unwrap_or_else(|| config.rig_for(selection.agent))
     };
     let cwd = crate::home();
-    let listed = tokio::time::timeout(Duration::from_secs(15), async {
+    let settings = rig.settings();
+    let (listed, settings) = tokio::time::timeout(Duration::from_secs(15), async {
         match selection.agent {
-            Agent::ClaudeCode => claude::models(&cwd, &rig.env).await,
-            Agent::Codex => codex::models(&cwd, &rig.env).await,
+            Agent::ClaudeCode => claude::options(&cwd, &rig.env, &settings).await,
+            Agent::Codex => codex::options(&cwd, &rig.env, &settings).await,
         }
     }).await.map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Provider took too long to list models. Try again.".to_owned()))?
         .map_err(|error| (StatusCode::BAD_GATEWAY, error.to_string()))?;
@@ -40,30 +41,38 @@ pub async fn options(State(state): State<AppState>, Query(selection): Query<Sele
         Some(json!({ "value": value, "label": label, "efforts": efforts }))
     }).collect();
     let modes: Vec<Choice> = selection.agent.modes().iter().map(|mode| Choice::mode(mode)).collect();
-    Ok(Json(json!({ "models": models, "modes": modes })))
+    Ok(Json(json!({ "models": models, "modes": modes, "settings": settings })))
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Save {
     original: Option<String>,
+    name: String,
     agent: Agent,
     model: Option<String>,
     effort: Option<String>,
     mode: String,
 }
 
-pub async fn save(State(state): State<AppState>, Json(save): Json<Save>) -> Result<Json<Vec<Rig>>, Failure> {
+pub async fn save(State(state): State<AppState>, Json(mut save): Json<Save>) -> Result<Json<Vec<Rig>>, Failure> {
     let mut configured = state.config.clone();
+    save.name = save.name.trim().to_owned();
+    let original = save.original.clone();
+    let name = save.name.clone();
     let rigs = tokio::task::spawn_blocking(move || {
-        let provider = match save.agent { Agent::ClaudeCode => "Claude Code", Agent::Codex => "Codex" };
-        let name = [Some(provider), save.model.as_deref(), save.effort.as_deref(), Some(&save.mode)].into_iter().flatten().collect::<Vec<_>>().join(" · ");
-        let rig = Rig { name, agent: save.agent, env: Default::default(), shortcut: None, model: save.model, effort: save.effort, mode: Some(save.mode) };
+        let rig = Rig { name: save.name, agent: save.agent, env: Default::default(), shortcut: None, model: save.model, effort: save.effort, mode: Some(save.mode) };
         config::write_rig(&state.config_path, save.original.as_deref(), rig)
     }).await.map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
     tokio::time::timeout(Duration::from_secs(2), configured.wait_for(|config| config.rigs == rigs))
         .await.map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Rig saved, but configuration did not reload".to_owned()))?
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    if let Some(original) = original.filter(|original| *original != name) {
+        state.chats.rename_rig(&original, &name)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        state.epics.rename_rig(&original, &name)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    }
     Ok(Json(rigs))
 }
