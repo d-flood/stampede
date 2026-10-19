@@ -132,7 +132,7 @@
 						{@const percent = Math.round(used * 100)}
 						{@const description = details(reading)}
 						{@const reset = reading?.resetsAt === undefined ? '' : `${resetTime(reading.resetsAt)} (${until(reading.resetsAt)})`}
-						<div class="meter" style:grid-column={window === 'weekly' ? 3 : 2} class:high={used >= 0.9}>
+						<div class="meter" class:high={used >= 0.9}>
 							<Tooltip delayDuration={0} text={reset} disabled={!compact || !reset}>
 								{#snippet children(props)}
 									<span {...props} class="ring" role="meter" aria-label="{label} · {name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% used. ${description}`}>
@@ -162,6 +162,8 @@
 <style>
 	section {
 		display: grid;
+		grid-template-columns: max-content repeat(2, minmax(0, 1fr));
+		column-gap: var(--space-3);
 		margin-top: auto;
 		padding: 0 var(--space-4);
 		border-top: var(--border-width) solid var(--border);
@@ -182,9 +184,9 @@
 	.agent {
 		--compact: 0;
 		display: grid;
-		grid-template-columns: max-content repeat(2, minmax(0, 1fr));
+		grid-template-columns: subgrid;
+		grid-column: 1 / -1;
 		align-items: start;
-		gap: var(--space-2);
 		padding: var(--space-3) 0;
 	}
 
@@ -340,10 +342,6 @@
 	}
 
 	@container (max-width: 16rem) {
-		section:not(.phone) .agent {
-			grid-template-columns: 18px repeat(2, minmax(0, 1fr));
-		}
-
 		section:not(.phone) .identity > div,
 		section:not(.phone) .label,
 		section:not(.phone) .reset {
@@ -367,11 +365,6 @@
 	}
 
 	@container (min-width: 32rem) {
-		.agent {
-			grid-template-columns: 132px repeat(2, minmax(0, 1fr));
-			gap: var(--space-6);
-		}
-
 		.identity {
 			gap: var(--space-3);
 		}

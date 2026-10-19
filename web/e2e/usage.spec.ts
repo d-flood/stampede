@@ -52,6 +52,7 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 		const reset = `${await usage.locator('time').first().textContent()} ${await usage.locator('.countdown').first().textContent()}`;
 		const resizer = page.getByRole('separator', { name: 'Resize sidebar' });
 		await resizer.focus();
+		await page.mouse.move(900, 400);
 		await page.keyboard.press('Home');
 		await expect(usage.locator('.reset').first()).toBeHidden();
 		await meter.hover();
