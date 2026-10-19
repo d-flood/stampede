@@ -4,19 +4,16 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
-import tempfile
 import time
+
+from build_environment import build_environment, repository_directory, target_directory
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    repository = subprocess.run(
-        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        cwd=ROOT, capture_output=True, text=True,
-    )
-    shared = Path(repository.stdout.strip()).parent if repository.returncode == 0 else ROOT
+    shared = repository_directory(ROOT)
     path = shared / "target/check/run.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as lock:
@@ -25,8 +22,9 @@ def main():
         except BlockingIOError:
             print("./check is already running for this repository.", file=sys.stderr)
             return 75
-        with tempfile.TemporaryDirectory(prefix="oikonomos-e2e-") as root:
-            env = {**os.environ, "OIKONOMOS_CHECK_LOCKED": str(ROOT), "OIKONOMOS_E2E_ROOT": root}
+        with build_environment(target_directory(ROOT), "oikonomos-e2e-") as env:
+            root = env["TMPDIR"]
+            env.update(OIKONOMOS_CHECK_LOCKED=str(ROOT), OIKONOMOS_E2E_ROOT=root)
             child = subprocess.Popen([str(ROOT / "check"), *sys.argv[1:]], env=env, start_new_session=True)
             stopping = None
 

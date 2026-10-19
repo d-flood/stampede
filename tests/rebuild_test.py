@@ -3,6 +3,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -34,6 +35,9 @@ class Deployment(unittest.TestCase):
         self.fail_start = False
         self.fail_health = False
         self.build = None
+        self.environment = None
+        self.enterContext(patch.dict(os.environ))
+        os.environ.pop("CARGO_TARGET_DIR", None)
         for name, value in (("INSTALL", self.install), ("UNIT", self.unit), ("ROOT", self.root)):
             self.enterContext(patch.object(rebuild, name, value))
         self.enterContext(patch.object(rebuild.shutil, "which", return_value="available"))
@@ -52,10 +56,15 @@ class Deployment(unittest.TestCase):
         command = [str(part) for part in command]
         self.calls.append(command)
         if command[0] == "cargo":
+            self.environment = kwargs["env"]
+            temporary = Path(self.environment["TMPDIR"])
+            (temporary / "compiler-temporary").write_text("temporary build output")
             if self.fail_build:
                 raise subprocess.CalledProcessError(1, command)
             self.build = kwargs["env"]["OIKONOMOS_BUILD_ID"]
-            self.candidate.write_text(self.build)
+            candidate = Path(command[command.index("--target-dir") + 1]) / "release/oikonomos"
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            candidate.write_text(self.build)
         elif command[0] == str(self.binary) and command[1] == "install":
             port = command[command.index("--port") + 1]
             config = command[command.index("--config") + 1]
@@ -98,6 +107,35 @@ class Deployment(unittest.TestCase):
         self.assertEqual(self.binary.read_text(), "old-build")
         self.assertEqual(self.unit.read_text(), old_unit)
         self.assertFalse(any("restart" in call for call in self.calls))
+
+    def test_worktree_rebuild_reuses_the_repository_target(self):
+        def git(*args):
+            subprocess.run(["git", "-C", str(self.root), "-c", "user.name=check", "-c", "user.email=check@example.invalid", "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+        git("init", "-q")
+        git("commit", "--allow-empty", "-qm", "fixture")
+        other = self.root / "other"
+        git("worktree", "add", "--detach", str(other))
+        with patch.object(rebuild, "ROOT", other):
+            self.deploy()
+        command = next(call for call in self.calls if call[0] == "cargo")
+        self.assertEqual(command[command.index("--target-dir") + 1], str(self.root / "target"))
+        self.assertEqual(self.binary.read_text(), self.build)
+
+    def test_failed_build_cleans_disk_backed_temporary_files(self):
+        self.fail_build = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.deploy()
+        temporary = Path(self.environment.get("TMPDIR", "/tmp"))
+        self.assertTrue(temporary.is_relative_to(self.root / "target"), str(temporary))
+        self.assertFalse(temporary.exists())
+
+    def test_configured_target_supplies_the_deployed_binary(self):
+        target = self.root / "custom-target"
+        with patch.dict(os.environ, CARGO_TARGET_DIR="custom-target"):
+            self.deploy()
+        self.assertEqual(self.environment["CARGO_TARGET_DIR"], str(target))
+        self.assertEqual(self.binary.read_text(), self.build)
+        self.assertFalse(Path(self.environment["TMPDIR"]).exists())
 
     def test_failed_restart_restores_previous_binary_and_configuration(self):
         self.seed()

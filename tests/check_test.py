@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import shutil
@@ -24,16 +25,33 @@ class Check(unittest.TestCase):
         for name in ["web/package.json", "web/pnpm-lock.yaml", "web/src/app.svelte", "crates/oikonomos/Cargo.toml"]:
             (self.root / name).write_text("initial")
         self.log = self.root / "calls"
-        self.env = {**os.environ, "PATH": f"{self.root}/bin:{os.environ['PATH']}", "CHECK_TEST_ROOT": str(self.root)}
+        self.env = {key: value for key, value in os.environ.items() if key != "CARGO_TARGET_DIR"}
+        self.env.update(PATH=f"{self.root}/bin:{os.environ['PATH']}", CHECK_TEST_ROOT=str(self.root))
         fake = '''#!/usr/bin/env python3
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 root = Path(os.environ["CHECK_TEST_ROOT"])
 with (root / "calls").open("a") as log:
     log.write(Path(sys.argv[0]).name + " " + " ".join(sys.argv[1:]) + "\\n")
 if Path(sys.argv[0]).name == "cargo":
+    import json
+    target = Path(os.environ.get("CARGO_TARGET_DIR", Path.cwd() / "target"))
+    target.mkdir(parents=True, exist_ok=True)
+    artifact = target / "fixture-artifact"
+    scratch_repository = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=os.environ["TMPDIR"], capture_output=True).returncode == 0
+    with (root / "builds.jsonl").open("a") as log:
+        log.write(json.dumps(dict(target=str(target), reused=artifact.exists(), temporary=os.environ.get("TMPDIR", "/tmp"), node_cache=os.environ.get("NODE_COMPILE_CACHE"), binary=os.environ.get("OIKONOMOS_E2E_BINARY"), scratch_repository=scratch_repository)) + "\\n")
+    artifact.touch()
+    scratch = Path(os.environ["TMPDIR"])
+    (scratch / "compiler-temporary").write_text("temporary build output")
+    cache = Path(os.environ["NODE_COMPILE_CACHE"])
+    cache.mkdir(exist_ok=True)
+    (cache / "compiled").write_text("cached compilation")
+    if (root / "fail-cargo").exists():
+        sys.exit(1)
     (root / "started").touch()
     while (root / "hold").exists():
         time.sleep(0.02)
@@ -140,6 +158,48 @@ if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
             (self.root / "hold").unlink()
             first.communicate(timeout=10)
 
+    def test_worktrees_reuse_build_artifacts(self):
+        def git(*args):
+            subprocess.run(["git", "-C", str(self.root), "-c", "user.name=check", "-c", "user.email=check@example.invalid", "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+        git("init", "-q")
+        git("add", ".")
+        git("commit", "-qm", "fixture")
+        other = self.root / "other"
+        git("worktree", "add", "--detach", str(other))
+        self.run_check("rust")
+        result = subprocess.run([str(other / "check"), "rust"], env=self.env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        builds = [json.loads(line) for line in (self.root / "builds.jsonl").read_text().splitlines()]
+        self.assertEqual([build["reused"] for build in builds], [False, True])
+        self.assertEqual(builds[0]["target"], builds[1]["target"])
+        self.assertEqual(builds[1]["binary"], str(Path(builds[1]["target"]) / "debug/oikonomos"))
+        self.assertFalse((other / "target/fixture-artifact").exists())
+        self.assertFalse(any(build["scratch_repository"] for build in builds))
+
+    def test_temporary_build_files_stay_on_disk_and_are_cleaned(self):
+        self.run_check("rust")
+        build = json.loads((self.root / "builds.jsonl").read_text())
+        temporary = Path(build["temporary"])
+        self.assertTrue(temporary.is_relative_to(self.root / "target"), str(temporary))
+        self.assertFalse(temporary.exists())
+        self.assertTrue(Path(build["node_cache"]).is_relative_to(temporary))
+
+    def test_failed_check_cleans_temporary_build_files(self):
+        (self.root / "fail-cargo").touch()
+        self.run_check("rust", success=False)
+        build = json.loads((self.root / "builds.jsonl").read_text())
+        self.assertFalse(Path(build["temporary"]).exists())
+        self.assertFalse(Path(build["node_cache"]).exists())
+
+    def test_configured_target_is_used_for_builds_and_binary(self):
+        target = self.root / "custom-target"
+        self.env["CARGO_TARGET_DIR"] = "custom-target"
+        self.run_check("e2e", "--list")
+        build = json.loads((self.root / "builds.jsonl").read_text())
+        self.assertEqual(build["target"], str(target))
+        self.assertEqual(build["binary"], str(target / "debug/oikonomos"))
+        self.assertTrue(Path(build["temporary"]).is_relative_to(target))
+
     def test_interrupt_stops_children_and_releases_lock(self):
         (self.root / "hold").touch()
         first = subprocess.Popen([str(self.root / "check"), "rust"], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -151,6 +211,8 @@ if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
             first.terminate()
             first.communicate(timeout=10)
             self.assertNotEqual(first.returncode, 0)
+            build = json.loads((self.root / "builds.jsonl").read_text())
+            self.assertFalse(Path(build["temporary"]).exists())
         finally:
             if first.poll() is None:
                 first.kill()

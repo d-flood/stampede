@@ -15,7 +15,7 @@ fi
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}
 export RUST_TEST_THREADS=${RUST_TEST_THREADS:-4}
 export TOKIO_WORKER_THREADS=${TOKIO_WORKER_THREADS:-2}
-export OIKONOMOS_E2E_BINARY="$PWD/target/debug/oikonomos"
+export OIKONOMOS_E2E_BINARY="$CARGO_TARGET_DIR/debug/oikonomos"
 
 run_logged() {
     local label=$1 log=$2 started=$SECONDS status=0

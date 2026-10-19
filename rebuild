@@ -3,7 +3,6 @@ import argparse
 import configparser
 import fcntl
 import json
-import os
 from pathlib import Path
 import re
 import shlex
@@ -14,6 +13,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+
+from scripts.build_environment import build_environment, target_directory
 
 
 ROOT = Path(__file__).resolve().parent
@@ -108,11 +109,13 @@ def deploy(arguments):
         atomic_copy(old_binary, previous)
 
     build = uuid.uuid4().hex
-    environment = os.environ | {"OIKONOMOS_BUILD_ID": build}
-    run("pnpm", "-C", "web", "install", "--frozen-lockfile", cwd=ROOT, env=environment)
-    run("pnpm", "-C", "web", "build", cwd=ROOT, env=environment)
-    run("cargo", "build", "--release", "--target-dir", ROOT / "target", cwd=ROOT, env=environment)
-    candidate = ROOT / "target/release/oikonomos"
+    target = target_directory(ROOT)
+    with build_environment(target, "oikonomos-rebuild-") as environment:
+        environment["OIKONOMOS_BUILD_ID"] = build
+        run("pnpm", "-C", "web", "install", "--frozen-lockfile", cwd=ROOT, env=environment)
+        run("pnpm", "-C", "web", "build", cwd=ROOT, env=environment)
+        run("cargo", "build", "--release", "--target-dir", target, cwd=ROOT, env=environment)
+    candidate = target / "release/oikonomos"
     configure = not old_unit or old_binary != binary or settings != old_settings
     try:
         atomic_copy(candidate, binary)
