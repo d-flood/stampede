@@ -20,7 +20,7 @@
 				<div {...props} class="item">
 					{#if Icon}<Icon />{/if}
 					<span class="label">{label}</span>
-					{#if hint}<span class="hint">{hint}</span>{/if}
+					{#if hint}<span class="hint" aria-hidden="true">{hint}</span>{/if}
 				</div>
 			{/snippet}
 		</DropdownMenu.Item>
@@ -30,7 +30,7 @@
 				<div {...props} class="item">
 					{#if Icon}<Icon />{/if}
 					<span class="label">{label}</span>
-					{#if hint}<span class="hint">{hint}</span>{/if}
+					{#if hint}<span class="hint" aria-hidden="true">{hint}</span>{/if}
 				</div>
 			{/snippet}
 		</DropdownMenu.CheckboxItem>

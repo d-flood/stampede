@@ -437,6 +437,26 @@ pub fn write_rig(path: &Path, original: Option<&str>, mut rig: Rig) -> Result<Ve
     Ok(updated.rigs)
 }
 
+pub fn reorder_rigs(path: &Path, order: &[String]) -> Result<Vec<Rig>, Error> {
+    let mut text = fs::read_to_string(path)?;
+    let current = Config::parse(&text)?;
+    let names: HashSet<_> = current.rigs.iter().map(|rig| &rig.name).collect();
+    if order.len() != names.len() || order.iter().collect::<HashSet<_>>() != names {
+        return Err("Rig list changed; reopen Settings and try again".into());
+    }
+    let ranges = (0..current.rigs.len()).map(|index| rig_range(&text, index)).collect::<Result<Vec<_>, _>>()?;
+    let replacements = order.iter().map(|name| {
+        let index = current.rigs.iter().position(|rig| rig.name == *name).unwrap();
+        text[ranges[index].clone()].to_owned()
+    }).collect::<Vec<_>>();
+    for (range, replacement) in ranges.into_iter().zip(replacements).rev() {
+        text.replace_range(range, &replacement);
+    }
+    let updated = Config::parse(&text)?;
+    fs::write(path, text)?;
+    Ok(updated.rigs)
+}
+
 pub fn delete_rig(path: &Path, name: &str) -> Result<Vec<Rig>, Error> {
     let mut text = fs::read_to_string(path)?;
     let current = Config::parse(&text)?;
@@ -703,6 +723,28 @@ mod tests {
                 invalid.name = name.to_owned();
                 assert!(write_rig(&path, original, invalid).is_err());
                 assert_eq!(fs::read_to_string(&path).unwrap(), before);
+            }
+        }
+    }
+
+    #[test]
+    fn rig_order_preserves_settings_and_rejects_stale_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        for environment in ["env = { CODEX_HOME = '/tmp/alternate' }\n", "[rig.env]\nCODEX_HOME = '/tmp/alternate'\n", "[rig.env]\n"] {
+            let original = format!("# Keep this\nroots = []\n[[rig]]\nname = 'First'\nagent = 'codex'\nshortcut = 'c'\n{environment}\n[[rig]]\nname = 'Second'\nagent = 'claude-code'\nmodel = 'opus'\n\n[editor]\nkeymap = 'vim'\n");
+            fs::write(&path, &original).unwrap();
+            let before = Config::load(&path).unwrap().rigs;
+            let order = vec!["Second".to_owned(), "First".to_owned()];
+            let after = reorder_rigs(&path, &order).unwrap();
+            assert_eq!(after, [before[1].clone(), before[0].clone()]);
+            assert_eq!(Config::load(&path).unwrap().rigs, after);
+            let saved = fs::read_to_string(&path).unwrap();
+            assert!(saved.starts_with("# Keep this\nroots = []"));
+            assert!(saved.contains("[editor]\nkeymap = 'vim'"));
+            for order in [vec!["First"], vec!["First", "First"], vec!["First", "Missing"], vec!["First", "Second", "Extra"]] {
+                assert!(reorder_rigs(&path, &order.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_err());
+                assert_eq!(fs::read_to_string(&path).unwrap(), saved);
             }
         }
     }

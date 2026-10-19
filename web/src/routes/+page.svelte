@@ -474,10 +474,10 @@
 
 	function newTab(projectId: string) {
 		const items = rigs()
-			.map((rig) => ({ label: rig.name, icon: logos[rig.agent], onselect: () => launch(rig, projectId) }));
+			.map((rig, index) => ({ label: rig.name, hint: index < 9 ? `Ctrl+Shift+${index + 1}` : `${index + 1}`, icon: logos[rig.agent], onselect: () => launch(rig, projectId) }));
 		const terminal = () => device.send({ type: 'terminal.create', projectId });
 		const rest = [
-			{ label: 'Terminal', icon: TerminalWindow, onselect: terminal },
+			{ label: 'Terminal', hint: 'Ctrl+Shift+T', icon: TerminalWindow, onselect: terminal },
 			{ label: 'Browser', icon: Globe, onselect: () => openBrowser(projectId) },
 			{ label: 'Open file', icon: FileCode, onselect: () => openPalette('files') }
 		];
@@ -604,6 +604,11 @@
 		if (!tabTarget) return;
 		if (tabTarget !== 'drawer') readSessions(tabTarget);
 		palette = 'tabs';
+	}
+
+	function openTerminal() {
+		if (drawer.ownsFocus()) drawer.newTab();
+		else if (focused) device.send({ type: 'terminal.create', projectId: focused.id });
 	}
 
 	function finishTabSelection(event: Event) {
@@ -1106,6 +1111,7 @@
 <Leader
 	ontab={jump}
 	onnew={openTabPicker}
+	onterminal={openTerminal}
 	onclose={closeActiveTab}
 	onpalette={() => openPalette('all')}
 	onrig={launch}

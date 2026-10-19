@@ -67,6 +67,7 @@
 				.map((rig) => ({
 					value: `rig:${rig.name}`,
 					label: rig.name,
+					hint: rigs().indexOf(rig) < 9 ? `Ctrl+Shift+${rigs().indexOf(rig) + 1}` : `${rigs().indexOf(rig) + 1}`,
 					onselect: () => onrig(rig)
 				}))
 		},
@@ -129,7 +130,7 @@
 													{#if Icon}<Icon />{/if}
 													{#if parent === undefined}
 														<span class="label">{label}</span>
-														{#if hint}<span class="hint">{hint}</span>{/if}
+														{#if hint}<span class="hint" aria-hidden="true">{hint}</span>{/if}
 													{:else}
 														<span class="path"><span class="parent">{parent}</span><span class="name">{label}</span></span>
 													{/if}

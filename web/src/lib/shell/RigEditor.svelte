@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { agentNames, deleteRig, rigs, saveRig, type Agent } from '#lib/config.svelte.ts';
+	import { agentNames, deleteRig, reorderRigs, rigs, saveRig, type Agent } from '#lib/config.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 
@@ -17,11 +17,12 @@
 	let loading = $state(false);
 	let saving = $state(false);
 	let error = $state('');
-	let saved = $state(false);
+	let saved = $state('');
 	let confirming = $state(false);
 	let deleting = $state(false);
 	let deleteError = $state('');
 	const busy = $derived(saving || deleting);
+	const position = $derived(rigs().findIndex((rig) => rig.name === selected));
 	let request = 0;
 	const efforts = $derived(options.models.find((choice) => choice.value === model)?.efforts ?? []);
 
@@ -61,7 +62,7 @@
 		model = rig?.model ?? '';
 		effort = rig?.effort ?? '';
 		mode = rig?.mode ?? defaultMode(agent);
-		saved = false;
+		saved = '';
 		void load();
 	}
 
@@ -70,7 +71,7 @@
 		model = '';
 		effort = '';
 		mode = defaultMode(agent);
-		saved = false;
+		saved = '';
 		void load();
 	}
 
@@ -81,14 +82,32 @@
 	async function save() {
 		saving = true;
 		error = '';
-		saved = false;
+		saved = '';
 		try {
 			await saveRig({ original: selected || undefined, name, agent, model: model || undefined, effort: effort || undefined, mode });
 			name = name.trim();
 			selected = name;
-			saved = true;
+			saved = 'Rig saved.';
 		} catch (failure) {
 			error = failure instanceof Error ? failure.message : 'Could not save rig.';
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function move(offset: number) {
+		const order = rigs().map((rig) => rig.name);
+		const destination = position + offset;
+		if (position < 0 || destination < 0 || destination >= order.length) return;
+		[order[position], order[destination]] = [order[destination], order[position]];
+		saving = true;
+		error = '';
+		saved = '';
+		try {
+			await reorderRigs(order);
+			saved = 'Rig order saved.';
+		} catch (failure) {
+			error = failure instanceof Error ? failure.message : 'Could not save rig order.';
 		} finally {
 			saving = false;
 		}
@@ -113,29 +132,36 @@
 	<label for="editing-rig">Rig</label>
 	<select id="editing-rig" value={selected} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
 		<option value="">New rig</option>
-		{#each rigs() as rig (rig.name)}<option value={rig.name}>{rig.name}</option>{/each}
+		{#each rigs() as rig, index (rig.name)}<option value={rig.name}>{index + 1}. {rig.name}</option>{/each}
 	</select>
+	{#if selected}
+		<div class="order" role="group" aria-label="Rig order">
+			<Button disabled={busy || position <= 0} onclick={() => move(-1)}>Move up</Button>
+			<Button disabled={busy || position === rigs().length - 1} onclick={() => move(1)}>Move down</Button>
+		</div>
+		{#if position < 9}<p>Launch with Ctrl+Shift+{position + 1}.</p>{/if}
+	{/if}
 	<fieldset disabled={busy}>
 		<label for="rig-name">Name</label>
-		<input id="rig-name" bind:value={name} required placeholder="e.g. Reviewer" oninput={() => (saved = false)} />
+		<input id="rig-name" bind:value={name} required placeholder="e.g. Reviewer" oninput={() => (saved = '')} />
 		<label for="rig-provider">Provider</label>
 		<select id="rig-provider" value={agent} onchange={(event) => provider(event.currentTarget.value as Agent)}>
 			{#each Object.entries(agentNames) as [value, label]}<option {value}>{label}</option>{/each}
 		</select>
 		<label for="rig-model">Model</label>
-		<select id="rig-model" bind:value={model} disabled={loading || !options.models.length} onchange={() => { effort = ''; saved = false; }}>
+		<select id="rig-model" bind:value={model} disabled={loading || !options.models.length} onchange={() => { effort = ''; saved = ''; }}>
 			<option value="">Provider default</option>
 			{#if model && !options.models.some((choice) => choice.value === model)}<option value={model}>{model} (configured)</option>{/if}
 			{#each options.models as choice (choice.value)}<option value={choice.value}>{choice.label}</option>{/each}
 		</select>
 		<label for="rig-effort">Effort level</label>
-		<select id="rig-effort" bind:value={effort} disabled={loading || !efforts.length} onchange={() => (saved = false)}>
+		<select id="rig-effort" bind:value={effort} disabled={loading || !efforts.length} onchange={() => (saved = '')}>
 			<option value="">Provider default</option>
 			{#if effort && !efforts.includes(effort)}<option value={effort}>{effort} (configured)</option>{/if}
 			{#each efforts as value}<option {value}>{value}</option>{/each}
 		</select>
 		<label for="rig-mode">Permission mode</label>
-		<select id="rig-mode" bind:value={mode} disabled={loading || !options.modes.length} onchange={() => (saved = false)}>
+		<select id="rig-mode" bind:value={mode} disabled={loading || !options.modes.length} onchange={() => (saved = '')}>
 			{#if !options.modes.some((choice) => choice.value === mode)}<option value={mode}>{mode}</option>{/if}
 			{#each options.modes as choice (choice.value)}<option value={choice.value}>{choice.label}</option>{/each}
 		</select>
@@ -143,7 +169,7 @@
 	{#if loading}<p role="status">Loading provider choices…</p>{/if}
 	{#if error}<p role="alert">{error}</p><Button disabled={loading || busy} onclick={load}>Reload choices</Button>{/if}
 	<div class="actions">
-		{#if saved}<span role="status">Rig saved.</span>{/if}
+		{#if saved}<span role="status">{saved}</span>{/if}
 		{#if selected}<Button variant="danger" disabled={busy} onclick={() => { deleteError = ''; confirming = true; }}>Delete rig</Button>{/if}
 		<Button variant="primary" disabled={loading || busy || !name.trim() || !options.models.length || !options.modes.length} onclick={save}>{saving ? 'Saving…' : 'Save rig'}</Button>
 	</div>
@@ -201,6 +227,7 @@
 		overflow-wrap: anywhere;
 	}
 
+	.order,
 	.actions {
 		display: flex;
 		flex-wrap: wrap;

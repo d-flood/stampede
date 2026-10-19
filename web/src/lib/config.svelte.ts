@@ -164,6 +164,16 @@ export async function deleteRig(name: string) {
 	configured = await response.json();
 }
 
+export async function reorderRigs(order: string[]) {
+	const response = await fetch('/api/rigs/order', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(order)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	configured = await response.json();
+}
+
 export function templates(): Template[] {
 	return offered;
 }

@@ -33,7 +33,7 @@ use axum::{
     extract::{Path, State},
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use rust_embed::RustEmbed;
 use serde_json::{Value, json};
@@ -111,6 +111,7 @@ fn router(state: AppState) -> Router {
         .route("/api/font", get(font))
         .route("/api/rigs", get(rigs).put(rigs::save).delete(rigs::delete))
         .route("/api/rigs/options", get(rigs::options))
+        .route("/api/rigs/order", put(rigs::reorder))
         .route("/api/usage/codex/reset", post(usage::reset))
         .route("/api/templates", get(templates))
         .route("/api/editor", get(editor))

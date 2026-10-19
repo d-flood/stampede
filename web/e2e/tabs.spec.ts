@@ -118,6 +118,38 @@ test('tab shortcuts create, activate, and close tabs in the focused area', async
 	await expect(tabs).toHaveCount(count);
 });
 
+test('Ctrl+Shift+T opens terminals in the focused area and ignores repeats and dialogs', async ({ page }) => {
+	await openProject(page, 'beta');
+	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab');
+	await page.keyboard.press('Control+Shift+T');
+	await expect(tabs).toHaveCount(1);
+	await expect(page.locator('.terminal:visible [contenteditable="true"]')).toBeFocused();
+	await page.keyboard.down('Control');
+	await page.keyboard.down('Shift');
+	await page.keyboard.down('t');
+	await expect(tabs).toHaveCount(2);
+	await page.keyboard.down('t');
+	await page.keyboard.up('t');
+	await page.keyboard.up('Shift');
+	await page.keyboard.up('Control');
+	await expect(tabs).toHaveCount(2);
+	await page.keyboard.press('Control+Backquote');
+	const drawer = page.getByRole('region', { name: 'Drawer' });
+	await expect.poll(() => drawer.evaluate((element) => getComputedStyle(element).transform)).toBe('none');
+	await page.keyboard.press('Control+Shift+T');
+	await expect(drawer.getByRole('tab')).toHaveCount(1);
+	await expect(drawer.locator('.terminal:visible [contenteditable="true"]')).toBeFocused();
+	await page.keyboard.press('Control+Backquote');
+	await page.keyboard.press('Control+T');
+	const picker = page.getByRole('dialog', { name: 'New Tab', exact: true });
+	await expect(picker.getByRole('combobox')).toBeFocused();
+	await page.keyboard.press('Control+Shift+T');
+	await page.keyboard.press('Control+Shift+1');
+	await expect(picker).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(tabs).toHaveCount(2);
+});
+
 test('opening a tab from the menu keeps the new tab active', async ({ page }, { project }) => {
 	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
 	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true });

@@ -82,6 +82,17 @@ pub async fn save(State(state): State<AppState>, Json(mut save): Json<Save>) -> 
     Ok(Json(rigs))
 }
 
+pub async fn reorder(State(state): State<AppState>, Json(order): Json<Vec<String>>) -> Result<Json<Vec<Rig>>, Failure> {
+    let mut configured = state.config.clone();
+    let rigs = tokio::task::spawn_blocking(move || config::reorder_rigs(&state.config_path, &order))
+        .await.map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    tokio::time::timeout(Duration::from_secs(2), configured.wait_for(|config| config.rigs == rigs))
+        .await.map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Rig order saved, but configuration did not reload".to_owned()))?
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(rigs))
+}
+
 pub async fn delete(State(state): State<AppState>, Json(name): Json<String>) -> Result<Json<Vec<Rig>>, Failure> {
     let mut configured = state.config.clone();
     let rigs = tokio::task::spawn_blocking(move || config::delete_rig(&state.config_path, &name))

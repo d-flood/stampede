@@ -2,6 +2,48 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
 import { openProject } from './shell.ts';
 
+test('numbered rigs can be reordered and launched with Ctrl+Shift+number', async ({ page, request }) => {
+	await openProject(page, 'beta');
+	await page.keyboard.press('Control+Shift+1');
+	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).getByTitle('done')).toBeVisible();
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+	const rig = dialog.getByRole('combobox', { name: 'Rig', exact: true });
+	await rig.selectOption('Fake Codex');
+	const name = dialog.getByRole('textbox', { name: 'Name', exact: true });
+	await name.fill('Unsaved name');
+	await page.route('**/api/rigs/order', (route) => route.fulfill({ status: 400, body: 'Order failed' }));
+	await dialog.getByRole('button', { name: 'Move up', exact: true }).click();
+	await expect(dialog.getByRole('alert')).toHaveText('Order failed');
+	await expect(name).toHaveValue('Unsaved name');
+	await expect(rig.locator('option:checked')).toHaveText('3. Fake Codex');
+	await page.unroute('**/api/rigs/order');
+	for (const number of [2, 1]) {
+		await dialog.getByRole('button', { name: 'Move up', exact: true }).click();
+		await expect(dialog.getByRole('status')).toHaveText('Rig order saved.');
+		await expect(rig.locator('option:checked')).toHaveText(`${number}. Fake Codex`);
+	}
+	await expect(dialog.getByRole('button', { name: 'Move up', exact: true })).toBeDisabled();
+	await expect(name).toHaveValue('Unsaved name');
+	await dialog.getByRole('button', { name: 'Move down', exact: true }).click();
+	await expect(rig.locator('option:checked')).toHaveText('2. Fake Codex');
+	await expect(dialog.getByText('Launch with Ctrl+Shift+2.', { exact: true })).toBeVisible();
+	await expect.poll(() => dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+	await page.screenshot({ path: test.info().outputPath('rig-order.png') });
+	const configured: { name: string }[] = await (await request.get('/api/rigs')).json();
+	expect(configured.slice(0, 2).map((rig) => rig.name)).toEqual(['Fake Claude', 'Fake Codex']);
+	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+	await page.keyboard.press('Control+Shift+2');
+	await expect(page.getByRole('tab', { name: /^Fake Codex/ }).getByTitle('done')).toBeVisible();
+	await page.reload();
+	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
+	await expect(page.getByRole('menuitem', { name: 'Fake Codex', exact: true })).toContainText('Ctrl+Shift+2');
+	await page.keyboard.press('Escape');
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await rig.selectOption('Fake Codex');
+	await expect(rig.locator('option:checked')).toHaveText('2. Fake Codex');
+});
+
 test.describe('starter rigs', () => {
 	test.use({ starterRigs: true });
 

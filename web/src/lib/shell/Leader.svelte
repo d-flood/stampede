@@ -2,9 +2,9 @@
 	import { leader, rigs, type Rig } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 
-	type Props = { ontab(index: number): void; onnew(): void; onclose(): void; onpalette(): void; onrig(rig: Rig): void; onsplit(): void };
+	type Props = { ontab(index: number): void; onnew(): void; onterminal(): void; onclose(): void; onpalette(): void; onrig(rig: Rig): void; onsplit(): void };
 
-	let { ontab, onnew, onclose, onpalette, onrig, onsplit }: Props = $props();
+	let { ontab, onnew, onterminal, onclose, onpalette, onrig, onsplit }: Props = $props();
 
 	const modifiers = ['Control', 'Shift', 'Alt', 'AltGraph', 'Meta'];
 	let pending = $state<'leader' | 'rig'>();
@@ -26,6 +26,17 @@
 	function keydown(event: KeyboardEvent) {
 		if (event.isComposing || event.defaultPrevented) return;
 		const key = event.key.toLowerCase();
+		if (!pending && event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && (key === 't' || /^Digit[1-9]$/.test(event.code))) {
+			event.preventDefault();
+			event.stopPropagation();
+			if (event.repeat || (event.target instanceof Element && event.target.closest('[role="dialog"], [role="alertdialog"], [role="menu"]'))) return;
+			if (key === 't') onterminal();
+			else {
+				const rig = rigs()[Number(event.code.slice(-1)) - 1];
+				if (rig) onrig(rig);
+			}
+			return;
+		}
 		if (!pending && (event.ctrlKey !== event.metaKey) && !event.altKey && !event.shiftKey && (key === 't' || key === 'w')) {
 			event.preventDefault();
 			event.stopPropagation();
