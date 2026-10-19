@@ -10,6 +10,10 @@ A self-hosted IDE for directing AI coding agents, served from the development ma
 The development machine that runs Oikonomos, its Projects, and their Terminals.
 _Avoid_: server, box, machine
 
+**Host name**:
+The name a Host goes by wherever it identifies itself, such as its installed app, so that several Hosts can be told apart; "Oikonomos" unless set.
+_Avoid_: hostname, server name, alias, label
+
 **Device**:
 A single browser window connected to Oikonomos, with its own layout and Focused Project; two windows on one computer are two Devices.
 _Avoid_: client, session, browser
