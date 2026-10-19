@@ -657,7 +657,8 @@ for (const agent of ['Claude', 'Codex']) {
 		await panel.getByLabel('Attach images', { exact: true }).setInputFiles(image);
 		await expect(panel.getByRole('img', { name: 'icon-192.png' })).toBeVisible();
 		await expect(panel.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
-		await panel.getByRole('button', { name: 'Send', exact: true }).click();
+		if (project.name === 'desktop') await panel.getByRole('textbox', { name: 'Composer' }).press('Enter');
+		else await panel.getByRole('button', { name: 'Send', exact: true }).click();
 		await expect(panel.getByLabel('Attachments', { exact: true })).toHaveCount(0);
 		await expect(panel.getByText('1 image', { exact: true })).toBeVisible();
 		await expect.poll(() => panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);

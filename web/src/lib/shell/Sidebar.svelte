@@ -50,9 +50,31 @@
 
 	const shown = $derived(available(git));
 	const current = $derived(showing(section, git).id);
+	const id = $props.id();
+	let viewport = $state(window.innerWidth);
+	let width = $state(320);
+	let drag = $state<{ x: number; width: number }>();
+	const maximum = $derived(Math.min(640, viewport * 0.6));
+	const minimum = $derived(Math.min(240, maximum));
+	const size = $derived(Math.min(maximum, Math.max(minimum, width)));
+
+	function resize(value: number) {
+		width = Math.min(maximum, Math.max(minimum, value));
+	}
+
+	function resizeKey(event: KeyboardEvent) {
+		if (event.key === 'ArrowLeft') resize(size - 16);
+		else if (event.key === 'ArrowRight') resize(size + 16);
+		else if (event.key === 'Home') resize(minimum);
+		else if (event.key === 'End') resize(maximum);
+		else return;
+		event.preventDefault();
+	}
 </script>
 
-<aside aria-label="Sidebar" hidden={!open} class:phone={form() === 'phone'}>
+<svelte:window bind:innerWidth={viewport} />
+
+<aside {id} aria-label="Sidebar" hidden={!open} class:phone={form() === 'phone'} style:width={form() === 'desktop' ? `${size}px` : undefined}>
 	{#if project}
 		{#if form() === 'desktop'}<h1 title={project.path}>{label}</h1>{/if}
 		<div class="sections" role="group" aria-label="Sections">
@@ -78,10 +100,38 @@
 		{/key}
 	{/if}
 	{#if form() === 'desktop'}<Usage readings={usage} />{/if}
+	{#if form() === 'desktop'}
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Focusable separators support keyboard resizing.) -->
+		<div
+			class="resizer"
+			class:dragging={!!drag}
+			role="separator"
+			aria-label="Resize sidebar"
+			aria-controls={id}
+			aria-orientation="vertical"
+			aria-valuemin={Math.round(minimum)}
+			aria-valuemax={Math.round(maximum)}
+			aria-valuenow={Math.round(size)}
+			tabindex="0"
+			onkeydown={resizeKey}
+			onpointerdown={(event) => {
+				if (event.button !== 0) return;
+				event.preventDefault();
+				drag = { x: event.clientX, width: size };
+				event.currentTarget.setPointerCapture(event.pointerId);
+			}}
+			onpointermove={(event) => {
+				if (drag && event.currentTarget.hasPointerCapture(event.pointerId)) resize(drag.width + event.clientX - drag.x);
+			}}
+			onpointerup={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+			onlostpointercapture={() => (drag = undefined)}
+		></div>
+	{/if}
 </aside>
 
 <style>
 	aside {
+		position: relative;
 		display: flex;
 		flex: none;
 		flex-direction: column;
@@ -89,6 +139,22 @@
 		width: 20rem;
 		border-right: var(--border-width) solid var(--border);
 		background: var(--surface-1);
+	}
+
+	.resizer {
+		position: absolute;
+		z-index: 1;
+		inset: 0 -4px 0 auto;
+		width: 8px;
+		cursor: col-resize;
+		touch-action: none;
+		user-select: none;
+	}
+
+	.resizer:hover,
+	.resizer:focus-visible,
+	.resizer.dragging {
+		background: var(--border);
 	}
 
 	aside[hidden] {

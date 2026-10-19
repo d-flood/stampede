@@ -39,6 +39,14 @@
 		if (onsend?.(text, enter)) clear();
 	}
 
+	function keydown(event: KeyboardEvent) {
+		if (event.isComposing) return;
+		onkeydown?.(event);
+		if (event.defaultPrevented || phone || event.key !== 'Enter' || event.shiftKey) return;
+		event.preventDefault();
+		if (!disabled && (text || actions)) submit(true);
+	}
+
 	function replace(next: string) {
 		text = next;
 		keep();
@@ -62,7 +70,7 @@
 		bind:this={box}
 		bind:value={text}
 		oninput={keep}
-		{onkeydown}
+		onkeydown={keydown}
 		{onpaste}
 		aria-label="Composer"
 		{placeholder}

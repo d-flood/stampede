@@ -117,6 +117,27 @@ test('blocked clipboard access opens a focused Composer for native paste', async
 	await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify('\x1b[200~first line\nsecond line\x1b[201~'));
 });
 
+test('terminal composer submits with desktop Enter and preserves mobile newlines', async ({ page }, { project }) => {
+	const input = await terminal(page);
+	await page.getByRole('button', { name: 'Composer', exact: true }).click();
+	const composer = page.getByRole('textbox', { name: 'Composer', exact: true });
+	await composer.fill('first line');
+	input.length = 0;
+	await composer.press('Shift+Enter');
+	await composer.press('s');
+	await expect(composer).toHaveValue('first line\ns');
+	expect(input.join('')).toBe('');
+	await composer.press('Enter');
+	if (project.name === 'pixel') {
+		await expect(composer).toHaveValue('first line\ns\n');
+		expect(input.join('')).toBe('');
+		await page.getByRole('button', { name: 'Send', exact: true }).click();
+	}
+	await expect(composer).toHaveValue('');
+	const text = `first line\ns${project.name === 'pixel' ? '\n' : ''}`;
+	await expect.poll(() => input.join('')).toBe(`\x1b[200~${text}\x1b[201~\r`);
+});
+
 test('paste shortcuts use the typed key across keyboard layouts', async ({ page }) => {
 	const input = await terminal(page);
 	const text = 'layout-safe paste';

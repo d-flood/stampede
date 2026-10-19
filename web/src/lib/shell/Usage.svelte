@@ -230,6 +230,16 @@
 		}
 	}
 
+	@container (max-width: 16rem) {
+		section:not(.phone) .agent {
+			grid-template-columns: 18px repeat(2, minmax(0, 1fr));
+		}
+
+		section:not(.phone) .identity > div {
+			display: none;
+		}
+	}
+
 	@container (min-width: 32rem) {
 		.agent {
 			grid-template-columns: 132px repeat(2, minmax(0, 1fr));

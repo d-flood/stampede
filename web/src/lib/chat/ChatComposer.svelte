@@ -114,7 +114,7 @@
 	</div>
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onkeydown={(event) => slash?.key(event)} onpaste={paste}>
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onsend={(text) => send(text, false)} onkeydown={(event) => slash?.key(event)} onpaste={paste}>
 	{#snippet menu(text, replace)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
 	{/snippet}
