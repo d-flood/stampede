@@ -6,6 +6,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
+	import QuestionForm from '#lib/chat/QuestionForm.svelte';
 	import CaretRight from '~icons/ph/caret-right';
 
 	let { request, agent, asker, disabled, onanswer }: { request: Request; agent: string; asker?: string; disabled: boolean; onanswer(answer: Answer): void } = $props();
@@ -60,7 +61,9 @@
 <section aria-label={request.kind === 'question' ? 'Question' : request.kind === 'plan' ? 'Plan' : 'Approval'} class="card" class:phone={form() === 'phone'} tabindex="-1" bind:this={card}>
 	{#if asker}<div class="asker"><icons.subagent />Asked by {asker}</div>{/if}
 	{#if request.kind !== 'question'}<h2>{title}</h2>{/if}
-	{#if request.kind === 'question' && question}
+	{#if request.kind === 'question' && request.questions[0]?.type}
+		<QuestionForm questions={request.questions} {disabled} {onanswer} />
+	{:else if request.kind === 'question' && question}
 		<details open>
 			<summary><span class="caret"><CaretRight /></span><h2>{title}</h2><span class="progress">Question {step + 1} of {request.questions.length}</span></summary>
 			<div class="question-body">

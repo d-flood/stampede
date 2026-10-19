@@ -2,6 +2,7 @@
 	import Handoff from '#lib/chat/Handoff.svelte';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
+	import { form } from '#lib/form.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import ArrowBendUpRight from '~icons/ph/arrow-bend-up-right';
@@ -9,6 +10,7 @@
 	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Paperclip from '~icons/ph/paperclip';
 	import Stop from '~icons/ph/stop-fill';
+	import Terminal from '~icons/ph/terminal';
 	import X from '~icons/ph/x';
 
 	let { device, chat, live, request, capabilities, choices, handoffAvailable, focused = false, onrun }: {
@@ -117,6 +119,9 @@
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
 	{/snippet}
 	{#snippet actions(text: string, clear: () => void)}
+		{#if form() === 'phone'}
+			<Button aria-label="Commands" title="Commands" aria-expanded={slash?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => slash?.toggle()}><Terminal /></Button>
+		{/if}
 		<Button aria-label="Attach image" title="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
 		<Handoff {device} {chat} available={handoffAvailable} />
 		{#if working}

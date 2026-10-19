@@ -98,6 +98,32 @@ impl Driver for Claude {
     }
 }
 
+pub async fn models(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Value>> {
+    let mut child = process::Command::new("claude")
+        .args(ARGS).envs(env).envs(SDK_ENV).current_dir(cwd)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .kill_on_drop(true).spawn()?;
+    let result = async {
+        let mut writer = child.stdin.take().unwrap();
+        let initialize = json!({ "type": "control_request", "request_id": "models", "request": { "subtype": "initialize" } });
+        writer.write_all(format!("{initialize}\n").as_bytes()).await?;
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        while let Some(line) = lines.next_line().await? {
+            let message: Value = serde_json::from_str(&line)?;
+            if message["type"] == "control_response" && message["response"]["request_id"] == "models" {
+                let response = &message["response"];
+                if response["subtype"] != "success" {
+                    return Err(io::Error::other(response.to_string()));
+                }
+                return Ok(response["response"]["models"].as_array().cloned().unwrap_or_default());
+            }
+        }
+        Err(io::Error::other("Claude Code closed before listing models"))
+    }.await;
+    let _ = child.kill().await;
+    result
+}
+
 pub async fn start(
     data_dir: &Path,
     id: &str,
@@ -142,8 +168,10 @@ async fn launch(
         .chain(env.iter().map(|(name, value)| (name.as_str(), value.as_str())))
         .chain(SDK_ENV)
         .chain([("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true")]);
-    let tools = ["--mcp-config".to_owned(), json!({ "mcpServers": { html::SERVER: html::config(data_dir, id) } }).to_string(),
-        "--allowedTools".to_owned(), format!("{},{},{},{}", html::CLAUDE_TOOL, crate::media::CLAUDE_TOOL, super::delegation::CLAUDE_LIST, super::delegation::CLAUDE_TOOL)];
+    let mut config = html::config(data_dir, id);
+    config["timeout"] = json!(86400000);
+    let tools = ["--mcp-config".to_owned(), json!({ "mcpServers": { html::SERVER: config } }).to_string(),
+        "--allowedTools".to_owned(), format!("{},{},{},{},{}", html::CLAUDE_TOOL, crate::media::CLAUDE_TOOL, super::delegation::CLAUDE_LIST, super::delegation::CLAUDE_TOOL, super::questions::CLAUDE_TOOL)];
     let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.claude_flags()).chain(tools);
     let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
     let rewind = at.into_iter().flat_map(|at| ["--resume-session-at".to_owned(), at.to_owned()]);
@@ -268,6 +296,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                         let original = transcript.inputs.remove(&id).unwrap_or_default();
                         transcript.unblock(&id);
                         let response = match answer {
+                            Answer::Responses(_) => continue,
                             Answer::Allow => json!({ "behavior": "allow" }),
                             Answer::Rules(rules) => {
                                 let parts = words(original["input"]["command"].as_str().unwrap_or_default());
@@ -1371,7 +1400,7 @@ impl Transcript {
                 let answers = questions.iter().map(|question| {
                     recorded_answers(question, result["answers"][&question.question].as_str().unwrap_or_default())
                 }).collect();
-                let record = AnsweredQuestions { source: Some(id.to_owned()), after: self.len, questions, answers };
+                let record = AnsweredQuestions { source: Some(id.to_owned()), after: self.len, questions, answers, responses: Default::default() };
                 let _ = self.events.send(Event::QuestionsRecovered(record));
             }
             self.activity.finish(id, &self.events);

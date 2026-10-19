@@ -3,9 +3,9 @@ import subprocess
 from pathlib import Path
 
 
-def call(config, name, arguments):
+def call(config, name, arguments, timeout=30):
     request = {'id': 1, 'method': 'tools/call', 'params': {'name': name, 'arguments': arguments}}
-    result = subprocess.run([config['command'], *config['args']], input=json.dumps(request) + '\n', capture_output=True, text=True, timeout=30)
+    result = subprocess.run([config['command'], *config['args']], input=json.dumps(request) + '\n', capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError(result.stderr)
     return json.loads(result.stdout)['result']
@@ -22,4 +22,11 @@ def delegate(config, arguments):
     if 'incorrect value' not in result['structuredContent']['report']:
         raise RuntimeError(f'review finding was not returned: {result}')
     Path('reviewed.txt').write_text('corrected value\n')
+    return result
+
+
+def ask(config, arguments):
+    arguments = json.loads(json.dumps(arguments).replace('/tmp/oikonomos-chat', str(Path.cwd())))
+    result = call(config, 'ask_questions', arguments, timeout=120)
+    Path('questions-result.json').write_text(json.dumps(result))
     return result

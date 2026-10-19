@@ -131,4 +131,14 @@ agent = "codex"
 env = { OIKONOMOS_FAKE_FIXTURE = "$PWD/crates/oikonomos/tests/fixtures/chats/codex/rewind.synthetic.jsonl", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
 EOF
 
+for agent in claude-code codex; do
+cat >> "$OIKONOMOS_E2E_ROOT/config.toml" <<EOF
+
+[[rig]]
+name = "Rich $agent Questions"
+agent = "$agent"
+env = { OIKONOMOS_FAKE_FIXTURE = "$PWD/crates/oikonomos/tests/fixtures/chats/$agent/rich-questions.synthetic.jsonl", CLAUDE_CONFIG_DIR = "$OIKONOMOS_E2E_ROOT/claude", CODEX_HOME = "$OIKONOMOS_E2E_ROOT/codex" }
+EOF
+done
+
 printf "%s\n" "$OIKONOMOS_E2E_PORT"

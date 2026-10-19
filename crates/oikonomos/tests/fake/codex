@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from rig_tools import delegate
+from rig_tools import ask, delegate
 
 stdin = sys.stdin.buffer.raw
 stdout = sys.stdout.buffer
@@ -261,6 +261,9 @@ def proxy():
                 images = [item for item in message['params']['input'] if item['type'] in ('image', 'localImage')]
             if 'id' in message:
                 ids[entry['stdin']['id']] = message['id']
+        elif 'ask' in entry:
+            result = ask(mcp, entry['ask'])
+            send({'method': 'item/completed', 'params': {'threadId': entry['thread'], 'turnId': entry['turn'], 'item': {'type': 'mcpToolCall', 'id': 'rich-questions', 'server': 'oikonomos_chat', 'tool': 'ask_questions', 'arguments': entry['ask'], 'status': 'completed', 'result': result}}})
         elif 'delegate' in entry:
             result = delegate(mcp, entry['delegate'])
             send({'method': 'item/completed', 'params': {'threadId': entry['thread'], 'turnId': entry['turn'], 'item': {'type': 'mcpToolCall', 'id': 'rig-review', 'server': 'oikonomos_chat', 'tool': 'delegate_to_rig', 'arguments': entry['delegate'], 'status': 'completed', 'result': result}}})

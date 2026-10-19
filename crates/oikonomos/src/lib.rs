@@ -16,6 +16,7 @@ mod projects;
 mod protocol;
 mod push;
 mod runs;
+mod rigs;
 mod search;
 mod templates;
 mod terminals;
@@ -105,7 +106,8 @@ fn router(state: AppState) -> Router {
         .route("/api/themes", get(theme_names))
         .route("/api/themes/{name}", get(preview_theme))
         .route("/api/font", get(font))
-        .route("/api/rigs", get(rigs))
+        .route("/api/rigs", get(rigs).put(rigs::save))
+        .route("/api/rigs/options", get(rigs::options))
         .route("/api/templates", get(templates))
         .route("/api/editor", get(editor))
         .route("/api/leader", get(leader))

@@ -1,9 +1,10 @@
-mod claude;
-mod codex;
+pub(crate) mod claude;
+pub(crate) mod codex;
 mod delegation;
 mod holder;
 mod html;
 mod protocol;
+mod questions;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -398,6 +399,7 @@ pub enum Answer {
     Allow,
     Rules(Vec<Rule>),
     Answers(Vec<Vec<String>>),
+    Responses(HashMap<String, questions::Response>),
     Deny { instead: Option<String> },
 }
 
@@ -408,13 +410,15 @@ struct Decision {
     #[serde(default)]
     rule: Vec<Rule>,
     answers: Option<Vec<Vec<String>>>,
+    responses: Option<HashMap<String, questions::Response>>,
     #[serde(default)]
     instead: Option<String>,
 }
 
 impl From<Decision> for Answer {
-    fn from(Decision { allow, instead, rule, answers }: Decision) -> Self {
-        if let Some(answers) = answers { Answer::Answers(answers) }
+    fn from(Decision { allow, instead, rule, answers, responses }: Decision) -> Self {
+        if let Some(responses) = responses { Answer::Responses(responses) }
+        else if let Some(answers) = answers { Answer::Answers(answers) }
         else if allow && !rule.is_empty() { Answer::Rules(rule) }
         else if allow { Answer::Allow } else { Answer::Deny { instead } }
     }
@@ -431,10 +435,20 @@ pub struct Question {
     pub options: Vec<ChoiceDescription>,
     #[serde(default)]
     pub multi_select: bool,
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub answer_type: Option<questions::Type>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<questions::Image>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChoiceDescription {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recommended: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<questions::Image>,
     pub label: String,
     #[serde(default)]
     pub description: String,
@@ -449,6 +463,8 @@ pub struct AnsweredQuestions {
     pub after: usize,
     pub questions: Vec<Question>,
     pub answers: Vec<Vec<String>>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub responses: HashMap<String, questions::Response>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -743,6 +759,7 @@ struct Transcript {
     requests: Vec<Request>,
     reported: Status,
     handoff: Option<Handoff>,
+    questions: HashMap<String, oneshot::Sender<questions::Reply>>,
 }
 
 struct Handoff {
@@ -906,7 +923,7 @@ impl Chats {
     }
 
     fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>) {
-        let transcript = Transcript { recoverable: false, seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status, handoff: None };
+        let transcript = Transcript { recoverable: false, seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status, handoff: None, questions: HashMap::new() };
         let entry = Arc::new(Entry {
             chat: Mutex::new(chat),
             transcript: Mutex::new(transcript),
@@ -1103,6 +1120,11 @@ impl Chats {
                 }
             }
         }
+        {
+            let mut transcript = entry.transcript.lock().unwrap();
+            let pending: Vec<_> = transcript.questions.keys().cloned().collect();
+            for request in pending { self.resolve(&mut transcript, &id, &request); }
+        }
         self.chats.lock().unwrap().retain(|other| !Arc::ptr_eq(other, &entry));
         let _ = fs::remove_file(record_path(&self.data_dir, &id));
         let project_id = entry.chat.lock().unwrap().project_id.clone();
@@ -1143,6 +1165,7 @@ impl Chats {
         if transcript.requests.len() == pending {
             return false;
         }
+        transcript.questions.remove(request_id);
         transcript.seq += 1;
         let (chat_id, seq, request_id) = (chat_id.to_owned(), transcript.seq, request_id.to_owned());
         let _ = self.changed.send(Change::Resolved { chat_id, seq, request_id });
@@ -1271,6 +1294,8 @@ impl Chats {
             let _ = handoff.reply.send(Err(io::Error::other("Handoff interrupted.")));
         }
         transcript.recoverable = false;
+        let pending: Vec<_> = transcript.questions.keys().cloned().collect();
+        for request in pending { self.resolve(&mut transcript, id, &request); }
         let mut chat = entry.chat.lock().unwrap();
         if !chat.queued.is_empty() {
             chat.queued.clear();
@@ -1304,18 +1329,26 @@ impl Chats {
                 }) { return; }
             }
             (Answer::Rules(_), _) => return,
+            (Answer::Responses(responses), RequestKind::Question { questions, .. })
+                if transcript.questions.contains_key(request_id) && questions::valid_responses(questions, responses) => {},
+            (Answer::Responses(_), _) => return,
+            (_, RequestKind::Question { .. }) if transcript.questions.contains_key(request_id)
+                && !matches!(answer, Answer::Deny { .. }) => return,
             (Answer::Answers(answers), RequestKind::Question { questions, .. }) if answers.len() == questions.len() => {},
             (Answer::Answers(_), _) => return,
             _ => {},
         }
-        let answered = if let RequestKind::Question { questions, .. } = &request.kind {
+        let answered = if transcript.questions.contains_key(request_id) && !matches!(answer, Answer::Responses(_)) { None }
+        else if let RequestKind::Question { questions, .. } = &request.kind {
             let answers = match &answer {
                 Answer::Answers(answers) => answers.clone(),
                 Answer::Deny { instead: Some(text) } => vec![vec![text.clone()]; questions.len()],
                 _ => vec![Vec::new(); questions.len()],
             };
-            Some(AnsweredQuestions { source: None, after: transcript.items.len(), questions: questions.clone(), answers })
+            let responses = match &answer { Answer::Responses(responses) => responses.clone(), _ => HashMap::new() };
+            Some(AnsweredQuestions { source: None, after: transcript.items.len(), questions: questions.clone(), answers, responses })
         } else { None };
+        let pending = transcript.questions.remove(request_id);
         if self.resolve(&mut transcript, id, request_id) {
             if let Some(answered) = answered {
                 let mut chat = entry.chat.lock().unwrap();
@@ -1323,7 +1356,14 @@ impl Chats {
                 self.save(&chat);
                 let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
             }
-            entry.driver.answer(request_id, answer);
+            if let Some(pending) = pending {
+                let reply = match answer {
+                    Answer::Responses(answers) => questions::Reply { answers, cancelled: false, instruction: None },
+                    Answer::Deny { instead } => questions::Reply { answers: HashMap::new(), cancelled: true, instruction: instead },
+                    _ => unreachable!(),
+                };
+                let _ = pending.send(reply);
+            } else { entry.driver.answer(request_id, answer); }
             self.settle(&entry, &transcript);
         }
     }

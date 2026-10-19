@@ -73,6 +73,8 @@
 		z-index: 50;
 		box-sizing: border-box;
 		width: min(28rem, calc(100vw - 2 * var(--space-4)));
+		max-height: calc(100dvh - 2 * var(--space-4));
+		overflow-y: auto;
 		padding: var(--space-4);
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg);
@@ -89,6 +91,7 @@
 		left: 0;
 		width: 100%;
 		height: 100%;
+		max-height: none;
 		overflow-y: auto;
 		border: none;
 		border-radius: 0;

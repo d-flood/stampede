@@ -168,4 +168,8 @@
 	.boxed.phone textarea:focus-visible {
 		border-color: var(--status-working);
 	}
+
+	.boxed.phone .actions {
+		flex-wrap: wrap;
+	}
 </style>

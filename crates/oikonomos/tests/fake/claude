@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from rig_tools import delegate
+from rig_tools import ask, delegate
 
 FLAGS = {'--input-format': 'stream-json', '--output-format': 'stream-json'}
 SWITCHES = ['--verbose', '--include-partial-messages', '--permission-prompt-tool=stdio']
@@ -172,7 +172,7 @@ if os.environ.get('CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING') == 'true':
     mcp = json.loads(args[args.index('--mcp-config') + 1])['mcpServers']['oikonomos_chat']
     if not Path(mcp['command']).is_file() or mcp['args'][:2] != ['chat-tools', '--data-dir'] or len(mcp['args']) != 5 or mcp['args'][3] != '--chat-id' or not mcp['args'][4] or not Path(mcp['args'][2]).is_absolute():
         fail(f'invalid chat HTML server: {mcp}')
-    if args[args.index('--allowedTools') + 1] != 'mcp__oikonomos_chat__render_html,mcp__oikonomos_chat__render_media,mcp__oikonomos_chat__list_rigs,mcp__oikonomos_chat__delegate_to_rig':
+    if args[args.index('--allowedTools') + 1] != 'mcp__oikonomos_chat__render_html,mcp__oikonomos_chat__render_media,mcp__oikonomos_chat__list_rigs,mcp__oikonomos_chat__delegate_to_rig,mcp__oikonomos_chat__ask_questions':
         fail('chat HTML tool is not allowed')
 
 entries = [json.loads(line) for line in fixture().read_text().splitlines()]
@@ -200,6 +200,9 @@ for entry in entries[start:]:
             uuids[entry['stdin']['uuid']] = message['uuid']
         if message.get('type') == 'user':
             prompt = message['message']['content']
+    elif 'ask' in entry:
+        result = ask(mcp, entry['ask'])
+        print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'rich-questions', 'content': result['content'], 'is_error': result['isError']}]}}), flush=True)
     elif 'delegate' in entry:
         result = delegate(mcp, entry['delegate'])
         print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'rig-review', 'content': result['content'], 'is_error': result['isError']}]}}), flush=True)

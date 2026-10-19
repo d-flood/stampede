@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Text from '#lib/chat/Text.svelte';
+	import Media from '#lib/chat/Media.svelte';
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
 	import type { AnsweredQuestions } from '#lib/device.svelte.ts';
 	import CaretRight from '~icons/ph/caret-right';
@@ -12,13 +14,17 @@
 		{#each record.questions as question, index}
 			<section>
 				<h3>{question.header}</h3>
-				<div class="question">{question.question}</div>
+				{#if question.type}<Text item={{ kind: 'text', text: question.question, streaming: false, phase: 'final' }} />{:else}<div class="question">{question.question}</div>{/if}
+				{#if question.image}<Media item={{ kind: 'media', ...question.image }} />{/if}
 				<div class="options">
 					{#each question.options as option}
-						<div class="option" class:selected={record.answers[index]?.includes(option.label)}><QuestionOption {option} /></div>
+						<div class="option" class:selected={question.type ? record.responses?.[question.id]?.selected.includes(option.id ?? '') : record.answers[index]?.includes(option.label)}><QuestionOption {option} rich={!!question.type} /></div>
 					{/each}
 				</div>
-				<p class="answer">Answer: {record.answers[index]?.length ? record.answers[index].join(', ') : 'Skipped'}</p>
+				{#if question.type}
+					{@const response = record.responses?.[question.id]}
+					<p class="answer">Answer: {response && !response.skipped ? [...question.options.filter((option) => response.selected.includes(option.id ?? '')).map((option) => option.label), response.text].filter(Boolean).join('\n') : 'Skipped'}</p>
+				{:else}<p class="answer">Answer: {record.answers[index]?.length ? record.answers[index].join(', ') : 'Skipped'}</p>{/if}
 			</section>
 		{/each}
 	</div>

@@ -22,7 +22,14 @@
 		choose(): void;
 	};
 
-	let { text, agent, settings, capabilities, choices, working, replace, onrun }: Props = $props();
+	let { text, agent, settings, capabilities, choices, working, replace: replaceText, onrun }: Props = $props();
+	let browsing = $state<string>();
+	const query = $derived(browsing === text ? '/' : text);
+
+	function replace(next: string) {
+		browsing = undefined;
+		replaceText(next);
+	}
 
 	const builtins = ['effort', 'model', 'mode', 'compact', 'clear', 'rewind'];
 
@@ -37,7 +44,7 @@
 	}
 
 	const groups = $derived.by((): { heading: string; rows: Row[] }[] => {
-		const picking = text.match(/^\/(model|effort|mode) (\S*)$/);
+		const picking = query.match(/^\/(model|effort|mode) (\S*)$/);
 		if (picking) {
 			const setting = picking[1] as Setting;
 			const current = settings[setting];
@@ -49,7 +56,7 @@
 			}));
 			return [{ heading: `/${setting}`, rows }];
 		}
-		const typed = text.match(/^\/(\S*)$/)?.[1];
+		const typed = query.match(/^\/(\S*)$/)?.[1];
 		if (typed === undefined) return [];
 		const model = choices.model.find((choice) => choice.value === settings.model);
 		const oikonomos: Row[] = [
@@ -80,6 +87,18 @@
 	const highlight = $derived(Math.max(0, rows.findIndex((row) => row.label === highlighted)));
 	let dismissed = $state<string>();
 	const open = $derived(rows.length > 0 && dismissed !== text);
+
+	export function isOpen() {
+		return open;
+	}
+
+	export function toggle() {
+		if (open) dismissed = text;
+		else {
+			browsing = text;
+			dismissed = undefined;
+		}
+	}
 
 	export function key(event: KeyboardEvent) {
 		if (!open) return;

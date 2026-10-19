@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { selectedTheme } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import RigEditor from '#lib/shell/RigEditor.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
 	import { selectTextSize, textSize, typography } from '#lib/typography.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -40,6 +41,11 @@
 				<ThemeSwitcher />
 			</div>
 			<p>Applies on every device.</p>
+		</section>
+		<section aria-labelledby="rigs-label">
+			<h3 id="rigs-label">Rigs</h3>
+			<p>Starting settings for new chats. Saved on every device.</p>
+			{#if open}<RigEditor />{/if}
 		</section>
 	</div>
 	{#snippet actions()}

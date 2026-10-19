@@ -99,7 +99,7 @@ pub fn call(args: &ChatToolsArgs, params: Value) -> Value {
         std::io::BufReader::new(stream).read_line(&mut reply)?;
         serde_json::from_str(&reply).map_err(io::Error::other)
     };
-    exchange().unwrap_or_else(|cause| error(format!("Could not reach Oikonomos delegation: {cause}")))
+    exchange().unwrap_or_else(|cause| error(format!("Could not reach Oikonomos chat tools: {cause}")))
 }
 
 pub fn listen(data_dir: &Path, chats: Arc<Chats>, config: watch::Receiver<Arc<Config>>) -> io::Result<()> {
@@ -118,13 +118,16 @@ pub fn listen(data_dir: &Path, chats: Arc<Chats>, config: watch::Receiver<Arc<Co
                         let (reader, mut writer) = stream.into_split();
                         let mut reader = BufReader::new(reader);
                         let mut line = String::new();
-                        if (&mut reader).take(128 * 1024).read_line(&mut line).await.is_err() { return; }
+                        if (&mut reader).take(1024 * 1024).read_line(&mut line).await.is_err() { return; }
                         let result = match serde_json::from_str::<Request>(&line) {
                             Ok(request) if request.name == LIST => {
                                 let rigs: Vec<_> = config.borrow().rigs.iter().map(|rig| json!({
                                     "name": rig.name, "agent": rig.agent, "model": rig.model, "effort": rig.effort,
                                 })).collect();
                                 json!({ "content": [{ "type": "text", "text": serde_json::to_string(&rigs).unwrap() }], "isError": false })
+                            }
+                            Ok(request) if request.name == super::questions::TOOL => {
+                                super::questions::ask(&chats, request.chat_id, request.arguments, &mut reader).await
                             }
                             Ok(request) if request.name == TOOL => match serde_json::from_value::<Task>(request.arguments) {
                                 Ok(task) if !task.rig.trim().is_empty() && !task.task.trim().is_empty() && task.task.len() <= 65536 => {

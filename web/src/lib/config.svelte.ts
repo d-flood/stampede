@@ -19,7 +19,7 @@ type Keybar = { extra: string[] };
 export type Appearance = { theme: ITheme; fontFamily: string; fontSize: number; scrollback: number };
 export type Agent = 'claude-code' | 'codex';
 export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
-export type Rig = { name: string; agent: Agent; shortcut?: string };
+export type Rig = { name: string; agent: Agent; shortcut?: string; model?: string; effort?: string; mode?: string };
 export type Template = { name: string; description: string };
 
 const dark = new MediaQuery('(prefers-color-scheme: dark)');
@@ -125,6 +125,16 @@ export function beginThemePreview() {
 
 export function rigs(): Rig[] {
 	return configured;
+}
+
+export async function saveRig(settings: { original?: string; agent: Agent; model?: string; effort?: string; mode: string }) {
+	const response = await fetch('/api/rigs', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(settings)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	configured = await response.json();
 }
 
 export function templates(): Template[] {

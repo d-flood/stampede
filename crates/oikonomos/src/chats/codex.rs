@@ -207,6 +207,23 @@ pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<
     Ok(sessions)
 }
 
+pub async fn models(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Value>> {
+    let (mut connection, mut proxy) = connect(cwd, env).await?;
+    let result = async {
+        let mut models = Vec::new();
+        let mut cursor = Value::Null;
+        loop {
+            let listed = connection.call("model/list", json!({ "cursor": cursor })).await?;
+            models.extend(listed["data"].as_array().into_iter().flatten().cloned());
+            cursor = listed["nextCursor"].clone();
+            if cursor.is_null() { break; }
+        }
+        Ok(models)
+    }.await;
+    let _ = proxy.kill().await;
+    result
+}
+
 async fn connect(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Connection, Child)> {
     let daemon = codex(cwd, env).args(["app-server", "daemon", "start"]).stdout(Stdio::null()).status().await?;
     if !daemon.success() {
@@ -460,7 +477,9 @@ fn thread(data_dir: &Path, chat_id: &str, cwd: &Path, settings: &AgentSettings) 
 }
 
 fn tool_config(data_dir: &Path, chat_id: &str) -> Value {
-    json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.oikonomos_chat": html::config(data_dir, chat_id) })
+    let mut config = html::config(data_dir, chat_id);
+    config["tool_timeout_sec"] = json!(86400);
+    json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.oikonomos_chat": config })
 }
 
 fn codex(cwd: &Path, env: &BTreeMap<String, String>) -> Command {

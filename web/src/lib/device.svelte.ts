@@ -53,10 +53,12 @@ export type Request = (
 	| { kind: 'other'; id: string; title: string; detail: string }
 ) & { subagent?: string };
 
-export type Question = { id: string; header: string; question: string; options: { label: string; description: string; preview?: string }[]; multiSelect: boolean };
-export type AnsweredQuestions = { source?: string; after: number; questions: Question[]; answers: string[][] };
+export type QuestionImage = { title: string; asset: string };
+export type Question = { id: string; header: string; question: string; type?: 'single' | 'multiple' | 'text'; image?: QuestionImage; options: { id?: string; label: string; description: string; preview?: string; image?: QuestionImage; recommended?: boolean }[]; multiSelect: boolean };
+export type QuestionResponse = { selected: string[]; text: string; skipped: boolean };
+export type AnsweredQuestions = { source?: string; after: number; questions: Question[]; answers: string[][]; responses?: Record<string, QuestionResponse> };
 export type Image = { mediaType: string; data: string };
-export type Answer = { allow: true; rule?: { prefix: string[]; scope: 'chat' | 'always' }[] } | { allow: false; instead?: string } | { answers: string[][] };
+export type Answer = { allow: true; rule?: { prefix: string[]; scope: 'chat' | 'always' }[] } | { allow: false; instead?: string } | { answers: string[][] } | { responses: Record<string, QuestionResponse> };
 export type Todo = { text: string; status: 'pending' | 'active' | 'done' };
 
 export type Context = { used: number; window: number };

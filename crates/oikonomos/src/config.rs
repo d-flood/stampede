@@ -91,11 +91,11 @@ pub struct Rig {
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shortcut: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
 }
 
@@ -330,6 +330,53 @@ pub fn write_theme(path: &Path, name: &str) -> Result<Theme, Error> {
     Ok(theme)
 }
 
+pub fn write_rig(path: &Path, original: Option<&str>, mut rig: Rig) -> Result<Vec<Rig>, Error> {
+    let mut text = match fs::read_to_string(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        text => text?,
+    };
+    let current = Config::parse(&text)?;
+    if let Some(name) = original {
+        let old = current.rigs.iter().find(|rig| rig.name == name).ok_or("Rig no longer exists; reopen the editor")?;
+        rig.name = old.name.clone();
+        rig.env = if old.agent == rig.agent { old.env.clone() } else { current.rig_for(rig.agent).env };
+        rig.shortcut = old.shortcut.clone();
+    } else {
+        if current.rigs.iter().any(|other| other.name == rig.name) {
+            return Err("A Rig with these settings already exists".into());
+        }
+        rig.env = current.rig_for(rig.agent).env;
+    }
+    let mut value = toml::Value::try_from(&rig)?;
+    if !rig.env.is_empty() {
+        value.as_table_mut().unwrap().insert("env".to_owned(), toml::Value::try_from(&rig.env)?);
+    }
+    let replacement = toml::to_string(&toml::Table::from_iter([
+        ("rig".to_owned(), toml::Value::Array(vec![value])),
+    ]))?;
+    if let Some(name) = original {
+        #[derive(Deserialize)]
+        struct Document { rig: Vec<toml::Spanned<BTreeMap<String, toml::Spanned<toml::Value>>>> }
+        #[derive(Deserialize)]
+        struct Environments { rig: Vec<Environment> }
+        #[derive(Deserialize)]
+        struct Environment { #[serde(default)] env: BTreeMap<String, toml::Spanned<String>> }
+        let document: Document = toml::from_str(&text)?;
+        let environments: Environments = toml::from_str(&text)?;
+        let index = current.rigs.iter().position(|rig| rig.name == name).unwrap();
+        let old = &document.rig[index];
+        let end = old.get_ref().values().map(|field| field.span().end)
+            .chain(environments.rig[index].env.values().map(|field| field.span().end))
+            .max().unwrap_or(old.span().end);
+        text.replace_range(old.span().start..end, replacement.trim_end());
+    } else {
+        text.push_str(&format!("\n{replacement}"));
+    }
+    let updated = Config::parse(&text)?;
+    fs::write(path, text)?;
+    Ok(updated.rigs)
+}
+
 fn with_theme(mut text: String, name: &str) -> Result<String, Error> {
     #[derive(Deserialize)]
     struct Setting {
@@ -460,6 +507,37 @@ pub fn watch(path: &Path) -> io::Result<watch::Receiver<Arc<Config>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rig_editor_preserves_other_settings_and_private_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "# Keep this\nroots = []\n\n[[rig]]\nname = 'Mine'\nagent = 'codex'\nshortcut = 'c'\nenv = { CODEX_HOME = '/tmp/alternate' }\n\n[editor]\nkeymap = 'vim'\n";
+        fs::write(&path, original).unwrap();
+        let mut rig = Config::parse(original).unwrap().rigs.remove(0);
+        rig.model = Some("a-model".to_owned());
+        rig.effort = Some("high".to_owned());
+        rig.mode = Some("default".to_owned());
+        rig.env.clear();
+        rig.shortcut = None;
+        let saved = write_rig(&path, Some("Mine"), rig).unwrap();
+        assert_eq!(saved[0].env["CODEX_HOME"], "/tmp/alternate");
+        assert_eq!(saved[0].shortcut.as_deref(), Some("c"));
+        assert_eq!(saved[0].model.as_deref(), Some("a-model"));
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# Keep this\nroots = []"), "{text}");
+        assert!(text.contains("[editor]\nkeymap = 'vim'"), "{text}");
+        let mut new = saved[0].clone();
+        new.name = "Another".to_owned();
+        let rigs = write_rig(&path, None, new.clone()).unwrap();
+        assert_eq!(rigs.len(), 2);
+        assert!(write_rig(&path, None, new).is_err());
+        let before = fs::read_to_string(&path).unwrap();
+        let mut invalid = rigs[1].clone();
+        invalid.mode = Some("invalid".to_owned());
+        assert!(write_rig(&path, Some("Another"), invalid).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
 
     #[test]
     fn chat_only_rigs_accept_old_configs_without_accepting_unknown_fields() {
