@@ -101,6 +101,8 @@ export type Chat = {
 
 export type Reading = { agent: Agent; window: 'five-hour' | 'weekly' | 'monthly' | 'session'; used?: number; consumption?: { amount: number; unit: 'credits' | 'requests' | 'tokens' }; chatId?: string; sessionId?: string; partial?: boolean; startsAt?: number; resetsAt?: number; readAt: number };
 
+export type ResetCredits = { availableCount: number; expiresAt?: number; creditId?: string };
+
 export type Session = { agent: Agent; sessionId: string; firstPrompt: string; updatedAt: number };
 
 export type TicketStatus = 'not-started' | 'in-progress' | 'merging' | 'merged' | 'skipped';
@@ -192,7 +194,7 @@ export type ServerMessage =
 	| { type: 'picker.listed'; directories: string[] }
 	| { type: 'fs.changed'; projectId: string; paths: string[]; git?: true }
 	| { type: 'attention.changed'; items: Attention[] }
-	| { type: 'usage.changed'; readings: Reading[] }
+	| { type: 'usage.changed'; readings: Reading[]; codexResets?: ResetCredits | null }
 	| { type: 'git.changed'; projectId: string }
 	| { type: 'epics.changed'; projectId: string; epics: Epic[] }
 	| { type: 'epic.changed'; projectId: string; epic: Epic }

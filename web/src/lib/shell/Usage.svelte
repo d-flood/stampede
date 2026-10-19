@@ -1,25 +1,24 @@
 <script lang="ts">
-	import type { Reading } from '#lib/device.svelte.ts';
+	import { logos } from '#lib/chat/sessions.ts';
+	import type { Reading, ResetCredits } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import CodexResets from '#lib/shell/CodexResets.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 	import { onMount } from 'svelte';
-	import Claude from '~icons/simple-icons/claude';
-	import OpenAI from '~icons/simple-icons/openai';
-	import Copilot from '~icons/simple-icons/githubcopilot';
 
-	let { readings }: { readings: Reading[] } = $props();
+	let { readings, codexResets = null }: { readings: Reading[]; codexResets?: ResetCredits | null } = $props();
 
 	const windows = [
 		{ window: 'five-hour', label: '5h', name: '5h' },
 		{ window: 'weekly', label: 'Weekly', name: 'week' }
 	] as const;
 	const agents = [
-		{ agent: 'claude-code', label: 'Claude', Logo: Claude },
-		{ agent: 'codex', label: 'Codex', Logo: OpenAI },
-		{ agent: 'copilot', label: 'Copilot', Logo: Copilot }
+		{ agent: 'claude-code', label: 'Claude', Logo: logos['claude-code'] },
+		{ agent: 'codex', label: 'Codex', Logo: logos.codex },
+		{ agent: 'copilot', label: 'Copilot', Logo: logos.copilot }
 	] as const;
 
-	const visibleAgents = $derived(agents.filter(({ agent }) => readings.some((reading) => reading.agent === agent && (agent === 'copilot' || reading.used !== undefined))));
+	const visibleAgents = $derived(agents.filter(({ agent }) => (agent === 'codex' && codexResets !== null) || readings.some((reading) => reading.agent === agent && (agent === 'copilot' || reading.used !== undefined))));
 
 	let now = $state(Date.now());
 	let section: HTMLElement;
@@ -167,6 +166,9 @@
 					{/if}
 				{/each}
 			{/if}
+			{#if agent === 'codex' && codexResets}
+				<CodexResets credits={codexResets} {now} />
+			{/if}
 		</div>
 	{/each}
 </section>
@@ -259,7 +261,6 @@
 	.brand {
 		display: flex;
 		flex: none;
-		color: var(--brand);
 	}
 
 	.brand :global(svg) {

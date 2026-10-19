@@ -30,7 +30,7 @@ use crate::{
     config::{Agent, AgentSettings, Rig},
     projects::Project,
     templates,
-    usage::{Reading, Usage},
+    usage::{Reading, Snapshot, Usage},
 };
 pub use holder::{HoldChatArgs, hold_chat};
 pub use html::{ChatToolsArgs, serve as chat_tools};
@@ -1480,11 +1480,11 @@ impl Chats {
 }
 
 /// The Agent's Usage windows, read without a model call.
-pub async fn usage(rig: &Rig) -> io::Result<Vec<Reading>> {
+pub async fn usage(rig: &Rig) -> io::Result<Snapshot> {
     match rig.agent {
-        Agent::ClaudeCode => claude::usage(&rig.env).await,
+        Agent::ClaudeCode => Ok(Snapshot { readings: claude::usage(&rig.env).await?, ..Snapshot::default() }),
         Agent::Codex => codex::usage(&rig.env).await,
-        Agent::Copilot => copilot::usage(&rig.env).await,
+        Agent::Copilot => Ok(Snapshot { readings: copilot::usage(&rig.env).await?, ..Snapshot::default() }),
     }
 }
 

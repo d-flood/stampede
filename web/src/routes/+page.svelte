@@ -16,6 +16,7 @@
 		type Item,
 		type Project,
 		type Reading,
+		type ResetCredits,
 		type ServerMessage,
 		type Session,
 		type Terminal
@@ -74,6 +75,7 @@
 	let readingSessions = $state<Record<string, boolean>>({});
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
+	let codexResets = $state<ResetCredits | null>(null);
 	let visible = $state(document.visibilityState === 'visible');
 	let files = $state<Record<string, OpenFile[]>>(restored.files);
 	let browsers = $state<Record<string, OpenBrowser[]>>(restored.browsers);
@@ -210,6 +212,7 @@
 				break;
 			case 'usage.changed':
 				usage = message.readings;
+				codexResets = message.codexResets ?? null;
 				break;
 			case 'terminals.changed':
 				if (message.projectId) terminals[message.projectId] = message.terminals;
@@ -748,6 +751,7 @@
 		{device}
 		bind:section
 		{usage}
+		{codexResets}
 		epics={focused && epics[focused.id]}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		ondiff={(change, commit) => focused && openDiff(focused.id, change, commit)}
@@ -1045,7 +1049,7 @@
 		</header>
 		<div class="screens" class:held {@attach swipeable} onscrollend={landed}>
 			<div class="screen" inert={screen !== 0}>
-				<Usage readings={usage} />
+				<Usage readings={usage} {codexResets} />
 				<Projects
 					projects={ownProjects}
 					labels={projectLabels}

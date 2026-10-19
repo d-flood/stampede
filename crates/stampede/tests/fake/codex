@@ -183,6 +183,9 @@ def log(message, payload):
 
 def read(expected):
     while (message := receive()) is not None:
+        if os.environ.get('STAMPEDE_FAKE_RESETS') and message.get('method') in ('account/rateLimits/read', 'account/rateLimitResetCredit/consume'):
+            reset_request(message)
+            continue
         if message.get('method') == 'account/rateLimits/read' != expected.get('method'):
             usage = json.loads((FIXTURES / 'usage.recorded.jsonl').read_text().splitlines()[1])['stdout']
             send(dict(usage, id=message['id']))
@@ -200,6 +203,33 @@ def read(expected):
             continue
         return message
     return None
+
+
+def reset_request(message):
+    path = Path(os.environ['STAMPEDE_FAKE_RESETS'])
+    state = json.loads(path.read_text())
+    if message['method'] == 'account/rateLimits/read':
+        if message['params'].get('excludeResetCreditDetails') is not False:
+            fail('reset details were not requested')
+        send({'id': message['id'], 'result': state['usage']})
+        return
+    params = message['params']
+    key = params['idempotencyKey']
+    redeemed = state.setdefault('redeemed', {})
+    state.setdefault('requests', []).append(params)
+    outcome = 'alreadyRedeemed' if key in redeemed else state.get('outcome', 'reset')
+    if outcome == 'reset':
+        credits = state['usage']['rateLimitResetCredits']
+        credit = next((credit for credit in credits['credits'] if credit['status'] == 'available' and (params.get('creditId') is None or credit['id'] == params['creditId'])), None)
+        if credit is None:
+            outcome = 'noCredit'
+        else:
+            credit['status'] = 'redeemed'
+            credits['availableCount'] -= 1
+            state['usage']['rateLimits']['primary']['usedPercent'] = 0
+            redeemed[key] = params
+    path.write_text(json.dumps(state))
+    send({'id': message['id'], 'result': {'outcome': outcome}})
 
 
 def list_threads(message):

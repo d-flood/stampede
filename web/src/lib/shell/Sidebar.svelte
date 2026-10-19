@@ -21,7 +21,7 @@
 </script>
 
 <script lang="ts">
-	import type { Device, Epic, Project, Reading } from '#lib/device.svelte.ts';
+	import type { Device, Epic, Project, Reading, ResetCredits } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import type { Change, Commit } from '#lib/git.ts';
@@ -40,13 +40,14 @@
 		device: Device;
 		section: Section;
 		usage: Reading[];
+		codexResets?: ResetCredits | null;
 		epics?: Epic[];
 		onopen(path: string, cursor?: Cursor): void;
 		ondiff(change: Change, commit?: Commit): void;
 		onepic(slug: string): void;
 	};
 
-	let { open, project, label, git, device, section = $bindable(), usage, epics, onopen, ondiff, onepic }: Props = $props();
+	let { open, project, label, git, device, section = $bindable(), usage, codexResets, epics, onopen, ondiff, onepic }: Props = $props();
 
 	const shown = $derived(available(git));
 	const current = $derived(showing(section, git).id);
@@ -99,7 +100,7 @@
 			<Search projectId={project.id} {device} hidden={current !== 'search'} {onopen} />
 		{/key}
 	{/if}
-	{#if form() === 'desktop'}<Usage readings={usage} />{/if}
+	{#if form() === 'desktop'}<Usage readings={usage} {codexResets} />{/if}
 	{#if form() === 'desktop'}
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Focusable separators support keyboard resizing.) -->
 		<div

@@ -24,7 +24,7 @@ use super::{
 use crate::{
     config::{Agent, AgentSettings, codex_policy},
     chats::Status,
-    usage::{Reading, Window},
+    usage::{Reading, ResetCredits, ResetOutcome, Snapshot, Window},
 };
 
 const CLOSING: Duration = Duration::from_secs(5);
@@ -449,11 +449,37 @@ fn persist_extra_rules(env: &BTreeMap<String, String>, rules: &[super::Rule]) ->
 }
 
 /// Reads the account's windows from the daemon, which answers without a thread.
-pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
+pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Snapshot> {
     let (mut connection, mut proxy) = connect(&crate::home(), env).await?;
-    let read = connection.call("account/rateLimits/read", json!({ "excludeResetCreditDetails": true })).await;
+    let read = connection.call("account/rateLimits/read", json!({ "excludeResetCreditDetails": false })).await;
     let _ = proxy.kill().await;
-    Ok(readings(&read?["rateLimits"]))
+    Ok(usage_snapshot(&read?))
+}
+
+pub async fn consume_reset(env: &BTreeMap<String, String>, key: &str, credit: Option<&str>) -> io::Result<(ResetOutcome, Snapshot)> {
+    let (mut connection, mut proxy) = connect(&crate::home(), env).await?;
+    let result = async {
+        let redeemed = connection.call("account/rateLimitResetCredit/consume", json!({ "idempotencyKey": key, "creditId": credit })).await?;
+        let outcome = serde_json::from_value(redeemed["outcome"].clone()).map_err(io::Error::other)?;
+        let read = connection.call("account/rateLimits/read", json!({ "excludeResetCreditDetails": false })).await?;
+        Ok((outcome, usage_snapshot(&read)))
+    }.await;
+    let _ = proxy.kill().await;
+    result
+}
+
+fn usage_snapshot(read: &Value) -> Snapshot {
+    let credits = &read["rateLimitResetCredits"];
+    let next = credits["credits"].as_array().into_iter().flatten()
+        .filter(|credit| credit["status"] == "available" && credit["resetType"] == "codexRateLimits")
+        .min_by_key(|credit| credit["expiresAt"].as_u64().unwrap_or(u64::MAX));
+    let codex_resets = credits["availableCount"].as_u64().map(|available_count| ResetCredits {
+        available_count,
+        expires_at: next.and_then(|credit| credit["expiresAt"].as_u64()).map(|seconds| seconds.saturating_mul(1000)),
+        credit_id: next.and_then(|credit| credit["id"].as_str()).map(str::to_owned),
+    });
+    let snapshot = read["rateLimitsByLimitId"].get("codex").unwrap_or(&read["rateLimits"]);
+    Snapshot { readings: readings(snapshot), codex_resets }
 }
 
 /// The windows of a rate-limit snapshot, which may come from another metered limit than Codex's own.
@@ -1476,6 +1502,26 @@ fn edit(id: String, changes: &Value) -> super::RequestKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_credits_keep_the_authoritative_count_and_choose_the_first_expiry() {
+        let snapshot = usage_snapshot(&json!({ "rateLimitResetCredits": {
+            "availableCount": 8,
+            "credits": [
+                { "id": "later", "status": "available", "resetType": "codexRateLimits", "expiresAt": 500 },
+                { "id": "used", "status": "redeemed", "resetType": "codexRateLimits", "expiresAt": 100 },
+                { "id": "other", "status": "available", "resetType": "unknown", "expiresAt": 50 },
+                { "id": "next", "status": "available", "resetType": "codexRateLimits", "expiresAt": 300 },
+                { "id": "forever", "status": "available", "resetType": "codexRateLimits", "expiresAt": null }
+            ]
+        }}));
+        assert_eq!(snapshot.codex_resets, Some(ResetCredits { available_count: 8, expires_at: Some(300_000), credit_id: Some("next".to_owned()) }));
+        for credits in [Value::Null, json!([])] {
+            let snapshot = usage_snapshot(&json!({ "rateLimitResetCredits": { "availableCount": 3, "credits": credits } }));
+            assert_eq!(snapshot.codex_resets, Some(ResetCredits { available_count: 3, expires_at: None, credit_id: None }));
+        }
+        assert!(usage_snapshot(&json!({})).codex_resets.is_none());
+    }
 
     #[test]
     fn running_shells_stream_and_complete_in_place_after_resume() {

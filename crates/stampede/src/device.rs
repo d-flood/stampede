@@ -37,7 +37,7 @@ use crate::{
     runs::Runs,
     search,
     terminals::{Attachment, Terminals},
-    usage::{Reading, Usage},
+    usage::{Snapshot, Usage},
 };
 
 const OUTPUT: u8 = 1;
@@ -352,7 +352,7 @@ impl Device {
                 });
                 send(&self.outgoing, hello);
                 self.attention_changed(&self.attention.items());
-                self.usage_changed(&self.usage.readings());
+                self.usage_changed(&self.usage.snapshot());
                 self.send_switches();
             }
             Control::Create { project_id, owner } => {
@@ -712,8 +712,8 @@ impl Device {
         send(&self.outgoing, json!({ "type": "attention.changed", "items": items }));
     }
 
-    fn usage_changed(&self, readings: &[Reading]) {
-        send(&self.outgoing, json!({ "type": "usage.changed", "readings": readings }));
+    fn usage_changed(&self, snapshot: &Snapshot) {
+        send(&self.outgoing, json!({ "type": "usage.changed", "readings": snapshot.readings, "codexResets": snapshot.codex_resets }));
     }
 
     fn retitle(&self, terminal_id: &str, label: &str) {

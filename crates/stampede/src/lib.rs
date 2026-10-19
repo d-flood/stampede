@@ -111,6 +111,7 @@ fn router(state: AppState) -> Router {
         .route("/api/font", get(font))
         .route("/api/rigs", get(rigs).put(rigs::save).delete(rigs::delete))
         .route("/api/rigs/options", get(rigs::options))
+        .route("/api/usage/codex/reset", post(usage::reset))
         .route("/api/templates", get(templates))
         .route("/api/editor", get(editor))
         .route("/api/leader", get(leader))

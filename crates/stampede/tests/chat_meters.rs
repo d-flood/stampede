@@ -35,6 +35,54 @@ env = { STAMPEDE_FAKE_FIXTURE = "simple-turn" }
 "#;
 
 #[tokio::test]
+async fn codex_resets_refresh_all_devices_and_retries_do_not_spend_twice() {
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("resets.json");
+    let mut usage = serde_json::from_str::<Value>(include_str!("fixtures/chats/codex/usage.recorded.jsonl").lines().nth(1).unwrap()).unwrap()["stdout"]["result"].clone();
+    usage["rateLimitResetCredits"] = json!({ "availableCount": 2, "credits": [
+        { "id": "later", "resetType": "codexRateLimits", "status": "available", "expiresAt": 1901000000 },
+        { "id": "next", "resetType": "codexRateLimits", "status": "available", "expiresAt": 1900000000 }
+    ] });
+    usage.as_object_mut().unwrap().remove("rateLimitsByLimitId");
+    fs::write(&path, json!({ "usage": usage }).to_string()).unwrap();
+    let fake_path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
+    let server = Server::with_env("resets", USAGE, vec![("PATH", fake_path.into()), ("STAMPEDE_FAKE_RESETS", path.clone().into())]).await;
+    let mut watcher = device(server.port).await;
+    let initial = timeout(Duration::from_secs(10), async {
+        loop {
+            let snapshot = next_control(&mut watcher, "usage.changed").await;
+            if snapshot["codexResets"]["availableCount"] == 2 { break snapshot; }
+        }
+    }).await.unwrap();
+    assert_eq!(initial["codexResets"], json!({ "availableCount": 2, "expiresAt": 1900000000000u64, "creditId": "next" }));
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{}/api/usage/codex/reset", server.port);
+    let request = json!({ "idempotencyKey": "same-attempt", "creditId": "next" });
+    for outcome in ["reset", "alreadyRedeemed"] {
+        let response = client.post(&url).header("Content-Type", "application/json").body(request.to_string()).send().await.unwrap();
+        assert!(response.status().is_success(), "{}", response.text().await.unwrap());
+        assert_eq!(serde_json::from_str::<Value>(&response.text().await.unwrap()).unwrap(), outcome);
+        let updated = timeout(Duration::from_secs(10), next_control(&mut watcher, "usage.changed")).await.unwrap();
+        assert_eq!(updated["codexResets"], json!({ "availableCount": 1, "expiresAt": 1901000000000u64, "creditId": "later" }));
+        assert_eq!(parse(&updated)[&key("codex", "five-hour")].0, 0.0);
+    }
+    let mut late = device(server.port).await;
+    let latest = next_control(&mut late, "usage.changed").await;
+    assert_eq!(latest["codexResets"]["availableCount"], 1);
+    for outcome in ["nothingToReset", "noCredit"] {
+        let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        state["outcome"] = json!(outcome);
+        fs::write(&path, state.to_string()).unwrap();
+        let response = client.post(&url).header("Content-Type", "application/json").body(json!({ "idempotencyKey": outcome }).to_string()).send().await.unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&response.text().await.unwrap()).unwrap(), outcome);
+    }
+    assert_eq!(client.post(&url).header("Content-Type", "application/json").body(json!({ "idempotencyKey": "" }).to_string()).send().await.unwrap().status(), 400);
+    let state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(state["requests"].as_array().unwrap().len(), 4);
+    assert_eq!(state["usage"]["rateLimitResetCredits"]["availableCount"], 1);
+}
+
+#[tokio::test]
 async fn a_claude_chat_reports_its_context_and_tokens() {
     let (server, mut socket, chat) = launch("claude-code", "simple-turn", Vec::new()).await;
     let chat_id = chat["id"].as_str().unwrap();
