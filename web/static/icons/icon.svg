@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+	<defs>
+		<path id="far" d="M182 143 L217 208 L244 212 L244 230 L196 230 L158 157 Z" />
+		<g id="near">
+			<ellipse cx="135" cy="115" rx="78" ry="52" transform="rotate(-12 135 115)" />
+			<path d="M100 78 C60 76 18 70 -18 56 C4 98 50 140 100 160 Z" />
+			<path d="M176 92 C190 70 196 50 203 30 L246 38 C238 62 226 92 200 116 Z" />
+			<path d="M203 30 C203 10 223 2 245 8 L284 22 C294 26 292 42 282 44 L245 52 C223 56 203 50 203 30 Z" />
+			<path d="M106 144 L134 156 L108 222 L136 226 L136 244 L78 244 L80 222 Z" />
+		</g>
+		<g id="outline" fill="#EFE7D9" stroke="#EFE7D9" stroke-width="20" stroke-linejoin="round">
+			<use href="#far" />
+			<use href="#near" />
+		</g>
+		<circle id="eye" cx="238" cy="24" r="5.5" fill="#2A1D14" />
+	</defs>
+	<rect width="512" height="512" rx="112" fill="#EFE7D9" />
+	<g fill="#DCCAB4">
+		<circle cx="93" cy="372" r="22" />
+		<circle cx="125" cy="392" r="30" />
+		<circle cx="167" cy="404" r="20" />
+		<circle cx="99" cy="410" r="16" />
+	</g>
+	<g transform="translate(67 74) scale(0.58) rotate(7 140 140)">
+		<use href="#far" fill="#6E3A1C" />
+		<use href="#near" fill="#A9521F" />
+		<use href="#eye" />
+	</g>
+	<g transform="translate(261 82) scale(0.6) rotate(7 140 140)">
+		<use href="#outline" />
+		<use href="#far" fill="#6E3A1C" />
+		<use href="#near" fill="#B8581F" />
+		<use href="#eye" />
+	</g>
+	<g transform="translate(123 186) scale(0.92) rotate(7 140 140)">
+		<use href="#outline" />
+		<use href="#far" fill="#954F27" />
+		<use href="#near" fill="#EB6D25" />
+		<use href="#eye" />
+	</g>
+</svg>
