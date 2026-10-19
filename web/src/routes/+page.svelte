@@ -1082,7 +1082,7 @@
 	<div class="reconnecting" role="status"><WifiSlash /> Reconnecting…</div>
 {:else if updateAvailable}
 	<div class="update" role="status">
-		<span>{dirty ? 'Save your edits to reload the update.' : 'Oikonomos updated.'}</span>
+		<span>{dirty ? 'Save your edits to reload the update.' : 'Stampede updated.'}</span>
 		<Button disabled={dirty} onclick={async () => { await putLayout(deviceLayout); location.reload(); }}>Reload</Button>
 	</div>
 {/if}

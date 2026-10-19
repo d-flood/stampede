@@ -10,7 +10,7 @@ test('chat composer submits with Enter on desktop and keeps mobile Enter as a ne
 		if (message.type === 'chat.send') sent.push(message);
 	}));
 	const name = `composer-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();

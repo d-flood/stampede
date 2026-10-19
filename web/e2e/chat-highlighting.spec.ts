@@ -53,7 +53,7 @@ test('chat highlights commands, tool arguments, and both sides of inline diffs',
 		});
 	});
 	const name = `highlighting-${project.name}-${repeatEachIndex}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();

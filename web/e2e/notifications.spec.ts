@@ -23,7 +23,7 @@ test('notifications can be disabled, stay off after reload, and be enabled again
 		Object.defineProperty(navigator.serviceWorker, 'getRegistration', { value: async () => registration });
 		Object.defineProperty(navigator.serviceWorker, 'ready', { get: () => Promise.resolve(registration) });
 	}, subscription);
-	const saved = () => JSON.parse(readFileSync(join(process.env.OIKONOMOS_E2E_ROOT!, 'data/push/subscriptions.json'), 'utf8'))
+	const saved = () => JSON.parse(readFileSync(join(process.env.STAMPEDE_E2E_ROOT!, 'data/push/subscriptions.json'), 'utf8'))
 		.map((item: { browserId: string }) => item.browserId).sort();
 	const control = (name: string) => page.getByRole(project.name === 'pixel' ? 'button' : 'menuitem', { name, exact: true });
 	await page.goto('/');

@@ -8,7 +8,7 @@ import { closeProject, openProject, showSidebar } from './shell.ts';
 
 test('a Claude Code Chat streams its reply, shows done, and asks before closing while working', async ({ page }, { project }) => {
 	const name = `chat-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
@@ -46,7 +46,7 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 
 test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, { project }) => {
 	const name = `codex-chat-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Codex', exact: true }).click();
@@ -77,7 +77,7 @@ test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, 
 
 test('a Chat folds tools, thinking, commands and a long first prompt into lines that open on tap', async ({ page }, { project }) => {
 	const name = `blocks-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude Tools', exact: true }).click();
@@ -128,7 +128,7 @@ test('a Chat folds tools, thinking, commands and a long first prompt into lines 
 
 test('a working Chat steers, queues until its turn ends, and interrupts, with no KeyBar', async ({ page }, { project }) => {
 	const name = `steer-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	const keys = page.getByRole('toolbar', { name: 'Keys' });
 	if (project.name === 'pixel') {
@@ -196,7 +196,7 @@ const slashed = [
 for (const { agent, rig, command, before, after } of slashed) {
 	test(`/effort from the slash menu updates the effort chip of a ${rig} Chat`, async ({ page }, { project }) => {
 		const name = `slash-${agent}-${project.name}`;
-		mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+		mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 		await openProject(page, name);
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		await page.getByRole('menuitem', { name: rig, exact: true }).click();
@@ -236,7 +236,7 @@ for (const { agent, rig, command, before, after } of slashed) {
 }
 
 test('/spec from the slash menu sends its Template before the typed text', async ({ page }, { project }) => {
-	const root = process.env.OIKONOMOS_E2E_ROOT;
+	const root = process.env.STAMPEDE_E2E_ROOT;
 	const name = `template-${project.name}`;
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
@@ -258,7 +258,7 @@ test('/spec from the slash menu sends its Template before the typed text', async
 
 	await expect(panel.locator('.user')).toHaveText('/spec go');
 	await expect(panel.getByText('Problem Statement')).toHaveCount(0);
-	const spec = readFileSync(fileURLToPath(new URL('../../crates/oikonomos/src/templates/spec.md', import.meta.url)), 'utf8').trimEnd();
+	const spec = readFileSync(fileURLToPath(new URL('../../crates/stampede/src/templates/spec.md', import.meta.url)), 'utf8').trimEnd();
 	const data = `${root}/data`;
 	const sent = () =>
 		readFileSync(`${root}/claude/fake-received.jsonl`, 'utf8')
@@ -267,7 +267,7 @@ test('/spec from the slash menu sends its Template before the typed text', async
 			.map((line) => JSON.parse(line))
 			.filter((message) => message.type === 'user')
 			.map((message) => message.message.content);
-	const note = `This Oikonomos server keeps its data in ${data}, so pass \`--data-dir ${data}\` to every \`oikonomos\` command.`;
+	const note = `This Stampede server keeps its data in ${data}, so pass \`--data-dir ${data}\` to every \`stampede\` command.`;
 	await expect.poll(sent).toContain(`${spec}\n\n${note}\n\ngo`);
 	await expect(tab.getByTitle('done')).toBeVisible();
 
@@ -279,10 +279,10 @@ test('/spec from the slash menu sends its Template before the typed text', async
 for (const agent of ['Claude', 'Codex']) {
 	test(`a ${agent} edit is a card that opens its file in a Diff tab`, async ({ page }, { project }) => {
 		const name = `${agent.toLowerCase()}-edits-${project.name}`;
-		const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+		const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 		mkdirSync(root);
 		const git = (...args: string[]) =>
-			execFileSync('git', ['-C', root, '-c', 'user.name=oikonomos', '-c', 'user.email=e2e@oikonomos.invalid', '-c', 'commit.gpgsign=false', ...args]);
+			execFileSync('git', ['-C', root, '-c', 'user.name=stampede', '-c', 'user.email=e2e@stampede.invalid', '-c', 'commit.gpgsign=false', ...args]);
 		git('init', '-q');
 		writeFileSync(`${root}/notes.txt`, 'alpha\nbeta\ngamma\n');
 		git('add', '.');
@@ -323,7 +323,7 @@ for (const agent of ['Claude', 'Codex']) {
 
 test('a Chat that finishes unseen needs attention and opens from the Attention list or a notification', async ({ page }, { project }) => {
 	const name = `attention-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
@@ -410,7 +410,7 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 		if (type === 'chat.create' || type === 'terminal.create') created.push(type);
 	}));
 	const name = `launch-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await expect(page.getByRole('menuitem', { name: 'Fake Claude', exact: true })).toHaveCount(1);
@@ -437,13 +437,13 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 
 test('past sessions of both Agents are listed newest first, searchable, and reopen as a Chat', async ({ page }, { project }) => {
 	const name = `sessions-${project.name}`;
-	const root = process.env.OIKONOMOS_E2E_ROOT;
+	const root = process.env.STAMPEDE_E2E_ROOT;
 	const path = `${root}/projects/${name}`;
 	mkdirSync(path, { recursive: true });
 	const sessions = `${root}/claude/projects/${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
 	mkdirSync(sessions, { recursive: true });
 	const session = '9afa077a-3173-4e49-9197-7ed54344b24e';
-	const fixture = new URL(`../../crates/oikonomos/tests/fixtures/chats/claude-code/sessions/${session}.jsonl`, import.meta.url);
+	const fixture = new URL(`../../crates/stampede/tests/fixtures/chats/claude-code/sessions/${session}.jsonl`, import.meta.url);
 	copyFileSync(fileURLToPath(fixture), `${sessions}/${session}.jsonl`);
 	utimesSync(`${sessions}/${session}.jsonl`, new Date(), new Date());
 	await openProject(page, name);
@@ -507,7 +507,7 @@ async function finishElsewhere(name: string) {
 
 test('a Chat pins todos and counts its completed subagent in the dock', async ({ page }, { project }) => {
 	const name = `subagent-${project.name}`;
-	const root = process.env.OIKONOMOS_E2E_ROOT!;
+	const root = process.env.STAMPEDE_E2E_ROOT!;
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
@@ -553,10 +553,10 @@ test('a Chat pins todos and counts its completed subagent in the dock', async ({
 for (const agent of ['claude', 'codex']) {
 	test(`${agent} shows current activity before completion and clears it afterward`, async ({ page }, { project }) => {
 		const name = `activity-${agent}-${project.name}`;
-		const root = process.env.OIKONOMOS_E2E_ROOT;
+		const root = process.env.STAMPEDE_E2E_ROOT;
 		const gates = `${root}/${name}`;
 		const kind = agent === 'claude' ? 'claude-code' : 'codex';
-		const recording = readFileSync(fileURLToPath(new URL(`../../crates/oikonomos/tests/fixtures/chats/${kind}/tools.recorded.jsonl`, import.meta.url)), 'utf8');
+		const recording = readFileSync(fileURLToPath(new URL(`../../crates/stampede/tests/fixtures/chats/${kind}/tools.recorded.jsonl`, import.meta.url)), 'utf8');
 		const inserted = new Set<string>();
 		let turns = 0;
 		const entries = recording.trim().split('\n').flatMap((line) => {
@@ -630,7 +630,7 @@ for (const agent of ['claude', 'codex']) {
 
 test('a completed Codex subagent moves to the dock\'s finished chip', async ({ page }, { project }) => {
 	const name = `codex-subagent-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`);
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: `Fake Codex Subagent ${project.name}`, exact: true }).click();
@@ -648,7 +648,7 @@ test('a completed Codex subagent moves to the dock\'s finished chip', async ({ p
 for (const agent of ['Claude', 'Codex']) {
 	test(`${agent} sends an image with a thumbnail and image count`, async ({ page }, { project }) => {
 		const name = `image-${agent}-${project.name}`;
-		mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+		mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 		await openProject(page, name);
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		await page.getByRole('menuitem', { name: `Fake ${agent}`, exact: true }).click();
@@ -669,7 +669,7 @@ for (const agent of ['Claude', 'Codex']) {
 for (const agent of ['Claude', 'Codex']) {
 	test(`${agent} rewinds from the slash menu in the same Chat tab`, async ({ page }, { project }) => {
 		const name = `rewind-${agent}-${project.name}`;
-		mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+		mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 		await openProject(page, name);
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		await page.getByRole('menuitem', { name: `${agent} Rewind`, exact: true }).click();

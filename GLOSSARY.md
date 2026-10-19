@@ -1,4 +1,4 @@
-# Oikonomos
+# Stampede
 
 A self-hosted IDE for directing AI coding agents, served from the development machine and used from a browser on any computer or phone.
 
@@ -7,15 +7,15 @@ A self-hosted IDE for directing AI coding agents, served from the development ma
 ### Structure
 
 **Host**:
-The development machine that runs Oikonomos, its Projects, and their Terminals.
+The development machine that runs Stampede, its Projects, and their Terminals.
 _Avoid_: server, box, machine
 
 **Host name**:
-The name a Host goes by wherever it identifies itself, such as its installed app, so that several Hosts can be told apart; "Oikonomos" unless set.
+The name a Host goes by wherever it identifies itself, such as its installed app, so that several Hosts can be told apart; "Stampede" unless set.
 _Avoid_: hostname, server name, alias, label
 
 **Device**:
-A single browser window connected to Oikonomos, with its own layout and Focused Project; two windows on one computer are two Devices.
+A single browser window connected to Stampede, with its own layout and Focused Project; two windows on one computer are two Devices.
 _Avoid_: client, session, browser
 
 **Project**:
@@ -27,7 +27,7 @@ The one open Project a Device is currently showing; every other open Project kee
 _Avoid_: active project, current project
 
 **Terminal**:
-A persistent shell belonging to a Project or to the Drawer that keeps running regardless of which Devices are connected or whether Oikonomos restarts.
+A persistent shell belonging to a Project or to the Drawer that keeps running regardless of which Devices are connected or whether Stampede restarts.
 _Avoid_: session, pty, pane
 
 **Ended Terminal**:
@@ -53,11 +53,11 @@ A Chat's own conversation, as distinct from those of its Subagents.
 _Avoid_: parent, root, main session
 
 **TUI**:
-An Agent running its own terminal interface, started by the user in an ordinary Terminal. Oikonomos does not manage its lifecycle or status.
+An Agent running its own terminal interface, started by the user in an ordinary Terminal. Stampede does not manage its lifecycle or status.
 _Avoid_: agent, agent terminal
 
 **Chat**:
-An Agent that Oikonomos drives directly and shows in its own interface; it keeps running when Devices disconnect or Oikonomos restarts, stops when its Tab is closed.
+An Agent that Stampede drives directly and shows in its own interface; it keeps running when Devices disconnect or Stampede restarts, stops when its Tab is closed.
 _Avoid_: conversation, thread, session, native agent
 
 **Agent status**:
@@ -65,7 +65,7 @@ One of _working_, _waiting_ (blocked mid-task on the user, e.g. a permission pro
 _Avoid_: state, activity, idle
 
 **Template**:
-Instructions Oikonomos owns and sends as part of a prompt, such as a Ticket's first prompt, the Resolver's, or _/grill_, _/spec_, and _/tickets_.
+Instructions Stampede owns and sends as part of a prompt, such as a Ticket's first prompt, the Resolver's, or _/grill_, _/spec_, and _/tickets_.
 _Avoid_: skill, prompt file, command
 
 **Rig**:
@@ -129,7 +129,7 @@ One of an Agent's rolling usage allowances, such as its five-hour or weekly wind
 _Avoid_: quota, rate limit, limit
 
 **Note**:
-A durable message an Agent or David attaches to a Ticket: a decision, an answer the Ticket asked for, or a hand-off. Oikonomos attaches its own, and a refused Landing becomes a Note on the Epic.
+A durable message an Agent or David attaches to a Ticket: a decision, an answer the Ticket asked for, or a hand-off. Stampede attaches its own, and a refused Landing becomes a Note on the Epic.
 _Avoid_: comment, log, message
 
 **Setup Command**:

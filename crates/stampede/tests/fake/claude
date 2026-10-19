@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import select
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from rig_tools import ask, delegate
+
+FLAGS = {'--input-format': 'stream-json', '--output-format': 'stream-json'}
+SWITCHES = ['--verbose', '--include-partial-messages', '--permission-prompt-tool=stdio']
+ENV = {'CLAUDE_CODE_ENTRYPOINT': 'sdk-ts', 'CLAUDE_CODE_SDK_READS_SESSION_STATE': '1'}
+RECORDED_CWD = '/tmp/stampede-chat'
+
+
+def fail(reason):
+    print(f'fake claude: {reason}', file=sys.stderr)
+    sys.exit(2)
+
+
+FIXTURES = Path(__file__).resolve().parent.parent / 'fixtures/chats/claude-code'
+
+
+def fixture():
+    name = os.environ.get('STAMPEDE_FAKE_FIXTURE') or fail('STAMPEDE_FAKE_FIXTURE is not set')
+    if '/' in name:
+        return Path(name)
+    return FIXTURES / f'{name}.recorded.jsonl'
+
+
+def config():
+    return Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')
+
+
+def answers():
+    recorded = {}
+    for line in (FIXTURES / 'answers.recorded.jsonl').read_text().splitlines():
+        entry = json.loads(line)
+        if 'stdin' in entry:
+            outputs = recorded.setdefault(kind(entry['stdin']), [])
+        else:
+            outputs.append(entry['stdout'])
+    return recorded
+
+
+def answer(message):
+    for output in answers()[kind(message)]:
+        output['response']['request_id'] = message['request_id']
+        print(json.dumps(output, ensure_ascii=False), flush=True)
+
+
+def kind(message):
+    request = message.get('request', {})
+    return message.get('type'), request.get('subtype'), request.get('cancel_queued'), message.get('priority')
+
+
+def readline():
+    global pending
+    while b'\n' not in pending:
+        chunk = os.read(0, 65536)
+        if not chunk:
+            return None
+        pending += chunk
+    line, _, pending = pending.partition(b'\n')
+    received = os.environ.get('STAMPEDE_FAKE_RECEIVED')
+    if received:
+        with open(received, 'ab') as log:
+            log.write(line + b'\n')
+    return line
+
+
+def waiting():
+    global pending
+    while True:
+        if not pending and select.select([0], [], [], 0)[0]:
+            pending += os.read(0, 65536)
+        line, separator, rest = pending.partition(b'\n')
+        if not separator:
+            return bool(pending)
+        message = json.loads(line)
+        if kind(message)[:2] not in [('control_request', 'initialize'), ('control_request', 'get_settings')]:
+            return True
+        pending = rest
+        log(line)
+        answer(message)
+
+
+def log(received):
+    config().mkdir(parents=True, exist_ok=True)
+    with open(config() / 'fake-received.jsonl', 'a') as file:
+        file.write(received.decode() + "\n")
+
+
+def read(expected):
+    while (received := readline()) is not None:
+        message = json.loads(received)
+        if message.get('type') == 'user' and fixture().name == 'subagents.recorded.jsonl' and os.environ.get('CLAUDE_CODE_ENABLE_TODO_TOOLS') != '1':
+            fail('subagent turn without CLAUDE_CODE_ENABLE_TODO_TOOLS=1')
+        if kind(message)[:2] == ('control_request', 'get_usage') != kind(expected)[:2]:
+            usage = json.loads((FIXTURES / 'usage.recorded.jsonl').read_text().splitlines()[1])['stdout']
+            usage['response']['request_id'] = message['request_id']
+            print(json.dumps(usage, ensure_ascii=False), flush=True)
+            continue
+        log(received)
+        if kind(message) != kind(expected) and kind(message) in answers():
+            answer(message)
+            continue
+        return message
+    return None
+
+
+def remap(message):
+    text = json.dumps(message, ensure_ascii=False).replace(RECORDED_CWD, os.getcwd())
+    for recorded, sent in uuids.items():
+        text = text.replace(recorded, sent)
+    return text
+
+
+def record(entry):
+    project = config() / 'projects' / re.sub(r'[^a-zA-Z0-9]', '-', os.getcwd())
+    path = project / f'{entry["sessionId"]}.jsonl'
+    if entry.get('isSidechain'):
+        path = project / entry['sessionId'] / 'subagents' / f'agent-{entry["agentId"]}.jsonl'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'a') as session:
+        session.write(remap(entry) + '\n')
+
+
+def verdict(name, prompt):
+    binary = re.search(r'`stampede` is `([^`]+)`', prompt) or fail(f'no stampede binary in {prompt!r}')
+    reference = re.search(r'Your Ticket is (\S+?),', prompt) or fail(f'no Ticket reference in {prompt!r}')
+    data_dir = re.search(r'pass `--data-dir ([^`]+)`', prompt)
+    command = shlex.split(binary.group(1)) + [name, reference.group(1)]
+    command += ['-m', 'Fake verdict'] if name == 'complete' else ['Fake verdict']
+    command += ['--data-dir', data_dir.group(1)] if data_dir else []
+    run(command)
+
+
+def run(command):
+    ran = subprocess.run(command, capture_output=True, text=True)
+    print(f'fake claude ran {command}: {ran.returncode} {ran.stdout}{ran.stderr}', file=sys.stderr)
+
+
+def gate(name):
+    gates = os.environ.get('STAMPEDE_FAKE_GATES')
+    if not gates:
+        return
+    path = Path(gates) / name
+    path.touch()
+    while path.exists():
+        time.sleep(0.02)
+
+
+args = sys.argv[1:]
+if (capture := os.environ.get('STAMPEDE_FAKE_ENVIRONMENT')) and os.environ.get('STAMPEDE_SCRATCH'):
+    with open(capture, 'a') as output:
+        json.dump({name: os.environ.get(name) for name in ['TMPDIR', 'CLAUDE_CODE_TMPDIR', 'NODE_COMPILE_CACHE', 'CARGO_TARGET_DIR']}, output)
+        output.write('\n')
+for flag, value in FLAGS.items():
+    if flag not in args or args.index(flag) + 1 >= len(args) or args[args.index(flag) + 1] != value:
+        fail(f'{flag} {value} is missing from {args}')
+for switch in SWITCHES:
+    if switch not in args:
+        fail(f'{switch} is missing from {args}')
+for name, value in ENV.items():
+    if os.environ.get(name) != value:
+        fail(f'{name} is not {value}')
+
+if os.environ.get('CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING') == 'true':
+    if '--mcp-config' not in args or '--allowedTools' not in args:
+        fail('chat HTML tool is missing')
+    mcp = json.loads(args[args.index('--mcp-config') + 1])['mcpServers']['stampede_chat']
+    if not Path(mcp['command']).is_file() or mcp['args'][:2] != ['chat-tools', '--data-dir'] or len(mcp['args']) != 5 or mcp['args'][3] != '--chat-id' or not mcp['args'][4] or not Path(mcp['args'][2]).is_absolute():
+        fail(f'invalid chat HTML server: {mcp}')
+    if args[args.index('--allowedTools') + 1] != 'mcp__stampede_chat__render_html,mcp__stampede_chat__render_media,mcp__stampede_chat__list_rigs,mcp__stampede_chat__delegate_to_rig,mcp__stampede_chat__ask_questions':
+        fail('chat HTML tool is not allowed')
+
+entries = [json.loads(line) for line in fixture().read_text().splitlines()]
+start = 0
+if '--resume' in args:
+    session = args[args.index('--resume') + 1]
+    start = next((index + 1 for index, entry in enumerate(entries) if entry.get('resume') == session), 0)
+
+request_ids = {}
+uuids = {}
+pending = b''
+prompt = ''
+for entry in entries[start:]:
+    if 'resume' in entry:
+        break
+    if 'stdin' in entry:
+        message = read(entry['stdin'])
+        if message is None:
+            sys.exit(0)
+        if kind(message) != kind(entry['stdin']):
+            fail(f'expected {kind(entry["stdin"])} but read {kind(message)}')
+        if 'request_id' in message:
+            request_ids[entry['stdin']['request_id']] = message['request_id']
+        if 'uuid' in message and 'uuid' in entry['stdin']:
+            uuids[entry['stdin']['uuid']] = message['uuid']
+        if message.get('type') == 'user':
+            prompt = message['message']['content']
+    elif 'ask' in entry:
+        result = ask(mcp, entry['ask'])
+        print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'rich-questions', 'content': result['content'], 'is_error': result['isError']}]}}), flush=True)
+    elif 'delegate' in entry:
+        result = delegate(mcp, entry['delegate'])
+        print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'rig-review', 'content': result['content'], 'is_error': result['isError']}]}}), flush=True)
+    elif 'args' in entry:
+        expected = entry['args']
+        if not any(args[i:i + len(expected)] == expected for i in range(len(args))):
+            fail(f'{expected} is missing from {args}')
+    elif 'file' in entry:
+        path = Path.cwd() / entry['file']['path']
+        path.write_text(entry['file']['text'])
+    elif 'session' in entry:
+        record(entry['session'])
+    elif 'verdict' in entry:
+        verdict(entry['verdict'], prompt)
+    elif 'run' in entry:
+        run(entry['run'])
+    elif 'gate' in entry:
+        gate(entry['gate'])
+    else:
+        message = entry['stdout']
+        response = message.get('response', {})
+        if message.get('type') == 'control_response' and response.get('request_id') in request_ids:
+            response['request_id'] = request_ids[response['request_id']]
+        if message.get('type') == 'result' and waiting():
+            fail(f'read {pending!r} before the turn ended')
+        print(remap(message), flush=True)
+
+while read({}) is not None:
+    pass

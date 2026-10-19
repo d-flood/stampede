@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { closeProject, openProject } from './shell.ts';
 
 async function launch(page: Page, agent: string, name: string) {
-	const path = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	const path = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(path, { recursive: true });
 	copyFileSync(fileURLToPath(new URL('../static/icons/icon-512.png', import.meta.url)), `${path}/preview.png`);
 	await openProject(page, name);

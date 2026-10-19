@@ -1,6 +1,6 @@
 # Manual checklist
 
-Run at milestones against an installed Oikonomos (`oikonomos install`), opened at its tailnet URL.
+Run at milestones against an installed Stampede (`stampede install`), opened at its tailnet URL.
 
 ## 1. Real Agents: status and recovery
 
@@ -33,7 +33,7 @@ Run at milestones against an installed Oikonomos (`oikonomos install`), opened a
 Use a throwaway Project and repeat each applicable item with Claude Code and Codex. Check both desktop and the installed Pixel PWA.
 
 - [ ] Every Rig opens a Chat from New Tab, the Palette and shortcuts, on desktop and phone; model, effort, mode and account match the Rig.
-- [ ] Start a TUI manually in a Terminal; it receives no Oikonomos hooks, status, attention, resume or handoff controls.
+- [ ] Start a TUI manually in a Terminal; it receives no Stampede hooks, status, attention, resume or handoff controls.
 - [ ] Ask a Claude Code Rig to review with Codex and fix issues; the review appears as a subagent, and Claude receives its findings and applies fixes. Repeat with Codex calling Claude Code.
 - [ ] Answer a delegated rig’s approval in the calling Chat; stopping the caller stops its delegated work.
 - [ ] A running turn shows working.
@@ -69,8 +69,8 @@ Use a throwaway Project and repeat each applicable item with Claude Code and Cod
 - [ ] An edit card opens its file in the Diff tab.
 - [ ] Claude `/rewind` restores an Edit/Write change and removes the chosen prompt and later transcript; Bash and subagent changes remain.
 - [ ] Codex `/rewind` removes the selected turn and later transcript, leaves files unchanged, and says so.
-- [ ] Restart Oikonomos mid-turn; the Chat continues without missing transcript.
-- [ ] Restart Oikonomos at a question or approval; the request can still be answered.
+- [ ] Restart Stampede mid-turn; the Chat continues without missing transcript.
+- [ ] Restart Stampede at a question or approval; the request can still be answered.
 - [ ] Reboot the Host mid-turn; the session returns without re-running the prompt, marked interrupted and in Attention.
 - [ ] Compare Claude five-hour and weekly meters with its TUI usage display.
 - [ ] Compare Codex five-hour and weekly meters with its TUI usage display.

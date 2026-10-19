@@ -106,7 +106,7 @@ export type Session = { agent: Agent; sessionId: string; firstPrompt: string; up
 export type TicketStatus = 'not-started' | 'in-progress' | 'merging' | 'merged' | 'skipped';
 export type TicketTag = 'routine' | 'judgment' | 'frontend-design';
 
-export type Note = { author: 'agent' | 'david' | 'oikonomos'; text: string; at: number };
+export type Note = { author: 'agent' | 'david' | 'stampede'; text: string; at: number };
 
 export type Claim = { chat: string; rig: string; edited?: boolean };
 
@@ -268,7 +268,7 @@ let claimed: Promise<void> | undefined;
 
 export function claimDeviceId(): Promise<void> {
 	return (claimed ??= new Promise((resolve) => {
-		const channel = new BroadcastChannel('oikonomos-windows');
+		const channel = new BroadcastChannel('stampede-windows');
 		const token = crypto.randomUUID();
 		let ready = false;
 		let occupied = false;

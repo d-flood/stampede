@@ -7,7 +7,7 @@ const prompt = 'Run the shell command `mkdir -p out && touch out/approved.txt` e
 
 test('past Claude questions reopen with their full options, previews and answers', async ({ page }, { project }) => {
 	const name = `past-questions-${project.name}`;
-	const root = process.env.OIKONOMOS_E2E_ROOT;
+	const root = process.env.STAMPEDE_E2E_ROOT;
 	const path = `${root}/projects/${name}`;
 	const sessions = `${root}/claude/projects/${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
 	mkdirSync(path, { recursive: true });
@@ -42,7 +42,7 @@ test('past Claude questions reopen with their full options, previews and answers
 });
 
 async function launch(page: Page, rig: string, name: string) {
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: rig, exact: true }).click();

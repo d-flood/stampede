@@ -7,7 +7,7 @@ test.use({ reducedMotion: 'reduce' });
 
 test('a Diff tab opened from Changes shows the change', async ({ page }, { project }) => {
 	const line = `export const ${project.name} = true;`;
-	appendFileSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/alpha/greeting.ts`, `${line}\n`);
+	appendFileSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/alpha/greeting.ts`, `${line}\n`);
 	await openProject(page, 'alpha');
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'Changes' }).click();
@@ -18,9 +18,9 @@ test('a Diff tab opened from Changes shows the change', async ({ page }, { proje
 
 test('an open rename Diff follows HEAD after the rename is committed', async ({ page }, { project }) => {
 	const name = `rename-${project.name}`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root);
-	const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=oikonomos', '-c', 'user.email=e2e@oikonomos.invalid', '-c', 'commit.gpgsign=false', ...args]);
+	const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=stampede', '-c', 'user.email=e2e@stampede.invalid', '-c', 'commit.gpgsign=false', ...args]);
 	git('init', '-q');
 	writeFileSync(`${root}/before.ts`, 'export const one = 1;\nexport const two = 2;\nexport const three = 3;\n');
 	git('add', '.');

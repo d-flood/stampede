@@ -18,7 +18,7 @@ test('chat follows messages until scrolled up and resumes at the bottom', async 
 		});
 	});
 	const name = `chat-scroll-${project.name}-${repeatEachIndex}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`);
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();

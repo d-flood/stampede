@@ -43,7 +43,7 @@
 	function receive(event: MessageEvent<unknown>) {
 		if (!src || event.source !== iframe?.contentWindow || event.origin !== new URL(src).origin) return;
 		const data = event.data;
-		if (typeof data !== 'object' || data === null || !('type' in data) || data.type !== 'oikonomos.console' || !('kind' in data)) return;
+		if (typeof data !== 'object' || data === null || !('type' in data) || data.type !== 'stampede.console' || !('kind' in data)) return;
 		if (data.kind === 'ready') {
 			entries = [];
 			consoleReady = true;

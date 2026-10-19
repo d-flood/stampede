@@ -59,7 +59,7 @@
 		const typed = query.match(/^\/(\S*)$/)?.[1];
 		if (typed === undefined) return [];
 		const model = choices.model.find((choice) => choice.value === settings.model);
-		const oikonomos: Row[] = [
+		const stampede: Row[] = [
 			{ label: '/effort', choices: choices.effort, current: settings.effort, choose: () => replace('/effort ') },
 			{ label: '/model', detail: model?.label ?? settings.model ?? '', choose: () => replace('/model ') },
 			{ label: '/mode', choices: choices.mode, current: settings.mode, choose: () => replace('/mode ') },
@@ -77,7 +77,7 @@
 		}));
 		const matches = (row: Row) => row.label.startsWith(`/${typed}`);
 		return [
-			{ heading: 'Oikonomos', rows: oikonomos.filter(matches) },
+			{ heading: 'Stampede', rows: stampede.filter(matches) },
 			{ heading: `From ${agentNames[agent]}`, rows: own.filter(matches) }
 		].filter((group) => group.rows.length);
 	});

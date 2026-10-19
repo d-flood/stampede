@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 test('the Host name titles every page, heads the phone Projects screen, and saves into the config', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
-	const config = `${process.env.OIKONOMOS_E2E_ROOT}/config.toml`;
+	const config = `${process.env.STAMPEDE_E2E_ROOT}/config.toml`;
 	const original = readFileSync(config, 'utf8');
 	const heading = page.getByRole('heading', { level: 1 });
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
@@ -18,11 +18,11 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 		await expect(heading).toHaveText('Projects');
 		await expect(heading.locator('.sub')).toHaveCount(0);
 	}
-	await expect(page).toHaveTitle('Oikonomos');
+	await expect(page).toHaveTitle('Stampede');
 
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	await expect(field).toHaveValue('');
-	await expect(field).toHaveAttribute('placeholder', 'Oikonomos');
+	await expect(field).toHaveAttribute('placeholder', 'Stampede');
 	await field.fill('atlas');
 	await commit();
 	await expect(page).toHaveTitle('atlas');
@@ -54,7 +54,7 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 	writeFileSync(config, `name = "zeus"\n${original}`);
 	await field.fill('');
 	await commit();
-	await expect(page).toHaveTitle('Oikonomos');
+	await expect(page).toHaveTitle('Stampede');
 	await expect(section.getByRole('alert')).toHaveCount(0);
 	expect(readFileSync(config, 'utf8')).toBe(original);
 	await done();
@@ -62,5 +62,5 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 		await expect(heading).toHaveText('Projects');
 		await expect(heading.locator('.sub')).toHaveCount(0);
 	}
-	await expect(other).toHaveTitle('Oikonomos');
+	await expect(other).toHaveTitle('Stampede');
 });

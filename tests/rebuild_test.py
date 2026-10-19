@@ -25,9 +25,9 @@ class Deployment(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.install = self.root / "installed"
         self.install.mkdir()
-        self.unit = self.root / "oikonomos.service"
-        self.binary = self.install / "oikonomos"
-        self.candidate = self.root / "target/release/oikonomos"
+        self.unit = self.root / "stampede.service"
+        self.binary = self.install / "stampede"
+        self.candidate = self.root / "target/release/stampede"
         self.candidate.parent.mkdir(parents=True)
         self.calls = []
         self.live = None
@@ -48,7 +48,7 @@ class Deployment(unittest.TestCase):
         binary = binary or self.binary
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("old-build")
-        self.unit.write_text(f'[Service]\nExecStart="{binary}" serve --port 5678 --config "{self.root}/a config.toml"\nKillMode=process\n[X-Oikonomos]\nPort=5678\nHttpsPort=0\n')
+        self.unit.write_text(f'[Service]\nExecStart="{binary}" serve --port 5678 --config "{self.root}/a config.toml"\nKillMode=process\n[X-Stampede]\nPort=5678\nHttpsPort=0\n')
         self.live = "old-build"
         (self.install / "deployment.json").write_text(json.dumps(dict(buildId="old-build")))
 
@@ -61,15 +61,15 @@ class Deployment(unittest.TestCase):
             (temporary / "compiler-temporary").write_text("temporary build output")
             if self.fail_build:
                 raise subprocess.CalledProcessError(1, command)
-            self.build = kwargs["env"]["OIKONOMOS_BUILD_ID"]
-            candidate = Path(command[command.index("--target-dir") + 1]) / "release/oikonomos"
+            self.build = kwargs["env"]["STAMPEDE_BUILD_ID"]
+            candidate = Path(command[command.index("--target-dir") + 1]) / "release/stampede"
             candidate.parent.mkdir(parents=True, exist_ok=True)
             candidate.write_text(self.build)
         elif command[0] == str(self.binary) and command[1] == "install":
             port = command[command.index("--port") + 1]
             config = command[command.index("--config") + 1]
             data = command[command.index("--data-dir") + 1]
-            self.unit.write_text(f'[Service]\nExecStart="{self.binary}" serve --port {port} --config "{config}" --data-dir "{data}"\nKillMode=process\n[X-Oikonomos]\nPort={port}\nHttpsPort=0\n')
+            self.unit.write_text(f'[Service]\nExecStart="{self.binary}" serve --port {port} --config "{config}" --data-dir "{data}"\nKillMode=process\n[X-Stampede]\nPort={port}\nHttpsPort=0\n')
         elif command[:3] == ["systemctl", "--user", "restart"]:
             if self.fail_start:
                 self.fail_start = False
@@ -177,7 +177,7 @@ class Deployment(unittest.TestCase):
         with (self.install / "rebuild.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with patch("sys.argv", ["rebuild"]):
-                with self.assertRaisesRegex(RuntimeError, "another Oikonomos rebuild"):
+                with self.assertRaisesRegex(RuntimeError, "another Stampede rebuild"):
                     rebuild.main()
         self.assertEqual(self.calls, [])
 

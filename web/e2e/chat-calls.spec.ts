@@ -21,7 +21,7 @@ test('agent messages stay visible with collapsed streaming tool counts between t
 		});
 	});
 	const name = `calls-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`);
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();

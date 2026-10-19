@@ -22,9 +22,9 @@ def main():
         except BlockingIOError:
             print("./check is already running for this repository.", file=sys.stderr)
             return 75
-        with build_environment(target_directory(ROOT), "oikonomos-e2e-") as env:
+        with build_environment(target_directory(ROOT), "stampede-e2e-") as env:
             root = env["TMPDIR"]
-            env.update(OIKONOMOS_CHECK_LOCKED=str(ROOT), OIKONOMOS_E2E_ROOT=root)
+            env.update(STAMPEDE_CHECK_LOCKED=str(ROOT), STAMPEDE_E2E_ROOT=root)
             child = subprocess.Popen([str(ROOT / "check"), *sys.argv[1:]], env=env, start_new_session=True)
             stopping = None
 

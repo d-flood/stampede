@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+import base64
+import hashlib
+import json
+import os
+import select
+import sys
+import time
+import tomllib
+from pathlib import Path
+
+from rig_tools import ask, delegate
+
+stdin = sys.stdin.buffer.raw
+stdout = sys.stdout.buffer
+HERE = '/tmp/stampede-chat'
+INTERACTIVE = ['cli', 'vscode']
+buffered = b''
+
+
+def fail(reason):
+    print(f'fake codex: {reason}', file=sys.stderr)
+    sys.exit(2)
+
+
+FIXTURES = Path(__file__).resolve().parent.parent / 'fixtures/chats/codex'
+QUIET = ('initialize', 'initialized', 'account/rateLimits/read')
+held = []
+logging = False
+
+
+def recorded(name, suffix):
+    if '/' in name:
+        return Path(name)
+    return FIXTURES / f'{name}.{suffix}'
+
+
+def fixture():
+    name = os.environ.get('STAMPEDE_FAKE_FIXTURE') or fail('STAMPEDE_FAKE_FIXTURE is not set')
+    return recorded(name, 'recorded.jsonl')
+
+
+def answers():
+    recorded = {}
+    for line in (FIXTURES / 'answers.recorded.jsonl').read_text().splitlines():
+        entry = json.loads(line)
+        if 'stdin' in entry:
+            outputs = recorded.setdefault(entry['stdin']['method'], [])
+        else:
+            outputs.append(entry['stdout'])
+    return recorded
+
+
+def answer(message):
+    for output in answers()[message['method']]:
+        output['id'] = message['id']
+        send(output)
+
+
+def daemon():
+    return Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'fake-daemon'
+
+
+def threads():
+    path = daemon() / 'threads'
+    path.mkdir(exist_ok=True)
+    return path
+
+
+def resume(entries, thread):
+    path = threads() / thread
+    if not path.exists():
+        fail(f'thread {thread} was never started')
+    after = int(path.read_text())
+    for index in range(after + 1, len(entries)):
+        if entries[index].get('stdin', {}).get('method') == 'thread/resume':
+            return index
+    fail(f'nothing resumes thread {thread} after line {after + 1}')
+
+
+def gate(name):
+    gates = os.environ.get('STAMPEDE_FAKE_GATES')
+    if not gates:
+        return
+    path = Path(gates) / name
+    path.touch()
+    while path.exists():
+        time.sleep(0.02)
+
+
+def take(size):
+    global buffered
+    while len(buffered) < size and (chunk := stdin.read(65536)):
+        buffered += chunk
+    data, buffered = buffered[:size], buffered[size:]
+    return data
+
+
+def readline():
+    global buffered
+    while b'\n' not in buffered and (chunk := stdin.read(65536)):
+        buffered += chunk
+    line, newline, buffered = buffered.partition(b'\n')
+    return line + newline
+
+
+def waiting():
+    global buffered
+    while True:
+        if select.select([stdin], [], [], 0)[0]:
+            buffered += stdin.read(65536)
+        if not buffered:
+            return False
+        if len(buffered) < 2:
+            return False
+        opcode, size = buffered[0] & 0x0F, buffered[1] & 0x7F
+        start = 2
+        if size > 125:
+            width = 2 if size == 126 else 8
+            if len(buffered) < start + width:
+                return False
+            size = int.from_bytes(buffered[start:start + width], 'big')
+            start += width
+        masked = bool(buffered[1] & 0x80)
+        end = start + (4 if masked else 0) + size
+        if len(buffered) < end:
+            return False
+        if opcode in (9, 10):
+            buffered = buffered[end:]
+            continue
+        if opcode != 1:
+            return True
+        mask = buffered[start:start + 4] if masked else bytes(4)
+        start += 4 if masked else 0
+        payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(buffered[start:end]))
+        message = json.loads(payload)
+        if message.get('method') not in ('model/list', 'skills/list'):
+            return True
+        buffered = buffered[end:]
+        log(message, payload)
+        answer(message)
+
+
+def handshake():
+    key = None
+    while line := readline().strip():
+        name, _, value = line.decode().partition(':')
+        if name.lower() == 'sec-websocket-key':
+            key = value.strip()
+    if key is None:
+        fail('no WebSocket handshake')
+    accept = base64.b64encode(hashlib.sha1(f'{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11'.encode()).digest()).decode()
+    stdout.write(f'HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {accept}\r\n\r\n'.encode())
+    stdout.flush()
+
+
+def receive():
+    while len(header := take(2)) == 2:
+        opcode, length = header[0] & 0x0F, header[1] & 0x7F
+        if length > 125:
+            length = int.from_bytes(take(2 if length == 126 else 8), 'big')
+        mask = take(4) if header[1] & 0x80 else bytes(4)
+        payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(take(length)))
+        if opcode == 8:
+            break
+        if opcode == 1:
+            message = json.loads(payload)
+            log(message, payload)
+            return message
+    return None
+
+
+# A connection that only reads rate limits, as the server's usage poll does, stays out of the log.
+def log(message, payload):
+    global logging
+    held.append(payload.decode() + '\n')
+    logging = logging or message.get('method') not in QUIET
+    if logging:
+        with open(daemon() / 'received.jsonl', 'a') as file:
+            file.writelines(held)
+        held.clear()
+
+
+def read(expected):
+    while (message := receive()) is not None:
+        if message.get('method') == 'account/rateLimits/read' != expected.get('method'):
+            usage = json.loads((FIXTURES / 'usage.recorded.jsonl').read_text().splitlines()[1])['stdout']
+            send(dict(usage, id=message['id']))
+            continue
+        if message.get('method') == 'thread/list' != expected.get('method'):
+            list_threads(message)
+            continue
+        if message.get('method') == 'config/read' != expected.get('method'):
+            path = daemon().parent / 'config.toml'
+            config = tomllib.loads(path.read_text()) if path.exists() else {}
+            send({'id': message['id'], 'result': {'config': config, 'origins': {}, 'layers': None}})
+            continue
+        if message.get('method') != expected.get('method') and message.get('method') in answers():
+            answer(message)
+            continue
+        return message
+    return None
+
+
+def list_threads(message):
+    params = message.get('params') or {}
+    name = os.environ.get('STAMPEDE_FAKE_THREADS')
+    listed = json.loads(recorded(name, 'recorded.json').read_text().replace(HERE, os.getcwd())) if name else []
+    cwds = [params['cwd']] if isinstance(params.get('cwd'), str) else params.get('cwd')
+    kinds = params.get('sourceKinds') or INTERACTIVE
+    data = [thread for thread in listed if (cwds is None or thread['cwd'] in cwds) and thread['source'] in kinds]
+    send({'id': message['id'], 'result': {'data': data, 'nextCursor': None, 'backwardsCursor': None}})
+
+
+def send(message):
+    payload = json.dumps(message, ensure_ascii=False).replace(HERE, os.getcwd()).encode()
+    length = len(payload)
+    if length < 126:
+        header = bytes([0x81, length])
+    elif length < 65536:
+        header = bytes([0x81, 126]) + length.to_bytes(2, 'big')
+    else:
+        header = bytes([0x81, 127]) + length.to_bytes(8, 'big')
+    stdout.write(header + payload)
+    stdout.flush()
+
+
+def check(message, recorded):
+    method = message.get('method')
+    if method != recorded.get('method'):
+        fail(f'expected {recorded.get("method")} but read {method}')
+    params = message.get('params') or {}
+    if method == 'initialize' and params.get('capabilities', {}).get('experimentalApi') is not True:
+        fail(f'initialize without capabilities.experimentalApi: {params}')
+    if method == 'thread/start' and params.get('config', {}).get('tools.update_plan', {}).get('enabled') is not True:
+        fail('thread/start without tools.update_plan.enabled')
+    if method in ('thread/start', 'thread/resume'):
+        if capture := os.environ.get('STAMPEDE_FAKE_ENVIRONMENT'):
+            with open(capture, 'a') as output:
+                json.dump(params.get('config', {}).get('shell_environment_policy.set', {}), output)
+                output.write('\n')
+        mcp = params.get('config', {}).get('mcp_servers.stampede_chat', {})
+        if not Path(mcp.get('command', '')).is_file() or mcp.get('args', [])[:2] != ['chat-tools', '--data-dir'] or len(mcp['args']) != 5 or mcp['args'][3] != '--chat-id' or not mcp['args'][4] or not Path(mcp['args'][2]).is_absolute():
+            fail(f'{method} without chat HTML server: {mcp}')
+    if method == 'thread/start' and os.path.realpath(params.get('cwd') or '') != os.path.realpath(os.getcwd()):
+        fail(f'thread/start cwd {params.get("cwd")} is not the proxy cwd {os.getcwd()}')
+
+
+def proxy():
+    if not daemon().is_dir():
+        fail('no daemon is running')
+    handshake()
+    entries = [json.loads(line) for line in fixture().read_text().splitlines()]
+    ids = {}
+    index = 0
+    images = []
+    mcp = None
+    while index < len(entries):
+        entry = entries[index]
+        if 'stdin' in entry:
+            message = read(entry['stdin'])
+            if message is None:
+                sys.exit(0)
+            if message.get('method') == 'thread/resume' and entry['stdin'].get('method') != 'thread/resume':
+                index = resume(entries, message['params']['threadId'])
+                entry = entries[index]
+            check(message, entry['stdin'])
+            if message.get('method') in ('thread/start', 'thread/resume'):
+                mcp = message['params']['config']['mcp_servers.stampede_chat']
+            if message.get('method') in ('turn/start', 'turn/steer'):
+                images = [item for item in message['params']['input'] if item['type'] in ('image', 'localImage')]
+            if 'id' in message:
+                ids[entry['stdin']['id']] = message['id']
+        elif 'ask' in entry:
+            result = ask(mcp, entry['ask'])
+            send({'method': 'item/completed', 'params': {'threadId': entry['thread'], 'turnId': entry['turn'], 'item': {'type': 'mcpToolCall', 'id': 'rich-questions', 'server': 'stampede_chat', 'tool': 'ask_questions', 'arguments': entry['ask'], 'status': 'completed', 'result': result}}})
+        elif 'delegate' in entry:
+            result = delegate(mcp, entry['delegate'])
+            send({'method': 'item/completed', 'params': {'threadId': entry['thread'], 'turnId': entry['turn'], 'item': {'type': 'mcpToolCall', 'id': 'rig-review', 'server': 'stampede_chat', 'tool': 'delegate_to_rig', 'arguments': entry['delegate'], 'status': 'completed', 'result': result}}})
+        elif 'gate' in entry:
+            gate(entry['gate'])
+        elif 'daemon' in entry:
+            # Like the real proxy, which notices that its daemon has gone only once it relays something.
+            stdin.read(1)
+            sys.exit(1)
+        else:
+            message = entry['stdout']
+            if message.get('method') in ('item/started', 'item/completed') and message.get('params', {}).get('item', {}).get('type') == 'userMessage' and images:
+                message['params']['item']['content'].extend(images)
+            if 'method' not in message and message.get('id') in ids:
+                message['id'] = ids[message['id']]
+            if 'thread' in (message.get('result') or {}):
+                (threads() / message['result']['thread']['id']).write_text(str(index))
+            if message.get('method') == 'turn/completed' and waiting():
+                fail(f'read {buffered!r} before the turn ended')
+            send(message)
+        index += 1
+    while read({}) is not None:
+        pass
+
+
+args = sys.argv[1:]
+if args == ['app-server', 'daemon', 'start']:
+    daemon().mkdir(parents=True, exist_ok=True)
+elif args == ['app-server', 'proxy']:
+    proxy()
+else:
+    fail(f'unexpected arguments {args}')

@@ -152,7 +152,7 @@ test('created tabs activate before the tab list broadcast arrives', async ({ pag
 		});
 	});
 	const folder = `tab-race-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${folder}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${folder}`, { recursive: true });
 	await openProject(page, folder);
 	for (const label of ['Terminal', 'Fake Claude']) {
 		delaying = true;
@@ -172,7 +172,7 @@ test('created tabs activate before the tab list broadcast arrives', async ({ pag
 test('new tab picker matches the menu and focuses the selected content', async ({ page, context }, { project }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 	const folder = `tab-picker-${project.name}`;
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${folder}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${folder}`, { recursive: true });
 	await openProject(page, folder);
 	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();

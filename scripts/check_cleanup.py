@@ -6,8 +6,8 @@ import time
 
 
 root = sys.argv[1].encode()
-marker = b"OIKONOMOS_E2E_ROOT=" + root
-test_marker = b"OIKONOMOS_TEST_ROOT=" + root
+marker = b"STAMPEDE_E2E_ROOT=" + root
+test_marker = b"STAMPEDE_TEST_ROOT=" + root
 
 
 def processes():

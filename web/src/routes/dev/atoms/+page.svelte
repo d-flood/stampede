@@ -119,7 +119,7 @@
 
 	<Section title="Dialog">
 		<Button onclick={() => (open = true)}>Close Project…</Button>
-		<Dialog bind:open title="Close oikonomos?" description="An Agent is working. Closing ends its Terminal.">
+		<Dialog bind:open title="Close stampede?" description="An Agent is working. Closing ends its Terminal.">
 			{#snippet actions()}
 				<Button onclick={() => (open = false)}>Cancel</Button>
 				<Button variant="primary" onclick={() => (open = false)}>Close Project</Button>

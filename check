@@ -8,14 +8,14 @@ case ${1:-} in
 esac
 
 mkdir -p target/check
-if [[ ${OIKONOMOS_CHECK_LOCKED:-} != "$PWD" ]]; then
+if [[ ${STAMPEDE_CHECK_LOCKED:-} != "$PWD" ]]; then
     exec python3 scripts/check_run.py "$@"
 fi
 
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}
 export RUST_TEST_THREADS=${RUST_TEST_THREADS:-4}
 export TOKIO_WORKER_THREADS=${TOKIO_WORKER_THREADS:-2}
-export OIKONOMOS_E2E_BINARY="$CARGO_TARGET_DIR/debug/oikonomos"
+export STAMPEDE_E2E_BINARY="$CARGO_TARGET_DIR/debug/stampede"
 
 run_logged() {
     local label=$1 log=$2 started=$SECONDS status=0

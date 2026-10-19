@@ -1,6 +1,6 @@
 import { form } from '#lib/form.ts';
 
-const key = 'oikonomos.text-size';
+const key = 'stampede.text-size';
 export const typography = $state<{ size: number | null }>({ size: null });
 
 export function textSize(desktop = 13): number {

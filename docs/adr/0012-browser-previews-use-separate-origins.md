@@ -3,9 +3,9 @@
 A Browser Tab embeds a development server through a loopback reverse proxy. The proxy preserves paths, streams HTTP bodies, forwards WebSockets, and uses the development server's Host and Origin headers. Root-relative assets and Vite HMR work through the preview origin.
 
 - Local HTTP Devices use a separate loopback port.
-- Devices opened through Tailscale HTTPS use a temporary foreground `tailscale serve` endpoint on that proxy's port. It exits with Oikonomos; existing background Serve endpoints remain in place. The Host user needs permission to run Serve, and tailnet policy must permit the preview port.
-- Only HTTP loopback targets are accepted: `localhost`, `127.0.0.1`, and `[::1]`. Oikonomos's own ports are excluded.
-- Proxies are reused while Oikonomos runs. Browser Tabs and entered addresses persist in the Device layout, including splits.
+- Devices opened through Tailscale HTTPS use a temporary foreground `tailscale serve` endpoint on that proxy's port. It exits with Stampede; existing background Serve endpoints remain in place. The Host user needs permission to run Serve, and tailnet policy must permit the preview port.
+- Only HTTP loopback targets are accepted: `localhost`, `127.0.0.1`, and `[::1]`. Stampede's own ports are excluded.
+- Proxies are reused while Stampede runs. Browser Tabs and entered addresses persist in the Device layout, including splits.
 - Framing restrictions are removed from preview responses. Other content security policy directives remain intact.
 - Hardcoded localhost URLs in application scripts still refer to the Device. Configure those applications to use relative requests or their own development proxy.
 - The address bar tracks entered addresses. Links navigate inside the iframe; reload returns to the entered address.

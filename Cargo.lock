@@ -1971,42 +1971,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oikonomos"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64ct",
- "clap",
- "flate2",
- "futures-util",
- "grep-matcher",
- "grep-regex",
- "grep-searcher",
- "ignore",
- "libghostty-vt",
- "lol_html",
- "mime_guess",
- "nix 0.31.3",
- "notify",
- "portable-pty",
- "reqwest",
- "rust-embed",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "shlex",
- "tar",
- "tempfile",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tokio-util",
- "toml",
- "ttf-parser",
- "uuid",
- "web-push-native",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3052,6 +3016,42 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "stampede"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64ct",
+ "clap",
+ "flate2",
+ "futures-util",
+ "grep-matcher",
+ "grep-regex",
+ "grep-searcher",
+ "ignore",
+ "libghostty-vt",
+ "lol_html",
+ "mime_guess",
+ "nix 0.31.3",
+ "notify",
+ "portable-pty",
+ "reqwest",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "shlex",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "toml",
+ "ttf-parser",
+ "uuid",
+ "web-push-native",
+]
 
 [[package]]
 name = "strsim"

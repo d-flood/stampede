@@ -6,7 +6,7 @@ import { closeProject, openProject } from './shell.ts';
 const png = readFileSync(new URL('../static/icons/icon-192.png', import.meta.url)).toString('base64');
 
 async function launch(page: Page, name: string, rig = 'Fake Claude') {
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: rig, exact: true }).click();

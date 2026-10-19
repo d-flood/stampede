@@ -9,7 +9,7 @@ test.use({ reducedMotion: 'reduce' });
 const report = /\^\[\[<64;\d+;\d+M/;
 
 async function newTerminal(page: Page, name: string) {
-	mkdirSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`, { recursive: true });
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal' }).click();

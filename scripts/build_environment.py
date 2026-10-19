@@ -41,7 +41,7 @@ def build_environment(target, prefix):
                 "CLAUDE_CODE_TMPDIR": scratch,
                 "NODE_COMPILE_CACHE": str(Path(scratch) / "node-compile-cache"),
                 "GIT_CEILING_DIRECTORIES": ceilings,
-                "OIKONOMOS_BUILD_SCRATCH": scratch,
+                "STAMPEDE_BUILD_SCRATCH": scratch,
             }
 
 
@@ -56,13 +56,13 @@ def prune_temporary(target):
         try:
             for entry in (process / 'environ').read_bytes().split(b'\0'):
                 name, separator, value = entry.partition(b'=')
-                if separator and name in {b'TMPDIR', b'OIKONOMOS_E2E_ROOT', b'OIKONOMOS_BUILD_SCRATCH'}:
+                if separator and name in {b'TMPDIR', b'STAMPEDE_E2E_ROOT', b'STAMPEDE_BUILD_SCRATCH'}:
                     active.add(Path(os.fsdecode(value)))
         except (OSError, PermissionError):
             pass
     cutoff = time.time() - 86400
     for path in temporary.iterdir():
-        if not path.name.startswith(('oikonomos-e2e-', 'oikonomos-rebuild-')) or path.is_symlink() or not path.is_dir():
+        if not path.name.startswith(('stampede-e2e-', 'stampede-rebuild-')) or path.is_symlink() or not path.is_dir():
             continue
         if path.stat().st_mtime >= cutoff or any(candidate == path or candidate.is_relative_to(path) for candidate in active):
             continue

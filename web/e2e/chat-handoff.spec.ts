@@ -8,10 +8,10 @@ const summary = 'Continue implementing authentication.\n\nKeep local-first behav
 
 for (const agent of ['claude-code', 'codex'] as const) {
 	test(`${agent} prepares an editable handoff in the chosen Rig`, async ({ page, request }) => {
-		const root = process.env.OIKONOMOS_E2E_ROOT!;
-		const fixture = fileURLToPath(new URL(`../../crates/oikonomos/tests/fixtures/chats/${agent}/handoff.synthetic.jsonl`, import.meta.url));
+		const root = process.env.STAMPEDE_E2E_ROOT!;
+		const fixture = fileURLToPath(new URL(`../../crates/stampede/tests/fixtures/chats/${agent}/handoff.synthetic.jsonl`, import.meta.url));
 		mkdirSync(`${root}/handoff`);
-		appendFileSync(`${root}/config.toml`, `\n[[rig]]\nname = "Handoff source"\nagent = "${agent}"\nenv = { OIKONOMOS_FAKE_FIXTURE = "${fixture}", OIKONOMOS_FAKE_GATES = "${root}/handoff", CLAUDE_CONFIG_DIR = "${root}/handoff-claude", CODEX_HOME = "${root}/handoff-codex" }\n`);
+		appendFileSync(`${root}/config.toml`, `\n[[rig]]\nname = "Handoff source"\nagent = "${agent}"\nenv = { STAMPEDE_FAKE_FIXTURE = "${fixture}", STAMPEDE_FAKE_GATES = "${root}/handoff", CLAUDE_CONFIG_DIR = "${root}/handoff-claude", CODEX_HOME = "${root}/handoff-codex" }\n`);
 		await expect.poll(async () => (await (await request.get('/api/rigs')).json()).some((rig: { name: string }) => rig.name === 'Handoff source')).toBe(true);
 		const sent: ClientMessage[] = [];
 		page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {

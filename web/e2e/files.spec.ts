@@ -6,7 +6,7 @@ test.use({ reducedMotion: 'reduce' });
 
 test('context menus create files and directories in the selected location', async ({ page }, { project }) => {
 	const name = `create-${project.name}`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root);
 	await openProject(page, name);
 	let sidebar = await showSidebar(page);
@@ -60,7 +60,7 @@ test('context menus create files and directories in the selected location', asyn
 
 test('file tree offers deletion for files and directories', async ({ page }, { project }) => {
 	const name = `delete-${project.name}`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(`${root}/folder/nested`, { recursive: true });
 	writeFileSync(`${root}/remove.txt`, 'remove me\n');
 	writeFileSync(`${root}/folder/nested/child.txt`, 'child\n');
@@ -108,7 +108,7 @@ test('file tree offers deletion for files and directories', async ({ page }, { p
 
 test('failed deletion preserves the entry and can be retried', async ({ page }, { project }) => {
 	const name = `delete-error-${project.name}`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root);
 	writeFileSync(`${root}/keep.txt`, 'keep me\n');
 	await openProject(page, name);

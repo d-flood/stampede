@@ -5,7 +5,7 @@
 	let { children } = $props();
 </script>
 
-<svelte:head><title>{hostName() ?? 'Oikonomos'}</title></svelte:head>
+<svelte:head><title>{hostName() ?? 'Stampede'}</title></svelte:head>
 
 {@render children()}
 

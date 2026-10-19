@@ -41,7 +41,7 @@
 		{#if epics.length}
 			<p>No active Epics.</p>
 		{:else}
-			<p>No Epics yet. Agents add them with <code>oikonomos epic add</code>.</p>
+			<p>No Epics yet. Agents add them with <code>stampede epic add</code>.</p>
 		{/if}
 	{/if}
 </section>

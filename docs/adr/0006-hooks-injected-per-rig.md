@@ -2,7 +2,7 @@
 
 Superseded by [ADR 0011](0011-rigs-run-only-chats.md). TUI lifecycle management and injected hooks have been removed.
 
-Status hooks reach each Agent through its Rig's launch flags; Oikonomos never edits the user's global agent configuration.
+Status hooks reach each Agent through its Rig's launch flags; Stampede never edits the user's global agent configuration.
 
 - Launch-time settings layer on top of global settings rather than replacing them.
 - Rigs are how Agents get started anyway.

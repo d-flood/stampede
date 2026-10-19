@@ -18,13 +18,13 @@ from scripts.build_environment import build_environment, target_directory
 
 
 ROOT = Path(__file__).resolve().parent
-INSTALL = Path.home() / ".local/lib/oikonomos"
-UNIT = Path.home() / ".config/systemd/user/oikonomos.service"
-SERVICE = "oikonomos.service"
+INSTALL = Path.home() / ".local/lib/stampede"
+UNIT = Path.home() / ".config/systemd/user/stampede.service"
+SERVICE = "stampede.service"
 
 
 def parser():
-    result = argparse.ArgumentParser(description="Build and restart the Oikonomos user service, rolling back on startup failure.")
+    result = argparse.ArgumentParser(description="Build and restart the Stampede user service, rolling back on startup failure.")
     result.add_argument("--port", type=port)
     result.add_argument("--data-dir", type=lambda value: str(Path(value).resolve()))
     result.add_argument("--config", type=lambda value: str(Path(value).resolve()))
@@ -78,24 +78,24 @@ def readiness(port, build=None, seconds=30):
 
 
 def deploy(arguments):
-    binary = INSTALL / "oikonomos"
-    previous = INSTALL / "oikonomos.previous"
+    binary = INSTALL / "stampede"
+    previous = INSTALL / "stampede.previous"
     manifest = INSTALL / "deployment.json"
     old_unit = UNIT.read_text() if UNIT.exists() else None
-    defaults = dict(port=4580, data_dir=str(Path.home() / ".local/share/oikonomos"),
-                    config=str(Path.home() / ".config/oikonomos/config.toml"), https_port=0)
+    defaults = dict(port=4580, data_dir=str(Path.home() / ".local/share/stampede"),
+                    config=str(Path.home() / ".config/stampede/config.toml"), https_port=0)
     old_binary = binary if binary.exists() else None
     if old_unit:
         unit = configparser.ConfigParser(interpolation=None)
         unit.read_string(old_unit)
-        if not unit.has_section("X-Oikonomos") or unit["Service"].get("KillMode") != "process":
-            raise RuntimeError(f"{UNIT} is not an Oikonomos service with KillMode=process")
+        if not unit.has_section("X-Stampede") or unit["Service"].get("KillMode") != "process":
+            raise RuntimeError(f"{UNIT} is not a Stampede service with KillMode=process")
         command = [part.replace("%%", "%").replace("$$", "$") for part in shlex.split(unit["Service"]["ExecStart"])]
         if len(command) < 2 or command[1] != "serve":
             raise RuntimeError(f"cannot read server command in {UNIT}")
         old_binary = Path(command[0])
         defaults.update({key: value for key, value in vars(parser().parse_args(command[2:])).items() if value is not None})
-        defaults["https_port"] = int(unit["X-Oikonomos"]["HttpsPort"])
+        defaults["https_port"] = int(unit["X-Stampede"]["HttpsPort"])
     saved = json.loads(manifest.read_text()) if manifest.exists() else {}
     old_settings = defaults if old_unit else defaults | saved.get("settings", {})
     settings = old_settings | {key: value for key, value in vars(arguments).items() if value is not None}
@@ -110,12 +110,12 @@ def deploy(arguments):
 
     build = uuid.uuid4().hex
     target = target_directory(ROOT)
-    with build_environment(target, "oikonomos-rebuild-") as environment:
-        environment["OIKONOMOS_BUILD_ID"] = build
+    with build_environment(target, "stampede-rebuild-") as environment:
+        environment["STAMPEDE_BUILD_ID"] = build
         run("pnpm", "-C", "web", "install", "--frozen-lockfile", cwd=ROOT, env=environment)
         run("pnpm", "-C", "web", "build", cwd=ROOT, env=environment)
         run("cargo", "build", "--release", "--target-dir", target, cwd=ROOT, env=environment)
-    candidate = target / "release/oikonomos"
+    candidate = target / "release/stampede"
     configure = not old_unit or old_binary != binary or settings != old_settings
     try:
         atomic_copy(candidate, binary)
@@ -154,7 +154,7 @@ def deploy(arguments):
             else:
                 binary.unlink(missing_ok=True)
         raise
-    print(f"Oikonomos build {build} ready at http://127.0.0.1:{settings['port']}", flush=True)
+    print(f"Stampede build {build} ready at http://127.0.0.1:{settings['port']}", flush=True)
 
 
 def main():
@@ -164,7 +164,7 @@ def main():
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise RuntimeError("another Oikonomos rebuild is running") from None
+            raise RuntimeError("another Stampede rebuild is running") from None
         deploy(arguments)
 
 

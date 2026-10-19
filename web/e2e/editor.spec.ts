@@ -6,7 +6,7 @@ test.use({ reducedMotion: 'reduce' });
 
 test('multiline selections keep editor text visible', async ({ page }, { project }) => {
 	const name = `selection-${project.name}`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root);
 	writeFileSync(`${root}/selection.txt`, 'Selected text must remain visible.\nAcross multiple lines.\nIncluding this final line.\n');
 	await openProject(page, name);
@@ -47,7 +47,7 @@ test('multiline selections keep editor text visible', async ({ page }, { project
 
 test('line wrapping defaults to Markdown and toggles per editor without losing edits', async ({ page }, { project }) => {
 	const name = `wrapping-${project.name}`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	const content = 'A long line of prose that should wrap inside the editor. '.repeat(80);
 	mkdirSync(root);
 	for (const file of ['notes.MD', 'prose.markdown', 'plain.txt']) writeFileSync(`${root}/${file}`, content);
@@ -131,7 +131,7 @@ test('Editor markers and Agent file changes preserve explicit edits', async ({ p
 	await tree.getByTitle(`ignored/${project.name}.txt`, { exact: true }).click();
 	const current = page.locator('.editor:not([hidden])');
 	await expect(current.locator('.cm-content')).toContainText('initial ignored contents');
-	const ignored = `${process.env.OIKONOMOS_E2E_ROOT}/projects/alpha/ignored/${project.name}.txt`;
+	const ignored = `${process.env.STAMPEDE_E2E_ROOT}/projects/alpha/ignored/${project.name}.txt`;
 	writeFileSync(ignored, 'changed by Agent\n');
 	await expect(current.locator('.cm-content')).toContainText('changed by Agent');
 	await current.locator('.cm-content').click();

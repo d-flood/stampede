@@ -26,7 +26,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	const dracula = dialog.getByRole('option', { name: /^Dracula(?: Current theme)?$/ });
-	const config = `${process.env.OIKONOMOS_E2E_ROOT}/config.toml`;
+	const config = `${process.env.STAMPEDE_E2E_ROOT}/config.toml`;
 	const original = readFileSync(config, 'utf8');
 	const originalBackground = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
 	await search.fill('no-theme-matches-this');
@@ -65,7 +65,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await page.keyboard.type(`echo theme-after-${project.name}`);
 	await page.keyboard.press('Enter');
 	await expect.poll(() => screen(page)).toMatch(new RegExp(`^theme-after-${project.name}$`, 'm'));
-	expect(readFileSync(`${process.env.OIKONOMOS_E2E_ROOT}/config.toml`, 'utf8')).toContain('theme = "Dracula"');
+	expect(readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain('theme = "Dracula"');
 
 	await page.reload();
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -148,7 +148,7 @@ test('preview and save failures leave the saved theme intact', async ({ page }, 
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	const original = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
-	const config = `${process.env.OIKONOMOS_E2E_ROOT}/config.toml`;
+	const config = `${process.env.STAMPEDE_E2E_ROOT}/config.toml`;
 	const saved = readFileSync(config, 'utf8');
 	await page.route('**/api/themes/Dracula', (route) => route.fulfill({ status: 400, body: 'Invalid theme' }));
 	await search.fill('Dracula');

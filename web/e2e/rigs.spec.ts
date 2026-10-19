@@ -27,7 +27,7 @@ test.describe('starter rigs', () => {
 	}
 
 	test('provider settings fill missing values and explicit rig settings take precedence', async ({ page }) => {
-		const directory = `${process.env.OIKONOMOS_E2E_ROOT}/codex`;
+		const directory = `${process.env.STAMPEDE_E2E_ROOT}/codex`;
 		mkdirSync(directory, { recursive: true });
 		writeFileSync(`${directory}/config.toml`, 'model = "gpt-6-luna"\nmodel_reasoning_effort = "high"\n');
 		await page.goto('/');
@@ -147,8 +147,8 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 	await dialog.getByRole('button', { name: 'Save rig', exact: true }).click();
 	await expect(dialog.getByRole('status')).toHaveText('Rig saved.');
 	await expect(rig).toHaveValue('Fake Codex');
-	const config = readFileSync(`${process.env.OIKONOMOS_E2E_ROOT}/config.toml`, 'utf8');
-	expect(config).toContain('OIKONOMOS_FAKE_THREADS');
+	const config = readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
+	expect(config).toContain('STAMPEDE_FAKE_THREADS');
 	const response = await page.request.get('/api/rigs');
 	const saved = (await response.json()).find((rig: { name: string }) => rig.name === 'Fake Codex');
 	expect(saved).toMatchObject({ agent: 'codex', model: 'gpt-6-sol', effort: 'xhigh', mode: 'read-only' });

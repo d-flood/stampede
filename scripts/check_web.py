@@ -33,8 +33,8 @@ def prepare():
         *(path for path in WEB.iterdir() if path.name != "playwright.config.ts"),
         *(WEB / "src").rglob("*"),
         *(WEB / "static").rglob("*"),
-        ROOT / "crates/oikonomos/Cargo.toml",
-    ]) + os.environ.get("OIKONOMOS_BUILD_ID", "")
+        ROOT / "crates/stampede/Cargo.toml",
+    ]) + os.environ.get("STAMPEDE_BUILD_ID", "")
     stamp = CACHE / "web.json"
     output = WEB / "build"
     state = {"inputs": inputs, "output": fingerprint(output.rglob("*"))}

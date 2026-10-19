@@ -29,7 +29,7 @@
 		<section aria-labelledby="host-name-label">
 			<div class="row">
 				<label id="host-name-label" for="host-name">Host name</label>
-				<input id="host-name" type="text" placeholder="Oikonomos" value={hostName() ?? ''} onchange={(event) => rename(event.currentTarget)} aria-describedby="host-name-help" />
+				<input id="host-name" type="text" placeholder="Stampede" value={hostName() ?? ''} onchange={(event) => rename(event.currentTarget)} aria-describedby="host-name-help" />
 			</div>
 			<p id="host-name-help">Names this Host's installed app and windows on every device. Installed apps pick up a new name within about a day.</p>
 			{#if refusal}<p role="alert">{refusal}</p>{/if}

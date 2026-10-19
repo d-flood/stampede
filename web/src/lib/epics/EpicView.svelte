@@ -56,7 +56,7 @@
 		const kept = tickets.filter((ticket) => ticket.worktree && ticket.attention && resolved(ticket.status));
 		return [...(epic.kept ? [epic.kept] : []), ...kept.map((ticket) => `${epic.slug}/${ticket.number}: ${ticket.attention}`)];
 	});
-	const authors = { agent: 'Agent', david: 'David', oikonomos: 'Oikonomos' };
+	const authors = { agent: 'Agent', david: 'David', stampede: 'Stampede' };
 	const working = $derived(tickets.filter((ticket) => ticket.status === 'in-progress'));
 
 	let draft = $state('');
@@ -450,7 +450,7 @@
 <Dialog
 	bind:open={confirming}
 	title={epic?.base ? `Land ${open.slug} into ${epic.base}?` : `Land ${open.slug}?`}
-	description="Oikonomos merges the Epic branch into {epic?.base ?? 'its base'} in the Project's own checkout, then removes the Integration Worktree and the Epic branch if they are clean. It refuses, changing nothing, if the checkout is on another branch, has uncommitted changes, or would conflict."
+	description="Stampede merges the Epic branch into {epic?.base ?? 'its base'} in the Project's own checkout, then removes the Integration Worktree and the Epic branch if they are clean. It refuses, changing nothing, if the checkout is on another branch, has uncommitted changes, or would conflict."
 >
 	{#if unresolved.length}
 		<div class="unresolved">
@@ -475,7 +475,7 @@
 <Dialog
 	bind:open={archiving}
 	title="Archive {open.slug}?"
-	description="It is hidden from the active list. Use Show archived to view it later. Nothing in Oikonomos unarchives it yet."
+	description="It is hidden from the active list. Use Show archived to view it later. Nothing in Stampede unarchives it yet."
 >
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	{#snippet actions()}

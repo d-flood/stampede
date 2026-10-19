@@ -16,7 +16,7 @@ const runs = 5;
 const files = ['one.ts', 'two.ts', 'three.ts', 'four.ts', 'five.ts'];
 
 function fixture(name: string) {
-	const dir = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	const dir = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(dir, { recursive: true });
 	const step = (n: number) => `export function step${n}(input: number): number {\n\treturn input * ${n} + ${n};\n}\n`;
 	const source = Array.from({ length: 50 }, (_, n) => step(n)).join('\n');

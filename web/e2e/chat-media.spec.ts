@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { closeProject, openProject } from './shell.ts';
 
 function publish(path: string, title: string): Extract<Item, { kind: 'media' }> {
-	const output = execFileSync(process.env.OIKONOMOS_E2E_BINARY ?? fileURLToPath(new URL('../../target/debug/oikonomos', import.meta.url)), [
-		'chat-tools', '--data-dir', `${process.env.OIKONOMOS_E2E_ROOT}/data`
+	const output = execFileSync(process.env.STAMPEDE_E2E_BINARY ?? fileURLToPath(new URL('../../target/debug/stampede', import.meta.url)), [
+		'chat-tools', '--data-dir', `${process.env.STAMPEDE_E2E_ROOT}/data`
 	], { input: JSON.stringify({ id: 1, method: 'tools/call', params: { name: 'render_media', arguments: { path, title } } }) + '\n' });
 	const result = JSON.parse(output.toString()).result;
 	expect(result.isError).toBe(false);
@@ -17,7 +17,7 @@ function publish(path: string, title: string): Extract<Item, { kind: 'media' }> 
 
 test('chat media survives source removal and reload, plays recordings, and fits the screen', async ({ page }, { project, repeatEachIndex }) => {
 	const name = `media-${project.name}-${repeatEachIndex}`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root, { recursive: true });
 	copyFileSync(fileURLToPath(new URL('../static/icons/icon-512.png', import.meta.url)), `${root}/screenshot.png`);
 	const recording = await page.evaluate(async () => {

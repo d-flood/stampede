@@ -5,16 +5,16 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { fileURLToPath } from 'node:url';
 import { openProject, showSidebar } from './shell.ts';
 
-const oikonomos = process.env.OIKONOMOS_E2E_BINARY ?? fileURLToPath(new URL('../../target/debug/oikonomos', import.meta.url));
+const stampede = process.env.STAMPEDE_E2E_BINARY ?? fileURLToPath(new URL('../../target/debug/stampede', import.meta.url));
 
 test('an Epic made through the CLI shows live in the Epics section, its Tab and its Tickets', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
 	const slug = `epics-${project.name}`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${slug}`;
 	mkdirSync(root, { recursive: true });
 	execFileSync('git', ['-C', root, 'init', '-q']);
 	const cli = (stdin: string, ...args: string[]) =>
-		execFileSync(oikonomos, [...args, '--data-dir', `${process.env.OIKONOMOS_E2E_ROOT}/data`], { cwd: root, input: stdin });
+		execFileSync(stampede, [...args, '--data-dir', `${process.env.STAMPEDE_E2E_ROOT}/data`], { cwd: root, input: stdin });
 
 	await openProject(page, slug);
 	const sidebar = await showSidebar(page);
@@ -88,11 +88,11 @@ async function showFiles(sidebar: Locator) {
 }
 
 async function epicTab(page: Page, slug: string, ...tickets: [string, string, ...string[]][]) {
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${slug}`;
 	mkdirSync(root, { recursive: true });
 	execFileSync('git', ['-C', root, 'init', '-q']);
 	const cli = (stdin: string, ...args: string[]) =>
-		execFileSync(oikonomos, [...args, '--data-dir', `${process.env.OIKONOMOS_E2E_ROOT}/data`], { cwd: root, input: stdin });
+		execFileSync(stampede, [...args, '--data-dir', `${process.env.STAMPEDE_E2E_ROOT}/data`], { cwd: root, input: stdin });
 	cli('# Plan\n\nEdited from the Epic tab.\n', 'epic', 'add', slug, '--title', 'Edited by David', '--brief', '-');
 	for (const [index, [title, body, ...blockedBy]] of tickets.entries()) {
 		const blockers = blockedBy.length ? ['--blocked-by', blockedBy.join(',')] : [];
@@ -115,8 +115,8 @@ test('Ticket tags and rigs can be chosen independently and persist on desktop an
 	const phone = project.name === 'pixel';
 	const slug = `tags-${project.name}`;
 	const panel = await epicTab(page, slug, ['Routine work', 'Build it.\n'], ['Design work', 'Design it.\n', '1']);
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
-	const cli = (...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', `${process.env.OIKONOMOS_E2E_ROOT}/data`], { cwd: root });
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${slug}`;
+	const cli = (...args: string[]) => execFileSync(stampede, [...args, '--data-dir', `${process.env.STAMPEDE_E2E_ROOT}/data`], { cwd: root });
 	cli('ticket', 'set-tags', `${slug}/1`, 'routine');
 	cli('ticket', 'set-tags', `${slug}/2`, 'judgment,frontend-design');
 	const tickets = panel.getByRole('region', { name: 'Tickets' });
@@ -205,7 +205,7 @@ test('a Ticket body and David’s Note, edited in the Epic tab, persist across a
 	await expect(body).toHaveText('Show the tab, edited as Markdown.');
 	await expect(notes).toContainText('Decided by David.');
 	await expect(notes).toContainText('David · ');
-	const log = readFileSync(`${process.env.OIKONOMOS_E2E_ROOT}/data/epics/${slug}.jsonl`, 'utf8').trim().split('\n').slice(-2);
+	const log = readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/data/epics/${slug}.jsonl`, 'utf8').trim().split('\n').slice(-2);
 	expect(log.map((line) => ({ ...JSON.parse(line), at: 0 }))).toEqual([
 		{ at: 0, kind: 'ticket.body.set', ticket: 2, body: 'Show the tab, edited as Markdown.' },
 		{ at: 0, kind: 'note.added', ticket: 2, author: 'david', text: 'Decided by David.' }
@@ -273,7 +273,7 @@ test('David changes Blockers, adds a Ticket, edits the Brief and Setup Command, 
 	const sidebar = await showSidebar(page);
 	const section = sidebar.getByRole('region', { name: 'Epics' });
 	await expect(section).toContainText('No active Epics.');
-	const log = readFileSync(`${process.env.OIKONOMOS_E2E_ROOT}/data/epics/${slug}.jsonl`, 'utf8');
+	const log = readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/data/epics/${slug}.jsonl`, 'utf8');
 	expect(log.trim().split('\n').map((line) => JSON.parse(line).kind).slice(3)).toEqual([
 		'blockers.set',
 		'ticket.added',
@@ -291,8 +291,8 @@ test('David changes Blockers, adds a Ticket, edits the Brief and Setup Command, 
 	await card.click();
 	await expect(panel.getByRole('heading', { name: slug, exact: true })).toBeVisible();
 	await expect(panel.getByRole('button', { name: 'Archive Epic' })).toHaveCount(0);
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
-	execFileSync(oikonomos, ['epic', 'add', `${slug}-active`, '--title', 'Active plan', '--brief', '-', '--data-dir', `${process.env.OIKONOMOS_E2E_ROOT}/data`], { cwd: root, input: '# Active\n' });
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${slug}`;
+	execFileSync(stampede, ['epic', 'add', `${slug}-active`, '--title', 'Active plan', '--brief', '-', '--data-dir', `${process.env.STAMPEDE_E2E_ROOT}/data`], { cwd: root, input: '# Active\n' });
 	const visible = await showSidebar(page);
 	const epics = visible.getByRole('region', { name: 'Epics' });
 	await expect(epics.getByRole('button', { name: new RegExp(`^${slug}-active\\s`) })).toBeVisible();
@@ -311,18 +311,18 @@ test('David changes Blockers, adds a Ticket, edits the Brief and Setup Command, 
 test('Start on a Frontier Ticket works it with a fake Agent until it is merged', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
 	const slug = `start-${project.name}`;
-	const data = `${process.env.OIKONOMOS_E2E_ROOT}/data`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	const data = `${process.env.STAMPEDE_E2E_ROOT}/data`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${slug}`;
 	mkdirSync(root, { recursive: true });
 	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
 	git('init', '-q');
-	git('config', 'user.name', 'oikonomos');
-	git('config', 'user.email', 'e2e@oikonomos.invalid');
+	git('config', 'user.name', 'stampede');
+	git('config', 'user.email', 'e2e@stampede.invalid');
 	git('config', 'commit.gpgsign', 'false');
 	writeFileSync(`${root}/README`, 'start\n');
 	git('add', 'README');
 	git('commit', '-qm', 'Initial commit');
-	const cli = (stdin: string, ...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', data], { cwd: root, input: stdin });
+	const cli = (stdin: string, ...args: string[]) => execFileSync(stampede, [...args, '--data-dir', data], { cwd: root, input: stdin });
 	cli('# Start\n', 'epic', 'add', slug, '--title', 'Start one', '--brief', '-');
 	cli('Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
 	cli('Then more.\n', 'ticket', 'add', slug, '2', '--title', 'More', '--blocked-by', '1', '--body', '-');
@@ -372,18 +372,18 @@ test('Start on a Frontier Ticket works it with a fake Agent until it is merged',
 test('a merged Ticket moved back to not started is worked again on the Epic branch, and an edit mid-Chat is marked', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
 	const slug = `reopen-${project.name}`;
-	const data = `${process.env.OIKONOMOS_E2E_ROOT}/data`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	const data = `${process.env.STAMPEDE_E2E_ROOT}/data`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${slug}`;
 	mkdirSync(root, { recursive: true });
 	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
 	git('init', '-q');
-	git('config', 'user.name', 'oikonomos');
-	git('config', 'user.email', 'e2e@oikonomos.invalid');
+	git('config', 'user.name', 'stampede');
+	git('config', 'user.email', 'e2e@stampede.invalid');
 	git('config', 'commit.gpgsign', 'false');
 	writeFileSync(`${root}/README`, 'reopen\n');
 	git('add', 'README');
 	git('commit', '-qm', 'Initial commit');
-	const cli = (stdin: string, ...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', data], { cwd: root, input: stdin });
+	const cli = (stdin: string, ...args: string[]) => execFileSync(stampede, [...args, '--data-dir', data], { cwd: root, input: stdin });
 	cli('# Reopen\n', 'epic', 'add', slug, '--title', 'Reopen one', '--brief', '-');
 	cli('Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
 	cli('', 'epic', 'set-setup', slug, '');
@@ -440,19 +440,19 @@ test('a merged Ticket moved back to not started is worked again on the Epic bran
 test('a Run started from the Epic tab works the Epic through and calls from the Attention list when it finishes', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
 	const slug = `run-${project.name}`;
-	const data = `${process.env.OIKONOMOS_E2E_ROOT}/data`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
-	const gate = `${process.env.OIKONOMOS_E2E_ROOT}/${slug}.go`;
+	const data = `${process.env.STAMPEDE_E2E_ROOT}/data`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${slug}`;
+	const gate = `${process.env.STAMPEDE_E2E_ROOT}/${slug}.go`;
 	mkdirSync(root, { recursive: true });
 	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
 	git('init', '-q');
-	git('config', 'user.name', 'oikonomos');
-	git('config', 'user.email', 'e2e@oikonomos.invalid');
+	git('config', 'user.name', 'stampede');
+	git('config', 'user.email', 'e2e@stampede.invalid');
 	git('config', 'commit.gpgsign', 'false');
 	writeFileSync(`${root}/README`, 'run\n');
 	git('add', 'README');
 	git('commit', '-qm', 'Initial commit');
-	const cli = (stdin: string, ...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', data], { cwd: root, input: stdin });
+	const cli = (stdin: string, ...args: string[]) => execFileSync(stampede, [...args, '--data-dir', data], { cwd: root, input: stdin });
 	cli('# Run\n', 'epic', 'add', slug, '--title', 'Run it', '--brief', '-');
 	cli('Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
 	cli('Then more.\n', 'ticket', 'add', slug, '2', '--title', 'More', '--blocked-by', '1', '--body', '-');
@@ -536,7 +536,7 @@ test('a Run started from the Epic tab works the Epic through and calls from the 
 	await expect(panel.getByText('Nothing is left to land', { exact: true })).toBeVisible();
 	expect(readFileSync(`${root}/work.txt`, 'utf8')).toBe('Done by the fake.\n');
 	expect(existsSync(`${data}/worktrees/${slug}/integration`)).toBe(false);
-	expect(git('branch', '--list', `oikonomos/${slug}/*`).toString()).toBe('');
+	expect(git('branch', '--list', `stampede/${slug}/*`).toString()).toBe('');
 	await page.screenshot({ path: test.info().outputPath('landed.png') });
 	await showFiles(await showSidebar(page));
 });
@@ -544,18 +544,18 @@ test('a Run started from the Epic tab works the Epic through and calls from the 
 test('a paused Run starts nothing until it is resumed, and stopping it gives its Ticket back', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
 	const slug = `pause-${project.name}`;
-	const data = `${process.env.OIKONOMOS_E2E_ROOT}/data`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	const data = `${process.env.STAMPEDE_E2E_ROOT}/data`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${slug}`;
 	mkdirSync(root, { recursive: true });
 	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
 	git('init', '-q');
-	git('config', 'user.name', 'oikonomos');
-	git('config', 'user.email', 'e2e@oikonomos.invalid');
+	git('config', 'user.name', 'stampede');
+	git('config', 'user.email', 'e2e@stampede.invalid');
 	git('config', 'commit.gpgsign', 'false');
 	writeFileSync(`${root}/README`, 'pause\n');
 	git('add', 'README');
 	git('commit', '-qm', 'Initial commit');
-	const cli = (cwd: string, stdin: string, ...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', data], { cwd, input: stdin });
+	const cli = (cwd: string, stdin: string, ...args: string[]) => execFileSync(stampede, [...args, '--data-dir', data], { cwd, input: stdin });
 	cli(root, '# Pause\n', 'epic', 'add', slug, '--title', 'Pause it', '--brief', '-');
 	cli(root, 'Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
 	cli(root, 'Beside it.\n', 'ticket', 'add', slug, '2', '--title', 'Beside', '--body', '-');
@@ -604,19 +604,19 @@ test('a paused Run starts nothing until it is resumed, and stopping it gives its
 test('a live Run’s worktree Projects sit beside their Project, open on a tap, and go when it finishes', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
 	const slug = `nest-${project.name}`;
-	const data = `${process.env.OIKONOMOS_E2E_ROOT}/data`;
-	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
-	const gate = `${process.env.OIKONOMOS_E2E_ROOT}/gated-${project.name}/verdict`;
+	const data = `${process.env.STAMPEDE_E2E_ROOT}/data`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${slug}`;
+	const gate = `${process.env.STAMPEDE_E2E_ROOT}/gated-${project.name}/verdict`;
 	mkdirSync(root, { recursive: true });
 	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
 	git('init', '-q');
-	git('config', 'user.name', 'oikonomos');
-	git('config', 'user.email', 'e2e@oikonomos.invalid');
+	git('config', 'user.name', 'stampede');
+	git('config', 'user.email', 'e2e@stampede.invalid');
 	git('config', 'commit.gpgsign', 'false');
 	writeFileSync(`${root}/README`, 'nest\n');
 	git('add', 'README');
 	git('commit', '-qm', 'Initial commit');
-	const cli = (stdin: string, ...args: string[]) => execFileSync(oikonomos, [...args, '--data-dir', data], { cwd: root, input: stdin });
+	const cli = (stdin: string, ...args: string[]) => execFileSync(stampede, [...args, '--data-dir', data], { cwd: root, input: stdin });
 	cli('# Nest\n', 'epic', 'add', slug, '--title', 'Nest them', '--brief', '-');
 	cli('Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
 	cli('Beside it.\n', 'ticket', 'add', slug, '2', '--title', 'Beside', '--body', '-');

@@ -1,6 +1,6 @@
 # Language servers are app-owned, pinned, and started only on demand
 
-Oikonomos brings its own pinned language servers and runs one only while the Project's switch is on and an editor shows a file in its language; Agents never share them.
+Stampede brings its own pinned language servers and runs one only while the Project's switch is on and an editor shows a file in its language; Agents never share them.
 
 - Pinned, app-owned copies make behaviour deterministic.
 - Nothing runs by default, and servers stop shortly after the last editor for their language closes.

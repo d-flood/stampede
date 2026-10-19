@@ -25,7 +25,7 @@
 	let { epic, ticket, onedit, open, chat, device, onchat }: Props = $props();
 
 	const phone = $derived(form() === 'phone');
-	const authors = { agent: 'Agent', david: 'David', oikonomos: 'Oikonomos' };
+	const authors = { agent: 'Agent', david: 'David', stampede: 'Stampede' };
 	const others = $derived(epic.tickets.filter((other) => other.number !== ticket.number));
 	const Mark = $derived(marks[ticket.status]);
 	const startable = $derived(!epic.run && onFrontier(epic, ticket));

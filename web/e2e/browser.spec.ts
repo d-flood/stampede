@@ -10,7 +10,7 @@ test('Browser Tabs proxy a Vite app with HMR and survive reopening', async ({ pa
 	const nativeLogs: string[] = [];
 	page.on('console', (message) => nativeLogs.push(message.text()));
 	page.on('websocket', (socket) => sockets.push(socket.url()));
-	const root = await mkdtemp(join(tmpdir(), 'oikonomos-preview-'));
+	const root = await mkdtemp(join(tmpdir(), 'stampede-preview-'));
 	await writeFile(join(root, 'index.html'), `<!doctype html><html><head><title>Preview fixture</title><link rel="stylesheet" href="/style.css"><script>console.log('Preview startup', { phase: 'head' });</script></head>
 		<body><h1>Host development preview</h1><input aria-label="Preview input"><button id="save">Save</button><p id="reply"></p><a href="/nested/path?q=1">Nested page</a>
 		<script type="module">
@@ -92,8 +92,8 @@ test('Browser Tabs proxy a Vite app with HMR and survive reopening', async ({ pa
 		for (const text of ['Circular value', '42n', '[Circular]', '[Getter]', 'Logged preview failure', 'Preview assertion', 'Uncaught preview failure', 'Rejected preview promise']) {
 			await expect(output).toContainText(text);
 		}
-		await page.evaluate(() => window.postMessage({ type: 'oikonomos.console', kind: 'entries', entries: [{ level: 'error', text: 'Forged console message', time: Date.now() }] }, location.origin));
-		await frame.locator('body').evaluate(() => window.parent.postMessage({ type: 'oikonomos.console', kind: 'entries', entries: [{ level: 'error', text: { invalid: true }, time: Date.now() }] }, '*'));
+		await page.evaluate(() => window.postMessage({ type: 'stampede.console', kind: 'entries', entries: [{ level: 'error', text: 'Forged console message', time: Date.now() }] }, location.origin));
+		await frame.locator('body').evaluate(() => window.parent.postMessage({ type: 'stampede.console', kind: 'entries', entries: [{ level: 'error', text: { invalid: true }, time: Date.now() }] }, '*'));
 		await expect(output).not.toContainText('Forged console message');
 		await expect.poll(() => browser.evaluate((element) => {
 			const output = element.querySelector('.entries')!.getBoundingClientRect();

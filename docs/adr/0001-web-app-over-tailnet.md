@@ -1,4 +1,4 @@
-# Oikonomos is a web app served from the Host over the tailnet
+# Stampede is a web app served from the Host over the tailnet
 
 The UI is a web app served by a local server on the Host and opened from any browser on the tailnet.
 

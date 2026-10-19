@@ -18,7 +18,7 @@ test('a new server build offers a reload without discarding dirty edits', async 
 		});
 	});
 	const project = test.info().project.name === 'desktop' ? 'alpha' : 'beta';
-	writeFileSync(`${process.env.OIKONOMOS_E2E_ROOT}/projects/${project}/rebuild.txt`, 'before rebuild\n');
+	writeFileSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${project}/rebuild.txt`, 'before rebuild\n');
 	await openProject(page, project);
 	const update = page.getByRole('status').filter({ has: page.getByRole('button', { name: 'Reload', exact: true }) });
 	await expect(update).toBeHidden();
@@ -42,6 +42,6 @@ test('a new server build offers a reload without discarding dirty edits', async 
 	await expect(update.getByRole('button', { name: 'Reload', exact: true })).toBeEnabled();
 	updated = false;
 	await update.getByRole('button', { name: 'Reload', exact: true }).click();
-	await expect(page.getByRole('status').filter({ hasText: 'Oikonomos updated.' })).toBeHidden();
+	await expect(page.getByRole('status').filter({ hasText: 'Stampede updated.' })).toBeHidden();
 	await expect(editor).toContainText('with edits');
 });

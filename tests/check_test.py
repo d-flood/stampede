@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class Check(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix="oikonomos-check-test-")
+        self.directory = tempfile.TemporaryDirectory(prefix="stampede-check-test-")
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         shutil.copy(os.environ.get("CHECK_TEST_SCRIPT", ROOT / "check"), self.root / "check")
@@ -21,8 +21,8 @@ class Check(unittest.TestCase):
             shutil.copytree(ROOT / "scripts", self.root / "scripts")
         (self.root / "bin").mkdir()
         (self.root / "web/src").mkdir(parents=True)
-        (self.root / "crates/oikonomos").mkdir(parents=True)
-        for name in ["web/package.json", "web/pnpm-lock.yaml", "web/src/app.svelte", "crates/oikonomos/Cargo.toml"]:
+        (self.root / "crates/stampede").mkdir(parents=True)
+        for name in ["web/package.json", "web/pnpm-lock.yaml", "web/src/app.svelte", "crates/stampede/Cargo.toml"]:
             (self.root / name).write_text("initial")
         self.log = self.root / "calls"
         self.env = {key: value for key, value in os.environ.items() if key != "CARGO_TARGET_DIR"}
@@ -43,7 +43,7 @@ if Path(sys.argv[0]).name == "cargo":
     artifact = target / "fixture-artifact"
     scratch_repository = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=os.environ["TMPDIR"], capture_output=True).returncode == 0
     with (root / "builds.jsonl").open("a") as log:
-        log.write(json.dumps(dict(target=str(target), reused=artifact.exists(), temporary=os.environ.get("TMPDIR", "/tmp"), node_cache=os.environ.get("NODE_COMPILE_CACHE"), binary=os.environ.get("OIKONOMOS_E2E_BINARY"), scratch_repository=scratch_repository)) + "\\n")
+        log.write(json.dumps(dict(target=str(target), reused=artifact.exists(), temporary=os.environ.get("TMPDIR", "/tmp"), node_cache=os.environ.get("NODE_COMPILE_CACHE"), binary=os.environ.get("STAMPEDE_E2E_BINARY"), scratch_repository=scratch_repository)) + "\\n")
     artifact.touch()
     scratch = Path(os.environ["TMPDIR"])
     (scratch / "compiler-temporary").write_text("temporary build output")
@@ -93,7 +93,7 @@ if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
         self.run_check("e2e", "--list")
         source.unlink()
         self.run_check("e2e", "--list")
-        (self.root / "crates/oikonomos/Cargo.toml").write_text("new version")
+        (self.root / "crates/stampede/Cargo.toml").write_text("new version")
         self.run_check("e2e", "--list")
         self.assertEqual(len(self.calls("pnpm -C web build")), 4)
         self.assertEqual(len(self.calls(" install ")), 1)
@@ -172,7 +172,7 @@ if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
         builds = [json.loads(line) for line in (self.root / "builds.jsonl").read_text().splitlines()]
         self.assertEqual([build["reused"] for build in builds], [False, True])
         self.assertEqual(builds[0]["target"], builds[1]["target"])
-        self.assertEqual(builds[1]["binary"], str(Path(builds[1]["target"]) / "debug/oikonomos"))
+        self.assertEqual(builds[1]["binary"], str(Path(builds[1]["target"]) / "debug/stampede"))
         self.assertFalse((other / "target/fixture-artifact").exists())
         self.assertFalse(any(build["scratch_repository"] for build in builds))
 
@@ -197,7 +197,7 @@ if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
         self.run_check("e2e", "--list")
         build = json.loads((self.root / "builds.jsonl").read_text())
         self.assertEqual(build["target"], str(target))
-        self.assertEqual(build["binary"], str(target / "debug/oikonomos"))
+        self.assertEqual(build["binary"], str(target / "debug/stampede"))
         self.assertTrue(Path(build["temporary"]).is_relative_to(target))
 
     def test_interrupt_stops_children_and_releases_lock(self):
@@ -222,7 +222,7 @@ if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
 
     def test_cleanup_stops_detached_children_without_touching_other_runs(self):
         marker = str(self.root / "run")
-        detached = subprocess.Popen(["sleep", "60"], env={**self.env, "OIKONOMOS_E2E_ROOT": marker}, start_new_session=True)
+        detached = subprocess.Popen(["sleep", "60"], env={**self.env, "STAMPEDE_E2E_ROOT": marker}, start_new_session=True)
         unrelated = subprocess.Popen(["sleep", "60"], start_new_session=True)
         try:
             subprocess.run(["python3", str(ROOT / "scripts/check_cleanup.py"), marker], check=True, timeout=5)

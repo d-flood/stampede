@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 import { hardwareLaunchOptions } from './e2e/gpu.ts';
 
-if (!process.env.OIKONOMOS_E2E_ROOT || !process.env.OIKONOMOS_E2E_BINARY) {
+if (!process.env.STAMPEDE_E2E_ROOT || !process.env.STAMPEDE_E2E_BINARY) {
 	throw new Error('Run Playwright through ./check e2e');
 }
 

@@ -57,5 +57,5 @@ export async function closeProject(page: Page, name: string) {
 			if (!project) { clearTimeout(timer); socket.close(); resolve(); }
 			else if (!closing) { closing = true; socket.send(JSON.stringify({ type: 'project.close', projectId: project.id })); }
 		};
-	}), `${process.env.OIKONOMOS_E2E_ROOT}/projects/${name}`);
+	}), `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 }

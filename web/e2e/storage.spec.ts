@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { openProject, showSidebar } from './shell.ts';
 
 test('low storage pauses new Tickets and reports the reason', async ({ page }, { project }) => {
-	const parent = process.env.OIKONOMOS_E2E_ROOT!;
+	const parent = process.env.STAMPEDE_E2E_ROOT!;
 	const slug = `storage-${project.name}`;
 	const root = `${parent}/projects/${slug}`;
 	mkdirSync(root);
@@ -13,7 +13,7 @@ test('low storage pauses new Tickets and reports the reason', async ({ page }, {
 	writeFileSync(`${root}/README`, 'Storage\n');
 	git('add', 'README');
 	git('commit', '-qm', 'Fixture');
-	const cli = (input: string, ...args: string[]) => execFileSync(process.env.OIKONOMOS_E2E_BINARY!, [...args, '--data-dir', `${parent}/data`], { cwd: root, input });
+	const cli = (input: string, ...args: string[]) => execFileSync(process.env.STAMPEDE_E2E_BINARY!, [...args, '--data-dir', `${parent}/data`], { cwd: root, input });
 	cli('# Storage\n', 'epic', 'add', slug, '--title', 'Storage', '--brief', '-');
 	cli('Work\n', 'ticket', 'add', slug, '1', '--title', 'Work', '--body', '-');
 	cli('', 'epic', 'set-setup', slug, '');

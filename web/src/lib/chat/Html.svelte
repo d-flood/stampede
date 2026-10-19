@@ -16,14 +16,14 @@
 <style>:root{color-scheme:light dark;font:14px/1.5 system-ui}*{box-sizing:border-box}body{margin:0;padding:16px;overflow-wrap:anywhere;display:flow-root}img,svg{max-width:100%}</style>
 <script>
 addEventListener('DOMContentLoaded', () => {
-	const resize = () => parent.postMessage({type:'oikonomos-html-size',height:Math.ceil(document.body.getBoundingClientRect().height)}, '*');
+	const resize = () => parent.postMessage({type:'stampede-html-size',height:Math.ceil(document.body.getBoundingClientRect().height)}, '*');
 	new ResizeObserver(resize).observe(document.body);
 	resize();
 });
 <\/script></head><body>${item.html}</body></html>`);
 
 	function resize(event: MessageEvent) {
-		if (event.source !== frame?.contentWindow || event.data?.type !== 'oikonomos-html-size') return;
+		if (event.source !== frame?.contentWindow || event.data?.type !== 'stampede-html-size') return;
 		const value = event.data.height;
 		if (typeof value === 'number' && Number.isFinite(value)) height = Math.max(80, Math.min(1200, value));
 	}
