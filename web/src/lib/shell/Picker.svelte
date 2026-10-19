@@ -37,7 +37,7 @@
 		spellcheck={false}
 	>
 		{#snippet child({ props })}
-			<input {...props} class="query" bind:value={query} />
+			<input {...props} class="query" bind:value={query} {@attach (element) => element.focus()} />
 		{/snippet}
 	</Command.Input>
 	{#if error}

@@ -10,7 +10,7 @@
 
 	type Props = Omit<ComponentProps<typeof BitsMenu>, 'open'> & { onopen?: () => void };
 
-	let { items, context = false, trigger, onopen }: Props = $props();
+	let { items, context = false, trigger, onopen, ...rest }: Props = $props();
 
 	let open = $state(false);
 	const Popup = $derived(bits());
@@ -22,7 +22,7 @@
 </script>
 
 {#if Popup}
-	<Popup {items} {context} {trigger} bind:open={() => open, toggle} />
+	<Popup {items} {context} {trigger} {...rest} bind:open={() => open, toggle} />
 {:else}
 	{@render trigger({ onclick: () => (toggle(!context), warmUp()) })}
 {/if}

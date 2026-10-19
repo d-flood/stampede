@@ -81,6 +81,7 @@ test('context menus create files and directories in the selected location', asyn
 	await tree.click({ button: 'right', position: { x: 10, y: 10 } });
 	await page.getByRole('menuitem', { name: 'New File', exact: true }).click();
 	const fileDialog = page.getByRole('dialog', { name: 'New File', exact: true });
+	await expect(fileDialog.getByRole('textbox', { name: 'Name', exact: true })).toBeFocused();
 	await fileDialog.getByLabel('Name', { exact: true }).fill('root.txt');
 	await fileDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
 	expect(existsSync(`${root}/root.txt`)).toBe(false);
@@ -95,6 +96,7 @@ test('context menus create files and directories in the selected location', asyn
 	await sidebar.getByRole('button', { name: 'root.txt', exact: true }).click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'New Directory', exact: true }).click();
 	const directoryDialog = page.getByRole('dialog', { name: 'New Directory', exact: true });
+	await expect(directoryDialog.getByRole('textbox', { name: 'Name', exact: true })).toBeFocused();
 	await directoryDialog.getByLabel('Name', { exact: true }).fill('docs');
 	await directoryDialog.getByLabel('Name', { exact: true }).press('Enter');
 	await expect(sidebar.getByRole('button', { name: 'docs', exact: true })).toBeVisible();

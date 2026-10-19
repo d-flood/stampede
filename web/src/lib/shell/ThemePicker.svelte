@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { beginThemePreview, selectedTheme, selectTheme } from '#lib/config.svelte.ts';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import { Command } from 'bits-ui';
@@ -87,7 +87,7 @@
 <Command.Root shouldFilter={false} loop>
 	<Command.Input placeholder="Search Ghostty themes" aria-label="Search themes" autocomplete="off" spellcheck={false}>
 		{#snippet child({ props })}
-			<input {...props} class="query" bind:value={query} />
+			<input {...props} class="query" bind:value={query} {@attach (element) => { tick().then(() => element.focus()); }} />
 		{/snippet}
 	</Command.Input>
 	<Command.List aria-label="Ghostty themes" aria-busy={loading || saving}>

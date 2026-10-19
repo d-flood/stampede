@@ -1,14 +1,16 @@
 <script lang="ts">
 	import { ContextMenu, DropdownMenu } from 'bits-ui';
+	import Loading from '#lib/ui/Loading.svelte';
 	import type { Component, Snippet } from 'svelte';
 
 	type Item = { label: string; onselect: () => void; disabled?: boolean; icon?: Component; hint?: string; checked?: boolean };
 	type Group = { heading: string; items: Item[] };
 	type Layer = { wrapperProps: Record<string, unknown>; props: Record<string, unknown> };
 
-	type Props = { items: (Item | Group)[]; context?: boolean; trigger: Snippet<[Record<string, unknown>]>; open?: boolean };
+	type Props = { items: (Item | Group)[]; context?: boolean; trigger: Snippet<[Record<string, unknown>]>; open?: boolean; resize?: boolean; loading?: string };
 
-	let { items, context = false, trigger, open = $bindable(false) }: Props = $props();
+	let { items, context = false, trigger, open = $bindable(false), resize = false, loading }: Props = $props();
+	let width = $state(0);
 </script>
 
 {#snippet item({ label, onselect, disabled, checked, icon: Icon, hint }: Item)}
@@ -37,30 +39,35 @@
 
 {#snippet content({ wrapperProps, props }: Layer)}
 	<div {...wrapperProps}>
-		<div {...props} class="menu">
-			{#each items as entry, index}
-				{#if index > 0 && ('heading' in entry || 'heading' in items[index - 1])}
-					<DropdownMenu.Separator>
-						{#snippet child({ props })}
-							<div {...props} class="separator"></div>
-						{/snippet}
-					</DropdownMenu.Separator>
+		<div {...props} class="menu" class:resizing={resize} style:width={resize && width ? `calc(${width}px + 2 * var(--border-width))` : undefined}>
+			<div class="content" class:measured={resize} bind:offsetWidth={width}>
+				{#if loading}
+					<div class="loading"><Loading label={loading} /></div>
 				{/if}
-				{#if 'heading' in entry}
-					<DropdownMenu.Group>
-						<DropdownMenu.GroupHeading>
+				{#each items as entry, index}
+					{#if index > 0 && ('heading' in entry || 'heading' in items[index - 1])}
+						<DropdownMenu.Separator>
 							{#snippet child({ props })}
-								<div {...props} class="heading">{entry.heading}</div>
+								<div {...props} class="separator"></div>
 							{/snippet}
-						</DropdownMenu.GroupHeading>
-						{#each entry.items as grouped}
-							{@render item(grouped)}
-						{/each}
-					</DropdownMenu.Group>
-				{:else}
-					{@render item(entry)}
-				{/if}
-			{/each}
+						</DropdownMenu.Separator>
+					{/if}
+					{#if 'heading' in entry}
+						<DropdownMenu.Group>
+							<DropdownMenu.GroupHeading>
+								{#snippet child({ props })}
+									<div {...props} class="heading">{entry.heading}</div>
+								{/snippet}
+							</DropdownMenu.GroupHeading>
+							{#each entry.items as grouped}
+								{@render item(grouped)}
+							{/each}
+						</DropdownMenu.Group>
+					{:else}
+						{@render item(entry)}
+					{/if}
+				{/each}
+			</div>
 		</div>
 	</div>
 {/snippet}
@@ -96,7 +103,6 @@
 		max-width: min(24rem, 100vw - 2 * var(--space-2));
 		max-height: min(var(--bits-floating-available-height), 100dvh - 2 * var(--space-2));
 		overflow-y: auto;
-		padding: var(--space-1);
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-md);
 		background: var(--surface-2);
@@ -105,6 +111,29 @@
 		font-family: var(--font-ui);
 		font-size: var(--font-size-md);
 		outline: none;
+	}
+
+	.resizing {
+		overflow-x: hidden;
+		transition: width var(--dur-med) ease-out;
+	}
+
+	.content {
+		box-sizing: border-box;
+		padding: var(--space-1);
+	}
+
+	.measured {
+		width: max-content;
+		min-width: calc(10rem - 2 * var(--border-width));
+		max-width: calc(min(24rem, 100vw - 2 * var(--space-2)) - 2 * var(--border-width));
+	}
+
+	.loading {
+		display: flex;
+		align-items: center;
+		min-height: var(--target-min);
+		padding: 0 var(--space-2);
 	}
 
 	.item {

@@ -25,11 +25,12 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
+	await expect(search).toBeFocused();
 	const dracula = dialog.getByRole('option', { name: /^Dracula(?: Current theme)?$/ });
 	const config = `${process.env.STAMPEDE_E2E_ROOT}/config.toml`;
 	const original = readFileSync(config, 'utf8');
 	const originalBackground = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
-	await search.fill('no-theme-matches-this');
+	await page.keyboard.type('no-theme-matches-this');
 	await expect(dialog).toContainText('No matching themes');
 	await search.fill('Dracula');
 	await expect(dracula).toBeVisible();
@@ -52,6 +53,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(originalBackground);
 	expect(readFileSync(config, 'utf8')).toBe(original);
 	await page.getByRole('button', { name: 'Change theme' }).click();
+	await expect(search).toBeFocused();
 	await search.fill('Dracula');
 	await dracula.click();
 	await dialog.getByRole('button', { name: 'Apply theme', exact: true }).click();

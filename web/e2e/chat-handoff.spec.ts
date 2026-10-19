@@ -40,6 +40,7 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		const dialog = page.getByRole('dialog', { name: 'New Chat from here' });
 		await expect(dialog.getByLabel('Rig', { exact: true })).toHaveValue('Handoff source');
 		await expect(dialog.getByLabel('Focus (optional)', { exact: true })).toHaveValue('');
+		await expect(dialog.getByLabel('Focus (optional)', { exact: true })).toBeFocused();
 		await expect.poll(() => dialog.evaluate((element) => {
 			const rect = element.getBoundingClientRect();
 			return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight;

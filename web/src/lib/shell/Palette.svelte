@@ -10,6 +10,7 @@
 	import type { Project, Session } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { split } from '#lib/git.ts';
+	import Loading from '#lib/ui/Loading.svelte';
 	import { Command } from 'bits-ui';
 	import fuzzysort, { type Key } from 'fuzzysort';
 
@@ -20,6 +21,7 @@
 		focused?: Project;
 		actions?: Action[];
 		sessions?: Session[];
+		loadingSessions?: boolean;
 		onproject(projectId: string): void;
 		onrig(rig: Rig): void;
 		onfile(path: string): void;
@@ -27,11 +29,12 @@
 	};
 	type Entry = { value: string; label: string; parent?: string; icon?: Component; hint?: string; onselect(): void };
 
-	let { scope, projects, labels, focused, actions = [], sessions = [], onproject, onrig, onfile, onsession }: Props = $props();
+	let { scope, projects, labels, focused, actions = [], sessions = [], loadingSessions = false, onproject, onrig, onfile, onsession }: Props = $props();
 
 	let query = $state('');
 
 	const all = $derived(scope === 'all');
+	const reading = $derived(loadingSessions && (scope === 'tabs' || scope === 'sessions'));
 	const files = $derived.by(() => {
 		const snapshot = focused && listing(focused.id).snapshot;
 		if (!snapshot || scope === 'tabs' || (all && !query)) return [];
@@ -103,6 +106,9 @@
 			<input {...props} class="query" bind:value={query} {@attach (element) => element.focus()} />
 		{/snippet}
 	</Command.Input>
+	{#if reading}
+		<div class="loading"><Loading label="Reading sessions…" /></div>
+	{/if}
 	<Command.List>
 		{#snippet child({ props })}
 			<div {...props} class="list">
@@ -135,7 +141,7 @@
 							</Command.Group>
 						{/if}
 					{/each}
-					{#if groups.every(({ entries }) => !entries.length)}
+					{#if !reading && groups.every(({ entries }) => !entries.length)}
 						<p class="empty">{query ? 'No matches' : scope === 'sessions' ? 'No past sessions' : 'Type to find a file'}</p>
 					{/if}
 				</Command.Viewport>
@@ -166,6 +172,10 @@
 		max-height: min(24rem, 50dvh);
 		margin-top: var(--space-2);
 		overflow-y: auto;
+	}
+
+	.loading {
+		margin-top: var(--space-2);
 	}
 
 	.heading {

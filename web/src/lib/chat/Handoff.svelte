@@ -55,7 +55,7 @@
 			{/each}
 		</select>
 		<label for="handoff-focus-{chat.id}">Focus <span>(optional)</span></label>
-		<textarea id="handoff-focus-{chat.id}" bind:value={focus} disabled={preparing} placeholder="What should the new Chat focus on?" rows="3"></textarea>
+		<textarea id="handoff-focus-{chat.id}" bind:value={focus} disabled={preparing} placeholder="What should the new Chat focus on?" rows="3" {@attach (element) => element.focus()}></textarea>
 		{#if preparing}<p role="status">Preparing handoff in {chat.rig}…</p>{/if}
 		{#if error}<p role="alert">{error}</p>{/if}
 	</form>

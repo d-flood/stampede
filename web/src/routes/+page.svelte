@@ -71,6 +71,7 @@
 	setHtmlPreview((item) => htmlPreview = item);
 	let openSubagents = $state<Record<string, string[]>>({});
 	let sessions = $state<Record<string, Session[]>>({});
+	let readingSessions = $state<Record<string, boolean>>({});
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
 	let visible = $state(document.visibilityState === 'visible');
@@ -188,6 +189,7 @@
 		servers.message(message);
 		switch (message.type) {
 			case 'hello': {
+				readingSessions = {};
 				updateAvailable = (message.buildId ?? message.version) !== version;
 				const owned: Record<string, Terminal[]> = {};
 				for (const terminal of message.terminals) {
@@ -294,6 +296,7 @@
 			}
 			case 'sessions.listed':
 				sessions[message.projectId] = message.sessions;
+				readingSessions[message.projectId] = false;
 				break;
 			case 'terminal.title':
 				for (const terminal of Object.values(terminals).flat()) {
@@ -461,6 +464,11 @@
 		device.send({ type: 'project.close', projectId });
 	}
 
+	function readSessions(projectId: string) {
+		readingSessions[projectId] = true;
+		device.send({ type: 'sessions.list', projectId });
+	}
+
 	function newTab(projectId: string) {
 		const items = rigs()
 			.map((rig) => ({ label: rig.name, icon: logos[rig.agent], onselect: () => launch(rig, projectId) }));
@@ -591,7 +599,7 @@
 	function openTabPicker() {
 		tabTarget = drawer.ownsFocus() ? 'drawer' : focused?.id;
 		if (!tabTarget) return;
-		if (tabTarget !== 'drawer') device.send({ type: 'sessions.list', projectId: tabTarget });
+		if (tabTarget !== 'drawer') readSessions(tabTarget);
 		palette = 'tabs';
 	}
 
@@ -859,7 +867,7 @@
 				</div>
 				{#if focused}
 					{@const projectId = focused.id}
-					<Menu items={newTab(projectId)} onopen={() => device.send({ type: 'sessions.list', projectId })}>
+					<Menu items={newTab(projectId)} resize loading={readingSessions[projectId] ? 'Reading sessions…' : undefined} onopen={() => readSessions(projectId)}>
 						{#snippet trigger(props)}
 							<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
 						{/snippet}
@@ -1115,6 +1123,7 @@
 					{focused}
 					actions={palette === 'tabs' ? tabActions : [{ label: 'Open config', run: openConfig }]}
 					sessions={focused && sessions[focused.id]}
+					loadingSessions={!!readingSessions[palette === 'tabs' ? tabTarget ?? '' : focused?.id ?? '']}
 					onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
 					onrig={(launcher) => (launch(launcher), (palette = undefined))}
 					onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
