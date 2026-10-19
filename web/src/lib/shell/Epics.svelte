@@ -4,12 +4,16 @@
 	import { counts } from '#lib/epics.svelte.ts';
 
 	let { epics, onopen }: { epics: Epic[]; onopen(slug: string): void } = $props();
+	let showArchived = $state(false);
 
-	const listed = $derived(epics.filter((epic) => !epic.archived));
+	const listed = $derived(epics.filter((epic) => showArchived || !epic.archived));
 </script>
 
 <section aria-label="Epics">
-	<header><h2>Epics</h2></header>
+	<header>
+		<h2>Epics</h2>
+		<label><input type="checkbox" bind:checked={showArchived} /> Show archived</label>
+	</header>
 	{#if listed.length}
 		<ul>
 			{#each listed as epic (epic.slug)}
@@ -18,6 +22,7 @@
 					<button onclick={() => onopen(epic.slug)}>
 						<span class="line">
 							<span class="slug">{epic.slug}</span>
+							{#if epic.archived}<span class="archived">Archived</span>{/if}
 							{#if epic.run}<span class="live" class:paused={!!epic.run.paused}>{epic.run.paused ? 'Run paused' : 'Run live'}</span>{/if}
 						</span>
 						<span class="title">{epic.title}</span>
@@ -33,7 +38,11 @@
 			{/each}
 		</ul>
 	{:else}
-		<p>No Epics yet. Agents add them with <code>oikonomos epic add</code>.</p>
+		{#if epics.length}
+			<p>No active Epics.</p>
+		{:else}
+			<p>No Epics yet. Agents add them with <code>oikonomos epic add</code>.</p>
+		{/if}
 	{/if}
 </section>
 
@@ -48,6 +57,9 @@
 	header {
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 0 var(--space-2);
 		min-height: var(--target-min);
 		padding: 0 var(--space-3);
 	}
@@ -57,6 +69,20 @@
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		font-weight: 600;
+	}
+
+	label {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		min-height: var(--target-min);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		cursor: pointer;
+	}
+
+	input {
+		accent-color: var(--status-working);
 	}
 
 	ul {
@@ -111,6 +137,11 @@
 
 	.paused {
 		color: var(--status-waiting);
+	}
+
+	.archived {
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
 	}
 
 	.title {

@@ -293,7 +293,7 @@
 {/snippet}
 
 {#snippet archive()}
-	<div class="archive"><Button onclick={() => ((error = undefined), (archiving = true))}>Archive Epic</Button></div>
+	{#if !epic?.archived}<div class="archive"><Button onclick={() => ((error = undefined), (archiving = true))}>Archive Epic</Button></div>{/if}
 {/snippet}
 
 <div class="epic" class:phone role="tabpanel" aria-label={open.name} hidden={!active}>
@@ -338,6 +338,7 @@
 			<header class="head">
 				<div class="name">
 					<h1>{epic.slug}</h1>
+					{#if epic.archived}<span>Archived</span>{/if}
 					<span>{epic.title}</span>
 				</div>
 				<div class="progress">
@@ -474,7 +475,7 @@
 <Dialog
 	bind:open={archiving}
 	title="Archive {open.slug}?"
-	description="It disappears from every list but is not deleted. Nothing in Oikonomos unarchives it yet."
+	description="It is hidden from the active list. Use Show archived to view it later. Nothing in Oikonomos unarchives it yet."
 >
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	{#snippet actions()}

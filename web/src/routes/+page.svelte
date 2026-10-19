@@ -346,16 +346,16 @@
 				loadGit(message.projectId);
 				break;
 			case 'epics.changed':
+				closeArchived(message.projectId, message.epics);
 				epics[message.projectId] = message.epics;
-				closeArchived(message.projectId);
 				break;
 			case 'epic.changed': {
 				const { epic } = message;
+				closeArchived(message.projectId, [epic]);
 				const listed = (epics[message.projectId] ??= []);
 				const index = listed.findIndex((other) => other.slug >= epic.slug);
 				if (listed[index]?.slug === epic.slug) listed[index] = epic;
 				else listed.splice(index === -1 ? listed.length : index, 0, epic);
-				closeArchived(message.projectId);
 				break;
 			}
 			case 'ticket.started':
@@ -687,8 +687,8 @@
 		epicTabs[epic.projectId] = epicTabs[epic.projectId].filter((open) => open !== epic);
 	}
 
-	function closeArchived(projectId: string) {
-		const archived = (epics[projectId] ?? []).filter((epic) => epic.archived).map((epic) => epic.slug);
+	function closeArchived(projectId: string, incoming: Epic[]) {
+		const archived = incoming.filter((epic) => epic.archived && epics[projectId]?.some((previous) => previous.slug === epic.slug && !previous.archived)).map((epic) => epic.slug);
 		for (const epic of (epicTabs[projectId] ?? []).filter((open) => archived.includes(open.slug))) closeEpic(epic);
 	}
 

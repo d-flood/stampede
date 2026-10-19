@@ -271,7 +271,8 @@ test('David changes Blockers, adds a Ticket, edits the Brief and Setup Command, 
 	await dialog.getByRole('button', { name: 'Archive', exact: true }).click();
 	await expect(page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab', { name: `Epic ${slug}` })).toHaveCount(0);
 	const sidebar = await showSidebar(page);
-	await expect(sidebar.getByRole('region', { name: 'Epics' })).toContainText('No Epics yet');
+	const section = sidebar.getByRole('region', { name: 'Epics' });
+	await expect(section).toContainText('No active Epics.');
 	const log = readFileSync(`${process.env.OIKONOMOS_E2E_ROOT}/data/epics/${slug}.jsonl`, 'utf8');
 	expect(log.trim().split('\n').map((line) => JSON.parse(line).kind).slice(3)).toEqual([
 		'blockers.set',
@@ -280,7 +281,31 @@ test('David changes Blockers, adds a Ticket, edits the Brief and Setup Command, 
 		'brief.set',
 		'epic.archived'
 	]);
-	await showFiles(sidebar);
+	const archived = section.getByRole('checkbox', { name: 'Show archived' });
+	const card = section.getByRole('button', { name: new RegExp(`^${slug}\\s`) });
+	await expect(card).toHaveCount(0);
+	await archived.check();
+	await expect(card).toContainText('Archived');
+	await expect.poll(() => section.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+	await page.screenshot({ path: test.info().outputPath('archived-epics.png') });
+	await card.click();
+	await expect(panel.getByRole('heading', { name: slug, exact: true })).toBeVisible();
+	await expect(panel.getByRole('button', { name: 'Archive Epic' })).toHaveCount(0);
+	const root = `${process.env.OIKONOMOS_E2E_ROOT}/projects/${slug}`;
+	execFileSync(oikonomos, ['epic', 'add', `${slug}-active`, '--title', 'Active plan', '--brief', '-', '--data-dir', `${process.env.OIKONOMOS_E2E_ROOT}/data`], { cwd: root, input: '# Active\n' });
+	const visible = await showSidebar(page);
+	const epics = visible.getByRole('region', { name: 'Epics' });
+	await expect(epics.getByRole('button', { name: new RegExp(`^${slug}-active\\s`) })).toBeVisible();
+	await epics.getByRole('checkbox', { name: 'Show archived' }).uncheck();
+	await expect(card).toHaveCount(0);
+	await expect(page.getByRole('tab', { name: `Epic ${slug}`, exact: true })).toHaveAttribute('aria-selected', 'true');
+	await epics.getByRole('checkbox', { name: 'Show archived' }).check();
+	await card.click();
+	await page.reload();
+	await expect(panel.getByRole('heading', { name: slug, exact: true })).toBeVisible();
+	await openTicket(panel, phone, 1);
+	await expect(panel.getByRole('region', { name: 'Body' })).toContainText('Build the store.');
+	await showFiles(await showSidebar(page));
 });
 
 test('Start on a Frontier Ticket works it with a fake Agent until it is merged', async ({ page }, { project }) => {
