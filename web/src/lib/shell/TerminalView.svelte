@@ -112,7 +112,11 @@
 		const next = new Terminal({ ...size, theme, fontFamily, fontSize, disableStdin: ended, scrollback: scrollback * 4096 });
 		fit = new FitAddon();
 		next.loadAddon(fit);
+		// ghostty-web's open() takes focus; only the focused effect may.
+		const { focus } = next;
+		next.focus = () => {};
 		next.open(element);
+		next.focus = focus;
 		observer.disconnect();
 		observer.observe(element);
 		for (const input of [element, next.textarea]) {

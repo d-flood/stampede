@@ -150,6 +150,30 @@ test('Ctrl+Shift+T opens terminals in the focused area and ignores repeats and d
 	await expect(tabs).toHaveCount(2);
 });
 
+test('Drawer keeps focus while a Project Terminal initializes', async ({ page }) => {
+	await openProject(page, 'beta');
+	await page.evaluate(() => {
+		const load = document.fonts.load.bind(document.fonts);
+		document.fonts.load = (...args) => new Promise<FontFace[]>((resolve, reject) => {
+			document.addEventListener('release-terminal-font', () => {
+				document.fonts.load = load;
+				load(...args).then(resolve, reject);
+			}, { once: true });
+		});
+	});
+	await page.keyboard.press('Control+Shift+T');
+	await expect(page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab')).toHaveCount(1);
+	await page.keyboard.press('Control+Backquote');
+	const drawer = page.getByRole('region', { name: 'Drawer' });
+	await expect.poll(() => drawer.evaluate((element) => getComputedStyle(element).transform)).toBe('none');
+	await page.evaluate(() => document.dispatchEvent(new Event('release-terminal-font')));
+	await expect(page.getByRole('main').locator('.terminal canvas')).toBeVisible();
+	await expect(drawer).toBeFocused();
+	await page.keyboard.press('Control+Shift+T');
+	await expect(drawer.getByRole('tab')).toHaveCount(1);
+	await expect(drawer.locator('.terminal:visible [contenteditable="true"]')).toBeFocused();
+});
+
 test('opening a tab from the menu keeps the new tab active', async ({ page }, { project }) => {
 	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
 	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true });

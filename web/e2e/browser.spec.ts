@@ -136,7 +136,7 @@ test('Browser Tabs proxy a Vite app with HMR and survive reopening', async ({ pa
 		await page.reload();
 		await expect(browser.getByRole('textbox', { name: 'Host address' })).toHaveValue(url);
 		await expect(frame.getByRole('heading')).toHaveText('Hot update from Host');
-		if (project.name === 'desktop') await expect(page.getByRole('separator')).toBeVisible();
+		if (project.name === 'desktop') await expect(page.getByRole('main').getByRole('separator')).toBeVisible();
 		await browser.getByRole('button', { name: /^Console / }).click();
 		await expect(output).toContainText('Preview startup');
 		await expect.poll(() => browser.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);

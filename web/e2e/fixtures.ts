@@ -28,6 +28,7 @@ export const test = base.extend<{ hardwareGpu: void; starterRigs: boolean }>({
 				'serve', '--port', port, '--data-dir', join(root, 'data'), '--config', join(root, 'config.toml')
 			], { env: {
 				...process.env,
+				CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: undefined,
 				PATH: `${fakes}:${process.env.PATH}`,
 				...(starterRigs ? { STAMPEDE_FAKE_FIXTURE: 'simple-turn', CLAUDE_CONFIG_DIR: join(root, 'claude'), CODEX_HOME: join(root, 'codex') } : {})
 			}, stdio: ['ignore', output, output] });

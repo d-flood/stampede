@@ -735,6 +735,7 @@ struct Transcript {
     todos_held: bool,
     history: Option<PathBuf>,
     compacted: bool,
+    error_reported: bool,
     status: Status,
     replaying: bool,
     pending: Vec<Request>,
@@ -790,6 +791,7 @@ impl Transcript {
             todos_held: false,
             history: None,
             compacted: false,
+            error_reported: false,
             status: Status::Done,
             replaying: false,
             pending: Vec::new(),
@@ -1250,7 +1252,10 @@ impl Transcript {
             }
             Some("control_cancel_request") => self.resolve(message["request_id"].as_str().unwrap_or_default()),
             Some("result") => {
-                if message["is_error"] == true || message["subtype"].as_str().is_some_and(|subtype| subtype.starts_with("error")) {
+                let error_reported = std::mem::take(&mut self.error_reported);
+                if !error_reported && message["terminal_reason"] != "aborted_streaming"
+                    && (message["is_error"] == true || message["subtype"].as_str().is_some_and(|subtype| subtype.starts_with("error")))
+                {
                     let errors = message["errors"].as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join("\n");
                     let text = if errors.is_empty() { format!("Claude Code did not complete the turn: {}", message["subtype"].as_str().unwrap_or("error")) } else { errors };
                     self.push(Item::Notice { notice: Notice::Error, text });
@@ -1295,6 +1300,7 @@ impl Transcript {
                 self.pending.clear();
                 self.checkpoints.clear();
                 self.steering.clear();
+                self.error_reported = false;
                 let _ = self.events.send(Event::Reset);
                 let _ = self.events.send(Event::Truncate(0));
             }
@@ -1419,6 +1425,7 @@ impl Transcript {
         self.begin(&message["message"]);
         let blocks = message["message"]["content"].as_array().into_iter().flatten();
         if let Some(error) = message["error"].as_str() {
+            self.error_reported |= streamed;
             let text: Vec<&str> = blocks.filter_map(|block| block["text"].as_str()).collect();
             let notice = if error == "rate_limit" { Notice::Limit } else { Notice::Error };
             self.push(Item::Notice { notice, text: text.join("\n") });
@@ -1777,6 +1784,60 @@ fn prompt(content: &str) -> Option<String> {
         Some(args) if !args.is_empty() => format!("{name} {args}"),
         _ => name.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod result_tests {
+    use super::*;
+
+    #[test]
+    fn api_errors_are_reported_once_without_hiding_later_failures() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        transcript.read(&json!({
+            "type": "assistant", "error": "model_not_found",
+            "message": { "content": [{ "type": "text", "text": "Unknown model" }] },
+        }));
+        transcript.read(&json!({
+            "type": "result", "subtype": "success", "is_error": true,
+            "terminal_reason": "api_error", "result": "Unknown model",
+        }));
+        transcript.read(&json!({
+            "type": "result", "subtype": "error_during_execution", "is_error": true,
+            "errors": ["Next turn failed"],
+        }));
+        let mut errors = Vec::new();
+        while let Ok(event) = received.try_recv() {
+            if let Event::Item(_, Item::Notice { notice: Notice::Error, text }) = event {
+                errors.push(text);
+            }
+        }
+        assert_eq!(errors, ["Unknown model", "Next turn failed"]);
+    }
+
+    #[test]
+    fn aborted_streams_finish_without_error_notices() {
+        for reason in [Value::Null, json!("aborted_streaming"), json!("error")] {
+            let (events, mut received) = mpsc::unbounded_channel();
+            let mut transcript = Transcript::new(events, Path::new("/project"));
+            transcript.read(&json!({
+                "type": "result", "subtype": "error_during_execution", "is_error": true,
+                "terminal_reason": reason, "errors": ["diagnostic"],
+            }));
+            let mut errors = Vec::new();
+            let mut done = false;
+            while let Ok(event) = received.try_recv() {
+                match event {
+                    Event::Item(_, Item::Notice { notice: Notice::Error, text }) => errors.push(text),
+                    Event::Status(Status::Done) => done = true,
+                    _ => {}
+                }
+            }
+            assert!(done);
+            let expected = if reason == "aborted_streaming" { vec![] } else { vec!["diagnostic"] };
+            assert_eq!(errors, expected, "{reason}");
+        }
+    }
 }
 
 #[cfg(test)]

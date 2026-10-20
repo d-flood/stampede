@@ -978,7 +978,7 @@
 								terminalId={terminal.id}
 								pending={terminal.pending}
 								active={showing(terminal.id)}
-								focused={terminal.id === activeTab}
+								focused={terminal.id === activeTab && !drawerOpen}
 								{ended}
 								{project}
 								onopen={(path, cursor) => openFile(projectId, path, cursor)}
