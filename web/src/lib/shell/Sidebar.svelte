@@ -24,7 +24,8 @@
 	import type { Device, Epic, Project, Reading, ResetCredits } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import type { Change, Commit } from '#lib/git.ts';
+	import type { Against } from '#lib/files.svelte.ts';
+	import type { Change } from '#lib/git.ts';
 	import Changes from '#lib/shell/Changes.svelte';
 	import Epics from '#lib/shell/Epics.svelte';
 	import Files from '#lib/shell/Files.svelte';
@@ -44,7 +45,7 @@
 		codexResets?: ResetCredits | null;
 		epics?: Epic[];
 		onopen(path: string, cursor?: Cursor): void;
-		ondiff(change: Change, commit?: Commit): void;
+		ondiff(change: Change, against: Against): void;
 		onepic(slug: string): void;
 	};
 
@@ -90,7 +91,9 @@
 				<Files projectId={project.id} {device} changes={git?.changes ?? []} {onopen} />
 			{/key}
 		{:else if current === 'changes'}
-			<Changes changes={git?.changes ?? []} onopen={ondiff} />
+			{#key project.id}
+				{#if git}<Changes projectId={project.id} {git} {device} onopen={(path) => onopen(path)} {ondiff} />{/if}
+			{/key}
 		{:else if current === 'history'}
 			{#key project.id}
 				<History projectId={project.id} {device} onopen={ondiff} />

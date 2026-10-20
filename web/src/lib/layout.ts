@@ -1,8 +1,7 @@
 import { claimDeviceId, deviceId, type Chat, type Terminal } from '#lib/device.svelte.ts';
 import { OpenBrowser } from '#lib/browser.svelte.ts';
 import { OpenEpic } from '#lib/epics.svelte.ts';
-import { OpenConfig, OpenDiff, OpenFile, type Layout as DiffMode } from '#lib/files.svelte.ts';
-import type { Commit } from '#lib/git.ts';
+import { OpenConfig, OpenDiff, OpenFile, type Against, type Layout as DiffMode } from '#lib/files.svelte.ts';
 import type { Section } from '#lib/shell/Sidebar.svelte';
 import type { Split, TabGroup } from '#lib/split.ts';
 
@@ -13,7 +12,7 @@ export type TabRef =
 	| { kind: 'epic'; slug: string }
 	| { kind: 'file'; path: string }
 	| { kind: 'config' }
-	| { kind: 'diff'; path: string; against: 'HEAD' | Commit; from?: string };
+	| { kind: 'diff'; path: string; against: Exclude<Against, 'disk'>; from?: string };
 
 type Half = { tabs: TabRef[]; active: TabRef | null };
 

@@ -27,6 +27,7 @@ struct Settings {
     font: Fonts,
     #[serde(deserialize_with = "rigs")]
     rig: Vec<Rig>,
+    commit_rig: Option<String>,
     editor: Editor,
     keybar: Keybar,
     language_servers: LanguageServers,
@@ -44,6 +45,7 @@ impl Default for Settings {
             theme: Theme::default(),
             font: Fonts::default(),
             rig: Vec::new(),
+            commit_rig: None,
             editor: Editor::default(),
             keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
@@ -246,6 +248,7 @@ pub struct Config {
     pub theme: Theme,
     pub font: Font,
     pub rigs: Vec<Rig>,
+    pub commit_rig: Option<String>,
     pub editor: Editor,
     pub keybar: Keybar,
     pub language_servers: LanguageServers,
@@ -263,6 +266,7 @@ impl Default for Config {
             theme: Theme::default(),
             font: Font::default(),
             rigs: Vec::new(),
+            commit_rig: None,
             editor: Editor::default(),
             keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
@@ -303,6 +307,7 @@ impl Config {
             theme,
             font: Fonts { mono },
             rig: rigs,
+            commit_rig,
             editor,
             keybar,
             language_servers,
@@ -317,12 +322,19 @@ impl Config {
             theme,
             font: Font { family: mono.family, faces: mono.files },
             rigs,
+            commit_rig,
             editor,
             keybar,
             language_servers,
             pause_at: r#loop.pause_at,
             storage,
         })
+    }
+
+    /// The Rig that drafts commit messages: the chosen one, else the first.
+    pub fn commit_rig(&self) -> Option<&Rig> {
+        let chosen = self.commit_rig.as_ref().and_then(|name| self.rigs.iter().find(|rig| rig.name == *name));
+        chosen.or(self.rigs.first())
     }
 
     /// The first Rig for an Agent, or the Agent's defaults when no Rig runs it.
@@ -393,6 +405,18 @@ pub fn write_host_name(path: &Path, name: Option<&str>) -> Result<Option<String>
     Ok(name.map(str::to_owned))
 }
 
+pub fn write_commit_rig(path: &Path, name: &str) -> Result<String, Error> {
+    let text = match fs::read_to_string(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        text => text?,
+    };
+    if !Config::parse(&text)?.rigs.iter().any(|rig| rig.name == name) {
+        return Err(format!("there is no Rig {name}").into());
+    }
+    fs::write(path, with_top_level(text, "commit_rig", Some(name))?)?;
+    Ok(name.to_owned())
+}
+
 pub fn write_rig(path: &Path, original: Option<&str>, mut rig: Rig) -> Result<Vec<Rig>, Error> {
     let mut text = match fs::read_to_string(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
@@ -432,6 +456,9 @@ pub fn write_rig(path: &Path, original: Option<&str>, mut rig: Rig) -> Result<Ve
         }
         text.push_str(&format!("\n{replacement}"));
     }
+    if original.is_some_and(|name| current.commit_rig.as_deref() == Some(name) && name != rig.name) {
+        text = with_top_level(text, "commit_rig", Some(&rig.name))?;
+    }
     let updated = Config::parse(&text)?;
     fs::write(path, text)?;
     Ok(updated.rigs)
@@ -464,6 +491,9 @@ pub fn delete_rig(path: &Path, name: &str) -> Result<Vec<Rig>, Error> {
     text.replace_range(rig_range(&text, index)?, "");
     if current.rigs.len() == 1 {
         text.insert_str(0, "rig = []\n");
+    }
+    if current.commit_rig.as_deref() == Some(name) {
+        text = with_top_level(text, "commit_rig", None)?;
     }
     let updated = Config::parse(&text)?;
     fs::write(path, text)?;
@@ -502,21 +532,20 @@ fn with_theme(mut text: String, name: &str) -> Result<String, Error> {
     Ok(text)
 }
 
-fn with_host_name(mut text: String, name: Option<&str>) -> Result<String, Error> {
-    #[derive(Deserialize)]
-    struct Setting {
-        name: Option<toml::Spanned<String>>,
-    }
+fn with_host_name(text: String, name: Option<&str>) -> Result<String, Error> {
+    with_top_level(text, "name", name)
+}
 
-    let setting: Setting = toml::from_str(&text)?;
-    let value = name.map(|name| toml::Value::String(name.to_owned()).to_string());
-    match (setting.name, value) {
-        (Some(old), Some(value)) => text.replace_range(old.span(), &value),
-        (None, Some(value)) => text.insert_str(0, &format!("name = {value}\n")),
+fn with_top_level(mut text: String, key: &str, value: Option<&str>) -> Result<String, Error> {
+    let document: BTreeMap<toml::Spanned<String>, toml::Spanned<toml::Value>> = toml::from_str(&text)?;
+    let old = document.iter().find(|(name, _)| name.get_ref() == key).map(|(_, old)| old.span());
+    let value = value.map(|value| toml::Value::String(value.to_owned()).to_string());
+    match (old, value) {
+        (Some(old), Some(value)) => text.replace_range(old, &value),
+        (None, Some(value)) => text.insert_str(0, &format!("{key} = {value}\n")),
         (Some(old), None) => {
-            let span = old.span();
-            let start = text[..span.start].rfind('\n').map_or(0, |newline| newline + 1);
-            let end = text[span.end..].find('\n').map_or(text.len(), |newline| span.end + newline + 1);
+            let start = text[..old.start].rfind('\n').map_or(0, |newline| newline + 1);
+            let end = text[old.end..].find('\n').map_or(text.len(), |newline| old.end + newline + 1);
             text.replace_range(start..end, "");
         }
         (None, None) => {}

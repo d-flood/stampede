@@ -71,6 +71,7 @@
 	--git-added: var(--ansi-2);
 	--git-untracked: var(--ansi-2);
 	--git-deleted: var(--ansi-1);
+	--git-conflicted: var(--ansi-5);
 
 	--font-ui: var(--font-mono);
 	--font-mono: 'JetBrains Mono', 'Symbols Nerd Font Mono', monospace;

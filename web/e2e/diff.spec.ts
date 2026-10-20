@@ -11,12 +11,12 @@ test('a Diff tab opened from Changes shows the change', async ({ page }, { proje
 	await openProject(page, 'alpha');
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'Changes' }).click();
-	await sidebar.getByRole('list', { name: 'Modified' }).getByRole('button', { name: 'greeting.ts' }).click();
+	await sidebar.getByRole('list', { name: 'Changes', exact: true }).getByRole('button', { name: 'greeting.ts', exact: true }).click();
 	await expect(page.getByRole('tab', { name: /greeting\.ts/ })).toHaveAttribute('aria-selected', 'true');
 	await expect(page.getByRole('tabpanel').locator('.cm-changedLine', { hasText: line })).toBeVisible();
 });
 
-test('an open rename Diff follows HEAD after the rename is committed', async ({ page }, { project }) => {
+test('an open staged rename Diff follows HEAD after the rename is committed', async ({ page }, { project }) => {
 	const name = `rename-${project.name}`;
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root);
@@ -27,13 +27,14 @@ test('an open rename Diff follows HEAD after the rename is committed', async ({ 
 	git('commit', '-qm', 'Initial file');
 	git('mv', 'before.ts', 'after.ts');
 	appendFileSync(`${root}/after.ts`, 'export const four = 4;\n');
+	git('add', '.');
 	await openProject(page, name);
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'Changes' }).click();
-	await sidebar.getByRole('list', { name: 'Renamed' }).getByRole('button', { name: 'after.ts' }).click();
+	await sidebar.getByRole('list', { name: 'Staged Changes' }).getByRole('button', { name: 'after.ts', exact: true }).click();
 	const diff = page.locator('.diff:not([hidden])');
+	await expect(diff.locator('.path')).toHaveText('before.ts → after.ts');
 	await expect(diff.locator('.cm-changedLine', { hasText: 'export const four' })).toBeVisible();
-	git('add', '.');
 	git('commit', '-qm', 'Rename file');
 	await expect(diff.locator('.cm-changedLine')).toHaveCount(0);
 	await expect(diff.locator('.path')).toHaveText('after.ts');

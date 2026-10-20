@@ -8,7 +8,7 @@
 	import { read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
-	import { head, show, status } from '#lib/git.ts';
+	import { head, index, show, status } from '#lib/git.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
@@ -41,7 +41,7 @@
 	let note = $state<string>();
 	let heads = 0;
 	const sync = new Sync(() => diff, () => shown?.b);
-	const editable = $derived(diff.against === 'HEAD');
+	const editable = $derived(diff.against === 'HEAD' || diff.against === 'index');
 
 	onMount(() => {
 		let disposed = false;
@@ -56,11 +56,11 @@
 					return;
 				}
 				const doc = build(a, b.content).b.state.doc;
-				if (diff.against === 'HEAD') sync.start(b.hash, doc);
+				if (editable) sync.start(b.hash, doc);
 			},
 			(error: Error) => (note = error.message)
 		);
-		const unlisten = diff.against === 'HEAD' ? [sync.listen(device), device.listen({ message })] : [];
+		const unlisten = editable ? [sync.listen(device), device.listen({ message })] : diff.against === 'staged' ? [device.listen({ message })] : [];
 		return () => {
 			disposed = true;
 			for (const stop of unlisten) stop();
@@ -94,11 +94,13 @@
 	});
 
 	function sides(): Promise<[string, Contents]> | undefined {
-		if (diff.against === 'HEAD') return Promise.all([headContent(), current()]);
+		if (diff.against === 'HEAD' || diff.against === 'index') return Promise.all([original(), current()]);
+		if (diff.against === 'staged') return Promise.all([original(), staged()]);
 		if (diff.against !== 'disk') return committed(diff.against.sha);
 	}
 
-	async function headContent() {
+	async function original() {
+		if (diff.against === 'index') return index(diff.projectId, diff.path);
 		const git = await status(diff.projectId);
 		diff.from = git.changes.find((change) => change.path === diff.path)?.from;
 		return head(diff.projectId, diff.from ?? diff.path);
@@ -108,6 +110,11 @@
 		const parent = show(diff.projectId, `${sha}^`, diff.from ?? diff.path);
 		const [a, b] = await Promise.all([parent, show(diff.projectId, sha, diff.path)]);
 		return [a, a.includes('\0') || b.includes('\0') ? { binary: true, hash: '' } : { content: b, hash: '' }];
+	}
+
+	async function staged(): Promise<Contents> {
+		const content = await index(diff.projectId, diff.path);
+		return content.includes('\0') ? { binary: true, hash: '' } : { content, hash: '' };
 	}
 
 	async function current(): Promise<Contents> {
@@ -121,14 +128,17 @@
 	}
 
 	function message(message: ServerMessage) {
-		if (message.type === 'hello' || (message.type === 'git.changed' && message.projectId === diff.projectId)) refreshHead();
+		if (message.type === 'hello' || (message.type === 'git.changed' && message.projectId === diff.projectId)) refresh();
 	}
 
-	async function refreshHead() {
+	async function refresh() {
 		if (!shown) return;
 		const generation = ++heads;
-		const content = await headContent();
-		if (generation === heads && shown && content !== shown.original.toString()) shown.setOriginal(content);
+		const [content, side] = await Promise.all([original(), diff.against === 'staged' ? staged() : undefined]);
+		if (generation !== heads || !shown) return;
+		const right = side && !side.binary ? side.content : shown.b.state.doc.toString();
+		if (right !== shown.b.state.doc.toString() || !content !== !shown.original.length) build(content, right);
+		else if (content !== shown.original.toString()) shown.setOriginal(content);
 	}
 
 	function toggle() {
@@ -138,13 +148,14 @@
 
 	function build(a: string | Text, b: string | Text): Shown {
 		shown?.destroy();
-		const shared = [basicSetup, syntax ?? [], theme, diffTheme];
+		const whole = !a.length !== !b.length;
+		const shared = [basicSetup, syntax ?? [], theme, diffTheme(whole)];
 		const working = [
 			keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 			shared,
 			EditorState.readOnly.of(!editable),
 			sync.listener,
-			diff.against === 'HEAD' ? languageServer(servers, diff.projectId, diff.path, false) : []
+			editable ? languageServer(servers, diff.projectId, diff.path, false) : []
 		];
 		if (diff.layout === 'split') {
 			const view = new MergeView({
@@ -152,6 +163,7 @@
 				a: { doc: a, extensions: [shared, EditorState.readOnly.of(true)] },
 				b: { doc: b, extensions: working },
 				revertControls: editable ? 'a-to-b' : undefined,
+				highlightChanges: !whole,
 				collapseUnchanged: {}
 			});
 			return (shown = {
@@ -167,7 +179,7 @@
 			const view = new EditorView({
 				parent: container,
 				doc: b,
-				extensions: [working, unifiedMergeView({ original: a, mergeControls: editable && revert, collapseUnchanged: {} })]
+				extensions: [working, unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {} })]
 			});
 			return (shown = {
 				b: view,
@@ -200,11 +212,15 @@
 		<span class="path" title={diff.path}>{diff.from ? `${diff.from} → ${diff.path}` : diff.path}</span>
 		{#if diff.against === 'disk'}
 			<span class="sides">disk ↔ unsaved edits</span>
+		{:else if diff.against === 'index'}
+			<span class="sides">index ↔ disk</span>
+		{:else if diff.against === 'staged'}
+			<span class="sides">HEAD ↔ index</span>
 		{:else if diff.against !== 'HEAD'}
 			<span class="sides" title={diff.against.subject}>{diff.against.short}^ ↔ {diff.against.short}</span>
 		{/if}
 		{#if diff.deleted}<span class="deleted">deleted on disk</span>{/if}
-		<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} attached={diff.against === 'HEAD'} />
+		<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} attached={editable} />
 		{#if shown}
 			{#if diff.layout === 'split'}
 				<IconButton label="Single column" title="Single column" onclick={toggle}><Rows /></IconButton>

@@ -31,6 +31,7 @@ let chord = $state('ctrl+;');
 let extras = $state.raw<string[]>([]);
 let scrollback = $state(10_000);
 let named = $state<string | null>(null);
+let committer = $state<string | null>(null);
 let savedTheme: ThemeResponse | undefined;
 let previewing = false;
 
@@ -45,7 +46,7 @@ async function get<T>(path: string): Promise<T> {
 
 export async function loadConfig() {
 	loadTextSize();
-	const [name, theme, font, rigs, settings, leaderKey, keys, lines, listed] = await Promise.all([
+	const [name, theme, font, rigs, settings, leaderKey, keys, lines, listed, commitRigName] = await Promise.all([
 		get<string | null>('/api/host-name'),
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
@@ -54,9 +55,11 @@ export async function loadConfig() {
 		get<string>('/api/leader'),
 		get<Keybar>('/api/keybar'),
 		get<number>('/api/scrollback'),
-		get<Template[]>('/api/templates')
+		get<Template[]>('/api/templates'),
+		get<string | null>('/api/commit-rig')
 	]);
 	named = name;
+	committer = commitRigName;
 	editor.keymap = settings.keymap;
 	chord = leaderKey;
 	extras = keys.extra;
@@ -138,6 +141,20 @@ export function beginThemePreview() {
 			if (savedTheme) applyTheme(savedTheme);
 		}
 	};
+}
+
+export function commitRig(): string | null {
+	return committer;
+}
+
+export async function saveCommitRig(name: string) {
+	const response = await fetch('/api/commit-rig', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(name)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	committer = await response.json();
 }
 
 export function rigs(): Rig[] {

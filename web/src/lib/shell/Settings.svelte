@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { hostName, saveHostName, selectedTheme } from '#lib/config.svelte.ts';
+	import { commitRig, hostName, rigs, saveCommitRig, saveHostName, selectedTheme } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import RigEditor from '#lib/shell/RigEditor.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
@@ -11,6 +11,16 @@
 
 	let open = $state(false);
 	let refusal = $state<string | null>(null);
+	let commitRefusal = $state<string | null>(null);
+
+	async function chooseCommitRig(name: string) {
+		try {
+			await saveCommitRig(name);
+			commitRefusal = null;
+		} catch (error) {
+			commitRefusal = (error as Error).message;
+		}
+	}
 
 	async function rename(input: HTMLInputElement) {
 		try {
@@ -61,6 +71,20 @@
 			</div>
 			<p>Applies on every device.</p>
 		</section>
+		<section aria-labelledby="commit-rig-label">
+			<div class="row wrap">
+				<label id="commit-rig-label" for="commit-rig">Commit messages</label>
+				<select id="commit-rig" value={commitRig() ?? ''} disabled={!rigs().length} onchange={(event) => chooseCommitRig(event.currentTarget.value)} aria-describedby="commit-rig-help">
+					{#each rigs() as rig (rig.name)}
+						<option value={rig.name}>{rig.name}</option>
+					{:else}
+						<option value="">No Rigs</option>
+					{/each}
+				</select>
+			</div>
+			<p id="commit-rig-help">The Rig that drafts commit messages from staged changes.</p>
+			{#if commitRefusal}<p role="alert">{commitRefusal}</p>{/if}
+		</section>
 		<section aria-labelledby="rigs-label">
 			<h3 id="rigs-label">Rigs</h3>
 			<p>Starting settings for new chats. Saved on every device.</p>
@@ -88,6 +112,10 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: var(--space-3);
+	}
+
+	.wrap {
+		flex-wrap: wrap;
 	}
 
 	label,

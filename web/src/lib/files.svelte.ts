@@ -71,13 +71,16 @@ export class OpenConfig extends OpenFile {
 
 export type Layout = 'split' | 'unified';
 
+/** What a Diff compares: HEAD, the index or the disk with the file on disk; the index with HEAD; or a commit with its parent. */
+export type Against = 'HEAD' | 'index' | 'staged' | 'disk' | Commit;
+
 export class OpenDiff extends OpenFile {
-	against: 'HEAD' | 'disk' | Commit;
+	against: Against;
 	from = $state<string>();
 	snapshot = $state.raw<{ disk: string; buffer: string }>();
 	layout = $state<Layout>(form() === 'phone' ? 'unified' : 'split');
 
-	constructor(projectId: string, path: string, against: 'HEAD' | 'disk' | Commit, from?: string) {
+	constructor(projectId: string, path: string, against: Against, from?: string) {
 		super(projectId, path);
 		this.against = against;
 		this.from = from;

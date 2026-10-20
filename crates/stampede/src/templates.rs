@@ -23,6 +23,9 @@ pub const TICKET: Template = Template { name: "ticket", description: "work one T
 pub const RESOLVER: Template =
     Template { name: "resolver", description: "resolve a Ticket's conflicted merge", text: include_str!("templates/resolver.md") };
 
+/// The prompt asking a Rig to draft a commit message, followed by the staged diff.
+pub const COMMIT: &str = include_str!("templates/commit.md");
+
 pub const HANDOFF: Template =
     Template { name: "handoff", description: "prepare context for a new Chat", text: include_str!("templates/handoff.md") };
 

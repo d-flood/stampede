@@ -26,6 +26,8 @@ use crate::{
     watcher,
 };
 
+pub mod actions;
+
 const THROTTLE: Duration = Duration::from_millis(250);
 const PAGE: usize = 100;
 
@@ -45,12 +47,22 @@ pub enum Kind {
     Deleted,
     Renamed,
     Untracked,
+    Conflicted,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename = "git.changed", rename_all = "camelCase")]
 pub struct Changed {
     pub project_id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Operation {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
 }
 
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -60,7 +72,21 @@ pub struct Status {
     is_root: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     branch: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    detached: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upstream: Option<String>,
+    ahead: u32,
+    behind: u32,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    origin: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    operation: Option<Operation>,
+    /// Everything uncommitted against HEAD, one entry per path.
     changes: Vec<Change>,
+    staged: Vec<Change>,
+    unstaged: Vec<Change>,
+    conflicted: Vec<Change>,
 }
 
 #[derive(Serialize)]
@@ -164,11 +190,45 @@ pub async fn show(
     Ok(content_at(&dir, &query.sha, &query.path).await)
 }
 
+pub async fn index(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Query(query): Query<HeadQuery>,
+) -> Result<Vec<u8>, Failure> {
+    let dir = root(&state, &id)?;
+    inside(&query.path)?;
+    Ok(content_at(&dir, "", &query.path).await)
+}
+
+pub async fn message(State(state): State<AppState>, Param((id, commit)): Param<(String, String)>) -> Result<String, Failure> {
+    let dir = root(&state, &id)?;
+    let commit = sha(&commit).ok_or_else(|| (StatusCode::BAD_REQUEST, format!("{commit} is not a sha")))?;
+    let output = git(&dir, &["log", "-1", "--format=%B", commit, "--"]).await;
+    let message = output.ok_or_else(|| (StatusCode::NOT_FOUND, format!("No commit {commit}")))?;
+    Ok(String::from_utf8_lossy(&message).trim_end().to_owned())
+}
+
 pub async fn read(dir: &Path) -> Option<Status> {
-    let toplevel = toplevel(dir).await?;
+    let (toplevel, git_dir) = locate(dir).await?;
     let prefix = dir.strip_prefix(toplevel).ok()?;
-    let args = ["status", "--porcelain=v2", "-z", "--branch", "--no-ahead-behind", "--untracked-files=all", "--find-renames", "--", "."];
-    Some(parse(&git(dir, &args).await?, prefix))
+    let args = ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--find-renames", "--", "."];
+    let (output, origin) = tokio::join!(git(dir, &args), git(dir, &["config", "--get", "remote.origin.url"]));
+    let mut status = parse(&output?, prefix);
+    status.origin = origin.is_some();
+    status.operation = operation(&git_dir);
+    Some(status)
+}
+
+fn operation(git_dir: &Path) -> Option<Operation> {
+    [
+        ("rebase-merge", Operation::Rebase),
+        ("rebase-apply", Operation::Rebase),
+        ("MERGE_HEAD", Operation::Merge),
+        ("CHERRY_PICK_HEAD", Operation::CherryPick),
+        ("REVERT_HEAD", Operation::Revert),
+    ]
+    .into_iter()
+    .find_map(|(name, operation)| git_dir.join(name).exists().then_some(operation))
 }
 
 /// A page of the current branch. The cursor pins the first page's tip, so new commits never shift later pages.
@@ -248,10 +308,11 @@ pub async fn common_dir(dir: &Path) -> Option<PathBuf> {
     tokio::fs::canonicalize(common).await.ok()
 }
 
-async fn toplevel(dir: &Path) -> Option<PathBuf> {
-    let output = git(dir, &["rev-parse", "--show-toplevel"]).await?;
-    let toplevel = PathBuf::from(String::from_utf8(output).ok()?.trim_end_matches('\n'));
-    dir.starts_with(&toplevel).then_some(toplevel)
+async fn locate(dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let output = String::from_utf8(git(dir, &["rev-parse", "--show-toplevel", "--absolute-git-dir"]).await?).ok()?;
+    let (toplevel, git_dir) = output.trim_end_matches('\n').split_once('\n')?;
+    let toplevel = PathBuf::from(toplevel);
+    dir.starts_with(&toplevel).then(|| (toplevel, PathBuf::from(git_dir)))
 }
 
 /// Runs git in `dir`, giving its trimmed output, or what it printed when it failed.
@@ -286,6 +347,7 @@ async fn git(dir: &Path, args: &[&str]) -> Option<Vec<u8>> {
 
 fn parse(output: &[u8], prefix: &Path) -> Status {
     let relative = |path: &str| Some(Path::new(path).strip_prefix(prefix).ok()?.to_str()?.to_owned());
+    let mut status = Status { is_repo: true, is_root: prefix.as_os_str().is_empty(), ..Status::default() };
     let (mut head, mut oid) = (None, None);
     let mut changes = BTreeMap::new();
     let mut records = output.split(|&byte| byte == 0).map(String::from_utf8_lossy);
@@ -297,36 +359,53 @@ fn parse(output: &[u8], prefix: &Path) -> Status {
                     head = Some(name.to_owned());
                 } else if let Some(commit) = header.strip_prefix("branch.oid ") {
                     oid = Some(commit.chars().take(7).collect());
+                } else if let Some(upstream) = header.strip_prefix("branch.upstream ") {
+                    status.upstream = Some(upstream.to_owned());
+                } else if let Some(counts) = header.strip_prefix("branch.ab ") {
+                    let mut counts = counts.split(' ').map(|count| count.get(1..).and_then(|count| count.parse().ok()).unwrap_or(0));
+                    (status.ahead, status.behind) = (counts.next().unwrap_or(0), counts.next().unwrap_or(0));
                 }
                 continue;
             }
             Some(("1", _)) => {
                 let [_, xy, .., path] = fields(9)[..] else { continue };
+                let Some(path) = relative(path) else { continue };
+                sides(&mut status, xy, &path, None);
                 match (xy.contains('A'), xy.contains('D')) {
                     (true, true) => continue,
-                    (true, false) => (Kind::Added, relative(path), None),
-                    (false, true) => (Kind::Deleted, relative(path), None),
-                    (false, false) => (Kind::Modified, relative(path), None),
+                    (true, false) => (Kind::Added, path, None),
+                    (false, true) => (Kind::Deleted, path, None),
+                    (false, false) => (Kind::Modified, path, None),
                 }
             }
             Some(("2", _)) => {
                 let [_, xy, .., path] = fields(10)[..] else { continue };
                 let Some(from) = records.next() else { break };
+                let (Some(path), from) = (relative(path), relative(&from)) else { continue };
+                sides(&mut status, xy, &path, from.clone());
                 match (xy.starts_with('C'), xy.ends_with('D')) {
                     (true, true) => continue,
-                    (true, false) => (Kind::Added, relative(path), None),
-                    (false, true) => (Kind::Deleted, relative(&from), None),
-                    (false, false) => (Kind::Renamed, relative(path), relative(&from)),
+                    (true, false) => (Kind::Added, path, None),
+                    (false, true) => match from {
+                        Some(from) => (Kind::Deleted, from, None),
+                        None => continue,
+                    },
+                    (false, false) => (Kind::Renamed, path, from),
                 }
             }
             Some(("u", _)) => {
                 let [.., path] = fields(11)[..] else { continue };
-                (Kind::Modified, relative(path), None)
+                let Some(path) = relative(path) else { continue };
+                status.conflicted.push(Change { path: path.clone(), kind: Kind::Conflicted, from: None });
+                (Kind::Modified, path, None)
             }
-            Some(("?", path)) => (Kind::Untracked, relative(path), None),
+            Some(("?", path)) => {
+                let Some(path) = relative(path) else { continue };
+                status.unstaged.push(Change { path: path.clone(), kind: Kind::Untracked, from: None });
+                (Kind::Untracked, path, None)
+            }
             _ => continue,
         };
-        let Some(path) = path else { continue };
         match changes.entry(path.clone()) {
             Entry::Vacant(entry) => {
                 entry.insert(Change { path, kind, from });
@@ -335,8 +414,33 @@ fn parse(output: &[u8], prefix: &Path) -> Status {
             Entry::Occupied(mut entry) => entry.get_mut().kind = Kind::Modified,
         }
     }
-    let branch = if head.as_deref() == Some("(detached)") { oid } else { head };
-    Status { is_repo: true, is_root: prefix.as_os_str().is_empty(), branch, changes: changes.into_values().collect() }
+    status.detached = head.as_deref() == Some("(detached)");
+    status.branch = if status.detached { oid } else { head };
+    status.changes = changes.into_values().collect();
+    for list in [&mut status.staged, &mut status.unstaged, &mut status.conflicted] {
+        list.sort_by(|a, b| a.path.cmp(&b.path));
+    }
+    status
+}
+
+/// Records one porcelain entry's index (X) and worktree (Y) halves.
+fn sides(status: &mut Status, xy: &str, path: &str, from: Option<String>) {
+    let mut codes = xy.chars();
+    let (staged, unstaged) = (codes.next().unwrap_or('.'), codes.next().unwrap_or('.'));
+    let change = |kind, from| Change { path: path.to_owned(), kind, from };
+    match staged {
+        '.' => {}
+        'A' | 'C' => status.staged.push(change(Kind::Added, None)),
+        'D' => status.staged.push(change(Kind::Deleted, None)),
+        'R' => status.staged.push(change(Kind::Renamed, from)),
+        _ => status.staged.push(change(Kind::Modified, None)),
+    }
+    match unstaged {
+        '.' => {}
+        'A' => status.unstaged.push(change(Kind::Added, None)),
+        'D' => status.unstaged.push(change(Kind::Deleted, None)),
+        _ => status.unstaged.push(change(Kind::Modified, None)),
+    }
 }
 
 pub fn spawn(

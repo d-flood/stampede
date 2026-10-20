@@ -74,9 +74,10 @@ export const theme = [chrome, syntaxHighlighting(highlight)];
 const removed = (percent: number) => `color-mix(in oklab, var(--git-deleted) ${percent}%, transparent)`;
 const added = (percent: number) => `color-mix(in oklab, var(--git-added) ${percent}%, transparent)`;
 
-export const diffTheme = EditorView.theme({
-	'&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': { backgroundColor: removed(12) },
-	'&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': { backgroundColor: added(12) },
+/** With `whole`, a file added or deleted outright keeps its gutter bars but no tinted lines. */
+export const diffTheme = (whole: boolean) => EditorView.theme({
+	'&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': { backgroundColor: whole ? 'transparent' : removed(12) },
+	'&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': { backgroundColor: whole ? 'transparent' : added(12) },
 	'&.cm-merge-a .cm-changedText, & .cm-deletedChunk .cm-deletedText, &.cm-merge-b .cm-deletedText': {
 		background: removed(30)
 	},

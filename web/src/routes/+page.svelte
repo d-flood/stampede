@@ -23,9 +23,9 @@
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
-	import { image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Cursor } from '#lib/files.svelte.ts';
+	import { image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Against, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { deleteWorktree, status, type Change, type Commit, type Git } from '#lib/git.ts';
+	import { deleteWorktree, status, type Change, type Git } from '#lib/git.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
@@ -749,7 +749,7 @@
 		else unfocused = true;
 	}
 
-	function openDiff(projectId: string, { path, from }: Change, against: 'HEAD' | Commit = 'HEAD') {
+	function openDiff(projectId: string, { path, from }: Change, against: Against) {
 		openTab(new OpenDiff(projectId, path, against, from));
 	}
 
@@ -794,7 +794,7 @@
 		{codexResets}
 		epics={focused && epics[focused.id]}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
-		ondiff={(change, commit) => focused && openDiff(focused.id, change, commit)}
+		ondiff={(change, against) => focused && openDiff(focused.id, change, against)}
 		onepic={(slug) => focused && openEpic(focused.id, slug)}
 	/>
 {/snippet}

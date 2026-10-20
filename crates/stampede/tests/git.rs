@@ -43,6 +43,8 @@ async fn changes_are_everything_uncommitted_against_head() {
         "isRepo": true,
         "isRoot": true,
         "branch": "trunk",
+        "ahead": 0,
+        "behind": 0,
         "changes": [
             { "path": "added.txt", "kind": "added" },
             { "path": "both.txt", "kind": "modified" },
@@ -53,8 +55,278 @@ async fn changes_are_everything_uncommitted_against_head() {
             { "path": "staged.txt", "kind": "modified" },
             { "path": "unstaged.txt", "kind": "modified" },
         ],
+        "staged": [
+            { "path": "added.txt", "kind": "added" },
+            { "path": "both.txt", "kind": "modified" },
+            { "path": "moved.txt", "kind": "renamed", "from": "renamed.txt" },
+            { "path": "removed.txt", "kind": "deleted" },
+            { "path": "staged.txt", "kind": "modified" },
+        ],
+        "unstaged": [
+            { "path": "both.txt", "kind": "modified" },
+            { "path": "deleted.txt", "kind": "deleted" },
+            { "path": "dir/new file.txt", "kind": "untracked" },
+            { "path": "unstaged.txt", "kind": "modified" },
+        ],
+        "conflicted": [],
     });
     assert_eq!(get(server.port, &format!("/api/projects/{id}/git")).await, expected);
+    assert_eq!(text(server.port, format!("/api/projects/{id}/git/index?path=both.txt")).await, "staged\n");
+}
+
+#[tokio::test]
+async fn changes_are_staged_unstaged_discarded_committed_and_undone() {
+    let server = Server::start("git-actions").await;
+    let repo = repository(&server, "actions");
+    fs::write(repo.join("kept.txt"), "kept\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "Initial commit"]);
+    fs::write(repo.join("kept.txt"), "edited\n").unwrap();
+    fs::create_dir(repo.join("dir")).unwrap();
+    fs::write(repo.join("dir/new*.txt"), "new\n").unwrap();
+    fs::write(repo.join("dir/newer.txt"), "newer\n").unwrap();
+    let id = open(server.port, &repo).await;
+    let url = format!("/api/projects/{id}/git");
+    let status = || get(server.port, &url);
+
+    assert_eq!(post(server.port, &format!("/api/projects/{id}/git/stage"), json!({ "paths": ["dir/new*.txt"] })).await, (204, String::new()));
+    let staged = status().await;
+    assert_eq!(staged["staged"], json!([{ "path": "dir/new*.txt", "kind": "added" }]));
+    assert_eq!(staged["unstaged"], json!([{ "path": "dir/newer.txt", "kind": "untracked" }, { "path": "kept.txt", "kind": "modified" }]));
+
+    assert_eq!(post(server.port, &format!("/api/projects/{id}/git/discard"), json!({ "paths": ["kept.txt", "dir/newer.txt"] })).await.0, 204);
+    assert_eq!(fs::read_to_string(repo.join("kept.txt")).unwrap(), "kept\n");
+    assert!(!repo.join("dir/newer.txt").exists());
+    assert!(repo.join("dir/new*.txt").exists());
+
+    let commit = format!("/api/projects/{id}/git/commit");
+    assert_eq!(post(server.port, &commit, json!({ "message": "  " })).await.0, 400);
+    assert_eq!(post(server.port, &commit, json!({ "message": "Add new\n\nWith a body" })).await.0, 204);
+    assert_eq!(log_message(&repo, "HEAD"), "Add new\n\nWith a body");
+    assert_eq!(status().await["staged"], json!([]));
+    assert_eq!(post(server.port, &commit, json!({ "message": "Nothing" })).await.0, 409);
+
+    assert_eq!(post(server.port, &format!("/api/projects/{id}/git/undo"), json!(null)).await, (200, json!("Add new\n\nWith a body").to_string()));
+    assert_eq!(log_message(&repo, "HEAD"), "Initial commit");
+    assert_eq!(status().await["staged"], json!([{ "path": "dir/new*.txt", "kind": "added" }]));
+
+    assert_eq!(post(server.port, &format!("/api/projects/{id}/git/unstage"), json!({ "paths": ["dir/new*.txt"] })).await.0, 204);
+    assert_eq!(status().await["unstaged"], json!([{ "path": "dir/new*.txt", "kind": "untracked" }]));
+    assert_eq!(post(server.port, &format!("/api/projects/{id}/git/discard"), json!({ "paths": ["../outside"] })).await.0, 403);
+}
+
+#[tokio::test]
+async fn a_failing_hook_reports_what_it_printed() {
+    let server = Server::start("git-hook").await;
+    let repo = repository(&server, "hooked");
+    fs::write(repo.join("file.txt"), "file\n").unwrap();
+    git(&repo, &["add", "."]);
+    fs::write(repo.join(".git/hooks/pre-commit"), "#!/bin/sh\necho 'lint: trailing whitespace in file.txt'\nexit 1\n").unwrap();
+    Command::new("chmod").arg("+x").arg(repo.join(".git/hooks/pre-commit")).status().unwrap();
+    let id = open(server.port, &repo).await;
+    let (status, body) = post(server.port, &format!("/api/projects/{id}/git/commit"), json!({ "message": "Add file" })).await;
+    assert_eq!((status, body.as_str()), (400, "lint: trailing whitespace in file.txt"));
+}
+
+#[tokio::test]
+async fn any_unpushed_commit_can_be_reworded_without_touching_the_work() {
+    let server = Server::start("git-reword").await;
+    let origin = server.root.path().join("origin.git");
+    git(server.root.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    let repo = repository(&server, "reword");
+    git(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    for name in ["one", "two", "three"] {
+        fs::write(repo.join(format!("{name}.txt")), format!("{name}\n")).unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", name]);
+        if name == "one" { git(&repo, &["push", "-qu", "origin", "main"]); }
+    }
+    git(&repo, &["checkout", "-qb", "side", "HEAD~1"]);
+    fs::write(repo.join("side.txt"), "side\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "side"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    git(&repo, &["merge", "-q", "--no-ff", "side", "-m", "Merge side"]);
+    fs::write(repo.join("three.txt"), "dirty\n").unwrap();
+    fs::write(repo.join("one.txt"), "staged\n").unwrap();
+    git(&repo, &["add", "one.txt"]);
+    let tree = rev_parse(&repo, "HEAD^{tree}");
+    let [two, one] = ["HEAD~2", "HEAD~3"].map(|rev| rev_parse(&repo, rev));
+    let id = open(server.port, &repo).await;
+    let reword = format!("/api/projects/{id}/git/reword");
+
+    assert_eq!(text(server.port, format!("/api/projects/{id}/git/commit/{two}/message")).await, "two");
+    assert_eq!(post(server.port, &reword, json!({ "sha": &two[..7], "message": "Two, reworded\n\nWith a body\n" })).await.0, 204);
+    assert_eq!(log_message(&repo, "HEAD~2"), "Two, reworded\n\nWith a body");
+    assert_eq!(log_message(&repo, "HEAD"), "Merge side");
+    assert_eq!(log_message(&repo, "HEAD^2"), "side");
+    assert_eq!(rev_parse(&repo, "HEAD^2~1"), rev_parse(&repo, "HEAD~2"));
+    assert_eq!(rev_parse(&repo, "HEAD^{tree}"), tree);
+    assert_eq!(rev_parse(&repo, "HEAD~3"), one);
+    assert_eq!(fs::read_to_string(repo.join("three.txt")).unwrap(), "dirty\n");
+    let status = get(server.port, &format!("/api/projects/{id}/git")).await;
+    assert_eq!(status["staged"], json!([{ "path": "one.txt", "kind": "modified" }]));
+    assert_eq!(status["unstaged"], json!([{ "path": "three.txt", "kind": "modified" }]));
+
+    let head = rev_parse(&repo, "HEAD");
+    assert_eq!(post(server.port, &reword, json!({ "sha": head, "message": "Merge the side branch" })).await.0, 204);
+    assert_eq!(log_message(&repo, "HEAD"), "Merge the side branch");
+    let (status, body) = post(server.port, &reword, json!({ "sha": one, "message": "Pushed" })).await;
+    assert_eq!(status, 409);
+    assert!(body.contains("origin/main"), "{body}");
+    assert_eq!(log_message(&repo, "HEAD~3"), "one");
+}
+
+#[tokio::test]
+async fn conflicts_must_be_resolved_before_anything_risky() {
+    let server = Server::start("git-conflict").await;
+    let repo = repository(&server, "conflict");
+    fs::write(repo.join("clash.txt"), "base\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "Base"]);
+    git(&repo, &["checkout", "-qb", "other"]);
+    fs::write(repo.join("clash.txt"), "theirs\n").unwrap();
+    git(&repo, &["commit", "-qam", "Theirs"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    fs::write(repo.join("clash.txt"), "ours\n").unwrap();
+    git(&repo, &["commit", "-qam", "Ours"]);
+    let merged = Command::new("git").arg("-C").arg(&repo).args(["merge", "-q", "other"]).output().unwrap();
+    assert!(!merged.status.success());
+    let id = open(server.port, &repo).await;
+    let status = get(server.port, &format!("/api/projects/{id}/git")).await;
+    assert_eq!(status["operation"], "merge");
+    assert_eq!(status["conflicted"], json!([{ "path": "clash.txt", "kind": "conflicted" }]));
+    assert_eq!(status["staged"], json!([]));
+
+    let action = |name: &str| format!("/api/projects/{id}/git/{name}");
+    assert_eq!(post(server.port, &action("stage"), json!({ "paths": ["clash.txt"] })).await.0, 409);
+    assert_eq!(post(server.port, &action("discard"), json!({ "paths": ["clash.txt"] })).await.0, 409);
+    assert_eq!(post(server.port, &action("commit"), json!({ "message": "Merge" })).await.0, 409);
+    for name in ["undo", "stashes", "pull"] {
+        assert_eq!(post(server.port, &action(name), json!(null)).await.0, 409, "{name}");
+    }
+    assert!(fs::read_to_string(repo.join("clash.txt")).unwrap().contains("<<<<<<<"));
+
+    fs::write(repo.join("clash.txt"), "both\n").unwrap();
+    assert_eq!(post(server.port, &action("stage"), json!({ "paths": ["clash.txt"] })).await.0, 204);
+    assert_eq!(post(server.port, &action("commit"), json!({ "message": "Merge other" })).await.0, 204);
+    let status = get(server.port, &format!("/api/projects/{id}/git")).await;
+    assert!(status.get("operation").is_none());
+    assert_eq!(log_message(&repo, "HEAD"), "Merge other");
+    assert_eq!(rev_parse(&repo, "HEAD^2"), rev_parse(&repo, "other"));
+}
+
+#[tokio::test]
+async fn branches_publish_push_fetch_and_fast_forward_against_origin() {
+    let server = Server::start("git-remote").await;
+    let origin = server.root.path().join("origin.git");
+    git(server.root.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    let repo = repository(&server, "local");
+    git(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "Initial commit"]);
+    let id = open(server.port, &repo).await;
+    let url = format!("/api/projects/{id}/git");
+    let status = || get(server.port, &url);
+    let action = |name: &str| format!("/api/projects/{id}/git/{name}");
+
+    let unpublished = status().await;
+    assert_eq!((&unpublished["origin"], unpublished.get("upstream")), (&json!(true), None));
+    assert_eq!(post(server.port, &action("push"), json!(null)).await.0, 409);
+    assert_eq!(post(server.port, &action("publish"), json!(null)).await.0, 204);
+    assert_eq!(status().await["upstream"], "origin/main");
+
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "Local"]);
+    assert_eq!(status().await["ahead"], 1);
+    assert_eq!(post(server.port, &action("push"), json!(null)).await.0, 204);
+    assert_eq!(status().await["ahead"], 0);
+
+    let other = server.root.path().join("other");
+    git(server.root.path(), &["clone", "-q", origin.to_str().unwrap(), other.to_str().unwrap()]);
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "Remote"]);
+    git(&other, &["push", "-q"]);
+    assert_eq!(post(server.port, &action("fetch"), json!(null)).await.0, 204);
+    assert_eq!(status().await["behind"], 1);
+    assert_eq!(post(server.port, &action("pull"), json!(null)).await.0, 204);
+    assert_eq!((status().await["behind"].clone(), log_message(&repo, "HEAD")), (json!(0), "Remote".to_owned()));
+
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "Diverged"]);
+    git(&other, &["push", "-q"]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "Mine"]);
+    assert_eq!(post(server.port, &action("fetch"), json!(null)).await.0, 204);
+    assert_eq!(post(server.port, &action("pull"), json!(null)).await.0, 400);
+    assert_eq!(log_message(&repo, "HEAD"), "Mine");
+    let (code, body) = post(server.port, &action("undo"), json!(null)).await;
+    assert_eq!(code, 200, "{body}");
+    let (code, body) = post(server.port, &action("undo"), json!(null)).await;
+    assert_eq!(code, 409, "{body}");
+}
+
+#[tokio::test]
+async fn changes_stash_and_come_back() {
+    let server = Server::start("git-stash").await;
+    let repo = repository(&server, "stash");
+    fs::write(repo.join("file.txt"), "file\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "Initial commit"]);
+    fs::write(repo.join("file.txt"), "edited\n").unwrap();
+    fs::write(repo.join("new.txt"), "new\n").unwrap();
+    let id = open(server.port, &repo).await;
+    let stashes = format!("/api/projects/{id}/git/stashes");
+
+    assert_eq!(post(server.port, &stashes, json!(null)).await.0, 204);
+    assert_eq!(get(server.port, &format!("/api/projects/{id}/git")).await["changes"], json!([]));
+    let listed = get(server.port, &stashes).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert!(listed[0]["message"].as_str().unwrap().starts_with("WIP on main"), "{listed}");
+    assert_eq!(post(server.port, &format!("{stashes}/0/peek"), json!(null)).await.0, 404);
+    assert_eq!(post(server.port, &format!("{stashes}/0/pop"), json!(null)).await.0, 204);
+    assert_eq!(fs::read_to_string(repo.join("file.txt")).unwrap(), "edited\n");
+    assert_eq!(fs::read_to_string(repo.join("new.txt")).unwrap(), "new\n");
+    assert_eq!(get(server.port, &stashes).await, json!([]));
+}
+
+#[tokio::test]
+async fn the_commit_rig_drafts_a_message_from_the_staged_diff() {
+    let received = tempfile::tempdir().unwrap();
+    let log = received.path().join("received.jsonl");
+    let config = format!(r#"
+[[rig]]
+name = "Coder"
+agent = "claude-code"
+env = {{ STAMPEDE_FAKE_FIXTURE = "simple-turn" }}
+
+[[rig]]
+name = "Writer"
+agent = "claude-code"
+env = {{ STAMPEDE_FAKE_FIXTURE = "simple-turn", STAMPEDE_FAKE_RECEIVED = "{}" }}
+"#, log.display());
+    let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), std::env::var("PATH").unwrap());
+    let server = Server::with_env("git-draft", &config, vec![("PATH", path.into())]).await;
+    let repo = repository(&server, "draft");
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "Earlier subject"]);
+    fs::write(repo.join("feature.txt"), "a distinctive line\n").unwrap();
+    let id = open(server.port, &repo).await;
+    let draft = format!("/api/projects/{id}/git/draft");
+    assert_eq!(post(server.port, &draft, json!(null)).await.0, 409);
+    git(&repo, &["add", "."]);
+
+    let choose = |name: &str| put(server.port, "/api/commit-rig", json!(name));
+    assert_eq!(get(server.port, "/api/commit-rig").await, "Coder");
+    assert_eq!(choose("Nobody").await.0, 400);
+    assert_eq!(choose("Writer").await.0, 200);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while get(server.port, "/api/commit-rig").await != "Writer" { tokio::time::sleep(std::time::Duration::from_millis(20)).await; }
+    }).await.unwrap();
+    let (code, body) = post(server.port, &draft, json!(null)).await;
+    assert_eq!((code, serde_json::from_str::<Value>(&body).unwrap()), (200, json!("Hello and **welcome**! 👋")));
+    let prompt = fs::read_to_string(&log).unwrap();
+    assert!(prompt.contains("a distinctive line") && prompt.contains("Earlier subject"), "{prompt}");
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    assert_eq!(next_control(&mut socket, "hello").await["chats"], json!([]));
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while fs::read_dir(server.root.path().join("data/chats")).unwrap().next().is_some() { tokio::time::sleep(std::time::Duration::from_millis(20)).await; }
+    }).await.unwrap();
 }
 
 #[tokio::test]
@@ -79,7 +351,7 @@ async fn a_non_git_directory_is_not_a_repo() {
     fs::write(dir.join("file.txt"), "plain\n").unwrap();
 
     let id = open(server.port, &dir).await;
-    let expected = json!({ "isRepo": false, "isRoot": false, "changes": [] });
+    let expected = json!({ "isRepo": false, "isRoot": false, "ahead": 0, "behind": 0, "changes": [], "staged": [], "unstaged": [], "conflicted": [] });
     assert_eq!(get(server.port, &format!("/api/projects/{id}/git")).await, expected);
     assert_eq!(get(server.port, &format!("/api/projects/{id}/git/log")).await, json!({ "commits": [] }));
 }
@@ -138,6 +410,35 @@ async fn a_commit_is_diffed_against_its_first_parent() {
     assert_eq!(sides(port, &id, &main, "b.txt", "c.txt").await, ["b\nb\nb\n", "b\nb\nb\n"]);
     assert_eq!(sides(port, &id, &main, "gone.txt", "gone.txt").await, ["gone\n", ""]);
     assert_eq!(sides(port, &id, &root, "a.txt", "a.txt").await, ["", "one\n"]);
+}
+
+fn repository(server: &Server, name: &str) -> std::path::PathBuf {
+    let repo = server.root.path().join(name);
+    fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    for (key, value) in [("user.name", "stampede"), ("user.email", "test@stampede.invalid"), ("commit.gpgsign", "false")] {
+        git(&repo, &["config", key, value]);
+    }
+    repo
+}
+
+fn log_message(repo: &Path, rev: &str) -> String {
+    let output = Command::new("git").arg("-C").arg(repo).args(["log", "-1", "--format=%B", rev]).output().unwrap();
+    String::from_utf8(output.stdout).unwrap().trim_end().to_owned()
+}
+
+async fn post(port: u16, path: &str, body: Value) -> (u16, String) {
+    send(reqwest::Client::new().post(format!("http://127.0.0.1:{port}{path}")), body).await
+}
+
+async fn put(port: u16, path: &str, body: Value) -> (u16, String) {
+    send(reqwest::Client::new().put(format!("http://127.0.0.1:{port}{path}")), body).await
+}
+
+async fn send(request: reqwest::RequestBuilder, body: Value) -> (u16, String) {
+    let request = if body.is_null() { request } else { request.header("Content-Type", "application/json").body(body.to_string()) };
+    let response = request.send().await.unwrap();
+    (response.status().as_u16(), response.text().await.unwrap())
 }
 
 fn git(repo: &Path, args: &[&str]) {

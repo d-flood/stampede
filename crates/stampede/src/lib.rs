@@ -114,6 +114,7 @@ fn router(state: AppState) -> Router {
         .route("/api/font", get(font))
         .route("/api/rigs", get(rigs).put(rigs::save).delete(rigs::delete))
         .route("/api/rigs/options", get(rigs::options))
+        .route("/api/commit-rig", get(commit_rig).put(set_commit_rig))
         .route("/api/rigs/order", put(rigs::reorder))
         .route("/api/usage/codex/reset", post(usage::reset))
         .route("/api/templates", get(templates))
@@ -145,6 +146,21 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/git/log", get(git::history))
         .route("/api/projects/{id}/git/commit/{sha}", get(git::commit))
         .route("/api/projects/{id}/git/show", get(git::show))
+        .route("/api/projects/{id}/git/index", get(git::index))
+        .route("/api/projects/{id}/git/commit/{sha}/message", get(git::message))
+        .route("/api/projects/{id}/git/stage", post(git::actions::stage))
+        .route("/api/projects/{id}/git/unstage", post(git::actions::unstage))
+        .route("/api/projects/{id}/git/discard", post(git::actions::discard))
+        .route("/api/projects/{id}/git/commit", post(git::actions::commit))
+        .route("/api/projects/{id}/git/undo", post(git::actions::undo))
+        .route("/api/projects/{id}/git/reword", post(git::actions::reword))
+        .route("/api/projects/{id}/git/draft", post(git::actions::draft))
+        .route("/api/projects/{id}/git/fetch", post(git::actions::fetch))
+        .route("/api/projects/{id}/git/pull", post(git::actions::pull))
+        .route("/api/projects/{id}/git/push", post(git::actions::push))
+        .route("/api/projects/{id}/git/publish", post(git::actions::publish))
+        .route("/api/projects/{id}/git/stashes", get(git::actions::stashes).post(git::actions::stash))
+        .route("/api/projects/{id}/git/stashes/{index}/{action}", post(git::actions::unstash))
         .route("/api/lsp/log", get(language_servers::log))
         .route("/fonts/host/{index}", get(host_font))
         .route("/manifest.webmanifest", get(manifest))
@@ -329,6 +345,18 @@ async fn font(State(state): State<AppState>) -> Json<Font> {
 
 async fn rigs(State(state): State<AppState>) -> Json<Vec<Rig>> {
     Json(state.config.borrow().rigs.clone())
+}
+
+async fn commit_rig(State(state): State<AppState>) -> Json<Option<String>> {
+    Json(state.config.borrow().commit_rig().map(|rig| rig.name.clone()))
+}
+
+async fn set_commit_rig(State(state): State<AppState>, Json(name): Json<String>) -> Result<Json<String>, files::Failure> {
+    tokio::task::spawn_blocking(move || config::write_commit_rig(&state.config_path, &name))
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
 }
 
 async fn templates() -> Json<&'static [templates::Template]> {

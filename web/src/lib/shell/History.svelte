@@ -1,9 +1,17 @@
 <script lang="ts">
 	import type { Device } from '#lib/device.svelte.ts';
-	import { commitFiles, letters, log, split, type Change, type Commit } from '#lib/git.ts';
+	import { commitFiles, letters, log, message, reword, split, undo, type Change, type Commit } from '#lib/git.ts';
+	import { restoreMessage } from '#lib/shell/Changes.svelte';
+	import Button from '#lib/ui/Button.svelte';
+	import Dialog from '#lib/ui/Dialog.svelte';
+	import IconButton from '#lib/ui/IconButton.svelte';
+	import Menu from '#lib/ui/Menu.svelte';
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import ArrowUUpLeft from '~icons/ph/arrow-u-up-left';
 	import CaretRight from '~icons/ph/caret-right';
+	import DotsThree from '~icons/ph/dots-three';
+	import PencilSimple from '~icons/ph/pencil-simple';
 
 	type Props = { projectId: string; device: Device; onopen(change: Change, commit: Commit): void };
 
@@ -13,6 +21,10 @@
 	let cursor = $state<string>();
 	let files = $state<Record<string, Change[]>>({});
 	const expanded = new SvelteSet<string>();
+	let editing = $state<{ commit: Commit; text: string; loaded: boolean }>();
+	let saving = $state(false);
+	let refusal = $state<string>();
+	let failure = $state<string>();
 	let refreshes = 0;
 	let requested: string | undefined;
 
@@ -52,22 +64,103 @@
 		expanded.add(sha);
 		files[sha] ??= await commitFiles(projectId, sha);
 	}
+
+	async function edit(commit: Commit) {
+		editing = { commit, text: '', loaded: false };
+		refusal = undefined;
+		try {
+			const text = await message(projectId, commit.sha);
+			if (editing?.commit.sha === commit.sha) editing = { commit, text, loaded: true };
+		} catch (error) {
+			refusal = error instanceof Error ? error.message : String(error);
+		}
+	}
+
+	async function save(event?: SubmitEvent) {
+		event?.preventDefault();
+		if (!editing?.loaded || !editing.text.trim() || saving) return;
+		saving = true;
+		refusal = undefined;
+		try {
+			await reword(projectId, editing.commit.sha, editing.text);
+			editing = undefined;
+		} catch (error) {
+			refusal = error instanceof Error ? error.message : String(error);
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function undoCommit() {
+		failure = undefined;
+		try {
+			restoreMessage(projectId, await undo(projectId));
+		} catch (error) {
+			failure = error instanceof Error ? error.message : String(error);
+		}
+	}
+
+	function key(event: KeyboardEvent & { currentTarget: HTMLElement }) {
+		if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+		const row = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('[data-sha]') : null;
+		const rows = [...event.currentTarget.querySelectorAll<HTMLElement>('[data-sha]')];
+		const commit = commits?.find(({ sha }) => sha === row?.dataset.sha);
+		const at = row ? rows.indexOf(row) : -1;
+		const actions: Record<string, () => void> = {
+			j: () => rows[Math.min(rows.length - 1, at + 1)]?.focus(),
+			ArrowDown: () => rows[Math.min(rows.length - 1, at + 1)]?.focus(),
+			k: () => rows[Math.max(0, at - 1)]?.focus(),
+			ArrowUp: () => rows[Math.max(0, at - 1)]?.focus(),
+			r: () => commit && edit(commit),
+			z: undoCommit
+		};
+		const action = actions[event.key];
+		if (!action) return;
+		event.preventDefault();
+		action();
+	}
 </script>
 
 <section aria-label="History">
 	<header><h2>History</h2></header>
-	<div class="list" onscroll={scrolled}>
+	{#if failure}<p class="failure" role="alert">{failure}</p>{/if}
+	<!-- svelte-ignore a11y_no_static_element_interactions (Keys act on the focused commit.) -->
+	<div class="list" onscroll={scrolled} onkeydown={key}>
 		<ul aria-label="Commits">
-			{#each commits ?? [] as commit (commit.sha)}
+			{#each commits ?? [] as commit, index (commit.sha)}
 				{@const open = expanded.has(commit.sha)}
+				{@const items = [
+					{ label: 'Edit Message…', icon: PencilSimple, hint: 'r', onselect: () => edit(commit) },
+					...(index === 0 ? [{ label: 'Undo Last Commit', icon: ArrowUUpLeft, hint: 'z', onselect: undoCommit }] : [])
+				]}
 				<li>
-					<button class="commit" aria-expanded={open} title={commit.subject} onclick={() => toggle(commit.sha)}>
-						<span class="caret" class:open><CaretRight /></span>
-						<span class="text">
-							<span class="subject">{commit.subject}</span>
-							<span class="meta"><span class="sha">{commit.short}</span> · {commit.author} · {commit.date}</span>
-						</span>
-					</button>
+					<div class="row">
+						<Menu context {items}>
+							{#snippet trigger(props)}
+								<button
+									{...props}
+									class="commit"
+									data-sha={commit.sha}
+									aria-expanded={open}
+									title={commit.subject}
+									onclick={(event) => {
+										if (event.currentTarget.dataset.state !== 'open') toggle(commit.sha);
+									}}
+								>
+									<span class="caret" class:open><CaretRight /></span>
+									<span class="text">
+										<span class="subject">{commit.subject}</span>
+										<span class="meta"><span class="sha">{commit.short}</span> · {commit.author} · {commit.date}</span>
+									</span>
+								</button>
+							{/snippet}
+						</Menu>
+						<Menu {items}>
+							{#snippet trigger(props)}
+								<IconButton {...props} label={`Actions for ${commit.short}`}><DotsThree /></IconButton>
+							{/snippet}
+						</Menu>
+					</div>
 					{#if open && files[commit.sha]}
 						<ul aria-label="Files in {commit.short}">
 							{#each files[commit.sha] as change (change.path)}
@@ -96,6 +189,32 @@
 		{#if commits?.length === 0}<p>No commits</p>{/if}
 	</div>
 </section>
+
+<Dialog
+	bind:open={() => !!editing, (open) => !open && (editing = undefined)}
+	title="Edit commit message"
+	description={editing ? `${editing.commit.short} · ${editing.commit.subject}` : ''}
+>
+	{#if editing}
+		<form id="reword" onsubmit={save}>
+			<textarea
+				bind:value={editing.text}
+				aria-label="Commit message"
+				rows="8"
+				spellcheck="true"
+				disabled={!editing.loaded || saving}
+				onkeydown={(event) => {
+					if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) save();
+				}}
+			></textarea>
+			{#if refusal}<p role="alert">{refusal}</p>{/if}
+		</form>
+	{/if}
+	{#snippet actions()}
+		<Button disabled={saving} onclick={() => (editing = undefined)}>Cancel</Button>
+		<Button type="submit" form="reword" variant="primary" disabled={saving || !editing?.loaded || !editing.text.trim()}>{saving ? 'Saving…' : 'Save'}</Button>
+	{/snippet}
+</Dialog>
 
 <style>
 	section {
@@ -154,7 +273,43 @@
 		outline-offset: calc(-1 * var(--border-width));
 	}
 
+	.row {
+		display: flex;
+		align-items: center;
+	}
+
+	.row:hover {
+		background: var(--hover);
+	}
+
+	.row button:hover {
+		background: none;
+	}
+
+	textarea {
+		box-sizing: border-box;
+		width: 100%;
+		padding: var(--space-2);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface-2);
+		color: var(--color-fg);
+		font: inherit;
+		line-height: 1.5;
+		resize: vertical;
+	}
+
+	textarea:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
+	}
+
+	.failure {
+		color: var(--git-deleted);
+	}
+
 	.commit {
+		flex: 1;
+		min-width: 0;
 		align-items: center;
 		gap: var(--space-1);
 		padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
