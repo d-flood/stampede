@@ -165,7 +165,7 @@ _Avoid_: git decoration, dirty marker
 ### Layout
 
 **Project rail**:
-The column of open Projects used to hop between them, each marked when something inside needs attention or a Run is live; its worktree Projects, an Epic's or made by hand, sit beside the Project they belong to until deleted.
+The column of open Projects used to hop between them, collapsed to icons or expanded to show each one's path, each marked when something inside needs attention or a Run is live; its worktree Projects, an Epic's or made by hand, are counted on the Project they belong to and listed under it until deleted.
 _Avoid_: project list, project sidebar
 
 **Tab**:

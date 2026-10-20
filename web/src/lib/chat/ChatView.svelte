@@ -17,6 +17,7 @@
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { painted } from '#lib/paint.svelte.ts';
 	import { onMount, tick } from 'svelte';
 	import { on } from 'svelte/events';
 
@@ -43,6 +44,10 @@
 		model: capabilities.models.map((value) => ({ value, label: value })),
 		effort: capabilities.efforts.map((value) => ({ value, label: value })),
 		mode: capabilities.modes
+	});
+
+	$effect(() => {
+		if (active && attached) painted(chat.id);
 	});
 
 	onMount(() => {

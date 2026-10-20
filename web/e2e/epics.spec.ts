@@ -637,12 +637,12 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 	const parent = rail.getByRole('button', { name: slug, exact: true });
 	const row = rail.getByRole('listitem').filter({ has: page.getByRole('button', { name: slug, exact: true }) });
 	const worktrees = row.getByRole('group', { name: `Worktrees of ${slug}` });
-	await expect(worktrees.getByRole('button')).toHaveText(['In', '1', '2'], { timeout: 15000 });
+	await expect(worktrees.locator('.tile')).toHaveText(['In', '1', '2'], { timeout: 15000 });
 	await expect(worktrees.getByRole('button', { name: `Integration ${slug}`, exact: true })).toBeVisible();
 	const second = worktrees.getByRole('button', { name: `${slug}/2, working`, exact: true });
 	await expect(worktrees.getByRole('button', { name: `${slug}/1, working`, exact: true })).toBeVisible();
 	await expect(second).toBeVisible();
-	await expect.poll(() => second.evaluate((tile) => {
+	await expect.poll(() => second.locator('.tile').evaluate((tile) => {
 		const computed = getComputedStyle(tile);
 		const probe = document.createElement('span');
 		probe.style.color = computed.getPropertyValue('--status-working');
@@ -654,7 +654,7 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 	await expect.poll(async () => {
 		const avatar = await parent.boundingBox();
 		const column = await worktrees.boundingBox();
-		return !!avatar && !!column && column.x >= avatar.x + avatar.width && Math.abs(column.y - avatar.y) < 2;
+		return !!avatar && !!column && column.y >= avatar.y + avatar.height - 1;
 	}).toBe(true);
 	await expect(row).toContainText(phone ? `Run ${slug} · 0 of 2` : '0/2');
 	await row.screenshot({ path: test.info().outputPath('worktrees.png') });

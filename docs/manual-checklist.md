@@ -90,8 +90,8 @@ Use a throwaway Project and repeat with each available real Agent, Claude Code a
 - [ ] Confirming the Setup Command records it on the Epic.
 - [ ] Starting a Run at parallel 2 works two unblocked Tickets concurrently.
 - [ ] Each worker is a Chat using its Rig's model, effort and permission mode.
-- [ ] Desktop shows the Integration and Ticket worktree Projects beside their parent.
-- [ ] The phone Projects screen shows the same worktree Projects beside their parent.
+- [ ] Desktop shows the Integration and Ticket worktree Projects under their parent.
+- [ ] The phone Projects screen shows the same worktree Projects under their parent.
 - [ ] Opening a worktree tile shows that worktree's Files, Changes and Ticket Chat.
 - [ ] A pending worker approval appears in its Chat on the Pixel.
 - [ ] Answering the approval on the Pixel lets that worker continue.

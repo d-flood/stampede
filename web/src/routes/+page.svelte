@@ -91,6 +91,7 @@
 	let main: HTMLElement;
 	let sidebar = $state(restored.sidebar?.open ?? form() === 'desktop');
 	let section = $state<Section>(restored.sidebar?.section ?? 'files');
+	let rail = $state(restored.rail?.open ?? false);
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
 	let closingChat = $state<Chat>();
@@ -171,7 +172,7 @@
 		{ title: sectionShowing(section, focused && git[focused.id]).label, sub: label }
 	]);
 	const deviceLayout = $derived(
-		capture({ chosen, terminals, chats, files, browsers, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section } })
+		capture({ chosen, terminals, chats, files, browsers, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section }, rail: { open: rail } })
 	);
 
 	$effect(() => device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics }));
@@ -1113,6 +1114,7 @@
 {:else}
 	<div class="shell">
 		<Rail
+			bind:open={rail}
 			projects={ownProjects}
 			labels={projectLabels}
 			worktrees={nested}

@@ -44,6 +44,22 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await expect(tab).toHaveCount(0);
 });
 
+test('a page that loads onto a Chat opens context menus on right-click', async ({ page }, { project }) => {
+	const name = `chat-menus-${project.name}`;
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	await expect(tab.getByTitle('done')).toBeVisible();
+
+	await page.reload();
+	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	if (project.name === 'pixel') await page.getByRole('button', { name: 'Previous screen' }).click();
+	await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name, exact: true }).click({ button: 'right' });
+	await expect(page.getByRole('menuitem', { name: 'Change project icon…' })).toBeVisible();
+});
+
 test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, { project }) => {
 	const name = `codex-chat-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });

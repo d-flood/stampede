@@ -1,14 +1,17 @@
 <script lang="ts">
 	import type { Epic, Project } from '#lib/device.svelte.ts';
-	import { counts } from '#lib/epics.svelte.ts';
 	import type { Tile } from '#lib/projects.ts';
-	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
+	import ProjectRow from '#lib/shell/ProjectRow.svelte';
+	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
-	import Menu from '#lib/ui/Menu.svelte';
 	import type { Snippet } from 'svelte';
+	import CaretDoubleLeft from '~icons/ph/caret-double-left';
+	import CaretDoubleRight from '~icons/ph/caret-double-right';
+	import FolderOpen from '~icons/ph/folder-open';
 	import Plus from '~icons/ph/plus';
 
 	type Props = {
+		open?: boolean;
 		projects: Project[];
 		labels: Map<string, string>;
 		worktrees: Map<string, Tile[]>;
@@ -26,7 +29,9 @@
 		attention?: Snippet;
 	};
 
-	let { projects, labels, worktrees, epics, roots, focused, onfocus, onreorder, onclose, ondelete, onworktree, onpick, onicon, badge, attention }: Props = $props();
+	let { open = $bindable(false), projects, labels, worktrees, epics, roots, focused, onfocus, onreorder, onclose, ondelete, onworktree, onpick, onicon, badge, attention }: Props = $props();
+
+	const gutter = $derived(projects.some((project) => worktrees.get(project.id)?.length));
 
 	let list: HTMLOListElement;
 	let drag = $state<{ id: string; y: number; order: string[]; moved: boolean }>();
@@ -71,80 +76,47 @@
 	}
 </script>
 
-<nav aria-label="Projects">
+<nav aria-label="Projects" class:open>
+	<div class="top">
+		<IconButton label={open ? 'Collapse project rail' : 'Expand project rail'} aria-expanded={open} onclick={() => (open = !open)}>
+			{#if open}<CaretDoubleLeft />{:else}<CaretDoubleRight />{/if}
+		</IconButton>
+	</div>
 	<ol bind:this={list} onpointerdown={pointerdown}>
 		{#each shown as project (project.id)}
-			{@const label = labels.get(project.id) ?? project.path}
-			{@const tiles = worktrees.get(project.id) ?? []}
-			<li>
-				<span class="own">
-					<Menu context items={[
-						{ label: 'Change project icon…', onselect: () => onicon(project) },
-						...(roots.has(project.id) ? [{ label: 'New worktree…', onselect: () => onworktree(project) }] : []),
-						{ label: 'Close', onselect: () => onclose(project.id) }
-					]}>
-						{#snippet trigger(props)}
-							<button
-								{...props}
-								tabindex={0}
-								class="project"
-								class:focused={project.id === focused}
-								class:dragging={drag?.moved && drag.id === project.id}
-								aria-label={label}
-								aria-current={project.id === focused}
-								title={label}
-								data-project={project.id}
-								onclick={() => {
-									if (!dragged) onfocus(project.id);
-								}}
-							>
-								<ProjectIcon {project} />
-								{#if badge}<span class="badge">{@render badge(project)}</span>{/if}
-							</button>
-						{/snippet}
-					</Menu>
-					{#each (epics[project.id] ?? []).filter((epic) => epic.run && !epic.archived) as epic (epic.slug)}
-						{@const tally = counts(epic)}
-						<span class="progress" title="Run {epic.slug}: {tally.merged + tally.skipped} of {epic.tickets.length} resolved">
-							{tally.merged + tally.skipped}/{epic.tickets.length}
-						</span>
-					{/each}
-				</span>
-				{#if tiles.length}
-					<div class="worktrees" role="group" aria-label="Worktrees of {label}">
-						{#each tiles as tile (tile.id)}
-							{@const name = labels.get(tile.id) ?? tile.mark}
-							<Menu context items={[{ label: 'Delete worktree', onselect: () => ondelete(tile.id) }]}>
-								{#snippet trigger(props)}
-									<button
-										{...props}
-										tabindex={0}
-										class="tile {tile.status ?? ''}"
-										class:focused={tile.id === focused}
-										aria-label={tile.status ? `${name}, ${tile.status}` : name}
-										aria-current={tile.id === focused}
-										title={tile.status ? `${name} ${tile.status}` : name}
-										onclick={() => onfocus(tile.id)}
-									>
-										{tile.mark}
-									</button>
-								{/snippet}
-							</Menu>
-						{/each}
-					</div>
-				{/if}
-			</li>
+			<ProjectRow
+				{project}
+				label={labels.get(project.id) ?? project.path}
+				{labels}
+				tiles={worktrees.get(project.id) ?? []}
+				epics={epics[project.id] ?? []}
+				root={roots.has(project.id)}
+				compact={!open}
+				{gutter}
+				{focused}
+				dragging={!!drag?.moved && drag.id === project.id}
+				onfocus={(id) => {
+					if (!dragged) onfocus(id);
+				}}
+				{onclose}
+				{ondelete}
+				{onworktree}
+				{onicon}
+				{badge}
+			/>
 		{/each}
 	</ol>
-	<IconButton label="Open Project" onclick={onpick}><Plus /></IconButton>
+	{#if open}
+		<Button onclick={onpick}><FolderOpen /> Open Project</Button>
+	{:else}
+		<IconButton label="Open Project" onclick={onpick}><Plus /></IconButton>
+	{/if}
 	<span class="fill"></span>
-	{@render attention?.()}
+	<div class="foot">{@render attention?.()}</div>
 </nav>
 
 <style>
 	nav {
-		--monogram: calc(var(--target-min) + var(--space-2));
-
 		display: flex;
 		flex: none;
 		flex-direction: column;
@@ -154,6 +126,21 @@
 		border-right: var(--border-width) solid var(--border);
 		background: var(--surface-2);
 		user-select: none;
+	}
+
+	nav.open {
+		width: 17rem;
+		align-items: stretch;
+		overflow-y: auto;
+	}
+
+	.top {
+		display: flex;
+		justify-content: center;
+	}
+
+	.open .top {
+		justify-content: flex-end;
 	}
 
 	ol {
@@ -166,142 +153,18 @@
 		list-style: none;
 	}
 
-	li {
-		display: flex;
-		gap: var(--space-2);
+	.fill {
+		flex: 1;
 	}
 
-	.own {
+	.foot {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-1);
+		gap: var(--space-2);
 	}
 
-	.progress {
-		color: var(--status-done);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.worktrees {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-1);
-		padding-left: var(--space-2);
-		border-left: var(--border-width) solid var(--border);
-	}
-
-	.tile {
-		width: var(--target-min);
-		height: var(--target-min);
-		padding: 0;
-		border: var(--border-width) solid var(--muted-fg);
-		border-radius: var(--radius-md);
-		background: var(--surface-1);
-		color: var(--color-fg);
-		font: inherit;
-		font-size: var(--font-size-sm);
-		font-weight: 700;
-		cursor: pointer;
-	}
-
-	.tile:hover {
-		background: var(--hover);
-	}
-
-	.tile.working,
-	.tile.waiting,
-	.tile.done {
-		border-width: 2px;
-		border-color: currentColor;
-	}
-
-	.tile.working {
-		color: var(--status-working);
-	}
-
-	.tile.waiting {
-		color: var(--status-waiting);
-	}
-
-	.tile.done {
-		color: var(--status-done);
-	}
-
-	.tile.stopping {
-		border-style: dashed;
-		color: var(--muted-fg);
-	}
-
-	.tile.focused {
-		outline: var(--border-width) solid var(--color-fg);
-		outline-offset: var(--border-width);
-	}
-
-	.tile:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-		outline-offset: var(--border-width);
-	}
-
-	.project {
-		position: relative;
-		width: var(--monogram);
-		height: var(--monogram);
-		padding: 0;
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-1);
-		color: var(--muted-fg);
-		font: inherit;
-		font-weight: 600;
-		cursor: pointer;
-		touch-action: none;
-		transition:
-			background var(--dur-fast),
-			color var(--dur-fast);
-	}
-
-	.project:hover {
-		background: var(--hover);
-		color: var(--color-fg);
-	}
-
-	.project:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-		outline-offset: var(--border-width);
-	}
-
-	.project.focused {
-		border-color: var(--color-fg);
-		background: var(--color-bg);
-		color: var(--color-fg);
-	}
-
-	.project.focused::before {
-		content: '';
-		position: absolute;
-		top: 20%;
-		bottom: 20%;
-		left: calc(-1 * var(--space-2) - var(--border-width));
-		width: 3px;
-		border-radius: 0 3px 3px 0;
-		background: var(--color-fg);
-	}
-
-	.project.dragging {
-		box-shadow: var(--shadow-float);
-		cursor: grabbing;
-	}
-
-	.badge {
-		position: absolute;
-		top: calc(-1 * var(--space-1));
-		right: calc(-1 * var(--space-1));
-	}
-
-	.fill {
-		flex: 1;
+	.open .foot {
+		flex-direction: row;
 	}
 </style>
