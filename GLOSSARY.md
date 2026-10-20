@@ -113,7 +113,7 @@ Every Ticket that can be taken right now: not started, not held by a Chat, and w
 _Avoid_: ready queue, backlog, next up
 
 **Run**:
-One pass of the loop over an Epic, starting a Chat for each Frontier Ticket up to its parallel limit, until no Ticket can be taken or it is stopped.
+One pass of the loop over an Epic, starting a Chat for each Frontier Ticket up to its parallel limit, then its Review when it names Reviewers, until nothing is left to start or it is stopped.
 _Avoid_: job, batch, execution, cycle
 
 **Paused**:
@@ -151,6 +151,22 @@ _Avoid_: main worktree, staging
 **Resolver**:
 A Chat started in the Integration Worktree to resolve a finished Ticket's conflicted merge.
 _Avoid_: merge agent, merger
+
+**Review**:
+The last stage of a Run that names Reviewers, once every Ticket is merged or skipped: its Reviewers examine the Epic branch, then its Remediator deals with what they found. A Run has at most one.
+_Avoid_: finalization, audit, QA
+
+**Reviewer**:
+A Chat a Review starts with one of its Run's chosen Rigs, in a throwaway worktree of the Epic branch, to record Findings and then report.
+_Avoid_: critic, auditor, review agent
+
+**Finding**:
+A defect a Reviewer records against an Epic, which the Remediator accepts or rejects with a reason.
+_Avoid_: issue, comment, bug report
+
+**Remediator**:
+The one Chat that, once every Reviewer has reported, judges every Finding and fixes the accepted ones in the Integration Worktree, after which its Run finishes.
+_Avoid_: fixer, judge
 
 **Landing**:
 Merging an Epic's branch into the branch it was cut from, in the Project's own checkout, done by hand and refused rather than forced.

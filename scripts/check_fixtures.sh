@@ -113,6 +113,16 @@ agent = "claude-code"
 env = { STAMPEDE_FAKE_FIXTURE = "$PWD/crates/stampede/tests/fixtures/chats/claude-code/verdict.synthetic.jsonl", CLAUDE_CONFIG_DIR = "$STAMPEDE_E2E_ROOT/claude" }
 
 [[rig]]
+name = "Fake Reviewer"
+agent = "claude-code"
+env = { STAMPEDE_FAKE_FIXTURE = "$PWD/crates/stampede/tests/fixtures/chats/claude-code/reviewer.synthetic.jsonl", CLAUDE_CONFIG_DIR = "$STAMPEDE_E2E_ROOT/claude" }
+
+[[rig]]
+name = "Fake Remediator"
+agent = "claude-code"
+env = { STAMPEDE_FAKE_FIXTURE = "$PWD/crates/stampede/tests/fixtures/chats/claude-code/remediator.synthetic.jsonl", CLAUDE_CONFIG_DIR = "$STAMPEDE_E2E_ROOT/claude" }
+
+[[rig]]
 name = "Codex Questions"
 agent = "codex"
 env = { STAMPEDE_FAKE_FIXTURE = "questions", CODEX_HOME = "$STAMPEDE_E2E_ROOT/codex" }

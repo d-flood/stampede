@@ -73,13 +73,24 @@ pub enum Event {
     #[serde(rename = "turn.retried")]
     TurnRetried { ticket: u32, chat: String },
     #[serde(rename = "run.started")]
-    RunStarted { rig: String, parallel: u32 },
+    RunStarted {
+        rig: String,
+        parallel: u32,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reviewers: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remediator: Option<String>,
+    },
     #[serde(rename = "run.changed")]
     RunChanged {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rig: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parallel: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reviewers: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remediator: Option<String>,
     },
     #[serde(rename = "run.finished")]
     RunFinished,
@@ -108,6 +119,24 @@ pub enum Event {
     IntegrationRemoved,
     #[serde(rename = "integration.kept")]
     IntegrationKept { reason: String },
+    #[serde(rename = "review.started")]
+    ReviewStarted,
+    #[serde(rename = "reviewer.started")]
+    ReviewerStarted { reviewer: u32, rig: String, chat: String, worktree: PathBuf },
+    #[serde(rename = "reviewer.failed")]
+    ReviewerFailed { reviewer: u32, rig: String, reason: String },
+    #[serde(rename = "reviewer.reported")]
+    ReviewerReported { reviewer: u32 },
+    #[serde(rename = "finding.added")]
+    FindingAdded { finding: u32, rig: String, title: String, body: String },
+    #[serde(rename = "remediation.started")]
+    RemediationStarted { rig: String, chat: String },
+    #[serde(rename = "remediation.failed")]
+    RemediationFailed { rig: String, reason: String },
+    #[serde(rename = "finding.judged")]
+    FindingJudged { finding: u32, accepted: bool, reason: String },
+    #[serde(rename = "review.remediated")]
+    Remediated { commit: String },
     #[serde(other)]
     Unknown,
 }
@@ -234,6 +263,10 @@ pub struct Epic {
     pub kept: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<Note>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<Review>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Finding>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -249,15 +282,76 @@ pub struct Landed {
     pub head: String,
 }
 
-/// The live Run: the Rig its next Chats start with, how many Tickets it works at once, and why it starts none.
+/// The live Run: the Rig its next Chats start with, how many Chats it runs at once, the Rigs that review the Epic
+/// once its Tickets are done and remediate what they find, and why it starts no Chats.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Run {
     #[serde(skip)]
     pub recovered: BTreeSet<String>,
     pub rig: String,
     pub parallel: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reviewers: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remediator: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paused: Option<Pause>,
+}
+
+/// The last Run's Review of the Epic branch: its Reviewers, numbered in the order the Run names their Rigs, then
+/// the Remediator that judges their Findings.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Review {
+    pub reviewers: Vec<Reviewer>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remediator: Option<Remediator>,
+    /// Its Run has finished or stopped.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub ended: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Reviewer {
+    pub number: u32,
+    pub rig: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<PathBuf>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reported: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Remediator {
+    pub rig: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat: Option<String>,
+    /// The Epic branch's head once it remediated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Finding {
+    pub number: u32,
+    pub rig: String,
+    pub title: String,
+    pub body: String,
+    pub at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub judgment: Option<Judgment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Judgment {
+    pub accepted: bool,
+    pub reason: String,
+    pub at: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -363,6 +457,8 @@ impl Epic {
             landed: None,
             kept: None,
             notes: Vec::new(),
+            review: None,
+            findings: Vec::new(),
         })
     }
 
@@ -542,24 +638,35 @@ impl Epic {
             Event::TurnRetried { chat, .. } => {
                 if let Some(run) = &mut self.run { run.recovered.insert(chat.clone()); }
             }
-            Event::RunStarted { rig, parallel } => {
-                self.run = Some(Run { recovered: BTreeSet::new(), rig: rig.clone(), parallel: *parallel, paused: None });
+            Event::RunStarted { rig, parallel, reviewers, remediator } => {
+                self.run = Some(Run {
+                    recovered: BTreeSet::new(),
+                    rig: rig.clone(),
+                    parallel: *parallel,
+                    reviewers: reviewers.clone(),
+                    remediator: remediator.clone(),
+                    paused: None,
+                });
                 self.call = None;
                 for ticket in self.tickets.values_mut().filter(|ticket| ticket.status == Status::NotStarted) {
                     ticket.attention = None;
                 }
             }
-            Event::RunChanged { rig, parallel } => {
+            Event::RunChanged { rig, parallel, reviewers, remediator } => {
                 if let Some(run) = &mut self.run {
                     run.rig = rig.clone().unwrap_or_else(|| run.rig.clone());
                     run.parallel = parallel.unwrap_or(run.parallel);
+                    run.reviewers = reviewers.clone().unwrap_or_else(|| run.reviewers.clone());
+                    run.remediator = remediator.clone().or_else(|| run.remediator.clone());
                 }
             }
             Event::RigRenamed { original, name } => {
-                if let Some(run) = &mut self.run
-                    && run.rig == *original
-                {
-                    run.rig = name.clone();
+                if let Some(run) = &mut self.run {
+                    for rig in [&mut run.rig].into_iter().chain(&mut run.reviewers).chain(&mut run.remediator) {
+                        if *rig == *original {
+                            *rig = name.clone();
+                        }
+                    }
                 }
                 for ticket in self.tickets.values_mut() {
                     if ticket.rig.as_ref() == Some(original) {
@@ -575,6 +682,7 @@ impl Epic {
             Event::RunFinished => {
                 self.run = None;
                 self.call = Some(Call::Finished);
+                self.end_review();
             }
             Event::RunPaused { pause } => {
                 let Some(run) = &mut self.run else { return };
@@ -594,6 +702,7 @@ impl Epic {
             Event::RunStopped => {
                 self.run = None;
                 self.unpause(None);
+                self.end_review();
                 for ticket in self.tickets.values_mut().filter(|ticket| ticket.status == Status::InProgress) {
                     ticket.releasing = true;
                 }
@@ -608,7 +717,75 @@ impl Epic {
                 self.kept = None;
             }
             Event::IntegrationKept { reason } => self.kept = Some(reason.clone()),
+            Event::ReviewStarted => self.review = Some(Review { reviewers: Vec::new(), remediator: None, ended: false }),
+            Event::ReviewerStarted { reviewer, rig, chat, worktree } => {
+                if let Some(review) = &mut self.review {
+                    review.reviewers.push(Reviewer {
+                        number: *reviewer,
+                        rig: rig.clone(),
+                        chat: Some(chat.clone()),
+                        worktree: Some(worktree.clone()),
+                        reported: false,
+                        failed: None,
+                    });
+                }
+            }
+            Event::ReviewerFailed { reviewer: number, rig, reason } => {
+                let Some(review) = &mut self.review else { return };
+                match review.reviewers.iter_mut().find(|reviewer| reviewer.number == *number) {
+                    Some(reviewer) => reviewer.failed = Some(reason.clone()),
+                    None => review.reviewers.push(Reviewer {
+                        number: *number,
+                        rig: rig.clone(),
+                        chat: None,
+                        worktree: None,
+                        reported: false,
+                        failed: Some(reason.clone()),
+                    }),
+                }
+            }
+            Event::ReviewerReported { reviewer: number } => {
+                let reviewers = self.review.iter_mut().flat_map(|review| &mut review.reviewers);
+                if let Some(reviewer) = reviewers.into_iter().find(|reviewer| reviewer.number == *number) {
+                    reviewer.reported = true;
+                }
+            }
+            Event::FindingAdded { finding, rig, title, body } => self.findings.push(Finding {
+                number: *finding,
+                rig: rig.clone(),
+                title: title.clone(),
+                body: body.clone(),
+                at: entry.at,
+                judgment: None,
+            }),
+            Event::RemediationStarted { rig, chat } => {
+                if let Some(review) = &mut self.review {
+                    review.remediator = Some(Remediator { rig: rig.clone(), chat: Some(chat.clone()), commit: None, failed: None });
+                }
+            }
+            Event::RemediationFailed { rig, reason } => {
+                if let Some(review) = &mut self.review {
+                    let remediator = review.remediator.get_or_insert_with(|| Remediator { rig: rig.clone(), chat: None, commit: None, failed: None });
+                    remediator.failed = Some(reason.clone());
+                }
+            }
+            Event::FindingJudged { finding, accepted, reason } => {
+                if let Some(finding) = self.findings.iter_mut().find(|other| other.number == *finding) {
+                    finding.judgment = Some(Judgment { accepted: *accepted, reason: reason.clone(), at: entry.at });
+                }
+            }
+            Event::Remediated { commit } => {
+                if let Some(remediator) = self.review.as_mut().and_then(|review| review.remediator.as_mut()) {
+                    remediator.commit = Some(commit.clone());
+                }
+            }
             Event::EpicAdded { .. } | Event::Unknown => {}
+        }
+    }
+
+    fn end_review(&mut self) {
+        if let Some(review) = &mut self.review {
+            review.ended = true;
         }
     }
 
@@ -623,7 +800,7 @@ impl Epic {
         }
     }
 
-    fn check(&self, event: &Event) -> Result<(), String> {
+    pub fn check(&self, event: &Event) -> Result<(), String> {
         let slug = &self.slug;
         match event {
             Event::BriefSet { brief } => filled(brief, "Brief"),
@@ -748,10 +925,22 @@ impl Epic {
             Event::RunStarted { parallel: 0, .. } | Event::RunChanged { parallel: Some(0), .. } => {
                 Err("a Run works on at least one Ticket at a time".to_owned())
             }
+            Event::RunStarted { reviewers, remediator: None, .. } if !reviewers.is_empty() => Err(UNREMEDIATED.to_owned()),
             Event::RunChanged { .. } | Event::RunFinished | Event::RunPaused { .. } | Event::RunResumed | Event::RunStopped
                 if self.run.is_none() =>
             {
                 Err(format!("{slug} has no live Run"))
+            }
+            Event::RunChanged { reviewers: Some(_), .. } if self.reviewing().is_some() => {
+                Err(format!("{slug}'s Review has begun, so its Reviewers are settled"))
+            }
+            Event::RunChanged { remediator: Some(_), .. } if self.reviewing().is_some_and(|review| review.remediator.is_some()) => {
+                Err(format!("{slug}'s Remediator has started"))
+            }
+            Event::RunChanged { reviewers: Some(reviewers), remediator, .. }
+                if !reviewers.is_empty() && remediator.is_none() && self.run.as_ref().is_some_and(|run| run.remediator.is_none()) =>
+            {
+                Err(UNREMEDIATED.to_owned())
             }
             Event::RunPaused { pause } if self.run.as_ref().is_some_and(|run| run.paused.as_ref() == Some(pause)) => {
                 Err(format!("{slug}'s Run is already paused"))
@@ -797,8 +986,88 @@ impl Epic {
                 Err(format!("{slug} has no Integration Worktree"))
             }
             Event::LandingRefused { reason } => filled(reason, "reason"),
+            Event::ReviewStarted => {
+                let run = self.run.as_ref().ok_or_else(|| format!("{slug} has no live Run"))?;
+                if self.reviewing().is_some() {
+                    Err(format!("{slug}'s Run is already reviewing"))
+                } else if run.reviewers.is_empty() {
+                    Err(format!("{slug}'s Run names no Reviewers"))
+                } else if self.integration.is_none() {
+                    Err(format!("{slug} has no Integration Worktree to review"))
+                } else if let Some((number, ticket)) = self.tickets.iter().find(|(_, ticket)| !ticket.status.resolved()) {
+                    Err(format!("{slug}/{number} is {}, and a Review waits for every Ticket", ticket.status))
+                } else {
+                    Ok(())
+                }
+            }
+            Event::ReviewerStarted { reviewer, .. } | Event::ReviewerFailed { reviewer, .. } => {
+                let review = self.reviewing().ok_or_else(|| format!("{slug} is not reviewing"))?;
+                let named = self.run.as_ref().map_or(0, |run| run.reviewers.len());
+                match review.reviewers.iter().find(|other| other.number == *reviewer) {
+                    _ if *reviewer == 0 || *reviewer as usize > named => Err(format!("{slug}'s Run names no Reviewer {reviewer}")),
+                    Some(_) if matches!(event, Event::ReviewerStarted { .. }) => Err(format!("{slug}'s Reviewer {reviewer} has started")),
+                    Some(other) if other.done() => Err(format!("{slug}'s Reviewer {reviewer} is done")),
+                    _ => Ok(()),
+                }
+            }
+            Event::ReviewerReported { reviewer } => {
+                let review = self.reviewing().ok_or_else(|| format!("{slug} is not reviewing"))?;
+                match review.reviewers.iter().find(|other| other.number == *reviewer) {
+                    Some(other) if !other.done() => Ok(()),
+                    Some(_) => Err(format!("{slug}'s Reviewer {reviewer} is done")),
+                    None => Err(format!("{slug}'s Reviewer {reviewer} has not started")),
+                }
+            }
+            Event::FindingAdded { finding, title, body, .. } => {
+                self.reviewing().ok_or_else(|| format!("{slug} is not reviewing"))?;
+                if self.findings.iter().any(|other| other.number == *finding) {
+                    return Err(format!("{slug} already has Finding {finding}"));
+                }
+                one_line(title)?;
+                filled(body, "body")
+            }
+            Event::RemediationStarted { .. } => {
+                let review = self.reviewing().ok_or_else(|| format!("{slug} is not reviewing"))?;
+                let named = self.run.as_ref().map_or(0, |run| run.reviewers.len());
+                if review.remediator.is_some() {
+                    Err(format!("{slug}'s Remediator has started"))
+                } else if review.reviewers.len() < named || review.reviewers.iter().any(|reviewer| !reviewer.done()) {
+                    Err(format!("{slug}'s Reviewers have not all reported"))
+                } else {
+                    Ok(())
+                }
+            }
+            Event::RemediationFailed { .. } => match self.reviewing().ok_or_else(|| format!("{slug} is not reviewing"))?.remediator {
+                Some(ref remediator) if remediator.done() => Err(format!("{slug}'s Remediator is done")),
+                _ => Ok(()),
+            },
+            Event::FindingJudged { finding, reason, .. } => {
+                self.remediating()?;
+                if !self.findings.iter().any(|other| other.number == *finding) {
+                    return Err(format!("{slug} has no Finding {finding}"));
+                }
+                filled(reason, "reason")
+            }
+            Event::Remediated { .. } => {
+                self.remediating()?;
+                match self.findings.iter().find(|finding| finding.judgment.is_none()) {
+                    Some(finding) => Err(format!("{slug}'s Finding {} is not judged yet; accept or reject every Finding first", finding.number)),
+                    None => Ok(()),
+                }
+            }
             _ => Ok(()),
         }
+    }
+
+    /// The live Run's Review, once it has begun.
+    pub fn reviewing(&self) -> Option<&Review> {
+        self.review.as_ref().filter(|review| !review.ended)
+    }
+
+    /// The live Remediator, which judges Findings until it has remediated.
+    fn remediating(&self) -> Result<&Remediator, String> {
+        let remediator = self.reviewing().and_then(|review| review.remediator.as_ref());
+        remediator.filter(|remediator| remediator.chat.is_some() && !remediator.done()).ok_or_else(|| format!("{} is not remediating", self.slug))
     }
 
     fn chain(&self, from: u32, to: u32, seen: &mut BTreeSet<u32>) -> Option<Vec<u32>> {
@@ -829,6 +1098,20 @@ impl Epic {
             .map(|(number, ticket)| (*number, ticket))
     }
 }
+
+impl Reviewer {
+    pub fn done(&self) -> bool {
+        self.reported || self.failed.is_some()
+    }
+}
+
+impl Remediator {
+    pub fn done(&self) -> bool {
+        self.commit.is_some() || self.failed.is_some()
+    }
+}
+
+const UNREMEDIATED: &str = "a Run with Reviewers needs a Remediator to judge their Findings";
 
 impl Ticket {
     /// Resolved, with a worktree that cleanup has neither removed nor kept.
@@ -912,7 +1195,8 @@ impl Epics {
     pub fn rename_rig(&self, original: &str, name: &str) -> Result<(), String> {
         for slug in self.slugs() {
             let epic = self.get(&slug)?;
-            if epic.run.as_ref().is_some_and(|run| run.rig == original)
+            let names = |run: &Run| [&run.rig].into_iter().chain(&run.reviewers).chain(&run.remediator).any(|rig| rig == original);
+            if epic.run.as_ref().is_some_and(names)
                 || epic.tickets.values().any(|ticket| ticket.rig.as_deref() == Some(original)
                     || ticket.claim.as_ref().is_some_and(|claim| claim.rig == original))
             {
@@ -934,6 +1218,17 @@ impl Epics {
         let epics = self.epics.lock().unwrap();
         let mut resolvers = epics.values().flat_map(|epic| epic.tickets.values().map(move |ticket| (epic, ticket)));
         resolvers.find(|(_, ticket)| ticket.resolver.as_deref() == Some(chat)).map(|(epic, _)| epic.slug.clone())
+    }
+
+    /// The Epic whose live Review has `chat` as a Reviewer or its Remediator.
+    pub fn reviewing(&self, chat: &str) -> Option<String> {
+        let epics = self.epics.lock().unwrap();
+        epics.values().find(|epic| {
+            epic.reviewing().is_some_and(|review| {
+                let reviewers = review.reviewers.iter().filter_map(|reviewer| reviewer.chat.as_deref());
+                reviewers.chain(review.remediator.iter().filter_map(|remediator| remediator.chat.as_deref())).any(|other| other == chat)
+            })
+        }).map(|epic| epic.slug.clone())
     }
 
     pub fn list(&self, project: &Path) -> Vec<Epic> {
@@ -978,9 +1273,14 @@ impl Epics {
 
     /// Records the event only while `condition` holds for the Epic, checked in the same step as the event itself.
     pub fn record_if(&self, slug: &str, event: Event, condition: impl FnOnce(&Epic) -> Result<(), String>) -> Result<(), String> {
+        self.record_from(slug, |epic| condition(epic).map(|()| event)).map(drop)
+    }
+
+    /// Records the event `make` builds from the Epic, in the same step as the event itself, and gives it back.
+    pub fn record_from(&self, slug: &str, make: impl FnOnce(&Epic) -> Result<Event, String>) -> Result<Event, String> {
         let mut epics = self.epics.lock().unwrap();
         let epic = epics.get_mut(slug).ok_or_else(|| format!("there is no Epic {slug}"))?;
-        condition(epic)?;
+        let event = make(epic)?;
         epic.check(&event)?;
         let entry = stamp(event);
         let path = self.path(slug);
@@ -991,7 +1291,7 @@ impl Epics {
             .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
         epic.apply(&entry);
         let _ = self.changes.send(slug.to_owned());
-        Ok(())
+        Ok(entry.event)
     }
 }
 
@@ -1055,7 +1355,7 @@ mod tests {
             epics.record("loop", Event::RigSet { ticket, rig: Some(if ticket == 3 { "Other" } else { "Original" }.to_owned()) }).unwrap();
         }
         epics.record("loop", Event::Claimed { ticket: 1, chat: "chat".to_owned(), rig: "Original".to_owned(), worktree: PathBuf::from("/repo/1") }).unwrap();
-        epics.record("loop", Event::RunStarted { rig: "Original".to_owned(), parallel: 2 }).unwrap();
+        epics.record("loop", Event::RunStarted { rig: "Original".to_owned(), parallel: 2, reviewers: vec![], remediator: None }).unwrap();
         epics.rename_rig("Original", "Reviewer").unwrap();
         let reloaded = Epics::load(dir.path()).unwrap();
         for epics in [&epics, &reloaded] {
@@ -1193,6 +1493,8 @@ mod tests {
             landed: None,
             kept: None,
             notes: Vec::new(),
+            review: None,
+            findings: Vec::new(),
         };
         assert_eq!(epic, expected);
         let fresh = folded(&[ADDED.to_owned()]).unwrap();
@@ -1244,9 +1546,22 @@ mod tests {
             (Event::Reopened { ticket: 3 }, r#"{"at":9,"kind":"ticket.reopened","ticket":3}"#),
             (Event::StartFailed { ticket: 3, reason: "R".to_owned() }, r#"{"at":9,"kind":"start.failed","ticket":3,"reason":"R"}"#),
             (Event::RestoreFailed { ticket: 3, chat: "c".to_owned() }, r#"{"at":9,"kind":"restore.failed","ticket":3,"chat":"c"}"#),
-            (Event::RunStarted { rig: "R".to_owned(), parallel: 2 }, r#"{"at":9,"kind":"run.started","rig":"R","parallel":2}"#),
-            (Event::RunChanged { rig: None, parallel: Some(3) }, r#"{"at":9,"kind":"run.changed","parallel":3}"#),
-            (Event::RunChanged { rig: Some("R".to_owned()), parallel: None }, r#"{"at":9,"kind":"run.changed","rig":"R"}"#),
+            (
+                Event::RunStarted { rig: "R".to_owned(), parallel: 2, reviewers: vec![], remediator: None },
+                r#"{"at":9,"kind":"run.started","rig":"R","parallel":2}"#,
+            ),
+            (
+                Event::RunStarted { rig: "R".to_owned(), parallel: 2, reviewers: vec!["A".to_owned(), "B".to_owned()], remediator: Some("C".to_owned()) },
+                r#"{"at":9,"kind":"run.started","rig":"R","parallel":2,"reviewers":["A","B"],"remediator":"C"}"#,
+            ),
+            (
+                Event::RunChanged { rig: None, parallel: Some(3), reviewers: None, remediator: None },
+                r#"{"at":9,"kind":"run.changed","parallel":3}"#,
+            ),
+            (
+                Event::RunChanged { rig: Some("R".to_owned()), parallel: None, reviewers: Some(vec![]), remediator: Some("C".to_owned()) },
+                r#"{"at":9,"kind":"run.changed","rig":"R","reviewers":[],"remediator":"C"}"#,
+            ),
             (Event::RunFinished, r#"{"at":9,"kind":"run.finished"}"#),
             (Event::RunPaused { pause: Pause::David }, r#"{"at":9,"kind":"run.paused","reason":"david"}"#),
             (Event::RunResumed, r#"{"at":9,"kind":"run.resumed"}"#),
@@ -1270,6 +1585,33 @@ mod tests {
             (Event::LandingRefused { reason: "R".to_owned() }, r#"{"at":9,"kind":"landing.refused","reason":"R"}"#),
             (Event::IntegrationRemoved, r#"{"at":9,"kind":"integration.removed"}"#),
             (Event::IntegrationKept { reason: "R".to_owned() }, r#"{"at":9,"kind":"integration.kept","reason":"R"}"#),
+            (Event::ReviewStarted, r#"{"at":9,"kind":"review.started"}"#),
+            (
+                Event::ReviewerStarted { reviewer: 2, rig: "R".to_owned(), chat: "c".to_owned(), worktree: PathBuf::from("/w/review-2") },
+                r#"{"at":9,"kind":"reviewer.started","reviewer":2,"rig":"R","chat":"c","worktree":"/w/review-2"}"#,
+            ),
+            (
+                Event::ReviewerFailed { reviewer: 2, rig: "R".to_owned(), reason: "W".to_owned() },
+                r#"{"at":9,"kind":"reviewer.failed","reviewer":2,"rig":"R","reason":"W"}"#,
+            ),
+            (Event::ReviewerReported { reviewer: 2 }, r#"{"at":9,"kind":"reviewer.reported","reviewer":2}"#),
+            (
+                Event::FindingAdded { finding: 1, rig: "R".to_owned(), title: "T".to_owned(), body: "B".to_owned() },
+                r#"{"at":9,"kind":"finding.added","finding":1,"rig":"R","title":"T","body":"B"}"#,
+            ),
+            (
+                Event::RemediationStarted { rig: "R".to_owned(), chat: "c".to_owned() },
+                r#"{"at":9,"kind":"remediation.started","rig":"R","chat":"c"}"#,
+            ),
+            (
+                Event::RemediationFailed { rig: "R".to_owned(), reason: "W".to_owned() },
+                r#"{"at":9,"kind":"remediation.failed","rig":"R","reason":"W"}"#,
+            ),
+            (
+                Event::FindingJudged { finding: 1, accepted: false, reason: "W".to_owned() },
+                r#"{"at":9,"kind":"finding.judged","finding":1,"accepted":false,"reason":"W"}"#,
+            ),
+            (Event::Remediated { commit: "abc".to_owned() }, r#"{"at":9,"kind":"review.remediated","commit":"abc"}"#),
         ];
         for (event, line) in cases {
             let entry = Entry { at: 9, event };
@@ -1493,7 +1835,7 @@ mod tests {
 
     #[test]
     fn a_run_starts_changes_finishes_and_calls_until_viewed() {
-        let run = |rig: &str, parallel| Some(Run { recovered: BTreeSet::new(), rig: rig.to_owned(), parallel, paused: None });
+        let run = |rig: &str, parallel| Some(Run { recovered: BTreeSet::new(), rig: rig.to_owned(), parallel, reviewers: vec![], remediator: None, paused: None });
         let changed = |payload: &str| format!(r#"{{"at":8,"kind":"run.changed",{payload}}}"#);
         let cases: Vec<(&str, Vec<String>, Option<Run>, bool)> = vec![
             ("no Run", vec![], None, false),
@@ -1547,8 +1889,8 @@ mod tests {
     #[test]
     fn run_events_out_of_turn_are_refused() {
         let unset = folded(&[ADDED.to_owned(), ticket(1, &[])]).unwrap();
-        let start = |parallel| Event::RunStarted { rig: "Claude".to_owned(), parallel };
-        let change = |parallel| Event::RunChanged { rig: None, parallel: Some(parallel) };
+        let start = |parallel| Event::RunStarted { rig: "Claude".to_owned(), parallel, reviewers: vec![], remediator: None };
+        let change = |parallel| Event::RunChanged { rig: None, parallel: Some(parallel), reviewers: None, remediator: None };
         assert_eq!(
             unset.check(&start(1)),
             Err(r#"loop has no Setup Command yet; record one, "" when a fresh worktree needs nothing, before starting a Run"#.to_owned())
@@ -1697,7 +2039,7 @@ mod tests {
         use Status::*;
         let base = [ADDED.to_owned(), SETUP.to_owned(), ticket(1, &[]), ticket(2, &[]), ticket(3, &[])];
         let live = [started("Claude", 2), claimed(1), claimed(2), completed(2)];
-        let run = |paused| Some(Run { recovered: BTreeSet::new(), rig: "Claude".to_owned(), parallel: 2, paused });
+        let run = |paused| Some(Run { recovered: BTreeSet::new(), rig: "Claude".to_owned(), parallel: 2, reviewers: vec![], remediator: None, paused });
         let cases: Vec<(&str, Vec<String>, Option<Run>, [Status; 3], [bool; 3])> = vec![
             ("live", vec![], run(None), [InProgress, Merging, NotStarted], [false; 3]),
             ("paused", vec![paused()], run(Some(Pause::David)), [InProgress, Merging, NotStarted], [false; 3]),
@@ -1705,7 +2047,7 @@ mod tests {
             (
                 "changed while paused",
                 vec![paused(), r#"{"at":8,"kind":"run.changed","parallel":3}"#.to_owned()],
-                Some(Run { recovered: BTreeSet::new(), rig: "Claude".to_owned(), parallel: 3, paused: Some(Pause::David) }),
+                Some(Run { recovered: BTreeSet::new(), rig: "Claude".to_owned(), parallel: 3, reviewers: vec![], remediator: None, paused: Some(Pause::David) }),
                 [InProgress, Merging, NotStarted],
                 [false; 3],
             ),
@@ -1797,5 +2139,70 @@ mod tests {
             let epic = folded(&[base.to_vec(), events].concat()).unwrap();
             assert_eq!(epic.check(&release), Err(format!("loop/1 is {status}, so it has no Claim to release")), "{name}");
         }
+    }
+
+    #[test]
+    fn a_review_waits_for_every_ticket_and_remediates_once_every_finding_is_judged() {
+        let cut = r#"{"at":2,"kind":"branch.cut","base":"main","worktree":"/w/integration"}"#.to_owned();
+        let run = r#"{"at":7,"kind":"run.started","rig":"Claude","parallel":1,"reviewers":["Codex","Claude"],"remediator":"Claude"}"#;
+        let base = [ADDED.to_owned(), SETUP.to_owned(), cut, ticket(1, &[]), ticket(2, &[]), run.to_owned(), claimed(1), completed(1)];
+        let done = [event("ticket.merged", 1), claimed(2), event("ticket.skipped", 2)];
+        let started = |reviewer| Event::ReviewerStarted {
+            reviewer,
+            rig: "Codex".to_owned(),
+            chat: format!("reviewer{reviewer}"),
+            worktree: PathBuf::from(format!("/w/review-{reviewer}")),
+        };
+        let finding = |finding| Event::FindingAdded { finding, rig: "Codex".to_owned(), title: "T".to_owned(), body: "B".to_owned() };
+        let judged = |finding| Event::FindingJudged { finding, accepted: true, reason: "R".to_owned() };
+        let remediation = || Event::RemediationStarted { rig: "Claude".to_owned(), chat: "remediator".to_owned() };
+        let remediated = || Event::Remediated { commit: "abc".to_owned() };
+        let reviewers = || Event::RunChanged { rig: None, parallel: None, reviewers: Some(vec![]), remediator: None };
+
+        let merging = folded(&base).unwrap();
+        assert_eq!(merging.check(&Event::ReviewStarted), Err("loop/1 is merging, and a Review waits for every Ticket".to_owned()));
+        let mut epic = folded(&[base.to_vec(), done.to_vec()].concat()).unwrap();
+        let steps: Vec<(Event, Result<(), &str>)> = vec![
+            (finding(1), Err("loop is not reviewing")),
+            (Event::ReviewStarted, Ok(())),
+            (Event::ReviewStarted, Err("loop's Run is already reviewing")),
+            (remediation(), Err("loop's Reviewers have not all reported")),
+            (started(3), Err("loop's Run names no Reviewer 3")),
+            (started(1), Ok(())),
+            (started(1), Err("loop's Reviewer 1 has started")),
+            (reviewers(), Err("loop's Review has begun, so its Reviewers are settled")),
+            (Event::ReviewerReported { reviewer: 2 }, Err("loop's Reviewer 2 has not started")),
+            (Event::ReviewerFailed { reviewer: 2, rig: "Claude".to_owned(), reason: "W".to_owned() }, Ok(())),
+            (finding(1), Ok(())),
+            (finding(1), Err("loop already has Finding 1")),
+            (remediation(), Err("loop's Reviewers have not all reported")),
+            (Event::ReviewerReported { reviewer: 1 }, Ok(())),
+            (Event::ReviewerReported { reviewer: 1 }, Err("loop's Reviewer 1 is done")),
+            (judged(1), Err("loop is not remediating")),
+            (remediation(), Ok(())),
+            (remediated(), Err("loop's Finding 1 is not judged yet; accept or reject every Finding first")),
+            (judged(2), Err("loop has no Finding 2")),
+            (judged(1), Ok(())),
+            (remediated(), Ok(())),
+            (judged(1), Err("loop is not remediating")),
+            (Event::RunFinished, Ok(())),
+            (Event::ReviewStarted, Err("loop has no live Run")),
+        ];
+        for (event, expected) in steps {
+            let checked = epic.check(&event);
+            assert_eq!(checked, expected.map_err(str::to_owned), "{event:?}");
+            if checked.is_ok() {
+                epic.apply(&Entry { at: 9, event });
+            }
+        }
+        let review = epic.review.as_ref().unwrap();
+        assert!(review.ended && epic.reviewing().is_none());
+        let states: Vec<_> = review.reviewers.iter().map(|reviewer| (reviewer.number, reviewer.reported, reviewer.failed.as_deref())).collect();
+        assert_eq!(states, [(1, true, None), (2, false, Some("W"))]);
+        assert_eq!(review.remediator.as_ref().unwrap().commit.as_deref(), Some("abc"));
+        assert_eq!(epic.findings[0].judgment, Some(Judgment { accepted: true, reason: "R".to_owned(), at: 9 }));
+
+        let unremediated = Event::RunStarted { rig: "Claude".to_owned(), parallel: 1, reviewers: vec!["Codex".to_owned()], remediator: None };
+        assert_eq!(epic.check(&unremediated), Err(UNREMEDIATED.to_owned()));
     }
 }

@@ -140,8 +140,17 @@ def verdict(name, prompt):
     run(command)
 
 
-def run(command):
-    ran = subprocess.run(command, capture_output=True, text=True)
+def cli(entry, prompt):
+    binary = re.search(r'`stampede` is `([^`]+)`', prompt) or fail(f'no stampede binary in {prompt!r}')
+    epic = re.search(r' of the Epic (\S+?),', prompt) or fail(f'no Epic in {prompt!r}')
+    data_dir = re.search(r'pass `--data-dir ([^`]+)`', prompt)
+    command = shlex.split(binary.group(1)) + [arg.replace('{epic}', epic.group(1)) for arg in entry['cli']]
+    command += ['--data-dir', data_dir.group(1)] if data_dir else []
+    run(command, entry.get('input'))
+
+
+def run(command, input=None):
+    ran = subprocess.run(command, input=input, capture_output=True, text=True)
     print(f'fake claude ran {command}: {ran.returncode} {ran.stdout}{ran.stderr}', file=sys.stderr)
 
 
@@ -221,6 +230,8 @@ for entry in entries[start:]:
         record(entry['session'])
     elif 'verdict' in entry:
         verdict(entry['verdict'], prompt)
+    elif 'cli' in entry:
+        cli(entry, prompt)
     elif 'run' in entry:
         run(entry['run'])
     elif 'gate' in entry:

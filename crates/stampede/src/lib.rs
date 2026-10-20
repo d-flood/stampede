@@ -312,9 +312,13 @@ async fn record_epic(State(state): State<AppState>, Path(slug): Path<String>, Js
     if !editable {
         return Err((StatusCode::FORBIDDEN, "a Device records only David's edits; Epics come from the CLI".to_owned()));
     }
-    if let Event::RunStarted { rig, .. } | Event::RunChanged { rig: Some(rig), .. } | Event::RigSet { rig: Some(rig), .. } = &event
-        && !state.config.borrow().rigs.iter().any(|other| other.name == *rig)
-    {
+    let named: Vec<&String> = match &event {
+        Event::RunStarted { rig, reviewers, remediator, .. } => [rig].into_iter().chain(reviewers).chain(remediator).collect(),
+        Event::RunChanged { rig, reviewers, remediator, .. } => rig.iter().chain(reviewers.iter().flatten()).chain(remediator).collect(),
+        Event::RigSet { rig, .. } => rig.iter().collect(),
+        _ => Vec::new(),
+    };
+    if let Some(rig) = named.into_iter().find(|rig| !state.config.borrow().rigs.iter().any(|other| other.name == **rig)) {
         return Err((StatusCode::BAD_REQUEST, format!("there is no Rig {rig} in the config")));
     }
     state.epics.record(&slug, event).map(|()| StatusCode::NO_CONTENT).map_err(|error| (StatusCode::BAD_REQUEST, error))

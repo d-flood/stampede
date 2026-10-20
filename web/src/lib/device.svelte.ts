@@ -131,7 +131,7 @@ export type Ticket = {
 	releasing?: boolean;
 };
 
-export type Run = { rig: string; parallel: number; paused?: { reason: 'david' } | { reason: 'storage'; message: string } | { reason: 'usage'; agent: Agent; window: Reading['window']; resetsAt?: number } };
+export type Run = { rig: string; parallel: number; reviewers?: string[]; remediator?: string; paused?: { reason: 'david' } | { reason: 'storage'; message: string } | { reason: 'usage'; agent: Agent; window: Reading['window']; resetsAt?: number } };
 
 export type Epic = {
 	slug: string;
@@ -146,6 +146,25 @@ export type Epic = {
 	kept?: string;
 	notes?: Note[];
 	tickets: Ticket[];
+	review?: Review;
+	findings?: Finding[];
+};
+
+export type Reviewer = { number: number; rig: string; chat?: string; worktree?: string; reported?: boolean; failed?: string };
+
+export type Review = {
+	reviewers: Reviewer[];
+	remediator?: { rig: string; chat?: string; commit?: string; failed?: string };
+	ended?: boolean;
+};
+
+export type Finding = {
+	number: number;
+	rig: string;
+	title: string;
+	body: string;
+	at: number;
+	judgment?: { accepted: boolean; reason: string; at: number };
 };
 
 export type Attention = { projectId: string; label: string; status: Status } & ({ chatId: string } | { epic: string });

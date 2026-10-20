@@ -3,7 +3,7 @@
 	import Loading from '#lib/ui/Loading.svelte';
 	import type { Component, Snippet } from 'svelte';
 
-	type Item = { label: string; onselect: () => void; disabled?: boolean; icon?: Component; hint?: string; checked?: boolean };
+	type Item = { label: string; onselect: () => void; disabled?: boolean; icon?: Component; hint?: string; checked?: boolean; keepOpen?: boolean };
 	type Group = { heading: string; items: Item[] };
 	type Layer = { wrapperProps: Record<string, unknown>; props: Record<string, unknown> };
 
@@ -13,7 +13,7 @@
 	let width = $state(0);
 </script>
 
-{#snippet item({ label, onselect, disabled, checked, icon: Icon, hint }: Item)}
+{#snippet item({ label, onselect, disabled, checked, icon: Icon, hint, keepOpen }: Item)}
 	{#if checked === undefined}
 		<DropdownMenu.Item onSelect={onselect} {disabled}>
 			{#snippet child({ props })}
@@ -25,7 +25,7 @@
 			{/snippet}
 		</DropdownMenu.Item>
 	{:else}
-		<DropdownMenu.CheckboxItem {checked} onSelect={onselect} {disabled}>
+		<DropdownMenu.CheckboxItem {checked} onSelect={onselect} {disabled} closeOnSelect={!keepOpen}>
 			{#snippet child({ props })}
 				<div {...props} class="item">
 					{#if Icon}<Icon />{/if}

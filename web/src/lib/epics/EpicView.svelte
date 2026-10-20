@@ -2,7 +2,7 @@
 	import { ago } from '#lib/chat/sessions.ts';
 	import Text from '#lib/chat/Text.svelte';
 	import { rigs } from '#lib/config.svelte.ts';
-	import type { Chat, Device, Epic, Ticket, TicketTag } from '#lib/device.svelte.ts';
+	import type { Chat, Device, Epic, Finding, Review, Reviewer, Ticket, TicketTag } from '#lib/device.svelte.ts';
 	import Blockers from '#lib/epics/Blockers.svelte';
 	import RigSelect from '#lib/epics/RigSelect.svelte';
 	import Tags from '#lib/epics/Tags.svelte';
@@ -14,6 +14,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import Menu from '#lib/ui/Menu.svelte';
 	import { onMount } from 'svelte';
 	import CaretDown from '~icons/ph/caret-down';
 	import CaretLeft from '~icons/ph/caret-left';
@@ -58,6 +59,18 @@
 	});
 	const authors = { agent: 'Agent', david: 'David', stampede: 'Stampede' };
 	const working = $derived(tickets.filter((ticket) => ticket.status === 'in-progress'));
+	const named = (name?: string) => choices.some((choice) => choice.name === name);
+	const reviewers = $derived(epic?.run ? (epic.run.reviewers ?? []) : open.reviewers.filter(named));
+	const remediator = $derived(epic?.run?.remediator ?? (named(open.remediator) ? open.remediator : rig));
+	const review = $derived(epic?.review);
+	const reviewing = $derived(!!review && !review.ended);
+	const findings = $derived(epic?.findings ?? []);
+	const lineup = $derived.by((): Reviewer[] => {
+		if (!review) return [];
+		const waiting = (reviewing ? reviewers : []).map((rig, index) => ({ number: index + 1, rig }));
+		const unstarted = waiting.filter(({ number }) => !review.reviewers.some((reviewer) => reviewer.number === number));
+		return [...review.reviewers, ...unstarted].sort((a, b) => a.number - b.number);
+	});
 
 	let draft = $state('');
 	let title = $state('');
@@ -123,6 +136,17 @@
 		else open.rig = name;
 	}
 
+	function toggleReviewer(name: string) {
+		const chosen = reviewers.includes(name) ? reviewers.filter((other) => other !== name) : [...reviewers, name];
+		if (epic?.run) run({ kind: 'run.changed', reviewers: chosen, remediator: chosen.length ? remediator : undefined });
+		else open.reviewers = chosen;
+	}
+
+	function chooseRemediator(name: string) {
+		if (epic?.run) run({ kind: 'run.changed', remediator: name });
+		else open.remediator = name;
+	}
+
 	function limit(parallel: number) {
 		if (parallel < 1) return;
 		if (epic?.run) run({ kind: 'run.changed', parallel });
@@ -139,6 +163,37 @@
 
 	function chatOf(ticket: Ticket) {
 		return chats.find((chat) => chat.id === ticket.claim?.chat);
+	}
+
+	function status(chatId?: string) {
+		return chats.find((chat) => chat.id === chatId)?.status ?? 'closed';
+	}
+
+	function reviewState(review: Review, findings: Finding[]) {
+		const remediator = review.remediator;
+		if (remediator?.commit) return `Remediated at ${remediator.commit.slice(0, 12)}`;
+		if (remediator?.failed) return 'Remediation failed';
+		if (!review.ended) return remediator ? 'Remediating' : 'Reviewing';
+		const finished = review.reviewers.length > 0 && review.reviewers.every((reviewer) => reviewer.reported || reviewer.failed);
+		return finished && !remediator && findings.every((finding) => finding.judgment) ? 'Nothing found' : 'Stopped';
+	}
+
+	function reviewerState(reviewer: Reviewer) {
+		if (reviewer.failed) return 'failed';
+		if (reviewer.reported) return 'reported';
+		if (!reviewer.chat) return 'waiting';
+		return review?.ended ? 'stopped' : status(reviewer.chat);
+	}
+
+	function remediatorState(remediator: NonNullable<Review['remediator']>) {
+		if (remediator.failed) return 'failed';
+		if (remediator.commit) return 'remediated';
+		return review?.ended ? 'stopped' : status(remediator.chat);
+	}
+
+	function verdict(finding: Finding) {
+		if (!finding.judgment) return { label: 'Not judged', tone: 'var(--status-waiting)' };
+		return finding.judgment.accepted ? { label: 'Accepted', tone: 'var(--status-done)' } : { label: 'Rejected', tone: 'var(--muted-fg)' };
 	}
 
 	function holder(ticket: Ticket) {
@@ -210,6 +265,27 @@
 		<output class="limit">{parallel}</output>
 		<IconButton label="More" onclick={() => limit(parallel + 1)}><Plus /></IconButton>
 	</span>
+	<span class="setting">
+		<span aria-hidden="true">Reviewers</span>
+		<Menu items={choices.map((choice) => ({ label: choice.name, checked: reviewers.includes(choice.name), keepOpen: true, onselect: () => toggleReviewer(choice.name) }))}>
+			{#snippet trigger(props)}
+				<button class="picker" {...props} disabled={reviewing || !choices.length} aria-label="Reviewers: {reviewers.join(', ') || 'none'}">
+					<span>{reviewers.join(', ') || 'None'}</span>
+					<CaretDown />
+				</button>
+			{/snippet}
+		</Menu>
+	</span>
+	{#if reviewers.length}
+		<label class="setting">
+			<span>Remediator</span>
+			<select value={remediator} disabled={reviewing && !!review?.remediator} onchange={(event) => chooseRemediator(event.currentTarget.value)}>
+				{#each choices as choice (choice.name)}
+					<option value={choice.name}>{choice.name}</option>
+				{/each}
+			</select>
+		</label>
+	{/if}
 {/snippet}
 
 {#snippet runBar(epic: Epic)}
@@ -217,10 +293,10 @@
 	<section class="run" aria-label="Run">
 		{#if live}
 			<div class="top">
-				<span class="live" class:paused={!!live.paused}>{live.paused ? 'Run paused' : 'Run live'}</span>
+				<span class="live" class:paused={!!live.paused}>{live.paused ? 'Run paused' : reviewing ? (review?.remediator ? 'Remediating' : 'Reviewing') : 'Run live'}</span>
 				{#if phone}
 					<button class="summary" aria-expanded={open.showRun} onclick={() => (open.showRun = !open.showRun)}>
-						{live.rig} · ×{live.parallel}
+						{live.rig} · ×{live.parallel}{#if reviewers.length}{' '}· {reviewers.length} {reviewers.length === 1 ? 'Reviewer' : 'Reviewers'}{/if}
 						<CaretDown />
 					</button>
 				{/if}
@@ -242,7 +318,7 @@
 				<Button variant="danger" onclick={() => (working.length ? (stopping = true) : run({ kind: 'run.stopped' }))}><Stop /> Stop</Button>
 			</div>
 		{:else}
-			<Button variant="primary" disabled={!rig || epic.setup === null || open.savingRigs.length > 0} onclick={() => rig && run({ kind: 'run.started', rig, parallel: open.parallel })}>
+			<Button variant="primary" disabled={!rig || epic.setup === null || open.savingRigs.length > 0} onclick={() => rig && run({ kind: 'run.started', rig, parallel: open.parallel, reviewers, remediator: reviewers.length ? remediator : undefined })}>
 				<Play /> Start Run
 			</Button>
 			{#if epic.setup === null}<p class="note">Record a Setup Command before starting a Run.</p>{/if}
@@ -288,6 +364,57 @@
 				<span class="meta">{authors[note.author]} · {ago(note.at)}</span>
 				<p>{note.text}</p>
 			</div>
+		{/each}
+	</section>
+{/snippet}
+
+{#snippet reviewSection(review: Review | undefined)}
+	<section aria-label="Review" class="review">
+		<div class="heading">
+			<h2>Review</h2>
+			{#if review}<span class="unset">{reviewState(review, findings)}</span>{/if}
+		</div>
+		{#if review}
+			<ul class="crew">
+				{#each lineup as reviewer (reviewer.number)}
+					<li>
+						<span class="who">Reviewer {reviewer.number}</span>
+						<span class="rig">{reviewer.rig}</span>
+						<span class="state" class:flagged={!!reviewer.failed}>{reviewerState(reviewer)}</span>
+						{#if reviewer.chat && chats.some((chat) => chat.id === reviewer.chat)}
+							<button class="link" onclick={() => reviewer.chat && onchat(reviewer.chat)}>Open</button>
+						{/if}
+						{#if reviewer.failed}<p class="why">{reviewer.failed}</p>{/if}
+					</li>
+				{/each}
+				{#if review.remediator}
+					{@const remediator = review.remediator}
+					<li>
+						<span class="who">Remediator</span>
+						<span class="rig">{remediator.rig}</span>
+						<span class="state" class:flagged={!!remediator.failed}>{remediatorState(remediator)}</span>
+						{#if remediator.chat && chats.some((chat) => chat.id === remediator.chat)}
+							<button class="link" onclick={() => remediator.chat && onchat(remediator.chat)}>Open</button>
+						{/if}
+						{#if remediator.failed}<p class="why">{remediator.failed}</p>{/if}
+					</li>
+				{/if}
+			</ul>
+		{/if}
+		{#each findings as finding (finding.number)}
+			{@const judged = verdict(finding)}
+			<details class="finding">
+				<summary>
+					<span class="number">{finding.number}</span>
+					<span class="title">{finding.title}</span>
+					<span class="verdict" style:--tone={judged.tone}>{judged.label}</span>
+				</summary>
+				<div class="finding-body">
+					<p class="meta">{finding.rig} · {ago(finding.at)}</p>
+					<Text item={{ kind: 'text', text: finding.body, streaming: false, phase: 'final' }} />
+					{#if finding.judgment}<p class="reason"><strong>{judged.label}:</strong> {finding.judgment.reason}</p>{/if}
+				</div>
+			</details>
 		{/each}
 	</section>
 {/snippet}
@@ -361,62 +488,65 @@
 				</div>
 			{/if}
 			<div class="body">
-				<section aria-label="Tickets" class="tickets">
-					{#if !phone}
-						<div class="row columns" aria-hidden="true">
-							<span>#</span><span>Ticket</span><span>Blockers</span><span>Status</span><span>Held by</span>
-						</div>
-					{/if}
-					{#each shown as ticket (ticket.number)}
-						{@const expanded = !phone && open.ticket === ticket.number}
-						{@const Mark = marks[ticket.status]}
-						<div class="ticket-entry">
-							<button
-								class="row"
-								class:resolved={resolved(ticket.status)}
-								class:expanded
-								aria-expanded={phone ? undefined : expanded}
-								onclick={() => (open.ticket = expanded ? undefined : ticket.number)}
-							>
-								<span class="number">{ticket.number}</span>
-								{#if phone}
-									<span class="text">
-										<span class="title">{ticket.title}</span>
-										<span class="sub" style:--tone={tones[ticket.status]}>
-											<Mark />{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}{#if holder(ticket)}{' '}· {holder(ticket)}{/if}{#if ticket.claim?.edited}{' '}· edited{/if}
-										</span>
-									</span>
-									<CaretRight />
-								{:else}
-									<span class="title">{ticket.title}</span>
-									<span class="number">{ticket.blockers.join(', ')}</span>
-									<span class="status" style:--tone={tones[ticket.status]}><Mark />{label(ticket.status)}</span>
-									<span class="held" class:flagged={!!ticket.attention}>{holder(ticket)}</span>
-								{/if}
-							</button>
-							<div class="ticket-options">
-								<div class="tags" aria-label="Ticket tags">
-									{#each ticket.tags ?? [] as tag}<span title={ticketTags[tag].description}>{ticketTags[tag].label}</span>{/each}
-								</div>
-								<div class="ticket-rig">
-									<RigSelect {open} {ticket} defaultRig={epic.run?.rig ?? rig} label={`Rig for ticket ${ticket.number}`} disabled={open.starting.includes(ticket.number)} />
-								</div>
-							</div>
-						</div>
-						{#if expanded}
-							<div class="detail">
-								<TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} {open} chat={chatOf(ticket)} {device} {onchat} />
+				<div class="main">
+					<section aria-label="Tickets" class="tickets">
+						{#if !phone}
+							<div class="row columns" aria-hidden="true">
+								<span>#</span><span>Ticket</span><span>Blockers</span><span>Status</span><span>Held by</span>
 							</div>
 						{/if}
-					{/each}
-					{#if !tickets.length}<p class="unset">No Tickets yet.</p>{/if}
-					{#if folded}
-						<button class="fold" onclick={() => (open.showResolved = !open.showResolved)}>
-							{open.showResolved ? 'Hide' : 'Show'} {folded} resolved
-						</button>
-					{/if}
-					<button class="add" onclick={() => edit('new-ticket', '')}><Plus /> Add a Ticket</button>
-				</section>
+						{#each shown as ticket (ticket.number)}
+							{@const expanded = !phone && open.ticket === ticket.number}
+							{@const Mark = marks[ticket.status]}
+							<div class="ticket-entry">
+								<button
+									class="row"
+									class:resolved={resolved(ticket.status)}
+									class:expanded
+									aria-expanded={phone ? undefined : expanded}
+									onclick={() => (open.ticket = expanded ? undefined : ticket.number)}
+								>
+									<span class="number">{ticket.number}</span>
+									{#if phone}
+										<span class="text">
+											<span class="title">{ticket.title}</span>
+											<span class="sub" style:--tone={tones[ticket.status]}>
+												<Mark />{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}{#if holder(ticket)}{' '}· {holder(ticket)}{/if}{#if ticket.claim?.edited}{' '}· edited{/if}
+											</span>
+										</span>
+										<CaretRight />
+									{:else}
+										<span class="title">{ticket.title}</span>
+										<span class="number">{ticket.blockers.join(', ')}</span>
+										<span class="status" style:--tone={tones[ticket.status]}><Mark />{label(ticket.status)}</span>
+										<span class="held" class:flagged={!!ticket.attention}>{holder(ticket)}</span>
+									{/if}
+								</button>
+								<div class="ticket-options">
+									<div class="tags" aria-label="Ticket tags">
+										{#each ticket.tags ?? [] as tag}<span title={ticketTags[tag].description}>{ticketTags[tag].label}</span>{/each}
+									</div>
+									<div class="ticket-rig">
+										<RigSelect {open} {ticket} defaultRig={epic.run?.rig ?? rig} label={`Rig for ticket ${ticket.number}`} disabled={open.starting.includes(ticket.number)} />
+									</div>
+								</div>
+							</div>
+							{#if expanded}
+								<div class="detail">
+									<TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} {open} chat={chatOf(ticket)} {device} {onchat} />
+								</div>
+							{/if}
+						{/each}
+						{#if !tickets.length}<p class="unset">No Tickets yet.</p>{/if}
+						{#if folded}
+							<button class="fold" onclick={() => (open.showResolved = !open.showResolved)}>
+								{open.showResolved ? 'Hide' : 'Show'} {folded} resolved
+							</button>
+						{/if}
+						<button class="add" onclick={() => edit('new-ticket', '')}><Plus /> Add a Ticket</button>
+					</section>
+					{#if review || findings.length}{@render reviewSection(review)}{/if}
+				</div>
 				{#if phone}
 					{@render worktree(epic)}
 					{@render archive()}
@@ -805,6 +935,10 @@
 		flex: 1;
 	}
 
+	.phone .setting > span:first-child {
+		min-width: 10ch;
+	}
+
 	.phone [role='group'] > span:first-child {
 		flex: 1;
 	}
@@ -842,9 +976,20 @@
 		gap: var(--space-6);
 	}
 
-	.tickets {
+	.main {
 		display: flex;
 		flex: 1 1 32rem;
+		flex-direction: column;
+		gap: var(--space-6);
+		min-width: 0;
+	}
+
+	.phone .main {
+		gap: var(--space-4);
+	}
+
+	.tickets {
+		display: flex;
 		flex-direction: column;
 		min-width: 0;
 		overflow: hidden;
@@ -1061,6 +1206,166 @@
 	.add:focus-visible {
 		outline: var(--border-width) solid var(--status-working);
 		outline-offset: calc(-1 * var(--border-width));
+	}
+
+	.picker {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		max-width: 16rem;
+		min-height: var(--target-min);
+		padding: 0 var(--space-2);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--surface-1);
+		color: var(--color-fg);
+		font: inherit;
+		cursor: pointer;
+	}
+
+	.picker span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.picker :global(svg) {
+		flex: none;
+		color: var(--muted-fg);
+	}
+
+	.picker:disabled {
+		color: var(--muted-fg);
+		cursor: default;
+	}
+
+	.picker:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
+	}
+
+	.phone .picker {
+		flex: 1;
+		justify-content: space-between;
+		max-width: none;
+	}
+
+	.review {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-3);
+		padding: var(--space-4);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-lg);
+	}
+
+	.phone .review {
+		padding: var(--space-3);
+	}
+
+	.review h2 {
+		margin: 0;
+		font-size: var(--font-size-md);
+	}
+
+	.crew {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		margin: 0;
+		padding: 0;
+		font-size: var(--font-size-sm);
+		list-style: none;
+	}
+
+	.crew li {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0 var(--space-3);
+	}
+
+	.who {
+		min-width: 6.5rem;
+	}
+
+	.crew .rig,
+	.crew .state {
+		color: var(--muted-fg);
+	}
+
+	.crew .state.flagged {
+		color: var(--status-waiting);
+	}
+
+	.crew .link {
+		margin-left: auto;
+	}
+
+	.why {
+		flex-basis: 100%;
+		margin: 0;
+		color: var(--muted-fg);
+		overflow-wrap: anywhere;
+	}
+
+	.finding {
+		border-top: var(--border-width) solid var(--border);
+	}
+
+	.finding summary {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-3);
+		min-height: var(--target-min);
+		padding: var(--space-2) 0;
+		list-style: none;
+		cursor: pointer;
+	}
+
+	.finding summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.finding summary:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
+	}
+
+	.finding summary .number {
+		flex: none;
+		width: 2.5rem;
+	}
+
+	.finding .title {
+		flex: 1;
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+
+	.finding[open] .title {
+		font-weight: 600;
+	}
+
+	.verdict {
+		flex: none;
+		color: var(--tone);
+		font-size: var(--font-size-sm);
+	}
+
+	.finding-body {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+		padding: 0 0 var(--space-3) calc(2.5rem + var(--space-3));
+		font-size: var(--font-size-sm);
+		overflow-wrap: anywhere;
+	}
+
+	.phone .finding-body {
+		padding-left: 0;
+	}
+
+	.finding-body p {
+		margin: 0;
 	}
 
 	.archive {

@@ -12,6 +12,8 @@ export class OpenEpic {
 	showResolved = $state(false);
 	rig = $state<string>();
 	parallel = $state(1);
+	reviewers = $state<string[]>([]);
+	remediator = $state<string>();
 	showRun = $state(false);
 	starting = $state<number[]>([]);
 	savingRigs = $state<number[]>([]);
@@ -50,8 +52,8 @@ export type Edit =
 	| { kind: 'note.added'; ticket: number; author: 'david'; text: string }
 	| { kind: 'ticket.reopened'; ticket: number }
 	| { kind: 'epic.archived' }
-	| { kind: 'run.started'; rig: string; parallel: number }
-	| { kind: 'run.changed'; rig?: string; parallel?: number }
+	| { kind: 'run.started'; rig: string; parallel: number; reviewers: string[]; remediator?: string }
+	| { kind: 'run.changed'; rig?: string; parallel?: number; reviewers?: string[]; remediator?: string }
 	| { kind: 'run.paused'; reason: 'david' }
 	| { kind: 'run.resumed' }
 	| { kind: 'run.stopped' };

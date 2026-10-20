@@ -541,6 +541,58 @@ test('a Run started from the Epic tab works the Epic through and calls from the 
 	await showFiles(await showSidebar(page));
 });
 
+test('a Run with a Reviewer reviews the Epic once its Tickets are done, and its Remediator judges and fixes the Findings', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
+	const slug = `review-${project.name}`;
+	const data = `${process.env.STAMPEDE_E2E_ROOT}/data`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${slug}`;
+	mkdirSync(root, { recursive: true });
+	const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
+	git('init', '-q');
+	git('config', 'user.name', 'stampede');
+	git('config', 'user.email', 'e2e@stampede.invalid');
+	git('config', 'commit.gpgsign', 'false');
+	writeFileSync(`${root}/README`, 'review\n');
+	git('add', 'README');
+	git('commit', '-qm', 'Initial commit');
+	const cli = (stdin: string, ...args: string[]) => execFileSync(stampede, [...args, '--data-dir', data], { cwd: root, input: stdin });
+	cli('# Review\n', 'epic', 'add', slug, '--title', 'Review it', '--brief', '-');
+	cli('Write **work.txt**.\n', 'ticket', 'add', slug, '1', '--title', 'The work', '--body', '-');
+	cli('', 'epic', 'set-setup', slug, '');
+
+	await openProject(page, slug);
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
+	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
+	const run = panel.getByRole('region', { name: 'Run', exact: true });
+	await run.getByRole('combobox', { name: 'Rig' }).selectOption('Fake Claude Verdict');
+	await expect(run.getByRole('combobox', { name: 'Remediator' })).toHaveCount(0);
+	await run.getByRole('button', { name: 'Reviewers: none' }).click();
+	await page.getByRole('menuitemcheckbox', { name: 'Fake Reviewer' }).click();
+	await expect(page.getByRole('menuitemcheckbox', { name: 'Fake Reviewer' })).toHaveAttribute('aria-checked', 'true');
+	await page.keyboard.press('Escape');
+	await expect(run.getByRole('button', { name: 'Reviewers: Fake Reviewer' })).toBeVisible();
+	await run.getByRole('combobox', { name: 'Remediator' }).selectOption('Fake Remediator');
+	await page.screenshot({ path: test.info().outputPath('start-review.png') });
+	await run.getByRole('button', { name: 'Start Run' }).click();
+
+	const review = panel.getByRole('region', { name: 'Review' });
+	await expect(review).toContainText('Remediated at', { timeout: 20000 });
+	await expect(review.getByRole('listitem')).toHaveText([/Reviewer 1\s*Fake Reviewer\s*reported/, /Remediator\s*Fake Remediator\s*remediated/]);
+	const finding = review.locator('details', { hasText: 'The greeting shouts' });
+	await expect(finding.locator('summary')).toContainText('Accepted');
+	await finding.locator('summary').click();
+	await expect(finding).toContainText('work.txt is all capitals.');
+	await expect(finding).toContainText('Accepted: It does shout');
+	await expect(run).not.toContainText('Run live');
+	await expect(run.getByRole('button', { name: 'Start Run' })).toBeVisible();
+	expect(readFileSync(`${data}/worktrees/${slug}/integration/work.txt`, 'utf8')).toBe('Remediated.\n');
+	expect(existsSync(`${data}/worktrees/${slug}/review-1`)).toBe(false);
+	await page.screenshot({ path: test.info().outputPath('reviewed.png') });
+	await showFiles(await showSidebar(page));
+});
+
 test('a paused Run starts nothing until it is resumed, and stopping it gives its Ticket back', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
 	const slug = `pause-${project.name}`;

@@ -86,6 +86,84 @@ pub enum CliCommand {
         #[command(flatten)]
         connection: Connection,
     },
+    /// Record a Finding, list an Epic's Findings, or judge one.
+    ///
+    /// A Finding is a defect a Reviewer found once every Ticket of an Epic was done. The Run's Remediator judges every Finding, accepting the ones it fixes and rejecting the rest, each with a reason.
+    #[command(subcommand)]
+    Finding(FindingCommand),
+    /// Report that your Review of an Epic is done.
+    ///
+    /// Run it from inside your Reviewer worktree, as your last act, once every Finding you verified is recorded with `stampede finding add`. Stampede then ends your Chat and discards the worktree. Once every Reviewer has reported, the Run's Remediator judges the Findings.
+    Reviewed {
+        /// The Epic's slug, such as chat-ui.
+        epic: String,
+        #[command(flatten)]
+        connection: Connection,
+    },
+    /// Record that you have remediated an Epic.
+    ///
+    /// Run it from inside the Epic's Integration Worktree, as the Remediator's last act. It commits everything left uncommitted there, new files included, with the given message, then the Run finishes. It is refused while any Finding is unjudged.
+    Remediated {
+        /// The Epic's slug, such as chat-ui.
+        epic: String,
+        /// The commit message for whatever is left uncommitted. Quote it so that it reaches the command as one argument.
+        #[arg(short, long)]
+        message: String,
+        #[command(flatten)]
+        connection: Connection,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum FindingCommand {
+    /// Record a Finding of your Review.
+    ///
+    /// Run it from inside your Reviewer worktree while you review. An Epic's Findings are numbered from 1 in the order they are recorded, and are never edited.
+    Add {
+        /// The Epic's slug, such as chat-ui.
+        epic: String,
+        /// The defect, on one line.
+        #[arg(long)]
+        title: String,
+        /// A Markdown file holding the Finding: where the defect is, what is wrong, a scenario that shows it, and the fix you would make. Pass - to read it from standard input instead.
+        #[arg(long, value_name = "FILE")]
+        body: PathBuf,
+        #[command(flatten)]
+        connection: Connection,
+    },
+    /// Print every Finding of an Epic, with its judgment.
+    List {
+        /// The Epic's slug, such as chat-ui.
+        epic: String,
+        #[command(flatten)]
+        connection: Connection,
+    },
+    /// Accept a Finding, which you will fix.
+    ///
+    /// Run it from inside the Epic's Integration Worktree while you remediate. Judging a Finding again replaces its judgment.
+    Accept {
+        /// The Epic's slug, such as chat-ui.
+        epic: String,
+        /// The Finding's number.
+        finding: u32,
+        /// Why it is worth fixing. Quote it so that it reaches the command as one argument.
+        reason: String,
+        #[command(flatten)]
+        connection: Connection,
+    },
+    /// Reject a Finding, which stays unfixed.
+    ///
+    /// Run it from inside the Epic's Integration Worktree while you remediate. Judging a Finding again replaces its judgment.
+    Reject {
+        /// The Epic's slug, such as chat-ui.
+        epic: String,
+        /// The Finding's number.
+        finding: u32,
+        /// Why it is not fixed: wrong, out of scope, deliberate, a duplicate, or not worth its cost. Quote it so that it reaches the command as one argument.
+        reason: String,
+        #[command(flatten)]
+        connection: Connection,
+    },
 }
 
 #[derive(Subcommand)]
@@ -243,6 +321,16 @@ enum Request {
     Complete { epic: String, ticket: u32, message: String, cwd: PathBuf },
     #[serde(rename = "skip")]
     Skip { epic: String, ticket: u32, reason: String, cwd: PathBuf },
+    #[serde(rename = "finding.add")]
+    AddFinding { epic: String, title: String, body: String, cwd: PathBuf },
+    #[serde(rename = "finding.list")]
+    Findings { epic: String },
+    #[serde(rename = "finding.judge")]
+    Judge { epic: String, finding: u32, accepted: bool, reason: String, cwd: PathBuf },
+    #[serde(rename = "reviewed")]
+    Reviewed { epic: String, cwd: PathBuf },
+    #[serde(rename = "remediated")]
+    Remediated { epic: String, message: String, cwd: PathBuf },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -317,6 +405,18 @@ fn request(command: CliCommand) -> Result<(Connection, Request), String> {
         CliCommand::Skip { reference: Reference { epic, ticket }, reason, connection } => {
             (connection, Request::Skip { epic, ticket, reason, cwd: cwd()? })
         }
+        CliCommand::Finding(FindingCommand::Add { epic, title, body, connection }) => {
+            (connection, Request::AddFinding { epic, title, body: read(&body, "body")?, cwd: cwd()? })
+        }
+        CliCommand::Finding(FindingCommand::List { epic, connection }) => (connection, Request::Findings { epic }),
+        CliCommand::Finding(FindingCommand::Accept { epic, finding, reason, connection }) => {
+            (connection, Request::Judge { epic, finding, accepted: true, reason, cwd: cwd()? })
+        }
+        CliCommand::Finding(FindingCommand::Reject { epic, finding, reason, connection }) => {
+            (connection, Request::Judge { epic, finding, accepted: false, reason, cwd: cwd()? })
+        }
+        CliCommand::Reviewed { epic, connection } => (connection, Request::Reviewed { epic, cwd: cwd()? }),
+        CliCommand::Remediated { epic, message, connection } => (connection, Request::Remediated { epic, message, cwd: cwd()? }),
     })
 }
 
@@ -415,7 +515,35 @@ async fn handle(epics: &Epics, runs: &Runs, request: Request) -> Result<String, 
         }
         Request::Complete { epic, ticket, message, cwd } => runs.complete(&epic, ticket, &cwd, &message).await,
         Request::Skip { epic, ticket, reason, cwd } => runs.skip(&epic, ticket, &cwd, &reason),
+        Request::AddFinding { epic, title, body, cwd } => runs.add_finding(&epic, &cwd, &title, &body),
+        Request::Findings { epic } => Ok(findings(&epics.get(&epic)?)),
+        Request::Judge { epic, finding, accepted, reason, cwd } => runs.judge(&epic, finding, accepted, &reason, &cwd),
+        Request::Reviewed { epic, cwd } => runs.reviewed(&epic, &cwd),
+        Request::Remediated { epic, message, cwd } => runs.remediated(&epic, &cwd, &message).await,
     }
+}
+
+fn findings(epic: &Epic) -> String {
+    if epic.findings.is_empty() {
+        return format!("{} has no Findings.", epic.slug);
+    }
+    let mut text = String::new();
+    for finding in &epic.findings {
+        let judgment = match &finding.judgment {
+            Some(judgment) => format!("{}: {}", if judgment.accepted { "Accepted" } else { "Rejected" }, judgment.reason.trim_end()),
+            None => "Not judged yet".to_owned(),
+        };
+        text.push_str(&format!(
+            "# Finding {}: {}\n\nFound by: {}\n{judgment}\n\n{}\n\n",
+            finding.number,
+            finding.title,
+            finding.rig,
+            finding.body.trim_end()
+        ));
+    }
+    text.truncate(text.trim_end().len());
+    text.push('\n');
+    text
 }
 
 fn show(epic: &Epic, number: u32) -> Result<String, String> {

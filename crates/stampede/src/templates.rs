@@ -23,6 +23,14 @@ pub const TICKET: Template = Template { name: "ticket", description: "work one T
 pub const RESOLVER: Template =
     Template { name: "resolver", description: "resolve a Ticket's conflicted merge", text: include_str!("templates/resolver.md") };
 
+/// The first prompt of a Reviewer Chat, which the loop also sends itself.
+pub const REVIEWER: Template =
+    Template { name: "reviewer", description: "review an Epic whose Tickets are done", text: include_str!("templates/reviewer.md") };
+
+/// The first prompt of a Remediator Chat, which the loop also sends itself.
+pub const REMEDIATOR: Template =
+    Template { name: "remediator", description: "judge and fix an Epic's Findings", text: include_str!("templates/remediator.md") };
+
 /// The prompt asking a Rig to draft a commit message, followed by the staged diff.
 pub const COMMIT: &str = include_str!("templates/commit.md");
 
@@ -59,7 +67,7 @@ pub fn expand<'a>(text: &'a str, data_dir: &Path) -> Cow<'a, str> {
 
 /// The Template a sent text was expanded from, and the text as it was typed.
 pub fn recognize(text: &str, data_dir: &Path) -> Option<(&'static str, String)> {
-    TEMPLATES.iter().chain([&TICKET, &RESOLVER, &HANDOFF]).find_map(|template| {
+    TEMPLATES.iter().chain([&TICKET, &RESOLVER, &REVIEWER, &REMEDIATOR, &HANDOFF]).find_map(|template| {
         let typed = text.strip_prefix(&template.opening(data_dir))?;
         Some(match typed {
             "" => (template.name, format!("/{}", template.name)),

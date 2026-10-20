@@ -21,11 +21,11 @@ use crate::{
     attention::{Attention, Feed, Source, Tab},
     chats::{self, Chat, Chats, Lifecycle},
     config::{Config, Rig},
-    epics::{Author, Call, Continuation, Epic, Epics, Event, Keep, Pause, Run, Status},
+    epics::{Author, Call, Continuation, Epic, Epics, Event, Keep, Pause, Review, Run, Status},
     git,
     holder::Owner,
     projects::{Kind, Project, Projects, Role, Worktree},
-    templates::{self, RESOLVER, TICKET},
+    templates::{self, REMEDIATOR, RESOLVER, REVIEWER, TICKET},
     terminals::Terminals,
     usage::Usage,
 };
@@ -38,7 +38,8 @@ pub use worktrees::Refusal;
 
 const TAIL: usize = 40;
 
-/// The loop: Runs that start Tickets in their own worktrees, take their Verdicts, and merge them one at a time.
+/// The loop: Runs that start Tickets in their own worktrees, take their Verdicts, and merge them one at a time, then
+/// review the Epic branch and remediate what the Review finds.
 pub struct Runs {
     data_dir: PathBuf,
     storage: crate::storage::Storage,
@@ -51,7 +52,7 @@ pub struct Runs {
     config: watch::Receiver<Arc<Config>>,
     attention: Arc<Feed>,
     usage: Arc<Usage>,
-    starting: Arc<Mutex<HashSet<(String, u32)>>>,
+    starting: Arc<Mutex<HashSet<(String, Slot)>>>,
     cutting: tokio::sync::Mutex<()>,
     merges: mpsc::UnboundedSender<String>,
     schedule: mpsc::UnboundedSender<String>,
@@ -122,6 +123,16 @@ impl Runs {
                     }
                 }
             }
+            let Some(review) = epic.reviewing() else { continue };
+            let remediator = review.remediator.iter().filter_map(|remediator| remediator.chat.as_deref());
+            for chat in review.reviewers.iter().filter_map(|reviewer| reviewer.chat.as_deref()).chain(remediator) {
+                let reason = format!("Its Chat {chat} did not come back when Stampede restarted.");
+                if let Some(lost) = abandon(review, chat, reason).filter(|_| !live.contains(chat))
+                    && let Err(error) = self.epics.record(&slug, lost)
+                {
+                    eprintln!("cannot give up on {slug}'s missing Chat {chat}: {error}");
+                }
+            }
         }
     }
 
@@ -147,6 +158,7 @@ impl Runs {
                         self.limited(&claim.chat);
                     }
                 }
+                self.sweep(&slug).await;
                 self.meter(&slug, &mut resets).await;
                 self.continue_owed(&slug);
                 self.recover(&slug);
@@ -183,6 +195,7 @@ impl Runs {
                             Lifecycle::Ended(chat) => {
                                 closing.remove(&chat.id);
                                 self.released(chat);
+                                self.abandoned(chat);
                             }
                             Lifecycle::Status(chat, chats::Status::Done) => self.limited(chat),
                             _ => {}
@@ -220,28 +233,32 @@ impl Runs {
         }
     }
 
-    /// Starts Frontier Tickets in number order until the live Run's slots are full, and says whether it has finished.
-    /// Every in-progress or merging Ticket holds a slot, whatever its Chat's status.
+    /// Starts Frontier Tickets in number order until the live Run's slots are full, then reviews once they are all done,
+    /// and says whether it has finished. Every in-progress or merging Ticket holds a slot, whatever its Chat's status.
     fn fill(self: &Arc<Self>, slug: &str) -> bool {
         let Ok(epic) = self.epics.get(slug) else { return false };
         let Some(run) = epic.run.as_ref().filter(|_| !epic.archived) else { return false };
+        let starting = self.starting(slug);
         let mut busy: HashSet<u32> = epic
             .tickets
             .iter()
             .filter(|(_, ticket)| matches!(ticket.status, Status::InProgress | Status::Merging))
             .map(|(&number, _)| number)
             .collect();
-        busy.extend(self.starting.lock().unwrap().iter().filter(|(other, _)| other == slug).map(|&(_, number)| number));
+        busy.extend(starting.iter().filter_map(|slot| match slot {
+            Slot::Ticket(number) => Some(*number),
+            _ => None,
+        }));
         let takeable = epic.frontier().filter(|(number, ticket)| ticket.attention.is_none() && !busy.contains(number));
         let takeable: Vec<u32> = takeable.map(|(number, _)| number).collect();
         if takeable.is_empty() && busy.is_empty() {
-            return true;
+            return self.review(&epic, run, &starting);
         }
         if run.paused.is_some() {
             return false;
         }
         for number in takeable.into_iter().take((run.parallel as usize).saturating_sub(busy.len())) {
-            let Ok(starting) = Starting::new(self, slug, number) else { continue };
+            let Ok(starting) = Starting::new(self, slug, Slot::Ticket(number)) else { continue };
             let (runs, slug, rig) = (Arc::clone(self), slug.to_owned(), run.rig.clone());
             tokio::spawn(async move {
                 if let Err(reason) = runs.take(&slug, number, &rig).await {
@@ -253,6 +270,157 @@ impl Runs {
             });
         }
         false
+    }
+
+    fn starting(&self, slug: &str) -> Vec<Slot> {
+        self.starting.lock().unwrap().iter().filter(|(other, _)| other == slug).map(|&(_, slot)| slot).collect()
+    }
+
+    /// Steps a Run whose Tickets are all done through its Review: Reviewers up to its parallel limit, in the order it
+    /// names them, then a Remediator once every Reviewer is done and a Finding awaits judgment. Says whether the Run has
+    /// finished, which a Run without Reviewers does at once.
+    fn review(self: &Arc<Self>, epic: &Epic, run: &Run, starting: &[Slot]) -> bool {
+        let slug = &epic.slug;
+        let Some(review) = epic.reviewing() else {
+            let reviewable = !run.reviewers.is_empty() && epic.integration.is_some() && epic.tickets.values().all(|ticket| ticket.status.resolved());
+            if reviewable && run.paused.is_none() && let Err(error) = self.epics.record(slug, Event::ReviewStarted) {
+                eprintln!("cannot start {slug}'s Review: {error}");
+            }
+            return !reviewable;
+        };
+        if let Some(remediator) = &review.remediator {
+            return remediator.done();
+        }
+        let reviewing = starting.iter().filter(|slot| matches!(slot, Slot::Reviewer(_))).count()
+            + review.reviewers.iter().filter(|reviewer| !reviewer.done()).count();
+        let begun = |number: &u32| review.reviewers.iter().any(|reviewer| reviewer.number == *number) || starting.contains(&Slot::Reviewer(*number));
+        let waiting: Vec<u32> = (1..=run.reviewers.len() as u32).filter(|number| !begun(number)).collect();
+        if waiting.is_empty() && reviewing == 0 {
+            if !epic.findings.iter().any(|finding| finding.judgment.is_none()) {
+                return true;
+            }
+            if run.paused.is_some() {
+                return false;
+            }
+            let (Some(rig), Ok(starting)) = (run.remediator.clone(), Starting::new(self, slug, Slot::Remediator)) else { return false };
+            let (runs, slug) = (Arc::clone(self), slug.to_owned());
+            tokio::spawn(async move {
+                if let Err(reason) = runs.start_remediator(&slug, &rig).await
+                    && let Err(error) = runs.epics.record(&slug, Event::RemediationFailed { rig, reason })
+                {
+                    eprintln!("cannot record that {slug}'s Remediator did not start: {error}");
+                }
+                drop(starting);
+            });
+            return false;
+        }
+        if run.paused.is_some() {
+            return false;
+        }
+        for number in waiting.into_iter().take((run.parallel as usize).saturating_sub(reviewing)) {
+            let Ok(starting) = Starting::new(self, slug, Slot::Reviewer(number)) else { continue };
+            let (runs, slug, rig) = (Arc::clone(self), slug.to_owned(), run.reviewers[number as usize - 1].clone());
+            tokio::spawn(async move {
+                if let Err(reason) = runs.start_reviewer(&slug, number, &rig).await {
+                    let storage_paused = runs.epics.get(&slug).is_ok_and(|epic| epic.run.as_ref()
+                        .is_some_and(|run| matches!(run.paused, Some(Pause::Storage { .. }))));
+                    if !storage_paused && let Err(error) = runs.epics.record(&slug, Event::ReviewerFailed { reviewer: number, rig, reason }) {
+                        eprintln!("cannot record that {slug}'s Reviewer {number} did not start: {error}");
+                    }
+                }
+                drop(starting);
+            });
+        }
+        false
+    }
+
+    /// Starts a Reviewer in its own worktree, detached at the Epic branch's head and set up as a Ticket's would be.
+    async fn start_reviewer(&self, slug: &str, number: u32, rig: &str) -> Result<(), String> {
+        let epic = self.epics.get(slug)?;
+        let rig = self.rig(rig)?;
+        let project = self.project(&epic).await?;
+        if let Some(message) = self.storage_pressure(Path::new(&project.path)).await {
+            let _ = self.epics.record(slug, Event::RunPaused { pause: Pause::Storage { message: message.clone() } });
+            return Err(message);
+        }
+        let integration = epic.integration.clone().ok_or_else(|| format!("{slug} has no Integration Worktree to review"))?;
+        let worktree = self.worktree(slug, &format!("review-{number}"));
+        remove_worktree(&integration, Path::new(&worktree)).await;
+        git::run(&integration, &["worktree", "add", "--detach", &worktree, &epic_branch(slug)]).await?;
+        let started = async {
+            submodules::init(Path::new(&worktree), &integration)
+                .await
+                .map_err(|error| format!("Stampede could not check out the submodules of its worktree: {error}"))?;
+            let place = format!("Reviewer {number}'s new worktree");
+            run_setup(&self.storage, epic.setup.as_deref().unwrap_or_default(), &worktree, &place).await?;
+            self.chats.create(&project, Path::new(&worktree), &rig, None).await.map_err(|error| format!("Its Chat could not start: {error}."))
+        };
+        let chat = match started.await {
+            Ok(chat) => chat,
+            Err(error) => {
+                remove_worktree(&integration, Path::new(&worktree)).await;
+                return Err(error);
+            }
+        };
+        let event = Event::ReviewerStarted { reviewer: number, rig: rig.name.clone(), chat: chat.id.clone(), worktree: PathBuf::from(&worktree) };
+        if let Err(error) = self.epics.record(slug, event) {
+            self.chats.close(&chat.id);
+            remove_worktree(&integration, Path::new(&worktree)).await;
+            return Err(error);
+        }
+        self.chats.send(&chat.id, &self.reviewer_prompt(&epic, number), false, &[]);
+        Ok(())
+    }
+
+    /// Starts the Remediator in the Integration Worktree, where it fixes the Findings it accepts.
+    async fn start_remediator(&self, slug: &str, rig: &str) -> Result<(), String> {
+        let epic = self.epics.get(slug)?;
+        let rig = self.rig(rig)?;
+        let integration = epic.integration.as_deref().ok_or_else(|| format!("{slug} has no Integration Worktree to remediate"))?;
+        let project = self.project(&epic).await?;
+        let project = self.home(slug, &project, &integration.to_string_lossy(), Role::Integration);
+        let chat = self.chats.create(&project, integration, &rig, None).await.map_err(|error| format!("Its Chat could not start: {error}."))?;
+        if let Err(error) = self.epics.record(slug, Event::RemediationStarted { rig: rig.name.clone(), chat: chat.id.clone() }) {
+            self.chats.close(&chat.id);
+            return Err(error);
+        }
+        self.chats.send(&chat.id, &self.remediator_prompt(&epic), false, &[]);
+        Ok(())
+    }
+
+    fn rig(&self, name: &str) -> Result<Rig, String> {
+        let found = self.config.borrow().rigs.iter().find(|rig| rig.name == name).cloned();
+        found.ok_or_else(|| format!("Its Rig {name} is no longer in the config."))
+    }
+
+    /// Ends the Chats of the Reviewers and the Remediator that are done, and of all of them once their Run has ended,
+    /// removing each Reviewer's worktree with its Chat.
+    async fn sweep(&self, slug: &str) {
+        let Ok(epic) = self.epics.get(slug) else { return };
+        let Some(review) = &epic.review else { return };
+        for reviewer in review.reviewers.iter().filter(|reviewer| review.ended || reviewer.done()) {
+            if let Some(chat) = &reviewer.chat {
+                self.chats.end(chat);
+            }
+            if let (Some(worktree), Some(integration)) = (&reviewer.worktree, &epic.integration)
+                && worktree.exists()
+            {
+                remove_worktree(integration, worktree).await;
+            }
+        }
+        if let Some(chat) = review.remediator.as_ref().filter(|remediator| review.ended || remediator.done()).and_then(|remediator| remediator.chat.as_ref()) {
+            self.chats.end(chat);
+        }
+    }
+
+    /// Gives up on a Reviewer or the Remediator whose Chat stopped before it was done.
+    fn abandoned(&self, chat: &Chat) {
+        let Some(slug) = self.epics.reviewing(&chat.id) else { return };
+        let Some(review) = self.epics.get(&slug).ok().and_then(|epic| epic.reviewing().cloned()) else { return };
+        let Some(lost) = abandon(&review, &chat.id, format!("Its Chat {} stopped before it was done.", chat.id)) else { return };
+        if let Err(error) = self.epics.record(&slug, lost) {
+            eprintln!("cannot give up on {slug}'s Chat {}: {error}", chat.id);
+        }
     }
 
     /// Stops the Chat of each Ticket going back to not started, once, or releases the Ticket now when it has none.
@@ -361,10 +529,13 @@ impl Runs {
 
     fn over(&self, epic: &Epic, run: &Run) -> Option<Pause> {
         let config = self.config.borrow();
-        let names = epic.tickets.values().filter(|ticket| !ticket.status.resolved()).map(|ticket| {
+        let mut names: Vec<&str> = epic.tickets.values().filter(|ticket| !ticket.status.resolved()).map(|ticket| {
             ticket.claim.as_ref().map(|claim| claim.rig.as_str()).or(ticket.rig.as_deref()).unwrap_or(&run.rig)
-        });
-        let agents: Vec<_> = names.filter_map(|name| config.rigs.iter().find(|rig| rig.name == name).map(|rig| rig.agent)).collect();
+        }).collect();
+        if names.is_empty() {
+            names.extend(reviewing_rigs(epic, run));
+        }
+        let agents: Vec<_> = names.into_iter().filter_map(|name| config.rigs.iter().find(|rig| rig.name == name).map(|rig| rig.agent)).collect();
         let readings = self.usage.readings();
         let now = now();
         let mut paused_window = None;
@@ -605,7 +776,7 @@ impl Runs {
 
     /// Starts a Frontier Ticket by hand, outside any Run.
     pub async fn start(&self, slug: &str, number: u32, project: &Project, rig: &Rig) -> Result<String, String> {
-        let _starting = Starting::new(self, slug, number)?;
+        let _starting = Starting::new(self, slug, Slot::Ticket(number))?;
         self.begin(slug, number, project, rig, false).await
     }
 
@@ -786,6 +957,30 @@ impl Runs {
         )
     }
 
+    /// The Reviewer Template, then which Reviewer it is, which `templates::recognize` shows as what followed `/reviewer`.
+    fn reviewer_prompt(&self, epic: &Epic, number: u32) -> String {
+        format!(
+            "{}\n\nYou are Reviewer {number} of the Epic {}, reviewing `{}` against `{}`. {}",
+            REVIEWER.opening(&self.data_dir),
+            epic.slug,
+            epic_branch(&epic.slug),
+            epic.base.as_deref().unwrap_or("the branch it was cut from"),
+            self.binary()
+        )
+    }
+
+    /// The Remediator Template, then the Epic it remediates, which `templates::recognize` shows as what followed `/remediator`.
+    fn remediator_prompt(&self, epic: &Epic) -> String {
+        format!(
+            "{}\n\nYou are the Remediator of the Epic {}, on `{}`, which was cut from `{}`. {}",
+            REMEDIATOR.opening(&self.data_dir),
+            epic.slug,
+            epic_branch(&epic.slug),
+            epic.base.as_deref().unwrap_or("the branch it was cut from"),
+            self.binary()
+        )
+    }
+
     fn binary(&self) -> String {
         format!("On this Host `stampede` is `{}`; run it by that path if it is not on your PATH.", quote(&self.cli))
     }
@@ -814,6 +1009,49 @@ impl Runs {
         self.epics.record(slug, Event::Skipped { ticket: number, reason: reason.to_owned() })?;
         let _ = self.merges.send(slug.to_owned());
         Ok(format!("Recorded the Verdict: {slug}/{number} is skipped."))
+    }
+
+    /// Records a Finding of the Reviewer whose worktree holds `cwd`.
+    pub fn add_finding(&self, slug: &str, cwd: &Path, title: &str, body: &str) -> Result<String, String> {
+        let cwd = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_owned());
+        let added = self.epics.record_from(slug, |epic| {
+            let rig = reviewer_at(epic, &cwd)?.rig.clone();
+            let finding = epic.findings.last().map_or(1, |last| last.number + 1);
+            Ok(Event::FindingAdded { finding, rig, title: title.to_owned(), body: body.to_owned() })
+        })?;
+        let Event::FindingAdded { finding, .. } = added else { unreachable!("a Finding was recorded") };
+        Ok(format!("Added Finding {finding} to {slug}."))
+    }
+
+    /// Records that the Reviewer whose worktree holds `cwd` has reported, after which Stampede ends its Chat.
+    pub fn reviewed(&self, slug: &str, cwd: &Path) -> Result<String, String> {
+        let cwd = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_owned());
+        let reported = self.epics.record_from(slug, |epic| Ok(Event::ReviewerReported { reviewer: reviewer_at(epic, &cwd)?.number }))?;
+        let Event::ReviewerReported { reviewer } = reported else { unreachable!("a report was recorded") };
+        Ok(format!("Recorded that Reviewer {reviewer} of {slug} has reported. Stampede ends this Chat and discards its worktree next."))
+    }
+
+    pub fn judge(&self, slug: &str, finding: u32, accepted: bool, reason: &str, cwd: &Path) -> Result<String, String> {
+        integrated(&self.epics.get(slug)?, cwd, "A Finding is judged")?;
+        self.epics.record(slug, Event::FindingJudged { finding, accepted, reason: reason.to_owned() })?;
+        Ok(format!("{} Finding {finding} of {slug}.", if accepted { "Accepted" } else { "Rejected" }))
+    }
+
+    /// Commits what the Remediator left uncommitted and records that the Epic is remediated, once every Finding is judged.
+    pub async fn remediated(&self, slug: &str, cwd: &Path, message: &str) -> Result<String, String> {
+        let epic = self.epics.get(slug)?;
+        let integration = integrated(&epic, cwd, "The Remediator's Verdict is taken")?;
+        if message.trim().is_empty() {
+            return Err("the commit message is empty".to_owned());
+        }
+        epic.check(&Event::Remediated { commit: String::new() })?;
+        if !git::run(&integration, &["status", "--porcelain"]).await?.is_empty() {
+            git::run(&integration, &["add", "-A"]).await?;
+            git::run(&integration, &["commit", "-q", "-m", message]).await?;
+        }
+        let commit = git::run(&integration, &["rev-parse", "HEAD"]).await?;
+        self.epics.record(slug, Event::Remediated { commit: commit.clone() })?;
+        Ok(format!("Recorded the Verdict: {slug} is remediated at {}, and its Run finishes next.", &commit[..commit.len().min(12)]))
     }
 
     /// The worktree of an in-progress Ticket, provided `cwd` lies inside it.
@@ -978,19 +1216,31 @@ impl Runs {
     }
 }
 
-/// Marks a Ticket as starting, so a second start cannot race the first through its Setup Command.
+/// What a Run starts a Chat for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Slot {
+    Ticket(u32),
+    Reviewer(u32),
+    Remediator,
+}
+
+/// Marks a Ticket, Reviewer or Remediator as starting, so a second start cannot race the first through its setup.
 /// The start holds a slot of a live Run until it ends, when the Run is stepped again.
 struct Starting {
-    starting: Arc<Mutex<HashSet<(String, u32)>>>,
+    starting: Arc<Mutex<HashSet<(String, Slot)>>>,
     schedule: mpsc::UnboundedSender<String>,
-    key: (String, u32),
+    key: (String, Slot),
 }
 
 impl Starting {
-    fn new(runs: &Runs, slug: &str, number: u32) -> Result<Self, String> {
-        let key = (slug.to_owned(), number);
+    fn new(runs: &Runs, slug: &str, slot: Slot) -> Result<Self, String> {
+        let key = (slug.to_owned(), slot);
         if !runs.starting.lock().unwrap().insert(key.clone()) {
-            return Err(format!("{slug}/{number} is already starting"));
+            return Err(match slot {
+                Slot::Ticket(number) => format!("{slug}/{number} is already starting"),
+                Slot::Reviewer(number) => format!("{slug}'s Reviewer {number} is already starting"),
+                Slot::Remediator => format!("{slug}'s Remediator is already starting"),
+            });
         }
         Ok(Self { starting: Arc::clone(&runs.starting), schedule: runs.schedule.clone(), key })
     }
@@ -1042,6 +1292,55 @@ async fn run_setup(storage: &crate::storage::Storage, command: &str, worktree: &
     let lines: Vec<&str> = text.trim_end().lines().collect();
     let tail = lines[lines.len().saturating_sub(TAIL)..].join("\n");
     Err(format!("The Setup Command `{command}` failed in {place} ({}). The end of its output:\n\n```text\n{tail}\n```", output.status))
+}
+
+/// The Rigs of the Reviewers a Run has yet to finish with, and of its Remediator until it is done.
+fn reviewing_rigs<'a>(epic: &'a Epic, run: &'a Run) -> impl Iterator<Item = &'a str> {
+    let review = epic.reviewing();
+    let done = move |number: usize| review.is_some_and(|review| review.reviewers.iter().any(|reviewer| reviewer.number as usize == number && reviewer.done()));
+    let reviewers = run.reviewers.iter().enumerate().filter(move |(index, _)| !done(index + 1)).map(|(_, rig)| rig.as_str());
+    let remediating = review.and_then(|review| review.remediator.as_ref()).is_none_or(|remediator| !remediator.done());
+    reviewers.chain(run.remediator.as_deref().filter(|_| remediating))
+}
+
+/// The Reviewer of the live Review, not yet done, whose worktree holds `cwd`.
+fn reviewer_at<'a>(epic: &'a Epic, cwd: &Path) -> Result<&'a crate::epics::Reviewer, String> {
+    let reviewers = epic.reviewing().into_iter().flat_map(|review| &review.reviewers);
+    let mut held = reviewers.filter(|reviewer| !reviewer.done() && reviewer.worktree.as_ref().is_some_and(|worktree| cwd.starts_with(worktree)));
+    held.next().ok_or_else(|| {
+        format!("only a Reviewer of {}, from inside its worktree while it reviews, records Findings and reports, and this ran in {}", epic.slug, cwd.display())
+    })
+}
+
+/// The Epic's Integration Worktree, provided `cwd` lies inside it.
+fn integrated(epic: &Epic, cwd: &Path, what: &str) -> Result<PathBuf, String> {
+    let integration = epic.integration.clone().ok_or_else(|| format!("{} has no Integration Worktree", epic.slug))?;
+    let cwd = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_owned());
+    if !cwd.starts_with(&integration) {
+        return Err(format!("{what} only from inside {}'s Integration Worktree, {}, and this ran in {}", epic.slug, integration.display(), cwd.display()));
+    }
+    Ok(integration)
+}
+
+/// The event that gives up on the Reviewer or Remediator holding `chat`, unless it is already done.
+fn abandon(review: &Review, chat: &str, reason: String) -> Option<Event> {
+    let holds = |held: &Option<String>| held.as_deref() == Some(chat);
+    if let Some(reviewer) = review.reviewers.iter().find(|reviewer| holds(&reviewer.chat)) {
+        return (!reviewer.done()).then(|| Event::ReviewerFailed { reviewer: reviewer.number, rig: reviewer.rig.clone(), reason });
+    }
+    let remediator = review.remediator.as_ref().filter(|remediator| holds(&remediator.chat) && !remediator.done())?;
+    Some(Event::RemediationFailed { rig: remediator.rig.clone(), reason })
+}
+
+/// Removes a Reviewer's detached worktree, which holds nothing worth keeping.
+async fn remove_worktree(repo: &Path, worktree: &Path) {
+    let removed = match worktree.exists() {
+        true => git::run(repo, &["worktree", "remove", "--force", &worktree.to_string_lossy()]).await,
+        false => git::run(repo, &["worktree", "prune"]).await,
+    };
+    if let Err(error) = removed {
+        eprintln!("cannot remove {}: {error}", worktree.display());
+    }
 }
 
 /// Removes a worktree and branch made moments ago, which hold nothing yet.

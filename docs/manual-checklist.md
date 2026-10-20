@@ -114,6 +114,11 @@ Use a throwaway Project and repeat with each available real Agent, Claude Code a
 - [ ] An ordinary Chat interrupted by that reboot stays interrupted and Needs attention.
 - [ ] A second interruption of the recovered loop Chat Needs attention without another automatic retry.
 - [ ] A paused Run receives no automatic reboot continuation.
+- [ ] A Run naming Reviewers on both Agents reviews once every Ticket is merged, one Reviewer per free slot.
+- [ ] Each Reviewer records its Findings from its own detached worktree, then reports.
+- [ ] The Remediator judges every Finding, commits its fixes to the Epic branch, and the Run finishes.
+- [ ] The Epic tab shows the Review's Findings and judgments on desktop and phone.
+- [ ] Stopping mid-Review ends its Reviewers and removes their worktrees.
 - [ ] Land is unavailable while a Run or merge is live.
 - [ ] Landing refuses a dirty base checkout without changing it.
 - [ ] Landing a settled Epic puts its commits in the base checkout.

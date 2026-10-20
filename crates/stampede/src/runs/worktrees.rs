@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::{Runs, Starting, discard, epic_branch, submodules, ticket_branch};
+use super::{Runs, Slot, Starting, discard, epic_branch, submodules, ticket_branch};
 use crate::{
     epics::{Event, Status},
     git,
@@ -75,7 +75,7 @@ impl Runs {
 
     fn hold(&self, slug: &str, role: Role, path: &Path) -> Result<(Option<Event>, String, Option<Starting>), Refusal> {
         let starting = match role {
-            Role::Ticket(number) => Some(Starting::new(self, slug, number).map_err(Refusal::Refused)?),
+            Role::Ticket(number) => Some(Starting::new(self, slug, Slot::Ticket(number)).map_err(Refusal::Refused)?),
             Role::Integration => None,
         };
         let epic = self.epics.get(slug).map_err(Refusal::Refused)?;
@@ -85,7 +85,10 @@ impl Runs {
                 if epic.run.is_some() {
                     return Err(Refusal::Refused(format!("{slug} has a live Run, which merges into it.")));
                 }
-                if let Some((_, number)) = self.starting.lock().unwrap().iter().find(|(other, _)| other == slug) {
+                if let Some(number) = self.starting(slug).into_iter().find_map(|slot| match slot {
+                    Slot::Ticket(number) => Some(number),
+                    _ => None,
+                }) {
                     return Err(Refusal::Refused(format!("{slug}/{number} is starting from it.")));
                 }
                 if let Some((number, ticket)) = epic.tickets.iter().find(|(_, ticket)| busy(ticket.status)) {
