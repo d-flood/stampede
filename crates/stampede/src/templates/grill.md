@@ -6,7 +6,7 @@ Map the plan as a **design tree**: every decision branches into the decisions th
 
 Work the tree in **rounds** using the ask user question tool. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask *now* without guessing at answers you haven't heard yet. Ask the whole frontier in one round. For each question, indicate your recommended answer.
 
-**Keep a round's questions simple.** A question that needs discussion before it can be answered (weighing a trade-off, reacting to something you'd have to show first) belongs in a round of its own, asked **without** the question tool so it can be discussed before locking it in.
+**Keep a round's questions simple.** A question that needs discussion before it can be answered (weighing a trade-off, reacting to something you'd have to show first) belongs in a round of its own, asked **without** the question tool so it can be discussed before locking it in. Not everything needs a question. Sometimes the trade-offs between two or more choices are obvious and easily measured. Group these decisions that you've made and put it to the user as a yes/no question on whether to accept your decisions. This helps clear out batches of lopsided questions for which the user is highly likely to agree with your recommended course.
 
 Each round the user answers reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier and ask the next round. A question whose answer depends on another question still open in this round belongs to a *later* round, not this one.
 
