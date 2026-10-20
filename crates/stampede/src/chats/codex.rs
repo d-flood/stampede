@@ -46,6 +46,7 @@ enum Request {
     Run(Builtin),
     Close,
     Delegated(Item),
+    Shell(String),
 }
 
 impl Driver for Codex {
@@ -75,6 +76,10 @@ impl Driver for Codex {
 
     fn close(&self) {
         let _ = self.requests.send(Request::Close);
+    }
+
+    fn shell(&self, command: &str) {
+        let _ = self.requests.send(Request::Shell(command.to_owned()));
     }
 }
 
@@ -290,6 +295,9 @@ fn run(
                         let _ = connection.send(&mut transcript, Value::Array(input)).await;
                     }
                     Some(Request::Delegated(item)) => transcript.delegated(item),
+                    Some(Request::Shell(command)) => {
+                        let _ = connection.request("thread/shellCommand", json!({ "threadId": transcript.thread, "command": command })).await;
+                    }
                     Some(Request::Retry) => {
                         if let Some(input) = transcript.last_input.clone() {
                             let _ = connection.send(&mut transcript, input).await;
@@ -760,8 +768,6 @@ impl Transcript {
     }
 
     fn declare(&self) {
-        let mut modes: Vec<Choice> = Agent::Codex.modes().iter().map(|mode| Choice::mode(mode)).collect();
-        modes.push(Choice::mode("plan"));
         let commands = self.skills.iter().map(|skill| {
             let short = skill["interface"]["shortDescription"].as_str().or(skill["shortDescription"].as_str());
             AgentCommand {
@@ -774,7 +780,7 @@ impl Transcript {
             rewinds_files: false,
             models: self.models.iter().filter_map(|model| model["model"].as_str()).map(str::to_owned).collect(),
             efforts: self.efforts(),
-            modes,
+            modes: Agent::Codex.chat_modes().into_iter().map(Choice::mode).collect(),
             commands: commands.collect(),
         };
         let _ = self.events.send(Event::Capabilities(capabilities));
@@ -1092,7 +1098,7 @@ impl Transcript {
                 Some("reasoning") => Some("Thinking…".to_owned()),
                 Some("agentMessage") => Some("Writing response…".to_owned()),
                 Some("commandExecution") => {
-                    let Item::Command { command, .. } = command(item) else { unreachable!() };
+                    let (Item::Command { command, .. } | Item::Shell { command, .. }) = command(item) else { unreachable!() };
                     Some(format!("Running {command}"))
                 }
                 Some("webSearch") => Some("Searching the web…".to_owned()),
@@ -1229,7 +1235,7 @@ impl Transcript {
             }
             Some("item/commandExecution/outputDelta") => {
                 if let Some((index, item)) = params["itemId"].as_str().and_then(|id| self.commands.get_mut(id)) {
-                    if let Item::Command { output, .. } = item {
+                    if let Item::Command { output, .. } | Item::Shell { output, .. } = item {
                         output.push_str(params["delta"].as_str().unwrap_or_default());
                     }
                     let _ = self.events.send(Event::Item(*index, item.clone()));
@@ -1391,8 +1397,8 @@ impl Transcript {
         let mut item = command(value);
         let index = match self.commands.remove(id) {
             Some((index, previous)) => {
-                if value["aggregatedOutput"].is_null()
-                    && let (Item::Command { output, .. }, Item::Command { output: previous, .. }) = (&mut item, previous)
+                if (value["aggregatedOutput"].is_null() || value["exitCode"] == -1)
+                    && let (Item::Command { output, .. } | Item::Shell { output, .. }, Item::Command { output: previous, .. } | Item::Shell { output: previous, .. }) = (&mut item, previous)
                 {
                     *output = previous;
                 }
@@ -1401,7 +1407,7 @@ impl Transcript {
             }
             None => self.push(item.clone()),
         };
-        if matches!(item, Item::Command { status: CommandStatus::Running, .. }) {
+        if matches!(item, Item::Command { status: CommandStatus::Running, .. } | Item::Shell { status: CommandStatus::Running, .. }) {
             self.commands.insert(id.to_owned(), (index, item));
         }
     }
@@ -1441,7 +1447,11 @@ fn command(item: &Value) -> Item {
         Some("completed") => CommandStatus::Ok,
         _ => CommandStatus::Failed,
     };
-    Item::Command { command, status, output: item["aggregatedOutput"].as_str().unwrap_or_default().to_owned() }
+    let output = item["aggregatedOutput"].as_str().unwrap_or_default().to_owned();
+    match item["source"].as_str() {
+        Some("userShell") => Item::Shell { command, status, output, pending: false },
+        _ => Item::Command { command, status, output },
+    }
 }
 
 fn outcome(status: &str) -> Option<Outcome> {
@@ -1546,6 +1556,26 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert!(matches!(items.get(&0), Some(Item::Command { status: CommandStatus::Ok, output, .. }) if output == "Server ready\n"));
         assert!(transcript.commands.is_empty());
+    }
+
+    #[test]
+    fn user_shell_commands_are_shell_items_that_keep_their_output_when_stopped() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new("thread", Path::new("/project"), events);
+        let item = json!({ "type": "commandExecution", "id": "user", "source": "userShell", "command": "/bin/bash -lc 'cargo test'", "status": "inProgress" });
+        transcript.read(&json!({ "method": "item/started", "params": { "threadId": "thread", "item": item } }));
+        transcript.read(&json!({ "method": "item/commandExecution/outputDelta", "params": { "threadId": "thread", "itemId": "user", "delta": "running 3 tests\n" } }));
+        let mut stopped = item;
+        stopped["status"] = json!("failed");
+        stopped["exitCode"] = json!(-1);
+        stopped["aggregatedOutput"] = json!("command aborted by user");
+        transcript.completed(&stopped, 0);
+        let mut items = BTreeMap::new();
+        while let Ok(event) = received.try_recv() {
+            if let Event::Item(index, item) = event { items.insert(index, item); }
+        }
+        assert_eq!(items.len(), 1);
+        assert!(matches!(&items[&0], Item::Shell { command, status: CommandStatus::Failed, output, pending: false } if command == "cargo test" && output == "running 3 tests\n"));
     }
 
     #[test]

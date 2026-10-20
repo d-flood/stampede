@@ -15,6 +15,7 @@
 	import SubagentHeader from '#lib/chat/SubagentHeader.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
+	import { modes } from '#lib/config.svelte.ts';
 	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
@@ -36,6 +37,9 @@
 	const request = $derived(requests.find(({ subagent }) => subagent && subagent === attending) ?? requests[0]);
 	const asker = $derived(request?.subagent && subagents.find(({ subagent }) => subagent.id === request.subagent)?.subagent.task);
 	let card = $state<RequestCard>();
+	let composer = $state<ChatComposer>();
+	const history = $derived([...new Set(items.flatMap((item) => (item.kind === 'user' && item.text ? [item.text] : item.kind === 'shell' ? [`!${item.command}`] : [])).reverse())].reverse());
+	const shelling = $derived(items.some((item) => item.kind === 'shell' && item.status === 'running'));
 	const live = $derived(device.connection === 'connected');
 	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
 	let rewinding = $state(false);
@@ -43,7 +47,7 @@
 	const choices = $derived({
 		model: capabilities.models.map((value) => ({ value, label: value })),
 		effort: capabilities.efforts.map((value) => ({ value, label: value })),
-		mode: capabilities.modes
+		mode: capabilities.modes.filter((choice) => !modes(chat.agent).some((mode) => mode.value === choice.value && !mode.available))
 	});
 
 	$effect(() => {
@@ -111,6 +115,17 @@
 		device.send({ type: 'chat.run', chatId: chat.id, command, value });
 	}
 
+	function dragover(event: DragEvent) {
+		if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+	}
+
+	function drop(event: DragEvent) {
+		const files = [...(event.dataTransfer?.files ?? [])];
+		if (!files.length) return;
+		event.preventDefault();
+		void composer?.attach(files);
+	}
+
 	function follow(scroller: HTMLElement) {
 		let pinned = true;
 		let top = 0;
@@ -138,7 +153,8 @@
 	}
 </script>
 
-<div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active}>
+<!-- svelte-ignore a11y_interactive_supports_focus (Dropped images have the Attach image button as their keyboard path.) -->
+<div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active} ondragover={dragover} ondrop={drop}>
 	{#if !selected}
 		<Chips agent={chat.agent} settings={chat.settings} {choices} onrun={run}>
 			{#if form() === 'phone' && chat.context}
@@ -199,7 +215,7 @@
 			{/key}
 		{/if}
 		{#if !selected}
-			<ChatComposer {device} {chat} {live} {request} {capabilities} {choices} handoffAvailable={attached && items.some((item) => item.kind === 'user')} {focused} onrun={run} />
+			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {live} {request} {capabilities} {choices} handoffAvailable={attached && items.some((item) => item.kind === 'user')} {focused} onrun={run} />
 			{#if form() === 'desktop'}
 				<Meters {chat} />
 			{/if}

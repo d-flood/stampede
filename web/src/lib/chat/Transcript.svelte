@@ -12,6 +12,7 @@
 	import Tools from '#lib/chat/Tools.svelte';
 	import User from '#lib/chat/User.svelte';
 	import Questions from '#lib/chat/Questions.svelte';
+	import Shell from '#lib/chat/Shell.svelte';
 	import type { AnsweredQuestions, Item, Subagent } from '#lib/device.svelte.ts';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
@@ -22,7 +23,7 @@
 	});
 
 	function interim(item: Entry) {
-		return !['user', 'text', 'html', 'media', 'notice', 'questions'].includes(item.kind);
+		return !['user', 'shell', 'text', 'html', 'media', 'notice', 'questions'].includes(item.kind);
 	}
 
 	const runs = $derived(
@@ -63,6 +64,8 @@
 		<Edit {item} {ondiff} />
 	{:else if item.kind === 'command'}
 		<Command {item} onexpand={onexpand && (() => onexpand(items.indexOf(item)))} />
+	{:else if item.kind === 'shell'}
+		<Shell {item} onexpand={onexpand && (() => onexpand(items.indexOf(item)))} />
 	{:else if item.kind === 'notice'}
 		<Notice {item} />
 	{:else if item.kind === 'questions'}

@@ -1,5 +1,6 @@
+import { mkdirSync, readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { openProject, screen, showSidebar } from './shell.ts';
+import { closeProject, openProject, screen, showSidebar } from './shell.ts';
 
 test('JetBrains Mono loads for UI text and controls', async ({ page }) => {
 	await page.goto('/');
@@ -95,4 +96,31 @@ test('text size updates a running terminal and the editor', async ({ page }) => 
 	await page.reload();
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.fontSize)).toBe(20);
 	await expect.poll(() => screen(page)).toMatch(/^size-after$/m);
+});
+
+test('available modes are chosen per Agent and limit a Chat\'s mode menu and Shift+Tab', async ({ page }, { project }) => {
+	const name = `modes-${project.name}`;
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+	const claude = dialog.getByRole('group', { name: 'Claude Code', exact: true });
+	await claude.getByRole('checkbox', { name: 'accept edits', exact: true }).uncheck();
+	await expect.poll(() => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain('[modes]\nclaude-code = ["default", "plan", "auto", "dontAsk", "bypassPermissions"]');
+	const copilot = dialog.getByRole('group', { name: 'GitHub Copilot', exact: true });
+	await copilot.getByRole('checkbox', { name: 'full access', exact: true }).uncheck();
+	await expect(copilot.getByRole('checkbox', { name: 'default', exact: true })).toBeDisabled();
+	await expect.poll(() => dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+
+	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await panel.getByRole('button', { name: 'Mode: default', exact: true }).click();
+	await expect(page.getByRole('menuitemcheckbox', { name: 'plan' })).toBeVisible();
+	await expect(page.getByRole('menuitemcheckbox', { name: 'accept edits' })).toHaveCount(0);
+	await page.keyboard.press('Escape');
+	await panel.getByRole('textbox', { name: 'Composer' }).press('Shift+Tab');
+	await expect(panel.getByRole('button', { name: 'Mode: plan', exact: true })).toBeVisible();
+	await closeProject(page, name);
 });

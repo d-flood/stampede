@@ -45,6 +45,7 @@ enum Action {
     Run(Builtin),
     Delegated(Item),
     Close,
+    Shell(String),
 }
 
 impl Driver for Copilot {
@@ -55,6 +56,7 @@ impl Driver for Copilot {
     fn run(&self, builtin: Builtin) { let _ = self.requests.send(Action::Run(builtin)); }
     fn delegated(&self, item: Item) { let _ = self.requests.send(Action::Delegated(item)); }
     fn close(&self) { let _ = self.requests.send(Action::Close); }
+    fn shell(&self, command: &str) { let _ = self.requests.send(Action::Shell(command.to_owned())); }
 }
 
 struct Connection {
@@ -355,14 +357,30 @@ async fn drive(
     location: Location,
 ) {
     let mut pending = HashMap::<String, oneshot::Sender<Answer>>::new();
+    let mut shells = HashSet::<String>::new();
+    let (shelled, mut finished) = mpsc::unbounded_channel::<(String, Result<Value, String>)>();
     loop {
         let result: io::Result<()> = tokio::select! {
             action = actions.recv() => match action {
                 Some(Action::Send(text, images)) => send(&session, &mut transcript, &text, &images).await,
+                Some(Action::Shell(command)) => {
+                    let request = Uuid::new_v4().to_string();
+                    shells.insert(request.clone());
+                    let (client, shelled) = (connection.client.clone(), shelled.clone());
+                    let params = json!({ "sessionId": session.id().to_string(), "command": command, "requestId": request });
+                    tokio::spawn(async move {
+                        let result = client.call("session.shell.executeUserRequested", Some(params)).await.map_err(|error| error.to_string());
+                        let _ = shelled.send((request, result));
+                    });
+                    Ok(())
+                }
                 Some(Action::Retry) => {
                     if let Some((text, images)) = transcript.last_input.clone() { send(&session, &mut transcript, &text, &images).await } else { Ok(()) }
                 }
                 Some(Action::Interrupt) => {
+                    for request in &shells {
+                        let _ = connection.client.call("session.shell.cancelUserRequested", Some(json!({ "sessionId": session.id().to_string(), "requestId": request }))).await;
+                    }
                     resolve(&mut pending, &transcript.events);
                     rpc(session.abort()).await.map(|_| { transcript.finish(); transcript.push(Item::interrupted()); })
                 }
@@ -386,6 +404,10 @@ async fn drive(
                     let _ = rpc(session.disconnect()).await;
                     break;
                 }
+            },
+            Some((request, result)) = finished.recv() => {
+                shells.remove(&request);
+                result.map(|_| ()).map_err(io::Error::other)
             },
             interaction = interactions.recv() => {
                 let Some(interaction) = interaction else { break };
@@ -579,15 +601,24 @@ impl Transcript {
                 self.changed(index);
             }
             "tool.execution_start" => self.tool_start(data),
+            "tool.user_requested" => {
+                let (Some(id), Some(command)) = (data["toolCallId"].as_str(), data["arguments"]["command"].as_str()) else { return };
+                if self.tools.contains_key(id) { return; }
+                let index = self.push(Item::Shell { command: command.to_owned(), status: CommandStatus::Running, output: String::new(), pending: false });
+                self.tools.insert(id.to_owned(), (index, data.clone()));
+            }
             "tool.execution_complete" => self.tool_complete(data),
             "tool.execution_partial_result" | "tool.shell_output" => {
                 if let Some((index, _)) = data["toolCallId"].as_str().and_then(|id| self.tools.get(id)) {
                     let index = *index;
-                    if let Item::Command { output, .. } = &mut self.items[index] {
-                        let text = data["partialOutput"].as_str().or(data["text"].as_str()).unwrap_or_default();
-                        if event.event_type == "tool.execution_partial_result" { *output = text.to_owned(); } else { output.push_str(text); }
-                        self.changed(index);
+                    let partial = event.event_type == "tool.execution_partial_result";
+                    let text = data["partialOutput"].as_str().or(data["text"].as_str()).unwrap_or_default();
+                    match &mut self.items[index] {
+                        Item::Command { output, .. } if partial => *output = text.to_owned(),
+                        Item::Command { output, .. } | Item::Shell { output, .. } if !partial => output.push_str(text),
+                        _ => return,
                     }
+                    self.changed(index);
                 }
             }
             "session.idle" => self.finish(),
@@ -644,7 +675,11 @@ impl Transcript {
 
     fn tool_complete(&mut self, data: &Value) {
         let Some((index, start)) = data["toolCallId"].as_str().and_then(|id| self.tools.get(id)).cloned() else { return };
-        if let Item::Command { status, output, .. } = &mut self.items[index] {
+        if let Item::Shell { status, output, .. } = &mut self.items[index] {
+            *status = if data["success"] == true { CommandStatus::Ok } else { CommandStatus::Failed };
+            if output.is_empty() && let Some(content) = data["result"]["content"].as_str().or(data["error"]["message"].as_str()) { *output = content.to_owned(); }
+            self.changed(index);
+        } else if let Item::Command { status, output, .. } = &mut self.items[index] {
             *status = if data["success"] == true { CommandStatus::Ok } else { CommandStatus::Failed };
             if let Some(content) = data["result"]["content"].as_str().or(data["error"]["message"].as_str()) { *output = content.to_owned(); }
             self.changed(index);
@@ -666,4 +701,26 @@ impl Transcript {
 fn tool(name: &str, args: &Value, kind: ToolKind) -> Item {
     let detail = args["path"].as_str().or(args["pattern"].as_str()).or(args["url"].as_str()).map(str::to_owned).unwrap_or_else(|| args.to_string());
     Item::Tools { calls: vec![ToolCall { kind, name: name.to_owned(), detail }] }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_shell_commands_stream_only_shell_output_and_keep_it_when_cancelled() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(Path::new("/project"), events, Settings::default());
+        let event = |id: &str, kind: &str, data: Value| serde_json::from_value::<SessionEvent>(json!({ "id": id, "timestamp": "", "parentId": null, "type": kind, "data": data })).unwrap();
+        transcript.read(&event("1", "tool.user_requested", json!({ "toolCallId": "call", "toolName": "local_shell", "arguments": { "command": "make" } })), false);
+        transcript.read(&event("2", "tool.shell_output", json!({ "toolCallId": "call", "stream": "stdout", "text": "cc main.c\n" })), false);
+        transcript.read(&event("3", "tool.execution_partial_result", json!({ "toolCallId": "call", "partialOutput": "cc main.c\n" })), false);
+        transcript.read(&event("4", "tool.execution_complete", json!({ "toolCallId": "call", "isUserRequested": true, "success": false, "error": { "message": "cc main.c\ncc main.c\nShell command canceled." } })), false);
+        let mut items = BTreeMap::new();
+        while let Ok(event) = received.try_recv() {
+            if let Event::Item(index, item) = event { items.insert(index, item); }
+        }
+        assert_eq!(items.len(), 1);
+        assert!(matches!(&items[&0], Item::Shell { command, status: CommandStatus::Failed, output, .. } if command == "make" && output == "cc main.c\n"));
+    }
 }

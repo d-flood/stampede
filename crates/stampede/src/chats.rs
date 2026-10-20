@@ -7,6 +7,7 @@ mod holder;
 mod html;
 mod protocol;
 mod questions;
+mod shell;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -64,6 +65,13 @@ pub enum Item {
         write: bool,
     },
     Command { command: String, status: CommandStatus, output: String },
+    Shell {
+        command: String,
+        status: CommandStatus,
+        output: String,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        pending: bool,
+    },
     Subagent {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -324,6 +332,8 @@ fn appended(existing: &Item, item: &Item) -> Option<String> {
         (Item::Text { text: before, streaming: true, phase }, Item::Text { text: after, streaming: true, phase: same }) if phase == same => (before, after),
         (Item::Command { command, status, output: before }, Item::Command { command: same, status: unchanged, output: after })
             if command == same && status == unchanged => (before, after),
+        (Item::Shell { command, status, output: before, pending }, Item::Shell { command: same, status: unchanged, output: after, pending: still })
+            if command == same && status == unchanged && pending == still => (before, after),
         _ => return None,
     };
     after.strip_prefix(before.as_str()).map(str::to_owned)
@@ -532,6 +542,7 @@ pub enum Event {
     Reset,
     Settings(Settings),
     Capabilities(Capabilities),
+    ShellContext(Vec<String>),
 }
 
 /// One Agent's wire protocol. A driver's events end when its Agent has stopped.
@@ -544,6 +555,7 @@ pub trait Driver: Send + Sync {
     fn run(&self, builtin: Builtin);
     fn close(&self);
     fn delegated(&self, item: Item);
+    fn shell(&self, command: &str);
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -673,6 +685,8 @@ pub struct Chat {
     pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shell_context: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -889,6 +903,7 @@ impl Chats {
             handoff_from,
             parent,
             draft,
+            shell_context: Vec::new(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, cwd, &rig.env).await?;
@@ -1024,6 +1039,11 @@ impl Chats {
                 Event::ResumeAt(at) => {
                     let mut chat = entry.chat.lock().unwrap();
                     chat.resume_at = at;
+                    self.save(&chat);
+                }
+                Event::ShellContext(blocks) => {
+                    let mut chat = entry.chat.lock().unwrap();
+                    chat.shell_context = blocks;
                     self.save(&chat);
                 }
                 Event::Session(session) => {
@@ -1341,6 +1361,11 @@ impl Chats {
             drop(chat);
             entry.driver.send(&templates::expand(text, &self.data_dir), images);
         }
+    }
+
+    pub fn shell(&self, id: &str, command: &str) {
+        if command.trim().is_empty() { return; }
+        if let Some(entry) = self.get(id) { entry.driver.shell(command.trim()); }
     }
 
     /// Stops the running turn and drops what was queued behind it.

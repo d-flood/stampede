@@ -119,3 +119,16 @@ test('image paste respects pending approval and offline restrictions', async ({ 
 	await context.setOffline(false);
 	await closeProject(page, name);
 });
+
+test('images dropped anywhere on a Chat attach without leaving the page', async ({ page }, { project }) => {
+	const name = `drop-${project.name}`;
+	const { panel } = await launch(page, name);
+	const allowed = await panel.locator('.transcript').first().evaluate((element, png) => {
+		const dataTransfer = new DataTransfer();
+		dataTransfer.items.add(new File([Uint8Array.from(atob(png), (char) => char.charCodeAt(0))], 'dropped.png', { type: 'image/png' }));
+		return ['dragover', 'drop'].map((type) => element.dispatchEvent(new DragEvent(type, { dataTransfer, bubbles: true, cancelable: true })));
+	}, png);
+	expect(allowed).toEqual([false, false]);
+	await expect(panel.getByRole('img', { name: 'dropped.png' })).toBeVisible();
+	await closeProject(page, name);
+});

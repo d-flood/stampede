@@ -21,6 +21,7 @@ export type Agent = 'claude-code' | 'codex' | 'copilot';
 export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex', copilot: 'GitHub Copilot' };
 export type Rig = { name: string; agent: Agent; shortcut?: string; model?: string; effort?: string; mode?: string };
 export type Template = { name: string; description: string };
+export type Mode = { value: string; label: string; available: boolean };
 
 const dark = new MediaQuery('(prefers-color-scheme: dark)');
 let revision = $state(0);
@@ -32,6 +33,7 @@ let extras = $state.raw<string[]>([]);
 let scrollback = $state(10_000);
 let named = $state<string | null>(null);
 let committer = $state<string | null>(null);
+let offeredModes = $state.raw<Partial<Record<Agent, Mode[]>>>({});
 let savedTheme: ThemeResponse | undefined;
 let previewing = false;
 
@@ -46,7 +48,7 @@ async function get<T>(path: string): Promise<T> {
 
 export async function loadConfig() {
 	loadTextSize();
-	const [name, theme, font, rigs, settings, leaderKey, keys, lines, listed, commitRigName] = await Promise.all([
+	const [name, theme, font, rigs, settings, leaderKey, keys, lines, listed, commitRigName, agentModes] = await Promise.all([
 		get<string | null>('/api/host-name'),
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
@@ -56,10 +58,12 @@ export async function loadConfig() {
 		get<Keybar>('/api/keybar'),
 		get<number>('/api/scrollback'),
 		get<Template[]>('/api/templates'),
-		get<string | null>('/api/commit-rig')
+		get<string | null>('/api/commit-rig'),
+		get<Record<Agent, Mode[]>>('/api/modes')
 	]);
 	named = name;
 	committer = commitRigName;
+	offeredModes = agentModes;
 	editor.keymap = settings.keymap;
 	chord = leaderKey;
 	extras = keys.extra;
@@ -155,6 +159,20 @@ export async function saveCommitRig(name: string) {
 	});
 	if (!response.ok) throw new Error(await response.text());
 	committer = await response.json();
+}
+
+export function modes(agent: Agent): Mode[] {
+	return offeredModes[agent] ?? [];
+}
+
+export async function saveModes(agent: Agent, values: string[]) {
+	const response = await fetch('/api/modes', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ agent, modes: values })
+	});
+	if (!response.ok) throw new Error(await response.text());
+	offeredModes = await response.json();
 }
 
 export function rigs(): Rig[] {

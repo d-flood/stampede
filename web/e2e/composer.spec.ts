@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
 import { closeProject, openProject } from './shell.ts';
@@ -50,5 +51,67 @@ test('chat composer submits with Enter on desktop and keeps mobile Enter as a ne
 		expect(sent).toHaveLength(1);
 		await context.setOffline(false);
 	}
+	await closeProject(page, name);
+});
+
+async function launch(page: Page, name: string) {
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	await expect(tab.getByTitle('done')).toBeVisible();
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	return { tab, panel, composer: panel.getByRole('textbox', { name: 'Composer' }) };
+}
+
+test('ArrowUp and ArrowDown recall earlier prompts without replacing a draft', async ({ page }, { project }) => {
+	const name = `composer-history-${project.name}`;
+	const { tab, panel, composer } = await launch(page, name);
+	const send = panel.getByRole('button', { name: /^(Send|Steer)$/ });
+	await composer.fill('First prompt');
+	await send.click();
+	await expect(panel.getByText(/^Hello and welcome!/)).toBeVisible();
+	await expect(tab.getByTitle('done')).toBeVisible();
+	await composer.fill('Second prompt\nwith two lines');
+	await send.click();
+	await expect(panel.locator('.user', { hasText: 'Second prompt' })).toBeVisible();
+	await expect(composer).toHaveValue('');
+
+	await composer.press('ArrowUp');
+	await expect(composer).toHaveValue('Second prompt\nwith two lines');
+	await composer.press('ArrowDown');
+	await expect(composer).toHaveValue('Second prompt\nwith two lines');
+	await composer.press('ArrowDown');
+	await expect(composer).toHaveValue('');
+	await composer.press('ArrowUp');
+	await composer.press('ArrowUp');
+	await expect(composer).toHaveValue('First prompt');
+	await composer.press('ArrowUp');
+	await expect(composer).toHaveValue('First prompt');
+	await composer.press('ArrowDown');
+	await expect(composer).toHaveValue('Second prompt\nwith two lines');
+	await composer.press('ArrowUp');
+	await expect(composer).toHaveValue('Second prompt\nwith two lines');
+	await composer.press('ArrowUp');
+	await expect(composer).toHaveValue('First prompt');
+
+	await composer.fill('A draft');
+	await composer.press('ArrowUp');
+	await expect(composer).toHaveValue('A draft');
+	await closeProject(page, name);
+});
+
+test('Shift+Tab in the composer cycles the Chat mode', async ({ page }, { project }) => {
+	const name = `composer-mode-${project.name}`;
+	const { panel, composer } = await launch(page, name);
+	await panel.getByRole('button', { name: 'Mode: default', exact: true }).click();
+	await expect(page.getByRole('menuitemcheckbox', { name: 'accept edits' })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await composer.press('Shift+Tab');
+	await expect(panel.getByRole('button', { name: 'Mode: accept edits', exact: true })).toBeVisible();
+	await expect(composer).toBeFocused();
+	await composer.press('Shift+Tab');
+	await expect(panel.getByRole('button', { name: 'Mode: plan', exact: true })).toBeVisible();
 	await closeProject(page, name);
 });

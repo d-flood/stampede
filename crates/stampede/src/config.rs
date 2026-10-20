@@ -28,6 +28,8 @@ struct Settings {
     #[serde(deserialize_with = "rigs")]
     rig: Vec<Rig>,
     commit_rig: Option<String>,
+    #[serde(deserialize_with = "modes")]
+    modes: BTreeMap<Agent, Vec<String>>,
     editor: Editor,
     keybar: Keybar,
     language_servers: LanguageServers,
@@ -46,6 +48,7 @@ impl Default for Settings {
             font: Fonts::default(),
             rig: Vec::new(),
             commit_rig: None,
+            modes: BTreeMap::new(),
             editor: Editor::default(),
             keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
@@ -180,7 +183,7 @@ pub fn codex_policy(mode: &str) -> Option<(&'static str, &'static str, &'static 
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum Agent {
     ClaudeCode,
@@ -204,6 +207,14 @@ impl Agent {
             Agent::Codex => &["read-only", "default", "approve-for-me", "full-access"],
             Agent::Copilot => &["default", "full-access"],
         }
+    }
+
+    pub fn chat_modes(self) -> Vec<&'static str> {
+        let mut modes = self.modes().to_vec();
+        if self == Agent::Codex {
+            modes.push("plan");
+        }
+        modes
     }
 }
 
@@ -249,6 +260,7 @@ pub struct Config {
     pub font: Font,
     pub rigs: Vec<Rig>,
     pub commit_rig: Option<String>,
+    pub modes: BTreeMap<Agent, Vec<String>>,
     pub editor: Editor,
     pub keybar: Keybar,
     pub language_servers: LanguageServers,
@@ -267,6 +279,7 @@ impl Default for Config {
             font: Font::default(),
             rigs: Vec::new(),
             commit_rig: None,
+            modes: BTreeMap::new(),
             editor: Editor::default(),
             keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
@@ -308,6 +321,7 @@ impl Config {
             font: Fonts { mono },
             rig: rigs,
             commit_rig,
+            modes,
             editor,
             keybar,
             language_servers,
@@ -323,6 +337,7 @@ impl Config {
             font: Font { family: mono.family, faces: mono.files },
             rigs,
             commit_rig,
+            modes,
             editor,
             keybar,
             language_servers,
@@ -335,6 +350,11 @@ impl Config {
     pub fn commit_rig(&self) -> Option<&Rig> {
         let chosen = self.commit_rig.as_ref().and_then(|name| self.rigs.iter().find(|rig| rig.name == *name));
         chosen.or(self.rigs.first())
+    }
+
+    pub fn available_modes(&self, agent: Agent) -> Vec<&'static str> {
+        let chosen = self.modes.get(&agent);
+        agent.chat_modes().into_iter().filter(|mode| chosen.is_none_or(|chosen| chosen.iter().any(|value| value == mode))).collect()
     }
 
     /// The first Rig for an Agent, or the Agent's defaults when no Rig runs it.
@@ -415,6 +435,17 @@ pub fn write_commit_rig(path: &Path, name: &str) -> Result<String, Error> {
     }
     fs::write(path, with_top_level(text, "commit_rig", Some(name))?)?;
     Ok(name.to_owned())
+}
+
+pub fn write_modes(path: &Path, agent: Agent, modes: &[String]) -> Result<Config, Error> {
+    let text = match fs::read_to_string(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        text => text?,
+    };
+    let text = with_modes(text, agent, modes)?;
+    let updated = Config::parse(&text)?;
+    fs::write(path, text)?;
+    Ok(updated)
 }
 
 pub fn write_rig(path: &Path, original: Option<&str>, mut rig: Rig) -> Result<Vec<Rig>, Error> {
@@ -532,6 +563,26 @@ fn with_theme(mut text: String, name: &str) -> Result<String, Error> {
     Ok(text)
 }
 
+fn with_modes(mut text: String, agent: Agent, modes: &[String]) -> Result<String, Error> {
+    #[derive(Deserialize)]
+    struct Document {
+        modes: Option<toml::Spanned<BTreeMap<String, toml::Spanned<toml::Value>>>>,
+    }
+
+    let document: Document = toml::from_str(&text)?;
+    let value = toml::Value::try_from(modes)?.to_string();
+    match document.modes {
+        Some(table) => match table.get_ref().get(agent.name()) {
+            Some(old) => text.replace_range(old.span(), &value),
+            None if text[table.span()].starts_with('[') => text.insert_str(table.span().end, &format!("\n{} = {value}", agent.name())),
+            None => return Err("Add these modes to config.toml by hand; its modes are not a [modes] table".into()),
+        },
+        None => text.push_str(&format!("\n[modes]\n{} = {value}\n", agent.name())),
+    }
+    Config::parse(&text)?;
+    Ok(text)
+}
+
 fn with_host_name(text: String, name: Option<&str>) -> Result<String, Error> {
     with_top_level(text, "name", name)
 }
@@ -581,6 +632,20 @@ fn rigs<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Rig>, D::Error
         }
     }
     Ok(rigs)
+}
+
+fn modes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<BTreeMap<Agent, Vec<String>>, D::Error> {
+    let modes = BTreeMap::<Agent, Vec<String>>::deserialize(deserializer)?;
+    for (agent, chosen) in &modes {
+        let known = agent.chat_modes();
+        if chosen.is_empty() {
+            return Err(D::Error::custom(format!("modes.{} needs at least one mode; its modes are {}", agent.name(), known.join(", "))));
+        }
+        if let Some(mode) = chosen.iter().find(|mode| !known.contains(&mode.as_str())) {
+            return Err(D::Error::custom(format!("modes.{}: no mode {mode:?}; its modes are {}", agent.name(), known.join(", "))));
+        }
+    }
+    Ok(modes)
 }
 
 fn fraction<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
@@ -803,6 +868,37 @@ mod tests {
                 assert_eq!(write_rig(&path, None, added.clone()).unwrap(), [added]);
             }
         }
+    }
+
+    #[test]
+    fn available_modes_default_to_all_and_keep_the_agents_order() {
+        let config = Config::parse("[modes]\nclaude-code = ['plan', 'default']\n").unwrap();
+        assert_eq!(config.available_modes(Agent::ClaudeCode), ["default", "plan"]);
+        assert_eq!(config.available_modes(Agent::Codex), ["read-only", "default", "approve-for-me", "full-access", "plan"]);
+        for text in ["[modes]\ncodex = []\n", "[modes]\ncodex = ['acceptEdits']\n", "[modes]\ncursor = ['default']\n"] {
+            assert!(check(text).is_some(), "{text}");
+        }
+    }
+
+    #[test]
+    fn mode_writes_keep_the_rest_of_the_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "# Mine\nroots = []\n[[rig]]\nname = 'Claude'\nagent = 'claude-code'\n";
+        fs::write(&path, original).unwrap();
+        let chosen = |modes: &[&str]| modes.iter().map(|mode| mode.to_string()).collect::<Vec<_>>();
+        write_modes(&path, Agent::ClaudeCode, &chosen(&["default", "plan"])).unwrap();
+        write_modes(&path, Agent::Codex, &chosen(&["plan"])).unwrap();
+        let config = write_modes(&path, Agent::ClaudeCode, &chosen(&["acceptEdits"])).unwrap();
+        assert_eq!(config.available_modes(Agent::ClaudeCode), ["acceptEdits"]);
+        assert_eq!(config.available_modes(Agent::Codex), ["plan"]);
+        let saved = fs::read_to_string(&path).unwrap();
+        assert_eq!(saved, format!("{original}\n[modes]\ncodex = [\"plan\"]\nclaude-code = [\"acceptEdits\"]\n"));
+        assert!(write_modes(&path, Agent::Codex, &[]).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+        fs::write(&path, "modes = { codex = ['plan'] }\n").unwrap();
+        assert!(write_modes(&path, Agent::ClaudeCode, &chosen(&["plan"])).is_err());
+        assert_eq!(write_modes(&path, Agent::Codex, &chosen(&["default"])).unwrap().available_modes(Agent::Codex), ["default"]);
     }
 
     #[test]

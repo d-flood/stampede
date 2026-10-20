@@ -9,8 +9,7 @@
 		focused?: boolean;
 		placeholder?: string;
 		draft?: string;
-		code?: boolean;
-		/** Earlier prompts, oldest first, that ArrowUp and ArrowDown recall. */
+		code?: boolean | ((text: string) => boolean);
 		history?: string[];
 		menu?: Snippet<[text: string, replace: (text: string, caret?: number) => void, caret: number]>;
 		onkeydown?: (event: KeyboardEvent) => void;
@@ -26,6 +25,7 @@
 	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
 	let box: HTMLTextAreaElement;
 	let caret = $state(0);
+	const coded = $derived(typeof code === 'function' ? code(text) : code);
 	const phone = $derived(form() === 'phone');
 
 	function keep() {
@@ -105,12 +105,12 @@
 		onfocus={track}
 		{onpaste}
 		aria-label="Composer"
-		class:code
+		class:code={coded}
 		{placeholder}
 		rows={actions ? (phone ? 2 : 1) : 3}
-		autocorrect={code ? 'off' : 'on'}
-		autocapitalize={code ? 'off' : 'sentences'}
-		spellcheck={!code}
+		autocorrect={coded ? 'off' : 'on'}
+		autocapitalize={coded ? 'off' : 'sentences'}
+		spellcheck={!coded}
 	></textarea>
 	<div class="actions">
 		{#if actions}

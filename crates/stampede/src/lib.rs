@@ -44,7 +44,7 @@ use tokio::sync::{broadcast, watch};
 
 use attention::Feed;
 use chats::Chats;
-use config::{Config, Editor, Font, Keybar, Rig};
+use config::{Agent, Config, Editor, Font, Keybar, Rig};
 use epics::{Author, Epics, Event, Pause};
 pub use chats::{ChatToolsArgs, HoldChatArgs, hold_chat, chat_tools};
 pub use cli::{CliCommand, cli};
@@ -115,6 +115,7 @@ fn router(state: AppState) -> Router {
         .route("/api/rigs", get(rigs).put(rigs::save).delete(rigs::delete))
         .route("/api/rigs/options", get(rigs::options))
         .route("/api/commit-rig", get(commit_rig).put(set_commit_rig))
+        .route("/api/modes", get(modes).put(set_modes))
         .route("/api/rigs/order", put(rigs::reorder))
         .route("/api/usage/codex/reset", post(usage::reset))
         .route("/api/templates", get(templates))
@@ -357,6 +358,34 @@ async fn set_commit_rig(State(state): State<AppState>, Json(name): Json<String>)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .map(Json)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+
+#[derive(Deserialize)]
+struct ChosenModes {
+    agent: Agent,
+    modes: Vec<String>,
+}
+
+async fn modes(State(state): State<AppState>) -> Json<Value> {
+    Json(mode_choices(&state.config.borrow()))
+}
+
+async fn set_modes(State(state): State<AppState>, Json(chosen): Json<ChosenModes>) -> Result<Json<Value>, files::Failure> {
+    tokio::task::spawn_blocking(move || config::write_modes(&state.config_path, chosen.agent, &chosen.modes))
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(|config| Json(mode_choices(&config)))
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+
+fn mode_choices(config: &Config) -> Value {
+    Value::Object([Agent::ClaudeCode, Agent::Codex, Agent::Copilot].into_iter().map(|agent| {
+        let available = config.available_modes(agent);
+        let choices = agent.chat_modes().into_iter().map(|mode| {
+            json!({ "value": mode, "label": chats::Choice::mode(mode).label, "available": available.contains(&mode) })
+        });
+        (agent.name().to_owned(), choices.collect())
+    }).collect())
 }
 
 async fn templates() -> Json<&'static [templates::Template]> {

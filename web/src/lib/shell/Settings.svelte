@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { commitRig, hostName, rigs, saveCommitRig, saveHostName, selectedTheme } from '#lib/config.svelte.ts';
+	import { agentNames, commitRig, hostName, modes, rigs, saveCommitRig, saveHostName, saveModes, selectedTheme, type Agent } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import RigEditor from '#lib/shell/RigEditor.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
@@ -12,6 +12,19 @@
 	let open = $state(false);
 	let refusal = $state<string | null>(null);
 	let commitRefusal = $state<string | null>(null);
+	let modesRefusal = $state<string | null>(null);
+	const agents = Object.keys(agentNames) as Agent[];
+
+	async function toggleMode(agent: Agent, input: HTMLInputElement) {
+		const chosen = modes(agent).filter((mode) => (mode.value === input.value ? input.checked : mode.available));
+		try {
+			await saveModes(agent, chosen.map((mode) => mode.value));
+			modesRefusal = null;
+		} catch (error) {
+			input.checked = !input.checked;
+			modesRefusal = (error as Error).message;
+		}
+	}
 
 	async function chooseCommitRig(name: string) {
 		try {
@@ -85,6 +98,23 @@
 			<p id="commit-rig-help">The Rig that drafts commit messages from staged changes.</p>
 			{#if commitRefusal}<p role="alert">{commitRefusal}</p>{/if}
 		</section>
+		<section aria-labelledby="modes-label">
+			<h3 id="modes-label">Modes</h3>
+			<p>The modes each Agent's Chats offer in the mode menu, /mode and Shift+Tab. Saved on every device.</p>
+			{#each agents as agent (agent)}
+				{@const offered = modes(agent)}
+				<fieldset>
+					<legend>{agentNames[agent]}</legend>
+					{#each offered as mode (mode.value)}
+						<label class="mode">
+							<input type="checkbox" value={mode.value} checked={mode.available} disabled={mode.available && offered.filter((other) => other.available).length === 1} onchange={(event) => toggleMode(agent, event.currentTarget)} />
+							{mode.label}
+						</label>
+					{/each}
+				</fieldset>
+			{/each}
+			{#if modesRefusal}<p role="alert">{modesRefusal}</p>{/if}
+		</section>
 		<section aria-labelledby="rigs-label">
 			<h3 id="rigs-label">Rigs</h3>
 			<p>Starting settings for new chats. Saved on every device.</p>
@@ -151,6 +181,36 @@
 	input:focus-visible {
 		outline: var(--border-width) solid var(--status-working);
 		outline-offset: var(--border-width);
+	}
+
+	fieldset {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 var(--space-4);
+		margin: var(--space-3) 0 0;
+		padding: 0;
+		border: none;
+	}
+
+	legend {
+		padding: 0;
+		font-size: var(--font-size-sm);
+		font-weight: 600;
+	}
+
+	.mode {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
+		min-height: var(--target-min);
+		font-weight: normal;
+	}
+
+	.mode input {
+		min-height: 0;
+		margin: 0;
+		padding: 0;
+		accent-color: var(--status-working);
 	}
 
 	.preview {

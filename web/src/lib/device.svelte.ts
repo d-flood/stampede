@@ -45,6 +45,7 @@ export type Item =
 	| Subagent
 	| { kind: 'edit'; path: string; diff: string; added: number; removed: number; write?: true }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string; elided?: true }
+	| { kind: 'shell'; command: string; status: 'running' | 'ok' | 'failed'; output: string; pending?: true; elided?: true }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
 
 export type Request = (
@@ -226,6 +227,7 @@ export type ClientMessage =
 	| { type: 'chat.resume'; projectId: string; agent: Agent; sessionId: string }
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }
+	| { type: 'chat.shell'; chatId: string; command: string }
 	| { type: 'chat.close' | 'chat.attach' | 'chat.detach' | 'chat.interrupt'; chatId: string }
 	| { type: 'chat.expand'; chatId: string; index: number }
 	| { type: 'ping' }

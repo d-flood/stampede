@@ -89,6 +89,8 @@ enum Control {
     },
     #[serde(rename = "chat.interrupt")]
     InterruptChat { chat_id: String },
+    #[serde(rename = "chat.shell")]
+    ShellChat { chat_id: String, command: String },
     #[serde(rename = "chat.answer")]
     AnswerChat { chat_id: String, request_id: String, answer: chats::Answer },
     #[serde(rename = "chat.run")]
@@ -490,6 +492,7 @@ impl Device {
             Control::ListSessions { project_id } => self.list_sessions(project_id),
             Control::SendChat { chat_id, text, queue, images } => self.chats.send(&chat_id, &text, queue, &images),
             Control::InterruptChat { chat_id } => self.chats.interrupt(&chat_id),
+            Control::ShellChat { chat_id, command } => self.chats.shell(&chat_id, &command),
             Control::AnswerChat { chat_id, request_id, answer } => self.chats.answer(&chat_id, &request_id, answer),
             Control::RunChat { chat_id, builtin } => self.chats.run(&chat_id, builtin),
             Control::CloseChat { chat_id } => self.chats.close(&chat_id),
@@ -811,7 +814,8 @@ fn brief(mut item: chats::Item) -> Value {
             items.clear();
             true
         }
-        chats::Item::Command { status, output, .. } if *status != chats::CommandStatus::Running && output.len() > BRIEF_OUTPUT => {
+        chats::Item::Command { status, output, .. } | chats::Item::Shell { status, output, .. }
+            if *status != chats::CommandStatus::Running && output.len() > BRIEF_OUTPUT => {
             output.clear();
             true
         }

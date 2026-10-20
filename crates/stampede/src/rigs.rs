@@ -45,7 +45,8 @@ pub async fn options(State(state): State<AppState>, Query(selection): Query<Sele
         };
         Some(json!({ "value": value, "label": label, "efforts": efforts }))
     }).collect();
-    let modes: Vec<Choice> = selection.agent.modes().iter().map(|mode| Choice::mode(mode)).collect();
+    let available = state.config.borrow().available_modes(selection.agent);
+    let modes: Vec<Choice> = selection.agent.modes().iter().filter(|mode| available.contains(mode)).map(|mode| Choice::mode(mode)).collect();
     Ok(Json(json!({ "models": models, "modes": modes, "settings": settings })))
 }
 

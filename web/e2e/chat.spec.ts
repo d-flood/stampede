@@ -192,7 +192,8 @@ test('a working Chat steers, queues until its turn ends, and interrupts, with no
 	await composer.fill('Never sent');
 	await panel.getByRole('button', { name: 'Queue' }).click();
 	await expect(queued).toHaveText(['Never sent']);
-	await panel.getByRole('button', { name: 'Interrupt' }).click();
+	if (project.name === 'desktop') await composer.press('Escape');
+	else await panel.getByRole('button', { name: 'Interrupt' }).click();
 	await expect(panel.getByText('Interrupted', { exact: true })).toBeVisible();
 	await expect(tab.getByTitle('done')).toBeVisible();
 	await expect(queued).toHaveCount(0);

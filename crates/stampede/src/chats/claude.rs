@@ -13,7 +13,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::unix::OwnedWriteHalf,
     process,
-    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    sync::{mpsc::{self, UnboundedReceiver, UnboundedSender}, oneshot},
 };
 use uuid::Uuid;
 
@@ -23,6 +23,7 @@ use super::{
     holder::{self, Frames},
     html,
     protocol::{self, Message},
+    shell,
     Request, RequestKind, Image, Scope, AnsweredQuestions, Question, diff, seconds, unified, words,
 };
 use crate::{
@@ -65,6 +66,7 @@ enum Command {
     Run(Builtin),
     Close,
     Delegated(Item),
+    Shell(String),
 }
 
 impl Driver for Claude {
@@ -94,6 +96,10 @@ impl Driver for Claude {
 
     fn close(&self) {
         let _ = self.commands.send(Command::Close);
+    }
+
+    fn shell(&self, command: &str) {
+        let _ = self.commands.send(Command::Shell(command.to_owned()));
     }
 }
 
@@ -170,6 +176,7 @@ pub async fn resume(
         if chat.status == Status::Working { let _ = transcript.events.send(Event::Recoverable); }
         transcript.push(Item::interrupted());
     }
+    transcript.restore_shell_context(&chat.shell_context);
     let _ = transcript.events.send(Event::Status(Status::Done));
     Ok((drive(frames, writer, transcript), received))
 }
@@ -257,6 +264,7 @@ pub async fn reattach(
         }
     }
     transcript.replaying = false;
+    transcript.restore_shell_context(&chat.shell_context);
     for request in std::mem::take(&mut transcript.pending) {
         let _ = transcript.events.send(Event::Request(request));
     }
@@ -270,15 +278,21 @@ pub async fn reattach(
 
 fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcript) -> Claude {
     let (commands, mut pending) = mpsc::unbounded_channel();
+    let (progress, mut progressed) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 command = pending.recv() => match command {
                     Some(Command::Send(text, images)) => {
+                        let text = match transcript.take_shell_context() {
+                            Some(blocks) => format!("{blocks}\n\n{text}"),
+                            None => text,
+                        };
                         if send(&mut writer, &mut transcript, &text, &images).await.is_err() {
                             break;
                         }
                     }
+                    Some(Command::Shell(command)) => transcript.run_shell(command, &progress),
                     Some(Command::Delegated(item)) => transcript.delegated(item),
                     Some(Command::Retry) => {
                         if let Some(content) = transcript.last_input.clone() {
@@ -304,6 +318,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                         }
                     }
                     Some(Command::Interrupt) => {
+                        transcript.stop_shells();
                         let interrupt = json!({
                             "type": "control_request",
                             "request_id": Uuid::new_v4().to_string(),
@@ -363,6 +378,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                     }
                     None => break,
                 },
+                Some(progress) = progressed.recv() => transcript.shell_progress(progress),
                 frame = frames.next() => {
                     let Some(Ok(frame)) = frame else { break };
                     if let Ok(Some(Message::Line(line))) = protocol::decode(&frame)
@@ -414,6 +430,7 @@ async fn rewind(
     let _ = events.send(Event::QuestionsTruncated(index));
     let _ = events.send(Event::Truncate(0));
     let _ = events.send(Event::Reset);
+    let _ = events.send(Event::ShellContext(Vec::new()));
     let (frames, writer, mut fresh, _) = launch(&location.data_dir, &location.id, &transcript.cwd,
         &location.env, &transcript.settings.chosen, Some(&session), Some(&checkpoint), Some(events)).await?;
     let _ = fresh.events.send(Event::ResumeAt(Some(checkpoint)));
@@ -491,7 +508,10 @@ async fn send(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, text: &s
 async fn run(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, builtin: Builtin) -> io::Result<()> {
     let (setting, request, value) = match builtin {
         Builtin::Compact => return send(writer, transcript, "/compact", &[]).await,
-        Builtin::Clear => return send(writer, transcript, "/clear", &[]).await,
+        Builtin::Clear => {
+            transcript.take_shell_context();
+            return send(writer, transcript, "/clear", &[]).await;
+        }
         Builtin::Rewind(_) => return Ok(()),
         Builtin::Model(model) => (Setting::Model, json!({ "subtype": "set_model", "model": model }), model),
         Builtin::Effort(effort) => {
@@ -676,7 +696,17 @@ struct Location {
     env: BTreeMap<String, String>,
 }
 
+struct Running {
+    item: Item,
+    stdout: shell::Capture,
+    stderr: shell::Capture,
+    stop: Option<oneshot::Sender<()>>,
+}
+
 struct Transcript {
+    running: HashMap<usize, Running>,
+    shell_context: Vec<(usize, Item, String)>,
+    shell: Option<(usize, Item)>,
     last_input: Option<Value>,
     location: Option<Location>,
     session: Option<String>,
@@ -729,6 +759,9 @@ enum Asked {
 impl Transcript {
     fn new(events: UnboundedSender<Event>, cwd: &Path) -> Self {
         Self {
+            running: HashMap::new(),
+            shell_context: Vec::new(),
+            shell: None,
             last_input: None,
             location: None,
             session: None,
@@ -972,8 +1005,10 @@ impl Transcript {
             self.last_input = Some(content.clone());
             let images = content.as_array().into_iter().flatten().filter(|block| block["type"] == "image").count();
             let _ = self.events.send(Event::ResumeAt(None));
+            let (parts, typed) = shell::parse(&text);
+            if self.replaying { self.shells(parts); }
             self.checkpoint(message);
-            self.push(Item::User { text, images, template: None });
+            self.push(Item::User { text: typed.to_owned(), images, template: None });
             if message.get("priority").is_some()
                 && let Some(uuid) = message["uuid"].as_str()
             {
@@ -1033,7 +1068,10 @@ impl Transcript {
             Some("system") if entry["subtype"] == "compact_boundary" => self.compacted = true,
             Some("user") if entry["promptSource"] != "system" => match entry["message"]["content"].as_str() {
                 Some(content) => {
-                    if let Some(text) = prompt(content) {
+                    let (parts, typed) = shell::parse(content);
+                    let shelled = !parts.is_empty();
+                    self.shells(parts);
+                    if let Some(text) = prompt(typed).filter(|text| !shelled || !text.is_empty()) {
                         self.last_input = Some(entry["message"]["content"].clone());
                         self.checkpoint(entry);
                         self.push(Item::User { text, images: 0, template: None });
@@ -1043,6 +1081,9 @@ impl Transcript {
                 None => {
                     let blocks = entry["message"]["content"].as_array().into_iter().flatten();
                     let text = blocks.clone().filter_map(|block| block["text"].as_str()).collect::<Vec<_>>().join("\n");
+                    let (parts, typed) = shell::parse(&text);
+                    self.shells(parts);
+                    let text = typed.to_owned();
                     let images = blocks.filter(|block| block["type"] == "image").count();
                     if !text.is_empty() || images > 0 { self.last_input = Some(entry["message"]["content"].clone()); self.checkpoint(entry); self.push(Item::User { text, images, template: None }); }
                     self.compact();
@@ -1059,6 +1100,93 @@ impl Transcript {
                 self.assistant(entry, &entry["thinkingDurationMs"], false);
             }
             _ => {}
+        }
+    }
+
+    fn run_shell(&mut self, command: String, progress: &UnboundedSender<shell::Progress>) {
+        let item = Item::Shell { command: command.clone(), status: CommandStatus::Running, output: String::new(), pending: false };
+        let index = self.push(item.clone());
+        let env = self.location.as_ref().map(|location| location.env.clone()).unwrap_or_default();
+        match shell::spawn(index, &command, &self.cwd, &env, progress.clone()) {
+            Ok(stop) => {
+                self.running.insert(index, Running { item, stdout: shell::Capture::default(), stderr: shell::Capture::default(), stop: Some(stop) });
+            }
+            Err(error) => {
+                let _ = self.events.send(Event::Item(index, Item::Shell { command, status: CommandStatus::Failed, output: error.to_string(), pending: false }));
+            }
+        }
+    }
+
+    fn shell_progress(&mut self, progress: shell::Progress) {
+        match progress {
+            shell::Progress::Output { index, text, error } => {
+                let Some(running) = self.running.get_mut(&index) else { return };
+                if error { running.stderr.push(&text) } else { running.stdout.push(&text) }
+                if let Item::Shell { output, .. } = &mut running.item && output.len() < shell::SHOWN {
+                    output.push_str(&text);
+                    if output.len() >= shell::SHOWN { output.push_str("\n… output truncated …"); }
+                    let _ = self.events.send(Event::Item(index, running.item.clone()));
+                }
+            }
+            shell::Progress::Exit { index, code } => {
+                let Some(Running { mut item, stdout, stderr, .. }) = self.running.remove(&index) else { return };
+                let Item::Shell { command, status, pending, .. } = &mut item else { return };
+                *status = if code == Some(0) { CommandStatus::Ok } else { CommandStatus::Failed };
+                *pending = true;
+                let block = shell::block(command, &stdout.text(), &stderr.text(), code);
+                let _ = self.events.send(Event::Item(index, item.clone()));
+                self.shell_context.push((index, item, block));
+                self.report_shell_context();
+            }
+        }
+    }
+
+    fn stop_shells(&mut self) {
+        for running in self.running.values_mut() {
+            if let Some(stop) = running.stop.take() { let _ = stop.send(()); }
+        }
+    }
+
+    fn report_shell_context(&self) {
+        let _ = self.events.send(Event::ShellContext(self.shell_context.iter().map(|(_, _, block)| block.clone()).collect()));
+    }
+
+    fn take_shell_context(&mut self) -> Option<String> {
+        if self.shell_context.is_empty() { return None; }
+        let blocks = std::mem::take(&mut self.shell_context).into_iter().map(|(index, mut item, block)| {
+            if let Item::Shell { pending, .. } = &mut item { *pending = false; }
+            let _ = self.events.send(Event::Item(index, item));
+            block
+        }).collect::<Vec<_>>();
+        self.report_shell_context();
+        Some(blocks.join("\n"))
+    }
+
+    /// Claude Code records a `!` command and its output as separate prompts, so output fills the latest command.
+    fn shells(&mut self, parts: Vec<shell::Part>) {
+        for part in parts {
+            if let shell::Part::Input(command) = part {
+                let item = Item::Shell { command, status: CommandStatus::Ok, output: String::new(), pending: false };
+                self.shell = Some((self.push(item.clone()), item));
+                continue;
+            }
+            let Some((index, Item::Shell { output, status, .. })) = &mut self.shell else { continue };
+            match part {
+                shell::Part::Output(text) => output.push_str(&text),
+                _ => *status = CommandStatus::Failed,
+            }
+            let (index, item) = (*index, self.shell.as_ref().unwrap().1.clone());
+            let _ = self.events.send(Event::Item(index, item));
+        }
+    }
+
+    fn restore_shell_context(&mut self, blocks: &[String]) {
+        for block in blocks {
+            self.shells(shell::parse(block).0);
+            let Some((index, mut item)) = self.shell.take() else { continue };
+            if let Item::Shell { pending, .. } = &mut item { *pending = true; }
+            let _ = self.events.send(Event::Item(index, item.clone()));
+            self.shell_context.push((index, item, block.clone()));
         }
     }
 
@@ -1654,6 +1782,43 @@ fn prompt(content: &str) -> Option<String> {
 #[cfg(test)]
 mod subagent_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn shell_output_waits_for_the_next_prompt_and_returns_from_history() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/"));
+        let (progress, mut progressed) = mpsc::unbounded_channel();
+        transcript.run_shell("printf out; printf '<err>' >&2; exit 3".to_owned(), &progress);
+        while !transcript.running.is_empty() {
+            transcript.shell_progress(progressed.recv().await.unwrap());
+        }
+        let blocks = transcript.take_shell_context().unwrap();
+        assert!(blocks.contains("<bash-stderr>&lt;err&gt;</bash-stderr><bash-exit-code>3</bash-exit-code>"), "{blocks}");
+        let (mut items, mut contexts) = (BTreeMap::new(), Vec::new());
+        while let Ok(event) = received.try_recv() {
+            match event {
+                Event::Item(index, item) => { items.insert(index, item); }
+                Event::ShellContext(blocks) => contexts.push(blocks.len()),
+                _ => {}
+            }
+        }
+        assert_eq!(contexts, [1, 0]);
+        assert!(matches!(&items[&0], Item::Shell { status: CommandStatus::Failed, output, pending: false, .. } if output.contains("out") && output.contains("<err>")));
+
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut history = Transcript::new(events, Path::new("/"));
+        for content in [format!("{blocks}\n\nWhy?"), "<bash-input> ls</bash-input>".to_owned(), "<bash-stdout>a &gt; b</bash-stdout><bash-stderr></bash-stderr>".to_owned()] {
+            history.recorded(&json!({ "type": "user", "message": { "content": content } }));
+        }
+        let mut items = BTreeMap::new();
+        while let Ok(event) = received.try_recv() {
+            if let Event::Item(index, item) = event { items.insert(index, item); }
+        }
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[&0], Item::Shell { command, status: CommandStatus::Failed, output, .. } if command.starts_with("printf out") && output.ends_with("<err>")));
+        assert!(matches!(&items[&1], Item::User { text, .. } if text == "Why?"));
+        assert!(matches!(&items[&2], Item::Shell { command, status: CommandStatus::Ok, output, .. } if command == "ls" && output == "a > b"));
+    }
 
     #[test]
     fn background_shells_remain_running_until_notified_live_and_from_history() {

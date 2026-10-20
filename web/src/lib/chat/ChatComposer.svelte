@@ -16,11 +16,13 @@
 	import Terminal from '~icons/ph/terminal';
 	import X from '~icons/ph/x';
 
-	let { device, chat, live, request, capabilities, choices, handoffAvailable, focused = false, onrun }: {
+	let { device, chat, live, request, capabilities, choices, handoffAvailable, history, shelling, focused = false, onrun }: {
 		device: Device;
 		chat: Chat;
 		live: boolean;
 		handoffAvailable: boolean;
+		history: string[];
+		shelling: boolean;
 		focused?: boolean;
 		request?: Request;
 		capabilities: Capabilities;
@@ -52,7 +54,7 @@
 		void attach(files);
 	}
 
-	async function attach(files: File[]) {
+	export async function attach(files: File[]) {
 		if (!live || reading || request || !files.length) return;
 		error = '';
 		if (files.length + images.length > 20) { error = 'Attach up to 20 images.'; return; }
@@ -73,10 +75,19 @@
 	}
 
 	const working = $derived(chat.status !== 'done' && !request);
+	const stoppable = $derived(working || shelling);
 	const agent = $derived(chat.agent === 'claude-code' ? 'Claude' : agentNames[chat.agent]);
 
 	function send(text: string, queue: boolean) {
 		if (!live || reading || (!text.trim() && !images.length)) return false;
+		if (text.trimStart().startsWith('!')) {
+			const command = text.trim().slice(1).trim();
+			if (!command) return false;
+			if (images.length) { error = 'Remove images before running a command.'; return false; }
+			device.send({ type: 'chat.shell', chatId: chat.id, command });
+			error = '';
+			return true;
+		}
 		if (request) {
 			if (images.length) { error = 'Remove images before answering a request.'; return false; }
 			device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer: { allow: false, instead: text } });
@@ -104,6 +115,18 @@
 		device.send({ type: 'chat.interrupt', chatId: chat.id });
 	}
 
+	function keydown(event: KeyboardEvent) {
+		slash?.key(event);
+		if (!event.defaultPrevented) files?.key(event);
+		if (event.defaultPrevented || !live) return;
+		if (event.key === 'Escape' && stoppable) interrupt();
+		else if (event.key === 'Tab' && event.shiftKey && choices.mode.length) {
+			const at = choices.mode.findIndex((choice) => choice.value === chat.settings.mode);
+			onrun('mode', choices.mode[(at + 1) % choices.mode.length].value);
+		} else return;
+		event.preventDefault();
+	}
+
 	function keepFocus(event: MouseEvent) {
 		event.preventDefault();
 	}
@@ -118,7 +141,7 @@
 	</div>
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onsend={(text) => send(text, false)} onkeydown={(event) => { slash?.key(event); if (!event.defaultPrevented) files?.key(event); }} onpaste={paste}>
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} {history} code={(text) => text.trimStart().startsWith('!')} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
 	{#snippet menu(text, replace, caret)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
 		{#if !slash?.isOpen()}
@@ -132,11 +155,17 @@
 		{/if}
 		<Button aria-label="Attach image" title="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
 		<Handoff {device} {chat} available={handoffAvailable} />
-		{#if working}
+		{#if stoppable}
 			<Button aria-label="Interrupt" title="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
 				<span class="stop"><Stop /></span>
 			</Button>
 			<span class="gap"></span>
+		{/if}
+		{#if text.trimStart().startsWith('!')}
+			<Button variant="primary" disabled={!text.trim().slice(1).trim() || !live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
+				<Terminal /> Run
+			</Button>
+		{:else if working}
 			<Button disabled={(!text.trim() && !images.length) || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
 				<ListPlus /> Queue
 			</Button>
