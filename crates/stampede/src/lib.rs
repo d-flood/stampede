@@ -13,6 +13,7 @@ mod language_servers;
 mod layouts;
 mod media;
 mod projects;
+mod project_icons;
 mod protocol;
 mod push;
 mod runs;
@@ -120,6 +121,8 @@ fn router(state: AppState) -> Router {
         .route("/api/scrollback", get(scrollback))
         .route("/api/config/file", get(files::read_config).put(files::write_config))
         .route("/api/media/{asset}", get(media::read))
+        .route("/api/project-icons/{asset}", get(project_icons::read))
+        .route("/api/project-icons/website", post(project_icons::website))
         .route("/api/push/key", get(push::key))
         .route("/api/push/subscribe", post(push::subscribe).delete(push::unsubscribe))
         .route("/api/devices/{id}/layout", get(layouts::read).put(layouts::write))
@@ -127,6 +130,7 @@ fn router(state: AppState) -> Router {
         .route("/api/epics/{slug}", post(record_epic))
         .route("/api/epics/{slug}/land", post(land_epic))
         .route("/api/projects/{id}/tree", get(files::tree))
+        .route("/api/projects/{id}/icon", put(project_icons::save).delete(project_icons::remove))
         .route("/api/projects/{id}/files", get(files::paths))
         .route("/api/projects/{id}/image", get(files::image))
         .route("/api/projects/{id}/file/copy", post(files::copy))

@@ -145,7 +145,7 @@
 				<button onclick={() => (rewinding = false)}>Cancel</button>
 			</section>
 		{/if}
-		<Todos todos={chat.todos} working={chat.status === 'working'} />
+		<Todos todos={chat.todos} />
 	{:else}
 		<SubagentHeader subagent={selected} {trail} {onopen} />
 	{/if}

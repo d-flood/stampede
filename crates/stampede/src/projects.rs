@@ -15,6 +15,8 @@ pub struct Project {
     pub id: String,
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<Worktree>,
 }
 
@@ -42,10 +44,13 @@ pub struct Projects {
 impl Projects {
     pub fn load(data_dir: &Path) -> io::Result<Self> {
         let file = data_dir.join("projects.json");
-        let list = match fs::read(&file) {
+        let mut list: Vec<Project> = match fs::read(&file) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
             bytes => serde_json::from_slice(&bytes?)?,
         };
+        for project in &mut list {
+            project.icon = icon(data_dir, &project.id);
+        }
         Ok(Self { file, list: watch::Sender::new(Arc::new(list)) })
     }
 
@@ -76,7 +81,7 @@ impl Projects {
             if list.iter().any(|project| project.id == id) {
                 return false;
             }
-            list.push(Project { id: id.clone(), path, worktree: None });
+            list.push(Project { icon: icon(self.file.parent().unwrap(), &id), id: id.clone(), path, worktree: None });
             true
         });
         Ok(id)
@@ -84,7 +89,7 @@ impl Projects {
 
     pub fn nest(&self, path: &str, worktree: Worktree) -> Project {
         let id = id(path);
-        let mut nested = Project { id: id.clone(), path: path.to_owned(), worktree: Some(worktree) };
+        let mut nested = Project { id: id.clone(), path: path.to_owned(), icon: None, worktree: Some(worktree) };
         self.change(|list| match list.iter().find(|project| project.id == id) {
             Some(open) => {
                 nested = open.clone();
@@ -106,6 +111,44 @@ impl Projects {
         });
     }
 
+    pub fn icon_dir(&self) -> PathBuf {
+        self.file.parent().unwrap().join("project-icons")
+    }
+
+    pub fn set_icon(&self, id: &str, bytes: Option<&[u8]>) -> io::Result<()> {
+        let mut result = Ok(());
+        self.change(|list| {
+            let Some(project) = list.iter_mut().find(|project| project.id == id) else {
+                result = Err(io::Error::new(io::ErrorKind::NotFound, "Project is not open"));
+                return false;
+            };
+            let save = || -> io::Result<Option<String>> {
+                let directory = self.icon_dir();
+                fs::create_dir_all(&directory)?;
+                let asset = match bytes {
+                    Some(bytes) => {
+                        let hash: String = Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect();
+                        let asset = format!("{hash}.png");
+                        let temporary = directory.join(format!("{id}.png.tmp"));
+                        fs::write(&temporary, bytes)?;
+                        fs::rename(temporary, directory.join(&asset))?;
+                        Some(asset)
+                    }
+                    None => None,
+                };
+                let temporary = directory.join(format!("{id}.json.tmp"));
+                fs::write(&temporary, serde_json::to_vec(&asset)?)?;
+                fs::rename(temporary, directory.join(format!("{id}.json")))?;
+                Ok(asset)
+            };
+            match save() {
+                Ok(icon) => { project.icon = icon; true }
+                Err(error) => { result = Err(error); false }
+            }
+        });
+        result
+    }
+
     pub fn reorder(&self, order: &[String]) {
         self.change(|list| {
             let before = list.clone();
@@ -125,6 +168,10 @@ impl Projects {
             changed
         });
     }
+}
+
+fn icon(data_dir: &Path, id: &str) -> Option<String> {
+    serde_json::from_slice(&fs::read(data_dir.join("project-icons").join(format!("{id}.json"))).ok()?).ok()?
 }
 
 fn save(file: &Path, list: &[Project]) -> io::Result<()> {

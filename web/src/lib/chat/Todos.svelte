@@ -1,15 +1,14 @@
 <script lang="ts">
 	import type { Todo } from '#lib/device.svelte.ts';
-	import { form } from '#lib/form.ts';
 
-	let { todos, working }: { todos: Todo[]; working: boolean } = $props();
+	let { todos }: { todos: Todo[] } = $props();
 	const done = $derived(todos.filter((todo) => todo.status === 'done').length);
 	const current = $derived(todos.find((todo) => todo.status === 'active')?.text);
 </script>
 
 {#if todos.length}
 	<section aria-label="Todos">
-		<details open={form() === 'phone' && working}>
+		<details>
 			<summary><strong>Todos {done} of {todos.length}</strong>{#if current}<span>{' · '}{current}</span>{/if}</summary>
 			<ul>
 				{#each todos as todo, index (index)}

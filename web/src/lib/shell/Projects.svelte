@@ -2,7 +2,8 @@
 	import type { Epic, Project } from '#lib/device.svelte.ts';
 	import Progress from '#lib/epics/Progress.svelte';
 	import { counts } from '#lib/epics.svelte.ts';
-	import { monogram, type Tile } from '#lib/projects.ts';
+	import type { Tile } from '#lib/projects.ts';
+	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import type { Snippet } from 'svelte';
@@ -17,10 +18,11 @@
 		onfocus(id: string): void;
 		onclose(id: string): void;
 		onpick(): void;
+		onicon(project: Project): void;
 		badge?: Snippet<[Project]>;
 	};
 
-	let { projects, labels, worktrees, epics, focused, onfocus, onclose, onpick, badge }: Props = $props();
+	let { projects, labels, worktrees, epics, focused, onfocus, onclose, onpick, onicon, badge }: Props = $props();
 </script>
 
 <nav aria-label="Projects">
@@ -29,7 +31,7 @@
 			{@const label = labels.get(project.id) ?? project.path}
 			{@const tiles = worktrees.get(project.id) ?? []}
 			<li>
-				<Menu context items={[{ label: 'Close', onselect: () => onclose(project.id) }]}>
+				<Menu context items={[{ label: 'Change project icon…', onselect: () => onicon(project) }, { label: 'Close', onselect: () => onclose(project.id) }]}>
 					{#snippet trigger(props)}
 						<button
 							{...props}
@@ -43,7 +45,7 @@
 								if (event.currentTarget.dataset.state !== 'open') onfocus(project.id);
 							}}
 						>
-							<span class="monogram">{monogram(project.path)}</span>
+							<span class="monogram"><ProjectIcon {project} /></span>
 							<span class="text">
 								<strong>{label}</strong>
 								<span class="path">{project.path}</span>

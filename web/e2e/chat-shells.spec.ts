@@ -29,20 +29,34 @@ test('running shells stay visible across sessions and disappear when finished', 
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
 	const panel = page.locator('.panel[role="tabpanel"]:visible');
 	const shells = panel.getByRole('region', { name: 'Running shells' });
+	const phone = project.name === 'pixel';
+	const header = shells.locator('summary').first();
+	const first = shells.locator('.shell summary').first();
 	await expect(shells).toContainText('Running shells · 2');
+	if (phone) {
+		await expect(header).toHaveText('Running shells · 2');
+		await expect(shells.getByText('Builder', { exact: true })).toBeHidden();
+		await header.click();
+	}
 	await expect(shells.getByText('Builder', { exact: true })).toBeVisible();
 	await expect(panel.locator('.calls[open]')).toHaveCount(0);
-	await shells.locator('summary').first().click();
+	await first.click();
 	await expect(shells.getByText('Server ready', { exact: true })).toBeVisible();
 	await expect.poll(() => shells.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await expect.poll(() => shells.locator('summary').first().evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(project.name === 'pixel' ? 48 : 26);
+	await expect.poll(() => first.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(phone ? 48 : 26);
 	const dock = panel.getByRole('region', { name: 'Subagents' });
-	if (project.name === 'pixel') {
+	if (phone) {
 		await dock.getByRole('button').click();
 		await page.getByRole('dialog', { name: 'Subagents' }).getByRole('button', { name: /^Build the app/ }).click();
 	} else await dock.getByRole('button', { name: /^Build the app/ }).click();
 	await expect(shells.getByText('Server ready', { exact: true })).toBeVisible();
 	await page.screenshot({ path: test.info().outputPath('running-shells.png') });
+	if (phone) {
+		await expect(header).toBeInViewport();
+		await header.click();
+		await expect(shells.getByText('Server ready', { exact: true })).toBeHidden();
+		await expect(shells.getByText('Builder', { exact: true })).toBeHidden();
+	}
 	await page.reload();
 	await expect(shells).toContainText('Running shells · 2');
 	items[0] = { ...shell, status: 'ok' };

@@ -67,6 +67,7 @@
 
 	.end {
 		display: flex;
+		flex: none;
 		align-items: center;
 		margin-left: auto;
 	}
@@ -80,6 +81,10 @@
 	}
 
 	.chip {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		padding: var(--space-1) var(--space-3);
 		border: var(--border-width) solid var(--border);
 		border-radius: 999px;

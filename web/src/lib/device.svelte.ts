@@ -2,7 +2,7 @@ import { loadConfig, type Agent } from '#lib/config.svelte.ts';
 import type { State } from '#lib/editor/lsp.svelte.ts';
 import { on } from 'svelte/events';
 
-export type Project = { id: string; path: string; worktree?: Worktree };
+export type Project = { id: string; path: string; icon?: string; worktree?: Worktree };
 
 export type Worktree = { parent: string; epic: string; role: 'integration' | { ticket: number } };
 

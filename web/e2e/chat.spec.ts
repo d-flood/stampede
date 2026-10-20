@@ -1,6 +1,6 @@
 import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
-import type { Locator } from '@playwright/test';
+import type { Locator, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -188,6 +188,37 @@ test('a working Chat steers, queues until its turn ends, and interrupts, with no
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
 	await expect(tab).toHaveCount(0);
 });
+test('long model and mode chips stay on one line', async ({ page }, { project }) => {
+	let route: WebSocketRoute;
+	let chatId: string;
+	const settings = { model: 'gpt-6.1-sol-extended-preview', effort: 'high', mode: 'approve for me every single time' };
+	await page.routeWebSocket('**/ws', (socket) => {
+		route = socket;
+		const server = socket.connectToServer();
+		server.onMessage((data) => {
+			if (typeof data === 'string') {
+				const message: ServerMessage = JSON.parse(data);
+				if (message.type === 'chat.created') chatId = message.chat.id;
+			}
+			socket.send(data);
+		});
+	});
+	const name = `chips-${project.name}`;
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Codex', exact: true }).click();
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await expect(panel.getByRole('button', { name: 'Effort: high' })).toBeVisible();
+	route!.send(JSON.stringify({ type: 'chat.settings', chatId: chatId!, settings }));
+	const model = panel.getByRole('button', { name: `Model: ${settings.model}` });
+	const mode = panel.getByRole('button', { name: `Mode: ${settings.mode}` });
+	await expect(model).toBeVisible();
+	const effort = await panel.getByRole('button', { name: 'Effort: high' }).evaluate((element) => element.getBoundingClientRect().height);
+	for (const chip of [model, mode]) await expect.poll(() => chip.evaluate((element) => element.getBoundingClientRect().height)).toBe(effort);
+	await expect.poll(() => panel.locator('.chips').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
 const slashed = [
 	{ agent: 'claude', rig: 'Fake Claude', command: '/code-review', before: 'Effort: xhigh', after: 'Effort: low' },
 	{ agent: 'codex', rig: 'Fake Codex', command: '/openai-docs', before: 'Effort: high', after: 'Effort: low, next turn' }
@@ -520,16 +551,11 @@ test('a Chat pins todos and counts its completed subagent in the dock', async ({
 	await expect(todos.locator('summary')).toHaveText('Todos 0 of 3 · Find which file mentions "needle"');
 	await expect(tab.getByTitle('working')).toBeVisible();
 	await expect.poll(() => existsSync(`${root}/subagent-${project.name}/todos`)).toBe(true);
-	const expanded = project.name === 'pixel';
-	await expect(todos.locator('details')).toHaveJSProperty('open', expanded);
-	if (expanded) {
-		await expect(todos.getByRole('listitem')).toHaveCount(3);
-		await expect(todos.getByRole('listitem').first()).toBeInViewport();
-	} else {
-		await expect(todos.getByRole('listitem').first()).toBeHidden();
-		await todos.locator('summary').click();
-		await expect(todos.getByRole('listitem').first()).toBeVisible();
-	}
+	await expect(todos.locator('details')).toHaveJSProperty('open', false);
+	await expect(todos.getByRole('listitem').first()).toBeHidden();
+	await todos.locator('summary').click();
+	await expect(todos.getByRole('listitem')).toHaveCount(3);
+	await expect(todos.getByRole('listitem').first()).toBeInViewport();
 	unlinkSync(`${root}/subagent-${project.name}/todos`);
 	await expect(tab.getByTitle('done')).toBeVisible();
 	await expect(todos.locator('summary')).toHaveText('Todos 3 of 3');

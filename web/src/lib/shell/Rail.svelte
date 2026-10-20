@@ -1,7 +1,8 @@
 <script lang="ts">
 	import type { Epic, Project } from '#lib/device.svelte.ts';
 	import { counts } from '#lib/epics.svelte.ts';
-	import { monogram, type Tile } from '#lib/projects.ts';
+	import type { Tile } from '#lib/projects.ts';
+	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import type { Snippet } from 'svelte';
@@ -17,11 +18,12 @@
 		onreorder(order: string[]): void;
 		onclose(id: string): void;
 		onpick(): void;
+		onicon(project: Project): void;
 		badge?: Snippet<[Project]>;
 		attention?: Snippet;
 	};
 
-	let { projects, labels, worktrees, epics, focused, onfocus, onreorder, onclose, onpick, badge, attention }: Props = $props();
+	let { projects, labels, worktrees, epics, focused, onfocus, onreorder, onclose, onpick, onicon, badge, attention }: Props = $props();
 
 	let list: HTMLOListElement;
 	let drag = $state<{ id: string; y: number; order: string[]; moved: boolean }>();
@@ -73,7 +75,7 @@
 			{@const tiles = worktrees.get(project.id) ?? []}
 			<li>
 				<span class="own">
-					<Menu context items={[{ label: 'Close', onselect: () => onclose(project.id) }]}>
+					<Menu context items={[{ label: 'Change project icon…', onselect: () => onicon(project) }, { label: 'Close', onselect: () => onclose(project.id) }]}>
 						{#snippet trigger(props)}
 							<button
 								{...props}
@@ -89,7 +91,7 @@
 									if (!dragged) onfocus(project.id);
 								}}
 							>
-								{monogram(project.path)}
+								<ProjectIcon {project} />
 								{#if badge}<span class="badge">{@render badge(project)}</span>{/if}
 							</button>
 						{/snippet}

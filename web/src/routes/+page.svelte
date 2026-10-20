@@ -96,6 +96,7 @@
 	let closingChat = $state<Chat>();
 	const closingTicket = $derived(closingChat && heldBy(epics[closingChat.projectId] ?? [], closingChat.id));
 	let picking = $state(false);
+	let iconProject = $state<Project>();
 	let palette = $state<Scope>();
 	let tabTarget = $state<string>();
 	let afterPalette: (() => void) | undefined;
@@ -1064,6 +1065,7 @@
 					onfocus={focus}
 					onclose={(projectId) => closeProject(projectId)}
 					onpick={pick}
+					onicon={(project) => (iconProject = project)}
 					{badge}
 				/>
 			</div>
@@ -1083,6 +1085,7 @@
 			onreorder={reorder}
 			onclose={(projectId) => closeProject(projectId)}
 			onpick={pick}
+			onicon={(project) => (iconProject = project)}
 			{badge}
 			{attention}
 		/>
@@ -1154,6 +1157,14 @@
 	{#await import('#lib/shell/Picker.svelte') then { default: Picker }}
 		<Picker {directories} onopen={open} />
 	{/await}
+</Dialog>
+
+<Dialog bind:open={() => !!iconProject, (open) => !open && (iconProject = undefined)} full={phone} title="Change project icon">
+	{#if iconProject}
+		{#await import('#lib/shell/ProjectIconPicker.svelte') then { default: ProjectIconPicker }}
+			<ProjectIconPicker project={iconProject} onclose={() => (iconProject = undefined)} />
+		{/await}
+	{/if}
 </Dialog>
 
 <Dialog
