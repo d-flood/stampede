@@ -261,12 +261,19 @@
 			case 'chat.items': {
 				chatItems[message.chatId] = message.items;
 				const opened = openSubagents[message.chatId];
-				if (opened && !subagents(message.items).some(({ path }) => same(path, opened))) delete openSubagents[message.chatId];
+				const elided = message.items.some((item) => item.kind === 'subagent' && item.id === opened?.[0] && item.elided);
+				if (opened && !elided && !subagents(message.items).some(({ path }) => same(path, opened))) delete openSubagents[message.chatId];
 				break;
 			}
 			case 'chat.item':
 				(chatItems[message.chatId] ??= [])[message.index] = message.item;
 				break;
+			case 'chat.append': {
+				const item = chatItems[message.chatId]?.[message.index];
+				if (item?.kind === 'text') item.text += message.text;
+				else if (item?.kind === 'command') item.output += message.text;
+				break;
+			}
 			case 'chat.meters':
 				for (const chat of Object.values(chats).flat()) {
 					if (chat.id !== message.chatId) continue;

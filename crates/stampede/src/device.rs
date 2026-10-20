@@ -5,9 +5,11 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
 use axum::{
+    body::Bytes,
     extract::{
         State, WebSocketUpgrade,
         ws::{Message, WebSocket},
@@ -18,8 +20,9 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
-    sync::{broadcast::error::RecvError, mpsc, watch},
+    sync::{Notify, OwnedSemaphorePermit, Semaphore, broadcast::error::RecvError, mpsc, watch},
     task::{AbortHandle, JoinSet},
+    time::{Instant, interval_at, timeout},
 };
 use uuid::Uuid;
 
@@ -42,6 +45,11 @@ use crate::{
 
 const OUTPUT: u8 = 1;
 const INPUT: u8 = 2;
+const QUEUED_BYTES: u32 = 64 << 20;
+const QUEUED_OUTPUT: u32 = 1 << 20;
+const BRIEF_OUTPUT: usize = 2 << 10;
+const PING_EVERY: Duration = Duration::from_secs(20);
+const SILENT_FOR: Duration = Duration::from_secs(60);
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all_fields = "camelCase")]
@@ -93,6 +101,10 @@ enum Control {
     AttachChat { chat_id: String },
     #[serde(rename = "chat.detach")]
     DetachChat { chat_id: String },
+    #[serde(rename = "chat.expand")]
+    ExpandChat { chat_id: String, index: usize },
+    #[serde(rename = "ping")]
+    Ping {},
     #[serde(rename = "projects.list")]
     ListProjects {},
     #[serde(rename = "project.open")]
@@ -137,11 +149,13 @@ struct Device {
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
     attached: HashMap<String, u64>,
+    expanded: HashMap<(String, usize), u64>,
     attention: Arc<Feed>,
     usage: Arc<Usage>,
     projects: Arc<Projects>,
     config: watch::Receiver<Arc<Config>>,
-    outgoing: mpsc::UnboundedSender<Message>,
+    outgoing: Outgoing,
+    resyncs: mpsc::UnboundedSender<u32>,
     channels: HashMap<u32, (String, AbortHandle)>,
     next_channel: u32,
     attachments: JoinSet<()>,
@@ -158,14 +172,18 @@ async fn connect(
     AppState { terminals, chats, attention, usage, projects, mut config, disk, git, languages, epics, runs, .. }: AppState,
 ) {
     let (mut sink, mut stream) = socket.split();
-    let (outgoing, mut pending) = mpsc::unbounded_channel();
-    let writer = tokio::spawn(async move {
-        while let Some(message) = pending.recv().await {
-            if sink.send(message).await.is_err() {
+    let (outgoing, mut pending) = Outgoing::new();
+    let overflowed = Arc::clone(&outgoing.overflowed);
+    let mut writer = tokio::spawn(async move {
+        while let Some((message, _queued)) = pending.recv().await {
+            if !matches!(timeout(SILENT_FOR, sink.send(message)).await, Ok(Ok(()))) {
                 break;
             }
         }
     });
+    let (resyncs, mut behind) = mpsc::unbounded_channel();
+    let mut heartbeat = interval_at(Instant::now() + PING_EVERY, PING_EVERY);
+    let mut heard = Instant::now();
     let mut list = projects.subscribe();
     let mut changes = terminals.subscribe();
     let mut titles = terminals.subscribe_titles();
@@ -183,11 +201,13 @@ async fn connect(
         terminals,
         chats,
         attached: HashMap::new(),
+        expanded: HashMap::new(),
         attention,
         usage,
         projects,
         config: config.clone(),
         outgoing,
+        resyncs,
         channels: HashMap::new(),
         next_channel: 1,
         attachments: JoinSet::new(),
@@ -201,16 +221,28 @@ async fn connect(
     config.mark_unchanged();
     loop {
         tokio::select! {
-            message = stream.next() => match message {
-                Some(Ok(Message::Text(text))) => {
-                    if let Ok(control) = serde_json::from_str(&text) {
-                        device.control(control).await;
+            message = stream.next() => {
+                heard = Instant::now();
+                match message {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(control) = serde_json::from_str(&text) {
+                            device.control(control).await;
+                        }
                     }
+                    Some(Ok(Message::Binary(bytes))) => device.binary(&bytes),
+                    Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                    Some(Ok(_)) => {}
                 }
-                Some(Ok(Message::Binary(bytes))) => device.binary(&bytes),
-                Some(Ok(Message::Close(_)) | Err(_)) | None => break,
-                Some(Ok(_)) => {}
-            },
+            }
+            _ = &mut writer => break,
+            () = overflowed.notified() => break,
+            Some(channel) = behind.recv() => device.resync(channel).await,
+            _ = heartbeat.tick() => {
+                if heard.elapsed() > SILENT_FOR && device.outgoing.is_empty() {
+                    break;
+                }
+                device.outgoing.queue(0, Message::Ping(Bytes::new()));
+            }
             Ok(()) = config.changed() => {
                 config.mark_unchanged();
                 send(&device.outgoing, json!({ "type": "config.changed" }));
@@ -263,7 +295,18 @@ async fn connect(
                 }
                 Ok(chats::Change::Item { chat_id, seq, index, item }) => {
                     if device.attached.get(&chat_id).is_some_and(|&attached| seq > attached) {
-                        send(&device.outgoing, json!({ "type": "chat.item", "chatId": chat_id, "index": index, "item": item }));
+                        let item = match device.expanded.get(&(chat_id.clone(), index)) {
+                            Some(&expanded) => (seq > expanded).then(|| json!(item)),
+                            None => Some(brief(item)),
+                        };
+                        if let Some(item) = item {
+                            send(&device.outgoing, json!({ "type": "chat.item", "chatId": chat_id, "index": index, "item": item }));
+                        }
+                    }
+                }
+                Ok(chats::Change::Appended { chat_id, seq, index, text }) => {
+                    if device.attached.get(&chat_id).is_some_and(|&attached| seq > attached) {
+                        send(&device.outgoing, json!({ "type": "chat.append", "chatId": chat_id, "index": index, "text": text }));
                     }
                 }
                 Ok(chats::Change::Request { chat_id, seq, request }) => {
@@ -447,6 +490,13 @@ impl Device {
             Control::DetachChat { chat_id } => {
                 self.attached.remove(&chat_id);
             }
+            Control::Ping {} => send(&self.outgoing, json!({ "type": "pong" })),
+            Control::ExpandChat { chat_id, index } => {
+                if self.attached.contains_key(&chat_id) && let Some((seq, item)) = self.chats.item(&chat_id, index) {
+                    send(&self.outgoing, json!({ "type": "chat.item", "chatId": chat_id, "index": index, "item": item }));
+                    self.expanded.insert((chat_id, index), seq);
+                }
+            }
             Control::ListProjects {} => {
                 let projects = self.projects.list();
                 send(&self.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
@@ -583,18 +633,20 @@ impl Device {
             "rows": rows,
         });
         send(&self.outgoing, attached);
-        let outgoing = self.outgoing.clone();
+        let (outgoing, resyncs) = (self.outgoing.clone(), self.resyncs.clone());
         let terminal = terminal_id.clone();
         let attachment = self.attachments.spawn(async move {
-            loop {
+            let behind = loop {
                 tokio::select! {
                     bytes = output.next() => {
-                        let Some(bytes) = bytes else { break };
+                        let Some(bytes) = bytes else { break false };
                         let mut frame = Vec::with_capacity(5 + bytes.len());
                         frame.push(OUTPUT);
                         frame.extend_from_slice(&channel.to_be_bytes());
                         frame.extend_from_slice(&bytes);
-                        let _ = outgoing.send(Message::Binary(frame.into()));
+                        if !outgoing.output(frame) {
+                            break true;
+                        }
                     }
                     Ok(()) = size.changed() => {
                         let Size { cols, rows } = *size.borrow_and_update();
@@ -607,9 +659,21 @@ impl Device {
                         send(&outgoing, resized);
                     }
                 }
+            };
+            if behind {
+                drop(output);
+                outgoing.drained().await;
+                let _ = resyncs.send(channel);
             }
         });
         self.channels.insert(channel, (terminal, attachment));
+    }
+
+    /// Attaching afresh redraws the Terminal from the holder's screen.
+    async fn resync(&mut self, channel: u32) {
+        if let Some((terminal_id, _)) = self.channels.remove(&channel) {
+            self.attach(terminal_id).await;
+        }
     }
 
     fn terminals_changed(&self, owner: &Owner) {
@@ -631,6 +695,8 @@ impl Device {
 
     fn attach_chat(&mut self, chat_id: String) {
         let Some((seq, items, requests)) = self.chats.attach(&chat_id) else { return };
+        self.expanded.retain(|(expanded, _), _| *expanded != chat_id);
+        let items: Vec<Value> = items.into_iter().map(brief).collect();
         send(&self.outgoing, json!({ "type": "chat.items", "chatId": chat_id, "items": items }));
         for request in requests {
             send(&self.outgoing, json!({ "type": "chat.request", "chatId": chat_id, "request": request }));
@@ -731,6 +797,80 @@ impl Device {
     }
 }
 
-pub(crate) fn send(outgoing: &mpsc::UnboundedSender<Message>, message: Value) {
-    let _ = outgoing.send(Message::Text(message.to_string().into()));
+/// A finished subagent's items and a long finished command's output stay on the server until a Device expands the item.
+fn brief(mut item: chats::Item) -> Value {
+    let elided = match &mut item {
+        chats::Item::Subagent { status: chats::Status::Done, items, .. } if !items.is_empty() => {
+            items.clear();
+            true
+        }
+        chats::Item::Command { status, output, .. } if *status != chats::CommandStatus::Running && output.len() > BRIEF_OUTPUT => {
+            output.clear();
+            true
+        }
+        _ => false,
+    };
+    let mut value = json!(item);
+    if elided {
+        value["elided"] = json!(true);
+    }
+    value
+}
+
+/// Each queued message holds its share of a byte budget until it is written, so a Device that stops
+/// reading is cut off instead of queued for without end; it reconnects and resyncs.
+#[derive(Clone)]
+pub(crate) struct Outgoing {
+    messages: mpsc::UnboundedSender<(Message, OwnedSemaphorePermit)>,
+    queued: Arc<Semaphore>,
+    output: Arc<Semaphore>,
+    overflowed: Arc<Notify>,
+}
+
+impl Outgoing {
+    fn new() -> (Self, mpsc::UnboundedReceiver<(Message, OwnedSemaphorePermit)>) {
+        let (messages, pending) = mpsc::unbounded_channel();
+        let outgoing = Self {
+            messages,
+            queued: Arc::new(Semaphore::new(QUEUED_BYTES as usize)),
+            output: Arc::new(Semaphore::new(QUEUED_OUTPUT as usize)),
+            overflowed: Arc::default(),
+        };
+        (outgoing, pending)
+    }
+
+    fn queue(&self, len: usize, message: Message) {
+        match Arc::clone(&self.queued).try_acquire_many_owned(share(len, QUEUED_BYTES)) {
+            Ok(queued) => {
+                let _ = self.messages.send((message, queued));
+            }
+            Err(_) => self.overflowed.notify_one(),
+        }
+    }
+
+    fn output(&self, frame: Vec<u8>) -> bool {
+        let Ok(queued) = Arc::clone(&self.output).try_acquire_many_owned(share(frame.len(), QUEUED_OUTPUT)) else {
+            return false;
+        };
+        let _ = self.messages.send((Message::Binary(frame.into()), queued));
+        true
+    }
+
+    async fn drained(&self) {
+        let _ = self.output.acquire_many(QUEUED_OUTPUT).await;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.queued.available_permits() == QUEUED_BYTES as usize && self.output.available_permits() == QUEUED_OUTPUT as usize
+    }
+}
+
+/// A message larger than half the budget counts as half, so it can still follow smaller ones.
+fn share(len: usize, budget: u32) -> u32 {
+    u32::try_from(len).map_or(budget / 2, |len| len.min(budget / 2))
+}
+
+pub(crate) fn send(outgoing: &Outgoing, message: Value) {
+    let text = message.to_string();
+    outgoing.queue(text.len(), Message::Text(text.into()));
 }

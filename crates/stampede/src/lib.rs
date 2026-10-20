@@ -12,6 +12,7 @@ mod install;
 mod language_servers;
 mod layouts;
 mod media;
+mod memory;
 mod projects;
 mod project_icons;
 mod protocol;
@@ -167,6 +168,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     chats.restore(&rigs).await?;
     let terminals = Arc::new(Terminals::new(args.data_dir.clone()));
     terminals.restore().await?;
+    memory::trim_periodically();
     let runs = Runs::new(
         &args.data_dir,
         Arc::clone(&epics),

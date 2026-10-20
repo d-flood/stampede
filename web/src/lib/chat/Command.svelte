@@ -2,14 +2,14 @@
 	import Code from '#lib/chat/Code.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
 
-	let { item }: { item: Extract<Item, { kind: 'command' }> } = $props();
+	let { item, onexpand }: { item: Extract<Item, { kind: 'command' }>; onexpand?(): void } = $props();
 
 	const outcomes = { running: 'running…', ok: '✓', failed: '✗ failed' };
 
 	const output = $derived(item.output.replace(/\x1b\[[\d;]*m/g, ''));
 </script>
 
-<details class={item.status}>
+<details class={item.status} ontoggle={(event) => event.currentTarget.open && item.elided && onexpand?.()}>
 	<summary>
 		<span class="command">$ <Code code={item.command} path="command.sh" /></span>
 		<span class="outcome">{outcomes[item.status]}</span>

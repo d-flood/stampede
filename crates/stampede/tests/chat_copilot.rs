@@ -2,7 +2,7 @@ mod common;
 
 use std::{env, fs, time::Duration};
 
-use common::{Server, chat_turn, close_chat, control, next, next_control};
+use common::{Server, apply, chat_turn, close_chat, control, next, next_control};
 use serde_json::{Value, json};
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
@@ -289,7 +289,13 @@ async fn copilot_interrupts_streaming_and_pending_permissions() {
         control(&mut socket, json!({ "type": "chat.send", "chatId": chat["id"], "text": "Work" })).await;
         if fixture == "approval" { next_control(&mut socket, "chat.request").await; }
         else {
-            timeout(Duration::from_secs(10), async { while next(&mut socket).await["item"]["text"] != "Still working" {} }).await.unwrap();
+            let mut items = Vec::new();
+            timeout(Duration::from_secs(10), async {
+                while !items.iter().any(|item: &Value| item["text"] == "Still working") {
+                    let message = next(&mut socket).await;
+                    if matches!(message["type"].as_str(), Some("chat.item" | "chat.append")) { apply(&mut items, &message); }
+                }
+            }).await.unwrap();
         }
         control(&mut socket, json!({ "type": "chat.interrupt", "chatId": chat["id"] })).await;
         done(&mut socket).await;

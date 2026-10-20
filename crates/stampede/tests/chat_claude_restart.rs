@@ -2,7 +2,7 @@ mod common;
 
 use std::{env, fs, path::Path, time::Duration};
 
-use common::{Server, control, next, next_control};
+use common::{Server, apply, control, next, next_control};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
@@ -122,14 +122,7 @@ impl View {
                 }
                 match message["type"].as_str().unwrap() {
                     "chat.status" => self.statuses.push(message["status"].clone()),
-                    "chat.item" => {
-                        let index = message["index"].as_u64().unwrap() as usize;
-                        assert!(index <= self.items.len(), "{message}");
-                        match self.items.get_mut(index) {
-                            Some(item) => *item = message["item"].clone(),
-                            None => self.items.push(message["item"].clone()),
-                        }
-                    }
+                    "chat.item" | "chat.append" => apply(&mut self.items, &message),
                     _ => {}
                 }
             }

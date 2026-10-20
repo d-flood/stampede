@@ -10,7 +10,7 @@ use std::{
 };
 
 use axum::{
-    extract::{Query, State, ws::Message},
+    extract::{Query, State},
     http::header,
     response::IntoResponse,
 };
@@ -33,7 +33,7 @@ use tokio_util::{
 };
 use uuid::Uuid;
 
-use crate::{AppState, device::send};
+use crate::{AppState, device::{Outgoing, send}};
 
 const LOG_LINES: usize = 1000;
 const GRACE: Duration = Duration::from_secs(60);
@@ -152,7 +152,7 @@ impl LanguageServers {
         channel: &str,
         root: &str,
         pins: BTreeMap<String, String>,
-        outgoing: mpsc::UnboundedSender<Message>,
+        outgoing: Outgoing,
     ) -> Option<Server> {
         let (_, language) = parse(channel)?;
         if !LANGUAGES.contains(&language) {
@@ -176,7 +176,7 @@ impl LanguageServers {
         language: String,
         root: PathBuf,
         pins: BTreeMap<String, String>,
-        outgoing: mpsc::UnboundedSender<Message>,
+        outgoing: Outgoing,
         mut input: mpsc::UnboundedReceiver<Input>,
     ) {
         let state = |state: &str| send(&outgoing, json!({ "type": "lsp.state", "channel": channel, "state": state }));

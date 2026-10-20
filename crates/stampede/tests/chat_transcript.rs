@@ -463,7 +463,11 @@ async fn subagents(agent: &str) {
     assert_eq!(view.children.first().unwrap()["status"], "working");
     assert_eq!(view.children.first().unwrap()["items"], json!([]));
     assert!(view.children.iter().any(|child| child["status"] == "working" && child["items"].as_array().is_some_and(|items| !items.is_empty())));
-    let child = view.items.iter().find(|item| item["kind"] == "subagent").unwrap().clone();
+    let index = view.items.iter().position(|item| item["kind"] == "subagent").unwrap();
+    assert_eq!(view.items[index]["elided"], true);
+    control(&mut socket, json!({ "type": "chat.expand", "chatId": chat_id, "index": index })).await;
+    view.follow(&mut socket, &chat_id, |view| view.items[index].get("elided").is_none()).await;
+    let child = view.items[index].clone();
     assert_eq!(child["status"], "done");
     assert!(child["id"].as_str().is_some_and(|id| !id.is_empty()));
     assert!(child["startedAt"].is_u64());
@@ -527,11 +531,14 @@ async fn subagents(agent: &str) {
     server.restart().await;
     let (mut socket, mut restored) = reattach(&server, &chat_id, before.len()).await;
     let restored_child = |view: &View| view.items.iter().find(|item| item["kind"] == "subagent").unwrap().clone();
+    let index = restored.items.iter().position(|item| item["kind"] == "subagent").unwrap();
+    control(&mut socket, json!({ "type": "chat.expand", "chatId": chat_id, "index": index })).await;
     if agent == "codex" {
         expected[1]["seconds"] = json!(0);
         restored.follow(&mut socket, &chat_id, |view| restored_child(view)["items"] == expected).await;
         assert_eq!(restored_child(&restored)["startedAt"], 1792186663000u64);
     } else {
+        restored.follow(&mut socket, &chat_id, |view| restored_child(view).get("elided").is_none()).await;
         assert_eq!(restored_child(&restored)["items"], expected);
         assert_eq!(restored_child(&restored)["startedAt"], 1792186800832u64);
     }

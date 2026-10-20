@@ -2,7 +2,7 @@ mod common;
 
 use std::{env, fs, path::Path, process::Stdio, time::Duration};
 
-use common::{Server, close_chat, control, next, next_control};
+use common::{Server, close_chat, control, expand, next, next_control};
 use serde_json::{Value, json};
 use tokio::{io::AsyncWriteExt, net::TcpStream, process::Command, time::{sleep, timeout}};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
@@ -71,7 +71,10 @@ async fn review(agent: &str, target: &str) {
     assert_eq!(delegated[0]["status"], "done");
     assert_eq!(delegated[0]["outcome"], "completed");
     assert_eq!(delegated[0]["report"], FINDING);
-    assert!(delegated[0]["items"].as_array().unwrap().iter().any(|item| item["kind"] == "text" && item["text"] == FINDING));
+    assert_eq!(delegated[0]["elided"], true);
+    let index = attached["items"].as_array().unwrap().iter().position(|item| item["kind"] == "subagent").unwrap();
+    let expanded = expand(&mut socket, source["id"].as_str().unwrap(), index).await;
+    assert!(expanded["items"].as_array().unwrap().iter().any(|item| item["kind"] == "text" && item["text"] == FINDING));
     let id = live["id"].as_str().unwrap();
     timeout(Duration::from_secs(10), async {
         while server.root.path().join(format!("data/chats/{id}.json")).exists() { sleep(Duration::from_millis(20)).await; }

@@ -7,7 +7,7 @@ use std::{
     net::Shutdown,
     os::unix::net::{UnixListener, UnixStream},
     path::{Path, PathBuf},
-    sync::mpsc::{self, Sender},
+    sync::mpsc::{self, SyncSender},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -31,6 +31,8 @@ use crate::protocol::{self, Hello, Message, Size, Title};
 const MAX_CONTINUATION: usize = 1 << 20;
 const FOREGROUND_POLL: Duration = Duration::from_millis(100);
 const SAVE_INTERVAL: Duration = Duration::from_secs(2);
+const QUEUED_EVENTS: usize = 16;
+const QUEUED_FRAMES: usize = 256;
 
 #[derive(clap::Args)]
 pub struct HoldArgs {
@@ -161,8 +163,15 @@ enum Event {
 }
 
 struct Conn {
-    frames: Sender<Vec<u8>>,
+    frames: SyncSender<Vec<u8>>,
     attached: bool,
+}
+
+impl Conn {
+    /// A connection too far behind is dropped rather than queued for without end.
+    fn send(&self, frame: Vec<u8>) -> bool {
+        self.frames.try_send(frame).is_ok()
+    }
 }
 
 fn run(
@@ -181,7 +190,8 @@ fn run(
     let pid = child.process_id();
     drop(pty.slave);
 
-    let (events, received) = mpsc::channel();
+    // A bounded queue stops the reader, so the PTY holds back output the terminal cannot take in yet.
+    let (events, received) = mpsc::sync_channel(QUEUED_EVENTS);
     let mut reader = pty.master.try_clone_reader()?;
     let tx = events.clone();
     thread::spawn(move || {
@@ -259,22 +269,20 @@ fn run(
                     titles.set(terminal.title().unwrap_or_default(), pty.master.process_group_leader());
                 }
                 let frame = protocol::encode(&Message::Output(bytes));
-                for conn in conns.values().filter(|conn| conn.attached) {
-                    let _ = conn.frames.send(frame.clone());
-                }
+                conns.retain(|_, conn| !conn.attached || conn.send(frame.clone()));
             }
             Event::Exited => break,
             Event::Connected(stream) => {
                 next_id += 1;
                 if let Ok(conn) = connect(next_id, stream, events.clone()) {
-                    let _ = conn.frames.send(protocol::encode(&Message::TitleChanged(reported.clone())));
+                    conn.send(protocol::encode(&Message::TitleChanged(reported.clone())));
                     conns.insert(next_id, conn);
                 }
             }
             Event::Received(id, Message::Attach) => match snapshot(&mut terminal) {
                 Ok(bytes) => {
                     if let Some(conn) = conns.get_mut(&id) {
-                        let _ = conn.frames.send(protocol::encode(&Message::Snapshot(bytes)));
+                        conn.send(protocol::encode(&Message::Snapshot(bytes)));
                         conn.attached = true;
                     }
                 }
@@ -328,9 +336,7 @@ fn run(
         if titles.current != reported {
             reported = titles.current.clone();
             let frame = protocol::encode(&Message::TitleChanged(reported.clone()));
-            for conn in conns.values() {
-                let _ = conn.frames.send(frame.clone());
-            }
+            conns.retain(|_, conn| conn.send(frame.clone()));
         }
     }
     Ok(())
@@ -384,10 +390,10 @@ fn resize(terminal: &mut Terminal, pty: &dyn MasterPty, size: Size) -> Result<()
     Ok(())
 }
 
-fn connect(id: u64, stream: UnixStream, events: Sender<Event>) -> io::Result<Conn> {
+fn connect(id: u64, stream: UnixStream, events: SyncSender<Event>) -> io::Result<Conn> {
     let mut reader = stream.try_clone()?;
     let mut writer = stream;
-    let (frames, pending) = mpsc::channel::<Vec<u8>>();
+    let (frames, pending) = mpsc::sync_channel::<Vec<u8>>(QUEUED_FRAMES);
     thread::spawn(move || {
         for frame in pending {
             if writer.write_all(&frame).is_err() {

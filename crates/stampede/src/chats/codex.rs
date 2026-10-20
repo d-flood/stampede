@@ -118,12 +118,12 @@ async fn rejoin(
     let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "config": tool_config(data_dir, &transcript.chat_id, env) })).await?;
     let mut replay = Vec::new();
     let resumed = loop {
-        let message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;
+        let mut message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;
         if response(&message) == Some(id) {
             if let Some(error) = message.get("error") {
                 return Err(io::Error::other(format!("thread/resume: {error}")));
             }
-            break message["result"].clone();
+            break message["result"].take();
         }
         if message.get("method").is_some() && message.get("id").is_some() {
             replay.push(message);

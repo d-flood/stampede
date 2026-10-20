@@ -15,7 +15,7 @@
 	import type { AnsweredQuestions, Item, Subagent } from '#lib/device.svelte.ts';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
-	let { items, answered = [], activity, path = [], onopen, onattend, ondiff }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void } = $props();
+	let { items, answered = [], activity, path = [], onopen, onattend, ondiff, onexpand }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; onexpand?(index: number): void } = $props();
 	const entries = $derived.by(() => {
 		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map((record) => ({ kind: 'questions', record }));
 		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
@@ -62,7 +62,7 @@
 	{:else if item.kind === 'edit'}
 		<Edit {item} {ondiff} />
 	{:else if item.kind === 'command'}
-		<Command {item} />
+		<Command {item} onexpand={onexpand && (() => onexpand(items.indexOf(item)))} />
 	{:else if item.kind === 'notice'}
 		<Notice {item} />
 	{:else if item.kind === 'questions'}

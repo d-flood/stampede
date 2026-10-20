@@ -318,6 +318,16 @@ impl Subagent {
     }
 }
 
+fn appended(existing: &Item, item: &Item) -> Option<String> {
+    let (before, after) = match (existing, item) {
+        (Item::Text { text: before, streaming: true, phase }, Item::Text { text: after, streaming: true, phase: same }) if phase == same => (before, after),
+        (Item::Command { command, status, output: before }, Item::Command { command: same, status: unchanged, output: after })
+            if command == same && status == unchanged => (before, after),
+        _ => return None,
+    };
+    after.strip_prefix(before.as_str()).map(str::to_owned)
+}
+
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64)
 }
@@ -706,6 +716,7 @@ pub enum Change {
     Queued(String, Vec<String>),
     Truncated(String),
     Item { chat_id: String, seq: u64, index: usize, item: Item },
+    Appended { chat_id: String, seq: u64, index: usize, text: String },
     Meters { chat_id: String, context: Option<Context>, tokens: Option<Tokens> },
     Request { chat_id: String, seq: u64, request: Request },
     Resolved { chat_id: String, seq: u64, request_id: String },
@@ -1107,6 +1118,7 @@ impl Chats {
                     }
                     let mut transcript = entry.transcript.lock().unwrap();
                     if matches!(&item, Item::User { .. }) { transcript.recoverable = false; }
+                    let appended = transcript.items.get(index).and_then(|existing| appended(existing, &item));
                     match transcript.items.get_mut(index) {
                         Some(existing) => *existing = item.clone(),
                         None => {
@@ -1118,7 +1130,11 @@ impl Chats {
                     }
                     transcript.seq += 1;
                     let seq = transcript.seq;
-                    let _ = self.changed.send(Change::Item { chat_id: id.clone(), seq, index, item });
+                    let change = match appended {
+                        Some(text) => Change::Appended { chat_id: id.clone(), seq, index, text },
+                        None => Change::Item { chat_id: id.clone(), seq, index, item },
+                    };
+                    let _ = self.changed.send(change);
                 }
                 Event::Usage(readings) => self.usage.record(readings),
                 Event::Truncate(len) => {
@@ -1213,6 +1229,12 @@ impl Chats {
         if let Err(error) = write_record(&self.data_dir, chat) {
             eprintln!("cannot save chat {}: {error}", chat.id);
         }
+    }
+
+    pub fn item(&self, id: &str, index: usize) -> Option<(u64, Item)> {
+        let entry = self.get(id)?;
+        let transcript = entry.transcript.lock().unwrap();
+        Some((transcript.seq, transcript.items.get(index)?.clone()))
     }
 
     pub fn attach(&self, id: &str) -> Option<(u64, Vec<Item>, Vec<Request>)> {

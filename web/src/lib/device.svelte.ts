@@ -31,6 +31,7 @@ export type Subagent = {
 	totals?: { durationMs: number; tools: number; tokens?: number };
 	activity?: string | null;
 	items: Item[];
+	elided?: true;
 };
 
 export type Item =
@@ -42,7 +43,7 @@ export type Item =
 	| { kind: 'media'; title: string; asset: string }
 	| Subagent
 	| { kind: 'edit'; path: string; diff: string; added: number; removed: number; write?: true }
-	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string }
+	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string; elided?: true }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
 
 export type Request = (
@@ -177,6 +178,7 @@ export type ServerMessage =
 	| { type: 'chats.changed'; projectId: string; chats: Chat[] }
 	| { type: 'chat.items'; chatId: string; items: Item[] }
 	| { type: 'chat.item'; chatId: string; index: number; item: Item }
+	| { type: 'chat.append'; chatId: string; index: number; text: string }
 	| { type: 'chat.status'; chatId: string; status: Status }
 	| { type: 'chat.activity'; chatId: string; activity: string | null }
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
@@ -188,6 +190,7 @@ export type ServerMessage =
 	| { type: 'chat.settings'; chatId: string; settings: Settings }
 	| { type: 'chat.capabilities'; chatId: string; capabilities: Capabilities }
 	| { type: 'config.changed' }
+	| { type: 'pong' }
 	| { type: 'projects.changed'; projects: Project[] }
 	| { type: 'project.opened'; projectId: string }
 	| { type: 'project.error'; path: string; error: string }
@@ -222,6 +225,8 @@ export type ClientMessage =
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }
 	| { type: 'chat.close' | 'chat.attach' | 'chat.detach' | 'chat.interrupt'; chatId: string }
+	| { type: 'chat.expand'; chatId: string; index: number }
+	| { type: 'ping' }
 	| { type: 'chat.answer'; chatId: string; requestId: string; answer: Answer }
 	| { type: 'chat.run'; chatId: string; command: Builtin; value?: string | number }
 	| { type: 'projects.list' }
@@ -256,6 +261,9 @@ const OUTPUT = 1;
 const INPUT = 2;
 const FIRST_RETRY = 500;
 const LAST_RETRY = 5000;
+const FIRST_PATIENCE = 3000;
+const LAST_PATIENCE = 24000;
+const PONG_WITHIN = 1500;
 
 export function deviceId(): string {
 	let id = sessionStorage.getItem('deviceId');
@@ -303,14 +311,19 @@ export function connect(): Device {
 	let socket: WebSocket;
 	let connection = $state<Connection>('connected');
 	let delay = FIRST_RETRY;
+	let patience = FIRST_PATIENCE;
 	let retry: ReturnType<typeof setTimeout> | undefined;
+	let deadline: ReturnType<typeof setTimeout> | undefined;
 
 	function open() {
 		clearTimeout(retry);
 		socket = new WebSocket(new URL('/ws', location.href.replace(/^http/, 'ws')));
 		socket.binaryType = 'arraybuffer';
 		socket.onopen = () => send({ type: 'hello', deviceId: id, browserId: browserId() });
+		awaitReply(patience);
 		socket.onmessage = ({ data }) => {
+			clearTimeout(deadline);
+			patience = FIRST_PATIENCE;
 			if (typeof data === 'string') {
 				const message: ServerMessage = JSON.parse(data);
 				if (message.type === 'hello') {
@@ -329,20 +342,37 @@ export function connect(): Device {
 		socket.onclose = drop;
 	}
 
+	// A mobile socket can hang while connecting or die without closing, so one the server leaves unanswered is replaced.
+	function awaitReply(within: number) {
+		clearTimeout(deadline);
+		deadline = setTimeout(() => {
+			patience = Math.min(patience * 2, LAST_PATIENCE);
+			connection = 'reconnecting';
+			reopen();
+		}, within);
+	}
+
 	function drop() {
 		socket.onclose = null;
 		socket.close();
 		connection = 'reconnecting';
+		clearTimeout(deadline);
 		clearTimeout(retry);
 		retry = setTimeout(open, delay);
 		delay = Math.min(delay * 2, LAST_RETRY);
 	}
 
-	function wake() {
-		if (connection === 'connected' || socket.readyState === WebSocket.OPEN) return;
+	function reopen() {
 		socket.onclose = null;
 		socket.close();
 		open();
+	}
+
+	function wake() {
+		delay = FIRST_RETRY;
+		if (socket.readyState !== WebSocket.OPEN) return reopen();
+		send({ type: 'ping' });
+		awaitReply(PONG_WITHIN);
 	}
 
 	function send(message: ClientMessage) {
@@ -367,6 +397,7 @@ export function connect(): Device {
 	function close() {
 		off.forEach((listener) => listener());
 		clearTimeout(retry);
+		clearTimeout(deadline);
 		socket.onclose = null;
 		socket.close();
 	}

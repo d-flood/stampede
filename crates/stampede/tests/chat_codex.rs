@@ -2,7 +2,7 @@ mod common;
 
 use std::{env, fs, time::Duration};
 
-use common::{Server, chat_turn, close_chat, control, leftovers, next, next_control};
+use common::{Server, apply, chat_turn, close_chat, control, leftovers, next, next_control};
 use serde_json::{Value, json};
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
@@ -56,8 +56,12 @@ async fn closing_a_working_codex_chat_interrupts_its_turn() {
     let send = json!({ "type": "chat.send", "chatId": chat_id, "text": "Count from 1 to 300, one number per line." });
     control(&mut socket, send).await;
     let streaming = json!({ "kind": "text", "text": "1", "streaming": true, "phase": "final" });
+    let mut items = Vec::new();
     timeout(Duration::from_secs(20), async {
-        while next(&mut socket).await["item"] != streaming {}
+        while !items.contains(&streaming) {
+            let message = next(&mut socket).await;
+            if matches!(message["type"].as_str(), Some("chat.item" | "chat.append")) { apply(&mut items, &message); }
+        }
     })
     .await
     .expect("the turn never streamed");

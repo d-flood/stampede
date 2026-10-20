@@ -64,6 +64,7 @@
 				if (message.chatId !== chat.id) break;
 				attached = true;
 				requests = [];
+				if (opened.length) expand(opened, message.items);
 				break;
 			case 'chat.request':
 				if (message.chatId !== chat.id) break;
@@ -80,6 +81,16 @@
 
 	function answer(request: Request, answer: Answer) {
 		device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer });
+	}
+
+	function expand(path: string[], list = items) {
+		const index = list.findIndex((item) => item.kind === 'subagent' && item.id === path[0]);
+		if (index >= 0) device.send({ type: 'chat.expand', chatId: chat.id, index });
+	}
+
+	function open(path: string[]) {
+		if (path.length) expand(path);
+		onopen(path);
 	}
 
 	async function attend(subagent: string) {
@@ -147,11 +158,11 @@
 		{/if}
 		<Todos todos={chat.todos} />
 	{:else}
-		<SubagentHeader subagent={selected} {trail} {onopen} />
+		<SubagentHeader subagent={selected} {trail} onopen={open} />
 	{/if}
 	<div class="transcript" hidden={!!selected} {@attach follow}>
 		<div class="column">
-			<Transcript {items} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} {onopen} onattend={attend} {ondiff} />
+			<Transcript {items} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} onopen={open} onattend={attend} {ondiff} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 			<Queued queued={chat.queued} />
 		</div>
 	</div>
@@ -160,7 +171,7 @@
 			<div class="transcript" {@attach follow}>
 				<div class="column">
 					{#if selected.prompt}<Prompt prompt={selected.prompt} />{/if}
-					<Transcript items={selected.items} activity={selected.activity} path={opened} {onopen} onattend={attend} {ondiff} />
+					<Transcript items={selected.items} activity={selected.activity} path={opened} onopen={open} onattend={attend} {ondiff} />
 					{#if selected.report}
 						<section class="report" aria-label="Report">
 							<span class="label">Report</span>
@@ -175,7 +186,7 @@
 		<Shells {items} />
 		<Activity status={current.status} activity={current.activity} />
 		{#if subagents.length}
-			<Dock {subagents} {onopen} onattend={attend} />
+			<Dock {subagents} onopen={open} onattend={attend} />
 		{/if}
 		{#if request}
 			{#key request.id}

@@ -227,6 +227,12 @@ impl View {
                         let cols = message["cols"].as_u64().unwrap() as u16;
                         let rows = message["rows"].as_u64().unwrap() as u16;
                         self.terminal.resize(cols, rows, 0, 0).unwrap();
+                    } else if message["type"] == "terminal.attached" && message["terminalId"] == *self.terminal_id {
+                        self.channel = message["channel"].as_u64().unwrap() as u32;
+                        self.terminal.vt_write(b"\x1bc");
+                        let cols = message["cols"].as_u64().unwrap() as u16;
+                        let rows = message["rows"].as_u64().unwrap() as u16;
+                        self.terminal.resize(cols, rows, 0, 0).unwrap();
                     } else if message["type"] == "terminal.title" && message["terminalId"] == *self.terminal_id {
                         self.label = message["label"].as_str().unwrap().to_owned();
                     }
@@ -281,14 +287,7 @@ pub async fn chat_turn(
             }
             match message["type"].as_str().unwrap() {
                 "chat.status" => statuses.push(message["status"].clone()),
-                "chat.item" => {
-                    let index = message["index"].as_u64().unwrap() as usize;
-                    assert!(index <= items.len(), "{message}");
-                    match items.get_mut(index) {
-                        Some(item) => *item = message["item"].clone(),
-                        None => items.push(message["item"].clone()),
-                    }
-                }
+                "chat.item" | "chat.append" => apply(&mut items, &message),
                 _ => {}
             }
         }
@@ -296,6 +295,33 @@ pub async fn chat_turn(
     .await
     .unwrap_or_else(|_| panic!("the turn never ended: {statuses:?} {items:?}"));
     (statuses, items)
+}
+
+/// Asks for the whole of an item the Device was sent in brief, and returns it.
+pub async fn expand(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, chat_id: &str, index: usize) -> Value {
+    control(socket, json!({ "type": "chat.expand", "chatId": chat_id, "index": index })).await;
+    loop {
+        let message = next_control(socket, "chat.item").await;
+        if message["chatId"] == chat_id && message["index"] == index {
+            return message["item"].clone();
+        }
+    }
+}
+
+/// Applies a `chat.item` or `chat.append` message to a Chat's items.
+pub fn apply(items: &mut Vec<Value>, message: &Value) {
+    let index = message["index"].as_u64().unwrap() as usize;
+    if message["type"] == "chat.append" {
+        let item = &mut items[index];
+        let field = if item["kind"] == "command" { "output" } else { "text" };
+        item[field] = Value::String(format!("{}{}", item[field].as_str().unwrap(), message["text"].as_str().unwrap()));
+        return;
+    }
+    assert!(index <= items.len(), "{message}");
+    match items.get_mut(index) {
+        Some(item) => *item = message["item"].clone(),
+        None => items.push(message["item"].clone()),
+    }
 }
 
 /// Closes a Chat and waits until it is unlisted, its record is gone, and nothing it ran is left.

@@ -558,6 +558,41 @@ fn tagged<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     Some(&text[start..end])
 }
 
+fn lines(file: File) -> impl Iterator<Item = String> {
+    std::io::BufReader::new(file).lines().map_while(Result::ok)
+}
+
+/// How a session entry chains to the others, which is all replaying needs before reading the entry in full.
+struct Link {
+    kind: Option<String>,
+    uuid: Option<String>,
+    parent: Option<Value>,
+    sidechain: bool,
+    compact: bool,
+    tool_uses: Vec<String>,
+    tool_results: Vec<String>,
+}
+
+impl Link {
+    fn new(entry: &Value) -> Self {
+        let blocks = || entry["message"]["content"].as_array().into_iter().flatten();
+        let ids = |kind: &str, field: &str| blocks().filter(|block| block["type"] == kind).filter_map(|block| block[field].as_str().map(str::to_owned)).collect();
+        Self {
+            kind: entry["type"].as_str().map(str::to_owned),
+            uuid: entry["uuid"].as_str().map(str::to_owned),
+            parent: entry.get("parentUuid").cloned(),
+            sidechain: entry["isSidechain"] == true,
+            compact: entry["type"] == "system" && entry["subtype"] == "compact_boundary",
+            tool_uses: ids("tool_use", "id"),
+            tool_results: ids("tool_result", "tool_use_id"),
+        }
+    }
+
+    fn turn(&self) -> bool {
+        matches!(self.kind.as_deref(), Some("user" | "assistant"))
+    }
+}
+
 fn session_file(env: &BTreeMap<String, String>, session: &str) -> Option<PathBuf> {
     let name = format!("{session}.jsonl");
     let projects = fs::read_dir(config_dir(env)?.join("projects")).ok()?;
@@ -947,40 +982,40 @@ impl Transcript {
         }
     }
 
-    /// Translates the session file's entries, up to the one whose uuid is `until`.
+    /// Translates the session file's entries, up to the one whose uuid is `until`. A first pass keeps only how
+    /// the entries chain, so a long session is never held in memory whole.
     fn history(&mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>) {
         let Some(path) = session_file(env, session) else { return };
-        let Ok(contents) = fs::read_to_string(&path) else { return };
-        self.history = Some(path);
-        let entries: Vec<Value> = contents.lines().filter_map(|line| serde_json::from_str(line).ok()).collect();
-        let chained: HashMap<&str, &Value> = entries.iter().filter(|entry| entry["isSidechain"] != true).filter_map(|entry| Some((entry["uuid"].as_str()?, entry))).collect();
-        let leaf = entries.iter().rev().find(|entry| {
-            matches!(entry["type"].as_str(), Some("user" | "assistant")) && entry["isSidechain"] != true && entry.get("parentUuid").is_some()
-        });
+        let Ok(file) = File::open(&path) else { return };
+        self.history = Some(path.clone());
+        let links: Vec<Option<Link>> = lines(file).map(|line| serde_json::from_str(&line).ok().map(|entry| Link::new(&entry))).collect();
+        let entries = links.iter().enumerate().filter_map(|(index, link)| Some((index, link.as_ref()?)));
+        let chained: HashMap<&str, &Link> = entries.clone().filter(|(_, link)| !link.sidechain).filter_map(|(_, link)| Some((link.uuid.as_deref()?, link))).collect();
+        let leaf = entries.clone().rev().find(|(_, link)| link.turn() && !link.sidechain && link.parent.is_some());
         let mut branch = HashSet::new();
-        let mut current = leaf.and_then(|entry| entry["uuid"].as_str());
+        let mut current = leaf.and_then(|(_, link)| link.uuid.as_deref());
         let mut complete = false;
         while let Some(id) = current {
             if !branch.insert(id) { break; }
-            let Some(entry) = chained.get(id) else { break };
-            current = entry["parentUuid"].as_str();
-            if entry.get("parentUuid") == Some(&Value::Null) { complete = true; }
+            let Some(link) = chained.get(id) else { break };
+            current = link.parent.as_ref().and_then(Value::as_str);
+            if link.parent == Some(Value::Null) { complete = true; }
         }
-        let boundary = entries.iter().rposition(|entry| entry["type"] == "system" && entry["subtype"] == "compact_boundary");
-        let active_tools: HashSet<&str> = entries.iter().filter(|entry| entry["uuid"].as_str().is_some_and(|id| branch.contains(id)))
-            .flat_map(|entry| entry["message"]["content"].as_array().into_iter().flatten())
-            .filter(|block| block["type"] == "tool_use").filter_map(|block| block["id"].as_str()).collect();
-        for (index, entry) in entries.iter().enumerate() {
-            if complete && boundary.is_none_or(|boundary| index > boundary) && !branch.is_empty() && matches!(entry["type"].as_str(), Some("user" | "assistant"))
-                && entry["uuid"].as_str().is_some_and(|id| !branch.contains(id))
-                && !entry["message"]["content"].as_array().into_iter().flatten().any(|block| {
-                    block["type"] == "tool_result" && block["tool_use_id"].as_str().is_some_and(|id| active_tools.contains(id))
-                }) { continue; }
-            if until.is_some() && entry["uuid"].as_str() == until {
+        let boundary = entries.clone().rev().find(|(_, link)| link.compact).map(|(index, _)| index);
+        let active_tools: HashSet<&str> = entries.filter(|(_, link)| link.uuid.as_deref().is_some_and(|id| branch.contains(id)))
+            .flat_map(|(_, link)| link.tool_uses.iter().map(String::as_str)).collect();
+        let Ok(file) = File::open(&path) else { return };
+        for (index, line) in lines(file).enumerate().take(links.len()) {
+            let Some(link) = &links[index] else { continue };
+            if complete && boundary.is_none_or(|boundary| index > boundary) && !branch.is_empty() && link.turn()
+                && link.uuid.as_deref().is_some_and(|id| !branch.contains(id))
+                && !link.tool_results.iter().any(|id| active_tools.contains(id.as_str())) { continue; }
+            if until.is_some() && link.uuid.as_deref() == until {
                 // A compaction recorded just before the replayed turn's prompt belongs to that turn, which replays it.
                 self.compacted = false;
                 break;
             }
+            let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
             self.recorded(&entry);
         }
         self.history = None;
@@ -1435,9 +1470,8 @@ impl Transcript {
                     && let Some(agent) = result["agentId"].as_str()
                 {
                     let path = history.with_extension("").join("subagents").join(format!("agent-{agent}.jsonl"));
-                    let contents = fs::read_to_string(path).unwrap_or_default();
                     transcript.history = Some(history.clone());
-                    for entry in contents.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
+                    for entry in File::open(path).into_iter().flat_map(lines).filter_map(|line| serde_json::from_str::<Value>(&line).ok()) {
                         transcript.nested(&entry, &entry["toolUseResult"]);
                     }
                     transcript.history = None;
