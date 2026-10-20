@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { listing } from '#lib/files.svelte.ts';
 	import { split } from '#lib/git.ts';
+	import Loading from '#lib/ui/Loading.svelte';
 	import fuzzysort from 'fuzzysort';
 
 	type Props = {
@@ -69,7 +70,13 @@
 				<span class="parent">{dir}</span><span class="name">{name}</span>
 			</button>
 		{:else}
-			<p class="empty">{!query ? 'Type to find a file' : files.snapshot ? 'No matches' : 'Reading files…'}</p>
+			{#if files.snapshot}
+				<p class="empty">{query ? 'No matches' : 'Type to find a file'}</p>
+			{:else if files.failed}
+				<p class="empty" role="alert">Could not read files</p>
+			{:else}
+				<div class="empty"><Loading label="Reading files…" /></div>
+			{/if}
 		{/each}
 	</section>
 {/if}

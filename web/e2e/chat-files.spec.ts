@@ -61,3 +61,38 @@ test('@ references a tracked file by its plain path', async ({ page }, { project
 	await expect.poll(() => sent).toEqual([expected]);
 	await closeProject(page, name);
 });
+
+test('@ shows progress while the file list loads and recovers from a failed load', async ({ page }, { project }) => {
+	const name = `chat-files-loading-${project.name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+	mkdirSync(root, { recursive: true });
+	writeFileSync(`${root}/README.md`, '');
+	let fail = true;
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/api/projects/*/files', async (route) => {
+		if (fail) return route.fulfill({ status: 500, body: 'walk failed' });
+		await held;
+		await route.continue();
+	});
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	const menu = panel.getByRole('region', { name: 'Files' });
+
+	await composer.fill('@re');
+	await expect(menu.getByRole('alert')).toHaveText('Could not read files');
+	await composer.press('Escape');
+	await expect(menu).toBeHidden();
+	fail = false;
+	await composer.fill('@');
+	await expect(menu.getByRole('status')).toHaveText('Reading files…');
+	await composer.pressSequentially('read');
+	await expect(menu.getByRole('status')).toHaveText('Reading files…');
+	release();
+	await expect(menu.getByRole('button')).toHaveText(['README.md']);
+	await expect(menu.getByRole('status')).toHaveCount(0);
+	await closeProject(page, name);
+});

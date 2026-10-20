@@ -111,6 +111,7 @@ export async function json<T>(response: Response): Promise<T> {
 
 class Listing {
 	snapshot = $state.raw<Snapshot>();
+	failed = $state(false);
 	#projectId: string;
 	#stale = true;
 
@@ -121,10 +122,12 @@ class Listing {
 	async refresh() {
 		if (!this.#stale) return;
 		this.#stale = false;
+		this.failed = false;
 		try {
 			this.snapshot = fuzzysort.snapshot(await json<string[]>(await fetch(`/api/projects/${this.#projectId}/files`)));
 		} catch {
 			this.#stale = true;
+			this.failed = true;
 		}
 	}
 
