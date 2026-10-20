@@ -132,7 +132,7 @@ pub async fn status(State(state): State<AppState>, Param(id): Param<String>) -> 
 }
 
 pub async fn refs(State(state): State<AppState>, Param(id): Param<String>) -> Result<Json<Refs>, Failure> {
-    let output = git(&root(&state, &id)?, &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"]).await.unwrap_or_default();
+    let output = git(&root(&state, &id)?, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", "refs/heads", "refs/remotes"]).await.unwrap_or_default();
     let mut refs = Refs { local: Vec::new(), remote: Vec::new() };
     for name in String::from_utf8_lossy(&output).lines() {
         if let Some(local) = name.strip_prefix("refs/heads/") {

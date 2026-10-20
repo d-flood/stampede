@@ -167,6 +167,7 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/git/pull", post(git::actions::pull))
         .route("/api/projects/{id}/git/push", post(git::actions::push))
         .route("/api/projects/{id}/git/publish", post(git::actions::publish))
+        .route("/api/projects/{id}/git/switch", post(git::actions::switch))
         .route("/api/projects/{id}/git/stashes", get(git::actions::stashes).post(git::actions::stash))
         .route("/api/projects/{id}/git/stashes/{index}/{action}", post(git::actions::unstash))
         .route("/api/lsp/log", get(language_servers::log))

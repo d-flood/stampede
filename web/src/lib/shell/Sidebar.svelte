@@ -1,5 +1,8 @@
 <script lang="ts" module>
 	import type { Git } from '#lib/git.ts';
+	import { lazy, warmUp } from '#lib/paint.svelte.ts';
+
+	const picker = lazy(() => import('#lib/shell/BranchPicker.svelte'));
 
 	export type Section = 'files' | 'changes' | 'history' | 'search' | 'epics';
 
@@ -32,6 +35,8 @@
 	import History from '#lib/shell/History.svelte';
 	import Search from '#lib/shell/Search.svelte';
 	import Usage from '#lib/shell/Usage.svelte';
+	import Dialog from '#lib/ui/Dialog.svelte';
+	import CaretUpDown from '~icons/ph/caret-up-down';
 	import GitBranch from '~icons/ph/git-branch';
 
 	type Props = {
@@ -51,6 +56,8 @@
 
 	let { open, project, label, git, device, section = $bindable(), usage, codexResets, epics, onopen, ondiff, onepic }: Props = $props();
 
+	let switching = $state(false);
+	const Picker = $derived(picker());
 	const shown = $derived(available(git));
 	const current = $derived(showing(section, git).id);
 	const id = $props.id();
@@ -80,7 +87,16 @@
 <aside {id} aria-label="Sidebar" hidden={!open} class:phone={form() === 'phone'} style:width={form() === 'desktop' ? `${size}px` : undefined}>
 	{#if project}
 		{#if form() === 'desktop'}<h1 title={project.path}>{label}</h1>{/if}
-		{#if git?.branch}<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>{/if}
+		{#if git?.branch && project.worktree}
+			<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>
+		{:else if git?.branch}
+			<button class="branch" title="Switch branch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => ((switching = true), warmUp())}>
+				<GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span><CaretUpDown />
+			</button>
+			<Dialog bind:open={switching} full={form() === 'phone'} title="Switch branch" description="Uncommitted changes come along unless they clash with the branch.">
+				{#if Picker}<Picker projectId={project.id} current={git.branch} origin={!!git.origin} onswitch={() => (switching = false)} />{/if}
+			</Dialog>
+		{/if}
 		<div class="sections" role="group" aria-label="Sections">
 			{#each shown as { id, label } (id)}
 				<button aria-pressed={current === id} onclick={() => (section = id)}>{label}</button>
@@ -193,6 +209,27 @@
 		color: var(--muted-fg);
 		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
+	}
+
+	button.branch {
+		align-self: start;
+		max-width: calc(100% - 2 * var(--space-2));
+		min-height: var(--target-min);
+		margin: 0 var(--space-2);
+		padding: 0 var(--space-2);
+		border: none;
+		border-radius: var(--radius-sm);
+		background: none;
+		cursor: pointer;
+	}
+
+	button.branch:hover {
+		background: var(--hover);
+		color: var(--color-fg);
+	}
+
+	button.branch:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
 	}
 
 	.branch :global(svg) {

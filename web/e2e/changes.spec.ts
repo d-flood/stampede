@@ -215,6 +215,54 @@ test('a branch publishes to origin, then pushes and pulls by its counts', async 
 	await page.screenshot({ path: test.info().outputPath('remote.png') });
 });
 
+test('the sidebar branch switches to a local branch, or a fetched remote one tracked locally', async ({ page }) => {
+	const origin = `${process.env.STAMPEDE_E2E_ROOT}/switch-origin.git`;
+	execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+	const { root, git } = repository('switch');
+	git('remote', 'add', 'origin', origin);
+	writeFileSync(`${root}/file.txt`, 'one\n');
+	git('add', '.');
+	git('commit', '-qm', 'Initial commit');
+	git('push', '-q', '-u', 'origin', 'main');
+	git('checkout', '-qb', 'feature');
+	writeFileSync(`${root}/file.txt`, 'feature\n');
+	git('commit', '-qam', 'Feature');
+	git('checkout', '-q', 'main');
+	await openProject(page, 'switch');
+	const sidebar = await showSidebar(page);
+	const dialog = page.getByRole('dialog', { name: 'Switch branch' });
+
+	await sidebar.getByRole('button', { name: 'Branch main' }).click();
+	await expect(dialog.getByRole('option', { name: 'main Current branch' })).toBeVisible();
+	await expect(dialog.getByRole('option', { name: 'origin/main' })).toBeVisible();
+	await page.screenshot({ path: test.info().outputPath('switch-branch.png') });
+	await dialog.getByRole('combobox').fill('feat');
+	await expect(dialog.getByRole('option')).toHaveCount(1);
+	await dialog.getByRole('option', { name: 'feature' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(sidebar.getByRole('button', { name: 'Branch feature' })).toBeVisible();
+	expect(git('branch', '--show-current')).toBe('feature');
+
+	const other = `${process.env.STAMPEDE_E2E_ROOT}/switch-other`;
+	execFileSync('git', ['clone', '-q', origin, other]);
+	execFileSync('git', ['-C', other, 'push', '-q', 'origin', 'main:fresh']);
+	await sidebar.getByRole('button', { name: 'Branch feature' }).click();
+	await expect(dialog.getByRole('option', { name: 'origin/main' })).toBeVisible();
+	await expect(dialog.getByRole('option', { name: 'origin/fresh' })).toHaveCount(0);
+	await dialog.getByRole('button', { name: 'Fetch' }).click();
+	await dialog.getByRole('option', { name: 'origin/fresh' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(sidebar.getByRole('button', { name: 'Branch fresh' })).toBeVisible();
+	expect(git('rev-parse', '--abbrev-ref', 'fresh@{upstream}')).toBe('origin/fresh');
+
+	writeFileSync(`${root}/file.txt`, 'dirty\n');
+	await sidebar.getByRole('button', { name: 'Branch fresh' }).click();
+	await dialog.getByRole('option', { name: 'feature' }).click();
+	await expect(dialog.getByRole('alert')).toContainText('would be overwritten');
+	expect(git('branch', '--show-current')).toBe('fresh');
+	expect(readFileSync(`${root}/file.txt`, 'utf8')).toBe('dirty\n');
+});
+
 test('changes stash away and pop back', async ({ page }) => {
 	const { root, git } = repository('stash');
 	writeFileSync(`${root}/file.txt`, 'one\n');

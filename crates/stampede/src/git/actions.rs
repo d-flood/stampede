@@ -37,6 +37,11 @@ pub struct Reword {
     message: String,
 }
 
+#[derive(Deserialize)]
+pub struct Branch {
+    branch: String,
+}
+
 #[derive(Serialize)]
 pub struct Stash {
     message: String,
@@ -231,6 +236,26 @@ pub async fn publish(State(state): State<AppState>, Param(id): Param<String>) ->
     change(&state, &id, &dir, &["push", "-q", "-u", "origin", branch]).await
 }
 
+/// Checks out a local branch, or a remote one as the local branch of its name, tracking it when new.
+pub async fn switch(State(state): State<AppState>, Param(id): Param<String>, Json(Branch { branch }): Json<Branch>) -> Result<StatusCode, Failure> {
+    if state.projects.list().iter().any(|project| project.id == id && project.worktree.is_some()) {
+        return Err(refuse("A worktree stays on its own branch."));
+    }
+    let (dir, status) = open(&state, &id).await?;
+    settled(&status)?;
+    if exists(&dir, "heads", &branch).await {
+        return change(&state, &id, &dir, &["switch", "-q", &branch]).await;
+    }
+    let local = match branch.split_once('/') {
+        Some((_, local)) if local != "HEAD" && exists(&dir, "remotes", &branch).await => local,
+        _ => return Err((StatusCode::NOT_FOUND, format!("No branch {branch}"))),
+    };
+    if exists(&dir, "heads", local).await {
+        return change(&state, &id, &dir, &["switch", "-q", local]).await;
+    }
+    change(&state, &id, &dir, &["switch", "-q", "-c", local, "--track", &branch]).await
+}
+
 async fn open(state: &AppState, id: &str) -> Result<(PathBuf, Status), Failure> {
     let dir = root(state, id)?;
     let status = read(&dir).await.ok_or_else(|| (StatusCode::BAD_REQUEST, "This Project is not a git repository.".to_owned()))?;
@@ -279,6 +304,10 @@ fn unconflicted(status: &Status, paths: &[&str]) -> Result<(), Failure> {
         Some(conflict) => Err(refuse(format!("{} has merge conflicts. Resolve them in the file, then stage it.", conflict.path))),
         None => Ok(()),
     }
+}
+
+async fn exists(dir: &Path, kind: &str, name: &str) -> bool {
+    !name.starts_with('-') && exec(dir, &["show-ref", "--verify", "-q", &format!("refs/{kind}/{name}")]).await.is_ok()
 }
 
 async fn marked(path: &Path) -> bool {

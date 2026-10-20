@@ -89,6 +89,10 @@ export async function sync(projectId: string, action: 'fetch' | 'pull' | 'push' 
 	await post(projectId, action);
 }
 
+export async function switchBranch(projectId: string, branch: string): Promise<void> {
+	await post(projectId, 'switch', { branch });
+}
+
 export async function stashes(projectId: string): Promise<Stash[]> {
 	return json(await fetch(`/api/projects/${projectId}/git/stashes`));
 }

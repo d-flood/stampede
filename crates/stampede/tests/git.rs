@@ -205,6 +205,7 @@ async fn conflicts_must_be_resolved_before_anything_risky() {
     for name in ["undo", "stashes", "pull"] {
         assert_eq!(post(server.port, &action(name), json!(null)).await.0, 409, "{name}");
     }
+    assert_eq!(post(server.port, &action("switch"), json!({ "branch": "other" })).await.0, 409);
     assert!(fs::read_to_string(repo.join("clash.txt")).unwrap().contains("<<<<<<<"));
 
     fs::write(repo.join("clash.txt"), "both\n").unwrap();
@@ -259,6 +260,51 @@ async fn branches_publish_push_fetch_and_fast_forward_against_origin() {
     assert_eq!(code, 200, "{body}");
     let (code, body) = post(server.port, &action("undo"), json!(null)).await;
     assert_eq!(code, 409, "{body}");
+}
+
+#[tokio::test]
+async fn branches_switch_most_recent_first_tracking_remote_ones_when_new() {
+    let server = Server::start("git-switch").await;
+    let origin = server.root.path().join("origin.git");
+    git(server.root.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    let repo = repository(&server, "switch");
+    git(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "Initial commit"]);
+    git(&repo, &["push", "-q", "origin", "main", "main:shared"]);
+    git(&repo, &["checkout", "-qb", "later"]);
+    let mut later = Command::new("git");
+    later.arg("-C").arg(&repo).args(["commit", "-q", "--allow-empty", "-m", "Later"]).env("GIT_COMMITTER_DATE", "2090-01-01T00:00:00Z");
+    assert!(later.status().unwrap().success());
+    git(&repo, &["checkout", "-q", "main"]);
+    let id = open(server.port, &repo).await;
+    let url = format!("/api/projects/{id}/git");
+    let status = || get(server.port, &url);
+    let switch = |project: &str, branch: &str| {
+        let (path, body) = (format!("/api/projects/{project}/git/switch"), json!({ "branch": branch }));
+        async move { post(server.port, &path, body).await }
+    };
+
+    assert_eq!(get(server.port, &format!("/api/projects/{id}/git/refs")).await["local"][0], "later");
+    assert_eq!(switch(&id, "later").await.0, 204);
+    assert_eq!(status().await["branch"], "later");
+    assert_eq!(switch(&id, "origin/shared").await.0, 204);
+    let tracking = status().await;
+    assert_eq!((&tracking["branch"], &tracking["upstream"]), (&json!("shared"), &json!("origin/shared")));
+    assert_eq!(switch(&id, "main").await.0, 204);
+    assert_eq!(switch(&id, "origin/shared").await.0, 204);
+    assert_eq!(status().await["branch"], "shared");
+    for missing in ["nowhere", "main^", "--detach", "origin/HEAD"] {
+        assert_eq!(switch(&id, missing).await.0, 404, "{missing}");
+    }
+
+    let (code, body) = post(server.port, &format!("/api/projects/{id}/worktrees"), json!({ "branch": "nested", "from": "main" })).await;
+    assert_eq!(code, 200, "{body}");
+    let nested = serde_json::from_str::<Value>(&body).unwrap()["projectId"].as_str().unwrap().to_owned();
+    let (code, body) = switch(&id, "nested").await;
+    assert_eq!(code, 400);
+    assert!(body.contains("worktree"), "{body}");
+    assert_eq!(status().await["branch"], "shared");
+    assert_eq!(switch(&nested, "main").await, (409, "A worktree stays on its own branch.".to_owned()));
 }
 
 #[tokio::test]
