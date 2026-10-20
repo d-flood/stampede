@@ -480,6 +480,45 @@ pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
     Err(io::Error::other("claude ended without answering get_usage"))
 }
 
+/// Asks one question over the Chat protocol with no tools, MCP servers, settings, hooks or CLAUDE.md files.
+pub async fn ask(cwd: &Path, env: &BTreeMap<String, String>, model: Option<&str>, effort: Option<&str>, prompt: &str) -> io::Result<String> {
+    let mut claude = process::Command::new("claude")
+        .args(ARGS)
+        .args(["--tools", "", "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence", "--system-prompt", ""])
+        .args(model.into_iter().flat_map(|model| ["--model", model]))
+        .args(effort.into_iter().flat_map(|effort| ["--effort", effort]))
+        .envs(env)
+        .envs(SDK_ENV)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    let mut stderr = claude.stderr.take().unwrap();
+    let errors = tokio::spawn(async move {
+        let mut text = String::new();
+        let _ = tokio::io::AsyncReadExt::read_to_string(&mut stderr, &mut text).await;
+        text
+    });
+    let mut stdin = claude.stdin.take().unwrap();
+    let initialize = json!({ "type": "control_request", "request_id": Uuid::new_v4().to_string(), "request": { "subtype": "initialize" } });
+    let question = json!({ "type": "user", "message": { "role": "user", "content": prompt }, "parent_tool_use_id": null, "uuid": Uuid::new_v4().to_string() });
+    stdin.write_all(format!("{initialize}\n{question}\n").as_bytes()).await?;
+    let mut lines = BufReader::new(claude.stdout.take().unwrap()).lines();
+    while let Some(line) = lines.next_line().await? {
+        let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
+        if message["type"] != "result" {
+            continue;
+        }
+        drop(stdin);
+        let text = message["result"].as_str().or(message["subtype"].as_str()).unwrap_or_default().trim().to_owned();
+        return if message["is_error"] == true { Err(io::Error::other(text)) } else { Ok(text) };
+    }
+    let errors = errors.await.unwrap_or_default();
+    Err(io::Error::other(Some(errors.trim()).filter(|errors| !errors.is_empty()).unwrap_or("claude ended without answering").to_owned()))
+}
+
 async fn send(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, text: &str, images: &[Image]) -> io::Result<()> {
     let mut message = json!({
         "type": "user",

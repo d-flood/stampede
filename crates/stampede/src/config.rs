@@ -29,6 +29,7 @@ struct Settings {
     #[serde(deserialize_with = "rigs")]
     rig: Vec<Rig>,
     commit_rig: Option<String>,
+    commit_instructions: Option<String>,
     #[serde(deserialize_with = "modes")]
     modes: BTreeMap<Agent, Vec<String>>,
     #[serde(deserialize_with = "clips")]
@@ -52,6 +53,7 @@ impl Default for Settings {
             ui_font: None,
             rig: Vec::new(),
             commit_rig: None,
+            commit_instructions: None,
             modes: BTreeMap::new(),
             clip: Vec::new(),
             editor: Editor::default(),
@@ -287,6 +289,7 @@ pub struct Config {
     pub ui_font: Option<String>,
     pub rigs: Vec<Rig>,
     pub commit_rig: Option<String>,
+    pub commit_instructions: Option<String>,
     pub modes: BTreeMap<Agent, Vec<String>>,
     pub clips: Vec<Clip>,
     pub editor: Editor,
@@ -308,6 +311,7 @@ impl Default for Config {
             ui_font: None,
             rigs: Vec::new(),
             commit_rig: None,
+            commit_instructions: None,
             modes: BTreeMap::new(),
             clips: Vec::new(),
             editor: Editor::default(),
@@ -352,6 +356,7 @@ impl Config {
             ui_font,
             rig: rigs,
             commit_rig,
+            commit_instructions,
             modes,
             clip: clips,
             editor,
@@ -370,6 +375,7 @@ impl Config {
             ui_font: ui_font.map(|family| family.trim().to_owned()).filter(|family| !family.is_empty()),
             rigs,
             commit_rig,
+            commit_instructions: commit_instructions.map(|text| text.trim().to_owned()).filter(|text| !text.is_empty()),
             modes,
             clips,
             editor,
@@ -384,6 +390,10 @@ impl Config {
     pub fn commit_rig(&self) -> Option<&Rig> {
         let chosen = self.commit_rig.as_ref().and_then(|name| self.rigs.iter().find(|rig| rig.name == *name));
         chosen.or(self.rigs.first())
+    }
+
+    pub fn commit_instructions(&self) -> &str {
+        self.commit_instructions.as_deref().unwrap_or(crate::templates::COMMIT_INSTRUCTIONS)
     }
 
     pub fn available_modes(&self, agent: Agent) -> Vec<&'static str> {
@@ -478,6 +488,16 @@ pub fn write_commit_rig(path: &Path, name: &str) -> Result<String, Error> {
     }
     fs::write(path, with_top_level(text, "commit_rig", Some(name))?)?;
     Ok(name.to_owned())
+}
+
+pub fn write_commit_instructions(path: &Path, text: &str) -> Result<String, Error> {
+    let chosen = Some(text.trim()).filter(|text| !text.is_empty() && *text != crate::templates::COMMIT_INSTRUCTIONS);
+    let current = match fs::read_to_string(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        current => current?,
+    };
+    fs::write(path, with_top_level(current, "commit_instructions", chosen)?)?;
+    Ok(chosen.unwrap_or(crate::templates::COMMIT_INSTRUCTIONS).to_owned())
 }
 
 pub fn write_modes(path: &Path, agent: Agent, modes: &[String]) -> Result<Config, Error> {

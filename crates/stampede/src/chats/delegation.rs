@@ -11,8 +11,6 @@ pub const LIST: &str = "list_rigs";
 pub const TOOL: &str = "delegate_to_rig";
 pub const CLAUDE_LIST: &str = "mcp__stampede_chat__list_rigs";
 pub const CLAUDE_TOOL: &str = "mcp__stampede_chat__delegate_to_rig";
-/// The parent of a Chat started by `Chats::ask`, which belongs to no Chat.
-const ASKED: &str = "asked";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -240,49 +238,6 @@ impl Chats {
         self.clear_delegation_requests(&parent, &child.id);
         self.close(&child.id);
         Ok(report)
-    }
-
-    /// Asks a Rig one question in a Chat no Device shows, closed once it answers.
-    pub async fn ask(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &crate::config::Rig, prompt: &str) -> io::Result<String> {
-        struct Closing<'a>(&'a Chats, String);
-        impl Drop for Closing<'_> {
-            fn drop(&mut self) { self.0.close(&self.1); }
-        }
-        let mut changes = self.subscribe();
-        let chat = self.start(project_id, cwd, rig, None, None, Some(ASKED.to_owned())).await?;
-        let _closing = Closing(self, chat.id.clone());
-        let entry = self.get(&chat.id).ok_or_else(|| io::Error::other(format!("{} did not start.", rig.name)))?;
-        self.send(&chat.id, prompt, false, &[]);
-        loop {
-            {
-                let transcript = entry.transcript.lock().unwrap();
-                if !transcript.requests.is_empty() {
-                    return Err(io::Error::other(format!("{} asked for permission instead of answering. Choose a Rig that can answer without tools.", rig.name)));
-                }
-                let begun = transcript.items.iter().any(|item| matches!(item, Item::User { .. } | Item::Notice { notice: Notice::Error, .. }));
-                if begun && transcript.reported == Status::Done {
-                    let failure = transcript.items.iter().find_map(|item| match item {
-                        Item::Notice { notice: Notice::Error | Notice::Limit | Notice::Interrupted, text } => Some(text.clone()),
-                        _ => None,
-                    });
-                    let answer = transcript.items.iter().rev().find_map(|item| match item {
-                        Item::Text { text, streaming: false, phase: Phase::Final } if !text.trim().is_empty() => Some(text.clone()),
-                        _ => None,
-                    });
-                    return match (failure, answer) {
-                        (Some(failure), _) => Err(io::Error::other(failure)),
-                        (None, Some(answer)) => Ok(answer),
-                        (None, None) => Err(io::Error::other(format!("{} ended without an answer.", rig.name))),
-                    };
-                }
-            }
-            if let Err(broadcast::error::RecvError::Closed) = changes.recv().await {
-                return Err(io::Error::other("Stampede is shutting down."));
-            }
-            if self.get(&chat.id).is_none() {
-                return Err(io::Error::other(format!("{} stopped before answering.", rig.name)));
-            }
-        }
     }
 
     fn delegation_requests(&self, parent: &Entry, child: &Entry, child_id: &str) {

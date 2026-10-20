@@ -176,6 +176,25 @@ test('Settings chooses the Rig that drafts commit messages', async ({ page }) =>
 	await expect(page.getByRole('dialog', { name: 'Settings' }).getByRole('combobox', { name: 'Commit messages' })).toHaveValue('Fake Codex');
 });
 
+test('Settings keeps the instructions for drafting commit messages', async ({ page }) => {
+	const config = () => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
+	await page.goto('/');
+	await page.getByRole('button', { name: 'Settings' }).click();
+	const instructions = page.getByRole('dialog', { name: 'Settings' }).getByRole('textbox', { name: 'Instructions' });
+	const initial = await instructions.inputValue();
+	expect(initial).not.toBe('');
+	await instructions.fill('Twelve words or fewer.\nNo body.');
+	await instructions.blur();
+	await expect.poll(config).toContain('commit_instructions = ');
+	await page.reload();
+	await page.getByRole('button', { name: 'Settings' }).click();
+	await expect(instructions).toHaveValue('Twelve words or fewer.\nNo body.');
+	await instructions.fill('');
+	await instructions.blur();
+	await expect(instructions).toHaveValue(initial);
+	await expect.poll(config).not.toContain('commit_instructions');
+});
+
 test('a branch publishes to origin, then pushes and pulls by its counts', async ({ page }) => {
 	const origin = `${process.env.STAMPEDE_E2E_ROOT}/origin.git`;
 	execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);

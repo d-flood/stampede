@@ -169,6 +169,8 @@ if (capture := os.environ.get('STAMPEDE_FAKE_ENVIRONMENT')) and os.environ.get('
     with open(capture, 'a') as output:
         json.dump({name: os.environ.get(name) for name in ['TMPDIR', 'CLAUDE_CODE_TMPDIR', 'NODE_COMPILE_CACHE', 'CARGO_TARGET_DIR']}, output)
         output.write('\n')
+if '-p' in args or '--print' in args:
+    fail(f'print mode in {args}')
 for flag, value in FLAGS.items():
     if flag not in args or args.index(flag) + 1 >= len(args) or args[args.index(flag) + 1] != value:
         fail(f'{flag} {value} is missing from {args}')

@@ -335,6 +335,10 @@ async fn changes_stash_and_come_back() {
 async fn the_commit_rig_drafts_a_message_from_the_staged_diff() {
     let received = tempfile::tempdir().unwrap();
     let log = received.path().join("received.jsonl");
+    let fixture = received.path().join("bare.jsonl");
+    let turn = fs::read_to_string(format!("{}/tests/fixtures/chats/claude-code/simple-turn.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let bare = [json!(["--tools", ""]), json!(["--setting-sources", ""]), json!(["--strict-mcp-config"]), json!(["--system-prompt", ""])];
+    fs::write(&fixture, bare.iter().map(|args| format!("{}\n", json!({ "args": args }))).collect::<String>() + &turn).unwrap();
     let config = format!(r#"
 [[rig]]
 name = "Coder"
@@ -344,8 +348,8 @@ env = {{ STAMPEDE_FAKE_FIXTURE = "simple-turn" }}
 [[rig]]
 name = "Writer"
 agent = "claude-code"
-env = {{ STAMPEDE_FAKE_FIXTURE = "simple-turn", STAMPEDE_FAKE_RECEIVED = "{}" }}
-"#, log.display());
+env = {{ STAMPEDE_FAKE_FIXTURE = "{}", STAMPEDE_FAKE_RECEIVED = "{}" }}
+"#, fixture.display(), log.display());
     let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), std::env::var("PATH").unwrap());
     let server = Server::with_env("git-draft", &config, vec![("PATH", path.into())]).await;
     let repo = repository(&server, "draft");
@@ -365,14 +369,24 @@ env = {{ STAMPEDE_FAKE_FIXTURE = "simple-turn", STAMPEDE_FAKE_RECEIVED = "{}" }}
     }).await.unwrap();
     let (code, body) = post(server.port, &draft, json!(null)).await;
     assert_eq!((code, serde_json::from_str::<Value>(&body).unwrap()), (200, json!("Hello and **welcome**! 👋")));
-    let prompt = fs::read_to_string(&log).unwrap();
-    assert!(prompt.contains("a distinctive line") && prompt.contains("Earlier subject"), "{prompt}");
-    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
-    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
-    assert_eq!(next_control(&mut socket, "hello").await["chats"], json!([]));
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while fs::read_dir(server.root.path().join("data/chats")).unwrap().next().is_some() { tokio::time::sleep(std::time::Duration::from_millis(20)).await; }
-    }).await.unwrap();
+    let asked = || fs::read_to_string(&log).unwrap().lines().map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .find(|message| message["type"] == "user").unwrap()["message"]["content"].as_str().unwrap().to_owned();
+    let default = get(server.port, "/api/commit-instructions").await;
+    let prompt = asked();
+    assert!(prompt.starts_with(default.as_str().unwrap()) && prompt.contains("a distinctive line") && prompt.contains("Earlier subject"), "{prompt}");
+
+    let instructions = |text: &str| put(server.port, "/api/commit-instructions", json!(text));
+    let settled = |expected: Value| tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+        while get(server.port, "/api/commit-instructions").await != expected { tokio::time::sleep(std::time::Duration::from_millis(20)).await; }
+    });
+    assert_eq!(instructions("  Write a haiku.\nNo body.\n").await, (200, json!("Write a haiku.\nNo body.").to_string()));
+    settled(json!("Write a haiku.\nNo body.")).await.unwrap();
+    fs::remove_file(&log).unwrap();
+    assert_eq!(post(server.port, &draft, json!(null)).await.0, 200);
+    assert!(asked().starts_with("Write a haiku.\nNo body.\n\n"));
+    assert_eq!(instructions(" ").await, (200, default.to_string()));
+    settled(default).await.unwrap();
+    assert!(!fs::read_to_string(server.root.path().join("config.toml")).unwrap().contains("commit_instructions"));
 }
 
 #[tokio::test]

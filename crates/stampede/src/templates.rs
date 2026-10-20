@@ -31,7 +31,10 @@ pub const REVIEWER: Template =
 pub const REMEDIATOR: Template =
     Template { name: "remediator", description: "judge and fix an Epic's Findings", text: include_str!("templates/remediator.md") };
 
-/// The prompt asking a Rig to draft a commit message, followed by the staged diff.
+/// The commit message instructions until Settings changes them.
+pub const COMMIT_INSTRUCTIONS: &str = "Generate a commit message for the staged changes. Match the style of the recent commits.";
+
+/// Follows the commit message instructions and precedes the staged diff.
 pub const COMMIT: &str = include_str!("templates/commit.md");
 
 pub const HANDOFF: Template =

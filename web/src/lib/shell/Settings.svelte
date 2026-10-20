@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { agentNames, commitRig, hostName, modes, rigs, saveCommitRig, saveHostName, saveModes, themeLabel, uiFont, type Agent } from '#lib/config.svelte.ts';
+	import { agentNames, commitInstructions, commitRig, hostName, modes, rigs, saveCommitInstructions, saveCommitRig, saveHostName, saveModes, themeLabel, uiFont, type Agent } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import ClipEditor from '#lib/shell/ClipEditor.svelte';
 	import RigEditor from '#lib/shell/RigEditor.svelte';
@@ -32,6 +32,16 @@
 		try {
 			await saveCommitRig(name);
 			commitRefusal = null;
+		} catch (error) {
+			commitRefusal = (error as Error).message;
+		}
+	}
+
+	async function instruct(textarea: HTMLTextAreaElement) {
+		try {
+			await saveCommitInstructions(textarea.value);
+			commitRefusal = null;
+			textarea.value = commitInstructions();
 		} catch (error) {
 			commitRefusal = (error as Error).message;
 		}
@@ -105,6 +115,9 @@
 				</select>
 			</div>
 			<p id="commit-rig-help">The Rig that drafts commit messages from staged changes.</p>
+			<label class="field" for="commit-instructions">Instructions</label>
+			<textarea id="commit-instructions" rows="4" value={commitInstructions()} onchange={(event) => instruct(event.currentTarget)} aria-describedby="commit-instructions-help"></textarea>
+			<p id="commit-instructions-help">The Rig reads only these, recent commit subjects and the staged diff: no tools, settings or AGENTS.md files (Codex still reads its AGENTS.md). Clear to restore the default.</p>
 			{#if commitRefusal}<p role="alert">{commitRefusal}</p>{/if}
 		</section>
 		<section aria-labelledby="modes-label">
@@ -176,8 +189,24 @@
 		line-height: 1.5;
 	}
 
+	.field {
+		display: block;
+		margin-top: var(--space-3);
+		font-size: var(--font-size-sm);
+	}
+
+	textarea {
+		display: block;
+		box-sizing: border-box;
+		width: 100%;
+		margin-top: var(--space-2);
+		resize: vertical;
+		line-height: 1.5;
+	}
+
 	select,
-	input {
+	input,
+	textarea {
 		min-height: var(--target-min);
 		padding: var(--space-1) var(--space-2);
 		border: var(--border-width) solid var(--border);
@@ -192,7 +221,8 @@
 	}
 
 	select:focus-visible,
-	input:focus-visible {
+	input:focus-visible,
+	textarea:focus-visible {
 		outline: var(--border-width) solid var(--status-working);
 		outline-offset: var(--border-width);
 	}

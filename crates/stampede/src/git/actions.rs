@@ -16,7 +16,7 @@ use super::{Changed, Kind, Operation, Status, inside, read, sha};
 use crate::{
     AppState,
     files::{Failure, root},
-    templates,
+    rigs, templates,
 };
 
 const DIFF_LIMIT: usize = 60_000;
@@ -152,7 +152,11 @@ pub async fn draft(State(state): State<AppState>, Param(id): Param<String>) -> R
     if status.staged.is_empty() {
         return Err(refuse("Stage changes to draft a message for them."));
     }
-    let rig = state.config.borrow().commit_rig().cloned().ok_or_else(|| refuse("Add a Rig in Settings first."))?;
+    let (rig, instructions) = {
+        let config = state.config.borrow();
+        let rig = config.commit_rig().cloned().ok_or_else(|| refuse("Add a Rig in Settings first."))?;
+        (rig, config.commit_instructions().to_owned())
+    };
     let (summary, diff, recent) = tokio::join!(
         exec(&dir, &["diff", "--cached", "--stat"]),
         exec(&dir, &["diff", "--cached", "--no-color", "--no-ext-diff"]),
@@ -164,12 +168,12 @@ pub async fn draft(State(state): State<AppState>, Param(id): Param<String>) -> R
         diff.push_str("\n… diff truncated");
     }
     let prompt = format!(
-        "{}\n\nRecent commit subjects:\n{}\n\nStaged changes:\n{}\n\n```diff\n{diff}\n```",
+        "{instructions}\n\n{}\n\nRecent commit subjects:\n{}\n\nStaged changes:\n{}\n\n```diff\n{diff}\n```",
         templates::COMMIT.trim_end(),
         recent.unwrap_or_default(),
         summary.unwrap_or_default(),
     );
-    let reply = state.chats.ask(&id, &dir, &rig, &prompt).await.map_err(|error| (StatusCode::BAD_GATEWAY, error.to_string()))?;
+    let reply = rigs::ask(&dir, &rig, &prompt).await.map_err(|error| (StatusCode::BAD_GATEWAY, error.to_string()))?;
     Ok(Json(unfenced(&reply)))
 }
 

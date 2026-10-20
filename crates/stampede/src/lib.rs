@@ -120,6 +120,7 @@ fn router(state: AppState) -> Router {
         .route("/api/rigs", get(rigs).put(rigs::save).delete(rigs::delete))
         .route("/api/rigs/options", get(rigs::options))
         .route("/api/commit-rig", get(commit_rig).put(set_commit_rig))
+        .route("/api/commit-instructions", get(commit_instructions).put(set_commit_instructions))
         .route("/api/modes", get(modes).put(set_modes))
         .route("/api/rigs/order", put(rigs::reorder))
         .route("/api/clips", get(clips::list).put(clips::save).delete(clips::delete))
@@ -412,6 +413,18 @@ async fn commit_rig(State(state): State<AppState>) -> Json<Option<String>> {
 
 async fn set_commit_rig(State(state): State<AppState>, Json(name): Json<String>) -> Result<Json<String>, files::Failure> {
     tokio::task::spawn_blocking(move || config::write_commit_rig(&state.config_path, &name))
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+
+async fn commit_instructions(State(state): State<AppState>) -> Json<String> {
+    Json(state.config.borrow().commit_instructions().to_owned())
+}
+
+async fn set_commit_instructions(State(state): State<AppState>, Json(text): Json<String>) -> Result<Json<String>, files::Failure> {
+    tokio::task::spawn_blocking(move || config::write_commit_instructions(&state.config_path, &text))
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .map(Json)
