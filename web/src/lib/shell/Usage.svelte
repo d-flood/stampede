@@ -348,10 +348,8 @@
 		color: var(--ansi-3);
 	}
 
-	@media (prefers-color-scheme: dark) {
-		.codex {
-			--brand: #b7c5ee;
-		}
+	:global([data-scheme='dark']) .codex {
+		--brand: #b7c5ee;
 	}
 
 	@container (max-width: 16rem) {

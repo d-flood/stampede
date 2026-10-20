@@ -169,3 +169,102 @@ test('preview and save failures leave the saved theme intact', async ({ page }, 
 	await expect(dialog).toBeHidden();
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(original);
 });
+
+test('light and dark themes follow the system color scheme', async ({ page }, { project }) => {
+	const background = () => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
+	const config = () => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await page.getByRole('button', { name: 'Change theme' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
+	const search = dialog.getByRole('combobox', { name: 'Search themes' });
+	const light = dialog.getByRole('button', { name: /^Light/ });
+	const dark = dialog.getByRole('button', { name: /^Dark/ });
+	await expect(dark).toHaveAttribute('aria-pressed', 'true');
+	await expect(light).toHaveAttribute('aria-pressed', 'false');
+	await search.fill('Dracula');
+	await dialog.getByRole('option', { name: 'Dracula', exact: true }).click();
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await expect(light).toContainText('Same as dark');
+	await light.click();
+	await expect(light).toHaveAttribute('aria-pressed', 'true');
+	await search.fill('Alabaster');
+	await dialog.getByRole('option', { name: 'Alabaster', exact: true }).click();
+	await expect.poll(background).toBe('rgb(247, 247, 247)');
+	await expect(light).toContainText('Alabaster');
+	await expect(dark).toContainText('Dracula');
+	await dark.click();
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	await page.screenshot({ path: test.info().outputPath('theme-schemes.png') });
+	await dialog.getByRole('button', { name: 'Apply theme', exact: true }).click();
+	await expect(dialog).toBeHidden();
+	expect(config()).toContain('theme = "light:Alabaster,dark:Dracula"');
+	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+	await expect(settings).toContainText('Light: Alabaster · Dark: Dracula');
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await page.emulateMedia({ colorScheme: 'light' });
+	await expect.poll(background).toBe('rgb(247, 247, 247)');
+
+	await page.reload();
+	await expect.poll(background).toBe('rgb(247, 247, 247)');
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Light: Alabaster · Dark: Dracula');
+	await page.getByRole('button', { name: 'Change theme' }).click();
+	await expect(light).toHaveAttribute('aria-pressed', 'true');
+	await expect(dialog.getByRole('button', { name: 'Apply theme', exact: true })).toBeDisabled();
+	await search.fill('Alabaster');
+	await expect(dialog.getByRole('option', { name: /^Alabaster(?: Current theme)?$/ }).getByLabel('Current theme')).toBeVisible();
+	await dark.click();
+	await dialog.getByRole('option', { name: /^Alabaster(?: Current theme)?$/ }).click();
+	await expect(dark).toContainText('Alabaster');
+	await dialog.getByRole('button', { name: 'Apply theme', exact: true }).click();
+	await expect(dialog).toBeHidden();
+	expect(config()).toContain('theme = "Alabaster"');
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await expect.poll(background).toBe('rgb(247, 247, 247)');
+});
+
+test('the color scheme button cycles light, dark, and system on this device', async ({ page }, { project }) => {
+	const background = () => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
+	const terminalBackground = () => page.evaluate(() => window.terminal?.options.theme?.background);
+	const saved = await page.request.put('/api/theme', {
+		data: JSON.stringify('light:Alabaster,dark:Dracula'),
+		headers: { 'Content-Type': 'application/json' }
+	});
+	expect(saved.ok()).toBe(true);
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Terminal' }).click();
+	const toggle = page.getByRole('button', { name: /^Color scheme/ });
+	await expect(toggle).toHaveAccessibleName('Color scheme: System');
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await expect.poll(terminalBackground).toBe('#282a36');
+
+	await toggle.click();
+	await expect(toggle).toHaveAccessibleName('Color scheme: Light');
+	await expect.poll(background).toBe('rgb(247, 247, 247)');
+	await expect.poll(terminalBackground).toBe('#f7f7f7');
+	await page.screenshot({ path: test.info().outputPath('scheme-light.png') });
+
+	await toggle.click();
+	await expect(toggle).toHaveAccessibleName('Color scheme: Dark');
+	await page.emulateMedia({ colorScheme: 'light' });
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await expect.poll(terminalBackground).toBe('#282a36');
+	await page.reload();
+	await expect(toggle).toHaveAccessibleName('Color scheme: Dark');
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await page.screenshot({ path: test.info().outputPath('scheme-dark.png') });
+
+	await toggle.click();
+	await expect(toggle).toHaveAccessibleName('Color scheme: System');
+	await expect.poll(background).toBe('rgb(247, 247, 247)');
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await page.reload();
+	await expect(toggle).toHaveAccessibleName('Color scheme: System');
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+});

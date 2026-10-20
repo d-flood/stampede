@@ -34,6 +34,8 @@ async fn themes_are_listed_saved_and_reloaded_without_rewriting_other_settings()
     assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
 
     let saved = get(&client, &format!("{api}/theme")).await;
+    assert_eq!(saved["light"]["name"], "Alabaster");
+    assert_eq!(saved["dark"]["name"], "Dracula");
     let preview = get(&client, &format!("{api}/themes/Custom%20Theme")).await;
     assert_eq!(preview["name"], "Custom Theme");
     assert_eq!(preview["dark"]["background"], "#123456");

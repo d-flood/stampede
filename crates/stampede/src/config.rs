@@ -25,6 +25,7 @@ struct Settings {
     #[serde(deserialize_with = "theme")]
     theme: Theme,
     font: Fonts,
+    ui_font: Option<String>,
     #[serde(deserialize_with = "rigs")]
     rig: Vec<Rig>,
     commit_rig: Option<String>,
@@ -48,6 +49,7 @@ impl Default for Settings {
             scrollback: 10_000,
             theme: Theme::default(),
             font: Fonts::default(),
+            ui_font: None,
             rig: Vec::new(),
             commit_rig: None,
             modes: BTreeMap::new(),
@@ -282,6 +284,7 @@ pub struct Config {
     pub scrollback: usize,
     pub theme: Theme,
     pub font: Font,
+    pub ui_font: Option<String>,
     pub rigs: Vec<Rig>,
     pub commit_rig: Option<String>,
     pub modes: BTreeMap<Agent, Vec<String>>,
@@ -302,6 +305,7 @@ impl Default for Config {
             scrollback: Settings::default().scrollback,
             theme: Theme::default(),
             font: Font::default(),
+            ui_font: None,
             rigs: Vec::new(),
             commit_rig: None,
             modes: BTreeMap::new(),
@@ -345,6 +349,7 @@ impl Config {
             scrollback,
             theme,
             font: Fonts { mono },
+            ui_font,
             rig: rigs,
             commit_rig,
             modes,
@@ -362,6 +367,7 @@ impl Config {
             scrollback,
             theme,
             font: Font { family: mono.family, faces: mono.files },
+            ui_font: ui_font.map(|family| family.trim().to_owned()).filter(|family| !family.is_empty()),
             rigs,
             commit_rig,
             modes,
@@ -451,6 +457,15 @@ pub fn write_host_name(path: &Path, name: Option<&str>) -> Result<Option<String>
     let text = with_host_name(text, name)?;
     fs::write(path, text)?;
     Ok(name.map(str::to_owned))
+}
+
+pub fn write_ui_font(path: &Path, family: Option<&str>) -> Result<(), Error> {
+    let text = match fs::read_to_string(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        text => text?,
+    };
+    fs::write(path, with_top_level(text, "ui_font", family)?)?;
+    Ok(())
 }
 
 pub fn write_commit_rig(path: &Path, name: &str) -> Result<String, Error> {
@@ -764,7 +779,9 @@ fn fraction<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error>
 
 fn faces<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Face>, D::Error> {
     let files = Vec::<PathBuf>::deserialize(deserializer)?;
-    files.into_iter().enumerate().map(face).collect::<Result<_, _>>().map_err(D::Error::custom)
+    files.into_iter().enumerate()
+        .map(|(index, path)| face(expand(path), format!("/fonts/host/{index}")))
+        .collect::<Result<_, _>>().map_err(D::Error::custom)
 }
 
 pub fn expand(path: PathBuf) -> PathBuf {
@@ -774,8 +791,7 @@ pub fn expand(path: PathBuf) -> PathBuf {
     }
 }
 
-fn face((index, path): (usize, PathBuf)) -> Result<Face, Error> {
-    let path = expand(path);
+pub fn face(path: PathBuf, url: String) -> Result<Face, Error> {
     let data = fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     let (weight, style) = match ttf_parser::Face::parse(&data, 0) {
         Ok(face) => {
@@ -789,7 +805,7 @@ fn face((index, path): (usize, PathBuf)) -> Result<Face, Error> {
         }
         Err(_) => ("400".to_owned(), "normal"),
     };
-    Ok(Face { path, url: format!("/fonts/host/{index}"), weight, style })
+    Ok(Face { path, url, weight, style })
 }
 
 pub fn watch(path: &Path) -> io::Result<watch::Receiver<Arc<Config>>> {

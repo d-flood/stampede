@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { beginThemePreview, selectedTheme, selectTheme } from '#lib/config.svelte.ts';
+	import { beginThemePreview, selectedTheme, selectTheme, themeLabel } from '#lib/config.svelte.ts';
+	import { isDark } from '#lib/scheme.svelte.ts';
 	import { onDestroy, tick } from 'svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -7,19 +8,33 @@
 	import Check from '~icons/ph/check';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
+	import Moon from '~icons/ph/moon';
+	import Sun from '~icons/ph/sun';
+
+	type Scheme = 'light' | 'dark';
 
 	let { onselect }: { onselect(): void } = $props();
 
+	const schemes = [
+		{ scheme: 'light', label: 'Light', Icon: Sun },
+		{ scheme: 'dark', label: 'Dark', Icon: Moon }
+	] as const;
 	let names = $state<string[]>([]);
 	let query = $state('');
 	let loading = $state(true);
 	let saving = $state(false);
-	let candidate = $state(selectedTheme.name);
-	let previewed = $state(selectedTheme.name);
+	let scheme = $state<Scheme>(isDark() ? 'dark' : 'light');
+	const chosen = $state({ light: selectedTheme.light, dark: selectedTheme.dark });
+	const previewed = $state({ light: selectedTheme.light, dark: selectedTheme.dark });
 	let pending = $state(false);
 	let error = $state<string>();
 	let request = 0;
 	const matches = $derived(names.filter((name) => name.toLowerCase().includes(query.toLowerCase().trim())));
+	const candidate = $derived(chosen[scheme] ?? chosen[other(scheme)]);
+	const light = $derived(chosen.light ?? chosen.dark);
+	const dark = $derived(chosen.dark ?? chosen.light);
+	const spec = $derived(light === dark ? light : `light:${light},dark:${dark}`);
+	const ready = $derived(!saving && !pending && spec !== null && chosen.light === previewed.light && chosen.dark === previewed.dark);
 	const preview = beginThemePreview();
 	onDestroy(() => preview.end());
 
@@ -37,33 +52,52 @@
 		}
 	}
 
-	async function choose(name: string) {
-		if (saving) return;
+	function other(slot: Scheme): Scheme {
+		return slot === 'light' ? 'dark' : 'light';
+	}
+
+	function describe(slot: Scheme) {
+		return chosen[slot] ?? (chosen[other(slot)] ? `Same as ${other(slot)}` : 'Default');
+	}
+
+	async function show(name: string) {
 		const current = ++request;
-		candidate = name;
 		pending = true;
 		error = undefined;
 		try {
-			if (await preview.preview(name)) previewed = name;
+			return await preview.preview(name);
 		} catch (failure) {
 			error = failure instanceof Error ? failure.message : 'Could not preview theme.';
+			return false;
 		} finally {
 			if (current === request) pending = false;
 		}
 	}
 
+	async function choose(name: string) {
+		if (saving) return;
+		const slot = scheme;
+		chosen[slot] = name;
+		if (await show(name)) previewed[slot] = name;
+	}
+
+	function pick(slot: Scheme) {
+		scheme = slot;
+		if (candidate) show(candidate);
+	}
+
 	function cycle(direction: number) {
-		const index = matches.indexOf(candidate ?? '');
+		const index = matches.indexOf(chosen[scheme] ?? '');
 		const next = index < 0 ? (direction > 0 ? 0 : matches.length - 1) : (index + direction + matches.length) % matches.length;
 		if (matches[next]) choose(matches[next]);
 	}
 
 	async function apply() {
-		if (saving || pending || !candidate || candidate !== previewed) return;
+		if (!ready || !spec) return;
 		saving = true;
 		error = undefined;
 		try {
-			await selectTheme(candidate);
+			await selectTheme(spec);
 			onselect();
 		} catch (failure) {
 			error = failure instanceof Error ? failure.message : 'Could not save theme.';
@@ -75,7 +109,16 @@
 	load();
 </script>
 
-<p class="current">Saved: {selectedTheme.name ?? 'Default'}</p>
+<p class="current">Saved: {themeLabel()}</p>
+<div class="schemes" role="group" aria-label="Color scheme">
+	{#each schemes as { scheme: slot, label, Icon } (slot)}
+		<button type="button" aria-pressed={scheme === slot} disabled={saving} onclick={() => pick(slot)}>
+			<Icon aria-hidden="true" />
+			<span>{label}</span>
+			<strong>{describe(slot)}</strong>
+		</button>
+	{/each}
+</div>
 <div class="cycler">
 	<IconButton label="Previous theme" disabled={saving || matches.length === 0} onclick={() => cycle(-1)}><CaretLeft /></IconButton>
 	<div class="preview" role="status" aria-live="polite">
@@ -99,7 +142,7 @@
 						{#snippet child({ props })}
 							<div {...props} class="item">
 								<span>{name}</span>
-								{#if name === selectedTheme.name}<Check aria-label="Current theme" />{/if}
+								{#if name === selectedTheme[scheme]}<Check aria-label="Current theme" />{/if}
 							</div>
 						{/snippet}
 						</Command.Item>
@@ -113,7 +156,7 @@
 </Command.Root>
 <div class="actions">
 	<Button onclick={onselect}>Cancel</Button>
-	<Button variant="primary" disabled={saving || pending || !candidate || candidate !== previewed || candidate === selectedTheme.name} onclick={apply}>Apply theme</Button>
+	<Button variant="primary" disabled={!ready || spec === selectedTheme.name} onclick={apply}>Apply theme</Button>
 </div>
 {#if saving}<p class="status" role="status">Applying theme…</p>{/if}
 {#if error}
@@ -122,6 +165,54 @@
 {/if}
 
 <style>
+	.schemes {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: var(--space-2);
+		margin-bottom: var(--space-3);
+	}
+
+	.schemes button {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		align-items: center;
+		column-gap: var(--space-2);
+		min-width: 0;
+		min-height: var(--target-min);
+		padding: var(--space-2) var(--space-3);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--surface-2);
+		color: var(--muted-fg);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.schemes button:hover:not(:disabled) {
+		background: var(--hover);
+	}
+
+	.schemes button:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
+		outline-offset: var(--border-width);
+	}
+
+	.schemes button[aria-pressed='true'] {
+		border-color: var(--status-working);
+		background: var(--surface-3);
+		color: var(--color-fg);
+	}
+
+	.schemes strong {
+		grid-column: 1 / -1;
+		overflow: hidden;
+		color: var(--color-fg);
+		font-weight: 600;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
 	.cycler {
 		display: flex;
 		align-items: center;

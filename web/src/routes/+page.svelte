@@ -30,6 +30,7 @@
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
+	import SchemeToggle from '#lib/shell/SchemeToggle.svelte';
 	import Settings from '#lib/shell/Settings.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
@@ -778,6 +779,7 @@
 {/snippet}
 
 {#snippet attention()}
+	<SchemeToggle />
 	<Settings />
 	<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
 {/snippet}

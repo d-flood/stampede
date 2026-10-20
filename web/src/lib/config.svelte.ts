@@ -1,8 +1,9 @@
 import type { ITheme } from 'ghostty-web';
-import { MediaQuery } from 'svelte/reactivity';
+import { isDark } from '#lib/scheme.svelte.ts';
 import { loadTextSize, textSize } from '#lib/typography.svelte.ts';
 
 type Palette = {
+	name: string | null;
 	background: string;
 	foreground: string;
 	palette: string[];
@@ -24,9 +25,9 @@ export type Template = { name: string; description: string };
 export type Mode = { value: string; label: string; available: boolean };
 export type Clip = { name: string; text: string };
 
-const dark = new MediaQuery('(prefers-color-scheme: dark)');
 let revision = $state(0);
 let faces: FontFace[] = [];
+let uiFaces: FontFace[] = [];
 let configured = $state.raw<Rig[]>([]);
 let offered = $state.raw<Template[]>([]);
 let kept = $state.raw<Clip[]>([]);
@@ -38,9 +39,12 @@ let committer = $state<string | null>(null);
 let offeredModes = $state.raw<Partial<Record<Agent, Mode[]>>>({});
 let savedTheme: ThemeResponse | undefined;
 let previewing = false;
+let savedUiFont: Font | null = null;
+let previewingFont = false;
 
 export const editor = $state<EditorSettings>({ keymap: 'standard' });
-export const selectedTheme = $state<{ name: string | null }>({ name: null });
+export const selectedTheme = $state<{ name: string | null; light: string | null; dark: string | null }>({ name: null, light: null, dark: null });
+export const uiFont = $state<{ family: string | null }>({ family: null });
 
 async function get<T>(path: string): Promise<T> {
 	const response = await fetch(path);
@@ -50,10 +54,11 @@ async function get<T>(path: string): Promise<T> {
 
 export async function loadConfig() {
 	loadTextSize();
-	const [name, theme, font, rigs, settings, leaderKey, keys, lines, listed, commitRigName, agentModes, saved] = await Promise.all([
+	const [name, theme, font, ui, rigs, settings, leaderKey, keys, lines, listed, commitRigName, agentModes, saved] = await Promise.all([
 		get<string | null>('/api/host-name'),
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
+		get<Font | null>('/api/ui-font'),
 		get<Rig[]>('/api/rigs'),
 		get<EditorSettings>('/api/editor'),
 		get<string>('/api/leader'),
@@ -71,18 +76,69 @@ export async function loadConfig() {
 	chord = leaderKey;
 	extras = keys.extra;
 	scrollback = lines;
-	savedTheme = theme;
-	selectedTheme.name = theme.name;
-	if (!previewing) applyTheme(theme);
-	const style = document.documentElement.style;
-	for (const face of faces) document.fonts.delete(face);
-	faces = font.faces.map(({ url, weight, style }) => new FontFace(font.family, `url("${url}")`, { weight, style }));
-	for (const face of faces) document.fonts.add(face);
-	style.setProperty('--font-mono', `"${font.family}", "Symbols Nerd Font Mono", monospace`);
+	keepTheme(theme);
+	faces = register(faces, font);
+	document.documentElement.style.setProperty('--font-mono', `"${font.family}", "Symbols Nerd Font Mono", monospace`);
+	keepUiFont(ui);
 	configured = rigs;
 	offered = listed;
 	kept = saved;
 	revision++;
+}
+
+function register(previous: FontFace[], font: Font | null) {
+	for (const face of previous) document.fonts.delete(face);
+	const added = font ? font.faces.map(({ url, weight, style }) => new FontFace(font.family, `url("${url}")`, { weight, style })) : [];
+	for (const face of added) document.fonts.add(face);
+	return added;
+}
+
+function applyUiFont(font: Font | null) {
+	uiFaces = register(uiFaces, font);
+	const style = document.documentElement.style;
+	if (font) style.setProperty('--font-ui', `"${font.family}", "Symbols Nerd Font Mono", sans-serif`);
+	else style.removeProperty('--font-ui');
+}
+
+function keepUiFont(font: Font | null) {
+	savedUiFont = font;
+	uiFont.family = font?.family ?? null;
+	if (!previewingFont) applyUiFont(font);
+}
+
+export async function selectUiFont(family: string | null) {
+	const response = await fetch('/api/ui-font', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(family)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	keepUiFont(await response.json());
+}
+
+export function beginFontPreview() {
+	previewingFont = true;
+	return preview(
+		(family: string | null) => (family === null ? Promise.resolve(null) : get<Font>(`/api/fonts/${encodeURIComponent(family)}`)),
+		applyUiFont,
+		() => {
+			previewingFont = false;
+			applyUiFont(savedUiFont);
+		}
+	);
+}
+
+function keepTheme(theme: ThemeResponse) {
+	savedTheme = theme;
+	selectedTheme.name = theme.name;
+	selectedTheme.light = theme.light.name;
+	selectedTheme.dark = theme.dark.name;
+	if (!previewing) applyTheme(theme);
+}
+
+export function themeLabel(): string {
+	const { light, dark } = selectedTheme;
+	return light === dark ? (light ?? 'Default') : `Light: ${light} · Dark: ${dark}`;
 }
 
 function applyTheme(theme: ThemeResponse) {
@@ -106,10 +162,7 @@ export async function selectTheme(name: string) {
 		body: JSON.stringify(name)
 	});
 	if (!response.ok) throw new Error(await response.text());
-	const theme: ThemeResponse = await response.json();
-	savedTheme = theme;
-	selectedTheme.name = theme.name;
-	if (!previewing) applyTheme(theme);
+	keepTheme(await response.json());
 }
 
 export function hostName(): string | null {
@@ -128,15 +181,26 @@ export async function saveHostName(name: string | null) {
 
 export function beginThemePreview() {
 	previewing = true;
+	return preview(
+		(name: string) => get<ThemeResponse>(`/api/themes/${encodeURIComponent(name)}`),
+		applyTheme,
+		() => {
+			previewing = false;
+			if (savedTheme) applyTheme(savedTheme);
+		}
+	);
+}
+
+function preview<Name, Value>(load: (name: Name) => Promise<Value>, apply: (value: Value) => void, restore: () => void) {
 	let active = true;
 	let request = 0;
 	return {
-		async preview(name: string) {
+		async preview(name: Name) {
 			const current = ++request;
 			try {
-				const theme = await get<ThemeResponse>(`/api/themes/${encodeURIComponent(name)}`);
+				const value = await load(name);
 				if (!active || current !== request) return false;
-				applyTheme(theme);
+				apply(value);
 				return true;
 			} catch (error) {
 				if (!active || current !== request) return false;
@@ -145,8 +209,7 @@ export function beginThemePreview() {
 		},
 		end() {
 			active = false;
-			previewing = false;
-			if (savedTheme) applyTheme(savedTheme);
+			restore();
 		}
 	};
 }
@@ -262,7 +325,7 @@ export function keybarExtras(): string[] {
 export function appearance(): Appearance {
 	// Reading these re-runs the caller when the config or the color scheme changes.
 	void revision;
-	void dark.current;
+	void isDark();
 	const style = getComputedStyle(document.documentElement);
 	const token = (name: string) => style.getPropertyValue(name).trim();
 	const ansi = (n: number) => token(`--ansi-${n}`);

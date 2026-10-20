@@ -7,6 +7,7 @@ mod config;
 mod device;
 mod epics;
 mod files;
+mod fonts;
 mod git;
 mod holder;
 mod install;
@@ -113,6 +114,9 @@ fn router(state: AppState) -> Router {
         .route("/api/themes", get(theme_names))
         .route("/api/themes/{name}", get(preview_theme))
         .route("/api/font", get(font))
+        .route("/api/fonts", get(font_families))
+        .route("/api/fonts/{family}", get(preview_font))
+        .route("/api/ui-font", get(ui_font).put(set_ui_font))
         .route("/api/rigs", get(rigs).put(rigs::save).delete(rigs::delete))
         .route("/api/rigs/options", get(rigs::options))
         .route("/api/commit-rig", get(commit_rig).put(set_commit_rig))
@@ -167,6 +171,7 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/git/stashes/{index}/{action}", post(git::actions::unstash))
         .route("/api/lsp/log", get(language_servers::log))
         .route("/fonts/host/{index}", get(host_font))
+        .route("/fonts/system/{family}/{index}", get(system_font))
         .route("/manifest.webmanifest", get(manifest))
         .route("/ws", get(device::upgrade))
         .fallback(spa)
@@ -347,6 +352,51 @@ async fn font(State(state): State<AppState>) -> Json<Font> {
     Json(state.config.borrow().font.clone())
 }
 
+async fn font_families() -> Result<Json<Vec<String>>, files::Failure> {
+    tokio::task::spawn_blocking(fonts::families)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+
+async fn preview_font(Path(family): Path<String>) -> Result<Json<Font>, files::Failure> {
+    let font = tokio::task::spawn_blocking(move || fonts::resolve(&family))
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    if font.faces.is_empty() {
+        return Err((StatusCode::NOT_FOUND, format!("no installed font family {:?}", font.family)));
+    }
+    Ok(Json(font))
+}
+
+async fn ui_font(State(state): State<AppState>) -> Result<Json<Option<Font>>, files::Failure> {
+    let family = state.config.borrow().ui_font.clone();
+    tokio::task::spawn_blocking(move || family.map(|family| fonts::resolve(&family)).transpose())
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+
+async fn set_ui_font(State(state): State<AppState>, Json(family): Json<Option<String>>) -> Result<Json<Option<Font>>, files::Failure> {
+    tokio::task::spawn_blocking(move || -> Result<_, config::Error> {
+        let font = family.as_deref().map(fonts::resolve).transpose()?;
+        if let Some(font) = &font
+            && font.faces.is_empty()
+        {
+            return Err(format!("no installed font family {:?}", font.family).into());
+        }
+        config::write_ui_font(&state.config_path, family.as_deref())?;
+        Ok(font)
+    })
+    .await
+    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+    .map(Json)
+    .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+
 async fn rigs(State(state): State<AppState>) -> Json<Vec<Rig>> {
     Json(state.config.borrow().rigs.clone())
 }
@@ -416,6 +466,17 @@ async fn host_font(State(state): State<AppState>, Path(index): Path<usize>) -> R
         Some(face) => face.path.clone(),
         None => return StatusCode::NOT_FOUND.into_response(),
     };
+    font_file(path).await
+}
+
+async fn system_font(Path((family, index)): Path<(String, usize)>) -> Response {
+    match tokio::task::spawn_blocking(move || fonts::file(&family, index)).await {
+        Ok(Ok(Some(path))) => font_file(path).await,
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn font_file(path: PathBuf) -> Response {
     match tokio::fs::read(&path).await {
         Ok(data) => {
             let mime = mime_guess::from_path(&path).first_or_octet_stream().to_string();

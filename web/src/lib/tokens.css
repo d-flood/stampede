@@ -97,30 +97,28 @@
 	--target-min: 26px;
 }
 
-@media (prefers-color-scheme: dark) {
-	:root {
-		--color-bg: var(--dark-bg);
-		--color-fg: var(--dark-fg);
-		--ansi-0: var(--dark-ansi-0);
-		--ansi-1: var(--dark-ansi-1);
-		--ansi-2: var(--dark-ansi-2);
-		--ansi-3: var(--dark-ansi-3);
-		--ansi-4: var(--dark-ansi-4);
-		--ansi-5: var(--dark-ansi-5);
-		--ansi-6: var(--dark-ansi-6);
-		--ansi-7: var(--dark-ansi-7);
-		--ansi-8: var(--dark-ansi-8);
-		--ansi-9: var(--dark-ansi-9);
-		--ansi-10: var(--dark-ansi-10);
-		--ansi-11: var(--dark-ansi-11);
-		--ansi-12: var(--dark-ansi-12);
-		--ansi-13: var(--dark-ansi-13);
-		--ansi-14: var(--dark-ansi-14);
-		--ansi-15: var(--dark-ansi-15);
-		--color-cursor: var(--dark-cursor);
-		--color-selection-bg: var(--dark-selection-bg);
-		--color-selection-fg: var(--dark-selection-fg);
-	}
+:root[data-scheme='dark'] {
+	--color-bg: var(--dark-bg);
+	--color-fg: var(--dark-fg);
+	--ansi-0: var(--dark-ansi-0);
+	--ansi-1: var(--dark-ansi-1);
+	--ansi-2: var(--dark-ansi-2);
+	--ansi-3: var(--dark-ansi-3);
+	--ansi-4: var(--dark-ansi-4);
+	--ansi-5: var(--dark-ansi-5);
+	--ansi-6: var(--dark-ansi-6);
+	--ansi-7: var(--dark-ansi-7);
+	--ansi-8: var(--dark-ansi-8);
+	--ansi-9: var(--dark-ansi-9);
+	--ansi-10: var(--dark-ansi-10);
+	--ansi-11: var(--dark-ansi-11);
+	--ansi-12: var(--dark-ansi-12);
+	--ansi-13: var(--dark-ansi-13);
+	--ansi-14: var(--dark-ansi-14);
+	--ansi-15: var(--dark-ansi-15);
+	--color-cursor: var(--dark-cursor);
+	--color-selection-bg: var(--dark-selection-bg);
+	--color-selection-fg: var(--dark-selection-fg);
 }
 
 @media (pointer: coarse) {

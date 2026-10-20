@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-	import { selectedTheme } from '#lib/config.svelte.ts';
+	import { themeLabel } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -17,7 +17,7 @@
 
 <IconButton
 	label="Change theme"
-	title="Theme: {selectedTheme.name ?? 'Default'}"
+	title="Theme: {themeLabel()}"
 	aria-haspopup="dialog"
 	aria-expanded={open}
 	onclick={() => ((open = true), warmUp())}
@@ -26,7 +26,7 @@
 	bind:open
 	full={form() === 'phone'}
 	title="Choose a theme"
-	description="Preview themes here. Apply to save on every device; closing restores your saved theme."
+	description="Pick one theme for light mode and one for dark. Apply to save on every device; closing restores your saved themes."
 >
 	{#if Picker}<Picker onselect={() => (open = false)} />{/if}
 </Dialog>

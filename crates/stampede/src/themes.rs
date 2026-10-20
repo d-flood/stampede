@@ -12,6 +12,7 @@ struct Bundled;
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Palette {
+    pub name: Option<String>,
     pub background: String,
     pub foreground: String,
     pub palette: [String; 16],
@@ -86,7 +87,8 @@ fn lookup(name: &str) -> Result<Palette, Error> {
         }
         Err(error) => return Err(format!("{}: {error}", user.display()).into()),
     };
-    parse(&text).map_err(|error| format!("theme {name:?}: {error}").into())
+    let palette = parse(&text).map_err(|error| format!("theme {name:?}: {error}"))?;
+    Ok(Palette { name: Some(name.to_owned()), ..palette })
 }
 
 fn parse(text: &str) -> Result<Palette, Error> {
@@ -120,6 +122,7 @@ fn parse(text: &str) -> Result<Palette, Error> {
         }
     }
     Ok(Palette {
+        name: None,
         cursor: cursor.unwrap_or_else(|| foreground.clone()),
         cursor_text: cursor_text.unwrap_or_else(|| background.clone()),
         selection_background: selection_background.unwrap_or_else(|| foreground.clone()),

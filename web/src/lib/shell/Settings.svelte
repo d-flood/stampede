@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { agentNames, commitRig, hostName, modes, rigs, saveCommitRig, saveHostName, saveModes, selectedTheme, type Agent } from '#lib/config.svelte.ts';
+	import { agentNames, commitRig, hostName, modes, rigs, saveCommitRig, saveHostName, saveModes, themeLabel, uiFont, type Agent } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import ClipEditor from '#lib/shell/ClipEditor.svelte';
 	import RigEditor from '#lib/shell/RigEditor.svelte';
+	import FontSwitcher from '#lib/shell/FontSwitcher.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
 	import { selectTextSize, textSize, typography } from '#lib/typography.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -80,10 +81,17 @@
 		</section>
 		<section aria-labelledby="theme-label">
 			<div class="row">
-				<div><h3 id="theme-label">Theme</h3><p>{selectedTheme.name ?? 'Default'}</p></div>
+				<div><h3 id="theme-label">Theme</h3><p>{themeLabel()}</p></div>
 				<ThemeSwitcher />
 			</div>
-			<p>Applies on every device.</p>
+			<p>Light or dark follows your system unless the color scheme button beside Settings picks one. Applies on every device.</p>
+		</section>
+		<section aria-labelledby="font-label">
+			<div class="row">
+				<div><h3 id="font-label">Font</h3><p>{uiFont.family ?? 'Default'}</p></div>
+				<FontSwitcher />
+			</div>
+			<p>For the UI and chat text on every device. Code, paths, and terminals keep the monospace font.</p>
 		</section>
 		<section aria-labelledby="commit-rig-label">
 			<div class="row wrap">
