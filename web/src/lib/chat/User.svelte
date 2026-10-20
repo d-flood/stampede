@@ -1,10 +1,13 @@
 <script lang="ts">
+	import Text from '#lib/chat/Text.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
 	import CaretRight from '~icons/ph/caret-right';
 
 	let { item, first }: { item: Extract<Item, { kind: 'user' }>; first: boolean } = $props();
 
 	const lines = $derived(item.text.split('\n'));
+
+	const markdown = (text: string) => ({ kind: 'text', text, streaming: false, phase: 'final' }) as const;
 </script>
 
 {#if lines.length > 12}
@@ -16,12 +19,12 @@
 			<span class="label">{lines.length} lines</span>
 			<span class="caret"><CaretRight /></span>
 		</summary>
-		<div class="text">{item.text}</div>
+		<div class="body"><Text item={markdown(item.text)} /></div>
 	</details>
 {:else if item.template}
-	<div class="user text"><span class="template">/{item.template}</span>{item.text.slice(item.template.length + 1)}</div>
+	<div class="user"><span class="template">/{item.template}</span>{' '}<Text item={markdown(item.text.slice(item.template.length + 1))} /></div>
 {:else}
-	<div class="user text">{item.text}</div>
+	<div class="user"><Text item={markdown(item.text)} /></div>
 {/if}
 
 {#if item.images}<div class="label images">{item.images} image{item.images === 1 ? '' : 's'}</div>{/if}
@@ -34,11 +37,6 @@
 		border: var(--border-width) solid color-mix(in oklab, var(--ansi-4) 38%, var(--color-bg));
 		border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
 		background: color-mix(in oklab, var(--ansi-4) 16%, var(--color-bg));
-	}
-
-	.text {
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
 	}
 
 	details.user {
@@ -85,6 +83,8 @@
 	}
 
 	.template {
+		float: left;
+		margin-right: 1ch;
 		font-family: var(--font-mono);
 		font-weight: 600;
 	}
@@ -93,7 +93,7 @@
 		align-self: flex-end;
 	}
 
-	details .text {
+	.body {
 		padding-bottom: var(--space-3);
 	}
 </style>

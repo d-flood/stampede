@@ -102,6 +102,20 @@ test('ArrowUp and ArrowDown recall earlier prompts without replacing a draft', a
 	await closeProject(page, name);
 });
 
+test('a sent prompt renders its markdown', async ({ page }, { project }) => {
+	const name = `composer-markdown-${project.name}`;
+	const { panel, composer } = await launch(page, name);
+	await composer.fill('**Bold** and `code` <b>raw</b>\n\n- item');
+	await panel.getByRole('button', { name: /^(Send|Steer)$/ }).click();
+	const sent = panel.locator('.user');
+	await expect(sent.locator('strong')).toHaveText('Bold');
+	await expect(sent.locator('code')).toHaveText('code');
+	await expect(sent.getByRole('listitem')).toHaveText('item');
+	await expect(sent.locator('b')).toHaveCount(0);
+	await expect(sent).toContainText('<b>raw</b>');
+	await closeProject(page, name);
+});
+
 test('Shift+Tab in the composer cycles the Chat mode', async ({ page }, { project }) => {
 	const name = `composer-mode-${project.name}`;
 	const { panel, composer } = await launch(page, name);

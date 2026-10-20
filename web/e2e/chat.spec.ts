@@ -74,7 +74,7 @@ test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, 
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await panel.getByRole('textbox', { name: 'Composer' }).fill(prompt);
 	await panel.getByRole('button', { name: 'Send' }).click();
-	await expect(panel.getByText(prompt)).toBeVisible();
+	await expect(panel.locator('.user')).toHaveText(prompt.replaceAll('**', ''));
 	await expect(panel.locator('strong', { hasText: 'glad' })).toBeVisible();
 	await expect(panel.getByText('Welcome—glad you’re here.')).toBeVisible();
 	await expect(tab.getByTitle('done')).toBeVisible();
