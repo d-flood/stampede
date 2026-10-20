@@ -15,6 +15,7 @@
 	import CopyMode from '#lib/shell/CopyMode.svelte';
 	import KeyBar, { control } from '#lib/shell/KeyBar.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import Button from '#lib/ui/Button.svelte';
 	import { FitAddon, Terminal } from 'ghostty-web';
 	import { onMount, type Snippet } from 'svelte';
 	import ArrowElbowDownLeft from '~icons/ph/arrow-elbow-down-left';
@@ -25,6 +26,7 @@
 	type Props = {
 		device: Device;
 		terminalId: string;
+		pending?: string;
 		active: boolean;
 		focused: boolean;
 		ended?: boolean;
@@ -34,7 +36,7 @@
 		children?: Snippet;
 	};
 
-	let { device, terminalId, active, focused, ended = false, project, onopen, onbrowse, children }: Props = $props();
+	let { device, terminalId, pending, active, focused, ended = false, project, onopen, onbrowse, children }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<Terminal>();
@@ -95,7 +97,7 @@
 	$effect(() => {
 		if (!focused || !view) return;
 		window.terminal = view;
-		if (composing) composer?.focus();
+		if (composing || pending) composer?.focus();
 		else view.focus();
 	});
 
@@ -279,6 +281,14 @@
 		return true;
 	}
 
+	function submit(text: string) {
+		if (channel === undefined || !view || !live || ended || !text.trim()) return false;
+		text = text.replace(/\r\n?/g, '\n');
+		const pasted = view.hasBracketedPaste() ? `\x1b[200~${text}\x1b[201~` : text.replaceAll('\n', '\r');
+		device.send({ type: 'terminal.submit', terminalId, text: `${pasted}\r` });
+		return true;
+	}
+
 	function paste(event: ClipboardEvent) {
 		event.preventDefault();
 		event.stopPropagation();
@@ -375,7 +385,14 @@
 	{#if typing && !ended && form() === 'phone'}
 		<KeyBar bind:ctrl disabled={!live} application={() => !!view?.getMode(1)} onkey={send} oncopy={copy} />
 	{/if}
-	{#if composing && !ended}
+	{#if pending && !ended}
+		<Composer bind:this={composer} id={`pending:${terminalId}`} draft={pending} code disabled={!live || !filled} onsend={submit}>
+			{#snippet actions(text, clear)}
+				<span role="status">Review command before running</span>
+				<Button variant="primary" disabled={!text.trim() || !live || !filled} onclick={() => { if (submit(text)) clear(); }}>Run</Button>
+			{/snippet}
+		</Composer>
+	{:else if composing && !ended}
 		{#if pasteFallback}
 			<p role="status">Clipboard access unavailable. Paste into Composer, then choose Insert.</p>
 		{/if}

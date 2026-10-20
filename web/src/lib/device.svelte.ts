@@ -13,6 +13,7 @@ export type Terminal = {
 	owner: { project: string } | 'drawer';
 	label: string;
 	state: 'live' | 'ended';
+	pending?: string;
 };
 
 export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'mcp' | 'other'; name: string; detail: string };
@@ -214,6 +215,7 @@ export type ClientMessage =
 	| { type: 'hello'; deviceId: string; browserId: string }
 	| { type: 'terminal.create'; projectId: string }
 	| { type: 'terminal.create'; owner: 'drawer' }
+	| { type: 'terminal.submit'; terminalId: string; text: string }
 	| { type: 'terminal.close'; terminalId: string }
 	| { type: 'terminal.attach'; terminalId: string }
 	| { type: 'terminal.resize'; terminalId: string; cols: number; rows: number }

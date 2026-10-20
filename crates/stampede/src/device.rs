@@ -60,6 +60,8 @@ enum Control {
     Create { project_id: Option<String>, owner: Option<Owner> },
     #[serde(rename = "terminal.close")]
     Close { terminal_id: String },
+    #[serde(rename = "terminal.submit")]
+    Submit { terminal_id: String, text: String },
     #[serde(rename = "terminal.attach")]
     Attach { terminal_id: String },
     #[serde(rename = "terminal.resize")]
@@ -419,6 +421,11 @@ impl Device {
                 }
             }
             Control::Close { terminal_id } => self.terminals.close(&terminal_id),
+            Control::Submit { terminal_id, text } => {
+                if let Err(error) = self.terminals.submit(&terminal_id, &self.id, text) {
+                    eprintln!("cannot submit staged command: {error}");
+                }
+            }
             Control::Attach { terminal_id } => self.attach(terminal_id).await,
             Control::Resize { terminal_id, cols, rows } => {
                 self.terminals.resize(&terminal_id, &self.id, Size { cols, rows })

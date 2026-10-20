@@ -9,6 +9,7 @@
 		focused?: boolean;
 		placeholder?: string;
 		draft?: string;
+		code?: boolean;
 		menu?: Snippet<[string, (text: string) => void]>;
 		onkeydown?: (event: KeyboardEvent) => void;
 		onpaste?: (event: ClipboardEvent) => void;
@@ -17,7 +18,7 @@
 		actions?: Snippet<[text: string, clear: () => void]>;
 	};
 
-	let { id, disabled = false, focused = false, placeholder, draft, onsend, actions, menu, onkeydown, onpaste }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, draft, code = false, onsend, actions, menu, onkeydown, onpaste }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
@@ -73,11 +74,12 @@
 		onkeydown={keydown}
 		{onpaste}
 		aria-label="Composer"
+		class:code
 		{placeholder}
 		rows={actions ? (phone ? 2 : 1) : 3}
-		autocorrect="on"
-		autocapitalize="sentences"
-		spellcheck="true"
+		autocorrect={code ? 'off' : 'on'}
+		autocapitalize={code ? 'off' : 'sentences'}
+		spellcheck={!code}
 	></textarea>
 	<div class="actions">
 		{#if actions}
@@ -122,6 +124,10 @@
 
 	textarea:focus-visible {
 		outline: var(--border-width) solid var(--status-working);
+	}
+
+	textarea.code {
+		font-family: var(--font-mono);
 	}
 
 	.actions {

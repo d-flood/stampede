@@ -2,6 +2,7 @@ pub(crate) mod claude;
 pub(crate) mod codex;
 pub(crate) mod copilot;
 mod delegation;
+mod terminal_tools;
 mod holder;
 mod html;
 mod protocol;

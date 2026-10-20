@@ -164,10 +164,10 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let usage = Arc::new(Usage::default());
     let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage)));
     let rigs = config.borrow().rigs.clone();
-    chats::listen_delegations(&args.data_dir, Arc::clone(&chats), config.clone())?;
-    chats.restore(&rigs).await?;
     let terminals = Arc::new(Terminals::new(args.data_dir.clone()));
     terminals.restore().await?;
+    chats::listen_delegations(&args.data_dir, Arc::clone(&chats), Arc::clone(&terminals), config.clone())?;
+    chats.restore(&rigs).await?;
     memory::trim_periodically();
     let runs = Runs::new(
         &args.data_dir,

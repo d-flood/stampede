@@ -103,7 +103,7 @@ pub fn call(args: &ChatToolsArgs, params: Value) -> Value {
     exchange().unwrap_or_else(|cause| error(format!("Could not reach Stampede chat tools: {cause}")))
 }
 
-pub fn listen(data_dir: &Path, chats: Arc<Chats>, config: watch::Receiver<Arc<Config>>) -> io::Result<()> {
+pub fn listen(data_dir: &Path, chats: Arc<Chats>, terminals: Arc<crate::terminals::Terminals>, config: watch::Receiver<Arc<Config>>) -> io::Result<()> {
     let path = socket_path(data_dir);
     match fs::remove_file(&path) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
@@ -115,7 +115,7 @@ pub fn listen(data_dir: &Path, chats: Arc<Chats>, config: watch::Receiver<Arc<Co
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
-                    let (chats, config) = (Arc::clone(&chats), config.clone());
+                    let (chats, terminals, config) = (Arc::clone(&chats), Arc::clone(&terminals), config.clone());
                     tokio::spawn(async move {
                         let (reader, mut writer) = stream.into_split();
                         let mut reader = BufReader::new(reader);
@@ -130,6 +130,10 @@ pub fn listen(data_dir: &Path, chats: Arc<Chats>, config: watch::Receiver<Arc<Co
                             }
                             Ok(request) if request.name == super::questions::TOOL => {
                                 super::questions::ask(&chats, request.chat_id, request.arguments, &mut reader).await
+                            }
+                            Ok(request) if matches!(request.name.as_str(), super::terminal_tools::STAGE | super::terminal_tools::READ) => {
+                                let scrollback = config.borrow().scrollback;
+                                super::terminal_tools::call(&chats, &terminals, request.chat_id, &request.name, request.arguments, scrollback).await
                             }
                             Ok(request) if request.name == TOOL => match serde_json::from_value::<Task>(request.arguments) {
                                 Ok(task) if !task.rig.trim().is_empty() && !task.task.trim().is_empty() && task.task.len() <= 65536 => {

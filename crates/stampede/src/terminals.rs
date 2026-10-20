@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::{
     io::AsyncWriteExt,
     net::{
@@ -42,6 +42,16 @@ pub struct Terminal {
     pub owner: Owner,
     pub label: String,
     pub state: State,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending: Option<String>,
+    #[serde(skip)]
+    chat_id: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct Staged {
+    chat_id: String,
+    command: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
@@ -135,7 +145,7 @@ impl Terminals {
                         io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
                     ) =>
                 {
-                    self.end(record);
+                    self.end(record)?;
                 }
                 Err(error) => eprintln!("cannot reattach terminal {}: {error}", record.id),
             }
@@ -143,11 +153,12 @@ impl Terminals {
         Ok(())
     }
 
-    fn end(&self, record: Record) {
+    fn end(&self, record: Record) -> io::Result<()> {
         let size = record.size;
-        let (terminal, ..) = describe(record);
+        let (terminal, ..) = self.describe(record)?;
         let terminal = Terminal { state: State::Ended, ..terminal };
         self.terminals.lock().unwrap().push((terminal.id.clone(), Slot::Ended(terminal, size)));
+        Ok(())
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Owner> {
@@ -179,6 +190,33 @@ impl Terminals {
         scrollback: usize,
         device: &str,
     ) -> io::Result<Terminal> {
+        let (owner, cwd) = match project {
+            Some(project) => (Owner::Project(project.id.clone()), PathBuf::from(&project.path)),
+            None => (Owner::Drawer, crate::home()),
+        };
+        self.create_at(owner, &cwd, scrollback, device, None).await
+    }
+
+    pub async fn stage(
+        self: &Arc<Self>,
+        project_id: &str,
+        cwd: &Path,
+        chat_id: &str,
+        command: String,
+        scrollback: usize,
+    ) -> io::Result<Terminal> {
+        let staged = Staged { chat_id: chat_id.to_owned(), command: Some(command) };
+        self.create_at(Owner::Project(project_id.to_owned()), cwd, scrollback, "", Some(staged)).await
+    }
+
+    async fn create_at(
+        self: &Arc<Self>,
+        owner: Owner,
+        cwd: &Path,
+        scrollback: usize,
+        device: &str,
+        staged: Option<Staged>,
+    ) -> io::Result<Terminal> {
         let id = format!("{:016x}", Uuid::new_v4().as_u64_pair().1);
         let shell = env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
         let mut command = Command::new("/proc/self/exe");
@@ -187,10 +225,8 @@ impl Terminals {
         }
         command.arg("hold").arg("--data-dir").arg(&self.data_dir).arg("--id").arg(&id);
         command.arg("--scrollback").arg(scrollback.to_string());
-        match project {
-            Some(project) => command.arg("--cwd").arg(&project.path).arg("--project").arg(&project.id),
-            None => command.arg("--cwd").arg(crate::home()),
-        };
+        command.arg("--cwd").arg(cwd);
+        if let Owner::Project(id) = owner { command.arg("--project").arg(id); }
         command.arg("--").arg(&shell).arg("-l");
         let status = command
             .stdin(Stdio::null())
@@ -201,6 +237,7 @@ impl Terminals {
         if !status.success() {
             return Err(io::Error::other(format!("holder {status}")));
         }
+        if let Some(staged) = staged { self.save_staged(&id, &staged)?; }
         let record = read_record(&holder::record_path(&self.data_dir, &id))?;
         let terminal = self.open(record).await?;
         self.lead(&id, device);
@@ -211,7 +248,7 @@ impl Terminals {
         let (mut frames, mut writer, initial) = connect(&self.data_dir, &record.id).await?;
         let (control, mut pending) = mpsc::unbounded_channel();
         let size = record.size;
-        let (mut terminal, shell, mut title) = describe(record);
+        let (mut terminal, shell, mut title) = self.describe(record)?;
         if let Some(initial) = initial {
             title = initial;
             terminal.label = label(&shell, &title);
@@ -250,6 +287,7 @@ impl Terminals {
                 }
             }
             terminals.terminals.lock().unwrap().retain(|(other, _)| *other != id);
+            let _ = fs::remove_file(terminals.staged_path(&id));
             let _ = terminals.changed.send(owner);
         });
         Ok(terminal)
@@ -285,6 +323,55 @@ impl Terminals {
         }
     }
 
+    pub fn submit(&self, id: &str, device: &str, text: String) -> io::Result<()> {
+        let entry = self.get(id).ok_or(io::ErrorKind::NotFound)?;
+        let mut terminal = entry.terminal.lock().unwrap();
+        if terminal.pending.is_none() { return Ok(()); }
+        self.save_staged(id, &Staged { chat_id: terminal.chat_id.clone().unwrap(), command: None })?;
+        terminal.pending = None;
+        entry.control.send(Message::Input(text.into_bytes())).map_err(io::Error::other)?;
+        let _ = self.changed.send(terminal.owner.clone());
+        drop(terminal);
+        self.lead(id, device);
+        Ok(())
+    }
+
+    pub fn for_chat(&self, id: &str, chat_id: &str) -> Option<Terminal> {
+        self.list().into_iter().find(|terminal| terminal.id == id && terminal.chat_id.as_deref() == Some(chat_id))
+    }
+
+    pub async fn read(&self, id: &str) -> io::Result<String> {
+        let mut attachment = self.attach(id).await?;
+        let size = *attachment.size.borrow();
+        let bytes = tokio::time::timeout(std::time::Duration::from_secs(5), attachment.output.next())
+            .await.map_err(io::Error::other)?.ok_or(io::ErrorKind::UnexpectedEof)?;
+        drop(attachment);
+        tokio::task::spawn_blocking(move || plain(&bytes, size)).await.map_err(io::Error::other)?
+    }
+
+    fn staged_path(&self, id: &str) -> PathBuf { self.data_dir.join("terminals").join(format!("{id}.staged")) }
+
+    fn save_staged(&self, id: &str, staged: &Staged) -> io::Result<()> {
+        let path = self.staged_path(id);
+        let temporary = path.with_extension("staged.tmp");
+        fs::write(&temporary, serde_json::to_vec(staged)?)?;
+        fs::rename(temporary, path)
+    }
+
+    fn describe(&self, record: Record) -> io::Result<(Terminal, String, Title)> {
+        let staged: Option<Staged> = match fs::read(self.staged_path(&record.id)) {
+            Ok(bytes) => Some(serde_json::from_slice(&bytes)?),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let (mut terminal, shell, title) = describe(record);
+        if let Some(staged) = staged {
+            terminal.pending = staged.command;
+            terminal.chat_id = Some(staged.chat_id);
+        }
+        Ok((terminal, shell, title))
+    }
+
     pub fn close(&self, id: &str) {
         match self.get(id) {
             Some(entry) => {
@@ -308,6 +395,7 @@ impl Terminals {
         for path in [holder::record_path, holder::socket_path, holder::scrollback_path] {
             let _ = fs::remove_file(path(&self.data_dir, id));
         }
+        let _ = fs::remove_file(self.staged_path(id));
         let _ = self.changed.send(terminal.owner);
     }
 
@@ -380,8 +468,31 @@ fn describe(record: Record) -> (Terminal, String, Title) {
         owner: record.owner,
         label: label(&shell, &title),
         state: State::Live,
+        pending: None,
+        chat_id: None,
     };
     (terminal, shell, title)
+}
+
+fn plain(bytes: &[u8], size: Size) -> io::Result<String> {
+    use libghostty_vt::{Terminal, fmt::{Format, Formatter, FormatterOptions}, screen::Screen, terminal::Mode};
+
+    let extract = || -> Result<String, libghostty_vt::Error> {
+        let mut terminal = Terminal::new(size.cols, size.rows)?;
+        terminal.set_scrollback_max_bytes(None)?.set_scrollback_max_lines(None)?;
+        terminal.vt_write(bytes);
+        let options = || FormatterOptions::new().with_format(Format::Plain).with_unwrap(true).with_trim(true);
+        let active = Formatter::new(&terminal, options())?.format_alloc(None)?.to_vec();
+        let mut text = Vec::new();
+        if terminal.active_screen()? == Screen::Alternate {
+            terminal.vt_write(if terminal.mode(Mode::ALT_SCREEN_SAVE)? { b"\x1b[?1049l" } else { b"\x1b[?47l" });
+            text.extend_from_slice(&Formatter::new(&terminal, options())?.format_alloc(None)?);
+            text.push(b'\n');
+        }
+        text.extend_from_slice(&active);
+        Ok(String::from_utf8_lossy(&text).trim_end().to_owned())
+    };
+    extract().map_err(io::Error::other)
 }
 
 fn label(shell: &str, title: &Title) -> String {
@@ -430,5 +541,21 @@ async fn connect(data_dir: &Path, id: &str) -> io::Result<(Frames, OwnedWriteHal
             ),
         )),
         _ => Err(io::Error::other(format!("holder {id} did not say hello"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readable_output_unwraps_text_and_preserves_primary_and_alternate_screens() {
+        let size = Size { cols: 8, rows: 3 };
+        let text = plain("\x1b[31mfirst\r\nwide 界 text\x1b[0m".as_bytes(), size).unwrap();
+        assert_eq!(text, "first\nwide 界 text");
+        let text = plain(b"primary\x1b[?1049h\x1b[2J\x1b[Halternate", size).unwrap();
+        assert!(text.contains("primary"), "{text}");
+        assert!(text.contains("alternate"), "{text}");
+        assert!(!text.contains('\u{001b}'));
     }
 }

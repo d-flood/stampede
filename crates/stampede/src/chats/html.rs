@@ -53,7 +53,7 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
             "serverInfo": { "name": SERVER, "version": env!("CARGO_PKG_VERSION") },
         }),
         Some("ping") => json!({}),
-        Some("tools/list") => json!({ "tools": [super::delegation::list_tool(), super::delegation::tool(), super::questions::tool(), {
+        Some("tools/list") => json!({ "tools": [super::delegation::list_tool(), super::delegation::tool(), super::questions::tool(), super::terminal_tools::stage_tool(), super::terminal_tools::read_tool(), {
             "name": TOOL,
             "description": "Render an HTML snippet inline in Stampede chat. Use for diagrams, charts, tables, and visual explanations instead of ASCII art. Supply self-contained HTML with inline CSS, SVG, and optional inline JavaScript. It runs in an isolated sandbox: no network, external assets, parent-page access, forms, or popups. Make layouts responsive for narrow mobile screens. Do not repeat the HTML in a code block.",
             "inputSchema": {
@@ -80,7 +80,7 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
         }] }),
-        Some("tools/call") if matches!(request["params"]["name"].as_str(), Some(super::delegation::LIST | super::delegation::TOOL | super::questions::TOOL)) => {
+        Some("tools/call") if matches!(request["params"]["name"].as_str(), Some(super::delegation::LIST | super::delegation::TOOL | super::questions::TOOL | super::terminal_tools::STAGE | super::terminal_tools::READ)) => {
             super::delegation::call(args, request["params"].clone())
         }
         Some("tools/call") if request["params"]["name"] == TOOL => {

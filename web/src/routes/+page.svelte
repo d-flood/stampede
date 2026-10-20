@@ -216,7 +216,16 @@
 				codexResets = message.codexResets ?? null;
 				break;
 			case 'terminals.changed':
-				if (message.projectId) terminals[message.projectId] = message.terminals;
+				if (message.projectId) {
+					const previous = terminals[message.projectId] ?? [];
+					const staged = message.terminals.find((terminal) => terminal.pending && !previous.some(({ id }) => id === terminal.id));
+					terminals[message.projectId] = message.terminals;
+					if (staged) {
+						place(message.projectId, staged.id);
+						choose(message.projectId, staged.id);
+						if (message.projectId === focused?.id) slide(1);
+					}
+				}
 				break;
 			case 'terminal.created': {
 				const { owner, id } = message.terminal;
@@ -947,6 +956,7 @@
 							<TerminalView
 								{device}
 								terminalId={terminal.id}
+								pending={terminal.pending}
 								active={showing(terminal.id)}
 								focused={terminal.id === activeTab}
 								{ended}
