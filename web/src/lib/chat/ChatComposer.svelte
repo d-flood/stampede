@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { agentNames } from '#lib/config.svelte.ts';
+	import FileMenu from '#lib/chat/FileMenu.svelte';
 	import Handoff from '#lib/chat/Handoff.svelte';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
@@ -7,6 +8,7 @@
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import ArrowBendUpRight from '~icons/ph/arrow-bend-up-right';
+	import At from '~icons/ph/at';
 	import ListPlus from '~icons/ph/list-plus';
 	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Paperclip from '~icons/ph/paperclip';
@@ -28,6 +30,7 @@
 
 	let composer: Composer;
 	let slash = $state<SlashMenu>();
+	let files = $state<FileMenu>();
 	let picker: HTMLInputElement;
 	let images = $state<(Image & { name: string })[]>([]);
 	let error = $state('');
@@ -115,13 +118,17 @@
 	</div>
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onsend={(text) => send(text, false)} onkeydown={(event) => slash?.key(event)} onpaste={paste}>
-	{#snippet menu(text, replace)}
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} onsend={(text) => send(text, false)} onkeydown={(event) => { slash?.key(event); if (!event.defaultPrevented) files?.key(event); }} onpaste={paste}>
+	{#snippet menu(text, replace, caret)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
+		{#if !slash?.isOpen()}
+			<FileMenu bind:this={files} {text} {caret} projectId={chat.projectId} {replace} />
+		{/if}
 	{/snippet}
 	{#snippet actions(text: string, clear: () => void)}
 		{#if form() === 'phone'}
 			<Button aria-label="Commands" title="Commands" aria-expanded={slash?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => slash?.toggle()}><Terminal /></Button>
+			<Button aria-label="Reference file" title="Reference file" aria-expanded={files?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => (files?.isOpen() ? files.dismiss() : composer.insert('@'))}><At /></Button>
 		{/if}
 		<Button aria-label="Attach image" title="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
 		<Handoff {device} {chat} available={handoffAvailable} />

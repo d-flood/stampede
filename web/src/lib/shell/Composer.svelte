@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
-	import type { Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 
 	type Props = {
 		id: string;
@@ -10,7 +10,9 @@
 		placeholder?: string;
 		draft?: string;
 		code?: boolean;
-		menu?: Snippet<[string, (text: string) => void]>;
+		/** Earlier prompts, oldest first, that ArrowUp and ArrowDown recall. */
+		history?: string[];
+		menu?: Snippet<[text: string, replace: (text: string, caret?: number) => void, caret: number]>;
 		onkeydown?: (event: KeyboardEvent) => void;
 		onpaste?: (event: ClipboardEvent) => void;
 		onsend?(text: string, enter: boolean): boolean;
@@ -18,11 +20,12 @@
 		actions?: Snippet<[text: string, clear: () => void]>;
 	};
 
-	let { id, disabled = false, focused = false, placeholder, draft, code = false, onsend, actions, menu, onkeydown, onpaste }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], onsend, actions, menu, onkeydown, onpaste }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
 	let box: HTMLTextAreaElement;
+	let caret = $state(0);
 	const phone = $derived(form() === 'phone');
 
 	function keep() {
@@ -43,15 +46,40 @@
 	function keydown(event: KeyboardEvent) {
 		if (event.isComposing) return;
 		onkeydown?.(event);
+		if (!event.defaultPrevented) recall(event);
 		if (event.defaultPrevented || phone || event.key !== 'Enter' || event.shiftKey) return;
 		event.preventDefault();
 		if (!disabled && (text || actions)) submit(true);
 	}
 
-	function replace(next: string) {
+	function recall(event: KeyboardEvent) {
+		const up = event.key === 'ArrowUp';
+		if ((!up && event.key !== 'ArrowDown') || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+		const at = text ? history.lastIndexOf(text) : history.length;
+		const next = at + (up ? -1 : 1);
+		const edge = !(up ? text.slice(0, box.selectionStart) : text.slice(box.selectionEnd)).includes('\n');
+		if (at < 0 || next < 0 || next > history.length || !edge) return;
+		event.preventDefault();
+		replace(history[next] ?? '', up ? 0 : undefined);
+	}
+
+	function track() {
+		caret = box.selectionStart;
+	}
+
+	async function replace(next: string, at = next.length) {
 		text = next;
 		keep();
 		box.focus();
+		await tick();
+		box.setSelectionRange(at, at);
+		caret = at;
+	}
+
+	export function insert(value: string) {
+		const start = box.selectionStart;
+		const spaced = start && !/\s/.test(text[start - 1]) ? ` ${value}` : value;
+		replace(text.slice(0, start) + spaced + text.slice(box.selectionEnd), start + spaced.length);
 	}
 
 	export function focus() {
@@ -65,13 +93,16 @@
 </script>
 
 <div class="composer" class:boxed={actions} class:phone>
-	{@render menu?.(text, replace)}
+	{@render menu?.(text, replace, caret)}
 	<textarea
 		{@attach (element) => { if (focused) element.focus(); }}
 		bind:this={box}
 		bind:value={text}
-		oninput={keep}
+		oninput={() => { keep(); track(); }}
 		onkeydown={keydown}
+		onkeyup={track}
+		onpointerup={track}
+		onfocus={track}
 		{onpaste}
 		aria-label="Composer"
 		class:code
