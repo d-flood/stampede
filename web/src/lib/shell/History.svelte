@@ -2,6 +2,7 @@
 	import type { Device } from '#lib/device.svelte.ts';
 	import { commitFiles, letters, log, message, reword, split, undo, type Change, type Commit } from '#lib/git.ts';
 	import { restoreMessage } from '#lib/shell/Changes.svelte';
+	import CopyMode from '#lib/shell/CopyMode.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -10,6 +11,7 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import ArrowUUpLeft from '~icons/ph/arrow-u-up-left';
 	import CaretRight from '~icons/ph/caret-right';
+	import Copy from '~icons/ph/copy';
 	import DotsThree from '~icons/ph/dots-three';
 	import PencilSimple from '~icons/ph/pencil-simple';
 
@@ -25,6 +27,7 @@
 	let saving = $state(false);
 	let refusal = $state<string>();
 	let failure = $state<string>();
+	let copying = $state<string>();
 	let refreshes = 0;
 	let requested: string | undefined;
 
@@ -100,6 +103,10 @@
 		}
 	}
 
+	function copy(text: string) {
+		navigator.clipboard.writeText(text).catch(() => (copying = text));
+	}
+
 	function key(event: KeyboardEvent & { currentTarget: HTMLElement }) {
 		if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
 		const row = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('[data-sha]') : null;
@@ -112,6 +119,8 @@
 			k: () => rows[Math.max(0, at - 1)]?.focus(),
 			ArrowUp: () => rows[Math.max(0, at - 1)]?.focus(),
 			r: () => commit && edit(commit),
+			y: () => commit && copy(commit.short),
+			Y: () => commit && copy(commit.sha),
 			z: undoCommit
 		};
 		const action = actions[event.key];
@@ -131,6 +140,8 @@
 				{@const open = expanded.has(commit.sha)}
 				{@const items = [
 					{ label: 'Edit Message…', icon: PencilSimple, hint: 'r', onselect: () => edit(commit) },
+					{ label: 'Copy Short Hash', icon: Copy, hint: 'y', onselect: () => copy(commit.short) },
+					{ label: 'Copy Full Hash', icon: Copy, hint: 'Y', onselect: () => copy(commit.sha) },
 					...(index === 0 ? [{ label: 'Undo Last Commit', icon: ArrowUUpLeft, hint: 'z', onselect: undoCommit }] : [])
 				]}
 				<li>
@@ -189,6 +200,8 @@
 		{#if commits?.length === 0}<p>No commits</p>{/if}
 	</div>
 </section>
+
+<CopyMode bind:text={copying} />
 
 <Dialog
 	bind:open={() => !!editing, (open) => !open && (editing = undefined)}

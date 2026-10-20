@@ -359,3 +359,21 @@ test('History edits the message of an earlier commit', async ({ page }) => {
 	expect(git('log', '-1', '--format=%B', 'HEAD~1')).toBe('First, reworded\n\nWith a body');
 	expect(git('log', '-1', '--format=%s')).toBe('Second');
 });
+
+test('History copies the short and full hash of a commit', async ({ page, context }) => {
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+	const { root, git } = repository('hashes');
+	writeFileSync(`${root}/README.md`, '# hashes\n');
+	git('add', '.');
+	git('commit', '-qm', 'Initial');
+	const short = git('rev-parse', '--short', 'HEAD');
+	await openProject(page, 'hashes');
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'History' }).click();
+	await sidebar.getByRole('button', { name: `Actions for ${short}` }).click();
+	await page.getByRole('menuitem', { name: 'Copy Short Hash' }).click();
+	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(short);
+	await sidebar.getByRole('list', { name: 'Commits' }).getByRole('button', { name: /Initial/ }).focus();
+	await page.keyboard.press('Shift+Y');
+	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(git('rev-parse', 'HEAD'));
+});
