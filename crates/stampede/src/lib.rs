@@ -2,6 +2,7 @@ mod attention;
 mod browser;
 mod chats;
 mod cli;
+mod clips;
 mod config;
 mod device;
 mod epics;
@@ -117,6 +118,8 @@ fn router(state: AppState) -> Router {
         .route("/api/commit-rig", get(commit_rig).put(set_commit_rig))
         .route("/api/modes", get(modes).put(set_modes))
         .route("/api/rigs/order", put(rigs::reorder))
+        .route("/api/clips", get(clips::list).put(clips::save).delete(clips::delete))
+        .route("/api/clips/order", put(clips::reorder))
         .route("/api/usage/codex/reset", post(usage::reset))
         .route("/api/templates", get(templates))
         .route("/api/editor", get(editor))

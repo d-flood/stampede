@@ -30,6 +30,8 @@ struct Settings {
     commit_rig: Option<String>,
     #[serde(deserialize_with = "modes")]
     modes: BTreeMap<Agent, Vec<String>>,
+    #[serde(deserialize_with = "clips")]
+    clip: Vec<Clip>,
     editor: Editor,
     keybar: Keybar,
     language_servers: LanguageServers,
@@ -49,6 +51,7 @@ impl Default for Settings {
             rig: Vec::new(),
             commit_rig: None,
             modes: BTreeMap::new(),
+            clip: Vec::new(),
             editor: Editor::default(),
             keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
@@ -147,6 +150,27 @@ impl Rig {
             Agent::Copilot => "default",
         }.to_owned()));
         AgentSettings { model: self.model.clone(), effort: self.effort.clone(), mode }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Clip {
+    pub name: String,
+    pub text: String,
+}
+
+impl Clip {
+    fn check(&self) -> Result<(), &'static str> {
+        if self.name.is_empty() {
+            Err("Clip name is required")
+        } else if self.name.contains(char::is_whitespace) {
+            Err("Clip names cannot contain spaces")
+        } else if self.text.trim().is_empty() {
+            Err("Clip text is required")
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -261,6 +285,7 @@ pub struct Config {
     pub rigs: Vec<Rig>,
     pub commit_rig: Option<String>,
     pub modes: BTreeMap<Agent, Vec<String>>,
+    pub clips: Vec<Clip>,
     pub editor: Editor,
     pub keybar: Keybar,
     pub language_servers: LanguageServers,
@@ -280,6 +305,7 @@ impl Default for Config {
             rigs: Vec::new(),
             commit_rig: None,
             modes: BTreeMap::new(),
+            clips: Vec::new(),
             editor: Editor::default(),
             keybar: Keybar::default(),
             language_servers: LanguageServers::default(),
@@ -322,6 +348,7 @@ impl Config {
             rig: rigs,
             commit_rig,
             modes,
+            clip: clips,
             editor,
             keybar,
             language_servers,
@@ -338,6 +365,7 @@ impl Config {
             rigs,
             commit_rig,
             modes,
+            clips,
             editor,
             keybar,
             language_servers,
@@ -547,6 +575,71 @@ fn rig_range(text: &str, index: usize) -> Result<std::ops::Range<usize>, Error> 
     Ok(old.span().start..end)
 }
 
+pub fn write_clip(path: &Path, original: Option<&str>, mut clip: Clip) -> Result<Vec<Clip>, Error> {
+    let mut text = match fs::read_to_string(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        text => text?,
+    };
+    let current = Config::parse(&text)?;
+    clip.name = clip.name.trim().to_owned();
+    clip.check()?;
+    if current.clips.iter().any(|other| other.name == clip.name && Some(other.name.as_str()) != original) {
+        return Err("A Clip with this name already exists".into());
+    }
+    let replacement = toml::to_string(&toml::Table::from_iter([
+        ("clip".to_owned(), toml::Value::try_from([&clip])?),
+    ]))?;
+    match original {
+        Some(name) => {
+            let index = current.clips.iter().position(|clip| clip.name == name).ok_or("Clip no longer exists; reopen the editor")?;
+            text.replace_range(clip_range(&text, index)?, replacement.trim_end());
+        }
+        None => text.push_str(&format!("\n{replacement}")),
+    }
+    let updated = Config::parse(&text)?;
+    fs::write(path, text)?;
+    Ok(updated.clips)
+}
+
+pub fn reorder_clips(path: &Path, order: &[String]) -> Result<Vec<Clip>, Error> {
+    let mut text = fs::read_to_string(path)?;
+    let current = Config::parse(&text)?;
+    let names: HashSet<_> = current.clips.iter().map(|clip| &clip.name).collect();
+    if order.len() != names.len() || order.iter().collect::<HashSet<_>>() != names {
+        return Err("Clip list changed; reopen Settings and try again".into());
+    }
+    let ranges = (0..current.clips.len()).map(|index| clip_range(&text, index)).collect::<Result<Vec<_>, _>>()?;
+    let replacements = order.iter().map(|name| {
+        let index = current.clips.iter().position(|clip| clip.name == *name).unwrap();
+        text[ranges[index].clone()].to_owned()
+    }).collect::<Vec<_>>();
+    for (range, replacement) in ranges.into_iter().zip(replacements).rev() {
+        text.replace_range(range, &replacement);
+    }
+    let updated = Config::parse(&text)?;
+    fs::write(path, text)?;
+    Ok(updated.clips)
+}
+
+pub fn delete_clip(path: &Path, name: &str) -> Result<Vec<Clip>, Error> {
+    let mut text = fs::read_to_string(path)?;
+    let current = Config::parse(&text)?;
+    let index = current.clips.iter().position(|clip| clip.name == name).ok_or("Clip no longer exists; reopen the editor")?;
+    text.replace_range(clip_range(&text, index)?, "");
+    let updated = Config::parse(&text)?;
+    fs::write(path, text)?;
+    Ok(updated.clips)
+}
+
+fn clip_range(text: &str, index: usize) -> Result<std::ops::Range<usize>, Error> {
+    #[derive(Deserialize)]
+    struct Document { clip: Vec<toml::Spanned<BTreeMap<String, toml::Spanned<toml::Value>>>> }
+    let document: Document = toml::from_str(text)?;
+    let old = &document.clip[index];
+    let end = old.get_ref().values().map(|field| field.span().end).max().unwrap_or(old.span().end);
+    Ok(old.span().start..end)
+}
+
 fn with_theme(mut text: String, name: &str) -> Result<String, Error> {
     #[derive(Deserialize)]
     struct Setting {
@@ -646,6 +739,18 @@ fn modes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<BTreeMap<Agent, V
         }
     }
     Ok(modes)
+}
+
+fn clips<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Clip>, D::Error> {
+    let clips = Vec::<Clip>::deserialize(deserializer)?;
+    let mut names = HashSet::new();
+    for clip in &clips {
+        clip.check().map_err(|problem| D::Error::custom(format!("clip {:?}: {problem}", clip.name)))?;
+        if !names.insert(&clip.name) {
+            return Err(D::Error::custom(format!("more than one clip is named {:?}", clip.name)));
+        }
+    }
+    Ok(clips)
 }
 
 fn fraction<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
@@ -819,6 +924,40 @@ mod tests {
                 assert_eq!(fs::read_to_string(&path).unwrap(), before);
             }
         }
+    }
+
+    #[test]
+    fn clips_keep_multiline_text_and_other_settings_through_saves_reorders_and_deletes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "# Keep this\nroots = []\n\n[editor]\nkeymap = 'vim'\n";
+        fs::write(&path, original).unwrap();
+        let verify = Clip { name: "verify".to_owned(), text: "Run the tests.\n\nThen commit with a \"short\" message.\n".to_owned() };
+        let review = Clip { name: "review".to_owned(), text: "Review the diff.".to_owned() };
+        write_clip(&path, None, verify.clone()).unwrap();
+        assert_eq!(write_clip(&path, None, review.clone()).unwrap(), [verify.clone(), review.clone()]);
+        let edited = Clip { name: "check".to_owned(), text: "Check it.\nTwice.".to_owned() };
+        assert_eq!(write_clip(&path, Some("verify"), edited.clone()).unwrap(), [edited.clone(), review.clone()]);
+        assert_eq!(reorder_clips(&path, &["review".to_owned(), "check".to_owned()]).unwrap(), [review.clone(), edited.clone()]);
+        assert_eq!(delete_clip(&path, "review").unwrap(), [edited.clone()]);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with(original), "{text}");
+        assert_eq!(Config::parse(&text).unwrap().clips, [edited]);
+    }
+
+    #[test]
+    fn clips_refuse_clashing_or_unusable_names_and_empty_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write_clip(&path, None, Clip { name: " verify ".to_owned(), text: "Run the tests.".to_owned() }).unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        for (name, text) in [("verify", "Again."), ("", "Text."), ("two words", "Text."), ("empty", "  \n")] {
+            assert!(write_clip(&path, None, Clip { name: name.to_owned(), text: text.to_owned() }).is_err());
+        }
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(Config::parse(&before).unwrap().clips[0].name, "verify");
+        assert!(check("[[clip]]\nname = 'a'\ntext = 'x'\n[[clip]]\nname = 'a'\ntext = 'y'\n").is_some());
+        assert!(check("[[clip]]\nname = 'a b'\ntext = 'x'\n").is_some());
     }
 
     #[test]

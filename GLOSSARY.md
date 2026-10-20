@@ -68,6 +68,10 @@ _Avoid_: state, activity, idle
 Instructions Stampede owns and sends as part of a prompt, such as a Ticket's first prompt, the Resolver's, or _/grill_, _/spec_, and _/tickets_.
 _Avoid_: skill, prompt file, command
 
+**Clip**:
+Text David saves and reuses, inserted at the caret in any Composer by typing `;` and its name, and editable there before sending; unlike a Template, Stampede never expands or recognizes it.
+_Avoid_: snippet, macro, canned prompt, saved prompt, skill
+
 **Rig**:
 A named configuration for a Chat — its Agent, model, effort, permission mode and environment — started in a Project with one click or shortcut. Rigs also configure the Chats used by Runs.
 _Avoid_: preset, profile, launcher

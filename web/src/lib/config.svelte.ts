@@ -22,12 +22,14 @@ export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code',
 export type Rig = { name: string; agent: Agent; shortcut?: string; model?: string; effort?: string; mode?: string };
 export type Template = { name: string; description: string };
 export type Mode = { value: string; label: string; available: boolean };
+export type Clip = { name: string; text: string };
 
 const dark = new MediaQuery('(prefers-color-scheme: dark)');
 let revision = $state(0);
 let faces: FontFace[] = [];
 let configured = $state.raw<Rig[]>([]);
 let offered = $state.raw<Template[]>([]);
+let kept = $state.raw<Clip[]>([]);
 let chord = $state('ctrl+;');
 let extras = $state.raw<string[]>([]);
 let scrollback = $state(10_000);
@@ -48,7 +50,7 @@ async function get<T>(path: string): Promise<T> {
 
 export async function loadConfig() {
 	loadTextSize();
-	const [name, theme, font, rigs, settings, leaderKey, keys, lines, listed, commitRigName, agentModes] = await Promise.all([
+	const [name, theme, font, rigs, settings, leaderKey, keys, lines, listed, commitRigName, agentModes, saved] = await Promise.all([
 		get<string | null>('/api/host-name'),
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
@@ -59,7 +61,8 @@ export async function loadConfig() {
 		get<number>('/api/scrollback'),
 		get<Template[]>('/api/templates'),
 		get<string | null>('/api/commit-rig'),
-		get<Record<Agent, Mode[]>>('/api/modes')
+		get<Record<Agent, Mode[]>>('/api/modes'),
+		get<Clip[]>('/api/clips')
 	]);
 	named = name;
 	committer = commitRigName;
@@ -78,6 +81,7 @@ export async function loadConfig() {
 	style.setProperty('--font-mono', `"${font.family}", "Symbols Nerd Font Mono", monospace`);
 	configured = rigs;
 	offered = listed;
+	kept = saved;
 	revision++;
 }
 
@@ -211,6 +215,40 @@ export async function reorderRigs(order: string[]) {
 
 export function templates(): Template[] {
 	return offered;
+}
+
+export function clips(): Clip[] {
+	return kept;
+}
+
+export async function saveClip(clip: { original?: string; name: string; text: string }) {
+	const response = await fetch('/api/clips', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(clip)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	kept = await response.json();
+}
+
+export async function deleteClip(name: string) {
+	const response = await fetch('/api/clips', {
+		method: 'DELETE',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(name)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	kept = await response.json();
+}
+
+export async function reorderClips(order: string[]) {
+	const response = await fetch('/api/clips/order', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(order)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	kept = await response.json();
 }
 
 export function leader(): string {

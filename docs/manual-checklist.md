@@ -20,6 +20,7 @@ Run at milestones against an installed Stampede (`stampede install`), opened at 
 - [ ] Typing with Gboard straight into a Terminal shows no autocorrect or suggestions, and commands arrive unmangled.
 - [ ] Voice typing into the Composer, then Send, delivers the text as one input followed by Enter.
 - [ ] Insert pastes without Enter, and a multi-line draft arrives as one input.
+- [ ] Typing `;` after a space with Gboard opens the Clip menu, and tapping a Clip replaces `;name` with its text at the caret.
 
 ## 4. Host reboot
 

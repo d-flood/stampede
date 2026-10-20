@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { agentNames, commitRig, hostName, modes, rigs, saveCommitRig, saveHostName, saveModes, selectedTheme, type Agent } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import ClipEditor from '#lib/shell/ClipEditor.svelte';
 	import RigEditor from '#lib/shell/RigEditor.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
 	import { selectTextSize, textSize, typography } from '#lib/typography.svelte.ts';
@@ -119,6 +120,11 @@
 			<h3 id="rigs-label">Rigs</h3>
 			<p>Starting settings for new chats. Saved on every device.</p>
 			{#if open}<RigEditor />{/if}
+		</section>
+		<section aria-labelledby="clips-label">
+			<h3 id="clips-label">Clips</h3>
+			<p>Text to reuse in any Composer: type ; and a Clip's name to insert it, then edit before sending. Saved on every device.</p>
+			{#if open}<ClipEditor />{/if}
 		</section>
 	</div>
 	{#snippet actions()}

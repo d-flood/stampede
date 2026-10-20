@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { form } from '#lib/form.ts';
+	import ClipEditor from '#lib/shell/ClipEditor.svelte';
+	import ClipMenu from '#lib/shell/ClipMenu.svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import Dialog from '#lib/ui/Dialog.svelte';
 	import { tick, type Snippet } from 'svelte';
+	import BookmarkSimple from '~icons/ph/bookmark-simple';
 
 	type Props = {
 		id: string;
@@ -26,6 +30,8 @@
 	let box: HTMLTextAreaElement;
 	let caret = $state(0);
 	const coded = $derived(typeof code === 'function' ? code(text) : code);
+	let clipMenu = $state<ClipMenu>();
+	let clipping = $state(false);
 	const phone = $derived(form() === 'phone');
 
 	function keep() {
@@ -45,7 +51,8 @@
 
 	function keydown(event: KeyboardEvent) {
 		if (event.isComposing) return;
-		onkeydown?.(event);
+		clipMenu?.key(event);
+		if (!event.defaultPrevented) onkeydown?.(event);
 		if (!event.defaultPrevented) recall(event);
 		if (event.defaultPrevented || phone || event.key !== 'Enter' || event.shiftKey) return;
 		event.preventDefault();
@@ -94,6 +101,7 @@
 
 <div class="composer" class:boxed={actions} class:phone>
 	{@render menu?.(text, replace, caret)}
+	<ClipMenu bind:this={clipMenu} {text} {caret} {replace} />
 	<textarea
 		{@attach (element) => { if (focused) element.focus(); }}
 		bind:this={box}
@@ -113,6 +121,9 @@
 		spellcheck={!coded}
 	></textarea>
 	<div class="actions">
+		{#if text.trim()}
+			<Button aria-label="Save as Clip" title="Save as Clip" onmousedown={(event) => event.preventDefault()} onclick={() => (clipping = true)}><BookmarkSimple /></Button>
+		{/if}
 		{#if actions}
 			{@render actions(text, clear)}
 		{:else}
@@ -130,6 +141,9 @@
 		{/if}
 	</div>
 </div>
+<Dialog bind:open={clipping} full={phone} title="Save as Clip">
+	{#if clipping}<ClipEditor draft={text} ondone={() => (clipping = false)} />{/if}
+</Dialog>
 
 <style>
 	.composer {
