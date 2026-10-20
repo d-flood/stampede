@@ -53,11 +53,20 @@ pub struct Changed {
     pub project_id: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     is_repo: bool,
+    is_root: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch: Option<String>,
     changes: Vec<Change>,
+}
+
+#[derive(Serialize)]
+pub struct Refs {
+    local: Vec<String>,
+    remote: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -93,8 +102,20 @@ pub struct ShowQuery {
 }
 
 pub async fn status(State(state): State<AppState>, Param(id): Param<String>) -> Result<Json<Status>, Failure> {
-    let changes = changes(&root(&state, &id)?).await;
-    Ok(Json(Status { is_repo: changes.is_some(), changes: changes.unwrap_or_default() }))
+    Ok(Json(read(&root(&state, &id)?).await.unwrap_or_default()))
+}
+
+pub async fn refs(State(state): State<AppState>, Param(id): Param<String>) -> Result<Json<Refs>, Failure> {
+    let output = git(&root(&state, &id)?, &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"]).await.unwrap_or_default();
+    let mut refs = Refs { local: Vec::new(), remote: Vec::new() };
+    for name in String::from_utf8_lossy(&output).lines() {
+        if let Some(local) = name.strip_prefix("refs/heads/") {
+            refs.local.push(local.to_owned());
+        } else if let Some(remote) = name.strip_prefix("refs/remotes/").filter(|remote| !remote.ends_with("/HEAD")) {
+            refs.remote.push(remote.to_owned());
+        }
+    }
+    Ok(Json(refs))
 }
 
 pub async fn head(
@@ -143,10 +164,10 @@ pub async fn show(
     Ok(content_at(&dir, &query.sha, &query.path).await)
 }
 
-pub async fn changes(dir: &Path) -> Option<Vec<Change>> {
+pub async fn read(dir: &Path) -> Option<Status> {
     let toplevel = toplevel(dir).await?;
     let prefix = dir.strip_prefix(toplevel).ok()?;
-    let args = ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--find-renames", "--", "."];
+    let args = ["status", "--porcelain=v2", "-z", "--branch", "--no-ahead-behind", "--untracked-files=all", "--find-renames", "--", "."];
     Some(parse(&git(dir, &args).await?, prefix))
 }
 
@@ -263,13 +284,22 @@ async fn git(dir: &Path, args: &[&str]) -> Option<Vec<u8>> {
     output.status.success().then_some(output.stdout)
 }
 
-fn parse(output: &[u8], prefix: &Path) -> Vec<Change> {
+fn parse(output: &[u8], prefix: &Path) -> Status {
     let relative = |path: &str| Some(Path::new(path).strip_prefix(prefix).ok()?.to_str()?.to_owned());
+    let (mut head, mut oid) = (None, None);
     let mut changes = BTreeMap::new();
     let mut records = output.split(|&byte| byte == 0).map(String::from_utf8_lossy);
     while let Some(record) = records.next() {
         let fields = |count| record.splitn(count, ' ').collect::<Vec<_>>();
         let (kind, path, from) = match record.split_once(' ') {
+            Some(("#", header)) => {
+                if let Some(name) = header.strip_prefix("branch.head ") {
+                    head = Some(name.to_owned());
+                } else if let Some(commit) = header.strip_prefix("branch.oid ") {
+                    oid = Some(commit.chars().take(7).collect());
+                }
+                continue;
+            }
             Some(("1", _)) => {
                 let [_, xy, .., path] = fields(9)[..] else { continue };
                 match (xy.contains('A'), xy.contains('D')) {
@@ -305,7 +335,8 @@ fn parse(output: &[u8], prefix: &Path) -> Vec<Change> {
             Entry::Occupied(mut entry) => entry.get_mut().kind = Kind::Modified,
         }
     }
-    changes.into_values().collect()
+    let branch = if head.as_deref() == Some("(detached)") { oid } else { head };
+    Status { is_repo: true, is_root: prefix.as_os_str().is_empty(), branch, changes: changes.into_values().collect() }
 }
 
 pub fn spawn(
@@ -360,11 +391,11 @@ fn throttle(project: Project, changed: broadcast::Sender<Changed>) -> mpsc::Unbo
             while let Ok(more) = signals.try_recv() {
                 git |= more;
             }
-            let changes = changes(&dir).await;
-            if git || changes != last {
+            let status = read(&dir).await;
+            if git || status != last {
                 let _ = changed.send(Changed { project_id: project.id.clone() });
             }
-            last = changes;
+            last = status;
             sleep(THROTTLE).await;
         }
     });

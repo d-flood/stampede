@@ -4,7 +4,9 @@ export type Kind = 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked';
 
 export type Change = { path: string; kind: Kind; from?: string };
 
-export type Git = { isRepo: boolean; changes: Change[] };
+export type Git = { isRepo: boolean; isRoot: boolean; branch?: string; changes: Change[] };
+
+export type Refs = { local: string[]; remote: string[] };
 
 export type Commit = { sha: string; short: string; subject: string; author: string; date: string };
 
@@ -39,6 +41,20 @@ export async function commitFiles(projectId: string, sha: string): Promise<Chang
 
 export async function show(projectId: string, sha: string, path: string): Promise<string> {
 	return text(await fetch(`/api/projects/${projectId}/git/show?${new URLSearchParams({ sha, path })}`));
+}
+
+export async function refs(projectId: string): Promise<Refs> {
+	return json(await fetch(`/api/projects/${projectId}/git/refs`));
+}
+
+export async function createWorktree(projectId: string, branch: string, from: string): Promise<string> {
+	const init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ branch, from }) };
+	return (await json<{ projectId: string }>(await fetch(`/api/projects/${projectId}/worktrees`, init))).projectId;
+}
+
+export async function deleteWorktree(projectId: string, force: boolean): Promise<void> {
+	const response = await fetch(`/api/projects/${projectId}/worktree?${new URLSearchParams({ force: String(force) })}`, { method: 'DELETE' });
+	if (!response.ok) throw new RequestError(response.status, await response.text());
 }
 
 export function split(path: string) {

@@ -31,6 +31,7 @@
 	import History from '#lib/shell/History.svelte';
 	import Search from '#lib/shell/Search.svelte';
 	import Usage from '#lib/shell/Usage.svelte';
+	import GitBranch from '~icons/ph/git-branch';
 
 	type Props = {
 		open: boolean;
@@ -78,6 +79,7 @@
 <aside {id} aria-label="Sidebar" hidden={!open} class:phone={form() === 'phone'} style:width={form() === 'desktop' ? `${size}px` : undefined}>
 	{#if project}
 		{#if form() === 'desktop'}<h1 title={project.path}>{label}</h1>{/if}
+		{#if git?.branch}<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>{/if}
 		<div class="sections" role="group" aria-label="Sections">
 			{#each shown as { id, label } (id)}
 				<button aria-pressed={current === id} onclick={() => (section = id)}>{label}</button>
@@ -175,6 +177,27 @@
 		padding: var(--space-3) var(--space-4) 0;
 		overflow: hidden;
 		font-size: var(--font-size-lg);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.branch {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		margin: 0;
+		padding: 0 var(--space-4);
+		color: var(--muted-fg);
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+	}
+
+	.branch :global(svg) {
+		flex: none;
+	}
+
+	.branch span {
+		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}

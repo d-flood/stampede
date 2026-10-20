@@ -24,7 +24,7 @@ use crate::{
     epics::{Author, Call, Continuation, Epic, Epics, Event, Keep, Pause, Run, Status},
     git,
     holder::Owner,
-    projects::{Project, Projects, Role, Worktree},
+    projects::{Kind, Project, Projects, Role, Worktree},
     templates::{self, RESOLVER, TICKET},
     terminals::Terminals,
     usage::Usage,
@@ -32,6 +32,9 @@ use crate::{
 
 mod landing;
 mod submodules;
+mod worktrees;
+
+pub use worktrees::Refusal;
 
 const TAIL: usize = 40;
 
@@ -162,6 +165,7 @@ impl Runs {
                         Ok(Ok(())) => {},
                         result => eprintln!("cannot maintain temporary storage: {result:?}"),
                     }
+                    self.prune();
                     slugs = self.epics.slugs();
                 },
                 Ok(()) = readings.changed() => slugs = self.epics.slugs(),
@@ -491,31 +495,23 @@ impl Runs {
         if !live || parent.worktree.is_some() {
             return parent.clone();
         }
-        self.projects.nest(worktree, Worktree { parent: parent.id.clone(), epic: slug.to_owned(), role })
+        self.projects.nest(worktree, Worktree { parent: parent.id.clone(), kind: Kind::Epic { epic: slug.to_owned(), role } })
     }
 
     async fn nest(&self, slug: &str) {
         let Ok(epic) = self.epics.get(slug) else { return };
-        let live = epic.run.is_some() && !epic.archived;
-        let starting: Vec<u32> = self.starting.lock().unwrap().iter().filter(|(other, _)| other == slug).map(|&(_, number)| number).collect();
-        let active = |number: u32| epic.tickets.get(&number).filter(|ticket| matches!(ticket.status, Status::InProgress | Status::Merging));
         let worktrees = Path::new(&self.worktrees).join(slug);
         let projects = self.projects.list();
         for project in projects.iter() {
             let path = Path::new(&project.path);
-            let kept = match &project.worktree {
-                Some(worktree) if worktree.epic != slug => continue,
+            match &project.worktree {
+                Some(Worktree { kind: Kind::Epic { epic, .. }, .. }) if epic != slug => continue,
+                Some(Worktree { kind: Kind::Branch { .. }, .. }) => continue,
                 None if !path.starts_with(&worktrees) => continue,
-                None => path.exists(),
-                Some(Worktree { role: Role::Integration, .. }) => live && path.exists(),
-                Some(Worktree { role: Role::Ticket(number), .. }) => {
-                    starting.contains(number) || active(*number).is_some_and(|ticket| ticket.worktree.as_deref() == Some(path))
-                }
-            };
-            if kept {
-                continue;
+                _ if path.exists() => continue,
+                _ => {}
             }
-            if let Some(Worktree { role: Role::Ticket(number), .. }) = &project.worktree
+            if let Some(Worktree { kind: Kind::Epic { role: Role::Ticket(number), .. }, .. }) = &project.worktree
                 && epic.tickets.get(number).is_some_and(|ticket| matches!(ticket.status, Status::Merged | Status::Skipped))
             {
                 self.close_project(&project.id);
@@ -530,19 +526,31 @@ impl Runs {
                 None => self.close_project(&project.id),
             }
         }
-        if !live {
-            return;
-        }
-        let tickets = epic.tickets.keys().filter_map(|&number| Some((active(number)?.worktree.as_deref()?, Role::Ticket(number))));
-        let integration = epic.integration.as_deref().map(|path| (path, Role::Integration));
-        let mut missing: Vec<(&Path, Role)> = integration.into_iter().chain(tickets).collect();
-        missing.retain(|(path, _)| path.exists() && !projects.iter().any(|project| Path::new(&project.path) == *path));
+        let Ok(entries) = fs::read_dir(&worktrees) else { return };
+        let missing: Vec<(PathBuf, Role)> = entries
+            .filter_map(|entry| {
+                let path = entry.ok()?.path();
+                let role = role(path.file_name()?.to_str()?)?;
+                Some((path, role))
+            })
+            .filter(|(path, _)| !projects.iter().any(|project| Path::new(&project.path) == path))
+            .collect();
         if missing.is_empty() {
             return;
         }
         let Ok(parent) = self.project(&epic).await else { return };
         for (path, role) in missing {
-            self.projects.nest(&path.to_string_lossy(), Worktree { parent: parent.id.clone(), epic: slug.to_owned(), role });
+            self.projects.nest(&path.to_string_lossy(), Worktree { parent: parent.id.clone(), kind: Kind::Epic { epic: slug.to_owned(), role } });
+        }
+    }
+
+    fn prune(&self) {
+        for project in self.projects.list().iter() {
+            if let Some(Worktree { parent, kind: Kind::Branch { .. } }) = &project.worktree
+                && !Path::new(&project.path).exists()
+            {
+                self.unnest(&project.id, parent);
+            }
         }
     }
 
@@ -993,6 +1001,13 @@ impl Drop for Starting {
         self.starting.lock().unwrap().remove(&self.key);
         let _ = self.schedule.send(self.key.0.clone());
     }
+}
+
+fn role(name: &str) -> Option<Role> {
+    if name == "integration" {
+        return Some(Role::Integration);
+    }
+    name.split('-').next()?.parse().ok().map(Role::Ticket)
 }
 
 fn epic_branch(slug: &str) -> String {

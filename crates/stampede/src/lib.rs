@@ -32,12 +32,13 @@ use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
 };
 use rust_embed::RustEmbed;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, watch};
 
@@ -53,7 +54,7 @@ use language_servers::LanguageServers;
 use layouts::Layouts;
 use projects::Projects;
 use push::Push;
-use runs::Runs;
+use runs::{Refusal, Runs};
 use terminals::Terminals;
 use themes::Theme;
 use usage::Usage;
@@ -136,8 +137,11 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/image", get(files::image))
         .route("/api/projects/{id}/file/copy", post(files::copy))
         .route("/api/projects/{id}/file", get(files::read).head(files::exists).put(files::write).post(files::create).delete(files::delete))
+        .route("/api/projects/{id}/worktree", delete(delete_worktree))
+        .route("/api/projects/{id}/worktrees", post(create_worktree))
         .route("/api/projects/{id}/git", get(git::status))
         .route("/api/projects/{id}/git/head", get(git::head))
+        .route("/api/projects/{id}/git/refs", get(git::refs))
         .route("/api/projects/{id}/git/log", get(git::history))
         .route("/api/projects/{id}/git/commit/{sha}", get(git::commit))
         .route("/api/projects/{id}/git/show", get(git::show))
@@ -292,6 +296,31 @@ async fn record_epic(State(state): State<AppState>, Path(slug): Path<String>, Js
 
 async fn land_epic(State(state): State<AppState>, Path(slug): Path<String>) -> Result<String, files::Failure> {
     state.runs.land(&slug).await.map_err(|refusal| (StatusCode::BAD_REQUEST, refusal))
+}
+
+#[derive(Deserialize)]
+struct Creation {
+    branch: String,
+    from: String,
+}
+
+async fn create_worktree(State(state): State<AppState>, Path(id): Path<String>, Json(creation): Json<Creation>) -> Result<Json<Value>, files::Failure> {
+    let project_id = state.runs.create_worktree(&id, &creation.branch, &creation.from).await.map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    Ok(Json(json!({ "projectId": project_id })))
+}
+
+#[derive(Deserialize)]
+struct Deletion {
+    #[serde(default)]
+    force: bool,
+}
+
+async fn delete_worktree(State(state): State<AppState>, Path(id): Path<String>, Query(query): Query<Deletion>) -> Result<StatusCode, files::Failure> {
+    match state.runs.delete_worktree(&id, query.force).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(Refusal::Unmerged(work)) => Err((StatusCode::CONFLICT, work)),
+        Err(Refusal::Refused(reason)) => Err((StatusCode::BAD_REQUEST, reason)),
+    }
 }
 
 async fn font(State(state): State<AppState>) -> Json<Font> {

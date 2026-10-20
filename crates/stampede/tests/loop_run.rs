@@ -208,6 +208,18 @@ impl Loop {
         self.root.join("data/worktrees/work").join(name)
     }
 
+    fn branch(&self, name: &str) -> bool {
+        let verify = ["rev-parse", "-q", "--verify", &format!("refs/heads/{name}")];
+        std::process::Command::new("git").arg("-C").arg(&self.repo).args(verify).output().unwrap().status.success()
+    }
+
+    /// Deletes a worktree Project as a Device does, giving the response's status and text.
+    async fn delete(&self, project_id: &str, force: bool) -> (u16, String) {
+        let url = format!("http://127.0.0.1:{}/api/projects/{project_id}/worktree?force={force}", self.server.port);
+        let response = reqwest::Client::new().delete(url).send().await.unwrap();
+        (response.status().as_u16(), response.text().await.unwrap())
+    }
+
     /// Records the Verdict from the worktree of the Ticket's latest Claim.
     fn complete(&self, number: u64) {
         let worktree = PathBuf::from(self.claim(number)["worktree"].as_str().unwrap());
@@ -839,12 +851,13 @@ async fn closing_a_chat_after_its_verdict_leaves_its_ticket_resolved() {
     assert_eq!(lp.claims(), [1, 2]);
 }
 
+fn roles(message: &Value) -> Vec<Value> {
+    message["projects"].as_array().unwrap().iter().filter_map(|project| Some(project.get("worktree")?["role"].clone())).collect()
+}
+
 #[tokio::test]
-async fn a_live_runs_worktrees_open_as_projects_beside_its_own_and_close_once_resolved_or_removed() {
+async fn an_epics_worktrees_open_as_projects_beside_its_own_and_close_once_resolved_or_removed() {
     let mut lp = Loop::new("loop-run-nest", &[(1, ""), (2, "")]).await;
-    let roles = |message: &Value| -> Vec<Value> {
-        message["projects"].as_array().unwrap().iter().filter_map(|project| Some(project.get("worktree")?["role"].clone())).collect()
-    };
     lp.run("Done", 2).await;
     lp.claimed(&[1, 2]).await;
     let changed = lp.message(|message| message["type"] == "projects.changed" && roles(message).len() == 3).await;
@@ -868,19 +881,63 @@ async fn a_live_runs_worktrees_open_as_projects_beside_its_own_and_close_once_re
     lp.until("work/1's Chat to close", |lp| lp.chat_record(&first).is_none()).await;
     lp.complete(2);
     lp.finished(1).await;
-    lp.message(|message| message["type"] == "projects.changed" && roles(message).is_empty()).await;
+    lp.message(|message| message["type"] == "projects.changed" && roles(message) == [json!("integration")]).await;
     let second = lp.chat_of(2);
     lp.until("work/2's Chat to close", |lp| lp.chat_record(&second).is_none()).await;
     assert!(leftovers(&lp.root).iter().all(|process| !process.contains(&first) && !process.contains(&second)));
     assert!(lp.entries("claim.released").is_empty(), "closing a worktree Project gives no Ticket back");
 
-    let integration = lp.worktree("integration");
-    control(&mut lp.socket, json!({ "type": "project.open", "path": integration })).await;
-    lp.message(|message| message["type"] == "projects.changed" && message["projects"].as_array().unwrap().len() == 2).await;
     let landed = reqwest::Client::new().post(format!("http://127.0.0.1:{}/api/epics/work/land", lp.server.port)).send().await.unwrap();
     assert!(landed.status().is_success(), "{}", landed.text().await.unwrap());
     let changed = lp.message(|message| message["type"] == "projects.changed" && message["projects"].as_array().unwrap().len() == 1).await;
-    assert_eq!(changed["projects"][0]["id"], lp.project_id, "a Project opened on the Integration Worktree closes once Landing removes it");
+    assert_eq!(changed["projects"][0]["id"], lp.project_id, "the Integration Worktree's Project outlives its Run until Landing removes it");
+}
+
+#[tokio::test]
+async fn deleting_a_worktree_refuses_while_in_use_and_asks_before_discarding_unmerged_work() {
+    let mut lp = Loop::new("loop-run-delete", &[(1, "")]).await;
+    lp.run("Done", 1).await;
+    lp.claimed(&[1]).await;
+    lp.chat_status(1, "done").await;
+    let changed = lp.message(|message| message["type"] == "projects.changed" && roles(message).len() == 2).await;
+    let id = |role: Value| {
+        let projects = changed["projects"].as_array().unwrap();
+        projects.iter().find(|project| project["worktree"]["role"] == role).unwrap()["id"].as_str().unwrap().to_owned()
+    };
+    let (integration, ticket) = (id(json!("integration")), id(json!({ "ticket": 1 })));
+    assert_eq!(lp.delete(&integration, true).await, (400, "work has a live Run, which merges into it.".to_owned()));
+    assert_eq!(lp.delete(&ticket, true).await, (400, "work/1 is in progress in it.".to_owned()));
+
+    let chat_id = lp.chat_of(1);
+    lp.drain().await;
+    lp.record(json!({ "kind": "run.stopped" })).await.unwrap();
+    lp.given_back(1, &chat_id).await;
+    fs::write(lp.worktree("1").join("draft.txt"), "draft\n").unwrap();
+    git(&lp.worktree("1"), &["commit", "-q", "--allow-empty", "-m", "Unmerged"]);
+    let unmerged = "It has uncommitted changes and 1 commit no other branch has. Deleting it and stampede/work/1 discards them.";
+    assert_eq!(lp.delete(&ticket, false).await, (409, unmerged.to_owned()));
+    assert!(lp.worktree("1").join("draft.txt").exists());
+
+    assert_eq!(lp.delete(&ticket, true).await, (204, String::new()));
+    let changed = lp.message(|message| message["type"] == "projects.changed" && roles(message).len() == 1).await;
+    assert_eq!(roles(&changed), [json!("integration")]);
+    assert!(!lp.worktree("1").exists());
+    assert!(!lp.branch("stampede/work/1"));
+    assert_eq!(lp.entries("worktree.removed").len(), 1);
+
+    assert_eq!(lp.delete(&integration, false).await, (204, String::new()), "it holds nothing unmerged");
+    lp.message(|message| message["type"] == "projects.changed" && roles(message).is_empty()).await;
+    assert!(!lp.worktree("integration").exists());
+    assert!(!lp.branch("stampede/work/epic"));
+    assert_eq!(lp.entries("integration.removed").len(), 1);
+
+    lp.run("Done", 1).await;
+    lp.claimed(&[1, 1]).await;
+    assert_eq!(lp.worktrees(), vec![json!(lp.worktree("1")); 2]);
+    lp.chat_status(1, "done").await;
+    lp.complete(1);
+    lp.finished(1).await;
+    assert!(lp.sent().iter().all(|text| text.starts_with("You hold one Ticket")), "its deleted worktree's session is not resumed");
 }
 
 struct UsageFixture {

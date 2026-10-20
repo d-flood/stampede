@@ -23,8 +23,15 @@ pub struct Project {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Worktree {
     pub parent: String,
-    pub epic: String,
-    pub role: Role,
+    #[serde(flatten)]
+    pub kind: Kind,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Kind {
+    Epic { epic: String, role: Role },
+    Branch { branch: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

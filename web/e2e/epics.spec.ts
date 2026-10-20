@@ -601,7 +601,7 @@ test('a paused Run starts nothing until it is resumed, and stopping it gives its
 	await showFiles(await showSidebar(page));
 });
 
-test('a live Run’s worktree Projects sit beside their Project, open on a tap, and go when it finishes', async ({ page }, { project }) => {
+test('a Run’s worktree Projects sit beside their Project, open on a tap, and stay until deleted', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
 	const slug = `nest-${project.name}`;
 	const data = `${process.env.STAMPEDE_E2E_ROOT}/data`;
@@ -667,6 +667,7 @@ test('a live Run’s worktree Projects sit beside their Project, open on a tap, 
 	const chat = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/2`);
 	const worktree = await showSidebar(page);
+	await expect(worktree.getByText(`stampede/${slug}/2`, { exact: true })).toBeVisible();
 	await worktree.getByRole('button', { name: 'Changes', exact: true }).click();
 	await expect(worktree.getByRole('region', { name: 'Changes' }).getByRole('button', { name: /work\.txt/ })).toBeVisible();
 	await page.screenshot({ path: test.info().outputPath('worktree.png') });
@@ -675,12 +676,23 @@ test('a live Run’s worktree Projects sit beside their Project, open on a tap, 
 		await page.getByRole('button', { name: 'Previous screen' }).click();
 		await page.getByRole('button', { name: 'Previous screen' }).click();
 	}
-	await expect.poll(() => (rmSync(gate, { force: true }), worktrees.count()), { timeout: 20000 }).toBe(0);
+	const integration = worktrees.getByRole('button', { name: `Integration ${slug}`, exact: true });
+	await expect.poll(() => (rmSync(gate, { force: true }), worktrees.getByRole('button').count()), { timeout: 20000 }).toBe(1);
+	await expect(integration).toBeVisible();
 	await expect(row).not.toContainText(phone ? `Run ${slug}` : '/2');
 	await expect(parent).toHaveAttribute('aria-current', 'true');
 	expect(readFileSync(`${data}/worktrees/${slug}/integration/work.txt`, 'utf8')).toBe('Done by the fake.\n');
 	expect(cli('', 'ticket', `${slug}/2`).toString()).toContain('Status: merged');
 	await page.screenshot({ path: test.info().outputPath('finished.png') });
+
+	await integration.click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'Delete worktree' }).click();
+	const dialog = page.getByRole('dialog', { name: `Delete Integration ${slug}?` });
+	await expect(dialog).toContainText(`commits no other branch has. Deleting it and stampede/${slug}/epic discards them.`);
+	await page.screenshot({ path: test.info().outputPath('delete.png') });
+	await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
+	await expect(worktrees).toHaveCount(0);
+	expect(existsSync(`${data}/worktrees/${slug}/integration`)).toBe(false);
 	if (phone) await parent.click();
 	const completed = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab', { name: /^Fake Claude Gated/ });
 	await expect(completed).toHaveCount(0);

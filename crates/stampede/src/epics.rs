@@ -478,6 +478,9 @@ impl Epic {
             Event::WorktreeRemoved { ticket } => {
                 if let Some(ticket) = self.tickets.get_mut(ticket) {
                     ticket.worktree = None;
+                    if ticket.status.resolved() {
+                        ticket.attention = None;
+                    }
                 }
             }
             Event::WorktreeKept { ticket, reason } | Event::StartFailed { ticket, reason } => {
@@ -675,7 +678,11 @@ impl Epic {
                 }
             }
             Event::SetupFailed { ticket } => self.ticket(*ticket).map(drop),
-            Event::WorktreeRemoved { ticket } | Event::WorktreeKept { ticket, .. } => {
+            Event::WorktreeRemoved { ticket } => match self.ticket(*ticket)?.status {
+                status @ (Status::InProgress | Status::Merging) => Err(format!("{slug}/{ticket} is {status} in its worktree")),
+                _ => Ok(()),
+            },
+            Event::WorktreeKept { ticket, .. } => {
                 let status = self.ticket(*ticket)?.status;
                 if status.resolved() { Ok(()) } else { Err(format!("{slug}/{ticket} is {status}, not merged or skipped")) }
             }
@@ -1394,7 +1401,7 @@ mod tests {
             (Event::Reopened { ticket: 1 }, "loop/1 is not started; only an in-progress, merged or skipped Ticket can be moved back to not started"),
             (Event::Reopened { ticket: 3 }, "loop/3 is merging; only an in-progress, merged or skipped Ticket can be moved back to not started"),
             (Event::Reopened { ticket: 9 }, "loop has no Ticket 9"),
-            (Event::WorktreeRemoved { ticket: 4 }, "loop/4 is in progress, not merged or skipped"),
+            (Event::WorktreeRemoved { ticket: 4 }, "loop/4 is in progress in its worktree"),
             (Event::WorktreeKept { ticket: 3, reason: "r".to_owned() }, "loop/3 is merging, not merged or skipped"),
         ];
         for (event, error) in refused {

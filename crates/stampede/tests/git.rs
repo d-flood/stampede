@@ -15,7 +15,7 @@ async fn changes_are_everything_uncommitted_against_head() {
     let server = Server::start("git").await;
     let repo = server.root.path().join("repo");
     fs::create_dir(&repo).unwrap();
-    git(&repo, &["init", "-q"]);
+    git(&repo, &["init", "-q", "-b", "trunk"]);
     for name in ["unstaged", "staged", "both", "deleted", "removed", "renamed"] {
         fs::write(repo.join(format!("{name}.txt")), format!("{name}\none\ntwo\nthree\n")).unwrap();
     }
@@ -41,6 +41,8 @@ async fn changes_are_everything_uncommitted_against_head() {
     let id = open(server.port, &repo).await;
     let expected = json!({
         "isRepo": true,
+        "isRoot": true,
+        "branch": "trunk",
         "changes": [
             { "path": "added.txt", "kind": "added" },
             { "path": "both.txt", "kind": "modified" },
@@ -56,6 +58,20 @@ async fn changes_are_everything_uncommitted_against_head() {
 }
 
 #[tokio::test]
+async fn a_detached_head_is_named_by_its_short_commit() {
+    let server = Server::start("git").await;
+    let repo = server.root.path().join("detached");
+    fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "Initial commit"]);
+    git(&repo, &["checkout", "-q", "--detach"]);
+
+    let id = open(server.port, &repo).await;
+    let status = get(server.port, &format!("/api/projects/{id}/git")).await;
+    assert_eq!(status["branch"], rev_parse(&repo, "HEAD")[..7]);
+}
+
+#[tokio::test]
 async fn a_non_git_directory_is_not_a_repo() {
     let server = Server::start("git").await;
     let dir = server.root.path().join("plain");
@@ -63,7 +79,7 @@ async fn a_non_git_directory_is_not_a_repo() {
     fs::write(dir.join("file.txt"), "plain\n").unwrap();
 
     let id = open(server.port, &dir).await;
-    let expected = json!({ "isRepo": false, "changes": [] });
+    let expected = json!({ "isRepo": false, "isRoot": false, "changes": [] });
     assert_eq!(get(server.port, &format!("/api/projects/{id}/git")).await, expected);
     assert_eq!(get(server.port, &format!("/api/projects/{id}/git/log")).await, json!({ "commits": [] }));
 }

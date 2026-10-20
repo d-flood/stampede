@@ -14,6 +14,7 @@ export function labels(projects: Project[]): Map<string, string> {
 	const own = projects.filter((project) => !project.worktree);
 	return new Map(
 		projects.map(({ id, path, worktree }) => {
+			if (worktree && 'branch' in worktree) return [id, worktree.branch];
 			if (worktree) return [id, worktree.role === 'integration' ? `Integration ${worktree.epic}` : `${worktree.epic}/${worktree.role.ticket}`];
 			const name = basename(path);
 			const collides = own.some((other) => other.id !== id && basename(other.path) === name);
@@ -30,10 +31,14 @@ export function monogram(path: string): string {
 }
 
 export function worktrees(projects: Project[], epics: Record<string, Epic[]>, chats: Chat[]): Map<string, Tile[]> {
-	const rank = ({ role }: Worktree) => (role === 'integration' ? 0 : role.ticket);
+	const rank = (worktree: Worktree) => ('branch' in worktree ? Number.MAX_SAFE_INTEGER : worktree.role === 'integration' ? 0 : worktree.role.ticket);
 	const nested = projects.flatMap(({ id, worktree }) => (worktree ? [{ id, worktree }] : []));
 	const tiles = new Map<string, Tile[]>();
 	for (const { id, worktree } of nested.sort((a, b) => rank(a.worktree) - rank(b.worktree))) {
+		if ('branch' in worktree) {
+			tiles.set(worktree.parent, [...(tiles.get(worktree.parent) ?? []), { id, mark: monogram(worktree.branch) }]);
+			continue;
+		}
 		const { parent, epic: slug, role } = worktree;
 		const tickets = epics[parent]?.find((epic) => epic.slug === slug)?.tickets ?? [];
 		const ticket = role === 'integration' ? undefined : tickets.find(({ number }) => number === role.ticket);

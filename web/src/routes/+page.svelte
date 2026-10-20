@@ -23,9 +23,9 @@
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
-	import { image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, type Cursor } from '#lib/files.svelte.ts';
+	import { image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { status, type Change, type Commit, type Git } from '#lib/git.ts';
+	import { deleteWorktree, status, type Change, type Commit, type Git } from '#lib/git.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
@@ -94,9 +94,12 @@
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
 	let closingChat = $state<Chat>();
+	let deletion = $state<{ projectId: string; unmerged?: string; error?: string }>();
+	let deleting = $state(false);
 	const closingTicket = $derived(closingChat && heldBy(epics[closingChat.projectId] ?? [], closingChat.id));
 	let picking = $state(false);
 	let iconProject = $state<Project>();
+	let branching = $state<Project>();
 	let palette = $state<Scope>();
 	let tabTarget = $state<string>();
 	let afterPalette: (() => void) | undefined;
@@ -118,6 +121,7 @@
 
 	const projectLabels = $derived(labels(projects));
 	const ownProjects = $derived(projects.filter((project) => !project.worktree));
+	const roots = $derived(new Set(projects.filter((project) => git[project.id]?.isRoot).map((project) => project.id)));
 	const allChats = $derived(Object.values(chats).flat());
 	const nested = $derived(worktrees(projects, epics, allChats));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
@@ -482,6 +486,19 @@
 		}
 		closingProject = undefined;
 		device.send({ type: 'project.close', projectId });
+	}
+
+	async function removeWorktree(projectId: string, force = false) {
+		deleting = true;
+		try {
+			await deleteWorktree(projectId, force);
+			deletion = undefined;
+		} catch (cause) {
+			const message = cause instanceof Error ? cause.message : String(cause);
+			deletion = cause instanceof RequestError && cause.status === 409 ? { projectId, unmerged: message } : { ...deletion, projectId, error: message };
+		} finally {
+			deleting = false;
+		}
 	}
 
 	function readSessions(projectId: string) {
@@ -1078,9 +1095,12 @@
 					labels={projectLabels}
 					worktrees={nested}
 					{epics}
+					{roots}
 					focused={focused?.id}
 					onfocus={focus}
 					onclose={(projectId) => closeProject(projectId)}
+					ondelete={(projectId) => removeWorktree(projectId)}
+					onworktree={(project) => (branching = project)}
 					onpick={pick}
 					onicon={(project) => (iconProject = project)}
 					{badge}
@@ -1097,10 +1117,13 @@
 			labels={projectLabels}
 			worktrees={nested}
 			{epics}
+			{roots}
 			focused={focused?.id}
 			onfocus={(id) => (chosen = id)}
 			onreorder={reorder}
 			onclose={(projectId) => closeProject(projectId)}
+			ondelete={(projectId) => removeWorktree(projectId)}
+			onworktree={(project) => (branching = project)}
 			onpick={pick}
 			onicon={(project) => (iconProject = project)}
 			{badge}
@@ -1185,6 +1208,23 @@
 </Dialog>
 
 <Dialog
+	bind:open={() => !!branching, (open) => !open && (branching = undefined)}
+	title="New worktree"
+	description={branching && `A new branch of ${projectLabels.get(branching.id)}, checked out in its own worktree beside it.`}
+>
+	{#if branching}
+		{#await import('#lib/shell/NewWorktree.svelte') then { default: NewWorktree }}
+			<NewWorktree
+				project={branching}
+				current={git[branching.id]?.branch}
+				oncreate={(projectId) => ((branching = undefined), focus(projectId))}
+				oncancel={() => (branching = undefined)}
+			/>
+		{/await}
+	{/if}
+</Dialog>
+
+<Dialog
 	bind:open={() => !!closing, (open) => !open && (closing = undefined)}
 	title="Discard unsaved changes?"
 	description={closing && `${closing.path} has unsaved changes.`}
@@ -1216,6 +1256,22 @@
 	{#snippet actions()}
 		<Button onclick={() => (closingProject = undefined)}>Cancel</Button>
 		<Button variant="primary" onclick={() => closingProject && closeProject(closingProject, true)}>Close</Button>
+	{/snippet}
+</Dialog>
+
+<Dialog
+	bind:open={() => !!deletion, (open) => !open && (deletion = undefined)}
+	title={deletion?.unmerged ? `Delete ${projectLabels.get(deletion.projectId)}?` : `Could not delete ${deletion && projectLabels.get(deletion.projectId)}`}
+	description={deletion?.unmerged}
+>
+	{#if deletion?.error}<p role="alert">{deletion.error}</p>{/if}
+	{#snippet actions()}
+		{#if deletion?.unmerged}
+			<Button disabled={deleting} onclick={() => (deletion = undefined)}>Cancel</Button>
+			<Button variant="danger" disabled={deleting} onclick={() => deletion && removeWorktree(deletion.projectId, true)}>{deleting ? 'Deleting…' : 'Delete'}</Button>
+		{:else}
+			<Button variant="primary" onclick={() => (deletion = undefined)}>OK</Button>
+		{/if}
 	{/snippet}
 </Dialog>
 

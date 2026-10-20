@@ -14,15 +14,18 @@
 		labels: Map<string, string>;
 		worktrees: Map<string, Tile[]>;
 		epics: Record<string, Epic[]>;
+		roots: Set<string>;
 		focused?: string;
 		onfocus(id: string): void;
 		onclose(id: string): void;
+		ondelete(id: string): void;
+		onworktree(project: Project): void;
 		onpick(): void;
 		onicon(project: Project): void;
 		badge?: Snippet<[Project]>;
 	};
 
-	let { projects, labels, worktrees, epics, focused, onfocus, onclose, onpick, onicon, badge }: Props = $props();
+	let { projects, labels, worktrees, epics, roots, focused, onfocus, onclose, ondelete, onworktree, onpick, onicon, badge }: Props = $props();
 </script>
 
 <nav aria-label="Projects">
@@ -31,7 +34,11 @@
 			{@const label = labels.get(project.id) ?? project.path}
 			{@const tiles = worktrees.get(project.id) ?? []}
 			<li>
-				<Menu context items={[{ label: 'Change project icon…', onselect: () => onicon(project) }, { label: 'Close', onselect: () => onclose(project.id) }]}>
+				<Menu context items={[
+					{ label: 'Change project icon…', onselect: () => onicon(project) },
+					...(roots.has(project.id) ? [{ label: 'New worktree…', onselect: () => onworktree(project) }] : []),
+					{ label: 'Close', onselect: () => onclose(project.id) }
+				]}>
 					{#snippet trigger(props)}
 						<button
 							{...props}
@@ -63,15 +70,23 @@
 					<div class="worktrees" role="group" aria-label="Worktrees of {label}">
 						{#each tiles as tile (tile.id)}
 							{@const name = labels.get(tile.id) ?? tile.mark}
-							<button
-								class="tile {tile.status ?? ''}"
-								class:focused={tile.id === focused}
-								aria-label={tile.status ? `${name}, ${tile.status}` : name}
-								aria-current={tile.id === focused}
-								onclick={() => onfocus(tile.id)}
-							>
-								{tile.mark}
-							</button>
+							<Menu context items={[{ label: 'Delete worktree', onselect: () => ondelete(tile.id) }]}>
+								{#snippet trigger(props)}
+									<button
+										{...props}
+										tabindex={0}
+										class="tile {tile.status ?? ''}"
+										class:focused={tile.id === focused}
+										aria-label={tile.status ? `${name}, ${tile.status}` : name}
+										aria-current={tile.id === focused}
+										onclick={(event) => {
+											if (event.currentTarget.dataset.state !== 'open') onfocus(tile.id);
+										}}
+									>
+										{tile.mark}
+									</button>
+								{/snippet}
+							</Menu>
 						{/each}
 					</div>
 				{/if}
