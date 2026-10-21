@@ -1631,6 +1631,9 @@ impl Transcript {
                 let _ = self.events.send(Event::QuestionsRecovered(record));
             }
             self.activity.finish(id, &self.events);
+            if block["is_error"] != true && result["task_type"] == "local_bash" {
+                self.task_status(result["task_id"].as_str(), None, Some("stopped"), None, [None; 3]);
+            }
             if let Some(item) = self.snippets.remove(id) {
                 if block["is_error"] != true {
                     self.push(item);
@@ -1803,7 +1806,7 @@ fn outcome(status: Option<&str>) -> Option<Outcome> {
     match status? {
         "completed" => Some(Outcome::Completed),
         "failed" => Some(Outcome::Failed),
-        "stopped" => Some(Outcome::Stopped),
+        "stopped" | "killed" => Some(Outcome::Stopped),
         _ => None,
     }
 }
@@ -1943,7 +1946,7 @@ mod subagent_tests {
     #[test]
     fn background_shells_remain_running_until_notified_live_and_from_history() {
         for recorded in [false, true] {
-            for status in ["completed", "failed", "stopped"] {
+            for status in ["completed", "failed", "stopped", "killed"] {
                 let (events, mut received) = mpsc::unbounded_channel();
                 let mut transcript = Transcript::new(events, Path::new("/project"));
                 let assistant = json!({ "type": "assistant", "message": { "content": [{
@@ -1977,8 +1980,45 @@ mod subagent_tests {
     }
 
     #[test]
+    fn task_stop_finishes_only_the_stopped_shell_after_success() {
+        for recorded in [false, true] {
+            for error in [true, false] {
+                let (events, mut received) = mpsc::unbounded_channel();
+                let mut transcript = Transcript::new(events, Path::new("/project"));
+                for id in ["finished", "active"] {
+                    let assistant = json!({ "type": "assistant", "message": { "content": [{
+                        "type": "tool_use", "id": id, "name": "Bash", "input": { "command": id, "run_in_background": true },
+                    }] } });
+                    let mut result = json!({ "type": "user", "message": { "content": [{
+                        "type": "tool_result", "tool_use_id": id, "content": "Ready",
+                    }] } });
+                    result[if recorded { "toolUseResult" } else { "tool_use_result" }] = json!({ "backgroundTaskId": format!("task-{id}") });
+                    for entry in [assistant, result] {
+                        if recorded { transcript.recorded(&entry); } else { transcript.read(&entry); }
+                    }
+                }
+                let mut result = json!({ "type": "user", "message": { "content": [{
+                    "type": "tool_result", "tool_use_id": "stop", "is_error": error, "content": "TaskStop result",
+                }] } });
+                result[if recorded { "toolUseResult" } else { "tool_use_result" }] = json!({
+                    "message": "Successfully stopped task: task-finished (finished)",
+                    "task_id": "task-finished", "task_type": "local_bash", "command": "finished",
+                });
+                if recorded { transcript.recorded(&result); } else { transcript.read(&result); }
+                let mut items = BTreeMap::new();
+                while let Ok(event) = received.try_recv() {
+                    if let Event::Item(index, item) = event { items.insert(index, item); }
+                }
+                let expected = if error { CommandStatus::Running } else { CommandStatus::Failed };
+                assert!(matches!(&items[&0], Item::Command { status, output, .. } if *status == expected && output == "Ready"));
+                assert!(matches!(&items[&1], Item::Command { status: CommandStatus::Running, .. }));
+            }
+        }
+    }
+
+    #[test]
     fn background_completion_is_restored_without_hiding_active_agents() {
-        for status in ["completed", "failed", "stopped"] {
+        for status in ["completed", "failed", "stopped", "killed"] {
             for recorded in [false, true] {
                 for shape in ["system", "updated", "text", "blocks", "attachment"] {
                     let (events, mut received) = mpsc::unbounded_channel();

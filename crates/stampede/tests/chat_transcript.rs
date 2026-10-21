@@ -172,6 +172,70 @@ async fn claude_shells_survive_reattachment_but_stop_when_the_holder_is_lost() {
 }
 
 #[tokio::test]
+async fn claude_finished_shells_stay_finished_after_a_restart() {
+    for stopped in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/claude-code/tools.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let mut fixture = String::new();
+        let mut inserted = false;
+        for line in recording.lines() {
+            let mut entry: Value = serde_json::from_str(line).unwrap();
+            for path in ["/stdout/tool_use_result", "/session/toolUseResult"] {
+                if let Some(result) = entry.pointer_mut(path).filter(|result| result["stdout"] == "3 notes.txt") {
+                    result["backgroundTaskId"] = json!("background-shell");
+                }
+            }
+            if !inserted && entry["stdout"]["type"] == "result" {
+                inserted = true;
+                let session = entry["stdout"]["session_id"].clone();
+                let entries = if stopped {
+                    vec![
+                        json!({ "type": "assistant", "sessionId": session, "uuid": "stop-shell", "message": { "content": [{
+                            "type": "tool_use", "id": "stop", "name": "TaskStop", "input": { "task_id": "background-shell" },
+                        }] } }),
+                        json!({ "type": "user", "sessionId": session, "uuid": "stopped-shell", "message": { "content": [{
+                            "type": "tool_result", "tool_use_id": "stop", "content": "Successfully stopped task: background-shell",
+                        }] }, "toolUseResult": {
+                            "message": "Successfully stopped task: background-shell (wc -l notes.txt)",
+                            "task_id": "background-shell", "task_type": "local_bash", "command": "wc -l notes.txt",
+                        } }),
+                    ]
+                } else {
+                    vec![json!({
+                        "type": "attachment", "sessionId": session, "uuid": "finished-shell",
+                        "attachment": {
+                            "type": "queued_command",
+                            "prompt": "<task-notification>\n<task-id>background-shell</task-id>\n<status>killed</status>\n<summary>Background command was stopped after reaching its background time limit</summary>\n</task-notification>",
+                            "commandMode": "task-notification",
+                            "origin": { "kind": "task-notification", "producer": "session-task" },
+                        },
+                        "renderedRole": "system",
+                    })]
+                };
+                for entry in entries {
+                    fixture.push_str(&json!({ "session": entry }).to_string());
+                    fixture.push('\n');
+                }
+            }
+            fixture.push_str(&entry.to_string());
+            fixture.push('\n');
+        }
+        let path = directory.path().join("shells.jsonl");
+        fs::write(&path, fixture).unwrap();
+        let (mut server, mut socket, chat_id) = launch("claude-code", path.to_str().unwrap()).await;
+        let mut view = View::default();
+        view.turn(&mut socket, &chat_id, CLAUDE_PROMPT).await;
+        view.turn(&mut socket, &chat_id, "/compact").await;
+        view.turn(&mut socket, &chat_id, DONE).await;
+        server.restart().await;
+        let (_, view) = reattach(&server, &chat_id, view.items.len()).await;
+        let command = view.items.iter().find(|item| item["command"] == "wc -l notes.txt").unwrap();
+        assert_eq!(command["status"], "failed", "a finished shell must leave the running list after restart; TaskStop: {stopped}");
+        assert_eq!(command["output"], "3 notes.txt");
+    }
+}
+
+#[tokio::test]
 async fn resumed_shells_are_checked_against_live_processes() {
     let directory = tempfile::tempdir().unwrap();
     let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/codex/tools.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
