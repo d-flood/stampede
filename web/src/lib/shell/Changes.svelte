@@ -604,10 +604,23 @@
 		background: var(--hover);
 	}
 
+	.heading {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		border-block: var(--border-width) solid var(--border);
+		background: var(--surface-2);
+	}
+
+	.heading + .heading {
+		border-top: none;
+	}
+
 	.heading .name {
-		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
 	}
 
 	.entry {
