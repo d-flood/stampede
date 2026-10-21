@@ -569,7 +569,8 @@ impl Transcript {
                     media_type: attachment["mimeType"].as_str()?.to_owned(), data: attachment["data"].as_str()?.to_owned(),
                 })).collect();
                 self.last_input = Some((text.clone(), images.clone()));
-                let index = self.push(Item::User { text, images: images.len(), template: None });
+                let image_urls = images.iter().map(|image| format!("data:{};base64,{}", image.media_type, image.data)).collect();
+                let index = self.push(Item::User { text, images: images.len(), image_urls, template: None });
                 self.user_events.insert(index, event.id.clone());
             }
             "assistant.message_delta" | "assistant.message" => {

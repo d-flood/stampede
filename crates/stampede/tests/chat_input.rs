@@ -150,6 +150,8 @@ async fn a_queued_message_survives_a_server_restart() {
     assert_eq!(view.statuses, ["done"]);
     let mut expected = claude_items();
     expected[4]["images"] = json!(1);
+    expected[4]["imageUrls"] = view.items[4]["imageUrls"].clone();
+    assert_eq!(expected[4]["imageUrls"].as_array().unwrap().len(), 1);
     assert_eq!(view.items, expected);
     assert_eq!(record(&server, &chat_id)["queued"], json!([]));
 }
@@ -250,16 +252,24 @@ impl View {
 }
 
 #[tokio::test]
-async fn images_reach_both_agents_without_becoming_transcript_data() {
+async fn images_reach_both_agents_and_load_from_the_transcript() {
     for agent in ["claude-code", "codex"] {
-        let (server, mut socket, chat_id) = launch_fixture(agent, "simple-turn").await;
+        let (mut server, mut socket, chat_id) = launch_fixture(agent, "simple-turn").await;
         let image = json!({ "mediaType": "image/png", "data": "aGVsbG8=" });
         control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Greet the reader", "images": [image] })).await;
         let mut view = View::default();
         view.follow(&mut socket, &chat_id, |view| view.statuses.last().is_some_and(|status| status == "done")).await;
         assert_eq!(view.items[0]["images"], 1);
+        let url = view.items[0]["imageUrls"][0].as_str().unwrap().to_owned();
+        let response = reqwest::get(format!("http://127.0.0.1:{}{url}", server.port)).await.unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["content-type"], "image/png");
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"hello");
         assert!(!view.items.iter().any(|item| item.to_string().contains("aGVsbG8=")));
         close_chat(&mut socket, server.root.path(), &chat_id).await;
+        server.restart().await;
+        let response = reqwest::get(format!("http://127.0.0.1:{}{url}", server.port)).await.unwrap();
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"hello");
         let log = if agent == "codex" { received(server.root.path()) } else {
             fs::read_to_string(server.root.path().join("home/.claude/fake-received.jsonl")).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect()
         };

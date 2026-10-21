@@ -315,7 +315,12 @@ async fn copilot_sends_images_and_reports_missing_login() {
     let sent = received(&server).into_iter().find(|message| message["method"] == "session.send").unwrap();
     assert_eq!(sent["params"]["attachments"][0]["type"], "blob");
     assert_eq!(sent["params"]["attachments"][0]["mimeType"], "image/png");
-    assert_eq!(items(&mut socket, &chat).await["items"][0]["images"], 1);
+    let transcript = items(&mut socket, &chat).await;
+    assert_eq!(transcript["items"][0]["images"], 1);
+    let url = transcript["items"][0]["imageUrls"][0].as_str().unwrap();
+    let response = reqwest::get(format!("http://127.0.0.1:{}{url}", server.port)).await.unwrap();
+    assert_eq!(response.headers()["content-type"], "image/png");
+    assert_eq!(response.bytes().await.unwrap().as_ref(), b"image");
     close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
     let config_path = server.root.path().join("config.toml");
     let config = fs::read_to_string(&config_path).unwrap().replace("simple-turn", "unauthenticated");

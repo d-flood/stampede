@@ -49,10 +49,49 @@ for (const agent of ['Claude', 'Codex']) {
 		await panel.getByRole('button', { name: 'Send', exact: true }).click();
 		await expect(panel.getByLabel('Attachments', { exact: true })).toHaveCount(0);
 		await expect(panel.getByText('1 image', { exact: true })).toBeVisible();
+		const sentImage = panel.locator('.transcript').getByRole('img', { name: 'Attached image 1', exact: true });
+		await expect(sentImage).toBeVisible();
+		await expect.poll(() => sentImage.evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth > 0)).toBe(true);
+		await expect.poll(() => sentImage.evaluate((node) => node.getBoundingClientRect().width <= node.closest('.transcript')!.clientWidth)).toBe(true);
+		await expect.poll(() => sentImage.evaluate((node) => node.getBoundingClientRect().height <= innerHeight * 0.5 + 1)).toBe(true);
+		await expect(panel.getByRole('link', { name: 'Open attached image 1', exact: true })).toHaveAttribute('href', /^\/api\/media\//);
 		await expect(composer).toHaveValue('');
+		await page.reload();
+		await expect(sentImage).toBeVisible();
+		await expect.poll(() => sentImage.evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth > 0)).toBe(true);
 		await closeProject(page, name);
 	});
 }
+
+test('image-only messages show every attachment within the transcript bounds', async ({ page }, { project }) => {
+	const name = `image-only-${project.name}`;
+	const { panel } = await launch(page, name);
+	const files = await page.evaluate(() => [[1600, 400], [400, 1600]].map(([width, height], index) => {
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		const context = canvas.getContext('2d')!;
+		context.fillStyle = '#4338ca';
+		context.fillRect(0, 0, width, height);
+		return { name: `image-${index}.png`, data: canvas.toDataURL().split(',')[1] };
+	}));
+	await panel.getByLabel('Attach images', { exact: true }).setInputFiles(files.map(({ name, data }) => ({ name, mimeType: 'image/png', buffer: Buffer.from(data, 'base64') })));
+	await panel.getByRole('button', { name: 'Send', exact: true }).click();
+	const transcript = panel.locator('.transcript');
+	const images = transcript.getByRole('img');
+	await expect(images).toHaveCount(2);
+	await expect(transcript.getByText('2 images', { exact: true })).toBeVisible();
+	await expect(transcript.locator('.user')).toHaveCount(0);
+	for (const image of await images.all()) {
+		await image.scrollIntoViewIfNeeded();
+		await expect.poll(() => image.evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth > 0)).toBe(true);
+		await expect.poll(() => image.evaluate((node) => node.getBoundingClientRect().width <= node.closest('.transcript')!.clientWidth)).toBe(true);
+		await expect.poll(() => image.evaluate((node) => node.getBoundingClientRect().height <= innerHeight * 0.5 + 1)).toBe(true);
+		await expect.poll(() => image.evaluate((node: HTMLImageElement) => Math.abs(node.width / node.height - node.naturalWidth / node.naturalHeight))).toBeLessThan(0.02);
+	}
+	await expect.poll(() => panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+	await closeProject(page, name);
+});
 
 test('text paste stays native and pasted images can be removed', async ({ page, context }, { project }) => {
 	const name = `paste-text-${project.name}`;

@@ -44,6 +44,8 @@ pub enum Item {
     User {
         text: String,
         images: usize,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        image_urls: Vec<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         template: Option<&'static str>,
     },
@@ -1194,6 +1196,7 @@ impl Chats {
                     let _ = self.changed.send(Change::Todos { chat_id: id.clone(), todos });
                 }
                 Event::Item(index, mut item) => {
+                    crate::media::cache_images(&self.data_dir, &mut item);
                     if let Item::User { text, template, .. } = &mut item
                         && let Some((name, typed)) = templates::recognize(text, &self.data_dir)
                     {

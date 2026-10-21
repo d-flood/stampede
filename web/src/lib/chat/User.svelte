@@ -23,11 +23,20 @@
 	</details>
 {:else if item.template}
 	<div class="user"><span class="template">/{item.template}</span>{' '}<Text item={markdown(item.text.slice(item.template.length + 1))} /></div>
-{:else}
+{:else if item.text}
 	<div class="user"><Text item={markdown(item.text)} /></div>
 {/if}
 
-{#if item.images}<div class="label images">{item.images} image{item.images === 1 ? '' : 's'}</div>{/if}
+{#if item.images}
+	<div class="images" aria-label="Attached images">
+		<span class="label">{item.images} image{item.images === 1 ? '' : 's'}</span>
+		{#each item.imageUrls ?? [] as src, index}
+			<a href={src} target="_blank" rel="noreferrer" aria-label="Open attached image {index + 1}">
+				<img {src} alt="Attached image {index + 1}" loading="lazy" />
+			</a>
+		{/each}
+	</div>
+{/if}
 
 <style>
 	.user {
@@ -90,7 +99,25 @@
 	}
 
 	.images {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
 		align-self: flex-end;
+		gap: var(--space-2);
+		max-width: 85%;
+	}
+
+	.images a {
+		display: block;
+		max-width: 100%;
+	}
+
+	.images img {
+		display: block;
+		max-width: 100%;
+		max-height: min(24rem, 50dvh);
+		border-radius: var(--radius-md);
+		object-fit: contain;
 	}
 
 	.body {

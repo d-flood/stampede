@@ -36,7 +36,7 @@ export type Subagent = {
 };
 
 export type Item =
-	| { kind: 'user'; text: string; images: number; template?: string }
+	| { kind: 'user'; text: string; images: number; imageUrls?: string[]; template?: string }
 	| { kind: 'text'; text: string; streaming: boolean; phase: 'commentary' | 'final' }
 	| { kind: 'thinking'; seconds: number; text?: string }
 	| { kind: 'tools'; calls: ToolCall[] }

@@ -1,8 +1,10 @@
 use std::{fs, io::{self, Read, Write}, path::{Path, PathBuf}};
 
 use axum::{body::Body, extract::{Path as Param, State}, http::{HeaderMap, StatusCode, header}, response::{IntoResponse, Response}};
+use base64ct::{Base64, Encoding};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use uuid::Uuid;
 
@@ -41,6 +43,52 @@ fn mime(asset: &str) -> Option<&'static str> {
 
 fn title_valid(title: &str) -> bool {
     !title.trim().is_empty() && title.chars().count() <= 200
+}
+
+pub fn cache_images(data_dir: &Path, item: &mut Item) {
+    match item {
+        Item::User { image_urls, .. } => {
+            *image_urls = image_urls.iter().filter_map(|source| cache_image(data_dir, source).ok()).collect();
+        }
+        Item::Subagent { items, .. } => {
+            for item in items { cache_images(data_dir, item); }
+        }
+        _ => {}
+    }
+}
+
+fn cache_image(data_dir: &Path, source: &str) -> io::Result<String> {
+    if let Some(asset) = source.strip_prefix("/api/media/") && mime(asset).is_some() { return Ok(source.to_owned()); }
+    let (media_type, data) = source.strip_prefix("data:").and_then(|source| source.split_once(";base64,"))
+        .ok_or_else(|| io::Error::other("Expected an image data URL."))?;
+    let extension = match media_type {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => return Err(io::Error::other("Unsupported image type.")),
+    };
+    if data.len() > 5 * 1024 * 1024 * 4 / 3 + 4 { return Err(io::Error::other("Image is too large.")); }
+    let bytes = Base64::decode_vec(data).map_err(io::Error::other)?;
+    if bytes.is_empty() || bytes.len() > 5 * 1024 * 1024 { return Err(io::Error::other("Invalid image size.")); }
+    let digest = Sha256::digest(&bytes);
+    let asset = format!("{}.{extension}", Uuid::from_slice(&digest[..16]).unwrap());
+    let directory = data_dir.join("media");
+    fs::create_dir_all(&directory)?;
+    if !directory.join(&asset).exists() {
+        let temporary = directory.join(format!("{}.partial", Uuid::new_v4()));
+        let save = (|| -> io::Result<()> {
+            let mut file = fs::File::create_new(&temporary)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            fs::rename(&temporary, directory.join(&asset))
+        })();
+        if let Err(error) = save {
+            let _ = fs::remove_file(temporary);
+            return Err(error);
+        }
+    }
+    Ok(format!("/api/media/{asset}"))
 }
 
 fn publish(data_dir: &Path, arguments: &Value) -> Result<Asset, String> {

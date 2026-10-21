@@ -570,6 +570,13 @@ fn user(line: &[u8]) -> Option<Value> {
     serde_json::from_slice::<Value>(line).ok().filter(|message| message["type"] == "user")
 }
 
+fn image_urls(content: &Value) -> Vec<String> {
+    content.as_array().into_iter().flatten().filter(|block| block["type"] == "image").filter_map(|block| {
+        let source = &block["source"];
+        Some(format!("data:{};base64,{}", source["media_type"].as_str()?, source["data"].as_str()?))
+    }).collect()
+}
+
 /// The sessions Claude keeps for `cwd`, each with the first prompt found in its file's head.
 pub fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
     let Some(config) = config_dir(env) else { return Ok(Vec::new()) };
@@ -1049,7 +1056,7 @@ impl Transcript {
             let (parts, typed) = shell::parse(&text);
             if self.replaying { self.shells(parts); }
             self.checkpoint(message);
-            self.push(Item::User { text: typed.to_owned(), images, template: None });
+            self.push(Item::User { text: typed.to_owned(), images, image_urls: image_urls(content), template: None });
             if message.get("priority").is_some()
                 && let Some(uuid) = message["uuid"].as_str()
             {
@@ -1115,7 +1122,7 @@ impl Transcript {
                     if let Some(text) = prompt(typed).filter(|text| !shelled || !text.is_empty()) {
                         self.last_input = Some(entry["message"]["content"].clone());
                         self.checkpoint(entry);
-                        self.push(Item::User { text, images: 0, template: None });
+                        self.push(Item::User { text, images: 0, image_urls: Vec::new(), template: None });
                         self.compact();
                     }
                 }
@@ -1126,14 +1133,14 @@ impl Transcript {
                     self.shells(parts);
                     let text = typed.to_owned();
                     let images = blocks.filter(|block| block["type"] == "image").count();
-                    if !text.is_empty() || images > 0 { self.last_input = Some(entry["message"]["content"].clone()); self.checkpoint(entry); self.push(Item::User { text, images, template: None }); }
+                    if !text.is_empty() || images > 0 { self.last_input = Some(entry["message"]["content"].clone()); self.checkpoint(entry); self.push(Item::User { text, images, image_urls: image_urls(&entry["message"]["content"]), template: None }); }
                     self.compact();
                     self.results(&entry["message"]["content"], &entry["toolUseResult"]);
                 }
             },
             Some("attachment") if entry["attachment"]["type"] == "queued_command" && entry["renderedRole"] != "system" => {
                 if let Some(text) = entry["attachment"]["prompt"].as_str() {
-                    self.push(Item::User { text: text.to_owned(), images: 0, template: None });
+                    self.push(Item::User { text: text.to_owned(), images: 0, image_urls: Vec::new(), template: None });
                 }
             }
             Some("assistant") => {

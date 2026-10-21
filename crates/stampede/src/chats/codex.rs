@@ -1475,8 +1475,9 @@ fn notice(error: &Value) -> Item {
 fn user(item: &Value) -> Item {
     let content = item["content"].as_array().into_iter().flatten();
     let images = content.clone().filter(|input| input["type"] == "image" || input["type"] == "localImage").count();
+    let image_urls = content.clone().filter(|input| input["type"] == "image").filter_map(|input| input["url"].as_str().map(str::to_owned)).collect();
     let text: Vec<&str> = content.filter_map(|input| input["text"].as_str()).collect();
-    Item::User { text: text.join("\n"), images, template: None }
+    Item::User { text: text.join("\n"), images, image_urls, template: None }
 }
 
 fn agent(item: &Value) -> Item {
