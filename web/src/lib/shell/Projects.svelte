@@ -3,7 +3,6 @@
 	import type { Tile } from '#lib/projects.ts';
 	import ProjectRow from '#lib/shell/ProjectRow.svelte';
 	import Button from '#lib/ui/Button.svelte';
-	import type { Snippet } from 'svelte';
 	import FolderOpen from '~icons/ph/folder-open';
 
 	type Props = {
@@ -13,6 +12,7 @@
 		epics: Record<string, Epic[]>;
 		roots: Set<string>;
 		working: Set<string>;
+		needs: Map<string, number>;
 		focused?: string;
 		onfocus(id: string): void;
 		onclose(id: string): void;
@@ -20,10 +20,9 @@
 		onworktree(project: Project): void;
 		onpick(): void;
 		onicon(project: Project): void;
-		badge?: Snippet<[Project]>;
 	};
 
-	let { projects, labels, worktrees, epics, roots, working, focused, onfocus, onclose, ondelete, onworktree, onpick, onicon, badge }: Props = $props();
+	let { projects, labels, worktrees, epics, roots, working, needs, focused, onfocus, onclose, ondelete, onworktree, onpick, onicon }: Props = $props();
 
 	const gutter = $derived(projects.some((project) => worktrees.get(project.id)?.length));
 </script>
@@ -39,6 +38,7 @@
 				epics={epics[project.id] ?? []}
 				root={roots.has(project.id)}
 				working={working.has(project.id)}
+				needs={needs.get(project.id) ?? 0}
 				{gutter}
 				{focused}
 				{onfocus}
@@ -46,7 +46,6 @@
 				{ondelete}
 				{onworktree}
 				{onicon}
-				{badge}
 			/>
 		{/each}
 	</ol>

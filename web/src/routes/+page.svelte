@@ -41,7 +41,6 @@
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import Usage from '#lib/shell/Usage.svelte';
 	import { arrange, neighbor, type Side, type Split } from '#lib/split.ts';
-	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -129,6 +128,7 @@
 	const working = $derived(
 		new Set(projects.filter((project) => chats[project.id]?.some((chat) => chatStatus(chat) === 'working')).map((project) => project.worktree?.parent ?? project.id))
 	);
+	const needs = $derived(attentionList.reduce((map, item) => map.set(item.projectId, (map.get(item.projectId) ?? 0) + 1), new Map<string, number>()));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
 	const tabs = $derived((focused && terminals[focused.id]) || []);
 	const chatTabs = $derived((focused && chats[focused.id]) || []);
@@ -788,11 +788,6 @@
 
 <svelte:window onpagehide={() => sendClosing(deviceLayout)} />
 
-{#snippet badge(project: Project)}
-	{@const count = attentionList.filter((item) => item.projectId === project.id).length}
-	{#if count}<Badge tone="waiting">{count}</Badge>{/if}
-{/snippet}
-
 {#snippet attention()}
 	<SchemeToggle />
 	<Settings />
@@ -1122,7 +1117,7 @@
 					onworktree={(project) => (branching = project)}
 					onpick={pick}
 					onicon={(project) => (iconProject = project)}
-					{badge}
+					{needs}
 				/>
 			</div>
 			<div class="screen" inert={screen !== 1}>{@render workspace()}</div>
@@ -1147,7 +1142,7 @@
 			onworktree={(project) => (branching = project)}
 			onpick={pick}
 			onicon={(project) => (iconProject = project)}
-			{badge}
+			{needs}
 			{attention}
 		/>
 		{@render sidebarPanel()}

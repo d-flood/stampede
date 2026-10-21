@@ -18,6 +18,7 @@
 		epics: Record<string, Epic[]>;
 		roots: Set<string>;
 		working: Set<string>;
+		needs: Map<string, number>;
 		focused?: string;
 		onfocus(id: string): void;
 		onreorder(order: string[]): void;
@@ -26,11 +27,10 @@
 		onworktree(project: Project): void;
 		onpick(): void;
 		onicon(project: Project): void;
-		badge?: Snippet<[Project]>;
 		attention?: Snippet;
 	};
 
-	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, focused, onfocus, onreorder, onclose, ondelete, onworktree, onpick, onicon, badge, attention }: Props = $props();
+	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, needs, focused, onfocus, onreorder, onclose, ondelete, onworktree, onpick, onicon, attention }: Props = $props();
 
 	const gutter = $derived(projects.some((project) => worktrees.get(project.id)?.length));
 
@@ -93,6 +93,7 @@
 				epics={epics[project.id] ?? []}
 				root={roots.has(project.id)}
 				working={working.has(project.id)}
+				needs={needs.get(project.id) ?? 0}
 				compact={!open}
 				{gutter}
 				{focused}
@@ -104,7 +105,6 @@
 				{ondelete}
 				{onworktree}
 				{onicon}
-				{badge}
 			/>
 		{/each}
 	</ol>
