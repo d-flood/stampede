@@ -65,6 +65,16 @@ async function launch(page: Page, name: string) {
 	return { tab, panel, composer: panel.getByRole('textbox', { name: 'Composer' }) };
 }
 
+test('opening a Chat focuses its composer without client errors', async ({ page }, { project }) => {
+	const errors: string[] = [];
+	page.on('pageerror', (error) => errors.push(error.message));
+	const { composer } = await launch(page, `composer-focus-${project.name}`);
+	await expect(composer).toBeFocused();
+	await composer.fill('Still responsive');
+	await expect(composer).toHaveValue('Still responsive');
+	expect(errors).toEqual([]);
+});
+
 test('ArrowUp and ArrowDown recall earlier prompts without replacing a draft', async ({ page }, { project }) => {
 	const name = `composer-history-${project.name}`;
 	const { tab, panel, composer } = await launch(page, name);

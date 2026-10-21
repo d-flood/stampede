@@ -70,8 +70,8 @@
 		replace(history[next] ?? '', up ? 0 : undefined);
 	}
 
-	function track() {
-		caret = box.selectionStart;
+	function track(event: { currentTarget: HTMLTextAreaElement }) {
+		caret = event.currentTarget.selectionStart;
 	}
 
 	async function replace(next: string, at = next.length) {
@@ -106,7 +106,7 @@
 		{@attach (element) => { if (focused) element.focus(); }}
 		bind:this={box}
 		bind:value={text}
-		oninput={() => { keep(); track(); }}
+		oninput={(event) => { keep(); track(event); }}
 		onkeydown={keydown}
 		onkeyup={track}
 		onpointerup={track}

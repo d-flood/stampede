@@ -28,6 +28,7 @@
 		terminalId: string;
 		pending?: string;
 		active: boolean;
+		displayed?: boolean;
 		focused: boolean;
 		ended?: boolean;
 		project?: Project;
@@ -36,7 +37,7 @@
 		children?: Snippet;
 	};
 
-	let { device, terminalId, pending, active, focused, ended = false, project, onopen, onbrowse, children }: Props = $props();
+	let { device, terminalId, pending, active, displayed = true, focused, ended = false, project, onopen, onbrowse, children }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<Terminal>();
@@ -117,6 +118,17 @@
 		next.focus = () => {};
 		next.open(element);
 		next.focus = focus;
+		const renderer = next.renderer!;
+		const render = renderer.render.bind(renderer);
+		let stale = true;
+		renderer.render = (buffer, forceAll, ...args) => {
+			if (!active || !displayed || document.hidden) {
+				stale = true;
+				return;
+			}
+			render(buffer, forceAll || stale, ...args);
+			stale = false;
+		};
 		observer.disconnect();
 		observer.observe(element);
 		for (const input of [element, next.textarea]) {

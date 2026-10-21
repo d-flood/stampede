@@ -127,6 +127,7 @@
 					{device}
 					terminalId={terminal.id}
 					active={terminal.id === active?.id}
+					displayed={open}
 					focused={open && terminal.id === active?.id}
 					ended={terminal.state === 'ended'}
 				>
