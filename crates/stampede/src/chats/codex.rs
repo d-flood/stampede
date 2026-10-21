@@ -120,7 +120,7 @@ async fn rejoin(
     transcript: &mut Transcript,
 ) -> io::Result<(Connection, Child)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "config": tool_config(data_dir, &transcript.chat_id, env) })).await?;
+    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "cwd": cwd, "config": tool_config(data_dir, &transcript.chat_id, env) })).await?;
     let mut replay = Vec::new();
     let resumed = loop {
         let mut message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;

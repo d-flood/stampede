@@ -10,7 +10,7 @@ mod questions;
 mod shell;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -955,21 +955,15 @@ impl Chats {
             };
             let env = &storage.env;
             let reattached = match chat.agent {
-                Agent::ClaudeCode => match claude::reattach(&self.data_dir, &chat, &env).await {
+                Agent::ClaudeCode => match claude::reattach(&self.data_dir, &chat, env).await {
                     Err(error)
                         if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused) =>
                     {
-                        claude::resume(&self.data_dir, &chat, &env).await
+                        self.resume(&chat, env).await
                     }
-                    reattached => reattached,
-                }
-                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-                Agent::Codex => codex::resume(&self.data_dir, &chat, &env)
-                    .await
-                    .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-                Agent::Copilot => copilot::start(&self.data_dir, &chat, &env)
-                    .await
-                    .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+                    reattached => reattached.map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+                },
+                _ => self.resume(&chat, env).await,
             };
             match reattached {
                 Ok((driver, events)) => {
@@ -983,6 +977,74 @@ impl Chats {
         }
         self.refresh_attention();
         Ok(())
+    }
+
+    async fn resume(&self, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Box<dyn Driver>, UnboundedReceiver<Event>)> {
+        match chat.agent {
+            Agent::ClaudeCode => claude::resume(&self.data_dir, chat, env)
+                .await
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+            Agent::Codex => codex::resume(&self.data_dir, chat, env)
+                .await
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+            Agent::Copilot => copilot::start(&self.data_dir, chat, env)
+                .await
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+        }
+    }
+
+    pub fn movable(&self, id: &str) -> io::Result<Chat> {
+        let entry = self.get(id).ok_or_else(|| io::Error::other("The Chat is no longer open."))?;
+        let transcript = entry.transcript.lock().unwrap();
+        let chat = entry.chat.lock().unwrap();
+        if chat.status != Status::Done || transcript.reported != Status::Done || !transcript.requests.is_empty() || !chat.queued.is_empty() || transcript.handoff.is_some() {
+            return Err(io::Error::other("Wait for the Chat to finish before moving it."));
+        }
+        Ok(chat.clone())
+    }
+
+    pub async fn stop(&self, id: &str) -> io::Result<()> {
+        let mut lifecycle = self.lifecycle.subscribe();
+        if self.get(id).is_none() {
+            return Err(io::Error::other("The Chat is no longer open."));
+        }
+        self.close(id);
+        while self.get(id).is_some() {
+            if let Err(broadcast::error::RecvError::Closed) = lifecycle.recv().await {
+                return Err(io::Error::other("Stampede is shutting down."));
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn relocate(self: &Arc<Self>, source: &Chat, project_id: &str, cwd: &Path, note: &str, rigs: &[Rig]) -> io::Result<Chat> {
+        let draft = match &source.draft {
+            Some(draft) => format!("{note}\n\n{draft}"),
+            None => note.to_owned(),
+        };
+        let chat = Chat {
+            id: format!("{:016x}", Uuid::new_v4().as_u64_pair().1),
+            project_id: project_id.to_owned(),
+            cwd: cwd.to_owned(),
+            created: SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_nanos(),
+            viewed_since_done: true,
+            handoff_from: None,
+            draft: Some(draft),
+            ..source.clone()
+        };
+        self.reopen(chat, rigs).await
+    }
+
+    pub async fn reopen(self: &Arc<Self>, chat: Chat, rigs: &[Rig]) -> io::Result<Chat> {
+        let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
+        let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, &chat.cwd, &env).await?;
+        write_record(&self.data_dir, &chat)?;
+        let (driver, events) = self.resume(&chat, &storage.env).await.inspect_err(|_| {
+            let _ = fs::remove_file(record_path(&self.data_dir, &chat.id));
+        })?;
+        self.adopt(chat.clone(), driver, events, storage);
+        let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+        Ok(chat)
     }
 
     fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>, storage: crate::storage::Session) {

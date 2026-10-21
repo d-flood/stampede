@@ -272,8 +272,8 @@ def check(message, recorded):
         mcp = params.get('config', {}).get('mcp_servers.stampede_chat', {})
         if not Path(mcp.get('command', '')).is_file() or mcp.get('args', [])[:2] != ['chat-tools', '--data-dir'] or len(mcp['args']) != 5 or mcp['args'][3] != '--chat-id' or not mcp['args'][4] or not Path(mcp['args'][2]).is_absolute():
             fail(f'{method} without chat HTML server: {mcp}')
-    if method == 'thread/start' and os.path.realpath(params.get('cwd') or '') != os.path.realpath(os.getcwd()):
-        fail(f'thread/start cwd {params.get("cwd")} is not the proxy cwd {os.getcwd()}')
+    if method in ('thread/start', 'thread/resume') and os.path.realpath(params.get('cwd') or '') != os.path.realpath(os.getcwd()):
+        fail(f'{method} cwd {params.get("cwd")} is not the proxy cwd {os.getcwd()}')
 
 
 def proxy():

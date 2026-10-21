@@ -2,6 +2,7 @@
 	import { agentNames } from '#lib/config.svelte.ts';
 	import FileMenu from '#lib/chat/FileMenu.svelte';
 	import Handoff from '#lib/chat/Handoff.svelte';
+	import MoveToWorktree from '#lib/chat/MoveToWorktree.svelte';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -155,6 +156,7 @@
 		{/if}
 		<Button aria-label="Attach image" title="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
 		<Handoff {device} {chat} available={handoffAvailable} />
+		<MoveToWorktree {device} {chat} />
 		{#if stoppable}
 			<Button aria-label="Interrupt" title="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
 				<span class="stop"><Stop /></span>

@@ -291,7 +291,7 @@ fn chosen(paths: &[String]) -> Result<Vec<&str>, Failure> {
     Ok(paths.iter().map(String::as_str).collect())
 }
 
-fn settled(status: &Status) -> Result<(), Failure> {
+pub(crate) fn settled(status: &Status) -> Result<(), Failure> {
     let operation = match status.operation {
         Some(Operation::Merge) => "A merge",
         Some(Operation::Rebase) => "A rebase",

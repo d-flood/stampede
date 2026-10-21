@@ -77,6 +77,7 @@ Use a throwaway Project and repeat each applicable item with Claude Code and Cod
 - [ ] Compare Codex five-hour and weekly meters with its TUI usage display.
 - [ ] Meter ages advance and reset when readings refresh; unavailable windows show no invented value.
 - [ ] Reopen a past session from New Tab and from Search sessions; its history appears.
+- [ ] With uncommitted changes, Move to new worktree; the Chat reopens in the new worktree Project with its history and the changes, and after sending its Composer note the Agent works only in the worktree. Repeat with Copilot.
 
 Run results and unavailable checks: `epic/chats/22-manual-checklist.md`.
 

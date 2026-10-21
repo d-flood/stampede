@@ -1,7 +1,10 @@
-use std::path::Path;
+use std::{path::Path, time::Duration};
+
+use tokio::time::timeout;
 
 use super::{Runs, Slot, Starting, discard, epic_branch, submodules, ticket_branch};
 use crate::{
+    chats::Chat,
     epics::{Event, Status},
     git,
     projects::{Kind, Role, Worktree},
@@ -39,6 +42,55 @@ impl Runs {
         }
         let worktree = Worktree { parent: parent.clone(), kind: Kind::Branch { branch: branch.to_owned() } };
         Ok(self.projects.nest(&path, worktree).id)
+    }
+
+    pub async fn move_chat(&self, chat_id: &str, branch: &str) -> Result<Chat, String> {
+        let source = self.chats.movable(chat_id).map_err(|error| error.to_string())?;
+        if self.epics.holding(chat_id).or_else(|| self.epics.resolving(chat_id)).or_else(|| self.epics.reviewing(chat_id)).is_some() {
+            return Err("An Epic's Run owns this Chat.".to_owned());
+        }
+        let projects = self.projects.list();
+        let project = projects.iter().find(|project| project.id == source.project_id).ok_or("The Chat's Project is no longer open.")?;
+        let checkout = Path::new(&project.path);
+        if source.cwd != checkout {
+            return Err("Only a Chat working in its Project's own checkout can move.".to_owned());
+        }
+        let status = git::read(checkout).await.ok_or_else(|| format!("{} is not a git repository", project.path))?;
+        git::actions::settled(&status).map_err(|(_, reason)| reason)?;
+        let base = git::run(checkout, &["rev-parse", "--abbrev-ref", "HEAD"]).await?;
+        let commit = git::run(checkout, &["rev-parse", "HEAD"]).await?;
+        let short = git::run(checkout, &["rev-parse", "--short", "HEAD"]).await?;
+        let id = self.create_worktree(&project.id, branch, &commit).await?;
+        let path = self.projects.list().iter().find(|project| project.id == id).map(|project| project.path.clone()).ok_or("The new worktree is not open.")?;
+        let abandon = async |error: String| {
+            if let Err(Refusal::Unmerged(reason) | Refusal::Refused(reason)) = self.delete_worktree(&id, true).await {
+                eprintln!("cannot discard {path}: {reason}");
+            }
+            Err(error)
+        };
+        match timeout(Duration::from_secs(30), self.chats.stop(chat_id)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return abandon(error.to_string()).await,
+            Err(_) => return abandon("The Chat did not stop.".to_owned()).await,
+        }
+        let rigs = self.config.borrow().rigs.clone();
+        let carried = match carry(checkout, Path::new(&path)).await {
+            Ok(carried) => carried,
+            Err(error) => {
+                if let Err(reopened) = self.chats.reopen(source, &rigs).await {
+                    eprintln!("cannot reopen chat {chat_id}: {reopened}");
+                }
+                return abandon(format!("The uncommitted changes could not move: {error}")).await;
+            }
+        };
+        let from = if base == "HEAD" { format!("`{short}`") } else { format!("`{base}` at `{short}`") };
+        let changes = if carried { ", and the uncommitted changes moved with it" } else { "" };
+        let old = checkout.display();
+        let note = format!(
+            "FYI: Stampede moved this Chat to a new git worktree. The working directory is now `{path}`, on the new branch `{branch}`, cut from {from}{changes}. \
+             Paths earlier in this conversation under `{old}` are now under `{path}`. Read and edit files only here, not in the original checkout."
+        );
+        self.chats.relocate(&source, &id, Path::new(&path), &note, &rigs).await.map_err(|error| format!("The worktree {path} is ready, but the Chat could not resume there: {error}"))
     }
 
     pub async fn delete_worktree(&self, project_id: &str, force: bool) -> Result<(), Refusal> {
@@ -133,4 +185,19 @@ async fn unmerged(path: &Path, branch: &str) -> Option<String> {
         (false, Some(commits)) => format!("uncommitted changes and {commits}"),
     };
     Some(format!("It has {work}. Deleting it and {branch} discards them."))
+}
+
+async fn carry(from: &Path, to: &Path) -> Result<bool, String> {
+    let stashed = async |dir: &Path| git::run(dir, &["rev-parse", "-q", "--verify", "refs/stash"]).await.ok();
+    let before = stashed(from).await;
+    git::run(from, &["stash", "push", "--include-untracked", "-q", "-m", "Stampede: moving a Chat to a new worktree"]).await?;
+    // A push with nothing to stash still succeeds; popping then would take an older, unrelated stash.
+    if stashed(from).await == before {
+        return Ok(false);
+    }
+    if let Err(error) = git::run(to, &["stash", "pop", "--index", "-q"]).await {
+        git::run(from, &["stash", "pop", "--index", "-q"]).await.map_err(|restored| format!("{error}; they are kept in git stash: {restored}"))?;
+        return Err(error);
+    }
+    Ok(true)
 }

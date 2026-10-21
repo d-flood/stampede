@@ -196,6 +196,8 @@ export type ServerMessage =
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
 	| { type: 'chat.created'; chat: Chat }
 	| { type: 'chat.handoff.error'; chatId: string; error: string }
+	| { type: 'chat.moved'; chatId: string; chat: Chat }
+	| { type: 'chat.move.error'; chatId: string; error: string }
 	| { type: 'chats.changed'; projectId: string; chats: Chat[] }
 	| { type: 'chat.items'; chatId: string; items: Item[] }
 	| { type: 'chat.item'; chatId: string; index: number; item: Item }
@@ -243,6 +245,7 @@ export type ClientMessage =
 	| { type: 'terminal.detach'; channel: number }
 	| { type: 'chat.create'; projectId: string; rig: string }
 	| { type: 'chat.handoff'; chatId: string; rig: string; focus: string }
+	| { type: 'chat.move'; chatId: string; branch: string }
 	| { type: 'chat.resume'; projectId: string; agent: Agent; sessionId: string }
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }

@@ -320,6 +320,14 @@
 				if (message.chat.projectId === focused?.id) slide(1);
 				break;
 			}
+			case 'chat.moved': {
+				chats[message.chat.projectId] ??= [];
+				const owned = chats[message.chat.projectId];
+				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
+				focus(message.chat.projectId);
+				choose(message.chat.projectId, message.chat.id);
+				break;
+			}
 			case 'sessions.listed':
 				sessions[message.projectId] = message.sessions;
 				readingSessions[message.projectId] = false;

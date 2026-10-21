@@ -74,6 +74,8 @@ enum Control {
     CreateChat { project_id: String, rig: String },
     #[serde(rename = "chat.handoff")]
     HandoffChat { chat_id: String, rig: String, #[serde(default)] focus: String },
+    #[serde(rename = "chat.move")]
+    MoveChat { chat_id: String, branch: String },
     #[serde(rename = "chat.resume")]
     ResumeChat { project_id: String, agent: Agent, session_id: String },
     #[serde(rename = "sessions.list")]
@@ -475,6 +477,16 @@ impl Device {
                     match result {
                         Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat })),
                         Err(error) => send(&outgoing, json!({ "type": "chat.handoff.error", "chatId": chat_id, "error": error.to_string() })),
+                    }
+                });
+            }
+            Control::MoveChat { chat_id, branch } => {
+                let runs = Arc::clone(&self.runs);
+                let outgoing = self.outgoing.clone();
+                tokio::spawn(async move {
+                    match runs.move_chat(&chat_id, branch.trim()).await {
+                        Ok(chat) => send(&outgoing, json!({ "type": "chat.moved", "chatId": chat_id, "chat": chat })),
+                        Err(error) => send(&outgoing, json!({ "type": "chat.move.error", "chatId": chat_id, "error": error })),
                     }
                 });
             }
