@@ -141,6 +141,96 @@ async fn commands_are_visible_before_their_results_arrive() {
 }
 
 #[tokio::test]
+async fn claude_shells_survive_reattachment_but_stop_when_the_holder_is_lost() {
+    let directory = tempfile::tempdir().unwrap();
+    let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/claude-code/tools.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let fixture: Vec<_> = recording.lines().map(|line| {
+        let mut entry: Value = serde_json::from_str(line).unwrap();
+        for path in ["/stdout/tool_use_result", "/session/toolUseResult"] {
+            if let Some(result) = entry.pointer_mut(path).filter(|result| result["stdout"] == "3 notes.txt") {
+                result["backgroundTaskId"] = json!("background-shell");
+            }
+        }
+        entry.to_string()
+    }).collect();
+    let path = directory.path().join("shells.jsonl");
+    fs::write(&path, fixture.join("\n")).unwrap();
+    let (mut server, mut socket, chat_id) = launch("claude-code", path.to_str().unwrap()).await;
+    let mut view = View::default();
+    view.turn(&mut socket, &chat_id, CLAUDE_PROMPT).await;
+    let command = |view: &View| view.items.iter().find(|item| item["command"] == "wc -l notes.txt").unwrap().clone();
+    assert_eq!(command(&view)["status"], "running");
+    server.restart().await;
+    let (_, view) = reattach(&server, &chat_id, view.items.len()).await;
+    assert_eq!(command(&view)["status"], "running");
+    server.stop().await;
+    common::reboot(server.root.path());
+    server.restart().await;
+    let (_, view) = reattach(&server, &chat_id, view.items.len()).await;
+    assert_eq!(command(&view)["status"], "failed");
+    assert_eq!(command(&view)["output"], "3 notes.txt");
+}
+
+#[tokio::test]
+async fn resumed_shells_are_checked_against_live_processes() {
+    let directory = tempfile::tempdir().unwrap();
+    let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/codex/tools.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let mut fixture = String::new();
+    let mut live_id = String::new();
+    for line in recording.lines() {
+        let mut entry: Value = serde_json::from_str(line).unwrap();
+        let resumed = entry.pointer_mut("/stdout/result/thread/turns").and_then(Value::as_array_mut).filter(|turns| !turns.is_empty());
+        let listing = if let Some(turns) = resumed {
+            for item in turns.iter_mut().flat_map(|turn| turn["items"].as_array_mut().unwrap()) {
+                if item["type"] == "commandExecution" {
+                    item["status"] = json!("inProgress");
+                    item["exitCode"] = Value::Null;
+                    live_id = item["id"].as_str().unwrap().to_owned();
+                }
+            }
+            true
+        } else { false };
+        fixture.push_str(&entry.to_string());
+        fixture.push('\n');
+        if listing {
+            for entry in [
+                json!({ "stdin": { "method": "thread/backgroundTerminals/list", "id": 70 } }),
+                json!({ "stdout": { "id": 70, "result": { "data": [], "nextCursor": "live" } } }),
+                json!({ "stdin": { "method": "thread/backgroundTerminals/list", "id": 71 } }),
+                json!({ "stdout": { "id": 71, "result": { "data": [{ "itemId": live_id, "processId": "live" }], "nextCursor": null } } }),
+                json!({ "gate": "shell-live" }),
+                json!({ "stdin": { "method": "thread/backgroundTerminals/list", "id": 72 } }),
+                json!({ "stdout": { "id": 72, "result": { "data": [], "nextCursor": null } } }),
+            ] {
+                fixture.push_str(&entry.to_string());
+                fixture.push('\n');
+            }
+        }
+    }
+    assert!(!live_id.is_empty());
+    let path = directory.path().join("shells.jsonl");
+    fs::write(&path, fixture).unwrap();
+    let (mut server, mut socket, chat_id) = launch_with_gates("codex", path.to_str().unwrap(), Some(directory.path())).await;
+    let mut view = View::default();
+    view.turn(&mut socket, &chat_id, CODEX_PROMPT).await;
+    server.restart().await;
+    let (mut socket, mut view) = reattach(&server, &chat_id, 0).await;
+    let commands: Vec<_> = view.items.iter().filter(|item| item["kind"] == "command").collect();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0]["status"], "failed", "a lost shell must leave the running list");
+    assert_eq!(commands[0]["output"], "3 notes.txt\n");
+    assert_eq!(commands[1]["status"], "running", "a live shell must survive reconnection");
+    fs::remove_file(directory.path().join("shell-live")).unwrap();
+    view.follow(&mut socket, &chat_id, |view| !view.items.iter().any(|item| item["kind"] == "command" && item["status"] == "running")).await;
+    assert_eq!(view.items.iter().filter(|item| item["kind"] == "command").count(), 2);
+    let requests: Vec<Value> = fs::read_to_string(server.root.path().join("home/.codex/fake-daemon/received.jsonl")).unwrap()
+        .lines().map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|message| message["method"] == "thread/backgroundTerminals/list").collect();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["params"]["cursor"], "live");
+}
+
+#[tokio::test]
 async fn current_activity_is_reported_before_a_step_completes() {
     for agent in ["codex", "claude-code"] {
         for thinking in [true, false] {

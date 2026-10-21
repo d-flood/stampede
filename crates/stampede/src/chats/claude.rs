@@ -211,6 +211,7 @@ async fn launch(
     transcript.session = session.map(str::to_owned);
     if let Some(session) = session {
         transcript.history(env, session, at);
+        transcript.stop_commands();
     }
     transcript.settings.chosen = settings.clone();
     transcript.discover(&mut writer).await?;
@@ -389,6 +390,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                 }
             }
         }
+        transcript.stop_commands();
     });
     Claude { commands }
 }
@@ -1192,6 +1194,17 @@ impl Transcript {
     fn stop_shells(&mut self) {
         for running in self.running.values_mut() {
             if let Some(stop) = running.stop.take() { let _ = stop.send(()); }
+        }
+    }
+
+    fn stop_commands(&mut self) {
+        for (id, (index, command, output)) in self.commands.drain() {
+            self.activity.finish(&id, &self.events);
+            let _ = self.events.send(Event::Item(index, Item::Command { command, status: CommandStatus::Failed, output }));
+        }
+        for (subagent, transcript) in self.subagents.values_mut() {
+            transcript.stop_commands();
+            if subagent.update() { let _ = self.events.send(Event::Item(subagent.index, subagent.item())); }
         }
     }
 
@@ -2017,6 +2030,33 @@ mod subagent_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn lost_commands_stop_in_main_and_nested_transcripts() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        for message in [
+            json!({ "type": "assistant", "message": { "content": [
+                { "type": "tool_use", "id": "main", "name": "Bash", "input": { "command": "pnpm dev" } },
+                { "type": "tool_use", "id": "child", "name": "Agent", "input": { "description": "Build" } },
+            ] } }),
+            json!({ "type": "user", "tool_use_result": { "backgroundTaskId": "task" }, "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "main", "content": "Ready" },
+            ] } }),
+            json!({ "type": "assistant", "parent_tool_use_id": "child", "message": { "content": [
+                { "type": "tool_use", "id": "nested", "name": "Bash", "input": { "command": "pnpm watch" } },
+            ] } }),
+        ] { transcript.read(&message); }
+        transcript.stop_commands();
+        let mut items = BTreeMap::new();
+        while let Ok(event) = received.try_recv() {
+            if let Event::Item(index, item) = event { items.insert(index, item); }
+        }
+        assert!(matches!(&items[&0], Item::Command { status: CommandStatus::Failed, output, .. } if output == "Ready"));
+        assert!(matches!(&items[&1], Item::Subagent { items, .. } if matches!(items[0], Item::Command { status: CommandStatus::Failed, .. })));
+        assert!(transcript.commands.is_empty());
+        assert!(transcript.subagents["child"].1.commands.is_empty());
     }
 
     #[test]

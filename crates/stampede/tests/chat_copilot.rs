@@ -267,6 +267,22 @@ async fn copilot_maps_commands_edits_and_context_usage() {
 }
 
 #[tokio::test]
+async fn copilot_stops_unfinished_shells_when_restoring_history() {
+    let (mut server, mut socket, chat) = launch("approval", "default").await;
+    control(&mut socket, json!({ "type": "chat.send", "chatId": chat["id"], "text": "Check git" })).await;
+    next_control(&mut socket, "chat.request").await;
+    assert_eq!(items(&mut socket, &chat).await["items"][1]["status"], "running");
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    let restored = items(&mut socket, &chat).await;
+    assert_eq!(restored["items"][1]["command"], "git status");
+    assert_eq!(restored["items"][1]["status"], "failed");
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
+}
+
+#[tokio::test]
 async fn copilot_restores_history_after_a_server_restart() {
     let (mut server, mut socket, chat) = launch("simple-turn", "default").await;
     let (_, transcript) = chat_turn(&mut socket, chat["id"].as_str().unwrap(), &chat["status"], "Hello").await;

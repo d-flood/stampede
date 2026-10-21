@@ -329,6 +329,7 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
     }
     report_cost(&session, &chat.id, &transcript.events).await;
     for event in history { transcript.read(&event, true); }
+    transcript.stop_commands();
     transcript.finish();
     if chat.agent_session.is_some() && chat.status != Status::Done {
         transcript.push(Item::interrupted());
@@ -382,7 +383,7 @@ async fn drive(
                         let _ = connection.client.call("session.shell.cancelUserRequested", Some(json!({ "sessionId": session.id().to_string(), "requestId": request }))).await;
                     }
                     resolve(&mut pending, &transcript.events);
-                    rpc(session.abort()).await.map(|_| { transcript.finish(); transcript.push(Item::interrupted()); })
+                    rpc(session.abort()).await.map(|_| { transcript.stop_commands(); transcript.finish(); transcript.push(Item::interrupted()); })
                 }
                 Some(Action::Answer(id, answer)) => {
                     if let Some(response) = pending.remove(&id) {
@@ -434,6 +435,7 @@ async fn drive(
         };
         if let Err(error) = result { transcript.error(error.to_string()); }
     }
+    transcript.stop_commands();
     transcript.finish();
     connection.close().await;
 }
@@ -556,6 +558,17 @@ impl Transcript {
         }
         let _ = self.events.send(Event::Activity(None));
         self.status(Status::Done);
+    }
+
+    fn stop_commands(&mut self) {
+        for index in 0..self.items.len() {
+            if let Item::Command { status, .. } | Item::Shell { status, .. } = &mut self.items[index]
+                && *status == CommandStatus::Running
+            {
+                *status = CommandStatus::Failed;
+                self.changed(index);
+            }
+        }
     }
 
     fn read(&mut self, event: &SessionEvent, history: bool) {
@@ -707,6 +720,27 @@ fn tool(name: &str, args: &Value, kind: ToolKind) -> Item {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lost_commands_keep_output_and_completed_results() {
+        let (events, _) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(Path::new("/project"), events, Settings::default());
+        for (index, (kind, data)) in [
+            ("tool.execution_start", json!({ "toolCallId": "agent", "toolName": "bash", "arguments": { "command": "pnpm dev" } })),
+            ("tool.execution_partial_result", json!({ "toolCallId": "agent", "partialOutput": "Ready" })),
+            ("tool.execution_start", json!({ "toolCallId": "done", "toolName": "bash", "arguments": { "command": "true" } })),
+            ("tool.execution_complete", json!({ "toolCallId": "done", "success": true })),
+            ("tool.user_requested", json!({ "toolCallId": "user", "arguments": { "command": "make" } })),
+            ("tool.shell_output", json!({ "toolCallId": "user", "text": "cc main.c\n" })),
+        ].into_iter().enumerate() {
+            let event = serde_json::from_value::<SessionEvent>(json!({ "id": index.to_string(), "timestamp": "", "parentId": null, "type": kind, "data": data })).unwrap();
+            transcript.read(&event, true);
+        }
+        transcript.stop_commands();
+        assert!(matches!(&transcript.items[0], Item::Command { status: CommandStatus::Failed, output, .. } if output == "Ready"));
+        assert!(matches!(&transcript.items[1], Item::Command { status: CommandStatus::Ok, .. }));
+        assert!(matches!(&transcript.items[2], Item::Shell { status: CommandStatus::Failed, output, .. } if output == "cc main.c\n"));
+    }
 
     #[test]
     fn user_shell_commands_stream_only_shell_output_and_keep_it_when_cancelled() {

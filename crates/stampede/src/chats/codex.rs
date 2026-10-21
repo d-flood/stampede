@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
     process::Stdio,
@@ -159,6 +159,7 @@ async fn rejoin(
         })
         .await;
     }
+    let _ = timeout(REPLAY, connection.shells(transcript)).await;
     transcript.report(transcript.status);
     if transcript.turn.is_none() { transcript.propose(); }
     for child in transcript.subagents.keys().cloned().collect::<Vec<_>>() {
@@ -420,9 +421,6 @@ fn run(
                 message = connection.next() => match message {
                     Some(message) => {
                         transcript.read(&message);
-                        if let Some(input) = transcript.unsteered.take() {
-                            let _ = connection.start(&mut transcript, input).await;
-                        }
                     }
                     None => {
                         let _ = proxy.kill().await;
@@ -434,7 +432,11 @@ fn run(
                 },
                 _ = heartbeat.tick() => {
                     let _ = connection.ping().await;
+                    let _ = timeout(HEARTBEAT, connection.shells(&mut transcript)).await;
                 }
+            }
+            if let Some(input) = transcript.unsteered.take() {
+                let _ = connection.start(&mut transcript, input).await;
             }
         }
         let _ = proxy.kill().await;
@@ -552,6 +554,32 @@ struct Connection {
 }
 
 impl Connection {
+    async fn shells(&mut self, transcript: &mut Transcript) -> io::Result<()> {
+        let mut threads = Vec::new();
+        transcript.shell_threads(&mut threads);
+        for (thread, candidates) in threads {
+            let mut live = HashSet::new();
+            let mut cursor = Value::Null;
+            loop {
+                let id = self.request("thread/backgroundTerminals/list", json!({ "threadId": thread, "cursor": cursor })).await?;
+                let listed = loop {
+                    let message = self.next().await.ok_or(io::ErrorKind::UnexpectedEof)?;
+                    if response(&message) == Some(id) {
+                        if let Some(error) = message.get("error") { return Err(io::Error::other(error.to_string())); }
+                        break message["result"].clone();
+                    }
+                    transcript.read(&message);
+                };
+                let data = listed["data"].as_array().ok_or_else(|| io::Error::other("background terminals list gave no data"))?;
+                live.extend(data.iter().filter_map(|item| item["itemId"].as_str().map(str::to_owned)));
+                cursor = listed["nextCursor"].clone();
+                if cursor.is_null() { break; }
+            }
+            transcript.reconcile_shells(&thread, &candidates, &live);
+        }
+        Ok(())
+    }
+
     async fn write(&mut self, message: Value) -> io::Result<()> {
         self.socket.send(Message::text(message.to_string())).await.map_err(io::Error::other)
     }
@@ -657,7 +685,7 @@ struct Transcript {
     streaming: HashMap<String, (usize, String, Phase)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     activity: super::Activity,
-    commands: HashMap<String, (usize, Item)>,
+    commands: HashMap<String, (usize, Item, Option<String>)>,
     subagents: HashMap<String, (Subagent, Transcript)>,
     delegated: HashMap<String, usize>,
     reading: HashMap<u64, String>,
@@ -716,6 +744,30 @@ fn policy_type(sandbox: &str) -> String {
 }
 
 impl Transcript {
+    fn shell_threads(&self, threads: &mut Vec<(String, HashSet<String>)>) {
+        let candidates: HashSet<_> = self.commands.iter()
+            .filter(|(_, (_, _, turn))| self.turn.is_none() || *turn != self.turn)
+            .map(|(id, _)| id.clone()).collect();
+        if !candidates.is_empty() { threads.push((self.thread.clone(), candidates)); }
+        for (_, transcript) in self.subagents.values() { transcript.shell_threads(threads); }
+    }
+
+    fn reconcile_shells(&mut self, thread: &str, candidates: &HashSet<String>, live: &HashSet<String>) {
+        if self.thread == thread {
+            for id in candidates.difference(live) {
+                if let Some((index, mut item, _)) = self.commands.remove(id) {
+                    if let Item::Command { status, .. } | Item::Shell { status, .. } = &mut item { *status = CommandStatus::Failed; }
+                    let _ = self.events.send(Event::Item(index, item));
+                }
+            }
+        } else {
+            for (subagent, transcript) in self.subagents.values_mut() {
+                transcript.reconcile_shells(thread, candidates, live);
+                if subagent.update() { let _ = self.events.send(Event::Item(subagent.index, subagent.item())); }
+            }
+        }
+    }
+
     fn new(thread: &str, cwd: &Path, events: UnboundedSender<Event>) -> Self {
         Self {
             last_input: None,
@@ -1042,9 +1094,12 @@ impl Transcript {
         {
             let thread = &message["result"]["thread"];
             let turns = thread["turns"].as_array().map(Vec::as_slice).unwrap_or_default();
-            for item in turns.iter().flat_map(|turn| turn["items"].as_array().into_iter().flatten()) {
-                transcript.completed(item, 0);
+            for turn in turns {
+                transcript.turn = turn["id"].as_str().map(str::to_owned);
+                for item in turn["items"].as_array().into_iter().flatten() { transcript.completed(item, 0); }
             }
+            transcript.turn = turns.last().filter(|turn| turn["status"] == "inProgress")
+                .and_then(|turn| turn["id"].as_str()).map(str::to_owned);
             subagent.update();
             if let Some(name) = thread["agentRole"].as_str().or(thread["agentNickname"].as_str()) {
                 subagent.name = Some(name.to_owned());
@@ -1234,7 +1289,7 @@ impl Transcript {
                 self.command(item);
             }
             Some("item/commandExecution/outputDelta") => {
-                if let Some((index, item)) = params["itemId"].as_str().and_then(|id| self.commands.get_mut(id)) {
+                if let Some((index, item, _)) = params["itemId"].as_str().and_then(|id| self.commands.get_mut(id)) {
                     if let Item::Command { output, .. } | Item::Shell { output, .. } = item {
                         output.push_str(params["delta"].as_str().unwrap_or_default());
                     }
@@ -1395,8 +1450,10 @@ impl Transcript {
     fn command(&mut self, value: &Value) {
         let id = value["id"].as_str().unwrap_or_default();
         let mut item = command(value);
+        let mut turn = self.turn.clone();
         let index = match self.commands.remove(id) {
-            Some((index, previous)) => {
+            Some((index, previous, started)) => {
+                turn = started;
                 if (value["aggregatedOutput"].is_null() || value["exitCode"] == -1)
                     && let (Item::Command { output, .. } | Item::Shell { output, .. }, Item::Command { output: previous, .. } | Item::Shell { output: previous, .. }) = (&mut item, previous)
                 {
@@ -1408,7 +1465,7 @@ impl Transcript {
             None => self.push(item.clone()),
         };
         if matches!(item, Item::Command { status: CommandStatus::Running, .. } | Item::Shell { status: CommandStatus::Running, .. }) {
-            self.commands.insert(id.to_owned(), (index, item));
+            self.commands.insert(id.to_owned(), (index, item, turn));
         }
     }
 
@@ -1532,6 +1589,35 @@ mod tests {
             assert_eq!(snapshot.codex_resets, Some(ResetCredits { available_count: 3, expires_at: None, credit_id: None }));
         }
         assert!(usage_snapshot(&json!({})).codex_resets.is_none());
+    }
+
+    #[test]
+    fn shell_reconciliation_preserves_foreground_commands_and_updates_subagents() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new("thread", Path::new("/project"), events);
+        transcript.turn = Some("previous".to_owned());
+        transcript.command(&json!({ "id": "old", "command": "pnpm dev", "status": "inProgress", "aggregatedOutput": "Ready\n" }));
+        transcript.turn = Some("current".to_owned());
+        transcript.command(&json!({ "id": "foreground", "command": "cargo test", "status": "inProgress" }));
+        transcript.spawn("child", "Build");
+        let (_, child) = transcript.subagents.get_mut("child").unwrap();
+        child.command(&json!({ "id": "nested", "command": "pnpm watch", "status": "inProgress" }));
+        let mut threads = Vec::new();
+        transcript.shell_threads(&mut threads);
+        assert_eq!(threads.len(), 2);
+        for (thread, candidates) in threads {
+            transcript.reconcile_shells(&thread, &candidates, &HashSet::new());
+        }
+        assert_eq!(transcript.commands.len(), 1);
+        assert!(transcript.commands.contains_key("foreground"));
+        assert!(transcript.subagents["child"].1.commands.is_empty());
+        let mut items = BTreeMap::new();
+        while let Ok(event) = received.try_recv() {
+            if let Event::Item(index, item) = event { items.insert(index, item); }
+        }
+        assert!(matches!(&items[&0], Item::Command { status: CommandStatus::Failed, output, .. } if output == "Ready\n"));
+        assert!(matches!(&items[&1], Item::Command { status: CommandStatus::Running, .. }));
+        assert!(matches!(&items[&2], Item::Subagent { items, .. } if matches!(items[0], Item::Command { status: CommandStatus::Failed, .. })));
     }
 
     #[test]
