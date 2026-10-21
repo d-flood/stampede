@@ -69,6 +69,35 @@ test('Changes shows a folder tree of changed files to stage, commit and undo', a
 	expect(readFileSync(`${root}/README.md`, 'utf8')).toBe('# tree\n');
 });
 
+test('a folder holding over 200 changes starts collapsed, again after switching Projects', async ({ page }, { project }) => {
+	test.skip(project.name !== 'desktop');
+	const { root } = repository('bulk');
+	for (const folder of ['plugins', 'uploads']) {
+		mkdirSync(`${root}/export/${folder}`, { recursive: true });
+		for (let n = 0; n < 150; n++) writeFileSync(`${root}/export/${folder}/${n}.php`, '');
+	}
+	mkdirSync(`${root}/src`);
+	writeFileSync(`${root}/src/app.ts`, '');
+	await openProject(page, 'alpha');
+	const sidebar = await changesPanel(page, 'bulk');
+	const changes = sidebar.getByRole('list', { name: 'Changes', exact: true });
+	const bulk = changes.getByRole('button', { name: 'export', exact: true });
+	const projects = page.getByRole('navigation', { name: 'Projects' });
+
+	await expect(bulk).toHaveAttribute('aria-expanded', 'false');
+	await expect(changes.getByRole('button', { name: 'app.ts', exact: true })).toBeVisible();
+	await expect(changes.getByRole('listitem')).toHaveCount(3);
+
+	await bulk.click();
+	await expect(changes.getByRole('button', { name: 'plugins', exact: true })).toHaveAttribute('aria-expanded', 'true');
+	await expect(changes.getByRole('button', { name: /^\d+\.php$/ })).toHaveCount(300);
+
+	await projects.getByRole('button', { name: 'alpha', exact: true }).click();
+	await projects.getByRole('button', { name: 'bulk', exact: true }).click();
+	await expect(bulk).toHaveAttribute('aria-expanded', 'false');
+	await expect(changes.getByRole('listitem')).toHaveCount(3);
+});
+
 test('Changes takes LazyGit keys', async ({ page }, { project }) => {
 	test.skip(project.name !== 'desktop');
 	const { root, git } = repository('keys');

@@ -48,6 +48,7 @@
 	import Tab from '#lib/ui/Tab.svelte';
 	import { onMount } from 'svelte';
 	import { on } from 'svelte/events';
+	import { SvelteMap } from 'svelte/reactivity';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
 	import FileCode from '~icons/ph/file-code';
@@ -82,7 +83,7 @@
 	let epicTabs = $state<Record<string, OpenEpic[]>>(restored.epics);
 	let epics = $state<Record<string, Epic[]>>({});
 	const subscribed = new Set<string>();
-	let git = $state<Record<string, Git>>({});
+	const git = new SvelteMap<string, Git>();
 	let chosen = $state(restored.chosen);
 	let chosenTabs = $state<Record<string, string>>(restored.chosenTabs);
 	let splits = $state<Record<string, Split>>(restored.splits);
@@ -122,7 +123,7 @@
 
 	const projectLabels = $derived(labels(projects));
 	const ownProjects = $derived(projects.filter((project) => !project.worktree));
-	const roots = $derived(new Set(projects.filter((project) => git[project.id]?.isRoot).map((project) => project.id)));
+	const roots = $derived(new Set(projects.filter((project) => git.get(project.id)?.isRoot).map((project) => project.id)));
 	const allChats = $derived(Object.values(chats).flat());
 	const nested = $derived(worktrees(projects, epics, allChats));
 	const working = $derived(
@@ -173,7 +174,7 @@
 	const titles = $derived([
 		{ title: 'Projects', sub: hostName() ?? undefined },
 		{ title: label ?? 'Tabs' },
-		{ title: sectionShowing(section, focused && git[focused.id]).label, sub: label }
+		{ title: sectionShowing(section, focused && git.get(focused.id)).label, sub: label }
 	]);
 	const deviceLayout = $derived(
 		capture({ chosen, terminals, chats, files, browsers, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section }, rail: { open: rail } })
@@ -355,8 +356,8 @@
 				for (const projectId in files) {
 					if (!projects.some((project) => project.id === projectId)) delete files[projectId];
 				}
-				for (const projectId in git) {
-					if (!projects.some((project) => project.id === projectId)) delete git[projectId];
+				for (const projectId of git.keys()) {
+					if (!projects.some((project) => project.id === projectId)) git.delete(projectId);
 				}
 				for (const projectId in splits) {
 					if (!projects.some((project) => project.id === projectId)) delete splits[projectId];
@@ -475,7 +476,7 @@
 
 	async function loadGit(projectId: string) {
 		const loaded = await status(projectId).catch(() => undefined);
-		if (loaded && projects.some((project) => project.id === projectId)) git[projectId] = loaded;
+		if (loaded && projects.some((project) => project.id === projectId)) git.set(projectId, loaded);
 	}
 
 	function pick() {
@@ -799,7 +800,7 @@
 		open={phone || sidebar}
 		project={focused}
 		{label}
-		git={focused && git[focused.id]}
+		git={focused && git.get(focused.id)}
 		{device}
 		bind:section
 		{usage}
@@ -1057,7 +1058,7 @@
 										{file}
 										{device}
 										{servers}
-										git={git[file.projectId]}
+										git={git.get(file.projectId)}
 										{active}
 										displayed={active && foreground}
 										focused={file.id === activeTab}
@@ -1232,7 +1233,7 @@
 		{#await import('#lib/shell/NewWorktree.svelte') then { default: NewWorktree }}
 			<NewWorktree
 				project={branching}
-				current={git[branching.id]?.branch}
+				current={git.get(branching.id)?.branch}
 				oncreate={(projectId) => ((branching = undefined), focus(projectId))}
 				oncancel={() => (branching = undefined)}
 			/>

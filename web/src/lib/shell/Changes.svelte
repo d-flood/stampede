@@ -53,7 +53,7 @@
 	type Section = 'conflicted' | 'staged' | 'unstaged';
 	type Folder = { name: string; path: string; folders: Folder[]; files: Change[] };
 	type Row =
-		| { kind: 'folder'; key: string; folder: Folder; depth: number; changes: Change[] }
+		| { kind: 'folder'; key: string; folder: Folder; depth: number; changes: Change[]; open: boolean }
 		| { kind: 'file'; key: string; change: Change; depth: number };
 	type Target = { section: Section; changes: Change[]; label: string; change?: Change };
 	type Props = {
@@ -66,7 +66,9 @@
 
 	let { projectId, git, device, onopen, ondiff }: Props = $props();
 
+	const LARGE = 200;
 	const collapsed = new SvelteSet<string>();
+	const opened = new SvelteSet<string>();
 	let busy = $state(false);
 	let failure = $state<string>();
 	let drafting = $state(false);
@@ -168,15 +170,18 @@
 		const files = folder.files.toSorted((a, b) => split(a.path).name.localeCompare(split(b.path).name));
 		return [
 			...folders.flatMap((child): Row[] => {
-				const row: Row = { kind: 'folder', key: `${section}:${child.path}/`, folder: child, depth, changes: under(child) };
-				return collapsed.has(row.key) ? [row] : [row, ...flatten(child, section, depth + 1)];
+				const key = `${section}:${child.path}/`;
+				const changes = under(child);
+				const open = changes.length > LARGE ? opened.has(key) : !collapsed.has(key);
+				const row: Row = { kind: 'folder', key, folder: child, depth, changes, open };
+				return open ? [row, ...flatten(child, section, depth + 1)] : [row];
 			}),
 			...files.map((change): Row => ({ kind: 'file', key: `${section}:${change.path}`, change, depth }))
 		];
 	}
 
-	function toggle(key: string) {
-		if (!collapsed.delete(key)) collapsed.add(key);
+	function toggle(key: string, toggled = collapsed) {
+		if (!toggled.delete(key)) toggled.add(key);
 	}
 
 	async function run(action: () => Promise<unknown>) {
@@ -395,9 +400,8 @@
 					{#each rows as row (row.key)}
 						<li class="row">
 							{#if row.kind === 'folder'}
-								{@const expanded = !collapsed.has(row.key)}
-								<button data-key={row.key} class="entry" style:--depth={row.depth} aria-expanded={expanded} title={row.folder.path} onclick={() => toggle(row.key)}>
-									<span class="caret" class:open={expanded}><CaretRight /></span>
+								<button data-key={row.key} class="entry" style:--depth={row.depth} aria-expanded={row.open} title={row.folder.path} onclick={() => toggle(row.key, row.changes.length > LARGE ? opened : collapsed)}>
+									<span class="caret" class:open={row.open}><CaretRight /></span>
 									<span class="name">{row.folder.name}</span>
 								</button>
 							{:else}
