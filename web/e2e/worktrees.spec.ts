@@ -113,3 +113,30 @@ test('worktrees are counted on their Project and listed under it, grouped in the
 	await expect(rail.getByRole('button', { name: 'Collapse project rail' })).toHaveAttribute('aria-expanded', 'true');
 	await expect(row).toContainText(alpha());
 });
+
+test('a working Chat in a worktree spins on its Project square', async ({ page }) => {
+	await openProject(page, 'alpha');
+	await mint(page, 'spin');
+	await projectsScreen(page);
+	const rail = page.getByRole('navigation', { name: 'Projects' });
+	const square = rail.getByRole('button', { name: 'alpha', exact: true });
+	await rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: 'spin', exact: true }).click();
+
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	await expect(tab.getByTitle('done')).toBeVisible();
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	await composer.fill('Greet the reader');
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await expect(panel.getByText(/^Hello and welcome!/)).toBeVisible();
+	await expect(square.getByTitle('working')).toHaveCount(0);
+	await composer.fill('Anything else?');
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await expect(tab.getByTitle('working')).toBeVisible();
+
+	await projectsScreen(page);
+	await expect(square.getByTitle('working')).toBeVisible();
+	await page.screenshot({ path: test.info().outputPath('working.png') });
+});

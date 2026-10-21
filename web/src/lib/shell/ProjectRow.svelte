@@ -9,6 +9,7 @@
 	import type { Snippet } from 'svelte';
 	import CaretDown from '~icons/ph/caret-down';
 	import CaretRight from '~icons/ph/caret-right';
+	import CircleNotchBold from '~icons/ph/circle-notch-bold';
 
 	type Props = {
 		project: Project;
@@ -17,6 +18,7 @@
 		tiles: Tile[];
 		epics: Epic[];
 		root: boolean;
+		working?: boolean;
 		compact?: boolean;
 		gutter?: boolean;
 		focused?: string;
@@ -29,7 +31,7 @@
 		badge?: Snippet<[Project]>;
 	};
 
-	let { project, label, labels, tiles, epics, root, compact = false, gutter = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onicon, badge }: Props =
+	let { project, label, labels, tiles, epics, root, working = false, compact = false, gutter = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onicon, badge }: Props =
 		$props();
 
 	let folded = $state(false);
@@ -91,6 +93,7 @@
 					<span class="square">
 						<ProjectIcon {project} />
 						{#if tiles.length}<span class="count" title="{tiles.length} {tiles.length === 1 ? 'worktree' : 'worktrees'}">{tiles.length}</span>{/if}
+						{#if working}<span class="spinner" title="working"><CircleNotchBold /></span>{/if}
 					</span>
 					{#if compact}
 						{#if badge}<span class="attention">{@render badge(project)}</span>{/if}
@@ -281,6 +284,32 @@
 		font-variant-numeric: tabular-nums;
 		font-weight: 600;
 		line-height: 1;
+	}
+
+	.spinner {
+		position: absolute;
+		right: calc(-1 * var(--space-1) - var(--border-width));
+		bottom: calc(-1 * var(--space-1) - var(--border-width));
+		display: grid;
+		place-items: center;
+		box-sizing: border-box;
+		width: 1.4em;
+		height: 1.4em;
+		border: var(--border-width) solid var(--surface-2);
+		border-radius: 50%;
+		background: var(--surface-1);
+		color: var(--status-working);
+		font-size: calc(var(--font-size-sm) - 1px);
+	}
+
+	.spinner :global(svg) {
+		animation: spin 1s linear var(--pulse);
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(1turn);
+		}
 	}
 
 	.gutter {

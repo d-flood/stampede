@@ -17,6 +17,7 @@
 		worktrees: Map<string, Tile[]>;
 		epics: Record<string, Epic[]>;
 		roots: Set<string>;
+		working: Set<string>;
 		focused?: string;
 		onfocus(id: string): void;
 		onreorder(order: string[]): void;
@@ -29,7 +30,7 @@
 		attention?: Snippet;
 	};
 
-	let { open = $bindable(false), projects, labels, worktrees, epics, roots, focused, onfocus, onreorder, onclose, ondelete, onworktree, onpick, onicon, badge, attention }: Props = $props();
+	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, focused, onfocus, onreorder, onclose, ondelete, onworktree, onpick, onicon, badge, attention }: Props = $props();
 
 	const gutter = $derived(projects.some((project) => worktrees.get(project.id)?.length));
 
@@ -91,6 +92,7 @@
 				tiles={worktrees.get(project.id) ?? []}
 				epics={epics[project.id] ?? []}
 				root={roots.has(project.id)}
+				working={working.has(project.id)}
 				compact={!open}
 				{gutter}
 				{focused}

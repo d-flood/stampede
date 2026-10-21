@@ -15,6 +15,8 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await expect(tab.getByTitle('done')).toBeVisible();
+	const square = page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name, exact: true });
+	await expect(square.getByTitle('working')).toHaveCount(0);
 
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const context = panel.getByRole('meter', { name: 'Context' });
@@ -36,12 +38,14 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await composer.fill('Anything else?');
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(tab.getByTitle('working')).toBeVisible();
+	await expect(square.getByTitle('working')).toBeVisible();
 	await tab.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
 	const confirm = page.getByRole('dialog', { name: 'Close Fake Claude?' });
 	await expect(confirm).toBeVisible();
 	await confirm.getByRole('button', { name: 'Close' }).click();
 	await expect(tab).toHaveCount(0);
+	await expect(square.getByTitle('working')).toHaveCount(0);
 });
 
 test('a page that loads onto a Chat opens context menus on right-click', async ({ page }, { project }) => {

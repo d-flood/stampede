@@ -126,6 +126,9 @@
 	const roots = $derived(new Set(projects.filter((project) => git[project.id]?.isRoot).map((project) => project.id)));
 	const allChats = $derived(Object.values(chats).flat());
 	const nested = $derived(worktrees(projects, epics, allChats));
+	const working = $derived(
+		new Set(projects.filter((project) => chats[project.id]?.some((chat) => chatStatus(chat) === 'working')).map((project) => project.worktree?.parent ?? project.id))
+	);
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
 	const tabs = $derived((focused && terminals[focused.id]) || []);
 	const chatTabs = $derived((focused && chats[focused.id]) || []);
@@ -416,6 +419,10 @@
 				settle?.(message.error);
 				break;
 		}
+	}
+
+	function chatStatus(chat: Chat) {
+		return chat.status === 'done' ? (subagents(chatItems[chat.id] ?? []).find(({ subagent }) => subagent.status !== 'done')?.subagent.status ?? 'done') : chat.status;
 	}
 
 	function attend(projectId: string, tabId: string) {
@@ -862,7 +869,7 @@
 											data-tab={id}
 											variant="agent"
 											agent={chat.agent}
-											status={chat.status === 'done' ? subagents(chatItems[chat.id] ?? []).find(({ subagent }) => subagent.status !== 'done')?.subagent.status ?? 'done' : chat.status}
+											status={chatStatus(chat)}
 											label={chat.rig}
 											active={id === group.active}
 											onclose={() => closeChat(chat)}
@@ -1107,6 +1114,7 @@
 					worktrees={nested}
 					{epics}
 					{roots}
+					{working}
 					focused={focused?.id}
 					onfocus={focus}
 					onclose={(projectId) => closeProject(projectId)}
@@ -1130,6 +1138,7 @@
 			worktrees={nested}
 			{epics}
 			{roots}
+			{working}
 			focused={focused?.id}
 			onfocus={(id) => (chosen = id)}
 			onreorder={reorder}

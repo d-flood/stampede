@@ -12,6 +12,7 @@
 		worktrees: Map<string, Tile[]>;
 		epics: Record<string, Epic[]>;
 		roots: Set<string>;
+		working: Set<string>;
 		focused?: string;
 		onfocus(id: string): void;
 		onclose(id: string): void;
@@ -22,7 +23,7 @@
 		badge?: Snippet<[Project]>;
 	};
 
-	let { projects, labels, worktrees, epics, roots, focused, onfocus, onclose, ondelete, onworktree, onpick, onicon, badge }: Props = $props();
+	let { projects, labels, worktrees, epics, roots, working, focused, onfocus, onclose, ondelete, onworktree, onpick, onicon, badge }: Props = $props();
 
 	const gutter = $derived(projects.some((project) => worktrees.get(project.id)?.length));
 </script>
@@ -37,6 +38,7 @@
 				tiles={worktrees.get(project.id) ?? []}
 				epics={epics[project.id] ?? []}
 				root={roots.has(project.id)}
+				working={working.has(project.id)}
 				{gutter}
 				{focused}
 				{onfocus}
