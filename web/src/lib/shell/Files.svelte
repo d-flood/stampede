@@ -23,7 +23,7 @@
 	let { projectId, device, changes, onopen }: Props = $props();
 
 	let includeIgnored = $state(false);
-	let listings = $state<Record<string, Entry[]>>({});
+	let listings = $state.raw<Record<string, Entry[]>>({});
 	let target = $state<Entry>();
 	let confirming = $state(false);
 	let deleting = $state(false);
@@ -60,12 +60,11 @@
 	}
 
 	async function load(path: string) {
-		try {
-			listings[path] = await list(projectId, path, includeIgnored);
-		} catch (error) {
-			if (error instanceof RequestError && error.status === 404) listings[path] = [];
-			else throw error;
-		}
+		const entries = await list(projectId, path, includeIgnored).catch((error) => {
+			if (error instanceof RequestError && error.status === 404) return [];
+			throw error;
+		});
+		listings = { ...listings, [path]: entries };
 	}
 
 	function toggle(path: string) {
@@ -165,12 +164,14 @@
 		deleting = true;
 		try {
 			await remove(projectId, target.path);
+			const kept = { ...listings };
 			for (const path of expanded) {
 				if (path === target.path || path.startsWith(`${target.path}/`)) {
 					expanded.delete(path);
-					delete listings[path];
+					delete kept[path];
 				}
 			}
+			listings = kept;
 			reload();
 			confirming = false;
 		} catch (cause) {
