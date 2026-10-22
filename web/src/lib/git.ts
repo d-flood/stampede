@@ -133,7 +133,7 @@ export async function refs(projectId: string): Promise<Refs> {
 	return json(await fetch(`/api/projects/${projectId}/git/refs`));
 }
 
-export async function createWorktree(projectId: string, branch: string, from: string): Promise<string> {
+export async function createWorktree(projectId: string, from: string, branch?: string): Promise<string> {
 	const init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ branch, from }) };
 	return (await json<{ projectId: string }>(await fetch(`/api/projects/${projectId}/worktrees`, init))).projectId;
 }

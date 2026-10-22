@@ -22,8 +22,8 @@ async function mint(page: Page, branch: string, from?: string) {
 	await expect(select).toHaveValue('main');
 	if (from) await select.selectOption(from);
 	await dialog.getByRole('textbox', { name: 'New branch' }).fill(branch);
-	await page.screenshot({ path: test.info().outputPath(`new-worktree-${branch.replace('/', '-')}.png`) });
-	await dialog.getByRole('button', { name: 'Create' }).click();
+	await page.screenshot({ path: test.info().outputPath(`new-worktree-${(branch || from!).replace('/', '-')}.png`) });
+	await dialog.getByRole('button', { name: branch ? 'Create' : 'Open' }).click();
 	await expect(dialog).toBeHidden();
 }
 
@@ -52,6 +52,24 @@ test('a Project at a repository root mints a worktree from a chosen ref beside i
 	await page.getByRole('menuitem', { name: 'Delete worktree' }).click();
 	await expect(tile).toHaveCount(0);
 	expect(git('branch', '--list', 'try/it')).toBe('');
+});
+
+test('a worktree opened on an existing branch leaves the branch behind when deleted', async ({ page }) => {
+	git('branch', 'keep/me');
+	await openProject(page, 'alpha');
+	await mint(page, '', 'keep/me');
+
+	const rail = page.getByRole('navigation', { name: 'Projects' });
+	const tile = rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: 'keep/me', exact: true });
+	await expect(tile).toHaveAttribute('aria-current', 'true');
+	const sidebar = await showSidebar(page);
+	await expect(sidebar.getByRole('paragraph').filter({ has: page.getByRole('img', { name: 'Branch' }) })).toHaveText('keep/me');
+
+	await projectsScreen(page);
+	await tile.click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'Delete worktree' }).click();
+	await expect(tile).toHaveCount(0);
+	expect(git('branch', '--list', 'keep/me')).toBe('keep/me');
 });
 
 test('worktrees are counted on their Project and listed under it, grouped in the collapsed rail only while it is active', async ({ page }, { project }) => {

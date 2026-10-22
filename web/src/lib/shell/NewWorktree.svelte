@@ -13,6 +13,7 @@
 	let branch = $state('');
 	let error = $state<string>();
 	let creating = $state(false);
+	let fresh = $derived(!!branch.trim());
 
 	onMount(() => {
 		refs(project.id).then(
@@ -30,7 +31,7 @@
 		creating = true;
 		error = undefined;
 		try {
-			oncreate(await createWorktree(project.id, branch.trim(), from));
+			oncreate(await createWorktree(project.id, from, branch.trim() || undefined));
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : String(cause);
 		} finally {
@@ -54,11 +55,21 @@
 		{/if}
 	</select>
 	<label for="worktree-branch">New branch</label>
-	<input id="worktree-branch" bind:value={branch} required autocomplete="off" autocapitalize="off" spellcheck="false" disabled={creating} />
+	<input
+		id="worktree-branch"
+		bind:value={branch}
+		placeholder={from && `Leave blank to check out ${from}`}
+		autocomplete="off"
+		autocapitalize="off"
+		spellcheck="false"
+		disabled={creating}
+	/>
 	{#if error}<p role="alert">{error}</p>{/if}
 	<div class="actions">
 		<Button type="button" disabled={creating} onclick={oncancel}>Cancel</Button>
-		<Button type="submit" variant="primary" disabled={creating || !from || !branch.trim()}>{creating ? 'Creating…' : 'Create'}</Button>
+		<Button type="submit" variant="primary" disabled={creating || !from}>
+			{#if fresh}{creating ? 'Creating…' : 'Create'}{:else}{creating ? 'Opening…' : 'Open'}{/if}
+		</Button>
 	</div>
 </form>
 

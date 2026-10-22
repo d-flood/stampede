@@ -1227,7 +1227,7 @@
 <Dialog
 	bind:open={() => !!branching, (open) => !open && (branching = undefined)}
 	title="New worktree"
-	description={branching && `A new branch of ${projectLabels.get(branching.id)}, checked out in its own worktree beside it.`}
+	description={branching && `A branch of ${projectLabels.get(branching.id)}, checked out in its own worktree beside it.`}
 >
 	{#if branching}
 		{#await import('#lib/shell/NewWorktree.svelte') then { default: NewWorktree }}
