@@ -81,7 +81,7 @@
 	let files = $state<Record<string, OpenFile[]>>(restored.files);
 	let browsers = $state<Record<string, OpenBrowser[]>>(restored.browsers);
 	let epicTabs = $state<Record<string, OpenEpic[]>>(restored.epics);
-	let epics = $state<Record<string, Epic[]>>({});
+	let epics = $state.raw<Record<string, Epic[]>>({});
 	const subscribed = new Set<string>();
 	const git = new SvelteMap<string, Git>();
 	const staleGit = new SvelteSet<string>();
@@ -382,9 +382,8 @@
 				for (const projectId in epicTabs) {
 					if (!projects.some((project) => project.id === projectId)) delete epicTabs[projectId];
 				}
-				for (const projectId in epics) {
-					if (!projects.some((project) => project.id === projectId)) delete epics[projectId];
-				}
+				const kept = Object.entries(epics).filter(([projectId]) => projects.some((project) => project.id === projectId));
+				if (kept.length < Object.keys(epics).length) epics = Object.fromEntries(kept);
 				for (const projectId of subscribed) {
 					if (!projects.some((project) => project.id === projectId)) subscribed.delete(projectId);
 				}
@@ -401,15 +400,15 @@
 				break;
 			case 'epics.changed':
 				closeArchived(message.projectId, message.epics);
-				epics[message.projectId] = message.epics;
+				epics = { ...epics, [message.projectId]: message.epics };
 				break;
 			case 'epic.changed': {
 				const { epic } = message;
 				closeArchived(message.projectId, [epic]);
-				const listed = (epics[message.projectId] ??= []);
+				const listed = epics[message.projectId] ?? [];
 				const index = listed.findIndex((other) => other.slug >= epic.slug);
-				if (listed[index]?.slug === epic.slug) listed[index] = epic;
-				else listed.splice(index === -1 ? listed.length : index, 0, epic);
+				const updated = listed[index]?.slug === epic.slug ? listed.with(index, epic) : listed.toSpliced(index === -1 ? listed.length : index, 0, epic);
+				epics = { ...epics, [message.projectId]: updated };
 				break;
 			}
 			case 'ticket.started':

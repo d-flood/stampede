@@ -40,6 +40,7 @@ export type Workspace = {
 };
 
 let saved: Layout | null = null;
+let sent: string | undefined;
 let timer: ReturnType<typeof setTimeout> | undefined;
 
 function url(path: string) {
@@ -59,11 +60,15 @@ export function saveLayout(layout: Layout) {
 
 export async function putLayout(layout: Layout) {
 	clearTimeout(timer);
-	await fetch(url('layout'), { method: 'PUT', body: JSON.stringify(layout) }).catch(() => {});
+	const body = JSON.stringify(layout);
+	if (body === sent) return;
+	const response = await fetch(url('layout'), { method: 'PUT', body }).catch(() => undefined);
+	if (response?.ok) sent = body;
 }
 
 export function sendClosing(layout: Layout) {
 	clearTimeout(timer);
+	sent = undefined;
 	navigator.sendBeacon(url('closing'), JSON.stringify(layout));
 }
 

@@ -4,12 +4,14 @@
 	import { form } from '#lib/form.ts';
 	import { split } from '#lib/git.ts';
 	import Badge from '#lib/ui/Badge.svelte';
+	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import { onMount } from 'svelte';
 	import Eye from '~icons/ph/eye';
 	import EyeSlash from '~icons/ph/eye-slash';
 
 	type Props = { projectId: string; device: Device; hidden: boolean; onopen(path: string, cursor: Cursor): void };
+	type Result = { file: string; matches: Found[] };
 
 	let { projectId, device, hidden, onopen }: Props = $props();
 
@@ -17,11 +19,15 @@
 	let include = $state('');
 	let exclude = $state('');
 	let toggles = $state({ caseSensitive: false, wholeWord: false, regex: false, includeIgnored: false });
-	let results = $state.raw<{ file: string; matches: Found[] }[]>([]);
+	const PAGE = 200;
+	let results = $state.raw<Result[]>([]);
+	let shown = $state(PAGE);
 	let done = $state<{ truncated: boolean; error?: string }>();
 	let input: HTMLInputElement;
 	let current: string | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let pending: Result[] = [];
+	let frame: number | undefined;
 
 	const total = $derived(results.reduce((sum, { matches }) => sum + matches.length, 0));
 	const summary = $derived.by(() => {
@@ -35,6 +41,7 @@
 		const unlisten = device.listen({ message });
 		return () => {
 			clearTimeout(timer);
+			if (frame !== undefined) cancelAnimationFrame(frame);
 			unlisten();
 		};
 	});
@@ -50,22 +57,41 @@
 				break;
 			case 'search.started':
 				if (message.searchId !== current) break;
-				results = [];
-				done = undefined;
+				reset();
 				break;
 			case 'search.results':
-				if (message.searchId === current) results = [...results, { file: message.file, matches: message.matches }];
+				if (message.searchId !== current) break;
+				pending.push({ file: message.file, matches: message.matches });
+				frame ??= requestAnimationFrame(flush);
 				break;
 			case 'search.done':
-				if (message.searchId === current) done = message;
+				if (message.searchId !== current) break;
+				flush();
+				done = message;
 				break;
 		}
 	}
 
+	function flush() {
+		if (frame !== undefined) cancelAnimationFrame(frame);
+		frame = undefined;
+		if (!pending.length) return;
+		results = results.concat(pending);
+		pending = [];
+	}
+
+	function reset() {
+		if (frame !== undefined) cancelAnimationFrame(frame);
+		frame = undefined;
+		pending = [];
+		results = [];
+		shown = PAGE;
+		done = undefined;
+	}
+
 	function run() {
 		clearTimeout(timer);
-		results = [];
-		done = undefined;
+		reset();
 		current = undefined;
 		if (!query) return;
 		current = crypto.randomUUID();
@@ -151,7 +177,7 @@
 		</IconButton>
 	</header>
 	<ul class="results">
-		{#each results as { file, matches } (file)}
+		{#each results.slice(0, shown) as { file, matches } (file)}
 			{@const { name, dir } = split(file)}
 			<li>
 				<div class="file" title={file}>
@@ -171,6 +197,9 @@
 				</ul>
 			</li>
 		{/each}
+		{#if results.length > shown}
+			<li class="more"><Button onclick={() => (shown += PAGE)}>Show more</Button></li>
+		{/if}
 	</ul>
 </section>
 
@@ -286,6 +315,10 @@
 		flex: 1;
 		overflow: auto;
 		padding-bottom: var(--space-3);
+	}
+
+	.more {
+		padding: var(--space-2) var(--space-3);
 	}
 
 	.file {
