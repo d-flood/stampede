@@ -196,7 +196,7 @@ async fn launch(
     at: Option<&str>,
     sender: Option<UnboundedSender<Event>>,
 ) -> io::Result<(Frames, OwnedWriteHalf, Transcript, UnboundedReceiver<Event>)> {
-    let variables = [("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1")].into_iter()
+    let variables = [("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"), ("CLAUDE_CODE_ARTIFACT", "1")].into_iter()
         .chain(env.iter().map(|(name, value)| (name.as_str(), value.as_str())))
         .chain(SDK_ENV)
         .chain([("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true")]);

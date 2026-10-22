@@ -14,7 +14,7 @@ from rig_tools import ask, delegate
 
 FLAGS = {'--input-format': 'stream-json', '--output-format': 'stream-json'}
 SWITCHES = ['--verbose', '--include-partial-messages', '--permission-prompt-tool=stdio']
-ENV = {'CLAUDE_CODE_ENTRYPOINT': 'sdk-ts', 'CLAUDE_CODE_SDK_READS_SESSION_STATE': '1'}
+ENV = {'CLAUDE_CODE_ENTRYPOINT': 'sdk-ts', 'CLAUDE_CODE_SDK_READS_SESSION_STATE': '1', 'CLAUDE_CODE_ARTIFACT': '1'}
 RECORDED_CWD = '/tmp/stampede-chat'
 
 
