@@ -30,19 +30,23 @@ mod usage;
 mod unix;
 mod watcher;
 
-use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
+use std::{net::Ipv4Addr, path::PathBuf, sync::Arc, time::UNIX_EPOCH};
 
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::{StatusCode, Uri, header},
+    handler::Handler,
+    http::{HeaderMap, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
+    serve::ListenerExt,
 };
+use base64ct::{Base64, Encoding};
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, watch};
+use tower_http::compression::{CompressionLayer, DefaultPredicate, Predicate, predicate::NotForContentType};
 
 use attention::Feed;
 use chats::Chats;
@@ -106,6 +110,7 @@ struct AppState {
 }
 
 fn router(state: AppState) -> Router {
+    let compression = CompressionLayer::new().compress_when(DefaultPredicate::new().and(NotForContentType::const_new("font/woff")));
     Router::new()
         .route("/api/version", get(version))
         .route("/api/browser", post(browser::open))
@@ -163,6 +168,7 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/git/commit", post(git::actions::commit))
         .route("/api/projects/{id}/git/undo", post(git::actions::undo))
         .route("/api/projects/{id}/git/reword", post(git::actions::reword))
+        .route("/api/projects/{id}/git/squash", post(git::actions::squash))
         .route("/api/projects/{id}/git/draft", post(git::actions::draft))
         .route("/api/projects/{id}/git/fetch", post(git::actions::fetch))
         .route("/api/projects/{id}/git/pull", post(git::actions::pull))
@@ -172,11 +178,11 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/git/stashes", get(git::actions::stashes).post(git::actions::stash))
         .route("/api/projects/{id}/git/stashes/{index}/{action}", post(git::actions::unstash))
         .route("/api/lsp/log", get(language_servers::log))
-        .route("/fonts/host/{index}", get(host_font))
-        .route("/fonts/system/{family}/{index}", get(system_font))
+        .route("/fonts/host/{index}", get(host_font).layer(compression.clone()))
+        .route("/fonts/system/{family}/{index}", get(system_font).layer(compression.clone()))
         .route("/manifest.webmanifest", get(manifest))
         .route("/ws", get(device::upgrade))
-        .fallback(spa)
+        .fallback(spa.layer(compression))
         .with_state(state)
 }
 
@@ -224,6 +230,9 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("stampede listening on http://{}", listener.local_addr()?);
     let state = AppState { media_dir: args.data_dir.join("media"), terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs };
+    let listener = listener.tap_io(|stream| {
+        let _ = stream.set_nodelay(true);
+    });
     axum::serve(listener, router(state)).with_graceful_shutdown(async {
         if std::env::var_os("STAMPEDE_TEST_OWNER").is_none() { std::future::pending::<()>().await; }
         while holder::test_owner_alive() { tokio::time::sleep(std::time::Duration::from_millis(100)).await; }
@@ -479,42 +488,55 @@ async fn scrollback(State(state): State<AppState>) -> Json<usize> {
     Json(state.config.borrow().scrollback)
 }
 
-async fn host_font(State(state): State<AppState>, Path(index): Path<usize>) -> Response {
+async fn host_font(State(state): State<AppState>, Path(index): Path<usize>, headers: HeaderMap) -> Response {
     let path = match state.config.borrow().font.faces.get(index) {
         Some(face) => face.path.clone(),
         None => return StatusCode::NOT_FOUND.into_response(),
     };
-    font_file(path).await
+    font_file(path, &headers).await
 }
 
-async fn system_font(Path((family, index)): Path<(String, usize)>) -> Response {
+async fn system_font(Path((family, index)): Path<(String, usize)>, headers: HeaderMap) -> Response {
     match tokio::task::spawn_blocking(move || fonts::file(&family, index)).await {
-        Ok(Ok(Some(path))) => font_file(path).await,
+        Ok(Ok(Some(path))) => font_file(path, &headers).await,
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
-async fn font_file(path: PathBuf) -> Response {
+async fn font_file(path: PathBuf, headers: &HeaderMap) -> Response {
+    let Ok(metadata) = tokio::fs::metadata(&path).await else { return StatusCode::NOT_FOUND.into_response() };
+    let modified = metadata.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok()).unwrap_or_default();
+    let etag = format!("W/\"{:x}-{:x}\"", modified.as_nanos(), metadata.len());
+    if unchanged(headers, &etag) {
+        return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag), (header::CACHE_CONTROL, "no-cache".into())]).into_response();
+    }
     match tokio::fs::read(&path).await {
         Ok(data) => {
             let mime = mime_guess::from_path(&path).first_or_octet_stream().to_string();
-            ([(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, "no-cache".into())], data)
+            ([(header::CONTENT_TYPE, mime), (header::ETAG, etag), (header::CACHE_CONTROL, "no-cache".into())], data)
                 .into_response()
         }
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
-async fn spa(uri: Uri) -> Response {
+async fn spa(uri: Uri, headers: HeaderMap) -> Response {
     let path = uri.path().trim_start_matches('/');
     if path == "api" || path.starts_with("api/") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match Spa::get(path).or_else(|| Spa::get("index.html")) {
-        Some(file) => {
-            let mime = file.metadata.mimetype().to_owned();
-            ([(header::CONTENT_TYPE, mime)], file.data).into_response()
-        }
-        None => StatusCode::NOT_FOUND.into_response(),
+    let found = Spa::get(path).map(|file| (file, if path.starts_with("_app/immutable/") { "max-age=31536000, immutable" } else { "no-cache" }));
+    let Some((file, cache)) = found.or_else(|| Spa::get("index.html").map(|file| (file, "no-cache"))) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let etag = format!("W/\"{}\"", Base64::encode_string(&file.metadata.sha256_hash()));
+    if unchanged(&headers, &etag) {
+        return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag), (header::CACHE_CONTROL, cache.to_owned())]).into_response();
     }
+    let mime = file.metadata.mimetype().to_owned();
+    ([(header::CONTENT_TYPE, mime), (header::ETAG, etag), (header::CACHE_CONTROL, cache.to_owned())], file.data).into_response()
+}
+
+fn unchanged(headers: &HeaderMap, etag: &str) -> bool {
+    headers.get(header::IF_NONE_MATCH).is_some_and(|value| value == etag)
 }

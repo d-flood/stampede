@@ -178,6 +178,57 @@ async fn any_unpushed_commit_can_be_reworded_without_touching_the_work() {
 }
 
 #[tokio::test]
+async fn unpushed_commits_squash_into_one_without_touching_the_work() {
+    let server = Server::start("git-squash").await;
+    let origin = server.root.path().join("origin.git");
+    git(server.root.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    let repo = repository(&server, "squash");
+    git(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    for name in ["one", "two", "three", "four"] {
+        fs::write(repo.join(format!("{name}.txt")), format!("{name}\n")).unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["-c", &format!("user.name={name}"), "commit", "-qm", name]);
+        if name == "one" { git(&repo, &["push", "-qu", "origin", "main"]); }
+    }
+    fs::write(repo.join("four.txt"), "dirty\n").unwrap();
+    fs::write(repo.join("one.txt"), "staged\n").unwrap();
+    git(&repo, &["add", "one.txt"]);
+    let [tree, one] = ["HEAD^{tree}", "HEAD~3"].map(|rev| rev_parse(&repo, rev));
+    let [head, three, two] = ["HEAD", "HEAD~1", "HEAD~2"].map(|rev| rev_parse(&repo, rev));
+    let id = open(server.port, &repo).await;
+    let squash = format!("/api/projects/{id}/git/squash");
+
+    let (status, body) = post(server.port, &squash, json!({ "sha": two, "head": three, "message": "Stale" })).await;
+    assert_eq!((status, body.as_str()), (409, "The branch has new commits. Look them over and squash again."));
+    assert_eq!(post(server.port, &squash, json!({ "sha": head, "head": head, "message": "Alone" })).await.0, 409);
+    let (status, body) = post(server.port, &squash, json!({ "sha": one, "head": head, "message": "Pushed" })).await;
+    assert_eq!(status, 409);
+    assert!(body.contains("origin/main"), "{body}");
+
+    assert_eq!(post(server.port, &squash, json!({ "sha": &two[..7], "head": head, "message": "Two to four\n\nSquashed\n" })).await.0, 204);
+    assert_eq!(log_message(&repo, "HEAD"), "Two to four\n\nSquashed");
+    assert_eq!(rev_parse(&repo, "HEAD~1"), one);
+    assert_eq!(rev_parse(&repo, "HEAD^{tree}"), tree);
+    let output = Command::new("git").arg("-C").arg(&repo).args(["log", "-1", "--format=%an"]).output().unwrap();
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim_end(), "two");
+    assert_eq!(fs::read_to_string(repo.join("four.txt")).unwrap(), "dirty\n");
+    let status = get(server.port, &format!("/api/projects/{id}/git")).await;
+    assert_eq!(status["staged"], json!([{ "path": "one.txt", "kind": "modified" }]));
+    assert_eq!(status["unstaged"], json!([{ "path": "four.txt", "kind": "modified" }]));
+
+    git(&repo, &["stash", "-q"]);
+    git(&repo, &["checkout", "-qb", "side"]);
+    fs::write(repo.join("side.txt"), "side\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "side"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    git(&repo, &["merge", "-q", "--no-ff", "side", "-m", "Merge side"]);
+    let [head, squashed] = ["HEAD", "HEAD~1"].map(|rev| rev_parse(&repo, rev));
+    let (status, body) = post(server.port, &squash, json!({ "sha": squashed, "head": head, "message": "Across" })).await;
+    assert_eq!((status, body.as_str()), (409, "Merges cannot be squashed."));
+}
+
+#[tokio::test]
 async fn conflicts_must_be_resolved_before_anything_risky() {
     let server = Server::start("git-conflict").await;
     let repo = repository(&server, "conflict");

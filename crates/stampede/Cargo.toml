@@ -32,6 +32,7 @@ tar = "0.4.46"
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "process", "sync", "io-util", "time", "fs"] }
 tokio-tungstenite = "0.30.0"
 tokio-util = { version = "0.7.20", features = ["codec"] }
+tower-http = { version = "0.6.11", features = ["compression-gzip"] }
 toml = "1.1.8"
 ttf-parser = "0.25.1"
 uuid = { version = "1.28.0", features = ["v4"] }

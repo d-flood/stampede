@@ -38,6 +38,13 @@ pub struct Reword {
 }
 
 #[derive(Deserialize)]
+pub struct Squash {
+    sha: String,
+    head: String,
+    message: String,
+}
+
+#[derive(Deserialize)]
 pub struct Branch {
     branch: String,
 }
@@ -128,21 +135,34 @@ pub async fn undo(State(state): State<AppState>, Param(id): Param<String>) -> Re
 pub async fn reword(State(state): State<AppState>, Param(id): Param<String>, Json(request): Json<Reword>) -> Result<StatusCode, Failure> {
     let (dir, status) = open(&state, &id).await?;
     settled(&status)?;
-    let message = request.message.trim_end();
-    if message.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "Write a commit message first.".to_owned()));
-    }
-    let short = sha(&request.sha).ok_or_else(|| (StatusCode::BAD_REQUEST, format!("{} is not a sha", request.sha)))?;
-    let commit = exec(&dir, &["rev-parse", "--verify", "-q", &format!("{short}^{{commit}}")])
-        .await
-        .map_err(|_| (StatusCode::NOT_FOUND, format!("No commit {short}")))?;
-    let head = exec(&dir, &["rev-parse", "--verify", "-q", "HEAD"]).await.map_err(|_| refuse("There are no commits yet."))?;
-    if exec(&dir, &["merge-base", "--is-ancestor", &commit, &head]).await.is_err() {
-        return Err(refuse("That commit is not on this branch."));
-    }
+    let message = written(&request.message)?;
+    let (commit, head) = on_branch(&dir, &request.sha).await?;
     unpushed(&dir, &commit).await?;
     let tip = rewrite(&dir, &commit, &head, message).await.map_err(|output| (StatusCode::BAD_REQUEST, output))?;
     let reason = format!("reword: {}", message.lines().next().unwrap_or_default());
+    change(&state, &id, &dir, &["update-ref", "-m", &reason, "HEAD", &tip, &head]).await
+}
+
+/// Squashes a commit and every newer one on this branch into one with its author and the tip's tree,
+/// so the index and working tree stay as they are.
+pub async fn squash(State(state): State<AppState>, Param(id): Param<String>, Json(request): Json<Squash>) -> Result<StatusCode, Failure> {
+    let (dir, status) = open(&state, &id).await?;
+    settled(&status)?;
+    let message = written(&request.message)?;
+    let (commit, head) = on_branch(&dir, &request.sha).await?;
+    if head != request.head {
+        return Err(refuse("The branch has new commits. Look them over and squash again."));
+    }
+    if commit == head {
+        return Err(refuse("There are no newer commits to squash."));
+    }
+    let merges = exec(&dir, &["rev-list", "--count", "--merges", &head, "--not", &format!("{commit}^@")]).await;
+    if merges.as_deref() != Ok("0") {
+        return Err(refuse("Merges cannot be squashed."));
+    }
+    unpushed(&dir, &commit).await?;
+    let tip = squashed(&dir, &commit, &head, message).await.map_err(|output| (StatusCode::BAD_REQUEST, output))?;
+    let reason = format!("squash: {}", message.lines().next().unwrap_or_default());
     change(&state, &id, &dir, &["update-ref", "-m", &reason, "HEAD", &tip, &head]).await
 }
 
@@ -281,6 +301,14 @@ fn refuse(reason: impl Into<String>) -> Failure {
     (StatusCode::CONFLICT, reason.into())
 }
 
+fn written(message: &str) -> Result<&str, Failure> {
+    let message = message.trim_end();
+    if message.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Write a commit message first.".to_owned()));
+    }
+    Ok(message)
+}
+
 fn chosen(paths: &[String]) -> Result<Vec<&str>, Failure> {
     if paths.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "Choose files first.".to_owned()));
@@ -319,6 +347,19 @@ async fn marked(path: &Path) -> bool {
     String::from_utf8_lossy(&content).lines().any(|line| line.starts_with("<<<<<<<") || line.starts_with(">>>>>>>"))
 }
 
+/// Resolves a commit on this branch, along with the branch's tip.
+async fn on_branch(dir: &Path, text: &str) -> Result<(String, String), Failure> {
+    let short = sha(text).ok_or_else(|| (StatusCode::BAD_REQUEST, format!("{text} is not a sha")))?;
+    let commit = exec(dir, &["rev-parse", "--verify", "-q", &format!("{short}^{{commit}}")])
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, format!("No commit {short}")))?;
+    let head = exec(dir, &["rev-parse", "--verify", "-q", "HEAD"]).await.map_err(|_| refuse("There are no commits yet."))?;
+    if exec(dir, &["merge-base", "--is-ancestor", &commit, &head]).await.is_err() {
+        return Err(refuse("That commit is not on this branch."));
+    }
+    Ok((commit, head))
+}
+
 async fn unpushed(dir: &Path, commit: &str) -> Result<(), Failure> {
     let remotes = exec(dir, &["for-each-ref", "--contains", commit, "--format=%(refname)", "refs/remotes"]).await.unwrap_or_default();
     match remotes.lines().filter(|remote| !remote.ends_with("/HEAD")).find_map(|remote| remote.strip_prefix("refs/remotes/")) {
@@ -332,15 +373,25 @@ async fn rewrite(dir: &Path, commit: &str, head: &str, message: &str) -> Result<
     let mut rewritten = HashMap::new();
     for (index, original) in std::iter::once(commit).chain(descendants.lines()).enumerate() {
         let raw = output(dir, &["cat-file", "commit", original], None).await?;
-        let object = recommit(&raw, &rewritten, (index == 0).then_some(message));
-        let new = String::from_utf8_lossy(&output(dir, &["hash-object", "-t", "commit", "-w", "--stdin"], Some(&object)).await?).trim().to_owned();
-        rewritten.insert(original.to_owned(), new);
+        let object = recommit(&raw, &rewritten, None, (index == 0).then_some(message));
+        rewritten.insert(original.to_owned(), store(dir, &object).await?);
     }
     rewritten.remove(head).ok_or_else(|| "The branch changed while rewording.".to_owned())
 }
 
-/// A raw commit object with rewritten parents and, when given, a new message. Signatures no longer match, so they go.
-fn recommit(raw: &[u8], rewritten: &HashMap<String, String>, message: Option<&str>) -> Vec<u8> {
+async fn squashed(dir: &Path, commit: &str, head: &str, message: &str) -> Result<String, String> {
+    let tree = exec(dir, &["rev-parse", &format!("{head}^{{tree}}")]).await?;
+    let raw = output(dir, &["cat-file", "commit", commit], None).await?;
+    store(dir, &recommit(&raw, &HashMap::new(), Some(&tree), Some(message))).await
+}
+
+async fn store(dir: &Path, object: &[u8]) -> Result<String, String> {
+    let sha = output(dir, &["hash-object", "-t", "commit", "-w", "--stdin"], Some(object)).await?;
+    Ok(String::from_utf8_lossy(&sha).trim().to_owned())
+}
+
+/// A raw commit object with rewritten parents and, when given, a new tree and message. Signatures no longer match, so they go.
+fn recommit(raw: &[u8], rewritten: &HashMap<String, String>, tree: Option<&str>, message: Option<&str>) -> Vec<u8> {
     let split = raw.windows(2).position(|pair| pair == b"\n\n").map_or(raw.len(), |end| end + 1);
     let (headers, body) = raw.split_at(split);
     let mut object = Vec::new();
@@ -357,9 +408,10 @@ fn recommit(raw: &[u8], rewritten: &HashMap<String, String>, message: Option<&st
             continue;
         }
         let parent = line.strip_prefix(b"parent ").and_then(|parent| rewritten.get(String::from_utf8_lossy(parent).trim_end()));
-        match parent {
-            Some(parent) => object.extend_from_slice(format!("parent {parent}\n").as_bytes()),
-            None => object.extend_from_slice(line),
+        match (parent, tree.filter(|_| line.starts_with(b"tree "))) {
+            (Some(parent), _) => object.extend_from_slice(format!("parent {parent}\n").as_bytes()),
+            (_, Some(tree)) => object.extend_from_slice(format!("tree {tree}\n").as_bytes()),
+            _ => object.extend_from_slice(line),
         }
     }
     match message {

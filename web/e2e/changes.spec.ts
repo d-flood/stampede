@@ -378,15 +378,48 @@ test('History edits the message of an earlier commit', async ({ page }) => {
 	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD~1')}` }).click();
 	await page.getByRole('menuitem', { name: 'Edit Message…' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Edit commit message' });
-	const message = dialog.getByRole('textbox', { name: 'Commit message' });
-	await expect(message).toHaveValue('First');
+	const summary = dialog.getByRole('textbox', { name: 'Summary' });
+	await expect(summary).toHaveValue('First');
+	await expect(dialog.getByRole('textbox', { name: 'Description' })).toHaveValue('');
 	await page.screenshot({ path: test.info().outputPath('reword.png') });
-	await message.fill('First, reworded\n\nWith a body');
-	await dialog.getByRole('button', { name: 'Save' }).click();
+	await summary.fill('First, reworded');
+	await summary.press('Enter');
+	await expect(dialog).toBeVisible();
+	await page.keyboard.type('With a body');
+	await page.keyboard.press('Control+Enter');
 	await expect(dialog).toBeHidden();
 	await expect(sidebar.getByRole('list', { name: 'Commits' }).getByRole('button', { name: /First, reworded/ })).toBeVisible();
 	expect(git('log', '-1', '--format=%B', 'HEAD~1')).toBe('First, reworded\n\nWith a body');
 	expect(git('log', '-1', '--format=%s')).toBe('Second');
+});
+
+test('History squashes newer commits into an earlier one', async ({ page }) => {
+	const { root, git } = repository('squash');
+	for (const name of ['First', 'Second', 'Third']) {
+		writeFileSync(`${root}/${name}.txt`, `${name}\n`);
+		git('add', '.');
+		git('commit', '-qm', name === 'Second' ? 'Second\n\nWhy it changed' : name);
+	}
+	await openProject(page, 'squash');
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'History' }).click();
+	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD')}` }).click();
+	await expect(page.getByRole('menuitem', { name: 'Edit Message…' })).toBeVisible();
+	await expect(page.getByRole('menuitem', { name: /Squash/ })).toHaveCount(0);
+	await page.keyboard.press('Escape');
+	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD~1')}` }).click();
+	await page.getByRole('menuitem', { name: 'Squash Newer Commits Into This…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Squash 2 commits' });
+	await expect(dialog.getByRole('textbox', { name: 'Summary' })).toHaveValue('Second');
+	await expect(dialog.getByRole('textbox', { name: 'Description' })).toHaveValue('Why it changed\n\nThird');
+	await page.screenshot({ path: test.info().outputPath('squash.png') });
+	await dialog.getByRole('textbox', { name: 'Summary' }).fill('Second and third');
+	await dialog.getByRole('button', { name: 'Squash' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(sidebar.getByRole('list', { name: 'Commits' }).getByRole('button', { name: /Second and third/ })).toBeVisible();
+	expect(git('log', '--format=%s')).toBe('Second and third\nFirst');
+	expect(git('log', '-1', '--format=%B')).toBe('Second and third\n\nWhy it changed\n\nThird');
+	expect(git('ls-files')).toBe('First.txt\nSecond.txt\nThird.txt');
 });
 
 test('History copies the short and full hash of a commit', async ({ page, context }) => {

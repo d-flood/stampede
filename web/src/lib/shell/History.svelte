@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Device } from '#lib/device.svelte.ts';
-	import { commitFiles, letters, log, message, reword, split, undo, type Change, type Commit } from '#lib/git.ts';
+	import { commitFiles, letters, log, message, reword, split, squash, undo, type Change, type Commit } from '#lib/git.ts';
 	import { restoreMessage } from '#lib/shell/Changes.svelte';
 	import CopyMode from '#lib/shell/CopyMode.svelte';
 	import Button from '#lib/ui/Button.svelte';
@@ -13,6 +13,7 @@
 	import CaretRight from '~icons/ph/caret-right';
 	import Copy from '~icons/ph/copy';
 	import DotsThree from '~icons/ph/dots-three';
+	import GitMerge from '~icons/ph/git-merge';
 	import PencilSimple from '~icons/ph/pencil-simple';
 
 	type Props = { projectId: string; device: Device; onopen(change: Change, commit: Commit): void };
@@ -23,7 +24,8 @@
 	let cursor = $state<string>();
 	let files = $state<Record<string, Change[]>>({});
 	const expanded = new SvelteSet<string>();
-	let editing = $state<{ commit: Commit; text: string; loaded: boolean }>();
+	let editing = $state<{ commits: Commit[]; summary: string; description: string; loaded: boolean }>();
+	let edits = 0;
 	let saving = $state(false);
 	let refusal = $state<string>();
 	let failure = $state<string>();
@@ -68,24 +70,34 @@
 		files[sha] ??= await commitFiles(projectId, sha);
 	}
 
-	async function edit(commit: Commit) {
-		editing = { commit, text: '', loaded: false };
+	async function edit(range: Commit[]) {
+		const generation = ++edits;
+		editing = { commits: range, summary: '', description: '', loaded: false };
 		refusal = undefined;
 		try {
-			const text = await message(projectId, commit.sha);
-			if (editing?.commit.sha === commit.sha) editing = { commit, text, loaded: true };
+			const messages = await Promise.all(range.toReversed().map(({ sha }) => message(projectId, sha)));
+			const [summary, ...rest] = messages.join('\n\n').split('\n');
+			if (generation === edits && editing) editing = { commits: range, summary, description: rest.join('\n').replace(/^\n+/, ''), loaded: true };
 		} catch (error) {
 			refusal = error instanceof Error ? error.message : String(error);
 		}
 	}
 
+	function squashInto(commit: Commit) {
+		const at = commits?.indexOf(commit) ?? -1;
+		if (at > 0) edit(commits!.slice(0, at + 1));
+	}
+
 	async function save(event?: SubmitEvent) {
 		event?.preventDefault();
-		if (!editing?.loaded || !editing.text.trim() || saving) return;
+		if (!editing?.loaded || !editing.summary.trim() || saving) return;
+		const { commits: range, summary, description } = editing;
+		const text = description.trim() ? `${summary.trim()}\n\n${description}` : summary.trim();
 		saving = true;
 		refusal = undefined;
 		try {
-			await reword(projectId, editing.commit.sha, editing.text);
+			if (range.length > 1) await squash(projectId, range.at(-1)!.sha, range[0].sha, text);
+			else await reword(projectId, range[0].sha, text);
 			editing = undefined;
 		} catch (error) {
 			refusal = error instanceof Error ? error.message : String(error);
@@ -118,7 +130,8 @@
 			ArrowDown: () => rows[Math.min(rows.length - 1, at + 1)]?.focus(),
 			k: () => rows[Math.max(0, at - 1)]?.focus(),
 			ArrowUp: () => rows[Math.max(0, at - 1)]?.focus(),
-			r: () => commit && edit(commit),
+			r: () => commit && edit([commit]),
+			s: () => commit && squashInto(commit),
 			y: () => commit && copy(commit.short),
 			Y: () => commit && copy(commit.sha),
 			z: undoCommit
@@ -139,7 +152,8 @@
 			{#each commits ?? [] as commit, index (commit.sha)}
 				{@const open = expanded.has(commit.sha)}
 				{@const items = [
-					{ label: 'Edit Message…', icon: PencilSimple, hint: 'r', onselect: () => edit(commit) },
+					{ label: 'Edit Message…', icon: PencilSimple, hint: 'r', onselect: () => edit([commit]) },
+					...(index > 0 ? [{ label: 'Squash Newer Commits Into This…', icon: GitMerge, hint: 's', onselect: () => squashInto(commit) }] : []),
 					{ label: 'Copy Short Hash', icon: Copy, hint: 'y', onselect: () => copy(commit.short) },
 					{ label: 'Copy Full Hash', icon: Copy, hint: 'Y', onselect: () => copy(commit.sha) },
 					...(index === 0 ? [{ label: 'Undo Last Commit', icon: ArrowUUpLeft, hint: 'z', onselect: undoCommit }] : [])
@@ -205,27 +219,52 @@
 
 <Dialog
 	bind:open={() => !!editing, (open) => !open && (editing = undefined)}
-	title="Edit commit message"
-	description={editing ? `${editing.commit.short} · ${editing.commit.subject}` : ''}
+	title={editing && editing.commits.length > 1 ? `Squash ${editing.commits.length} commits` : 'Edit commit message'}
+	description={editing
+		? editing.commits.length > 1
+			? `${editing.commits.at(-1)!.short} and ${editing.commits.length === 2 ? 'the newer commit' : `${editing.commits.length - 1} newer commits`} become one`
+			: `${editing.commits[0].short} · ${editing.commits[0].subject}`
+		: ''}
 >
 	{#if editing}
-		<form id="reword" onsubmit={save}>
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions (Ctrl+Enter saves from either field.) -->
+		<form
+			id="reword"
+			onsubmit={save}
+			onkeydown={(event) => {
+				if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) save();
+			}}
+		>
+			<input
+				bind:value={editing.summary}
+				aria-label="Summary"
+				placeholder="Summary"
+				spellcheck="true"
+				autocomplete="off"
+				enterkeyhint="next"
+				disabled={!editing.loaded || saving}
+				onkeydown={(event) => {
+					if (event.key !== 'Enter' || event.ctrlKey || event.metaKey) return;
+					event.preventDefault();
+					event.currentTarget.form?.querySelector('textarea')?.focus();
+				}}
+			/>
 			<textarea
-				bind:value={editing.text}
-				aria-label="Commit message"
+				bind:value={editing.description}
+				aria-label="Description"
+				placeholder="Description"
 				rows="8"
 				spellcheck="true"
 				disabled={!editing.loaded || saving}
-				onkeydown={(event) => {
-					if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) save();
-				}}
 			></textarea>
 			{#if refusal}<p role="alert">{refusal}</p>{/if}
 		</form>
 	{/if}
 	{#snippet actions()}
 		<Button disabled={saving} onclick={() => (editing = undefined)}>Cancel</Button>
-		<Button type="submit" form="reword" variant="primary" disabled={saving || !editing?.loaded || !editing.text.trim()}>{saving ? 'Saving…' : 'Save'}</Button>
+		<Button type="submit" form="reword" variant="primary" disabled={saving || !editing?.loaded || !editing.summary.trim()}>
+			{saving ? 'Saving…' : editing && editing.commits.length > 1 ? 'Squash' : 'Save'}
+		</Button>
 	{/snippet}
 </Dialog>
 
@@ -299,6 +338,13 @@
 		background: none;
 	}
 
+	form {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+
+	input,
 	textarea {
 		box-sizing: border-box;
 		width: 100%;
@@ -312,6 +358,7 @@
 		resize: vertical;
 	}
 
+	input:focus-visible,
 	textarea:focus-visible {
 		outline: var(--border-width) solid var(--status-working);
 	}
