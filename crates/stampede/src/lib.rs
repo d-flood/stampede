@@ -100,7 +100,7 @@ struct AppState {
     config_path: PathBuf,
     disk: broadcast::Sender<watcher::Changed>,
     opened: watcher::Opened,
-    git: broadcast::Sender<git::Changed>,
+    git: git::Git,
     push: Arc<Push>,
     languages: Arc<LanguageServers>,
     layouts: Arc<Layouts>,
@@ -229,7 +229,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
         }
     });
     let (disk, opened) = watcher::spawn(projects.subscribe());
-    let git = git::spawn(projects.subscribe(), &disk);
+    let git = git::spawn(projects.subscribe(), &disk, devices.subscribe());
     eprintln!("stampede listening on http://{}", listener.local_addr()?);
     let state = AppState { media_dir: args.data_dir.join("media"), terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs, devices };
     let listener = listener.tap_io(|stream| {

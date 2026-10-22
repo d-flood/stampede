@@ -12,7 +12,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, process::Command};
 
-use super::{Changed, Kind, Operation, Status, inside, read, sha};
+use super::{Kind, Operation, Status, inside, read, sha};
 use crate::{
     AppState,
     files::{Failure, root},
@@ -283,7 +283,7 @@ async fn open(state: &AppState, id: &str) -> Result<(PathBuf, Status), Failure> 
 }
 
 fn changed(state: &AppState, id: &str) {
-    let _ = state.git.send(Changed { project_id: id.to_owned() });
+    state.git.reread(id);
 }
 
 /// Runs git to change the repository, then has every Device refresh, whether or not it succeeded.

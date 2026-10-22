@@ -157,7 +157,7 @@ impl Tree {
             }
             for path in changed {
                 if self.git_dir.as_deref().is_some_and(|dir| path.parent() == Some(dir)) {
-                    git |= path.file_name().is_some_and(|name| name == "HEAD" || name == "index");
+                    git |= path.file_name().is_some_and(|name| name == "HEAD" || name == "index" || name == "config");
                     continue;
                 }
                 let Some(rel) = self.relative(&path) else { continue };

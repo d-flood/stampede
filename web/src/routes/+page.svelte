@@ -48,7 +48,7 @@
 	import Tab from '#lib/ui/Tab.svelte';
 	import { onMount } from 'svelte';
 	import { on } from 'svelte/events';
-	import { SvelteMap } from 'svelte/reactivity';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
 	import FileCode from '~icons/ph/file-code';
@@ -84,6 +84,7 @@
 	let epics = $state<Record<string, Epic[]>>({});
 	const subscribed = new Set<string>();
 	const git = new SvelteMap<string, Git>();
+	const staleGit = new SvelteSet<string>();
 	let chosen = $state(restored.chosen);
 	let chosenTabs = $state<Record<string, string>>(restored.chosenTabs);
 	let splits = $state<Record<string, Split>>(restored.splits);
@@ -155,6 +156,7 @@
 	const shownChats = $derived(foreground ? chatTabs.filter((chat) => showing(chat.id)).map((chat) => chat.id) : []);
 	const shownEpics = $derived(foreground ? openEpics.filter((epic) => showing(epic.id)).map((epic) => epic.slug) : []);
 	const label = $derived(focused && projectLabels.get(focused.id));
+	const gitShown = $derived([...(focused ? [focused.id] : []), ...Object.keys(files).filter((projectId) => files[projectId].length)]);
 	const tabActions: Action[] = $derived.by(() => {
 		const items = tabTarget === 'drawer'
 			? [{ label: 'Terminal', icon: TerminalWindow, onselect: () => drawer.newTab() }]
@@ -183,6 +185,9 @@
 
 	$effect(() => device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics }));
 	$effect(() => saveLayout(deviceLayout));
+	$effect(() => {
+		if (visible) for (const projectId of gitShown) freshen(projectId);
+	});
 
 	const query = new URLSearchParams(location.search);
 	const [queryProject, queryTab] = [query.get('project'), query.get('tab')];
@@ -213,7 +218,10 @@
 				const chatsOwned: Record<string, Chat[]> = {};
 				for (const chat of message.chats) (chatsOwned[chat.projectId] ??= []).push(chat);
 				chats = chatsOwned;
-				for (const project of projects) invalidate(project.id);
+				for (const project of projects) {
+					invalidate(project.id);
+					staleGit.add(project.id);
+				}
 				subscribed.clear();
 				device.send({ type: 'projects.list' });
 				device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics });
@@ -345,7 +353,9 @@
 			case 'projects.changed': {
 				const left = focused;
 				const selected = activeTab;
+				const opened = message.projects.filter((project) => !projects.some((other) => other.id === project.id));
 				projects = message.projects;
+				for (const project of opened) staleGit.add(project.id);
 				if (left?.worktree && !projects.some((project) => project.id === left.id)) {
 					const { parent } = left.worktree;
 					chosenTabs[parent] = selected ?? chosenTabs[parent];
@@ -359,6 +369,9 @@
 				}
 				for (const projectId of git.keys()) {
 					if (!projects.some((project) => project.id === projectId)) git.delete(projectId);
+				}
+				for (const projectId of staleGit) {
+					if (!projects.some((project) => project.id === projectId)) staleGit.delete(projectId);
 				}
 				for (const projectId in splits) {
 					if (!projects.some((project) => project.id === projectId)) delete splits[projectId];
@@ -380,12 +393,11 @@
 					subscribed.add(id);
 					device.send({ type: 'epics.subscribe', projectId: id });
 				}
-				for (const project of projects) loadGit(project.id);
 				if (!activeTab) warmUp();
 				break;
 			}
 			case 'git.changed':
-				loadGit(message.projectId);
+				staleGit.add(message.projectId);
 				break;
 			case 'epics.changed':
 				closeArchived(message.projectId, message.epics);
@@ -475,7 +487,9 @@
 		if (screens) screen = Math.round(screens.scrollLeft / screens.clientWidth);
 	}
 
-	async function loadGit(projectId: string) {
+	async function freshen(projectId: string) {
+		if (!staleGit.has(projectId)) return;
+		staleGit.delete(projectId);
 		const loaded = await status(projectId).catch(() => undefined);
 		if (loaded && projects.some((project) => project.id === projectId)) git.set(projectId, loaded);
 	}
@@ -1052,7 +1066,7 @@
 						{#if active || warm()}
 							{#if file instanceof OpenDiff}
 								{#await import('#lib/shell/Diff.svelte') then { default: Diff }}
-									<Diff diff={file} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
+									<Diff diff={file} git={git.get(file.projectId)} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
 								{/await}
 							{:else if image(file.path) && !/\.svg$/i.test(file.path)}
 								{#await import('#lib/shell/ImageView.svelte') then { default: ImageView }}
@@ -1122,6 +1136,7 @@
 					onclose={(projectId) => closeProject(projectId)}
 					ondelete={(projectId) => removeWorktree(projectId)}
 					onworktree={(project) => (branching = project)}
+					onmenu={freshen}
 					onpick={pick}
 					onicon={(project) => (iconProject = project)}
 					{needs}
@@ -1147,6 +1162,7 @@
 			onclose={(projectId) => closeProject(projectId)}
 			ondelete={(projectId) => removeWorktree(projectId)}
 			onworktree={(project) => (branching = project)}
+			onmenu={freshen}
 			onpick={pick}
 			onicon={(project) => (iconProject = project)}
 			{needs}

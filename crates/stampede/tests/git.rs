@@ -42,6 +42,7 @@ async fn changes_are_everything_uncommitted_against_head() {
     let expected = json!({
         "isRepo": true,
         "isRoot": true,
+        "head": rev_parse(&repo, "HEAD"),
         "branch": "trunk",
         "ahead": 0,
         "behind": 0,
