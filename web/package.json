@@ -43,7 +43,7 @@
 		"bits-ui": "^2.19.5",
 		"codemirror": "^6.0.2",
 		"fuzzysort": "^4.0.2",
-		"ghostty-web": "0.4.0",
+		"ghostty-web": "0.4.0-next.20.g1858a59",
 		"markdown-it": "^14.3.2",
 		"style-mod": "^4.1.4",
 		"svelte": "^5.57.2",

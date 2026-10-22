@@ -989,6 +989,7 @@
 								terminalId={terminal.id}
 								pending={terminal.pending}
 								active={showing(terminal.id)}
+								displayed={foreground}
 								focused={terminal.id === activeTab && !drawerOpen}
 								{ended}
 								{project}

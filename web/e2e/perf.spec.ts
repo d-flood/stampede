@@ -6,6 +6,7 @@ import { openProject, screen, showSidebar } from './shell.ts';
 declare global {
 	interface Window {
 		clicked?: number;
+		animationFrames?: number;
 	}
 }
 
@@ -97,6 +98,51 @@ test('switching Tab or Project paints within 50 ms, and opening a file within 10
 		opens.push(await measure(page, sidebar.getByRole('button', { name: file, exact: true }), page.getByRole('tab', { name: file })));
 	}
 	check('Open file', opens, 100);
+});
+
+test('an idle Terminal draws nothing, and a hidden one catches up when shown', async ({ page }, { project }) => {
+	test.skip(project.name !== 'desktop', 'measured on the desktop only');
+	await page.addInitScript(() => {
+		const request = window.requestAnimationFrame.bind(window);
+		window.animationFrames = 0;
+		window.requestAnimationFrame = (callback) => request((time) => {
+			window.animationFrames!++;
+			callback(time);
+		});
+	});
+	const frames = () => page.evaluate(async () => {
+		const renderer = window.terminal!.renderer!;
+		const render = renderer.render;
+		let visible = 0;
+		renderer.render = (...args) => (visible++, render.apply(renderer, args));
+		const before = window.animationFrames!;
+		await new Promise((resolve) => setTimeout(resolve, 2000));
+		renderer.render = render;
+		return { all: window.animationFrames! - before, beyondVisible: window.animationFrames! - before - visible };
+	});
+	const ready = () => expect.poll(() => page.evaluate(() => window.terminal?.hasBracketedPaste())).toBe(true);
+	await openProject(page, fixture(`perf-${project.name}-idle`));
+	const first = await newTerminal(page);
+	await page.locator('.terminal:visible [contenteditable="true"]').focus();
+	await ready();
+	const canvas = (await page.locator('.terminal:visible canvas').elementHandle())!;
+	const pixels = () => canvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+	await expect.poll(async () => (await frames()).all, { message: 'frames while idle', timeout: 10_000 }).toBeLessThanOrEqual(2);
+
+	const idle = await pixels();
+	await page.keyboard.type('x');
+	await expect.poll(pixels).not.toBe(idle);
+
+	await page.keyboard.press('Backspace');
+	await page.keyboard.type('sleep 1; seq 1 40');
+	await page.keyboard.press('Enter');
+	await newTerminal(page);
+	await ready();
+	expect((await frames()).beyondVisible, 'frames while hidden output arrives').toBeLessThanOrEqual(2);
+	const hidden = await pixels();
+	await page.locator(`[data-tab="${first}"]`).click();
+	await expect.poll(pixels).not.toBe(hidden);
+	await expect.poll(() => screen(page)).toMatch(/^40$/m);
 });
 
 test('a fresh load on the phone paints the active Terminal within 1.5 s', async ({ page, context }, { project }) => {
