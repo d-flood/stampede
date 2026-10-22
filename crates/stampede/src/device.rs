@@ -819,11 +819,18 @@ impl Device {
     }
 }
 
-/// A finished subagent's items and a long finished command's output stay on the server until a Device expands the item.
+/// A finished subagent's items, a running subagent's items other than its own subagents, and a long finished command's
+/// output stay on the server until a Device expands the item.
 fn brief(mut item: chats::Item) -> Value {
+    let mut nested = None;
     let elided = match &mut item {
         chats::Item::Subagent { status: chats::Status::Done, items, .. } if !items.is_empty() => {
             items.clear();
+            true
+        }
+        chats::Item::Subagent { status: chats::Status::Working | chats::Status::Waiting, items, .. } => {
+            let subagents = std::mem::take(items).into_iter().filter(|item| matches!(item, chats::Item::Subagent { .. }));
+            nested = Some(subagents.map(brief).collect::<Vec<_>>());
             true
         }
         chats::Item::Command { status, output, .. } | chats::Item::Shell { status, output, .. }
@@ -834,6 +841,9 @@ fn brief(mut item: chats::Item) -> Value {
         _ => false,
     };
     let mut value = json!(item);
+    if let Some(nested) = nested {
+        value["items"] = json!(nested);
+    }
     if elided {
         value["elided"] = json!(true);
     }

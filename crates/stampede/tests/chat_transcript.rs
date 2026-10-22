@@ -2,7 +2,7 @@ mod common;
 
 use std::{env, fs, time::Duration};
 
-use common::{Server, control, next, next_control};
+use common::{Server, control, expand, next, next_control};
 use serde_json::{Value, json};
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
@@ -405,9 +405,10 @@ async fn a_codex_subagent_reports_its_current_command_before_completion() {
     }
     control(&mut socket, json!({ "type": "chat.attach", "chatId": chat_id })).await;
     let snapshot = next_control(&mut socket, "chat.items").await;
-    let child = snapshot["items"].as_array().unwrap().iter().find(|item| item["kind"] == "subagent").unwrap();
-    assert_eq!(child["status"], "working");
-    assert_eq!(child["activity"], "Running cat notes.txt todo.txt");
+    let index = snapshot["items"].as_array().unwrap().iter().position(|item| item["kind"] == "subagent").unwrap();
+    assert_eq!(snapshot["items"][index]["status"], "working");
+    assert_eq!(snapshot["items"][index]["activity"], "Running cat notes.txt todo.txt");
+    let child = expand(&mut socket, &chat_id, index).await;
     assert!(child["items"].as_array().unwrap().iter().any(|item| item["kind"] == "command" && item["status"] == "running"));
     fs::remove_file(directory.path().join("activity")).unwrap();
 }
@@ -611,16 +612,48 @@ async fn codex_subagent_activity_stays_nested_and_todos_replace_live_and_after_r
 }
 
 async fn subagents(agent: &str) {
-    let (mut server, mut socket, chat_id) = launch(agent, "subagents").await;
+    let directory = tempfile::tempdir().unwrap();
+    let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/{agent}/subagents.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let mut gated = String::new();
+    let mut inserted = false;
+    for line in recording.lines() {
+        let entry: Value = serde_json::from_str(line).unwrap();
+        if entry.get("gate").is_some() { continue; }
+        gated.push_str(line);
+        gated.push('\n');
+        let message = &entry["stdout"];
+        let nested = if agent == "codex" {
+            message["method"] == "item/completed" && message["params"]["item"]["type"] == "commandExecution"
+        } else {
+            message["type"] == "assistant" && message["parent_tool_use_id"].is_string()
+        };
+        if nested && !inserted {
+            gated.push_str("{\"gate\":\"nested\"}\n");
+            inserted = true;
+        }
+    }
+    assert!(inserted);
+    let fixture = directory.path().join("subagents.jsonl");
+    fs::write(&fixture, gated).unwrap();
+    let (mut server, mut socket, chat_id) = launch_with_gates(agent, fixture.to_str().unwrap(), Some(directory.path())).await;
     let mut view = View::default();
-    view.turn(&mut socket, &chat_id, "Find needle using a subagent and track the steps.").await;
-    assert_eq!(view.children.first().unwrap()["status"], "working");
-    assert_eq!(view.children.first().unwrap()["items"], json!([]));
-    assert!(view.children.iter().any(|child| child["status"] == "working" && child["items"].as_array().is_some_and(|items| !items.is_empty())));
+    control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Find needle using a subagent and track the steps." })).await;
+    timeout(Duration::from_secs(5), async {
+        while !directory.path().join("nested").exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await.unwrap();
+    view.follow(&mut socket, &chat_id, |view| view.items.iter().any(|item| item["kind"] == "subagent")).await;
     let index = view.items.iter().position(|item| item["kind"] == "subagent").unwrap();
-    assert_eq!(view.items[index]["elided"], true);
     control(&mut socket, json!({ "type": "chat.expand", "chatId": chat_id, "index": index })).await;
     view.follow(&mut socket, &chat_id, |view| view.items[index].get("elided").is_none()).await;
+    fs::remove_file(directory.path().join("nested")).unwrap();
+    view.follow(&mut socket, &chat_id, |view| view.statuses.last().is_some_and(|status| status == "done")).await;
+    let expanded = view.children.iter().position(|child| child.get("elided").is_none()).unwrap();
+    assert!(expanded > 0);
+    assert!(view.children[..expanded].iter().all(|child| child["status"] == "working" && child["elided"] == true && child["items"] == json!([])));
+    assert!(view.children[expanded..].iter().all(|child| child.get("elided").is_none()));
+    assert!(view.children[expanded..].iter().any(|child| child["status"] == "working" && child["items"].as_array().is_some_and(|items| !items.is_empty())));
     let child = view.items[index].clone();
     assert_eq!(child["status"], "done");
     assert!(child["id"].as_str().is_some_and(|id| !id.is_empty()));
