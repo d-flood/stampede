@@ -1,10 +1,25 @@
 <script lang="ts">
 	import { render } from '#lib/chat/markdown.ts';
 	import type { Item } from '#lib/device.svelte.ts';
+	import { onDestroy, untrack } from 'svelte';
 
 	let { item }: { item: Extract<Item, { kind: 'text' }> } = $props();
 
-	const html = $derived(render(item.text));
+	let framed = $state(untrack(() => item.text));
+	let frame = 0;
+
+	$effect(() => {
+		if (item.streaming && item.text !== framed && !frame) {
+			frame = requestAnimationFrame(() => {
+				frame = 0;
+				framed = item.text;
+			});
+		}
+	});
+
+	onDestroy(() => cancelAnimationFrame(frame));
+
+	const html = $derived(render(item.streaming ? framed : item.text));
 </script>
 
 <div class="text" class:streaming={item.streaming} class:commentary={item.phase === 'commentary'}>{@html html}</div>

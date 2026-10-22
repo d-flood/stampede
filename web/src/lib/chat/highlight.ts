@@ -1,4 +1,4 @@
-import { language as loadLanguage } from '#lib/editor/languages.ts';
+import { extension, language as loadLanguage } from '#lib/editor/languages.ts';
 import { highlight } from '#lib/editor/theme.ts';
 import { language, type Language } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
@@ -8,9 +8,16 @@ type Parser = Language['parser'];
 type Token = { text: string; classes: string };
 type Line = { kind: string; prefix: string; tokens: Token[] };
 
-export async function parser(path: string): Promise<Parser | undefined> {
-	const extensions = await loadLanguage(path);
-	return EditorState.create({ extensions }).facet(language)?.parser;
+const parsers = new Map<string, Promise<Parser | undefined>>();
+
+export function parser(path: string): Promise<Parser | undefined> {
+	const key = extension(path);
+	let found = parsers.get(key);
+	if (!found) {
+		found = loadLanguage(path).then((extensions) => EditorState.create({ extensions }).facet(language)?.parser);
+		parsers.set(key, found);
+	}
+	return found;
 }
 
 const inline = /\bpython[\d.]*\b[^\n'"|;&]*?(?:-c\s+(?:'([^']*)|"((?:[^"\\]|\\.)*))|<<-?\s*(['"]?)(\w+)\3[^\n]*\n)/dg;

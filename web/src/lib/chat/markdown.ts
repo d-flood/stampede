@@ -8,6 +8,12 @@ markdown.renderer.rules.link_open = (tokens, index, options, _env, self) => {
 	return self.renderToken(tokens, index, options);
 };
 
+const rendered = new Map<string, string>();
+
 export function render(text: string): string {
-	return markdown.render(text);
+	const html = rendered.get(text) ?? markdown.render(text);
+	rendered.delete(text);
+	rendered.set(text, html);
+	if (rendered.size > 200) rendered.delete(rendered.keys().next().value!);
+	return html;
 }

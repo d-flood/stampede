@@ -53,7 +53,10 @@ const loaders: Record<string, Load> = {
 	svelte: async () => (await import('@replit/codemirror-lang-svelte')).svelte()
 };
 
+export function extension(path: string): string {
+	return path.match(/\.([^./]+)$/)?.[1].toLowerCase() ?? '';
+}
+
 export function language(path: string): Promise<Extension> {
-	const extension = path.match(/\.([^./]+)$/)?.[1].toLowerCase() ?? '';
-	return loaders[extension]?.() ?? Promise.resolve([]);
+	return loaders[extension(path)]?.() ?? Promise.resolve([]);
 }
