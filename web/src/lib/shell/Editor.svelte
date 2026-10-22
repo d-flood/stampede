@@ -43,6 +43,8 @@
 	let wrap = $state(false);
 	const svg = $derived(/\.svg$/i.test(file.path) && !(file instanceof OpenConfig));
 	const markdown = $derived(/\.(md|markdown)$/i.test(file.path) && !(file instanceof OpenConfig));
+	const original = $derived(git?.isRepo ? (git.changes.find((change) => change.path === file.path)?.from ?? file.path) : undefined);
+	const head = $derived(git?.head);
 	let rendered = $state(false);
 	let content = $state<string>();
 	const sync = new Sync(() => file, () => view);
@@ -112,10 +114,10 @@
 	});
 
 	$effect(() => {
-		const current = view;
+		const [current, path, commit] = [view, original, head];
 		if (!current || file instanceof OpenConfig) return;
 		let stale = false;
-		baseline(file.projectId, file.path, git).then((content) => {
+		(path === undefined ? Promise.resolve(null) : baseline(file.projectId, commit, path)).then((content) => {
 			if (!stale) current.dispatch({ effects: setBaseline.of(content === null ? null : current.state.toText(content)) });
 		});
 		return () => {

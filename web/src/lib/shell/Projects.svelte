@@ -18,11 +18,12 @@
 		onclose(id: string): void;
 		ondelete(id: string): void;
 		onworktree(project: Project): void;
+		onmenu(id: string): void;
 		onpick(): void;
 		onicon(project: Project): void;
 	};
 
-	let { projects, labels, worktrees, epics, roots, working, needs, focused, onfocus, onclose, ondelete, onworktree, onpick, onicon }: Props = $props();
+	let { projects, labels, worktrees, epics, roots, working, needs, focused, onfocus, onclose, ondelete, onworktree, onmenu, onpick, onicon }: Props = $props();
 
 	const gutter = $derived(projects.some((project) => worktrees.get(project.id)?.length));
 </script>
@@ -45,6 +46,7 @@
 				{onclose}
 				{ondelete}
 				{onworktree}
+				{onmenu}
 				{onicon}
 			/>
 		{/each}

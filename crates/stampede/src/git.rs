@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, btree_map::Entry},
     path::{Component, Path, PathBuf},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -65,11 +66,13 @@ pub enum Operation {
     Revert,
 }
 
-#[derive(Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     is_repo: bool,
     is_root: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    head: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     branch: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -128,7 +131,8 @@ pub struct ShowQuery {
 }
 
 pub async fn status(State(state): State<AppState>, Param(id): Param<String>) -> Result<Json<Status>, Failure> {
-    Ok(Json(read(&root(&state, &id)?).await.unwrap_or_default()))
+    let dir = root(&state, &id)?;
+    Ok(Json(state.git.status(&id, &dir).await))
 }
 
 pub async fn refs(State(state): State<AppState>, Param(id): Param<String>) -> Result<Json<Refs>, Failure> {
@@ -209,14 +213,43 @@ pub async fn message(State(state): State<AppState>, Param((id, commit)): Param<(
 }
 
 pub async fn read(dir: &Path) -> Option<Status> {
-    let (toplevel, git_dir) = locate(dir).await?;
-    let prefix = dir.strip_prefix(toplevel).ok()?;
-    let args = ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--find-renames", "--", "."];
-    let (output, origin) = tokio::join!(git(dir, &args), git(dir, &["config", "--get", "remote.origin.url"]));
-    let mut status = parse(&output?, prefix);
-    status.origin = origin.is_some();
-    status.operation = operation(&git_dir);
-    Some(status)
+    Repo::default().read(dir, true).await
+}
+
+/// What a Project's status needs besides `git status`: where its repository is, found once, and whether it has an
+/// origin, read again only when its git directory changes.
+#[derive(Default)]
+struct Repo {
+    located: Option<(PathBuf, PathBuf)>,
+    origin: Option<bool>,
+}
+
+impl Repo {
+    async fn read(&mut self, dir: &Path, git_changed: bool) -> Option<Status> {
+        if self.located.is_none() {
+            self.located = locate(dir).await;
+        }
+        let (toplevel, git_dir) = self.located.as_ref()?;
+        let prefix = dir.strip_prefix(toplevel).ok()?;
+        let known = self.origin.filter(|_| !git_changed);
+        let origin = async move {
+            match known {
+                Some(origin) => origin,
+                None => git(dir, &["config", "--get", "remote.origin.url"]).await.is_some(),
+            }
+        };
+        let args = ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--find-renames", "--", "."];
+        let (output, origin) = tokio::join!(git(dir, &args), origin);
+        let Some(output) = output else {
+            *self = Self::default();
+            return None;
+        };
+        let mut status = parse(&output, prefix);
+        status.origin = origin;
+        status.operation = operation(git_dir);
+        self.origin = Some(origin);
+        Some(status)
+    }
 }
 
 fn operation(git_dir: &Path) -> Option<Operation> {
@@ -358,6 +391,7 @@ fn parse(output: &[u8], prefix: &Path) -> Status {
                 if let Some(name) = header.strip_prefix("branch.head ") {
                     head = Some(name.to_owned());
                 } else if let Some(commit) = header.strip_prefix("branch.oid ") {
+                    status.head = (commit != "(initial)").then(|| commit.to_owned());
                     oid = Some(commit.chars().take(7).collect());
                 } else if let Some(upstream) = header.strip_prefix("branch.upstream ") {
                     status.upstream = Some(upstream.to_owned());
@@ -443,16 +477,76 @@ fn sides(status: &mut Status, xy: &str, path: &str, from: Option<String>) {
     }
 }
 
+/// Each open Project's git status, read by its throttle once per change while a Device is connected and served to
+/// every Device from that read.
+#[derive(Clone)]
+pub struct Git {
+    changed: broadcast::Sender<Changed>,
+    throttles: Arc<Mutex<HashMap<String, Throttle>>>,
+    devices: watch::Receiver<usize>,
+}
+
+struct Throttle {
+    signal: mpsc::UnboundedSender<bool>,
+    status: watch::Sender<Option<Status>>,
+}
+
+impl Git {
+    pub fn subscribe(&self) -> broadcast::Receiver<Changed> {
+        self.changed.subscribe()
+    }
+
+    /// Has the Project read again after git changed it; Devices hear `git.changed` once that read is shared.
+    pub fn reread(&self, id: &str) {
+        match self.throttles.lock().unwrap().get(id) {
+            Some(throttle) => {
+                let _ = throttle.signal.send(true);
+            }
+            None => {
+                let _ = self.changed.send(Changed { project_id: id.to_owned() });
+            }
+        }
+    }
+
+    /// The shared status while throttles keep it fresh, that is while a Device is connected; otherwise a new read.
+    async fn status(&self, id: &str, dir: &Path) -> Status {
+        let shared = self.throttles.lock().unwrap().get(id).map(|throttle| throttle.status.clone());
+        if *self.devices.borrow() > 0
+            && let Some(status) = shared.as_ref().and_then(|shared| shared.borrow().clone())
+        {
+            return status;
+        }
+        let status = read(dir).await.unwrap_or_default();
+        if let Some(shared) = shared {
+            shared.send_if_modified(|current| {
+                let empty = current.is_none();
+                if empty {
+                    *current = Some(status.clone());
+                }
+                empty
+            });
+        }
+        status
+    }
+}
+
 pub fn spawn(
     mut projects: watch::Receiver<List>,
     disk: &broadcast::Sender<watcher::Changed>,
-) -> broadcast::Sender<Changed> {
+    mut devices: watch::Receiver<usize>,
+) -> Git {
     let (changes, _) = broadcast::channel(256);
-    let sender = changes.clone();
+    let git = Git { changed: changes.clone(), throttles: Arc::default(), devices: devices.clone() };
+    let throttles = Arc::clone(&git.throttles);
     let mut disk = disk.subscribe();
     projects.mark_changed();
+    let mut connected = *devices.borrow_and_update();
     tokio::spawn(async move {
-        let mut throttles = HashMap::<String, mpsc::UnboundedSender<bool>>::new();
+        let signal = |git: bool| {
+            for throttle in throttles.lock().unwrap().values() {
+                let _ = throttle.signal.send(git);
+            }
+        };
         loop {
             tokio::select! {
                 opened = projects.changed() => {
@@ -460,48 +554,64 @@ pub fn spawn(
                         break;
                     }
                     let list = projects.borrow_and_update().clone();
+                    let mut throttles = throttles.lock().unwrap();
                     throttles.retain(|id, _| list.iter().any(|project| project.id == *id));
                     for project in list.iter() {
                         if !throttles.contains_key(&project.id) {
-                            throttles.insert(project.id.clone(), throttle(project.clone(), sender.clone()));
+                            throttles.insert(project.id.clone(), throttle(project.clone(), changes.clone(), devices.clone()));
                         }
                     }
                 }
                 changed = disk.recv() => match changed {
                     Ok(changed) => {
-                        if let Some(throttle) = throttles.get(&changed.project_id) {
-                            let _ = throttle.send(changed.git);
+                        if let Some(throttle) = throttles.lock().unwrap().get(&changed.project_id) {
+                            let _ = throttle.signal.send(changed.git);
                         }
                     }
-                    Err(RecvError::Lagged(_)) => {
-                        for throttle in throttles.values() {
-                            let _ = throttle.send(true);
-                        }
-                    }
+                    Err(RecvError::Lagged(_)) => signal(true),
                     Err(RecvError::Closed) => break,
                 },
+                Ok(()) = devices.changed() => {
+                    let count = *devices.borrow_and_update();
+                    if connected == 0 && count > 0 {
+                        signal(false);
+                    }
+                    connected = count;
+                }
             }
         }
     });
-    changes
+    git
 }
 
-fn throttle(project: Project, changed: broadcast::Sender<Changed>) -> mpsc::UnboundedSender<bool> {
+/// Reads the Project on each batch of signals while a Device is connected, at most once per THROTTLE, sharing the
+/// result before telling Devices. Without a Device it drops the shared status instead, remembering whether git changed.
+fn throttle(project: Project, changed: broadcast::Sender<Changed>, devices: watch::Receiver<usize>) -> Throttle {
     let (signal, mut signals) = mpsc::unbounded_channel();
+    let (status, _) = watch::channel(None);
+    let shared = status.clone();
     tokio::spawn(async move {
         let dir = PathBuf::from(&project.path);
-        let mut last = None;
+        let mut repo = Repo::default();
+        let mut missed = false;
         while let Some(mut git) = signals.recv().await {
             while let Ok(more) = signals.try_recv() {
                 git |= more;
             }
-            let status = read(&dir).await;
-            if git || status != last {
+            if *devices.borrow() == 0 {
+                missed |= git;
+                shared.send_replace(None);
+                continue;
+            }
+            git |= std::mem::take(&mut missed);
+            let read = repo.read(&dir, git).await.unwrap_or_default();
+            let differs = shared.borrow().as_ref() != Some(&read);
+            shared.send_replace(Some(read));
+            if git || differs {
                 let _ = changed.send(Changed { project_id: project.id.clone() });
             }
-            last = status;
             sleep(THROTTLE).await;
         }
     });
-    signal
+    Throttle { signal, status }
 }

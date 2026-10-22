@@ -28,10 +28,11 @@
 		onclose(id: string): void;
 		ondelete(id: string): void;
 		onworktree(project: Project): void;
+		onmenu(id: string): void;
 		onicon(project: Project): void;
 	};
 
-	let { project, label, labels, tiles, epics, root, working = false, needs = 0, compact = false, gutter = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onicon }: Props =
+	let { project, label, labels, tiles, epics, root, working = false, needs = 0, compact = false, gutter = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onmenu, onicon }: Props =
 		$props();
 
 	let folded = $state(false);
@@ -76,7 +77,7 @@
 			{ label: 'Change project icon…', onselect: () => onicon(project) },
 			...(root ? [{ label: 'New worktree…', onselect: () => onworktree(project) }] : []),
 			{ label: 'Close', onselect: () => onclose(project.id) }
-		]}>
+		]} onopen={() => onmenu(project.id)}>
 			{#snippet trigger(props)}
 				<button
 					{...props}

@@ -9,6 +9,7 @@ export type Operation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
 export type Git = {
 	isRepo: boolean;
 	isRoot: boolean;
+	head?: string;
 	branch?: string;
 	detached?: boolean;
 	upstream?: string;
@@ -43,10 +44,6 @@ export const letters = Object.fromEntries(kinds.map(({ kind, letter }) => [kind,
 
 export async function status(projectId: string): Promise<Git> {
 	return json(await fetch(`/api/projects/${projectId}/git`));
-}
-
-export async function head(projectId: string, path: string): Promise<string> {
-	return text(await fetch(`/api/projects/${projectId}/git/head?${new URLSearchParams({ path })}`));
 }
 
 export async function index(projectId: string, path: string): Promise<string> {
@@ -153,8 +150,7 @@ async function text(response: Response): Promise<string> {
 	return response.text();
 }
 
-export async function baseline(projectId: string, path: string, git?: Git): Promise<string | null> {
-	if (!git?.isRepo) return null;
-	const change = git.changes.find((change) => change.path === path);
-	return head(projectId, change?.from ?? path);
+/** HEAD's copy of a file, read at the commit a status named; empty before the first commit. */
+export async function baseline(projectId: string, commit: string | undefined, path: string): Promise<string> {
+	return commit ? show(projectId, commit, path) : '';
 }

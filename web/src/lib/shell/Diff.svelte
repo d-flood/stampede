@@ -8,7 +8,7 @@
 	import { read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
-	import { head, index, show, status } from '#lib/git.ts';
+	import { baseline, index, show, type Git } from '#lib/git.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
@@ -24,6 +24,7 @@
 
 	type Props = {
 		diff: OpenDiff;
+		git?: Git;
 		device: Device;
 		servers: LanguageServers;
 		active: boolean;
@@ -33,15 +34,21 @@
 	};
 	type Shown = { b: EditorView; original: Text; editable: boolean; setOriginal(content: string): void; destroy(): void };
 
-	let { diff, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
+	let { diff, git, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let shown = $state.raw<Shown>();
 	let syntax = $state.raw<Extension>();
 	let note = $state<string>();
 	let heads = 0;
+	let left: string | undefined;
+	let right: Contents | undefined;
 	const sync = new Sync(() => diff, () => shown?.b);
 	const editable = $derived(diff.against === 'HEAD' || diff.against === 'index');
+	const versusHead = $derived(diff.against === 'HEAD' || diff.against === 'staged');
+	const loaded = $derived(!!git);
+	const from = $derived(git?.changes.find((change) => change.path === diff.path)?.from);
+	const head = $derived(git?.head);
 
 	onMount(() => {
 		let disposed = false;
@@ -50,21 +57,39 @@
 				if (disposed) return;
 				syntax = extension;
 				if (!sides) return;
-				const [a, b] = sides;
-				if (b.binary) {
-					note = 'binary file';
-					return;
-				}
-				const doc = build(a, b.content).b.state.doc;
-				if (editable) sync.start(b.hash, doc);
+				left ??= sides[0];
+				right = sides[1];
+				start();
 			},
 			(error: Error) => (note = error.message)
 		);
-		const unlisten = editable ? [sync.listen(device), device.listen({ message })] : diff.against === 'staged' ? [device.listen({ message })] : [];
+		const unlisten = editable ? [sync.listen(device)] : [];
+		if (diff.against === 'index' || diff.against === 'staged') unlisten.push(device.listen({ message }));
 		return () => {
 			disposed = true;
 			for (const stop of unlisten) stop();
 			shown?.destroy();
+		};
+	});
+
+	$effect(() => {
+		if (!versusHead || !loaded) return;
+		const [path, commit] = [from ?? diff.path, head];
+		diff.from = from;
+		let stale = false;
+		baseline(diff.projectId, commit, path).then(
+			(content) => {
+				if (stale) return;
+				left = content;
+				if (shown) update(content, shown.b.state.doc.toString());
+				else start();
+			},
+			(error: Error) => {
+				if (!stale && !shown) note = error.message;
+			}
+		);
+		return () => {
+			stale = true;
 		};
 	});
 
@@ -93,17 +118,22 @@
 		if (focused && shown && form() === 'desktop') shown.b.focus();
 	});
 
-	function sides(): Promise<[string, Contents]> | undefined {
-		if (diff.against === 'HEAD' || diff.against === 'index') return Promise.all([original(), current()]);
-		if (diff.against === 'staged') return Promise.all([original(), staged()]);
+	/** Both sides, but HEAD's, which follows the status. */
+	function sides(): Promise<[string | undefined, Contents]> | undefined {
+		if (diff.against === 'HEAD') return Promise.all([undefined, current()]);
+		if (diff.against === 'index') return Promise.all([index(diff.projectId, diff.path), current()]);
+		if (diff.against === 'staged') return Promise.all([undefined, staged()]);
 		if (diff.against !== 'disk') return committed(diff.against.sha);
 	}
 
-	async function original() {
-		if (diff.against === 'index') return index(diff.projectId, diff.path);
-		const git = await status(diff.projectId);
-		diff.from = git.changes.find((change) => change.path === diff.path)?.from;
-		return head(diff.projectId, diff.from ?? diff.path);
+	function start() {
+		if (shown || note || left === undefined || !right) return;
+		if (right.binary) {
+			note = 'binary file';
+			return;
+		}
+		const doc = build(left, right.content).b.state.doc;
+		if (editable) sync.start(right.hash, doc);
 	}
 
 	async function committed(sha: string): Promise<[string, Contents]> {
@@ -131,13 +161,22 @@
 		if (message.type === 'hello' || (message.type === 'git.changed' && message.projectId === diff.projectId)) refresh();
 	}
 
+	/** Reads the index side again, which can change while the status stays the same. */
 	async function refresh() {
 		if (!shown) return;
 		const generation = ++heads;
-		const [content, side] = await Promise.all([original(), diff.against === 'staged' ? staged() : undefined]);
-		if (generation !== heads || !shown) return;
-		const right = side && !side.binary ? side.content : shown.b.state.doc.toString();
-		if (right !== shown.b.state.doc.toString() || !content !== !shown.original.length) build(content, right);
+		if (diff.against === 'index') {
+			const content = await index(diff.projectId, diff.path);
+			if (generation === heads && shown) update(content, shown.b.state.doc.toString());
+		} else {
+			const side = await staged();
+			if (generation === heads && shown && !side.binary) update(shown.original.toString(), side.content);
+		}
+	}
+
+	function update(content: string, side: string) {
+		if (!shown) return;
+		if (side !== shown.b.state.doc.toString() || !content !== !shown.original.length) build(content, side);
 		else if (content !== shown.original.toString()) shown.setOriginal(content);
 	}
 

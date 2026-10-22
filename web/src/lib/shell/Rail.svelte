@@ -25,12 +25,13 @@
 		onclose(id: string): void;
 		ondelete(id: string): void;
 		onworktree(project: Project): void;
+		onmenu(id: string): void;
 		onpick(): void;
 		onicon(project: Project): void;
 		attention?: Snippet;
 	};
 
-	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, needs, focused, onfocus, onreorder, onclose, ondelete, onworktree, onpick, onicon, attention }: Props = $props();
+	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, needs, focused, onfocus, onreorder, onclose, ondelete, onworktree, onmenu, onpick, onicon, attention }: Props = $props();
 
 	const gutter = $derived(projects.some((project) => worktrees.get(project.id)?.length));
 
@@ -104,6 +105,7 @@
 				{onclose}
 				{ondelete}
 				{onworktree}
+				{onmenu}
 				{onicon}
 			/>
 		{/each}
