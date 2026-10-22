@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fmt,
     fs::{self, File},
     io::{self, BufRead, Read},
     path::{Path, PathBuf},
@@ -8,7 +9,11 @@ use std::{
 };
 
 use futures_util::StreamExt;
-use serde_json::{Value, json};
+use serde::{
+    Deserialize, Deserializer,
+    de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor},
+};
+use serde_json::{Map, Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::unix::OwnedWriteHalf,
@@ -210,7 +215,7 @@ async fn launch(
     transcript.location = Some(Location { data_dir: data_dir.to_owned(), id: id.to_owned(), env: env.clone() });
     transcript.session = session.map(str::to_owned);
     if let Some(session) = session {
-        transcript.history(env, session, at);
+        transcript = transcript.replay(env, session, at).await?;
         transcript.stop_commands();
     }
     transcript.settings.chosen = settings.clone();
@@ -242,7 +247,7 @@ pub async fn reattach(
     transcript.window = chat.context.map(|context| context.window);
     transcript.settings.chosen = chat.settings.chosen.clone();
     if let Some(session) = &chat.agent_session {
-        transcript.history(env, session, turn.as_deref().or(chat.resume_at.as_deref()));
+        transcript = transcript.replay(env, session, turn.as_deref().or(chat.resume_at.as_deref())).await?;
     }
     for message in replay {
         match message {
@@ -632,33 +637,170 @@ fn lines(file: File) -> impl Iterator<Item = String> {
 }
 
 /// How a session entry chains to the others, which is all replaying needs before reading the entry in full.
+#[derive(Deserialize)]
 struct Link {
+    #[serde(rename = "type")]
     kind: Option<String>,
+    subtype: Option<String>,
     uuid: Option<String>,
-    parent: Option<Value>,
+    #[serde(rename = "parentUuid", default, deserialize_with = "present")]
+    parent: Option<Option<String>>,
+    #[serde(rename = "isSidechain", default)]
     sidechain: bool,
-    compact: bool,
-    tool_uses: Vec<String>,
-    tool_results: Vec<String>,
+    message: Option<Linked>,
+}
+
+#[derive(Deserialize)]
+struct Linked {
+    #[serde(default, deserialize_with = "blocks")]
+    content: Vec<Block>,
+}
+
+#[derive(Deserialize)]
+struct Block {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    id: Option<String>,
+    tool_use_id: Option<String>,
 }
 
 impl Link {
-    fn new(entry: &Value) -> Self {
-        let blocks = || entry["message"]["content"].as_array().into_iter().flatten();
-        let ids = |kind: &str, field: &str| blocks().filter(|block| block["type"] == kind).filter_map(|block| block[field].as_str().map(str::to_owned)).collect();
-        Self {
-            kind: entry["type"].as_str().map(str::to_owned),
-            uuid: entry["uuid"].as_str().map(str::to_owned),
-            parent: entry.get("parentUuid").cloned(),
-            sidechain: entry["isSidechain"] == true,
-            compact: entry["type"] == "system" && entry["subtype"] == "compact_boundary",
-            tool_uses: ids("tool_use", "id"),
-            tool_results: ids("tool_result", "tool_use_id"),
+    fn turn(&self) -> bool {
+        matches!(self.kind.as_deref(), Some("user" | "assistant"))
+    }
+
+    fn compact(&self) -> bool {
+        self.kind.as_deref() == Some("system") && self.subtype.as_deref() == Some("compact_boundary")
+    }
+
+    fn tool_uses(&self) -> impl Iterator<Item = &str> {
+        self.blocks("tool_use").filter_map(|block| block.id.as_deref())
+    }
+
+    fn tool_results(&self) -> impl Iterator<Item = &str> {
+        self.blocks("tool_result").filter_map(|block| block.tool_use_id.as_deref())
+    }
+
+    fn blocks(&self, kind: &str) -> impl Iterator<Item = &Block> {
+        self.message.iter().flat_map(|message| &message.content).filter(move |block| block.kind.as_deref() == Some(kind))
+    }
+}
+
+/// A null `parentUuid` marks the first entry, unlike a missing one.
+fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::deserialize(deserializer).map(Some)
+}
+
+/// A message's content blocks, or none when its content is plain text.
+fn blocks<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Block>, D::Error> {
+    struct Blocks;
+
+    impl<'de> Visitor<'de> for Blocks {
+        type Value = Vec<Block>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("text or content blocks")
+        }
+
+        fn visit_str<E>(self, _: &str) -> Result<Vec<Block>, E> {
+            Ok(Vec::new())
+        }
+
+        fn visit_unit<E>(self) -> Result<Vec<Block>, E> {
+            Ok(Vec::new())
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<Block>, A::Error> {
+            let mut blocks = Vec::new();
+            while let Some(block) = seq.next_element()? {
+                blocks.push(block);
+            }
+            Ok(blocks)
         }
     }
 
-    fn turn(&self) -> bool {
-        matches!(self.kind.as_deref(), Some("user" | "assistant"))
+    deserializer.deserialize_any(Blocks)
+}
+
+/// The fields of a session entry, and of its tool result, that replaying reads. The rest of a long line, such as the
+/// whole file a Read returned, is skipped rather than held, and anything but an object reads as null.
+#[derive(Clone, Copy)]
+struct Only(&'static [&'static str]);
+
+const ENTRY: Only = Only(&[
+    "type", "subtype", "uuid", "isSidechain", "isMeta", "isCompactSummary", "promptSource", "renderedRole", "message", "attachment",
+    "toolUseResult", "thinkingDurationMs", "error", "timestamp", "usage", "task_id", "tool_use_id", "status", "patch", "summary",
+]);
+
+const RESULT: Only = Only(&[
+    "type", "content", "structuredPatch", "original_file", "updated_file", "filePath", "notebook_path", "answers", "questions",
+    "task_type", "task_id", "task", "agentId", "resolvedModel", "isAsync", "status", "totalDurationMs", "totalToolUseCount",
+    "totalTokens", "backgroundTaskId",
+]);
+
+fn entry(line: &str) -> Option<Value> {
+    let mut deserializer = serde_json::Deserializer::from_str(line);
+    let entry = ENTRY.deserialize(&mut deserializer).ok()?;
+    deserializer.end().ok()?;
+    Some(entry)
+}
+
+impl<'de> DeserializeSeed<'de> for Only {
+    type Value = Value;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Value, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for Only {
+    type Value = Value;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("JSON")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+        let mut kept = Map::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if !self.0.contains(&key.as_str()) {
+                map.next_value::<IgnoredAny>()?;
+            } else if key == "toolUseResult" {
+                kept.insert(key, map.next_value_seed(RESULT)?);
+            } else {
+                kept.insert(key, map.next_value()?);
+            }
+        }
+        Ok(Value::Object(kept))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(Value::Null)
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_unit<E>(self) -> Result<Value, E> {
+        Ok(Value::Null)
     }
 }
 
@@ -1068,13 +1210,24 @@ impl Transcript {
         }
     }
 
+    /// Runs `history` on a blocking thread, since a long session takes a while to read.
+    async fn replay(mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>) -> io::Result<Self> {
+        let (env, session, until) = (env.clone(), session.to_owned(), until.map(str::to_owned));
+        tokio::task::spawn_blocking(move || {
+            self.history(&env, &session, until.as_deref());
+            self
+        })
+        .await
+        .map_err(io::Error::other)
+    }
+
     /// Translates the session file's entries, up to the one whose uuid is `until`. A first pass keeps only how
     /// the entries chain, so a long session is never held in memory whole.
     fn history(&mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>) {
         let Some(path) = session_file(env, session) else { return };
         let Ok(file) = File::open(&path) else { return };
         self.history = Some(path.clone());
-        let links: Vec<Option<Link>> = lines(file).map(|line| serde_json::from_str(&line).ok().map(|entry| Link::new(&entry))).collect();
+        let links: Vec<Option<Link>> = lines(file).map(|line| serde_json::from_str(&line).ok()).collect();
         let entries = links.iter().enumerate().filter_map(|(index, link)| Some((index, link.as_ref()?)));
         let chained: HashMap<&str, &Link> = entries.clone().filter(|(_, link)| !link.sidechain).filter_map(|(_, link)| Some((link.uuid.as_deref()?, link))).collect();
         let leaf = entries.clone().rev().find(|(_, link)| link.turn() && !link.sidechain && link.parent.is_some());
@@ -1084,24 +1237,24 @@ impl Transcript {
         while let Some(id) = current {
             if !branch.insert(id) { break; }
             let Some(link) = chained.get(id) else { break };
-            current = link.parent.as_ref().and_then(Value::as_str);
-            if link.parent == Some(Value::Null) { complete = true; }
+            current = link.parent.as_ref().and_then(Option::as_deref);
+            if link.parent == Some(None) { complete = true; }
         }
-        let boundary = entries.clone().rev().find(|(_, link)| link.compact).map(|(index, _)| index);
+        let boundary = entries.clone().rev().find(|(_, link)| link.compact()).map(|(index, _)| index);
         let active_tools: HashSet<&str> = entries.filter(|(_, link)| link.uuid.as_deref().is_some_and(|id| branch.contains(id)))
-            .flat_map(|(_, link)| link.tool_uses.iter().map(String::as_str)).collect();
+            .flat_map(|(_, link)| link.tool_uses()).collect();
         let Ok(file) = File::open(&path) else { return };
         for (index, line) in lines(file).enumerate().take(links.len()) {
             let Some(link) = &links[index] else { continue };
             if complete && boundary.is_none_or(|boundary| index > boundary) && !branch.is_empty() && link.turn()
                 && link.uuid.as_deref().is_some_and(|id| !branch.contains(id))
-                && !link.tool_results.iter().any(|id| active_tools.contains(id.as_str())) { continue; }
+                && !link.tool_results().any(|id| active_tools.contains(id)) { continue; }
             if until.is_some() && link.uuid.as_deref() == until {
                 // A compaction recorded just before the replayed turn's prompt belongs to that turn, which replays it.
                 self.compacted = false;
                 break;
             }
-            let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
+            let Some(entry) = entry(&line) else { continue };
             self.recorded(&entry);
         }
         self.history = None;
@@ -1669,7 +1822,7 @@ impl Transcript {
                 {
                     let path = history.with_extension("").join("subagents").join(format!("agent-{agent}.jsonl"));
                     transcript.history = Some(history.clone());
-                    for entry in File::open(path).into_iter().flat_map(lines).filter_map(|line| serde_json::from_str::<Value>(&line).ok()) {
+                    for entry in File::open(path).into_iter().flat_map(lines).filter_map(|line| entry(&line)) {
                         transcript.nested(&entry, &entry["toolUseResult"]);
                     }
                     transcript.history = None;

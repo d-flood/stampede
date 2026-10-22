@@ -2,8 +2,8 @@ use std::{
     collections::{BTreeMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime},
 };
 
 use notify::{RecursiveMode, Watcher};
@@ -811,8 +811,16 @@ pub fn expand(path: PathBuf) -> PathBuf {
     }
 }
 
+/// Each face file's weight and style, by its path, modification time and length.
+static FACES: Mutex<BTreeMap<(PathBuf, Option<SystemTime>, u64), (String, &'static str)>> = Mutex::new(BTreeMap::new());
+
 pub fn face(path: PathBuf, url: String) -> Result<Face, Error> {
-    let data = fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let metadata = fs::metadata(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let key = (path, metadata.modified().ok(), metadata.len());
+    if let Some((weight, style)) = FACES.lock().unwrap().get(&key).cloned() {
+        return Ok(Face { path: key.0, url, weight, style });
+    }
+    let data = fs::read(&key.0).map_err(|error| format!("{}: {error}", key.0.display()))?;
     let (weight, style) = match ttf_parser::Face::parse(&data, 0) {
         Ok(face) => {
             let wght = Tag::from_bytes(b"wght");
@@ -825,6 +833,8 @@ pub fn face(path: PathBuf, url: String) -> Result<Face, Error> {
         }
         Err(_) => ("400".to_owned(), "normal"),
     };
+    let path = key.0.clone();
+    FACES.lock().unwrap().insert(key, (weight.clone(), style));
     Ok(Face { path, url, weight, style })
 }
 

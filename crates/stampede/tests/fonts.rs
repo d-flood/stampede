@@ -79,3 +79,32 @@ async fn installed_fonts_are_listed_served_and_saved_without_rewriting_other_set
     assert_eq!(fs::read_to_string(&config).unwrap(), ORIGINAL);
     settled(&client, &base, &Value::Null).await;
 }
+
+#[tokio::test]
+async fn hashed_assets_are_immutable_and_gzipped_while_the_rest_revalidates() {
+    let server = Server::start("assets-").await;
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let gzipped = |path: &str| client.get(format!("{base}{path}")).header("Accept-Encoding", "gzip").send();
+
+    let index = get(&client, &format!("{base}/")).await;
+    assert_eq!(index.headers()["cache-control"], "no-cache");
+    let etag = index.headers()["etag"].clone();
+    let html = index.text().await.unwrap();
+    let bundle = html.split('"').find(|part| part.starts_with("/_app/immutable/") && part.ends_with(".js"))
+        .expect("the index page names no hashed bundle file; build the frontend with pnpm -C web build");
+    let revalidated = client.get(format!("{base}/")).header("If-None-Match", etag).send().await.unwrap();
+    assert_eq!(revalidated.status(), 304);
+
+    let bundle = gzipped(bundle).await.unwrap();
+    assert_eq!(bundle.status(), 200);
+    assert_eq!(bundle.headers()["cache-control"], "max-age=31536000, immutable");
+    assert_eq!(bundle.headers()["content-encoding"], "gzip");
+
+    let font = gzipped("/fonts/SymbolsNerdFontMono-Regular.woff2").await.unwrap();
+    assert_eq!(font.status(), 200);
+    assert_eq!(font.headers().get("content-encoding"), None);
+
+    let missing = get(&client, &format!("{base}/_app/immutable/missing.js")).await;
+    assert!(!missing.headers()["cache-control"].to_str().unwrap().contains("immutable"));
+}

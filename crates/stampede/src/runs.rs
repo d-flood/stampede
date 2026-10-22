@@ -57,6 +57,7 @@ pub struct Runs {
     merges: mpsc::UnboundedSender<String>,
     schedule: mpsc::UnboundedSender<String>,
     views: Mutex<HashMap<Uuid, (Option<String>, Vec<String>)>>,
+    common_dirs: Mutex<HashMap<String, PathBuf>>,
 }
 
 impl Runs {
@@ -93,6 +94,7 @@ impl Runs {
             merges,
             schedule,
             views: Mutex::default(),
+            common_dirs: Mutex::default(),
         });
         runs.reconcile();
         tokio::spawn(Arc::clone(&runs).merge_queued(queued));
@@ -651,7 +653,7 @@ impl Runs {
         let mut found = None;
         for project in self.projects.list().iter().filter(|project| project.worktree.is_none()) {
             let path = Path::new(&project.path);
-            if git::common_dir(path).await.as_deref() == Some(epic.project.as_path()) {
+            if self.common_dir(&project.path).await.as_deref() == Some(epic.project.as_path()) {
                 if epic.project.parent() == Some(path) {
                     return Ok(project.clone());
                 }
@@ -659,6 +661,15 @@ impl Runs {
             }
         }
         found.ok_or_else(|| format!("No open Project checks out {}'s repository, so Stampede could not start a Chat.", epic.slug))
+    }
+
+    async fn common_dir(&self, path: &str) -> Option<PathBuf> {
+        if let Some(common_dir) = self.common_dirs.lock().unwrap().get(path) {
+            return Some(common_dir.clone());
+        }
+        let common_dir = git::common_dir(Path::new(path)).await?;
+        self.common_dirs.lock().unwrap().insert(path.to_owned(), common_dir.clone());
+        Some(common_dir)
     }
 
     fn home(&self, slug: &str, parent: &Project, worktree: &str, role: Role) -> Project {

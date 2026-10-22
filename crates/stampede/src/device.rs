@@ -148,6 +148,30 @@ pub async fn upgrade(State(state): State<AppState>, upgrade: WebSocketUpgrade) -
     upgrade.on_upgrade(|socket| connect(socket, state))
 }
 
+/// How many Device WebSockets are open, for background work that only matters while someone is looking.
+#[derive(Clone, Default)]
+pub struct Devices(Arc<watch::Sender<usize>>);
+
+impl Devices {
+    pub fn subscribe(&self) -> watch::Receiver<usize> {
+        self.0.subscribe()
+    }
+
+    fn connect(&self) -> Connected {
+        self.0.send_modify(|count| *count += 1);
+        Connected(self.clone())
+    }
+}
+
+/// Counts one Device as connected until it drops, however its connection ends.
+struct Connected(Devices);
+
+impl Drop for Connected {
+    fn drop(&mut self) {
+        self.0.0.send_modify(|count| *count -= 1);
+    }
+}
+
 struct Device {
     id: String,
     browser: Option<String>,
@@ -175,8 +199,9 @@ struct Device {
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, chats, attention, usage, projects, mut config, disk, git, languages, epics, runs, .. }: AppState,
+    AppState { terminals, chats, attention, usage, projects, mut config, disk, git, languages, epics, runs, devices, .. }: AppState,
 ) {
+    let _connected = devices.connect();
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut pending) = Outgoing::new();
     let overflowed = Arc::clone(&outgoing.overflowed);
@@ -535,8 +560,11 @@ impl Device {
             Control::ReorderProjects { order } => self.projects.reorder(&order),
             Control::ListPicker {} => {
                 let roots = self.config.borrow().roots.clone();
-                let directories = projects::directories(&roots);
-                send(&self.outgoing, json!({ "type": "picker.listed", "directories": directories }));
+                let outgoing = self.outgoing.clone();
+                tokio::task::spawn_blocking(move || {
+                    let directories = projects::directories(&roots);
+                    send(&outgoing, json!({ "type": "picker.listed", "directories": directories }));
+                });
             }
             Control::View { chat_ids, epics } => {
                 self.chats.view(self.connection, self.browser.clone(), chat_ids);

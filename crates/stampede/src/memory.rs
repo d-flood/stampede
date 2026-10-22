@@ -8,7 +8,7 @@ pub fn trim_periodically() {
         let mut every = tokio::time::interval(TRIM_EVERY);
         loop {
             every.tick().await;
-            trim();
+            let _ = tokio::task::spawn_blocking(trim).await;
         }
     });
 }
