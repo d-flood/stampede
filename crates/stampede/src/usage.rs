@@ -6,13 +6,14 @@ use std::{
 use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use tokio::{
-    sync::watch,
+    sync::{broadcast::error::RecvError, watch},
     time::{MissedTickBehavior, interval, timeout},
 };
 
 use crate::{
     AppState, chats,
     config::{Agent, Config},
+    epics::Epics,
     files::Failure,
 };
 
@@ -171,24 +172,40 @@ pub async fn reset(State(state): State<AppState>, Json(request): Json<Reset>) ->
     Ok(Json(outcome))
 }
 
-/// Reads each Agent's windows through its first Rig now and every few minutes, since TUIs spend them too.
-pub fn spawn(usage: Arc<Usage>, config: watch::Receiver<Arc<Config>>) {
+/// Reads each Agent's windows through its first Rig every few minutes, since TUIs spend them too, but only while a
+/// Device is connected or a Run is live, and at once when the first Device connects.
+pub fn spawn(usage: Arc<Usage>, config: watch::Receiver<Arc<Config>>, mut devices: watch::Receiver<usize>, epics: Arc<Epics>) {
     tokio::spawn(async move {
+        let mut changes = epics.subscribe();
         let mut ticks = interval(REFRESH);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let (mut connected, mut active) = (0, false);
         loop {
-            ticks.tick().await;
-            let rigs = config.borrow().rigs.clone();
-            for agent in [Agent::ClaudeCode, Agent::Codex, Agent::Copilot] {
-                let Some(rig) = rigs.iter().find(|rig| rig.agent == agent).cloned() else { continue };
-                let usage = Arc::clone(&usage);
-                tokio::spawn(async move {
-                    match timeout(READING, chats::usage(&rig)).await.unwrap_or_else(|elapsed| Err(elapsed.into())) {
-                        Ok(snapshot) => usage.record_snapshot(agent, snapshot),
-                        Err(error) => eprintln!("cannot read {} usage: {error}", agent.name()),
-                    }
-                });
+            let count = *devices.borrow_and_update();
+            let wanted = count > 0 || epics.live();
+            if (wanted && !active) || (count > 0 && connected == 0) {
+                ticks.reset_immediately();
+            }
+            (connected, active) = (count, wanted);
+            tokio::select! {
+                _ = ticks.tick(), if active => read(&usage, &config),
+                Ok(()) = devices.changed() => {}
+                changed = changes.recv() => if let Err(RecvError::Closed) = changed { break },
             }
         }
     });
+}
+
+fn read(usage: &Arc<Usage>, config: &watch::Receiver<Arc<Config>>) {
+    let rigs = config.borrow().rigs.clone();
+    for agent in [Agent::ClaudeCode, Agent::Codex, Agent::Copilot] {
+        let Some(rig) = rigs.iter().find(|rig| rig.agent == agent).cloned() else { continue };
+        let usage = Arc::clone(usage);
+        tokio::spawn(async move {
+            match timeout(READING, chats::usage(&rig)).await.unwrap_or_else(|elapsed| Err(elapsed.into())) {
+                Ok(snapshot) => usage.record_snapshot(agent, snapshot),
+                Err(error) => eprintln!("cannot read {} usage: {error}", agent.name()),
+            }
+        });
+    }
 }

@@ -107,6 +107,7 @@ struct AppState {
     browsers: Arc<browser::Browsers>,
     epics: Arc<Epics>,
     runs: Arc<Runs>,
+    devices: device::Devices,
 }
 
 fn router(state: AppState) -> Router {
@@ -217,7 +218,8 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
         Arc::clone(&usage),
     )?;
     cli::listen(requests, Arc::clone(&epics), Arc::clone(&runs));
-    usage::spawn(Arc::clone(&usage), config.clone());
+    let devices = device::Devices::default();
+    usage::spawn(Arc::clone(&usage), config.clone(), devices.subscribe(), Arc::clone(&epics));
     terminals.scrollback(config.borrow().scrollback);
     let mut settings = config.clone();
     let configured_terminals = Arc::clone(&terminals);
@@ -229,7 +231,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk);
     eprintln!("stampede listening on http://{}", listener.local_addr()?);
-    let state = AppState { media_dir: args.data_dir.join("media"), terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs };
+    let state = AppState { media_dir: args.data_dir.join("media"), terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs, devices };
     let listener = listener.tap_io(|stream| {
         let _ = stream.set_nodelay(true);
     });

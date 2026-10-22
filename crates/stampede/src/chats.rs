@@ -13,7 +13,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -787,6 +787,7 @@ pub struct Chats {
 
 struct Entry {
     chat: Mutex<Chat>,
+    writing: Mutex<()>,
     transcript: Mutex<Transcript>,
     capabilities: Mutex<Capabilities>,
     driver: Box<dyn Driver>,
@@ -839,6 +840,7 @@ impl Chats {
             if chat.rig == original {
                 let mut renamed = chat.clone();
                 name.clone_into(&mut renamed.rig);
+                let _writing = entry.writing.lock().unwrap();
                 write_record(&self.data_dir, &renamed)?;
                 *chat = renamed;
                 let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
@@ -860,11 +862,12 @@ impl Chats {
     }
 
     pub fn hand_over(&self, from: &str, to: &str) {
-        for entry in self.chats.lock().unwrap().iter() {
+        let entries = self.chats.lock().unwrap().clone();
+        for entry in entries {
             let mut chat = entry.chat.lock().unwrap();
             if chat.project_id == from {
                 to.clone_into(&mut chat.project_id);
-                self.save(&chat);
+                self.save(&entry, chat);
             }
         }
         let _ = self.changed.send(Change::Chats(to.to_owned()));
@@ -1065,6 +1068,7 @@ impl Chats {
         let entry = Arc::new(Entry {
             _storage: storage,
             chat: Mutex::new(chat),
+            writing: Mutex::default(),
             transcript: Mutex::new(transcript),
             capabilities: Mutex::default(),
             driver,
@@ -1088,13 +1092,14 @@ impl Chats {
                 Event::PlanResolved(id) => {
                     let mut chat = entry.chat.lock().unwrap();
                     chat.plan_resolved = Some(id);
-                    self.save(&chat);
+                    self.save(&entry, chat);
                 }
                 Event::QuestionsTruncated(after) => {
                     let mut chat = entry.chat.lock().unwrap();
                     chat.answered_questions.retain(|record| record.after <= after);
-                    self.save(&chat);
-                    let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+                    let project_id = chat.project_id.clone();
+                    self.save(&entry, chat);
+                    let _ = self.changed.send(Change::Chats(project_id));
                 }
                 Event::QuestionsRecovered(record) => {
                     let mut chat = entry.chat.lock().unwrap();
@@ -1108,26 +1113,28 @@ impl Chats {
                     } else {
                         chat.answered_questions.push(record);
                     }
-                    self.save(&chat);
-                    let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+                    let project_id = chat.project_id.clone();
+                    self.save(&entry, chat);
+                    let _ = self.changed.send(Change::Chats(project_id));
                 }
                 Event::ResumeAt(at) => {
                     let mut chat = entry.chat.lock().unwrap();
                     chat.resume_at = at;
-                    self.save(&chat);
+                    self.save(&entry, chat);
                 }
                 Event::ShellContext(blocks) => {
                     let mut chat = entry.chat.lock().unwrap();
                     chat.shell_context = blocks;
-                    self.save(&chat);
+                    self.save(&entry, chat);
                 }
                 Event::Session(session) => {
                     let mut chat = entry.chat.lock().unwrap();
                     if chat.agent_session.as_ref() != Some(&session) {
                         if chat.agent_session.is_some() { chat.answered_questions.clear(); }
                         chat.agent_session = Some(session.clone());
-                        self.save(&chat);
-                        let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+                        let project_id = chat.project_id.clone();
+                        self.save(&entry, chat);
+                        let _ = self.changed.send(Change::Chats(project_id));
                         let _ = self.lifecycle.send(Lifecycle::Session(id.clone(), session));
                     }
                 }
@@ -1140,7 +1147,7 @@ impl Chats {
                     if status == Status::Done && !chat.queued.is_empty() && !cut_off {
                         let text = chat.queued.remove(0);
                         let images = if chat.queued_images.is_empty() { Vec::new() } else { chat.queued_images.remove(0) };
-                        self.queued(&chat);
+                        self.queued(&entry, chat);
                         entry.driver.send(&templates::expand(&text, &self.data_dir), &images);
                         continue;
                     }
@@ -1193,8 +1200,8 @@ impl Chats {
                     if (chat.context, chat.tokens) == before {
                         continue;
                     }
-                    self.save(&chat);
                     let (context, tokens) = (chat.context, chat.tokens);
+                    self.save(&entry, chat);
                     let _ = self.changed.send(Change::Meters { chat_id: id.clone(), context, tokens });
                 }
                 Event::Todos(todos) => {
@@ -1203,7 +1210,7 @@ impl Chats {
                         continue;
                     }
                     chat.todos = todos.clone();
-                    self.save(&chat);
+                    self.save(&entry, chat);
                     let _ = self.changed.send(Change::Todos { chat_id: id.clone(), todos });
                 }
                 Event::Item(index, mut item) => {
@@ -1251,7 +1258,7 @@ impl Chats {
                     chat.queued.clear();
                     chat.queued_images.clear();
                     chat.todos.clear();
-                    self.queued(&chat);
+                    self.queued(&entry, chat);
                     let _ = self.changed.send(Change::Todos { chat_id: id.clone(), todos: Vec::new() });
                     let _ = self.changed.send(Change::Meters { chat_id: id.clone(), context: None, tokens: None });
                 }
@@ -1261,7 +1268,7 @@ impl Chats {
                         continue;
                     }
                     chat.settings = settings.clone();
-                    self.save(&chat);
+                    self.save(&entry, chat);
                     let _ = self.changed.send(Change::Settings(id.clone(), settings));
                 }
                 Event::Capabilities(capabilities) => {
@@ -1298,9 +1305,8 @@ impl Chats {
         if status == Status::Done {
             chat.viewed_since_done = self.shown(&id);
         }
-        self.save(&chat);
         let item = (chat.parent.is_none() && !chat.closing).then(|| chat.attention());
-        drop(chat);
+        self.save(entry, chat);
         let _ = self.changed.send(Change::Status(id.clone(), status));
         let _ = self.lifecycle.send(Lifecycle::Status(id.clone(), status));
         self.refresh_attention();
@@ -1322,9 +1328,13 @@ impl Chats {
         true
     }
 
-    fn save(&self, chat: &Chat) {
-        if let Err(error) = write_record(&self.data_dir, chat) {
-            eprintln!("cannot save chat {}: {error}", chat.id);
+    /// Writes the Chat's record once its lock is released, in the order its changes were made.
+    fn save(&self, entry: &Entry, chat: MutexGuard<'_, Chat>) {
+        let record = chat.clone();
+        let _writing = entry.writing.lock().unwrap();
+        drop(chat);
+        if let Err(error) = write_record(&self.data_dir, &record) {
+            eprintln!("cannot save chat {}: {error}", record.id);
         }
     }
 
@@ -1423,14 +1433,16 @@ impl Chats {
             let _ = handoff.reply.send(Err(io::Error::other("Handoff cancelled because another message was sent.")));
         }
         if chat.draft.take().is_some() {
-            self.save(&chat);
-            let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+            let project_id = chat.project_id.clone();
+            self.save(&entry, chat);
+            let _ = self.changed.send(Change::Chats(project_id));
+            chat = entry.chat.lock().unwrap();
         }
         if queue && chat.status != Status::Done {
             while chat.queued_images.len() < chat.queued.len() { chat.queued_images.push(Vec::new()); }
             chat.queued.push(text.to_owned());
             chat.queued_images.push(images.to_vec());
-            self.queued(&chat);
+            self.queued(&entry, chat);
         } else {
             transcript.reported = Status::Working;
             transcript.recoverable = false;
@@ -1458,18 +1470,20 @@ impl Chats {
         let pending: Vec<_> = transcript.questions.keys().cloned().collect();
         for request in pending { self.resolve(&mut transcript, id, &request); }
         let mut chat = entry.chat.lock().unwrap();
-        if !chat.queued.is_empty() {
+        if chat.queued.is_empty() {
+            drop(chat);
+        } else {
             chat.queued.clear();
             chat.queued_images.clear();
-            self.queued(&chat);
+            self.queued(&entry, chat);
         }
-        drop(chat);
         entry.driver.interrupt();
     }
 
-    fn queued(&self, chat: &Chat) {
-        self.save(chat);
-        let _ = self.changed.send(Change::Queued(chat.id.clone(), chat.queued.clone()));
+    fn queued(&self, entry: &Entry, chat: MutexGuard<'_, Chat>) {
+        let change = Change::Queued(chat.id.clone(), chat.queued.clone());
+        self.save(entry, chat);
+        let _ = self.changed.send(change);
     }
 
     pub fn answer(&self, id: &str, request_id: &str, answer: Answer) {
@@ -1515,8 +1529,9 @@ impl Chats {
             if let Some(answered) = answered {
                 let mut chat = entry.chat.lock().unwrap();
                 chat.answered_questions.push(answered);
-                self.save(&chat);
-                let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+                let project_id = chat.project_id.clone();
+                self.save(&entry, chat);
+                let _ = self.changed.send(Change::Chats(project_id));
             }
             if let Some(pending) = pending {
                 let reply = match answer {
@@ -1546,9 +1561,9 @@ impl Chats {
         let mut chat = entry.chat.lock().unwrap();
         if !chat.closing {
             chat.closing = true;
-            self.save(&chat);
-            let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
-            drop(chat);
+            let project_id = chat.project_id.clone();
+            self.save(&entry, chat);
+            let _ = self.changed.send(Change::Chats(project_id));
             self.refresh_attention();
         }
         entry.driver.close();
@@ -1580,7 +1595,7 @@ impl Chats {
             let mut chat = entry.chat.lock().unwrap();
             if chat.status == Status::Done && !chat.viewed_since_done {
                 chat.viewed_since_done = true;
-                self.save(&chat);
+                self.save(&entry, chat);
                 viewed = true;
             }
         }

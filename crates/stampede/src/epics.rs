@@ -1152,6 +1152,8 @@ fn valid_slug(slug: &str) -> bool {
 pub struct Epics {
     dir: PathBuf,
     epics: Mutex<BTreeMap<String, Epic>>,
+    /// Held from an event's check until it applies, so readers of `epics` never wait on the write.
+    appending: Mutex<()>,
     changes: broadcast::Sender<String>,
 }
 
@@ -1173,7 +1175,7 @@ impl Epics {
                 Err(error) => eprintln!("cannot read {}: {error}", path.display()),
             }
         }
-        Ok(Self { dir, epics: Mutex::new(epics), changes: broadcast::channel(64).0 })
+        Ok(Self { dir, epics: Mutex::new(epics), appending: Mutex::default(), changes: broadcast::channel(64).0 })
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
@@ -1190,6 +1192,11 @@ impl Epics {
 
     pub fn slugs(&self) -> Vec<String> {
         self.epics.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// Whether any Epic has a Run, paused or not, that is not archived.
+    pub fn live(&self) -> bool {
+        self.epics.lock().unwrap().values().any(|epic| epic.run.is_some() && !epic.archived)
     }
 
     pub fn rename_rig(&self, original: &str, name: &str) -> Result<(), String> {
@@ -1240,31 +1247,33 @@ impl Epics {
             return Err(format!("{slug:?} is not a valid slug; use lowercase letters, digits and hyphens, such as chat-ui"));
         }
         one_line(title)?;
-        let mut epics = self.epics.lock().unwrap();
-        if let Some(existing) = epics.get(slug) {
-            let archived = if existing.archived { ", archived" } else { "" };
-            return Err(format!(
-                "Epic {slug} already exists in {}{archived}; slugs are unique across every Project",
-                existing.project.display()
-            ));
-        }
-        let event = Event::EpicAdded {
-            slug: slug.to_owned(),
-            title: title.to_owned(),
-            brief: brief.to_owned(),
-            project: project.to_owned(),
-        };
-        let entry = stamp(event);
-        let path = self.path(slug);
-        OpenOptions::new()
-            .append(true)
-            .create_new(true)
-            .open(&path)
-            .and_then(|file| append(file, &entry))
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-        epics.insert(slug.to_owned(), Epic::added(&entry).expect("an epic.added entry"));
-        let _ = self.changes.send(slug.to_owned());
-        Ok(())
+        tokio::task::block_in_place(|| {
+            let _appending = self.appending.lock().unwrap();
+            if let Some(existing) = self.epics.lock().unwrap().get(slug) {
+                let archived = if existing.archived { ", archived" } else { "" };
+                return Err(format!(
+                    "Epic {slug} already exists in {}{archived}; slugs are unique across every Project",
+                    existing.project.display()
+                ));
+            }
+            let event = Event::EpicAdded {
+                slug: slug.to_owned(),
+                title: title.to_owned(),
+                brief: brief.to_owned(),
+                project: project.to_owned(),
+            };
+            let entry = stamp(event);
+            let path = self.path(slug);
+            OpenOptions::new()
+                .append(true)
+                .create_new(true)
+                .open(&path)
+                .and_then(|file| append(file, &entry))
+                .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+            self.epics.lock().unwrap().insert(slug.to_owned(), Epic::added(&entry).expect("an epic.added entry"));
+            let _ = self.changes.send(slug.to_owned());
+            Ok(())
+        })
     }
 
     pub fn record(&self, slug: &str, event: Event) -> Result<(), String> {
@@ -1278,20 +1287,28 @@ impl Epics {
 
     /// Records the event `make` builds from the Epic, in the same step as the event itself, and gives it back.
     pub fn record_from(&self, slug: &str, make: impl FnOnce(&Epic) -> Result<Event, String>) -> Result<Event, String> {
-        let mut epics = self.epics.lock().unwrap();
-        let epic = epics.get_mut(slug).ok_or_else(|| format!("there is no Epic {slug}"))?;
-        let event = make(epic)?;
-        epic.check(&event)?;
-        let entry = stamp(event);
-        let path = self.path(slug);
-        OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .and_then(|file| append(file, &entry))
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-        epic.apply(&entry);
-        let _ = self.changes.send(slug.to_owned());
-        Ok(entry.event)
+        tokio::task::block_in_place(|| {
+            let _appending = self.appending.lock().unwrap();
+            let event = {
+                let epics = self.epics.lock().unwrap();
+                let epic = epics.get(slug).ok_or_else(|| format!("there is no Epic {slug}"))?;
+                let event = make(epic)?;
+                epic.check(&event)?;
+                event
+            };
+            let entry = stamp(event);
+            let path = self.path(slug);
+            OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .and_then(|file| append(file, &entry))
+                .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+            if let Some(epic) = self.epics.lock().unwrap().get_mut(slug) {
+                epic.apply(&entry);
+            }
+            let _ = self.changes.send(slug.to_owned());
+            Ok(entry.event)
+        })
     }
 }
 
