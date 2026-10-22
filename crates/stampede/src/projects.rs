@@ -31,7 +31,11 @@ pub struct Worktree {
 #[serde(untagged)]
 pub enum Kind {
     Epic { epic: String, role: Role },
-    Branch { branch: String },
+    Branch {
+        branch: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        existing: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

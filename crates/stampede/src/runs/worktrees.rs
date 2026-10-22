@@ -16,7 +16,7 @@ pub enum Refusal {
 }
 
 impl Runs {
-    pub async fn create_worktree(&self, project_id: &str, branch: &str, from: &str) -> Result<String, String> {
+    pub async fn create_worktree(&self, project_id: &str, branch: Option<&str>, from: &str) -> Result<String, String> {
         let projects = self.projects.list();
         let project = projects.iter().find(|project| project.id == project_id).ok_or_else(|| format!("Project {project_id} is not open"))?;
         let checkout = Path::new(&project.path);
@@ -24,23 +24,38 @@ impl Runs {
             Ok(toplevel) if Path::new(&toplevel) == checkout => {}
             _ => return Err(format!("{} is not the root of a git repository", project.path)),
         }
-        if branch.starts_with('-') || git::run(checkout, &["check-ref-format", "--branch", branch]).await.is_err() {
-            return Err(format!("{branch} is not a valid branch name"));
-        }
         if from.starts_with('-') || git::run(checkout, &["rev-parse", "-q", "--verify", &format!("{from}^{{commit}}")]).await.is_err() {
             return Err(format!("{from} is not a branch or commit"));
+        }
+        let exists = async |reference: String| git::run(checkout, &["show-ref", "-q", "--verify", &reference]).await.is_ok();
+        let (branch, existing, track) = match branch {
+            Some(branch) => (branch, false, "--no-track"),
+            None if exists(format!("refs/heads/{from}")).await => (from, true, ""),
+            None if exists(format!("refs/remotes/{from}")).await => (from.split_once('/').map_or(from, |(_, name)| name), false, "--track"),
+            None => return Err(format!("{from} is not a branch")),
+        };
+        if branch.starts_with('-') || git::run(checkout, &["check-ref-format", "--branch", branch]).await.is_err() {
+            return Err(format!("{branch} is not a valid branch name"));
         }
         let parent = project.worktree.as_ref().map_or(&project.id, |worktree| &worktree.parent);
         let path = format!("{}/_branches/{parent}/{}", self.worktrees, branch.replace('/', "-"));
         if Path::new(&path).exists() {
             return Err(format!("{path} already exists"));
         }
-        git::run(checkout, &["worktree", "add", "-q", "--no-track", "-b", branch, &path, from]).await?;
+        if existing {
+            git::run(checkout, &["worktree", "add", "-q", &path, branch]).await?;
+        } else {
+            git::run(checkout, &["worktree", "add", "-q", track, "-b", branch, &path, from]).await?;
+        }
         if let Err(error) = submodules::init(Path::new(&path), checkout).await {
-            discard(&project.path, &path, branch).await;
+            if !existing {
+                discard(&project.path, &path, branch).await;
+            } else if let Err(removal) = git::run(checkout, &["worktree", "remove", "--force", &path]).await {
+                eprintln!("cannot discard {path}: {removal}");
+            }
             return Err(format!("Stampede could not check out the submodules of the new worktree: {error}"));
         }
-        let worktree = Worktree { parent: parent.clone(), kind: Kind::Branch { branch: branch.to_owned() } };
+        let worktree = Worktree { parent: parent.clone(), kind: Kind::Branch { branch: branch.to_owned(), existing } };
         Ok(self.projects.nest(&path, worktree).id)
     }
 
@@ -60,7 +75,7 @@ impl Runs {
         let base = git::run(checkout, &["rev-parse", "--abbrev-ref", "HEAD"]).await?;
         let commit = git::run(checkout, &["rev-parse", "HEAD"]).await?;
         let short = git::run(checkout, &["rev-parse", "--short", "HEAD"]).await?;
-        let id = self.create_worktree(&project.id, branch, &commit).await?;
+        let id = self.create_worktree(&project.id, Some(branch), &commit).await?;
         let path = self.projects.list().iter().find(|project| project.id == id).map(|project| project.path.clone()).ok_or("The new worktree is not open.")?;
         let abandon = async |error: String| {
             if let Err(Refusal::Unmerged(reason) | Refusal::Refused(reason)) = self.delete_worktree(&id, true).await {
@@ -102,19 +117,20 @@ impl Runs {
         let checkout = projects.iter().find(|other| other.id == worktree.parent).map(|parent| parent.path.clone());
         let checkout = checkout.ok_or_else(|| Refusal::Refused(format!("The Project {} belongs to is not open.", project.path)))?;
         let path = Path::new(&project.path);
+        let existing = matches!(worktree.kind, Kind::Branch { existing: true, .. });
         let _cutting = self.cutting.lock().await;
         let (event, branch, _starting) = match &worktree.kind {
-            Kind::Branch { branch } => (None, branch.clone(), None),
+            Kind::Branch { branch, .. } => (None, branch.clone(), None),
             Kind::Epic { epic, role } => self.hold(epic, *role, path)?,
         };
-        if !force && let Some(work) = unmerged(path, &branch).await {
+        if !force && let Some(work) = unmerged(path, &branch, existing).await {
             return Err(Refusal::Unmerged(work));
         }
         git::run(Path::new(&checkout), &["worktree", "remove", "--force", &project.path])
             .await
             .map_err(|error| Refusal::Refused(format!("git could not remove {}: {error}", project.path)))?;
         self.close_project(project_id);
-        if let Err(error) = git::run(Path::new(&checkout), &["branch", "-D", &branch]).await {
+        if !existing && let Err(error) = git::run(Path::new(&checkout), &["branch", "-D", &branch]).await {
             eprintln!("cannot delete {branch}: {error}");
         }
         if let (Some(event), Kind::Epic { epic, .. }) = (event, &worktree.kind)
@@ -164,11 +180,15 @@ impl Runs {
     }
 }
 
-async fn unmerged(path: &Path, branch: &str) -> Option<String> {
+async fn unmerged(path: &Path, branch: &str, existing: bool) -> Option<String> {
     let exclude = format!("--exclude={branch}");
-    let ahead = ["rev-list", "--count", "HEAD", branch, "--not", &exclude, "--branches", "--remotes"];
-    let (status, ahead) = match (submodules::status(path).await, git::run(path, &ahead).await) {
-        (Ok(status), Ok(ahead)) => (status, ahead.parse::<usize>().unwrap_or_default()),
+    let args = ["rev-list", "--count", "HEAD", branch, "--not", &exclude, "--branches", "--remotes"];
+    let ahead = async || match existing {
+        true => Ok(0),
+        false => git::run(path, &args).await.map(|ahead| ahead.parse::<usize>().unwrap_or_default()),
+    };
+    let (status, ahead) = match (submodules::status(path).await, ahead().await) {
+        (Ok(status), Ok(ahead)) => (status, ahead),
         (Err(error), _) | (_, Err(error)) => {
             return Some(format!("Stampede could not tell whether it holds work no other branch has: {error}"));
         }
@@ -184,7 +204,8 @@ async fn unmerged(path: &Path, branch: &str) -> Option<String> {
         (true, Some(commits)) => commits,
         (false, Some(commits)) => format!("uncommitted changes and {commits}"),
     };
-    Some(format!("It has {work}. Deleting it and {branch} discards them."))
+    let doomed = if existing { String::new() } else { format!(" and {branch}") };
+    Some(format!("It has {work}. Deleting it{doomed} discards them."))
 }
 
 async fn carry(from: &Path, to: &Path) -> Result<bool, String> {

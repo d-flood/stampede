@@ -340,12 +340,12 @@ async fn land_epic(State(state): State<AppState>, Path(slug): Path<String>) -> R
 
 #[derive(Deserialize)]
 struct Creation {
-    branch: String,
+    branch: Option<String>,
     from: String,
 }
 
 async fn create_worktree(State(state): State<AppState>, Path(id): Path<String>, Json(creation): Json<Creation>) -> Result<Json<Value>, files::Failure> {
-    let project_id = state.runs.create_worktree(&id, &creation.branch, &creation.from).await.map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    let project_id = state.runs.create_worktree(&id, creation.branch.as_deref(), &creation.from).await.map_err(|error| (StatusCode::BAD_REQUEST, error))?;
     Ok(Json(json!({ "projectId": project_id })))
 }
 
