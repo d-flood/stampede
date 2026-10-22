@@ -73,7 +73,7 @@
 {/snippet}
 
 {#if context}
-	<ContextMenu.Root>
+	<ContextMenu.Root bind:open>
 		<ContextMenu.Trigger>
 			{#snippet child({ props })}
 				{@render trigger(props)}

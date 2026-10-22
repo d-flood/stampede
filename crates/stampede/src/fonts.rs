@@ -36,13 +36,17 @@ fn modified(directory: &Path) -> Option<SystemTime> {
     fs::metadata(directory).and_then(|metadata| metadata.modified()).ok()
 }
 
-/// Fontconfig's usual font roots, each directory between them and a listed font, and each font's own directory,
-/// so that installing or removing a font anywhere below them changes one of their modification times.
+/// Fontconfig's usual font roots and every directory below them, each directory between them and a listed font, and
+/// each font's own directory, so that installing or removing a font anywhere below them changes one of their
+/// modification times.
 fn directories(families: &Families) -> BTreeSet<PathBuf> {
     let home = crate::home();
     let data = env::var_os("XDG_DATA_HOME").map_or_else(|| home.join(".local/share"), PathBuf::from);
     let roots = [data.join("fonts"), home.join(".fonts"), PathBuf::from("/usr/share/fonts"), PathBuf::from("/usr/local/share/fonts")];
-    let mut directories = BTreeSet::from_iter(roots.clone());
+    let mut directories = BTreeSet::new();
+    for root in &roots {
+        walk(root, &mut directories);
+    }
     for parent in families.values().flatten().filter_map(|file| file.parent()) {
         directories.insert(parent.to_owned());
         if let Some(root) = roots.iter().find(|root| parent.starts_with(root)) {
@@ -50,6 +54,15 @@ fn directories(families: &Families) -> BTreeSet<PathBuf> {
         }
     }
     directories
+}
+
+fn walk(directory: &Path, directories: &mut BTreeSet<PathBuf>) {
+    directories.insert(directory.to_owned());
+    for entry in fs::read_dir(directory).into_iter().flatten().flatten() {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            walk(&entry.path(), directories);
+        }
+    }
 }
 
 fn list() -> io::Result<Families> {

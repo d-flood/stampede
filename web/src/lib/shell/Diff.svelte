@@ -41,6 +41,7 @@
 	let syntax = $state.raw<Extension>();
 	let note = $state<string>();
 	let heads = 0;
+	let missed = false;
 	let left: string | undefined;
 	let right: Contents | undefined;
 	const sync = new Sync(() => diff, () => shown?.b);
@@ -158,7 +159,15 @@
 	}
 
 	function message(message: ServerMessage) {
-		if (message.type === 'hello' || (message.type === 'git.changed' && message.projectId === diff.projectId)) refresh();
+		if (message.type !== 'hello' && !(message.type === 'git.changed' && message.projectId === diff.projectId)) return;
+		if (document.hidden) missed = true;
+		else refresh();
+	}
+
+	function catchUp() {
+		if (document.hidden || !missed) return;
+		missed = false;
+		refresh();
 	}
 
 	/** Reads the index side again, which can change while the status stays the same. */
@@ -245,6 +254,8 @@
 		return button;
 	}
 </script>
+
+<svelte:document onvisibilitychange={catchUp} />
 
 <div class="diff" role="tabpanel" hidden={!active}>
 	<div class="toolbar">

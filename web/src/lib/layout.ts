@@ -62,8 +62,9 @@ export async function putLayout(layout: Layout) {
 	clearTimeout(timer);
 	const body = JSON.stringify(layout);
 	if (body === sent) return;
+	sent = body;
 	const response = await fetch(url('layout'), { method: 'PUT', body }).catch(() => undefined);
-	if (response?.ok) sent = body;
+	if (!response?.ok && sent === body) sent = undefined;
 }
 
 export function sendClosing(layout: Layout) {

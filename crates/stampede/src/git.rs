@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap, btree_map::Entry},
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use axum::{
@@ -217,11 +217,11 @@ pub async fn read(dir: &Path) -> Option<Status> {
 }
 
 /// What a Project's status needs besides `git status`: where its repository is, found once, and whether it has an
-/// origin, read again only when its git directory changes.
+/// origin, read again only when its git directory or the repository's config changes.
 #[derive(Default)]
 struct Repo {
-    located: Option<(PathBuf, PathBuf)>,
-    origin: Option<bool>,
+    located: Option<(PathBuf, PathBuf, PathBuf)>,
+    origin: Option<(Option<SystemTime>, bool)>,
 }
 
 impl Repo {
@@ -229,9 +229,10 @@ impl Repo {
         if self.located.is_none() {
             self.located = locate(dir).await;
         }
-        let (toplevel, git_dir) = self.located.as_ref()?;
+        let (toplevel, git_dir, config) = self.located.as_ref()?;
         let prefix = dir.strip_prefix(toplevel).ok()?;
-        let known = self.origin.filter(|_| !git_changed);
+        let configured = tokio::fs::metadata(config).await.and_then(|metadata| metadata.modified()).ok();
+        let known = self.origin.filter(|(at, _)| !git_changed && *at == configured).map(|(_, origin)| origin);
         let origin = async move {
             match known {
                 Some(origin) => origin,
@@ -247,7 +248,7 @@ impl Repo {
         let mut status = parse(&output, prefix);
         status.origin = origin;
         status.operation = operation(git_dir);
-        self.origin = Some(origin);
+        self.origin = Some((configured, origin));
         Some(status)
     }
 }
@@ -341,11 +342,13 @@ pub async fn common_dir(dir: &Path) -> Option<PathBuf> {
     tokio::fs::canonicalize(common).await.ok()
 }
 
-async fn locate(dir: &Path) -> Option<(PathBuf, PathBuf)> {
-    let output = String::from_utf8(git(dir, &["rev-parse", "--show-toplevel", "--absolute-git-dir"]).await?).ok()?;
-    let (toplevel, git_dir) = output.trim_end_matches('\n').split_once('\n')?;
-    let toplevel = PathBuf::from(toplevel);
-    dir.starts_with(&toplevel).then(|| (toplevel, PathBuf::from(git_dir)))
+/// The toplevel, the git directory, and the config file, which linked worktrees share with their main repository.
+async fn locate(dir: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
+    let args = ["rev-parse", "--show-toplevel", "--absolute-git-dir", "--path-format=absolute", "--git-common-dir"];
+    let output = String::from_utf8(git(dir, &args).await?).ok()?;
+    let mut lines = output.trim_end_matches('\n').split('\n');
+    let (toplevel, git_dir, common_dir) = (PathBuf::from(lines.next()?), lines.next()?, lines.next()?);
+    dir.starts_with(&toplevel).then(|| (toplevel, PathBuf::from(git_dir), Path::new(common_dir).join("config")))
 }
 
 /// Runs git in `dir`, giving its trimmed output, or what it printed when it failed.
