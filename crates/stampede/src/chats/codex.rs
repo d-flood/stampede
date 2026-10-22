@@ -17,7 +17,7 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
 use super::{
-    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
+    AgentCommand, Answer, Builtin, CLOSING, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
     Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
     html,
 };
@@ -27,7 +27,6 @@ use crate::{
     usage::{Reading, ResetCredits, ResetOutcome, Snapshot, Window},
 };
 
-const CLOSING: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(5);
 const RECONNECTING: Duration = Duration::from_secs(30);
 const REPLAY: Duration = Duration::from_secs(5);

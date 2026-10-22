@@ -48,6 +48,31 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await expect(square.getByTitle('working')).toHaveCount(0);
 });
 
+test('a closed Chat stays disabled until its Agent exits', async ({ page }, { project }) => {
+	test.skip(project.name !== 'desktop');
+	const name = `chat-closing-${project.name}`;
+	const directory = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+	mkdirSync(directory, { recursive: true });
+	writeFileSync(`${directory}/.fake-slow-exit`, '');
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await panel.getByRole('textbox', { name: 'Composer' }).fill('Greet the reader');
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await expect(panel.getByText(/^Hello and welcome!/)).toBeVisible();
+	await expect(tab.getByTitle('done')).toBeVisible();
+
+	const pressed = Date.now();
+	await page.keyboard.press('Control+W');
+	await expect(tab).toHaveAttribute('aria-disabled', 'true', { timeout: 200 });
+	await page.waitForTimeout(pressed + 500 - Date.now());
+	await expect(tab).toHaveCount(1, { timeout: 0 });
+	await expect(tab).toHaveCount(0, { timeout: pressed + 3000 - Date.now() });
+});
+
 test('a page that loads onto a Chat opens context menus on right-click', async ({ page }, { project }) => {
 	const name = `chat-menus-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });

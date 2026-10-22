@@ -12,7 +12,7 @@ export type Terminal = {
 	id: string;
 	owner: { project: string } | 'drawer';
 	label: string;
-	state: 'live' | 'ended';
+	state: 'live' | 'closing' | 'ended';
 	pending?: string;
 };
 
@@ -90,6 +90,7 @@ export type Chat = {
 	rig: string;
 	agent: Agent;
 	status: Status;
+	closing?: true;
 	agentSession?: string;
 	activity?: string | null;
 	context: Context | null;
