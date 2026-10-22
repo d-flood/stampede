@@ -143,8 +143,8 @@ pub async fn reword(State(state): State<AppState>, Param(id): Param<String>, Jso
     change(&state, &id, &dir, &["update-ref", "-m", &reason, "HEAD", &tip, &head]).await
 }
 
-/// Squashes a commit and every newer one on this branch into one with its author and the tip's tree,
-/// so the index and working tree stay as they are.
+/// Squashes a commit and every newer one on this branch, merges included, into one with its author, parents
+/// and the tip's tree, so merged-in history flattens and the index and working tree stay as they are.
 pub async fn squash(State(state): State<AppState>, Param(id): Param<String>, Json(request): Json<Squash>) -> Result<StatusCode, Failure> {
     let (dir, status) = open(&state, &id).await?;
     settled(&status)?;
@@ -155,10 +155,6 @@ pub async fn squash(State(state): State<AppState>, Param(id): Param<String>, Jso
     }
     if commit == head {
         return Err(refuse("There are no newer commits to squash."));
-    }
-    let merges = exec(&dir, &["rev-list", "--count", "--merges", &head, "--not", &format!("{commit}^@")]).await;
-    if merges.as_deref() != Ok("0") {
-        return Err(refuse("Merges cannot be squashed."));
     }
     unpushed(&dir, &commit).await?;
     let tip = squashed(&dir, &commit, &head, message).await.map_err(|output| (StatusCode::BAD_REQUEST, output))?;

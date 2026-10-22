@@ -223,9 +223,11 @@ async fn unpushed_commits_squash_into_one_without_touching_the_work() {
     git(&repo, &["commit", "-qm", "side"]);
     git(&repo, &["checkout", "-q", "main"]);
     git(&repo, &["merge", "-q", "--no-ff", "side", "-m", "Merge side"]);
-    let [head, squashed] = ["HEAD", "HEAD~1"].map(|rev| rev_parse(&repo, rev));
-    let (status, body) = post(server.port, &squash, json!({ "sha": squashed, "head": head, "message": "Across" })).await;
-    assert_eq!((status, body.as_str()), (409, "Merges cannot be squashed."));
+    let [head, squashed, tree] = ["HEAD", "HEAD~1", "HEAD^{tree}"].map(|rev| rev_parse(&repo, rev));
+    assert_eq!(post(server.port, &squash, json!({ "sha": squashed, "head": head, "message": "Across" })).await.0, 204);
+    assert_eq!(log_message(&repo, "HEAD"), "Across");
+    assert_eq!(rev_parse(&repo, "HEAD^@"), one);
+    assert_eq!(rev_parse(&repo, "HEAD^{tree}"), tree);
 }
 
 #[tokio::test]
