@@ -156,7 +156,6 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/worktree", delete(delete_worktree))
         .route("/api/projects/{id}/worktrees", post(create_worktree))
         .route("/api/projects/{id}/git", get(git::status))
-        .route("/api/projects/{id}/git/head", get(git::head))
         .route("/api/projects/{id}/git/refs", get(git::refs))
         .route("/api/projects/{id}/git/log", get(git::history))
         .route("/api/projects/{id}/git/commit/{sha}", get(git::commit))

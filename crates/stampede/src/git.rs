@@ -115,7 +115,7 @@ pub struct Log {
 }
 
 #[derive(Deserialize)]
-pub struct HeadQuery {
+pub struct PathQuery {
     path: String,
 }
 
@@ -146,16 +146,6 @@ pub async fn refs(State(state): State<AppState>, Param(id): Param<String>) -> Re
         }
     }
     Ok(Json(refs))
-}
-
-pub async fn head(
-    State(state): State<AppState>,
-    Param(id): Param<String>,
-    Query(query): Query<HeadQuery>,
-) -> Result<Vec<u8>, Failure> {
-    let dir = root(&state, &id)?;
-    inside(&query.path)?;
-    Ok(content_at(&dir, "HEAD", &query.path).await)
 }
 
 pub async fn history(
@@ -197,7 +187,7 @@ pub async fn show(
 pub async fn index(
     State(state): State<AppState>,
     Param(id): Param<String>,
-    Query(query): Query<HeadQuery>,
+    Query(query): Query<PathQuery>,
 ) -> Result<Vec<u8>, Failure> {
     let dir = root(&state, &id)?;
     inside(&query.path)?;
