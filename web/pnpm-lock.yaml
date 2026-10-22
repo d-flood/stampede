@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  ghostty-web@0.4.0-next.20.g1858a59: d1efe2edb4db728bdef75b0fb03520b831e66c279a47f5a173c7fdd2673677a0
+
 importers:
 
   .:
@@ -99,8 +102,8 @@ importers:
         specifier: ^4.0.2
         version: 4.0.2
       ghostty-web:
-        specifier: 0.4.0
-        version: 0.4.0
+        specifier: 0.4.0-next.20.g1858a59
+        version: 0.4.0-next.20.g1858a59(patch_hash=d1efe2edb4db728bdef75b0fb03520b831e66c279a47f5a173c7fdd2673677a0)
       markdown-it:
         specifier: ^14.3.2
         version: 14.3.2
@@ -556,8 +559,8 @@ packages:
   fuzzysort@4.0.2:
     resolution: {integrity: sha512-3c7yD6rK1EXIsqpcu1ZVzXJugODWNMzvUij6yTiziaAHrpNS8kzFOI9mJLE8pmG4K9JOaVgzQRgklfOEk8f4Tg==}
 
-  ghostty-web@0.4.0:
-    resolution: {integrity: sha512-0puDBik2qapbD/QQBW9o5ZHfXnZBqZWx/ctBiVtKZ6ZLds4NYb+wZuw1cRLXZk9zYovIQ908z3rvFhexAvc5Hg==}
+  ghostty-web@0.4.0-next.20.g1858a59:
+    resolution: {integrity: sha512-NXA9H3IJlx+DGJukXbOPQWFkigYdAatTqkoIvM8tvhfbaYoDf3gGKxXLLyXtLYOBt5qzGdEZa294TU36gULjVg==}
 
   import-meta-resolve@4.2.0:
     resolution: {integrity: sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg==}
@@ -1415,7 +1418,7 @@ snapshots:
 
   fuzzysort@4.0.2: {}
 
-  ghostty-web@0.4.0: {}
+  ghostty-web@0.4.0-next.20.g1858a59(patch_hash=d1efe2edb4db728bdef75b0fb03520b831e66c279a47f5a173c7fdd2673677a0): {}
 
   import-meta-resolve@4.2.0: {}
 

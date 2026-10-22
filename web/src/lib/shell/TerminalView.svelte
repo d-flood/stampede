@@ -56,6 +56,7 @@
 	let composer = $state<Composer>();
 	let dragged = $state<number>();
 	let wheeled = 0;
+	let hidden = $state(document.hidden);
 	const live = $derived(device.connection === 'connected');
 	const observer = new ResizeObserver(propose);
 
@@ -96,6 +97,11 @@
 	});
 
 	$effect(() => {
+		if (active && displayed && !hidden) view?.resume();
+		else view?.pause();
+	});
+
+	$effect(() => {
 		if (!focused || !view) return;
 		window.terminal = view;
 		if (composing || pending) composer?.focus();
@@ -118,26 +124,15 @@
 		next.focus = () => {};
 		next.open(element);
 		next.focus = focus;
-		const renderer = next.renderer!;
-		const render = renderer.render.bind(renderer);
-		let stale = true;
-		renderer.render = (buffer, forceAll, ...args) => {
-			if (!active || !displayed || document.hidden) {
-				stale = true;
-				return;
-			}
-			render(buffer, forceAll || stale, ...args);
-			stale = false;
-		};
 		observer.disconnect();
 		observer.observe(element);
 		for (const input of [element, next.textarea]) {
 			for (const name of ['autocomplete', 'autocorrect', 'autocapitalize']) input?.setAttribute(name, 'off');
 			input?.setAttribute('spellcheck', 'false');
 		}
-		// ghostty-web reads only keydown and compositionend, so text a soft keyboard commits directly would be lost.
+		// ghostty-web reads beforeinput only on its textarea, so text a soft keyboard commits to the focused element would be lost.
 		element.addEventListener('beforeinput', (event) => {
-			if (event.inputType === 'insertText' && event.data && !event.isComposing) send(event.data);
+			if (event.target === element && event.inputType === 'insertText' && event.data && !event.isComposing) send(event.data);
 		});
 		if (onopen) linkify(next, () => project, onopen, onbrowse);
 		next.attachCustomWheelEventHandler((event) => {
@@ -216,7 +211,7 @@
 		if (channel !== undefined && live) device.input(channel, data);
 	}
 
-	// ghostty-web has no mouse reporting and turns the wheel into arrow keys on the
+	// ghostty-web reports clicks but never the wheel, which it turns into arrow keys on the
 	// alternate screen, so apps tracking the mouse, like Claude Code, get wheel reports from here.
 	function scroll(amount: number, at?: { clientX: number; clientY: number }) {
 		if (!view) return;
@@ -368,6 +363,8 @@
 		view?.focus();
 	}
 </script>
+
+<svelte:document onvisibilitychange={() => (hidden = document.hidden)} />
 
 <div class="panel" role="tabpanel" hidden={!active}>
 	<div class="toolbar">
