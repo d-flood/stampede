@@ -4,6 +4,7 @@ import os
 import re
 import select
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -163,6 +164,14 @@ def gate(name):
     while path.exists():
         time.sleep(0.02)
 
+
+def slow_exit(*_):
+    time.sleep(1)
+    sys.exit(0)
+
+
+if Path('.fake-slow-exit').exists():
+    signal.signal(signal.SIGTERM, slow_exit)
 
 args = sys.argv[1:]
 if (capture := os.environ.get('STAMPEDE_FAKE_ENVIRONMENT')) and os.environ.get('STAMPEDE_SCRATCH'):

@@ -31,6 +31,7 @@ use crate::protocol::{self, Hello, Message, Size, Title};
 const MAX_CONTINUATION: usize = 1 << 20;
 const FOREGROUND_POLL: Duration = Duration::from_millis(100);
 const SAVE_INTERVAL: Duration = Duration::from_secs(2);
+const CLOSING: Duration = Duration::from_secs(5);
 const QUEUED_EVENTS: usize = 16;
 const QUEUED_FRAMES: usize = 256;
 
@@ -69,6 +70,8 @@ pub struct Record {
     pub command: Vec<String>,
     pub size: Size,
     pub protocol: u16,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closing: bool,
 }
 
 pub fn socket_path(data_dir: &Path, id: &str) -> PathBuf {
@@ -142,6 +145,7 @@ pub fn hold(args: HoldArgs) -> Result<(), Box<dyn Error>> {
         command: args.command,
         size: Size { cols: 80, rows: 24 },
         protocol: protocol::VERSION,
+        closing: false,
     };
     files.write_record(&record)?;
     // SAFETY: no other threads exist yet.
@@ -260,6 +264,7 @@ fn run(
     let mut next_id = 0;
     let mut changed = false;
     let mut saved = Instant::now();
+    let mut deadline = None;
     for event in received {
         match event {
             Event::Output(bytes) => {
@@ -306,10 +311,13 @@ fn run(
             }
             Event::Received(_, Message::Hangup) => {
                 // portable-pty starts the child with setsid, so its pid names its process group.
-                if let Some(pid) = pid {
-                    let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGHUP);
+                let Some(pid) = pid else { break };
+                let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGHUP);
+                if deadline.is_none() {
+                    deadline = Some(Instant::now() + CLOSING);
+                    record.closing = true;
+                    let _ = files.write_record(record);
                 }
-                break;
             }
             Event::Received(..) => {}
             Event::Closed(id) => {
@@ -321,6 +329,9 @@ fn run(
                         let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGHUP);
                     }
                     break;
+                }
+                if let (Some(pid), Some(deadline)) = (pid, deadline) && Instant::now() >= deadline {
+                    let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
                 }
                 if changed && saved.elapsed() >= SAVE_INTERVAL {
                     changed = false;

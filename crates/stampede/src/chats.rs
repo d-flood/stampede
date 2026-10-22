@@ -14,7 +14,7 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,8 @@ use crate::{
 pub use holder::{HoldChatArgs, hold_chat};
 pub use html::{ChatToolsArgs, serve as chat_tools};
 pub use delegation::listen as listen_delegations;
+
+const CLOSING: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
@@ -664,6 +666,8 @@ pub struct Chat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_resolved: Option<String>,
     pub status: Status,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closing: bool,
     #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub activity: Option<String>,
     pub viewed_since_done: bool,
@@ -878,6 +882,9 @@ impl Chats {
     }
 
     async fn start(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>, parent: Option<String>) -> io::Result<Chat> {
+        if session.is_some() && self.chats.lock().unwrap().iter().any(|entry| entry.chat.lock().unwrap().agent_session.as_deref() == session) {
+            return Err(io::Error::other("Another Chat is still running that conversation."));
+        }
         let (handoff_from, draft) = match handoff {
             Some((source, text)) => (Some(source), Some(text)),
             None => (None, None),
@@ -893,6 +900,7 @@ impl Chats {
             resume_at: None,
             plan_resolved: None,
             status: Status::Done,
+            closing: false,
             activity: None,
             viewed_since_done: true,
             context: None,
@@ -969,10 +977,10 @@ impl Chats {
             };
             match reattached {
                 Ok((driver, events)) => {
-                    let parent = chat.parent.clone();
+                    let closing = chat.closing || chat.parent.is_some();
                     let id = chat.id.clone();
                     self.adopt(chat, driver, events, storage);
-                    if parent.is_some() { self.close(&id); }
+                    if closing { self.close(&id); }
                 },
                 Err(error) => eprintln!("cannot restore chat {}: {error}", chat.id),
             }
@@ -999,6 +1007,9 @@ impl Chats {
         let entry = self.get(id).ok_or_else(|| io::Error::other("The Chat is no longer open."))?;
         let transcript = entry.transcript.lock().unwrap();
         let chat = entry.chat.lock().unwrap();
+        if chat.closing {
+            return Err(io::Error::other("The Chat is closing."));
+        }
         if chat.status != Status::Done || transcript.reported != Status::Done || !transcript.requests.is_empty() || !chat.queued.is_empty() || transcript.handoff.is_some() {
             return Err(io::Error::other("Wait for the Chat to finish before moving it."));
         }
@@ -1288,7 +1299,7 @@ impl Chats {
             chat.viewed_since_done = self.shown(&id);
         }
         self.save(&chat);
-        let item = chat.parent.is_none().then(|| chat.attention());
+        let item = (chat.parent.is_none() && !chat.closing).then(|| chat.attention());
         drop(chat);
         let _ = self.changed.send(Change::Status(id.clone(), status));
         let _ = self.lifecycle.send(Lifecycle::Status(id.clone(), status));
@@ -1531,9 +1542,16 @@ impl Chats {
         for child in self.children(id) {
             self.close(&child);
         }
-        if let Some(entry) = self.get(id) {
-            entry.driver.close();
+        let Some(entry) = self.get(id) else { return };
+        let mut chat = entry.chat.lock().unwrap();
+        if !chat.closing {
+            chat.closing = true;
+            self.save(&chat);
+            let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
+            drop(chat);
+            self.refresh_attention();
         }
+        entry.driver.close();
     }
 
     /// Closes a Chat, or forgets the record of one that did not come back when the server restarted.
@@ -1603,7 +1621,7 @@ pub async fn usage(rig: &Rig) -> io::Result<Snapshot> {
 
 impl Chat {
     fn needs_attention(&self) -> bool {
-        match self.status {
+        !self.closing && match self.status {
             Status::Waiting => true,
             Status::Done => !self.viewed_since_done,
             Status::Working => false,

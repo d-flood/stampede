@@ -58,6 +58,7 @@ struct Staged {
 #[serde(rename_all = "lowercase")]
 pub enum State {
     Live,
+    Closing,
     Ended,
 }
 
@@ -248,6 +249,9 @@ impl Terminals {
         let (mut frames, mut writer, initial) = connect(&self.data_dir, &record.id).await?;
         let (control, mut pending) = mpsc::unbounded_channel();
         let size = record.size;
+        if record.closing {
+            let _ = control.send(Message::Hangup);
+        }
         let (mut terminal, shell, mut title) = self.describe(record)?;
         if let Some(initial) = initial {
             title = initial;
@@ -373,12 +377,13 @@ impl Terminals {
     }
 
     pub fn close(&self, id: &str) {
-        match self.get(id) {
-            Some(entry) => {
-                let _ = entry.control.send(Message::Hangup);
-            }
-            None => self.dismiss(id),
+        let Some(entry) = self.get(id) else { return self.dismiss(id) };
+        let mut terminal = entry.terminal.lock().unwrap();
+        if terminal.state != State::Closing {
+            terminal.state = State::Closing;
+            let _ = self.changed.send(terminal.owner.clone());
         }
+        let _ = entry.control.send(Message::Hangup);
     }
 
     pub fn ended(&self, id: &str) -> Option<(Terminal, Size)> {
@@ -467,7 +472,7 @@ fn describe(record: Record) -> (Terminal, String, Title) {
         id: record.id,
         owner: record.owner,
         label: label(&shell, &title),
-        state: State::Live,
+        state: if record.closing { State::Closing } else { State::Live },
         pending: None,
         chat_id: None,
     };

@@ -143,9 +143,10 @@
 		...openEpics.map((epic) => epic.id),
 		...fileTabs.map((file) => file.id)
 	]);
-	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? '']) ?? tabIds.at(-1));
+	const closingTabs = $derived(new Set([...tabs.filter((tab) => tab.state === 'closing'), ...chatTabs.filter((chat) => chat.closing)].map(({ id }) => id)));
+	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? ''] && !closingTabs.has(id)) ?? tabIds.findLast((id) => !closingTabs.has(id)));
 	const whole = $derived({ tabs: tabIds, active: activeTab });
-	const layout = $derived(focused && arrange(splits[focused.id], tabIds, activeTab));
+	const layout = $derived(focused && arrange(splits[focused.id], tabIds, activeTab, closingTabs));
 	const side: Side = $derived(layout && layout.right.active === activeTab ? 'right' : 'left');
 	const split = $derived(form() === 'desktop' ? layout : undefined);
 	const groups = $derived(split ? [split.left, split.right] : [whole]);
@@ -555,7 +556,7 @@
 
 	function jump(index: number) {
 		const tabId = groups.flatMap((group) => group.tabs)[index];
-		if (focused && tabId) choose(focused.id, tabId);
+		if (focused && tabId && !closingTabs.has(tabId)) choose(focused.id, tabId);
 	}
 
 	function openPalette(scope: Scope) {
@@ -591,7 +592,7 @@
 		if (!source.tabs.includes(tabId)) return;
 		const rest = source.tabs.filter((id) => id !== tabId);
 		if (rest.length) {
-			const kept = { tabs: rest, active: source.active === tabId ? neighbor(source.tabs, tabId) : source.active };
+			const kept = { tabs: rest, active: source.active === tabId ? neighbor(source.tabs, tabId, closingTabs) : source.active };
 			const moved = { tabs: [...(layout?.[to].tabs ?? []), tabId], active: tabId };
 			const [left, right] = to === 'left' ? [moved, kept] : [kept, moved];
 			splits[focused.id] = { left, right, ratio: layout?.ratio ?? 0.5 };
@@ -641,7 +642,7 @@
 		if (!group) return;
 		if (group.tabs.length === 1) delete splits[projectId];
 		if (tabId !== group.active) return;
-		const next = neighbor(group.tabs, tabId) ?? halves.find((other) => other !== group)?.active;
+		const next = neighbor(group.tabs, tabId, closingTabs) ?? halves.find((other) => other !== group)?.active;
 		if (next && tabId === activeTab) choose(projectId, next);
 		else if (next) show(projectId, next);
 	}
@@ -840,7 +841,11 @@
 							{@const file = fileTabs.find((file) => file.id === id)}
 							{@const browser = browserTabs.find((browser) => browser.id === id)}
 							{@const epic = openEpics.find((epic) => epic.id === id)}
-							{#if tab}
+							{#if tab?.state === 'closing'}
+								<Tab variant="terminal" label={tab.label} closing />
+							{:else if chat?.closing}
+								<Tab variant="agent" agent={chat.agent} label={chat.rig} closing />
+							{:else if tab}
 								<Menu context items={tabMenu(projectId, tab)}>
 									{#snippet trigger(props)}
 										<Tab

@@ -25,7 +25,7 @@ use tokio::{
 use uuid::Uuid;
 
 use super::{
-    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, ChoiceDescription, CommandStatus,
+    AgentCommand, Answer, Builtin, CLOSING, Capabilities, Chat, Choice, ChoiceDescription, CommandStatus,
     Context, Driver, Event, Image, Item, Notice, Phase, Question, Request, RequestKind, Session,
     Settings, Status, Tokens, ToolCall, ToolKind, html, relative, unified, words,
 };
@@ -401,8 +401,11 @@ async fn drive(
                 Some(Action::Delegated(item)) => { transcript.push(item); Ok(()) }
                 Some(Action::Close) | None => {
                     pending.clear();
-                    if transcript.status != Status::Done { let _ = rpc(session.abort()).await; }
-                    let _ = rpc(session.disconnect()).await;
+                    let _ = timeout(CLOSING, async {
+                        if transcript.status != Status::Done { let _ = session.abort().await; }
+                        let _ = session.disconnect().await;
+                    }).await;
+                    let _ = connection.child.kill().await;
                     break;
                 }
             },

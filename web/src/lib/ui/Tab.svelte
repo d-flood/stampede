@@ -22,6 +22,7 @@
 		dirty?: boolean;
 		deleted?: boolean;
 		ended?: boolean;
+		closing?: boolean;
 		onclose?: () => void;
 	};
 
@@ -35,6 +36,7 @@
 		dirty = false,
 		deleted = false,
 		ended = false,
+		closing = false,
 		onclose,
 		...rest
 	}: Props = $props();
@@ -46,7 +48,18 @@
 </script>
 
 <div class="tab {status ?? ''}" class:closable={active && !!onclose}>
-	<button role="tab" aria-selected={active} class="select {variant} {status ?? ''}" class:active class:deleted class:ended {...rest}>
+	<button
+		role="tab"
+		aria-selected={active}
+		aria-disabled={closing || undefined}
+		title={closing ? 'Closing…' : undefined}
+		class="select {variant} {status ?? ''}"
+		class:active
+		class:deleted
+		class:ended
+		class:closing
+		{...rest}
+	>
 		<Icon />
 		<span class="label">{label}</span>
 		{#if variant === 'diff'}<span class="vs">↔ {against}</span>{/if}
@@ -101,7 +114,7 @@
 			color var(--dur-fast);
 	}
 
-	.select:not(.active):hover {
+	.select:not(.active, .closing):hover {
 		background: var(--hover);
 		color: var(--color-fg);
 	}
@@ -181,6 +194,16 @@
 		color: var(--muted-fg);
 		font-weight: 400;
 		font-style: italic;
+	}
+
+	.closing {
+		color: color-mix(in oklab, var(--muted-fg) 55%, var(--color-bg));
+		font-weight: 400;
+		cursor: default;
+	}
+
+	.closing :global(svg) {
+		color: inherit;
 	}
 
 	.terminal .label {

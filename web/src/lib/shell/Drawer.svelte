@@ -20,7 +20,8 @@
 	const views: Record<string, TerminalView> = {};
 	let returnTo: HTMLElement | undefined;
 
-	const active = $derived(terminals.find((terminal) => terminal.id === chosen) ?? terminals.at(-1));
+	const selectable = (terminal: Terminal) => terminal.state !== 'closing';
+	const active = $derived(terminals.find((terminal) => terminal.id === chosen && selectable(terminal)) ?? terminals.findLast(selectable));
 
 	onMount(() => device.listen({ message }));
 
@@ -81,7 +82,7 @@
 	function closeTab(terminalId: string) {
 		if (terminalId === active?.id) {
 			const index = terminals.findIndex((terminal) => terminal.id === terminalId);
-			const neighbor = terminals[index + 1] ?? terminals[index - 1];
+			const neighbor = terminals.slice(index + 1).find(selectable) ?? terminals.slice(0, index).findLast(selectable);
 			if (neighbor) chosen = neighbor.id;
 			else panel.focus();
 		}
@@ -95,19 +96,23 @@
 	<div class="strip">
 		<div role="tablist" aria-label="Drawer Tabs">
 			{#each terminals as tab (tab.id)}
-				<Menu context items={[{ label: 'Close', onselect: () => closeTab(tab.id) }]}>
-					{#snippet trigger(props)}
-						<Tab
-							{...props}
-							variant="terminal"
-							label={tab.label}
-							ended={tab.state === 'ended'}
-							active={tab.id === active?.id}
-							onclose={() => closeTab(tab.id)}
-							onclick={() => (chosen = tab.id)}
-						/>
-					{/snippet}
-				</Menu>
+				{#if selectable(tab)}
+					<Menu context items={[{ label: 'Close', onselect: () => closeTab(tab.id) }]}>
+						{#snippet trigger(props)}
+							<Tab
+								{...props}
+								variant="terminal"
+								label={tab.label}
+								ended={tab.state === 'ended'}
+								active={tab.id === active?.id}
+								onclose={() => closeTab(tab.id)}
+								onclick={() => (chosen = tab.id)}
+							/>
+						{/snippet}
+					</Menu>
+				{:else}
+					<Tab variant="terminal" label={tab.label} closing />
+				{/if}
 			{/each}
 		</div>
 		<Menu items={[{ label: 'Terminal', icon: TerminalWindow, onselect: newTab }]}>

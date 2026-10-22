@@ -13,6 +13,7 @@ use std::{
     process::{Command, Stdio},
     sync::mpsc::{self, Sender},
     thread,
+    time::Instant,
 };
 
 use futures_util::StreamExt;
@@ -23,7 +24,7 @@ use nix::{
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
 
-use super::protocol::{self, Hello, Message};
+use super::{CLOSING, protocol::{self, Hello, Message}};
 
 pub type Frames = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 
@@ -126,6 +127,7 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String], record: &Path) ->
     let mut conns: HashMap<u64, Sender<Vec<u8>>> = HashMap::new();
     let mut next_id = 0;
     let mut buffer = Vec::new();
+    let mut deadline = None;
     for event in received {
         match event {
             Event::Line(line) => {
@@ -141,6 +143,9 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String], record: &Path) ->
                     let _ = killpg(group, Signal::SIGTERM);
                     break;
                 }
+                if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    let _ = killpg(group, Signal::SIGKILL);
+                }
             }
             Event::Connected(stream) => {
                 next_id += 1;
@@ -155,6 +160,7 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String], record: &Path) ->
             Event::Received(Message::Forget) => buffer.clear(),
             Event::Received(Message::Hangup) => {
                 let _ = killpg(group, Signal::SIGTERM);
+                deadline.get_or_insert(Instant::now() + CLOSING);
             }
             Event::Received(_) => {}
             Event::Closed(id) => {
