@@ -21,6 +21,7 @@ export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'mcp' | 'ot
 export type Subagent = {
 	kind: 'subagent';
 	id: string;
+	origin?: 'harness' | 'stampede';
 	name?: string;
 	task: string;
 	status: Status;

@@ -2,13 +2,13 @@
 	import type { Item } from '#lib/device.svelte.ts';
 	import CaretRight from '~icons/ph/caret-right';
 
-	let { item }: { item: Extract<Item, { kind: 'thinking' }> } = $props();
+	let { item, open = false }: { item: Extract<Item, { kind: 'thinking' }>; open?: boolean } = $props();
 
 	const label = $derived(item.seconds ? `Thought for ${item.seconds}s` : 'Thought briefly');
 </script>
 
 {#if item.text}
-	<details class="thinking">
+	<details class="thinking" {open}>
 		<summary><span class="caret"><CaretRight /></span>{label}</summary>
 		<div class="text">{item.text}</div>
 	</details>

@@ -660,6 +660,7 @@ async fn subagents(agent: &str) {
     assert!(child["startedAt"].is_u64());
     let home = server.root.path().join("home").display().to_string();
     let finished = |child: &Value, restored: bool| {
+        assert_eq!(child["origin"], "harness");
         assert_eq!(child["outcome"], "completed");
         if agent == "claude-code" {
             assert_eq!(child["name"], "Explore");

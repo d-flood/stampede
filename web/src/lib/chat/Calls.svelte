@@ -4,7 +4,7 @@
 	import type { Snippet } from 'svelte';
 	import CaretRight from '~icons/ph/caret-right';
 
-	let { items, activity, children }: { items: Item[]; activity?: string | null; children: Snippet } = $props();
+	let { items, activity, open = false, children }: { items: Item[]; activity?: string | null; open?: boolean; children: Snippet } = $props();
 
 	const count = $derived(items.reduce((count, item) => count + (item.kind === 'tools' ? item.calls.length : ['command', 'edit'].includes(item.kind) ? 1 : 0), 0));
 	const last = $derived.by(() => {
@@ -21,7 +21,7 @@
 </script>
 
 {#if count}
-	<details class="calls">
+	<details class="calls" {open}>
 		<summary><span class="caret"><CaretRight /></span><span class="count">{count} tool {count === 1 ? 'call' : 'calls'}</span>{#if last?.icon}<span class="icon"><last.icon /></span>{/if}<span class="latest">{latest}</span></summary>
 		<div class="content">{@render children()}</div>
 	</details>

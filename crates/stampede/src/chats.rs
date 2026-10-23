@@ -78,6 +78,7 @@ pub enum Item {
     },
     Subagent {
         id: String,
+        origin: SubagentOrigin,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
         task: String,
@@ -106,6 +107,13 @@ pub enum Outcome {
     Completed,
     Failed,
     Stopped,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubagentOrigin {
+    Harness,
+    Stampede,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -297,14 +305,13 @@ impl Subagent {
         self.outcome = outcome.or(self.outcome);
     }
 
-    /// A final-phase text is the Subagent's report, not one of its items.
     fn item(&self) -> Item {
         let done = self.status == Status::Done;
         let report = self.items.iter().rev().find_map(|item| match item {
-            Item::Text { text, phase: Phase::Final, .. } => Some(text.clone()),
+            Item::Text { text, phase: Phase::Final, .. } if done => Some(text.clone()),
             _ => None,
         });
-        let items: Vec<Item> = self.items.iter().filter(|item| !matches!(item, Item::Text { phase: Phase::Final, .. })).cloned().collect();
+        let items: Vec<Item> = self.items.iter().filter(|item| !done || !matches!(item, Item::Text { phase: Phase::Final, .. })).cloned().collect();
         let totals = done.then(|| Totals {
             duration_ms: self.duration.unwrap_or(self.finished_at.saturating_sub(self.started_at)),
             tools: self.tools.unwrap_or_else(|| items.iter().map(|item| match item {
@@ -316,6 +323,7 @@ impl Subagent {
         });
         Item::Subagent {
             id: self.id.clone(),
+            origin: SubagentOrigin::Harness,
             name: self.name.clone(),
             task: self.task.clone(),
             status: self.status,

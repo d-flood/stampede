@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SubagentOrigin from '#lib/chat/SubagentOrigin.svelte';
 	import { clock, totals, type Placed } from '#lib/chat/agents.ts';
 	import { icons } from '#lib/chat/icons.ts';
 	import type { Subagent } from '#lib/device.svelte.ts';
@@ -26,6 +27,7 @@
 		<span class="separator">/</span>
 		<span class="current" aria-current="page"><icons.subagent /><strong>{subagent.task}</strong></span>
 	</nav>
+	<SubagentOrigin origin={subagent.origin} />
 	{#if subagent.name}<span class="chip" title="Type">{subagent.name}</span>{/if}
 	{#if subagent.model}<span class="chip" title="Model">{subagent.model}</span>{/if}
 	<span class="status {subagent.status}" class:ended>

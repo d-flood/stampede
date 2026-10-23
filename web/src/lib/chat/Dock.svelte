@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SubagentOrigin from '#lib/chat/SubagentOrigin.svelte';
 	import { clock, type Placed } from '#lib/chat/agents.ts';
 	import { icons } from '#lib/chat/icons.ts';
 	import SubagentMenu from '#lib/chat/SubagentMenu.svelte';
@@ -66,6 +67,7 @@
 				<button class="pill {subagent.status}" style:min-width="{PILL}em" title={subagent.task} onclick={() => (subagent.status === 'waiting' ? onattend(subagent.id) : onopen(path))}>
 					<span class="mark">{#if subagent.status === 'waiting'}<HandPalmFill />{:else}<CircleNotchBold />{/if}</span>
 					<span class="task">{subagent.task}</span>
+					<SubagentOrigin origin={subagent.origin} />
 					{#if subagent.startedAt}<span class="clock">{clock(subagent.startedAt)}</span>{/if}
 				</button>
 			{/each}

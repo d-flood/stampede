@@ -4,7 +4,7 @@
 	import type { Item, ToolCall } from '#lib/device.svelte.ts';
 	import CaretRight from '~icons/ph/caret-right';
 
-	let { item }: { item: Extract<Item, { kind: 'tools' }> } = $props();
+	let { item, open = false }: { item: Extract<Item, { kind: 'tools' }>; open?: boolean } = $props();
 
 	const verbs: Partial<Record<ToolCall['kind'], string>> = { read: 'Read', search: 'Search', fetch: 'Fetch', web: 'Web search' };
 
@@ -27,7 +27,7 @@
 	});
 </script>
 
-<details>
+<details {open}>
 	<summary><span class="caret"><CaretRight /></span><span class="text">{summary}</span></summary>
 	<ul>
 		{#each item.calls as call, index (index)}

@@ -905,6 +905,7 @@ struct Transcript {
     cwd: PathBuf,
     len: usize,
     streaming: HashMap<u64, (usize, String)>,
+    thinking: BTreeMap<u64, (usize, String)>,
     message: Option<String>,
     phase: Phase,
     said: Vec<(usize, String)>,
@@ -961,6 +962,7 @@ impl Transcript {
             cwd: cwd.to_owned(),
             len: 0,
             streaming: HashMap::new(),
+            thinking: BTreeMap::new(),
             message: None,
             phase: Phase::Final,
             said: Vec::new(),
@@ -1436,7 +1438,7 @@ impl Transcript {
             Some("stream_event") if top => self.stream(&message["event"]),
             Some("assistant") if top => self.assistant(message, &message["thinking_duration_ms"], true),
             Some("user") if top => self.results(&message["message"]["content"], &message["tool_use_result"]),
-            Some("assistant" | "user") => {
+            Some("assistant" | "user" | "stream_event") => {
                 if let Some(parent) = message["parent_tool_use_id"].as_str() {
                     for block in message["message"]["content"].as_array().into_iter().flatten().filter(|block| block["type"] == "tool_use") {
                         if let Some(tool) = block["id"].as_str() { self.issued.insert(tool.to_owned(), parent.to_owned()); }
@@ -1495,6 +1497,7 @@ impl Transcript {
                 self.window = None;
                 self.len = 0;
                 self.streaming.clear();
+                self.thinking.clear();
                 self.tools = None;
                 self.commands.clear();
                 self.snippets.clear();
@@ -1651,8 +1654,15 @@ impl Transcript {
                     self.said.push((index, text));
                 }
                 Some("thinking") => {
-                    let text = block["thinking"].as_str().filter(|text| !text.is_empty()).map(str::to_owned);
-                    self.push(Item::Thinking { seconds: seconds(thinking.as_u64().unwrap_or_default()), text });
+                    let streamed = self.thinking.pop_first().map(|(_, item)| item);
+                    let text = block["thinking"].as_str().filter(|text| !text.is_empty()).map(str::to_owned)
+                        .or_else(|| streamed.as_ref().map(|(_, text)| text.clone()).filter(|text| !text.is_empty()));
+                    let item = Item::Thinking { seconds: seconds(thinking.as_u64().unwrap_or_default()), text };
+                    if let Some((index, _)) = streamed {
+                        let _ = self.events.send(Event::Item(index, item));
+                    } else {
+                        self.push(item);
+                    }
                 }
                 Some("tool_use") => {
                     self.phase = Phase::Commentary;
@@ -1673,6 +1683,7 @@ impl Transcript {
             self.message = id.map(str::to_owned);
             self.phase = Phase::Final;
             self.said.clear();
+            self.thinking.clear();
         }
     }
 
@@ -1756,15 +1767,15 @@ impl Transcript {
         }
     }
 
-    /// Claude streams only a subagent's tool calls and their results, so its other activity is left out of the session file's too.
     fn nested(&mut self, message: &Value, result: &Value) {
         let content = &message["message"]["content"];
         match message["type"].as_str() {
             Some("assistant") => {
-                for block in content.as_array().into_iter().flatten().filter(|block| block["type"] == "tool_use") {
-                    self.tool(block, &message["timestamp"]);
-                }
+                let streamed = self.message.as_deref().is_some_and(|id| message["message"]["id"] == id)
+                    && (!self.said.is_empty() || !self.streaming.is_empty());
+                self.assistant(message, &message["thinking_duration_ms"], streamed);
             }
+            Some("stream_event") => self.stream(&message["event"]),
             Some("user") => self.results(content, result),
             _ => {}
         }
@@ -1922,6 +1933,17 @@ impl Transcript {
         }
         if event["type"] == "content_block_stop" { self.activity.finish(&activity_id, &self.events); }
         match event["type"].as_str() {
+            Some("content_block_start") if event["content_block"]["type"] == "thinking" => {
+                let text = event["content_block"]["thinking"].as_str().unwrap_or_default().to_owned();
+                let index = self.push(Item::Thinking { seconds: 0, text: Some(text.clone()) });
+                self.thinking.insert(block, (index, text));
+            }
+            Some("content_block_delta") if event["delta"]["type"] == "thinking_delta" => {
+                if let Some((index, text)) = self.thinking.get_mut(&block) {
+                    text.push_str(event["delta"]["thinking"].as_str().unwrap_or_default());
+                    let _ = self.events.send(Event::Item(*index, Item::Thinking { seconds: 0, text: Some(text.clone()) }));
+                }
+            }
             Some("content_block_start") if event["content_block"]["type"] == "text" => {
                 let text = event["content_block"]["text"].as_str().unwrap_or_default().to_owned();
                 let index = self.push(Item::Text { text: text.clone(), streaming: true, phase: self.phase });
@@ -2058,6 +2080,60 @@ mod result_tests {
 #[cfg(test)]
 mod subagent_tests {
     use super::*;
+
+    #[test]
+    fn subagents_stream_partial_text_and_thinking_without_duplicates() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        transcript.read(&json!({ "type": "assistant", "message": { "content": [{
+            "type": "tool_use", "id": "child", "name": "Agent", "input": { "description": "Review" },
+        }] } }));
+        for event in [
+            json!({ "type": "message_start", "message": { "id": "reply" } }),
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "" } }),
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "thinking_delta", "thinking": "Checking the implementation." } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+            json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "text", "text": "" } }),
+            json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "text_delta", "text": "The first finding" } }),
+        ] {
+            transcript.read(&json!({ "type": "stream_event", "parent_tool_use_id": "child", "event": event }));
+        }
+        let items = std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+            Event::Item(_, Item::Subagent { status: Status::Working, items, .. }) => Some(items),
+            _ => None,
+        }).last().unwrap();
+        assert!(items.iter().any(|item| matches!(item, Item::Thinking { text, .. } if text.as_deref() == Some("Checking the implementation."))), "{items:?}");
+        assert!(items.iter().any(|item| matches!(item, Item::Text { text, streaming: true, .. } if text == "The first finding")), "{items:?}");
+        transcript.read(&json!({ "type": "stream_event", "parent_tool_use_id": "child", "event": { "type": "content_block_stop", "index": 1 } }));
+        transcript.read(&json!({ "type": "assistant", "parent_tool_use_id": "child", "message": { "id": "reply", "content": [
+            { "type": "thinking", "thinking": "Checking the implementation." },
+            { "type": "text", "text": "The first finding" },
+        ] } }));
+        let items = &transcript.subagents["child"].0.items;
+        assert_eq!(items.iter().filter(|item| matches!(item, Item::Thinking { .. })).count(), 1);
+        assert_eq!(items.iter().filter(|item| matches!(item, Item::Text { .. })).count(), 1);
+    }
+
+    #[test]
+    fn subagents_publish_text_and_thinking_while_working() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        transcript.read(&json!({ "type": "assistant", "message": { "content": [{
+            "type": "tool_use", "id": "child", "name": "Agent", "input": { "description": "Review" },
+        }] } }));
+        transcript.read(&json!({ "type": "assistant", "parent_tool_use_id": "child", "message": { "content": [
+            { "type": "thinking", "thinking": "Checking the implementation." },
+            { "type": "text", "text": "Reading the relevant files." },
+            { "type": "tool_use", "id": "read", "name": "Read", "input": { "file_path": "/project/main.rs" } },
+        ] } }));
+        let items = std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+            Event::Item(_, Item::Subagent { status: Status::Working, items, .. }) => Some(items),
+            _ => None,
+        }).last().unwrap();
+        assert!(items.iter().any(|item| matches!(item, Item::Thinking { text, .. } if text.as_deref() == Some("Checking the implementation."))), "{items:?}");
+        assert!(items.iter().any(|item| matches!(item, Item::Text { text, .. } if text == "Reading the relevant files.")), "{items:?}");
+        assert!(items.iter().any(|item| matches!(item, Item::Tools { calls } if calls.iter().any(|call| call.name == "Read"))), "{items:?}");
+    }
 
     #[tokio::test]
     async fn shell_output_waits_for_the_next_prompt_and_returns_from_history() {

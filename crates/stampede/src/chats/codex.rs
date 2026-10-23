@@ -682,6 +682,7 @@ struct Transcript {
     starting: Option<u64>,
     turn: Option<String>,
     streaming: HashMap<String, (usize, String, Phase)>,
+    thinking: HashMap<String, (usize, BTreeMap<u64, String>)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     activity: super::Activity,
     commands: HashMap<String, (usize, Item, Option<String>)>,
@@ -780,6 +781,7 @@ impl Transcript {
             starting: None,
             turn: None,
             streaming: HashMap::new(),
+            thinking: HashMap::new(),
             tools: None,
             activity: super::Activity::default(),
             commands: HashMap::new(),
@@ -890,6 +892,7 @@ impl Transcript {
         self.activity.clear(&self.events);
         self.len = 0;
         self.streaming.clear();
+        self.thinking.clear();
         self.tools = None;
         self.commands.clear();
         self.subagents.clear();
@@ -956,6 +959,7 @@ impl Transcript {
         self.tools = None;
         self.starting = None;
         self.streaming.clear();
+        self.thinking.clear();
         self.commands.clear();
         self.subagents.clear();
         self.delegated.clear();
@@ -1284,6 +1288,18 @@ impl Transcript {
                     None => self.stream(id, delta, Phase::Final),
                 }
             }
+            Some("item/reasoning/summaryTextDelta") => {
+                let Some(id) = params["itemId"].as_str() else { return };
+                if !self.thinking.contains_key(id) {
+                    let index = self.push(Item::Thinking { seconds: 0, text: None });
+                    self.thinking.insert(id.to_owned(), (index, BTreeMap::new()));
+                }
+                let (index, parts) = self.thinking.get_mut(id).unwrap();
+                parts.entry(params["summaryIndex"].as_u64().unwrap_or_default()).or_default()
+                    .push_str(params["delta"].as_str().unwrap_or_default());
+                let text = parts.values().cloned().collect::<Vec<_>>().join("\n\n");
+                let _ = self.events.send(Event::Item(*index, Item::Thinking { seconds: 0, text: Some(text) }));
+            }
             Some("item/started") if item["type"] == "commandExecution" => {
                 self.command(item);
             }
@@ -1307,7 +1323,6 @@ impl Transcript {
         }
     }
 
-    /// Codex announces reasoning once it is done, so its duration runs from the item before.
     fn completed(&mut self, item: &Value, elapsed: u64) {
         if item["type"] == "fileChange" {
             self.edits.remove(item["id"].as_str().unwrap_or_default());
@@ -1340,7 +1355,14 @@ impl Transcript {
                     let parts: Vec<&str> = item[key].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
                     Some(parts.join("\n\n")).filter(|text| !text.is_empty())
                 };
-                self.push(Item::Thinking { seconds: seconds(elapsed), text: parts("summary").or_else(|| parts("content")) });
+                let streamed = self.thinking.remove(&text("id"));
+                let text = parts("summary").or_else(|| parts("content")).or_else(|| streamed.as_ref().map(|(_, parts)| parts.values().cloned().collect::<Vec<_>>().join("\n\n")));
+                let item = Item::Thinking { seconds: seconds(elapsed), text };
+                if let Some((index, _)) = streamed {
+                    let _ = self.events.send(Event::Item(index, item));
+                } else {
+                    self.push(item);
+                }
             }
             Some("commandExecution") => self.command(item),
             Some("fileChange") if item["status"] == "completed" => {
@@ -1569,6 +1591,29 @@ fn edit(id: String, changes: &Value) -> super::RequestKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subagents_publish_reasoning_and_output_before_completion() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new("thread", Path::new("/project"), events);
+        transcript.spawn("child", "Review");
+        for (method, params) in [
+            ("item/started", json!({ "item": { "id": "thinking", "type": "reasoning", "summary": [], "content": [] } })),
+            ("item/reasoning/summaryTextDelta", json!({ "itemId": "thinking", "summaryIndex": 0, "delta": "Checking the implementation." })),
+            ("item/started", json!({ "item": { "id": "output", "type": "agentMessage", "text": "", "phase": "final_answer" } })),
+            ("item/agentMessage/delta", json!({ "itemId": "output", "delta": "The first finding" })),
+        ] {
+            let mut params = params;
+            params["threadId"] = json!("child");
+            transcript.read(&json!({ "method": method, "params": params }));
+        }
+        let items = std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+            Event::Item(_, Item::Subagent { status: Status::Working, items, .. }) => Some(items),
+            _ => None,
+        }).last().unwrap();
+        assert!(items.iter().any(|item| matches!(item, Item::Thinking { text, .. } if text.as_deref() == Some("Checking the implementation."))), "{items:?}");
+        assert!(items.iter().any(|item| matches!(item, Item::Text { text, streaming: true, .. } if text == "The first finding")), "{items:?}");
+    }
 
     #[test]
     fn reset_credits_keep_the_authoritative_count_and_choose_the_first_expiry() {

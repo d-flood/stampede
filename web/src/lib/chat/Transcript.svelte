@@ -53,9 +53,9 @@
 	{:else if item.kind === 'text'}
 		<Text {item} />
 	{:else if item.kind === 'thinking'}
-		<Thinking {item} />
+		<Thinking {item} open={path.length > 0} />
 	{:else if item.kind === 'tools'}
-		<Tools {item} />
+		<Tools {item} open={path.length > 0} />
 	{:else if item.kind === 'html'}
 		<Html {item} />
 	{:else if item.kind === 'media'}
@@ -77,7 +77,7 @@
 	{#if run.kind === 'spawn'}
 		<Spawn subagents={run.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} {onopen} {onattend} />
 	{:else if run.kind === 'rail'}
-		<Calls items={run.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={run === runs.at(-1) ? activity : null}>
+		<Calls items={run.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={run === runs.at(-1) ? activity : null} open={path.length > 0}>
 			<div class="rail">
 				{#each run.indices as index (index)}
 					{@const Marker = marker(entries[index])}

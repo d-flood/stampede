@@ -33,6 +33,7 @@ async fn review(agent: &str, target: &str) {
         }
     }).await.unwrap();
     assert_eq!(live["name"], "target");
+    assert_eq!(live["origin"], "stampede");
     assert_eq!(live["status"], "working");
     assert_eq!(live["prompt"], TASK);
     assert_eq!(fs::read_to_string(server.root.path().join("home/reviewed.txt")).unwrap(), "incorrect value\n");
@@ -69,6 +70,7 @@ async fn review(agent: &str, target: &str) {
     let delegated: Vec<_> = attached["items"].as_array().unwrap().iter().filter(|item| item["kind"] == "subagent").collect();
     assert_eq!(delegated.len(), 1);
     assert_eq!(delegated[0]["status"], "done");
+    assert_eq!(delegated[0]["origin"], "stampede");
     assert_eq!(delegated[0]["outcome"], "completed");
     assert_eq!(delegated[0]["report"], FINDING);
     assert_eq!(delegated[0]["elided"], true);

@@ -1,8 +1,85 @@
 import type { Item, ServerMessage, Subagent } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { WebSocketRoute } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { openProject } from './shell.ts';
+
+for (const agent of ['claude', 'codex']) {
+	test(`${agent} subagents expose live tools, thinking and output through the server`, async ({ page }, { project }) => {
+		const root = process.env.STAMPEDE_E2E_ROOT!;
+		const gates = `${root}/activity-${agent}-${project.name}`;
+		const kind = agent === 'claude' ? 'claude-code' : 'codex';
+		const recording = readFileSync(fileURLToPath(new URL(`../../crates/stampede/tests/fixtures/chats/${kind}/subagents.recorded.jsonl`, import.meta.url)), 'utf8');
+		const rows = recording.trim().split('\n').map((line) => JSON.parse(line));
+		const main = rows.find((row) => row.stdin?.method === 'turn/start')?.stdin.params.threadId;
+		let inserted = false;
+		const entries = rows.flatMap((row) => {
+			if (row.gate) return [];
+			const message = row.stdout;
+			const nested = agent === 'claude'
+				? message?.type === 'assistant' && message.parent_tool_use_id
+				: message?.method === 'item/started' && message.params.threadId !== main && message.params.item.type === 'commandExecution';
+			if (inserted || !nested) return [row];
+			inserted = true;
+			const threadId = message.params?.threadId;
+			const parent = message.parent_tool_use_id;
+			const stream = (event: object) => ({ stdout: { type: 'stream_event', parent_tool_use_id: parent, event } });
+			const event = (method: string, params: object) => ({ stdout: { method, params: { threadId, ...params } } });
+			const initial = agent === 'claude' ? [
+				stream({ type: 'message_start', message: { id: 'live-reply' } }),
+				stream({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }),
+				stream({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Checking the relevant code.' } }),
+				stream({ type: 'content_block_stop', index: 0 }),
+				stream({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }),
+				stream({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'First finding' } })
+			] : [
+				event('item/reasoning/summaryTextDelta', { itemId: 'live-thought', summaryIndex: 0, delta: 'Checking the relevant code.' }),
+				event('item/started', { item: { type: 'agentMessage', id: 'live-output', text: '', phase: 'final_answer' } }),
+				event('item/agentMessage/delta', { itemId: 'live-output', delta: 'First finding' })
+			];
+			const continued = agent === 'claude'
+				? stream({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: ': missing validation.' } })
+				: event('item/agentMessage/delta', { itemId: 'live-output', delta: ': missing validation.' });
+			const finished = agent === 'claude' ? [
+				stream({ type: 'content_block_stop', index: 1 }),
+				{ stdout: { type: 'assistant', parent_tool_use_id: parent, message: { id: 'live-reply', content: [
+					{ type: 'thinking', thinking: 'Checking the relevant code.' },
+					{ type: 'text', text: 'First finding: missing validation.' }
+				] } } }
+			] : [
+				event('item/completed', { item: { type: 'reasoning', id: 'live-thought', summary: ['Checking the relevant code.'], content: [] } }),
+				event('item/completed', { item: { type: 'agentMessage', id: 'live-output', text: 'First finding: missing validation.', phase: 'final_answer' } })
+			];
+			return [row, ...initial, { gate: 'stream' }, continued, { gate: 'continued' }, ...finished];
+		});
+		expect(inserted).toBe(true);
+		writeFileSync(`${gates}/tools.jsonl`, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+		const name = `live-subagent-${agent}-${project.name}`;
+		mkdirSync(`${root}/projects/${name}`);
+		await openProject(page, name);
+		await page.getByRole('button', { name: 'New Tab' }).click();
+		await page.getByRole('menuitem', { name: `Activity ${agent} ${project.name}`, exact: true }).click();
+		const panel = page.locator('.panel[role="tabpanel"]:visible');
+		await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
+		await panel.getByRole('button', { name: 'Send', exact: true }).click();
+		await expect.poll(() => existsSync(`${gates}/stream`)).toBe(true);
+		await panel.getByRole('button', { name: /^1 Subagent · 1 running/ }).click();
+		await expect(panel.locator('header').getByTitle('Spawned by')).toHaveText('Harness');
+		await expect(panel.getByText('First finding', { exact: true })).toBeVisible();
+		const calls = panel.locator('.transcript:visible details.calls');
+		await expect(calls).toHaveJSProperty('open', true);
+		await expect(calls).toContainText(agent === 'claude' ? 'Read notes.txt' : 'cat notes.txt todo.txt');
+		await expect(panel.getByText('Checking the relevant code.', { exact: true })).toBeVisible();
+		unlinkSync(`${gates}/stream`);
+		await expect.poll(() => existsSync(`${gates}/continued`)).toBe(true);
+		await expect(panel.getByText('First finding: missing validation.', { exact: true })).toBeVisible();
+		await expect(panel.getByRole('region', { name: 'Report' })).toHaveCount(0);
+		await expect(panel.getByRole('status', { name: 'Current activity' })).toBeVisible();
+		await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+		unlinkSync(`${gates}/continued`);
+	});
+}
 
 test('the dock shows running subagents as pills and keeps finished ones reachable', async ({ page }, { project }) => {
 	let route: WebSocketRoute;
@@ -26,7 +103,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	};
 	const failed: Subagent = { kind: 'subagent', id: 'failed', name: 'general-purpose', task: 'Broken task', status: 'done', outcome: 'failed', startedAt: now - 300_000, totals: { durationMs: 5_000, tools: 1 }, items: [] };
 	const nested: Subagent = { kind: 'subagent', id: 'nested', name: 'Explore', task: 'Search deeper', status: 'working', startedAt: now, items: [text('Deep work.')] };
-	const active: Subagent = { kind: 'subagent', id: 'active', name: 'Explore', task: 'Find the file', status: 'working', startedAt: now - 65_000, activity: 'Reading codex.rs', items: [text('Reading the files.'), nested] };
+	const active: Subagent = { kind: 'subagent', id: 'active', origin: 'stampede', name: 'Reviewer', task: 'Find the file', status: 'working', startedAt: now - 65_000, activity: 'Reading codex.rs', items: [text('Reading the files.'), nested] };
 	const waiting: Subagent = { kind: 'subagent', id: 'waiting', name: 'Review', task: 'Review the file', status: 'waiting', startedAt: now, items: [] };
 	let items: Item[] = [];
 	const phone = project.name === 'pixel';
@@ -110,7 +187,29 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await spawned.nth(1).click();
 	await expect(rows).toHaveCount(0);
 	await expect(panel.getByText('Reading the files.', { exact: true })).toBeVisible();
+	await expect(header.getByTitle('Spawned by')).toHaveText('Stampede delegate');
 	await expect(composer).toHaveCount(0);
+	items[2] = { ...active, activity: 'Running cargo test', items: [
+		text('Reading the files.'),
+		{ kind: 'thinking', seconds: 0, text: 'Checking the relevant code.' },
+		{ kind: 'tools', calls: [{ kind: 'read', name: 'Read', detail: 'codex.rs' }] },
+		{ kind: 'command', command: 'cargo test', status: 'running', output: 'running 3 tests' },
+		{ kind: 'text', text: 'First finding', phase: 'final', streaming: true },
+		nested
+	] };
+	send({ type: 'chat.item', chatId: chatId!, index: 2, item: items[2] });
+	await expect(panel.getByText('First finding', { exact: true })).toBeVisible();
+	const calls = panel.locator('.transcript:visible details.calls');
+	await expect(calls).toHaveJSProperty('open', true);
+	await expect(calls).toContainText('Read codex.rs');
+	await expect(panel.getByText('Checking the relevant code.', { exact: true })).toBeVisible();
+	await calls.locator('details.running > summary').click();
+	await expect(calls.locator('pre')).toHaveText('running 3 tests');
+	(items[2] as Subagent).items[4] = { kind: 'text', text: 'First finding: missing validation.', phase: 'final', streaming: true };
+	send({ type: 'chat.item', chatId: chatId!, index: 2, item: items[2] });
+	await expect(panel.getByText('First finding: missing validation.', { exact: true })).toBeVisible();
+	await expect(report).toHaveCount(0);
+	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 	await marker('1 Subagent · 1 running').click();
 	await expect(rows).toHaveCount(0);
 	await expect(panel.getByText('Deep work.', { exact: true })).toBeVisible();
@@ -128,8 +227,8 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 		await expect(section('Running')).toHaveText([/^\s*Find the file/, /^\s*Search deeper/, /^\s*Review the file/]);
 	}
 	await expect(done).toHaveCount(2);
-	await expect(done.nth(0)).toHaveText(/^\s*Broken task\s*general-purpose\s*failed\s*·\s*5s · 1 tool$/);
-	await expect(done.nth(1)).toHaveText(/^\s*Old task\s*Explore\s*1m 12s · 14 tools · 38k tokens$/);
+	await expect(done.nth(0)).toHaveText(/^\s*Broken task\s*Harness\s*general-purpose\s*failed\s*·\s*5s · 1 tool$/);
+	await expect(done.nth(1)).toHaveText(/^\s*Old task\s*Harness\s*Explore\s*1m 12s · 14 tools · 38k tokens$/);
 	await done.nth(1).click();
 	await expect(rows).toHaveCount(0);
 	await expect(panel.getByText('Old work.', { exact: true })).toBeVisible();
@@ -138,6 +237,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(panel.getByText('Subagent', { exact: true })).toBeVisible();
 	await expect(breadcrumb).toHaveText(/^Main\s*\/\s*Old task$/);
 	await expect(header.getByTitle('Type')).toHaveText('Explore');
+	await expect(header.getByTitle('Spawned by')).toHaveText('Harness');
 	await expect(header.getByTitle('Model')).toHaveText('claude-haiku-4-5');
 	await expect(header).toContainText('1m 12s · 14 tools · 38k tokens');
 	const lines = () => prompt.getByText(/^Find the old file/).evaluate((element) => Math.round(element.clientHeight / parseFloat(getComputedStyle(element).lineHeight)));
