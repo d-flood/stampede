@@ -8,6 +8,9 @@ const javascript: Load = async () => (await import('@codemirror/lang-javascript'
 const python: Load = async () => (await import('@codemirror/lang-python')).python();
 const markdown: Load = async () => (await import('@codemirror/lang-markdown')).markdown();
 const yaml: Load = async () => (await import('@codemirror/lang-yaml')).yaml();
+const json: Load = async () => (await import('@codemirror/lang-json')).json();
+const xml: Load = async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/xml')).xml);
+const diff: Load = async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/diff')).diff);
 const shell: Load = async () => {
 	const { shell } = await import('@codemirror/legacy-modes/mode/shell');
 	return StreamLanguage.define({
@@ -39,8 +42,13 @@ const loaders: Record<string, Load> = {
 	pyi: python,
 	css: async () => (await import('@codemirror/lang-css')).css(),
 	html: async () => (await import('@codemirror/lang-html')).html(),
-	svg: async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/xml')).xml),
-	json: async () => (await import('@codemirror/lang-json')).json(),
+	svg: xml,
+	xml,
+	json,
+	jsonc: json,
+	jsonl: json,
+	jsonld: json,
+	webmanifest: json,
 	md: markdown,
 	markdown,
 	rs: async () => (await import('@codemirror/lang-rust')).rust(),
@@ -50,10 +58,15 @@ const loaders: Record<string, Load> = {
 	bash: shell,
 	zsh: shell,
 	toml: async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/toml')).toml),
-	svelte: async () => (await import('@replit/codemirror-lang-svelte')).svelte()
+	dockerfile: async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/dockerfile')).dockerFile),
+	diff,
+	patch: diff,
+	svelte: async () => (await import('@replit/codemirror-lang-svelte')).svelte(),
+	vue: async () => (await import('@codemirror/lang-vue')).vue()
 };
 
 export function extension(path: string): string {
+	if (/(?:^|\/)Dockerfile$/.test(path)) return 'dockerfile';
 	return path.match(/\.([^./]+)$/)?.[1].toLowerCase() ?? '';
 }
 

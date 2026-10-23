@@ -66,6 +66,8 @@ export const highlight = HighlightStyle.define([
 	{ tag: tags.emphasis, fontStyle: 'italic' },
 	{ tag: tags.strikethrough, textDecoration: 'line-through' },
 	{ tag: [tags.link, tags.url], color: 'var(--ansi-4)', textDecoration: 'underline' },
+	{ tag: tags.inserted, color: 'var(--git-added)' },
+	{ tag: tags.deleted, color: 'var(--git-deleted)' },
 	{ tag: tags.invalid, color: 'var(--ansi-1)' }
 ]);
 
