@@ -11,6 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use ignore::WalkBuilder;
+use nix::fcntl::{AT_FDCWD, RenameFlags, renameat2};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -50,6 +51,12 @@ pub struct Create {
 pub struct Copy {
     path: String,
     destination: String,
+}
+
+#[derive(Deserialize)]
+pub struct Rename {
+    path: String,
+    name: String,
 }
 
 #[derive(Deserialize)]
@@ -271,6 +278,30 @@ pub async fn copy(
             }
         }
         unreachable!()
+    })
+    .await
+}
+
+pub async fn rename(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Json(rename): Json<Rename>,
+) -> Result<Response, Failure> {
+    let root = root(&state, &id)?;
+    blocking(move || {
+        let relative = Path::new(&rename.path);
+        if !relative.components().all(|part| matches!(part, Component::Normal(_))) {
+            return Err((StatusCode::FORBIDDEN, "Invalid path within the Project".to_owned()));
+        }
+        let name = relative.file_name().ok_or_else(|| (StatusCode::BAD_REQUEST, "No name".to_owned()))?;
+        if matches!(rename.name.as_str(), "" | "." | "..") || rename.name.contains('/') {
+            return Err((StatusCode::BAD_REQUEST, "Invalid name".to_owned()));
+        }
+        let parent = relative.parent().unwrap_or(Path::new(""));
+        let dir = resolve(&root, &parent.to_string_lossy())?;
+        renameat2(AT_FDCWD, &dir.join(name), AT_FDCWD, &dir.join(&rename.name), RenameFlags::RENAME_NOREPLACE)
+            .map_err(|error| failure(error.into()))?;
+        Ok(Json(json!({ "path": parent.join(&rename.name) })).into_response())
     })
     .await
 }

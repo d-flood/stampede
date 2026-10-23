@@ -51,11 +51,12 @@
 		codexResets?: ResetCredits | null;
 		epics?: Epic[];
 		onopen(path: string, cursor?: Cursor): void;
+		onrename(from: string, to: string): void;
 		ondiff(change: Change, against: Against): void;
 		onepic(slug: string): void;
 	};
 
-	let { open, project, label, git, device, section = $bindable(), usage, codexResets, epics, onopen, ondiff, onepic }: Props = $props();
+	let { open, project, label, git, device, section = $bindable(), usage, codexResets, epics, onopen, onrename, ondiff, onepic }: Props = $props();
 
 	let switching = $state(false);
 	const Picker = $derived(picker());
@@ -106,7 +107,7 @@
 		</div>
 		{#if current === 'files'}
 			{#key project.id}
-				<Files projectId={project.id} {device} changes={git?.changes ?? []} {onopen} />
+				<Files projectId={project.id} {device} changes={git?.changes ?? []} {onopen} {onrename} />
 			{/key}
 		{:else if current === 'changes'}
 			{#key project.id}

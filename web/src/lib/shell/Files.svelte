@@ -2,6 +2,7 @@
 	import type { Device } from '#lib/device.svelte.ts';
 	import { copy, create, list, remove, RequestError, type Entry } from '#lib/files.svelte.ts';
 	import { letters, type Change } from '#lib/git.ts';
+	import Rename from '#lib/shell/Rename.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -16,11 +17,12 @@
 	import EyeSlash from '~icons/ph/eye-slash';
 	import FilePlus from '~icons/ph/file-plus';
 	import FolderPlus from '~icons/ph/folder-plus';
+	import PencilSimple from '~icons/ph/pencil-simple';
 	import Trash from '~icons/ph/trash';
 
-	type Props = { projectId: string; device: Device; changes: Change[]; onopen(path: string): void };
+	type Props = { projectId: string; device: Device; changes: Change[]; onopen(path: string): void; onrename(from: string, to: string): void };
 
-	let { projectId, device, changes, onopen }: Props = $props();
+	let { projectId, device, changes, onopen, onrename }: Props = $props();
 
 	let includeIgnored = $state(false);
 	let listings = $state.raw<Record<string, Entry[]>>({});
@@ -36,6 +38,7 @@
 	let copied = $state<Entry>();
 	let pasting = $state(false);
 	let pasteError = $state('');
+	let renamer: Rename;
 	let treeElement: HTMLDivElement;
 	let focused: Entry | undefined;
 	const expanded = new SvelteSet<string>();
@@ -118,9 +121,14 @@
 	}
 
 	function keydown(event: KeyboardEvent) {
-		if (event.defaultPrevented || event.isComposing || event.altKey || event.shiftKey || event.ctrlKey === event.metaKey) return;
+		if (event.defaultPrevented || event.isComposing || event.altKey || event.shiftKey) return;
 		if (!(event.target instanceof HTMLElement) || !treeElement?.contains(event.target)) return;
 		const entry = event.target === treeElement ? undefined : focused;
+		if (event.key === 'F2' && entry && !event.ctrlKey && !event.metaKey) {
+			event.preventDefault();
+			renamer.start(entry.path, entry.dir);
+		}
+		if (event.ctrlKey === event.metaKey) return;
 		const key = event.key.toLowerCase();
 		if (key === 'c' && entry) {
 			event.preventDefault();
@@ -159,6 +167,20 @@
 		}
 	}
 
+	function renamed(from: string, to: string) {
+		const kept = { ...listings };
+		for (const path of [...expanded]) {
+			if (path === from || path.startsWith(`${from}/`)) {
+				expanded.delete(path);
+				expanded.add(to + path.slice(from.length));
+				delete kept[path];
+			}
+		}
+		listings = kept;
+		reload();
+		onrename(from, to);
+	}
+
 	async function deleteEntry() {
 		if (!target || deleting) return;
 		deleting = true;
@@ -193,6 +215,7 @@
 			{@const items = [
 				{ label: 'Copy', icon: Copy, onselect: () => copyEntry(entry) },
 				...creationItems(entry.dir ? entry.path : path),
+				{ label: 'Rename', icon: PencilSimple, onselect: () => renamer.start(entry.path, entry.dir) },
 				{ label: 'Delete', icon: Trash, onselect: () => confirm(entry) }
 			]}
 			<li>
@@ -272,6 +295,8 @@
 		<Button type="submit" form="create-entry" variant="primary" disabled={creating || !name.trim()}>{creating ? 'Creating…' : 'Create'}</Button>
 	{/snippet}
 </Dialog>
+
+<Rename bind:this={renamer} {projectId} onrename={renamed} />
 
 <Dialog
 	bind:open={confirming}

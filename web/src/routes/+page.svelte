@@ -38,6 +38,7 @@
 	import type { Action, Scope } from '#lib/shell/Palette.svelte';
 	import Projects from '#lib/shell/Projects.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
+	import Rename from '#lib/shell/Rename.svelte';
 	import Sidebar, { showing as sectionShowing, type Section } from '#lib/shell/Sidebar.svelte';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import Usage from '#lib/shell/Usage.svelte';
@@ -113,6 +114,7 @@
 	let screens: HTMLElement | undefined;
 	let held = $state(false);
 	let drawer: Drawer;
+	let renamer = $state<Rename>();
 	let drawerOpen = $state(false);
 	let settle: ((error?: string) => void) | undefined;
 	let updateAvailable = $state(false);
@@ -789,6 +791,31 @@
 		openTab(new OpenDiff(file.projectId, file.path, 'disk')).snapshot = { disk, buffer };
 	}
 
+	function retarget(projectId: string, from: string, to: string) {
+		const open = files[projectId] ?? [];
+		const ids = new Map<string, string>();
+		for (const file of open) {
+			if (file instanceof OpenDiff || file instanceof OpenConfig || (file.path !== from && !file.path.startsWith(`${from}/`))) continue;
+			const moved = new OpenFile(projectId, to + file.path.slice(from.length));
+			if (open.some((other) => other.id === moved.id)) continue;
+			ids.set(file.id, moved.id);
+			file.path = moved.path;
+		}
+		const swap = (id: string) => ids.get(id) ?? id;
+		if (chosenTabs[projectId]) chosenTabs[projectId] = swap(chosenTabs[projectId]);
+		const stored = splits[projectId];
+		for (const group of stored ? [stored.left, stored.right] : []) {
+			group.tabs = group.tabs.map(swap);
+			if (group.active) group.active = swap(group.active);
+		}
+	}
+
+	function fileMenu(file: OpenFile) {
+		const close = { label: 'Close', onselect: () => closeFile(file) };
+		if (file instanceof OpenDiff || file instanceof OpenConfig) return [close];
+		return [close, { label: 'Rename', onselect: () => renamer?.start(file.path, false) }];
+	}
+
 	function closeFile(file: OpenFile, discard = false) {
 		if (file.dirty && !discard) {
 			closing = file;
@@ -822,6 +849,7 @@
 		{codexResets}
 		epics={focused && epics[focused.id]}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
+		onrename={(from, to) => focused && retarget(focused.id, from, to)}
 		ondiff={(change, against) => focused && openDiff(focused.id, change, against)}
 		onepic={(slug) => focused && openEpic(focused.id, slug)}
 	/>
@@ -922,7 +950,7 @@
 									{/snippet}
 								</Menu>
 							{:else if file}
-								<Menu context items={[{ label: 'Close', onselect: () => closeFile(file) }]}>
+								<Menu context items={fileMenu(file)}>
 									{#snippet trigger(props)}
 										<Tab
 											{...props}
@@ -1061,7 +1089,7 @@
 				</div>
 			{/each}
 			{#each Object.values(files) as open}
-				{#each open as file (file.id)}
+				{#each open as file (file)}
 					{@const onshowdiff = (disk: string, buffer: string) => showDiff(file, disk, buffer)}
 					{@const active = showing(file.id)}
 					<div
@@ -1181,6 +1209,11 @@
 {/if}
 
 <Drawer bind:this={drawer} bind:open={drawerOpen} {device} />
+
+{#if focused}
+	{@const projectId = focused.id}
+	<Rename bind:this={renamer} {projectId} onrename={(from, to) => retarget(projectId, from, to)} />
+{/if}
 
 {#if htmlPreview}
 	<dialog bind:this={htmlDialog} class="html-preview" aria-label={htmlPreview.title} onclose={() => htmlPreview = undefined} {@attach (node) => { node.showModal(); }}>

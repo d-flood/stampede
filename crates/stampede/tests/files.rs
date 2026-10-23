@@ -236,3 +236,65 @@ async fn deletion_removes_entries_without_following_symlinks_or_leaving_the_proj
     assert!(root.is_dir());
     assert_eq!(fs::read_to_string(outside.join("keep.txt")).unwrap(), "keep");
 }
+
+#[tokio::test]
+async fn renaming_stays_in_place_without_overwriting_or_following_symlinks() {
+    let server = Server::start("rename-files-").await;
+    let root = server.root.path().join("project");
+    let outside = server.root.path().join("outside");
+    fs::create_dir_all(root.join("folder/nested")).unwrap();
+    fs::create_dir(&outside).unwrap();
+    fs::write(root.join("notes.txt"), "notes").unwrap();
+    fs::write(root.join("keep.txt"), "keep").unwrap();
+    fs::write(root.join("folder/nested/child.txt"), "child").unwrap();
+    fs::write(outside.join("keep.txt"), "keep").unwrap();
+    symlink(&outside, root.join("external")).unwrap();
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "rename-files" })).await;
+    next_control(&mut socket, "hello").await;
+    control(&mut socket, json!({ "type": "project.open", "path": root })).await;
+    let opened = next_control(&mut socket, "project.opened").await;
+    let id = opened["projectId"].as_str().unwrap();
+    let api = format!("http://127.0.0.1:{}/api/projects/{id}/file/rename", server.port);
+    let client = reqwest::Client::new();
+    for (path, name, expected) in [
+        ("notes.txt", "renamed.txt", "renamed.txt"),
+        ("folder/nested", "inner", "folder/inner"),
+        ("folder", ".hidden", ".hidden"),
+        ("external", "linked", "linked"),
+    ] {
+        let response = client.post(&api)
+            .header("content-type", "application/json")
+            .body(json!({ "path": path, "name": name }).to_string())
+            .send().await.unwrap();
+        assert_eq!(response.status(), 200, "{path} -> {name}");
+        let body: serde_json::Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+        assert_eq!(body["path"], expected);
+    }
+    assert_eq!(fs::read_to_string(root.join("renamed.txt")).unwrap(), "notes");
+    assert_eq!(fs::read_to_string(root.join(".hidden/inner/child.txt")).unwrap(), "child");
+    assert_eq!(fs::read_link(root.join("linked")).unwrap(), outside);
+    for (path, name, status) in [
+        ("renamed.txt", "keep.txt", 409),
+        ("renamed.txt", ".hidden", 409),
+        ("renamed.txt", "", 400),
+        ("renamed.txt", ".", 400),
+        ("renamed.txt", "..", 400),
+        ("renamed.txt", "../escaped.txt", 400),
+        ("renamed.txt", ".hidden/moved.txt", 400),
+        ("", "root", 400),
+        ("../outside/keep.txt", "escaped.txt", 403),
+        ("linked/keep.txt", "escaped.txt", 403),
+        ("missing.txt", "found.txt", 404),
+    ] {
+        let response = client.post(&api)
+            .header("content-type", "application/json")
+            .body(json!({ "path": path, "name": name }).to_string())
+            .send().await.unwrap();
+        assert_eq!(response.status().as_u16(), status, "{path} -> {name}");
+    }
+    assert_eq!(fs::read_to_string(root.join("renamed.txt")).unwrap(), "notes");
+    assert_eq!(fs::read_to_string(root.join("keep.txt")).unwrap(), "keep");
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 1);
+    assert!(!server.root.path().join("escaped.txt").exists());
+}

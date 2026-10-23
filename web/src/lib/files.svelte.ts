@@ -18,7 +18,7 @@ export function image(path: string): boolean {
 
 export class OpenFile {
 	projectId: string;
-	path: string;
+	path = $state('');
 	dirty = $state(false);
 	deleted = $state(false);
 	cursor = $state<Cursor>();
@@ -179,6 +179,16 @@ export async function copy(projectId: string, path: string, destination: string)
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ path, destination })
+	}));
+	invalidate(projectId);
+	return result;
+}
+
+export async function rename(projectId: string, path: string, name: string): Promise<{ path: string }> {
+	const result = await json<{ path: string }>(await fetch(`/api/projects/${projectId}/file/rename`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ path, name })
 	}));
 	invalidate(projectId);
 	return result;

@@ -20,7 +20,7 @@
 	import { Compartment, EditorState } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
 	import { basicSetup } from 'codemirror';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import FloppyDisk from '~icons/ph/floppy-disk';
 	import Warning from '~icons/ph/warning';
 
@@ -50,13 +50,17 @@
 	const sync = new Sync(() => file, () => view);
 	const keys = new Compartment();
 	const wrapping = new Compartment();
+	const syntax = new Compartment();
+	const server = new Compartment();
+	let loaded: string;
 
 	onMount(() => {
 		let disposed = false;
 		rendered = svg && !file.cursor;
 		wrap = markdown;
-		Promise.all([file.read(), language(file.path)]).then(
-			([contents, syntax]) => {
+		loaded = file.path;
+		Promise.all([file.read(), language(loaded)]).then(
+			([contents, highlighting]) => {
 				if (disposed) return;
 				if (contents.binary) {
 					note = 'binary file';
@@ -73,13 +77,13 @@
 							keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 							basicSetup,
 							changeMarkers,
-							syntax,
+							syntax.of(highlighting),
 							theme,
 							sync.listener,
 							svg || markdown ? EditorView.updateListener.of((update) => {
 								if (update.docChanged) content = update.state.doc.toString();
 							}) : [],
-							languageServer(servers, file.projectId, file.path, true)
+							server.of(languageServer(servers, file.projectId, loaded, true))
 						]
 					})
 				});
@@ -123,6 +127,16 @@
 		return () => {
 			stale = true;
 		};
+	});
+
+	$effect(() => {
+		const [current, path] = [view, file.path];
+		if (!current || path === loaded) return;
+		loaded = path;
+		untrack(() => sync.refresh());
+		language(path).then((extension) => {
+			if (loaded === path) current.dispatch({ effects: [syntax.reconfigure(extension), server.reconfigure(languageServer(servers, file.projectId, path, true))] });
+		});
 	});
 
 	$effect(() => {

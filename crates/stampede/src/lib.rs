@@ -152,6 +152,7 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/files", get(files::paths))
         .route("/api/projects/{id}/image", get(files::image))
         .route("/api/projects/{id}/file/copy", post(files::copy))
+        .route("/api/projects/{id}/file/rename", post(files::rename))
         .route("/api/projects/{id}/file", get(files::read).head(files::exists).put(files::write).post(files::create).delete(files::delete))
         .route("/api/projects/{id}/worktree", delete(delete_worktree))
         .route("/api/projects/{id}/worktrees", post(create_worktree))
