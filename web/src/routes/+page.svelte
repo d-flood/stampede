@@ -29,6 +29,7 @@
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
+	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
 	import SchemeToggle from '#lib/shell/SchemeToggle.svelte';
 	import Settings from '#lib/shell/Settings.svelte';
@@ -826,6 +827,12 @@
 	/>
 {/snippet}
 
+{#snippet sidebarToggle()}
+	<IconButton label="Sidebar" aria-expanded={sidebar} onclick={() => (sidebar = !sidebar)}>
+		<SidebarSimple style={sidebarPosition.side === 'right' ? 'transform: scaleX(-1)' : undefined} />
+	</IconButton>
+{/snippet}
+
 {#snippet workspace()}
 	<main
 		bind:this={main}
@@ -840,10 +847,8 @@
 				onfocusin={() => focused && group.active && choose(focused.id, group.active)}
 				onpointerdown={grab}
 			>
-				{#if index === 0 && !phone}
-					<IconButton label="Sidebar" aria-expanded={sidebar} onclick={() => (sidebar = !sidebar)}>
-						<SidebarSimple />
-					</IconButton>
+				{#if !phone && sidebarPosition.side === 'left' && index === 0}
+					{@render sidebarToggle()}
 				{/if}
 				<div role="tablist" aria-label={split ? `${index ? 'Right' : 'Left'} Tabs` : 'Tabs'}>
 					{#if focused}
@@ -947,6 +952,9 @@
 							<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
 						{/snippet}
 					</Menu>
+				{/if}
+				{#if !phone && sidebarPosition.side === 'right' && index === groups.length - 1}
+					{@render sidebarToggle()}
 				{/if}
 			</div>
 		{/each}
