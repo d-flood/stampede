@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { render } from '#lib/chat/markdown.ts';
+	import { renderCopyable } from '#lib/chat/markdown.ts';
 	import type { Item } from '#lib/device.svelte.ts';
 	import { onDestroy, untrack } from 'svelte';
+	import { on } from 'svelte/events';
 
 	let { item }: { item: Extract<Item, { kind: 'text' }> } = $props();
 
@@ -19,10 +20,20 @@
 
 	onDestroy(() => cancelAnimationFrame(frame));
 
-	const html = $derived(render(item.streaming ? framed : item.text));
+	const html = $derived(renderCopyable(item.streaming ? framed : item.text));
+
+	function copy(event: MouseEvent) {
+		const button = (event.target as Element).closest<HTMLElement>('.copy');
+		const code = button?.parentElement!.querySelector('code');
+		if (!button || !code) return;
+		navigator.clipboard.writeText(code.textContent.trimEnd()).then(() => {
+			button.dataset.copied = '';
+			setTimeout(() => delete button.dataset.copied, 1500);
+		});
+	}
 </script>
 
-<div class="text" class:streaming={item.streaming} class:commentary={item.phase === 'commentary'}>{@html html}</div>
+<div class="text" class:streaming={item.streaming} class:commentary={item.phase === 'commentary'} {@attach (text) => on(text, 'click', copy)}>{@html html}</div>
 
 <style>
 	.text {
@@ -42,7 +53,7 @@
 		margin-bottom: 0;
 	}
 
-	.text :global(:is(p, ul, ol, pre, blockquote, table)) {
+	.text :global(:is(p, ul, ol, pre, blockquote, table, .code-block)) {
 		margin: 0 0 var(--space-3);
 	}
 
@@ -73,6 +84,64 @@
 	.text :global(pre code) {
 		padding: 0;
 		background: none;
+	}
+
+	.text :global(.code-block) {
+		display: flex;
+		align-items: flex-start;
+		border-radius: var(--radius-lg);
+		background: var(--surface-1);
+	}
+
+	.text :global(.code-block pre) {
+		flex: 1;
+		min-width: 0;
+		margin: 0;
+	}
+
+	.text :global(.copy) {
+		display: inline-grid;
+		place-items: center;
+		padding: 1px;
+		border: none;
+		border-radius: var(--radius-sm);
+		background: none;
+		color: var(--muted-fg);
+		font-size: 0.92em;
+		vertical-align: text-bottom;
+		cursor: pointer;
+		transition:
+			background var(--dur-fast),
+			color var(--dur-fast);
+	}
+
+	.text :global(.code-block .copy) {
+		flex: none;
+		min-width: var(--target-min);
+		min-height: var(--target-min);
+		margin: var(--space-1);
+		font-size: 1em;
+	}
+
+	.text :global(.copy:hover) {
+		background: var(--hover);
+		color: var(--color-fg);
+	}
+
+	.text :global(.copy:focus-visible) {
+		outline: var(--border-width) solid var(--status-working);
+	}
+
+	.text :global(.copy[data-copied]) {
+		color: var(--status-done);
+	}
+
+	.text :global(:is(.copy > :last-child, .copy[data-copied] > :first-child)) {
+		display: none;
+	}
+
+	.text :global(.copy[data-copied] > :last-child) {
+		display: block;
 	}
 
 	.text :global(blockquote) {

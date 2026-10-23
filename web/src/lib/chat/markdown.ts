@@ -1,19 +1,41 @@
 import MarkdownIt from 'markdown-it';
+import Check from '~icons/ph/check?raw';
+import Copy from '~icons/ph/copy?raw';
 
 const markdown = new MarkdownIt({ breaks: true, linkify: true });
+const rules = markdown.renderer.rules;
+const copy = `<button class="copy" type="button" aria-label="Copy">${Copy}${Check}</button>`;
 
-markdown.renderer.rules.link_open = (tokens, index, options, _env, self) => {
+rules.link_open = (tokens, index, options, _env, self) => {
 	tokens[index].attrSet('target', '_blank');
 	tokens[index].attrSet('rel', 'noreferrer');
 	return self.renderToken(tokens, index, options);
 };
 
-const rendered = new Map<string, string>();
-
-export function render(text: string): string {
-	const html = rendered.get(text) ?? markdown.render(text);
-	rendered.delete(text);
-	rendered.set(text, html);
-	if (rendered.size > 200) rendered.delete(rendered.keys().next().value!);
-	return html;
+for (const name of ['fence', 'code_block'] as const) {
+	const rule = rules[name]!;
+	rules[name] = (tokens, index, options, env, self) => {
+		const html = rule(tokens, index, options, env, self);
+		return env.copy ? `<div class="code-block">${html}${copy}</div>` : html;
+	};
 }
+
+const inline = rules.code_inline!;
+rules.code_inline = (tokens, index, options, env, self) => {
+	const html = inline(tokens, index, options, env, self);
+	return env.copy && tokens[index].content.length >= 20 ? `<span class="code-inline">${html}${copy}</span>` : html;
+};
+
+function cached(render: (text: string) => string) {
+	const rendered = new Map<string, string>();
+	return (text: string) => {
+		const html = rendered.get(text) ?? render(text);
+		rendered.delete(text);
+		rendered.set(text, html);
+		if (rendered.size > 200) rendered.delete(rendered.keys().next().value!);
+		return html;
+	};
+}
+
+export const render = cached((text) => markdown.render(text));
+export const renderCopyable = cached((text) => markdown.render(text, { copy: true }));
