@@ -1,5 +1,6 @@
 import type { ITheme } from 'ghostty-web';
 import { isDark } from '#lib/scheme.svelte.ts';
+import { loadSidebarSide } from '#lib/sidebar.svelte.ts';
 import { loadTextSize, textSize } from '#lib/typography.svelte.ts';
 
 type Palette = {
@@ -55,6 +56,7 @@ async function get<T>(path: string): Promise<T> {
 
 export async function loadConfig() {
 	loadTextSize();
+	loadSidebarSide();
 	const [name, theme, font, ui, rigs, settings, leaderKey, keys, lines, listed, commitRigName, commitText, agentModes, saved] = await Promise.all([
 		get<string | null>('/api/host-name'),
 		get<ThemeResponse>('/api/theme'),

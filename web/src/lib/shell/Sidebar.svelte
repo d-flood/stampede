@@ -27,6 +27,7 @@
 	import type { Device, Epic, Project, Reading, ResetCredits } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
 	import type { Against } from '#lib/files.svelte.ts';
 	import type { Change } from '#lib/git.ts';
 	import Changes from '#lib/shell/Changes.svelte';
@@ -67,14 +68,15 @@
 	const maximum = $derived(Math.min(640, viewport * 0.6));
 	const minimum = $derived(Math.min(160, maximum));
 	const size = $derived(Math.min(maximum, Math.max(minimum, width)));
+	const direction = $derived(sidebarPosition.side === 'right' ? -1 : 1);
 
 	function resize(value: number) {
 		width = Math.min(maximum, Math.max(minimum, value));
 	}
 
 	function resizeKey(event: KeyboardEvent) {
-		if (event.key === 'ArrowLeft') resize(size - 16);
-		else if (event.key === 'ArrowRight') resize(size + 16);
+		if (event.key === 'ArrowLeft') resize(size - 16 * direction);
+		else if (event.key === 'ArrowRight') resize(size + 16 * direction);
 		else if (event.key === 'Home') resize(minimum);
 		else if (event.key === 'End') resize(maximum);
 		else return;
@@ -84,7 +86,7 @@
 
 <svelte:window bind:innerWidth={viewport} />
 
-<aside {id} aria-label="Sidebar" hidden={!open} class:phone={form() === 'phone'} style:width={form() === 'desktop' ? `${size}px` : undefined}>
+<aside {id} aria-label="Sidebar" hidden={!open} class:phone={form() === 'phone'} class:right={form() === 'desktop' && sidebarPosition.side === 'right'} style:width={form() === 'desktop' ? `${size}px` : undefined}>
 	{#if project}
 		{#if form() === 'desktop'}<h1 title={project.path}>{label}</h1>{/if}
 		{#if git?.branch && project.worktree}
@@ -143,7 +145,7 @@
 				event.currentTarget.setPointerCapture(event.pointerId);
 			}}
 			onpointermove={(event) => {
-				if (drag && event.currentTarget.hasPointerCapture(event.pointerId)) resize(drag.width + event.clientX - drag.x);
+				if (drag && event.currentTarget.hasPointerCapture(event.pointerId)) resize(drag.width + (event.clientX - drag.x) * direction);
 			}}
 			onpointerup={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
 			onlostpointercapture={() => (drag = undefined)}
@@ -177,6 +179,16 @@
 	.resizer:focus-visible,
 	.resizer.dragging {
 		background: var(--border);
+	}
+
+	.right {
+		order: 1;
+		border-right: none;
+		border-left: var(--border-width) solid var(--border);
+	}
+
+	.right .resizer {
+		inset: 0 auto 0 -4px;
 	}
 
 	aside[hidden] {

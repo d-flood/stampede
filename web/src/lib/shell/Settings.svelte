@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { agentNames, commitInstructions, commitRig, hostName, modes, rigs, saveCommitInstructions, saveCommitRig, saveHostName, saveModes, themeLabel, uiFont, type Agent } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { selectSidebarSide, sidebarPosition, type SidebarSide } from '#lib/sidebar.svelte.ts';
 	import ClipEditor from '#lib/shell/ClipEditor.svelte';
 	import RigEditor from '#lib/shell/RigEditor.svelte';
 	import FontSwitcher from '#lib/shell/FontSwitcher.svelte';
@@ -88,6 +89,16 @@
 				<p>{typography.size === null ? 'Using default: 16 px on mobile, 13 px on desktop.' : 'Custom text size'}</p>
 				<Button disabled={typography.size === null} onclick={() => selectTextSize(null)}>Reset</Button>
 			</div>
+		</section>
+		<section aria-labelledby="sidebar-side-label">
+			<div class="row">
+				<label id="sidebar-side-label" for="sidebar-side">Sidebar position</label>
+				<select id="sidebar-side" value={sidebarPosition.side} onchange={(event) => selectSidebarSide(event.currentTarget.value as SidebarSide)} aria-describedby="sidebar-side-help">
+					<option value="left">Left</option>
+					<option value="right">Right</option>
+				</select>
+			</div>
+			<p id="sidebar-side-help">Places the desktop sidebar on the left or right. Saved in this browser.</p>
 		</section>
 		<section aria-labelledby="theme-label">
 			<div class="row">
