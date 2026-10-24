@@ -16,7 +16,7 @@
 	import type { AnsweredQuestions, Item, Subagent } from '#lib/device.svelte.ts';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
-	let { items, answered = [], activity, path = [], onopen, onattend, ondiff, onexpand }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; onexpand?(index: number): void } = $props();
+	let { items, answered = [], activity, path = [], onopen, onattend, ondiff, onexpand, onrewind }: { items: Item[]; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; onexpand?(index: number): void; onrewind?(index: number): void } = $props();
 	const entries = $derived.by(() => {
 		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map((record) => ({ kind: 'questions', record }));
 		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
@@ -49,7 +49,7 @@
 
 {#snippet entry(item: Entry, index: number)}
 	{#if item.kind === 'user'}
-		<User {item} first={index === 0} />
+		<User {item} first={index === 0} index={items.indexOf(item)} number={items.slice(0, items.indexOf(item)).filter((entry) => entry.kind === 'user').length + 1} {onrewind} />
 	{:else if item.kind === 'text'}
 		<Text {item} />
 	{:else if item.kind === 'thinking'}

@@ -204,13 +204,15 @@ start = 0
 if '--resume' in args:
     session = args[args.index('--resume') + 1]
     start = next((index + 1 for index, entry in enumerate(entries) if entry.get('resume') == session), 0)
+else:
+    start = next((index + 1 for index, entry in enumerate(entries) if entry.get('restart') and Path(entry['restart']).exists()), 0)
 
 request_ids = {}
 uuids = {}
 pending = b''
 prompt = ''
 for entry in entries[start:]:
-    if 'resume' in entry:
+    if 'resume' in entry or 'restart' in entry:
         break
     if 'stdin' in entry:
         message = read(entry['stdin'])

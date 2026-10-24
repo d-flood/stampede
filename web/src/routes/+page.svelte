@@ -319,7 +319,10 @@
 				break;
 			case 'chat.queued':
 				for (const chat of Object.values(chats).flat()) {
-					if (chat.id === message.chatId) chat.queued = message.queued;
+					if (chat.id === message.chatId) {
+						chat.queued = message.queued;
+						chat.queueRevision = message.revision;
+					}
 				}
 				break;
 			case 'chat.settings':

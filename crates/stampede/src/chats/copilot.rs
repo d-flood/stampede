@@ -484,11 +484,13 @@ async fn run(client: &Client, location: &Location, session: &mut CopilotSession,
         }
         Builtin::Rewind(index) if transcript.status == Status::Done => {
             let event_id = transcript.user_events.get(&index).ok_or_else(|| io::Error::other("Choose a user message to rewind to"))?.clone();
+            transcript.status(Status::Working);
             rpc(session.rpc().history().truncate(github_copilot_sdk::rpc::HistoryTruncateRequest { event_id })).await?;
             let history = rpc(session.get_events()).await?;
             transcript.reset();
             for event in history { transcript.read(&event, true); }
             transcript.finish();
+            transcript.push(Item::Notice { notice: super::Notice::Rewound, text: "Selected message and everything after it removed. Files are left unchanged.".to_owned() });
         }
         _ => return Err(io::Error::other("GitHub Copilot does not support this command")),
     }
@@ -586,7 +588,7 @@ impl Transcript {
                 })).collect();
                 self.last_input = Some((text.clone(), images.clone()));
                 let image_urls = images.iter().map(|image| format!("data:{};base64,{}", image.media_type, image.data)).collect();
-                let index = self.push(Item::User { text, images: images.len(), image_urls, template: None });
+                let index = self.push(Item::User { text, images: images.len(), image_urls, template: None, rewind_from: None });
                 self.user_events.insert(index, event.id.clone());
             }
             "assistant.message_delta" | "assistant.message" => {

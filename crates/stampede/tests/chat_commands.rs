@@ -464,6 +464,33 @@ fn methods(server: &Server) -> Vec<Value> {
 }
 
 #[tokio::test]
+async fn claude_rewind_removes_the_selected_prompt_and_retains_its_parent_chain_entry_after_restart() {
+    let fixture = format!("{}/tests/fixtures/chats/claude-code/rewind-middle.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
+    let (mut server, mut socket, chat_id, mut view) = launch_fixture("claude-code", Vec::new(), &fixture).await;
+    view.turn(&mut socket, &chat_id, json!({ "type": "chat.send", "chatId": chat_id, "text": "Keep this" })).await;
+    view.turn(&mut socket, &chat_id, json!({ "type": "chat.send", "chatId": chat_id, "text": "Discard this" })).await;
+    run(&mut socket, &chat_id, json!({ "command": "rewind", "value": 2 })).await;
+    view.follow(&mut socket, &chat_id, |view| view.items.last().is_some_and(|item| item["notice"] == "rewound")).await;
+    assert_eq!(view.items.len(), 3);
+    assert_eq!(view.items[0]["text"], "Keep this");
+    assert_eq!(view.items[1]["text"], "Kept reply");
+    assert_eq!(record(&server, &chat_id)["resumeAt"], "kept-tail");
+    assert_eq!(fs::read_to_string(server.root.path().join("home/rewind.txt")).unwrap(), "before");
+    assert!(common::leftovers(server.root.path()).iter().any(|process| process.contains("--resume-session-at kept-tail")));
+
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    control(&mut socket, json!({ "type": "chat.attach", "chatId": chat_id })).await;
+    let items = next_control(&mut socket, "chat.items").await["items"].clone();
+    assert_eq!(items.as_array().unwrap().len(), 2);
+    assert_eq!(items[0]["text"], "Keep this");
+    assert_eq!(items[1]["text"], "Kept reply");
+    close_chat(&mut socket, server.root.path(), &chat_id).await;
+}
+
+#[tokio::test]
 async fn rewind_cuts_the_conversation_and_uses_each_agents_restore_contract() {
     for agent in ["claude-code", "codex"] {
         let fixture = format!("{}/tests/fixtures/chats/{agent}/rewind.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
@@ -487,7 +514,7 @@ async fn rewind_cuts_the_conversation_and_uses_each_agents_restore_contract() {
             let rewind = log.iter().find(|message| message["request"]["subtype"] == "rewind_files").unwrap();
             assert_eq!(rewind["request"]["user_message_id"], user["uuid"]);
             let processes = common::leftovers(server.root.path());
-            assert!(processes.iter().any(|process| process.contains(&format!("--resume-session-at {}", user["uuid"].as_str().unwrap()))));
+            assert!(!processes.iter().any(|process| process.contains("--resume")));
         } else {
             assert_eq!(fs::read_to_string(&file).unwrap(), "after");
             assert!(view.items[0]["text"].as_str().unwrap().contains("Files are left unchanged"));

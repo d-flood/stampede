@@ -50,6 +50,8 @@ pub enum Item {
         image_urls: Vec<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         template: Option<&'static str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rewind_from: Option<usize>,
     },
     Text { text: String, streaming: bool, phase: Phase },
     Thinking {
@@ -687,6 +689,8 @@ pub struct Chat {
     pub settings: Settings,
     #[serde(default)]
     pub queued: Vec<String>,
+    #[serde(default)]
+    pub queue_revision: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queued_images: Vec<Vec<Image>>,
     #[serde(default)]
@@ -742,7 +746,7 @@ pub enum Change {
     Chats(String),
     Status(String, Status),
     Activity(String, Option<String>),
-    Queued(String, Vec<String>),
+    Queued(String, Vec<String>, u64),
     Truncated(String),
     Item { chat_id: String, seq: u64, index: usize, item: Item },
     Appended { chat_id: String, seq: u64, index: usize, text: String },
@@ -918,6 +922,7 @@ impl Chats {
             tokens: None,
             settings: Settings { chosen: rig.settings(), pending: Vec::new() },
             queued: Vec::new(),
+            queue_revision: 0,
             queued_images: Vec::new(),
             todos: Vec::new(),
             answered_questions: Vec::new(),
@@ -1488,8 +1493,19 @@ impl Chats {
         entry.driver.interrupt();
     }
 
-    fn queued(&self, entry: &Entry, chat: MutexGuard<'_, Chat>) {
-        let change = Change::Queued(chat.id.clone(), chat.queued.clone());
+    pub fn unqueue(&self, id: &str, index: usize, revision: u64) -> Option<(String, Vec<Image>)> {
+        let entry = self.get(id)?;
+        let mut chat = entry.chat.lock().unwrap();
+        if chat.queue_revision != revision || index >= chat.queued.len() { return None; }
+        let text = chat.queued.remove(index);
+        let images = if index < chat.queued_images.len() { chat.queued_images.remove(index) } else { Vec::new() };
+        self.queued(&entry, chat);
+        Some((text, images))
+    }
+
+    fn queued(&self, entry: &Entry, mut chat: MutexGuard<'_, Chat>) {
+        chat.queue_revision += 1;
+        let change = Change::Queued(chat.id.clone(), chat.queued.clone(), chat.queue_revision);
         self.save(entry, chat);
         let _ = self.changed.send(change);
     }
@@ -1557,6 +1573,12 @@ impl Chats {
         if let Some(entry) = self.get(id) {
             if matches!(builtin, Builtin::Rewind(_) | Builtin::Clear | Builtin::Compact)
                 && entry.chat.lock().unwrap().status != Status::Done { return; }
+            if matches!(builtin, Builtin::Rewind(_)) {
+                if !entry.chat.lock().unwrap().queued.is_empty() { return; }
+                let transcript = entry.transcript.lock().unwrap();
+                if transcript.reported != Status::Done || transcript.items.iter().any(|item| matches!(item, Item::Shell { status: CommandStatus::Running, .. })) { return; }
+                if transcript.items.iter().any(|item| matches!(item, Item::Subagent { status, .. } if *status != Status::Done)) { return; }
+            }
             entry.driver.run(builtin);
         }
     }

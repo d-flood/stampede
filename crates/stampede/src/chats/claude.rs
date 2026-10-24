@@ -215,7 +215,7 @@ async fn launch(
     transcript.location = Some(Location { data_dir: data_dir.to_owned(), id: id.to_owned(), env: env.clone() });
     transcript.session = session.map(str::to_owned);
     if let Some(session) = session {
-        transcript = transcript.replay(env, session, at).await?;
+        transcript = transcript.replay(env, session, at, true).await?;
         transcript.stop_commands();
     }
     transcript.settings.chosen = settings.clone();
@@ -247,7 +247,7 @@ pub async fn reattach(
     transcript.window = chat.context.map(|context| context.window);
     transcript.settings.chosen = chat.settings.chosen.clone();
     if let Some(session) = &chat.agent_session {
-        transcript = transcript.replay(env, session, turn.as_deref().or(chat.resume_at.as_deref())).await?;
+        transcript = transcript.replay(env, session, turn.as_deref().or(chat.resume_at.as_deref()), turn.is_none()).await?;
     }
     for message in replay {
         match message {
@@ -315,6 +315,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                             Ok(None) => {},
                             Err(error) => {
                                 transcript.push(Item::Notice { notice: Notice::Error, text: format!("Could not rewind: {error}") });
+                                transcript.report(Status::Done);
                             }
                         }
                     }
@@ -407,9 +408,17 @@ async fn rewind(
     index: usize,
 ) -> io::Result<Option<(Frames, OwnedWriteHalf, Transcript)>> {
     if transcript.status != Status::Done { return Ok(None); }
-    let Some(checkpoint) = transcript.checkpoints.get(&index).cloned() else { return Ok(None) };
+    let checkpoint = transcript.checkpoints.get(&index).cloned().ok_or_else(|| io::Error::other("This message has no rewind checkpoint. Choose another user message."))?;
     let Some(location) = transcript.location.clone() else { return Ok(None) };
     let Some(session) = transcript.session.clone() else { return Ok(None) };
+    let path = session_file(&location.env, &session).ok_or_else(|| io::Error::other("The session history is unavailable"))?;
+    let selected = checkpoint.clone();
+    let parent = tokio::task::spawn_blocking(move || {
+        lines(File::open(path)?).filter_map(|line| serde_json::from_str::<Link>(&line).ok())
+            .find(|link| link.uuid.as_deref() == Some(&selected)).and_then(|link| link.parent)
+            .ok_or_else(|| io::Error::other("The message's conversation boundary is unavailable"))
+    }).await.map_err(io::Error::other)??;
+    transcript.report(Status::Working);
     let id = Uuid::new_v4().to_string();
     let request = json!({ "type": "control_request", "request_id": id,
         "request": { "subtype": "rewind_files", "user_message_id": checkpoint } });
@@ -439,9 +448,10 @@ async fn rewind(
     let _ = events.send(Event::Reset);
     let _ = events.send(Event::ShellContext(Vec::new()));
     let (frames, writer, mut fresh, _) = launch(&location.data_dir, &location.id, &transcript.cwd,
-        &location.env, &transcript.settings.chosen, Some(&session), Some(&checkpoint), Some(events)).await?;
-    let _ = fresh.events.send(Event::ResumeAt(Some(checkpoint)));
-    fresh.push(Item::Notice { notice: Notice::Rewound, text: "Conversation rewound; tracked edits restored. Bash and subagent changes are not restored.".to_owned() });
+        &location.env, &transcript.settings.chosen, parent.as_ref().map(|_| session.as_str()), parent.as_deref(), Some(events)).await?;
+    let _ = fresh.events.send(Event::ResumeAt(parent));
+    fresh.push(Item::Notice { notice: Notice::Rewound, text: "Selected message and everything after it removed; tracked edits restored. Changes made through Bash or subagents may remain. External actions are not undone.".to_owned() });
+    fresh.report(Status::Done);
     Ok(Some((frames, writer, fresh)))
 }
 
@@ -1202,7 +1212,7 @@ impl Transcript {
             let (parts, typed) = shell::parse(&text);
             if self.replaying { self.shells(parts); }
             self.checkpoint(message);
-            self.push(Item::User { text: typed.to_owned(), images, image_urls: image_urls(content), template: None });
+            self.push(Item::User { text: typed.to_owned(), images, image_urls: image_urls(content), template: None, rewind_from: None });
             if message.get("priority").is_some()
                 && let Some(uuid) = message["uuid"].as_str()
             {
@@ -1213,10 +1223,10 @@ impl Transcript {
     }
 
     /// Runs `history` on a blocking thread, since a long session takes a while to read.
-    async fn replay(mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>) -> io::Result<Self> {
+    async fn replay(mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>, inclusive: bool) -> io::Result<Self> {
         let (env, session, until) = (env.clone(), session.to_owned(), until.map(str::to_owned));
         tokio::task::spawn_blocking(move || {
-            self.history(&env, &session, until.as_deref());
+            self.history(&env, &session, until.as_deref(), inclusive);
             self
         })
         .await
@@ -1225,14 +1235,15 @@ impl Transcript {
 
     /// Translates the session file's entries, up to the one whose uuid is `until`. A first pass keeps only how
     /// the entries chain, so a long session is never held in memory whole.
-    fn history(&mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>) {
+    fn history(&mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>, inclusive: bool) {
         let Some(path) = session_file(env, session) else { return };
         let Ok(file) = File::open(&path) else { return };
         self.history = Some(path.clone());
         let links: Vec<Option<Link>> = lines(file).map(|line| serde_json::from_str(&line).ok()).collect();
         let entries = links.iter().enumerate().filter_map(|(index, link)| Some((index, link.as_ref()?)));
         let chained: HashMap<&str, &Link> = entries.clone().filter(|(_, link)| !link.sidechain).filter_map(|(_, link)| Some((link.uuid.as_deref()?, link))).collect();
-        let leaf = entries.clone().rev().find(|(_, link)| link.turn() && !link.sidechain && link.parent.is_some());
+        let leaf = until.and_then(|id| entries.clone().find(|(_, link)| link.uuid.as_deref() == Some(id)))
+            .or_else(|| entries.clone().rev().find(|(_, link)| link.turn() && !link.sidechain && link.parent.is_some()));
         let mut branch = HashSet::new();
         let mut current = leaf.and_then(|(_, link)| link.uuid.as_deref());
         let mut complete = false;
@@ -1242,7 +1253,8 @@ impl Transcript {
             current = link.parent.as_ref().and_then(Option::as_deref);
             if link.parent == Some(None) { complete = true; }
         }
-        let boundary = entries.clone().rev().find(|(_, link)| link.compact()).map(|(index, _)| index);
+        let end = leaf.map(|(index, _)| index).unwrap_or(links.len());
+        let boundary = entries.clone().filter(|(index, _)| *index <= end).rev().find(|(_, link)| link.compact()).map(|(index, _)| index);
         let active_tools: HashSet<&str> = entries.filter(|(_, link)| link.uuid.as_deref().is_some_and(|id| branch.contains(id)))
             .flat_map(|(_, link)| link.tool_uses()).collect();
         let Ok(file) = File::open(&path) else { return };
@@ -1252,8 +1264,9 @@ impl Transcript {
                 && link.uuid.as_deref().is_some_and(|id| !branch.contains(id))
                 && !link.tool_results().any(|id| active_tools.contains(id)) { continue; }
             if until.is_some() && link.uuid.as_deref() == until {
-                // A compaction recorded just before the replayed turn's prompt belongs to that turn, which replays it.
-                self.compacted = false;
+                if inclusive {
+                    if let Some(entry) = entry(&line) { self.recorded(&entry); }
+                } else { self.compacted = false; }
                 break;
             }
             let Some(entry) = entry(&line) else { continue };
@@ -1279,7 +1292,7 @@ impl Transcript {
                     if let Some(text) = prompt(typed).filter(|text| !shelled || !text.is_empty()) {
                         self.last_input = Some(entry["message"]["content"].clone());
                         self.checkpoint(entry);
-                        self.push(Item::User { text, images: 0, image_urls: Vec::new(), template: None });
+                        self.push(Item::User { text, images: 0, image_urls: Vec::new(), template: None, rewind_from: None });
                         self.compact();
                     }
                 }
@@ -1290,14 +1303,14 @@ impl Transcript {
                     self.shells(parts);
                     let text = typed.to_owned();
                     let images = blocks.filter(|block| block["type"] == "image").count();
-                    if !text.is_empty() || images > 0 { self.last_input = Some(entry["message"]["content"].clone()); self.checkpoint(entry); self.push(Item::User { text, images, image_urls: image_urls(&entry["message"]["content"]), template: None }); }
+                    if !text.is_empty() || images > 0 { self.last_input = Some(entry["message"]["content"].clone()); self.checkpoint(entry); self.push(Item::User { text, images, image_urls: image_urls(&entry["message"]["content"]), template: None, rewind_from: None }); }
                     self.compact();
                     self.results(&entry["message"]["content"], &entry["toolUseResult"]);
                 }
             },
             Some("attachment") if entry["attachment"]["type"] == "queued_command" && entry["renderedRole"] != "system" => {
                 if let Some(text) = entry["attachment"]["prompt"].as_str() {
-                    self.push(Item::User { text: text.to_owned(), images: 0, image_urls: Vec::new(), template: None });
+                    self.push(Item::User { text: text.to_owned(), images: 0, image_urls: Vec::new(), template: None, rewind_from: None });
                 }
             }
             Some("assistant") => {
@@ -2277,7 +2290,7 @@ mod subagent_tests {
                         fs::create_dir_all(&project).unwrap();
                         fs::write(project.join("session.jsonl"), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
                         let env = BTreeMap::from([("CLAUDE_CONFIG_DIR".to_owned(), directory.path().to_str().unwrap().to_owned())]);
-                        transcript.history(&env, "session", None);
+                        transcript.history(&env, "session", None, false);
                     } else {
                         for entry in entries { transcript.read(&entry); }
                     }

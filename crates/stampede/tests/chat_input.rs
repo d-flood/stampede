@@ -79,7 +79,7 @@ async fn a_codex_chat_steers_mid_turn_queues_for_the_next_and_interrupts() {
         [
             json!({ "kind": "user", "text": first, "images": 0 }),
             counted.clone(),
-            json!({ "kind": "user", "text": steer, "images": 0 }),
+            json!({ "kind": "user", "text": steer, "images": 0, "rewindFrom": 0 }),
             json!({ "kind": "text", "text": "banana", "streaming": false, "phase": "final" }),
             json!({ "kind": "user", "text": queued, "images": 0 }),
             counted,
@@ -116,6 +116,49 @@ async fn a_codex_chat_steers_mid_turn_queues_for_the_next_and_interrupts() {
         received[8]["params"],
         json!({ "threadId": thread, "turnId": "01a14671-f13a-7471-a47e-3a969b05eea6" })
     );
+}
+
+#[tokio::test]
+async fn cancelling_a_queued_message_preserves_the_turn_and_rejects_stale_cancellations() {
+    for agent in ["claude-code", "codex", "copilot"] {
+        let fixture = if agent == "copilot" { "interrupt" } else { "steer-queue-interrupt" };
+        let (server, mut socket, chat_id) = launch_fixture(agent, fixture).await;
+        let first = if agent == "codex" { CODEX[0] } else { CLAUDE[0] };
+        let mut view = View::default();
+        send(&mut socket, &chat_id, first, false).await;
+        view.follow(&mut socket, &chat_id, |view| streaming(view, 1)).await;
+        let image = json!({ "mediaType": "image/png", "data": "aGVsbG8=" });
+        let other = json!({ "mediaType": "image/png", "data": "d29ybGQ=" });
+        send(&mut socket, &chat_id, "Keep queued", true).await;
+        for attachment in [&image, &other] {
+            control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Same text", "queue": true, "images": [attachment] })).await;
+        }
+        view.follow(&mut socket, &chat_id, |view| view.queued.last().is_some_and(|queue| queue.as_array().unwrap().len() == 3)).await;
+        let revision = record(&server, &chat_id)["queueRevision"].as_u64().unwrap();
+        let cancel = json!({ "type": "chat.unqueue", "chatId": chat_id, "index": 1, "revision": revision });
+        control(&mut socket, cancel.clone()).await;
+        assert_eq!(next_control(&mut socket, "chat.unqueued").await, json!({ "type": "chat.unqueued", "chatId": chat_id, "text": "Same text", "images": [image] }));
+        let queued = next_control(&mut socket, "chat.queued").await;
+        assert_eq!(queued["queued"], json!(["Keep queued", "Same text"]));
+        assert_eq!(queued["revision"], revision + 1);
+        assert_eq!(record(&server, &chat_id)["queuedImages"], json!([[], [other]]));
+        assert_eq!(record(&server, &chat_id)["status"], "working");
+
+        control(&mut socket, cancel).await;
+        control(&mut socket, json!({ "type": "chat.unqueue", "chatId": chat_id, "index": 99, "revision": revision + 1 })).await;
+        control(&mut socket, json!({ "type": "ping" })).await;
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let message = next(&mut socket).await;
+                assert_ne!(message["type"], "chat.unqueued");
+                if message["type"] == "pong" { break; }
+            }
+        }).await.unwrap();
+        assert_eq!(record(&server, &chat_id)["queued"], json!(["Keep queued", "Same text"]));
+        assert_eq!(record(&server, &chat_id)["queueRevision"], revision + 1);
+        assert_eq!(view.items.iter().filter(|item| item["kind"] == "user").count(), 1);
+        close_chat(&mut socket, server.root.path(), &chat_id).await;
+    }
 }
 
 #[tokio::test]

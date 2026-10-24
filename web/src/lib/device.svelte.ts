@@ -37,7 +37,7 @@ export type Subagent = {
 };
 
 export type Item =
-	| { kind: 'user'; text: string; images: number; imageUrls?: string[]; template?: string }
+	| { kind: 'user'; text: string; images: number; imageUrls?: string[]; template?: string; rewindFrom?: number }
 	| { kind: 'text'; text: string; streaming: boolean; phase: 'commentary' | 'final' }
 	| { kind: 'thinking'; seconds: number; text?: string }
 	| { kind: 'tools'; calls: ToolCall[] }
@@ -97,6 +97,7 @@ export type Chat = {
 	context: Context | null;
 	tokens: Tokens | null;
 	queued: string[];
+	queueRevision: number;
 	todos: Todo[];
 	answeredQuestions: AnsweredQuestions[];
 	settings: Settings;
@@ -209,7 +210,8 @@ export type ServerMessage =
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
 	| { type: 'sessions.listed'; projectId: string; sessions: Session[] }
 	| { type: 'chat.todos'; chatId: string; todos: Todo[] }
-	| { type: 'chat.queued'; chatId: string; queued: string[] }
+	| { type: 'chat.queued'; chatId: string; queued: string[]; revision: number }
+	| { type: 'chat.unqueued'; chatId: string; text: string; images: Image[] }
 	| { type: 'chat.request'; chatId: string; request: Request }
 	| { type: 'chat.resolved'; chatId: string; requestId: string }
 	| { type: 'chat.settings'; chatId: string; settings: Settings }
@@ -251,6 +253,7 @@ export type ClientMessage =
 	| { type: 'chat.resume'; projectId: string; agent: Agent; sessionId: string }
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }
+	| { type: 'chat.unqueue'; chatId: string; index: number; revision: number }
 	| { type: 'chat.shell'; chatId: string; command: string }
 	| { type: 'chat.close' | 'chat.attach' | 'chat.detach' | 'chat.interrupt'; chatId: string }
 	| { type: 'chat.expand'; chatId: string; index: number }

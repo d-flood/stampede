@@ -24,7 +24,7 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	await composer.fill('Greet the reader');
 	await panel.getByRole('button', { name: 'Send' }).click();
-	await expect(panel.getByText('Greet the reader')).toBeVisible();
+	await expect(panel.getByRole('region', { name: 'User message 1' }).getByText('Greet the reader')).toBeVisible();
 	await expect(panel.locator('strong', { hasText: 'welcome' })).toBeVisible();
 	await expect(panel.getByText(/^Hello and welcome!/)).toBeVisible();
 	await expect(tab.getByTitle('done')).toBeVisible();
@@ -544,7 +544,7 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
-	await expect(panel.getByText('Name a color in one word.')).toBeVisible();
+	await expect(panel.getByRole('region', { name: 'User message 1' }).getByText('Name a color in one word.')).toBeVisible();
 	await expect(panel.getByText('Crimson')).toBeVisible();
 
 	await newTab.click();
@@ -754,11 +754,15 @@ for (const agent of ['Claude', 'Codex']) {
 		await expect(panel.locator('.user')).toHaveCount(1);
 		await composer.fill('/rewind');
 		await panel.getByRole('region', { name: 'Commands' }).getByRole('button', { name: /^\/rewind/ }).click();
-		const picker = panel.getByRole('region', { name: 'Rewind', exact: true });
-		await expect(picker).toContainText(agent === 'Claude' ? 'Bash and subagent changes are not restored.' : 'Files are left unchanged.');
-		await picker.getByRole('button', { name: agent === 'Claude' ? 'Change the file' : /^Greet the reader/ }).click();
-		await expect(picker).toHaveCount(0);
-		await expect(panel.getByText(agent === 'Claude' ? /^Conversation rewound; tracked edits restored/ : 'Conversation rewound. Files are left unchanged.')).toBeVisible();
+		const picker = page.getByRole('dialog', { name: 'Choose where to rewind' });
+		await picker.getByRole('button', { name: agent === 'Claude' ? /Change the file/ : /Greet the reader/ }).click();
+		const review = page.getByRole('dialog', { name: 'Rewind before message 1?' });
+		await expect(review).toContainText('Message 1 will be removed, including its prompt and attachments.');
+		await expect(review).toContainText(agent === 'Claude' ? 'Restore checkpointed file edits' : 'Files are left unchanged');
+		await expect(panel.locator('.user')).toHaveCount(1);
+		await review.getByRole('button', { name: 'Rewind before message 1', exact: true }).click();
+		await expect(review).toHaveCount(0);
+		await expect(panel.getByText(agent === 'Claude' ? /^Selected message and everything after it removed; tracked edits restored/ : 'Selected turn and every later turn removed. Files are left unchanged.')).toBeVisible();
 		await expect(panel.locator('.user')).toHaveCount(0);
 		await expect(tab).toHaveAttribute('aria-selected', 'true');
 		await closeProject(page, name);

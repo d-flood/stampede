@@ -81,6 +81,8 @@
 
 	function send(text: string, queue: boolean) {
 		if (!live || reading || (!text.trim() && !images.length)) return false;
+		if (images.length > 20) { error = 'Attach up to 20 images.'; return false; }
+		if (images.reduce((size, image) => size + image.data.length * 3 / 4, 0) > 20 * 1024 * 1024) { error = 'Keep attachments under 20 MB per message.'; return false; }
 		if (text.trimStart().startsWith('!')) {
 			const command = text.trim().slice(1).trim();
 			if (!command) return false;
@@ -114,6 +116,12 @@
 	function interrupt() {
 		composer.prepend(chat.queued);
 		device.send({ type: 'chat.interrupt', chatId: chat.id });
+	}
+
+	export function restore(text: string, attachments: Image[]) {
+		composer.prepend([text]);
+		images = [...attachments.map((image, index) => ({ ...image, name: `Attached image ${index + 1}` })), ...images];
+		composer.focus();
 	}
 
 	function keydown(event: KeyboardEvent) {

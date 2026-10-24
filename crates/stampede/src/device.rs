@@ -91,6 +91,8 @@ enum Control {
     },
     #[serde(rename = "chat.interrupt")]
     InterruptChat { chat_id: String },
+    #[serde(rename = "chat.unqueue")]
+    UnqueueChat { chat_id: String, index: usize, revision: u64 },
     #[serde(rename = "chat.shell")]
     ShellChat { chat_id: String, command: String },
     #[serde(rename = "chat.answer")]
@@ -321,8 +323,8 @@ async fn connect(
                         device.attach_chat(chat_id);
                     }
                 }
-                Ok(chats::Change::Queued(chat_id, queued)) => {
-                    send(&device.outgoing, json!({ "type": "chat.queued", "chatId": chat_id, "queued": queued }));
+                Ok(chats::Change::Queued(chat_id, queued, revision)) => {
+                    send(&device.outgoing, json!({ "type": "chat.queued", "chatId": chat_id, "queued": queued, "revision": revision }));
                 }
                 Ok(chats::Change::Item { chat_id, seq, index, item }) => {
                     if device.attached.get(&chat_id).is_some_and(|&attached| seq > attached) {
@@ -529,6 +531,11 @@ impl Device {
             Control::ListSessions { project_id } => self.list_sessions(project_id),
             Control::SendChat { chat_id, text, queue, images } => self.chats.send(&chat_id, &text, queue, &images),
             Control::InterruptChat { chat_id } => self.chats.interrupt(&chat_id),
+            Control::UnqueueChat { chat_id, index, revision } => {
+                if let Some((text, images)) = self.chats.unqueue(&chat_id, index, revision) {
+                    send(&self.outgoing, json!({ "type": "chat.unqueued", "chatId": chat_id, "text": text, "images": images }));
+                }
+            }
             Control::ShellChat { chat_id, command } => self.chats.shell(&chat_id, &command),
             Control::AnswerChat { chat_id, request_id, answer } => self.chats.answer(&chat_id, &request_id, answer),
             Control::RunChat { chat_id, builtin } => self.chats.run(&chat_id, builtin),

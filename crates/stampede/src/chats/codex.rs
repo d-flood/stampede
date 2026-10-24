@@ -365,7 +365,9 @@ fn run(
                     }
                     Some(Request::Run(Builtin::Rewind(index))) if transcript.idle() => {
                         if let Some(turn) = transcript.checkpoints.get(&index).cloned() {
+                            let boundary = transcript.checkpoints.iter().filter(|(_, id)| **id == turn).map(|(index, _)| *index).min().unwrap_or(index);
                             let params = json!({ "threadId": transcript.thread, "beforeTurnId": turn });
+                            transcript.report(Status::Working);
                             match connection.call("thread/revert", params).await {
                                 Ok(_) => {
                                     let mut turns = Vec::new();
@@ -381,13 +383,17 @@ fn run(
                                             Err(error) => { transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() }); break; }
                                         }
                                     }
-                                    let _ = transcript.events.send(Event::QuestionsTruncated(index));
+                                    let _ = transcript.events.send(Event::QuestionsTruncated(boundary));
+                                    transcript.status = Status::Done;
                                     transcript.resumed(&json!(turns));
                                     let _ = transcript.events.send(Event::Reset);
-                                    transcript.push(Item::Notice { notice: Notice::Rewound, text: "Conversation rewound. Files are left unchanged.".to_owned() });
+                                    transcript.push(Item::Notice { notice: Notice::Rewound, text: "Selected turn and every later turn removed. Files are left unchanged.".to_owned() });
                                 }
                                 Err(error) => { transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() }); }
                             }
+                            transcript.report(Status::Done);
+                        } else {
+                            transcript.push(Item::Notice { notice: Notice::Error, text: "This message has no rewind checkpoint. Choose another user message.".to_owned() });
                         }
                     }
                     Some(Request::Run(Builtin::Compact)) if transcript.idle() => {
@@ -976,8 +982,7 @@ impl Transcript {
                 match item["type"].as_str() {
                     Some("userMessage") => {
                         self.last_input = Some(item["content"].clone());
-                        self.checkpoint();
-                        self.push(user(item));
+                        self.push_user(item);
                     }
                     Some("fileChange") if item["status"] == "inProgress" => self.edited(item),
                     _ => self.completed(item, 0),
@@ -1005,6 +1010,16 @@ impl Transcript {
 
     fn checkpoint(&mut self) {
         if let Some(turn) = &self.turn { self.checkpoints.insert(self.len, turn.clone()); }
+    }
+
+    fn push_user(&mut self, input: &Value) {
+        self.checkpoint();
+        let boundary = self.checkpoints.iter().filter(|(_, turn)| Some(*turn) == self.turn.as_ref()).map(|(index, _)| *index).min();
+        let mut item = user(input);
+        if let Item::User { rewind_from, .. } = &mut item {
+            *rewind_from = boundary.filter(|index| *index < self.len);
+        }
+        self.push(item);
     }
 
     fn edited(&mut self, item: &Value) {
@@ -1268,8 +1283,7 @@ impl Transcript {
             }
             Some("item/started") if item["type"] == "userMessage" => {
                 self.last_input = Some(item["content"].clone());
-                self.checkpoint();
-                self.push(user(item));
+                self.push_user(item);
             }
             Some("item/started") if item["type"] == "agentMessage" => {
                 let (Some(id), Some(text)) = (item["id"].as_str(), item["text"].as_str()) else { return };
@@ -1555,7 +1569,7 @@ fn user(item: &Value) -> Item {
     let images = content.clone().filter(|input| input["type"] == "image" || input["type"] == "localImage").count();
     let image_urls = content.clone().filter(|input| input["type"] == "image").filter_map(|input| input["url"].as_str().map(str::to_owned)).collect();
     let text: Vec<&str> = content.filter_map(|input| input["text"].as_str()).collect();
-    Item::User { text: text.join("\n"), images, image_urls, template: None }
+    Item::User { text: text.join("\n"), images, image_urls, template: None, rewind_from: None }
 }
 
 fn agent(item: &Value) -> Item {

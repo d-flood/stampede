@@ -6,6 +6,8 @@
 	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import Meters from '#lib/chat/Meters.svelte';
 	import Queued from '#lib/chat/Queued.svelte';
+	import Rewind from '#lib/chat/Rewind.svelte';
+	import MessageNav from '#lib/chat/MessageNav.svelte';
 	import RequestCard from '#lib/chat/RequestCard.svelte';
 	import Shells from '#lib/chat/Shells.svelte';
 	import Todos from '#lib/chat/Todos.svelte';
@@ -43,6 +45,16 @@
 	const live = $derived(device.connection === 'connected');
 	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
 	let rewinding = $state(false);
+	let rewindTarget = $state<number>();
+	let scroller = $state<HTMLElement>();
+	const rewindUnavailable = $derived.by(() => {
+		if (!live) return 'Reconnect to rewind.';
+		if (!attached) return 'Loading the conversation…';
+		if (chat.queued.length) return 'Cancel queued messages before rewinding.';
+		if (chat.status !== 'done') return 'Wait for the current turn to finish, or interrupt first.';
+		if (shelling) return 'Wait for running commands to finish, or interrupt first.';
+		if (subagents.some(({ subagent }) => subagent.status !== 'done')) return 'Wait for subagents to finish, or interrupt first.';
+	});
 	let capabilities = $state<Capabilities>({ models: [], efforts: [], modes: [], commands: [], rewindsFiles: false });
 	const choices = $derived({
 		model: capabilities.models.map((value) => ({ value, label: value })),
@@ -85,6 +97,9 @@
 			case 'chat.capabilities':
 				if (message.chatId === chat.id) capabilities = message.capabilities;
 				break;
+			case 'chat.unqueued':
+				if (message.chatId === chat.id) composer?.restore(message.text, message.images);
+				break;
 		}
 	}
 
@@ -110,7 +125,7 @@
 	}
 
 	function run(command: Builtin, value?: string | number) {
-		if (command === 'rewind' && value === undefined) { rewinding = true; return; }
+		if (command === 'rewind') { rewindTarget = typeof value === 'number' ? value : undefined; rewinding = true; return; }
 		rewinding = false;
 		device.send({ type: 'chat.run', chatId: chat.id, command, value });
 	}
@@ -167,25 +182,18 @@
 				{#each handoffs as target (target.id)}<Button onclick={() => onchat(target)}>New Chat · {target.rig}</Button>{/each}
 			</div>
 		{/if}
-		{#if rewinding}
-			<section class="rewind" aria-label="Rewind">
-				<strong>Rewind to before a message</strong>
-				<p>{capabilities.rewindsFiles ? 'Restores tracked edits. Bash and subagent changes are not restored.' : 'Conversation only. Files are left unchanged.'}</p>
-				{#each items as item, index}
-					{#if item.kind === 'user'}<button disabled={!live || chat.status !== 'done'} onclick={() => run('rewind', index)}>{item.text || `${item.images} images`}</button>{/if}
-				{/each}
-				<button onclick={() => (rewinding = false)}>Cancel</button>
-			</section>
-		{/if}
 		<Todos todos={chat.todos} />
 	{:else}
 		<SubagentHeader subagent={selected} {trail} onopen={open} />
 	{/if}
-	<div class="transcript" hidden={!!selected} {@attach follow}>
-		<div class="column">
-			<Transcript {items} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} onopen={open} onattend={attend} {ondiff} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
-			<Queued queued={chat.queued} />
+	<div class="conversation" hidden={!!selected}>
+		<div class="transcript" bind:this={scroller} {@attach follow}>
+			<div class="column">
+				<Transcript {items} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} onopen={open} onattend={attend} {ondiff} onrewind={(index) => run('rewind', index)} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
+				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
+			</div>
 		</div>
+		<MessageNav {items} {scroller} />
 	</div>
 	{#if selected}
 		{#key opened.join('/')}
@@ -224,6 +232,7 @@
 		{/if}
 	</div>
 </div>
+<Rewind bind:open={rewinding} bind:target={rewindTarget} {chat} {items} {capabilities} unavailable={rewindUnavailable} onrewind={(index) => device.send({ type: 'chat.run', chatId: chat.id, command: 'rewind', value: index })} />
 
 <style>
 	.handoffs { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: var(--border-width) solid var(--border); font-size: var(--font-size-sm); }
@@ -231,10 +240,8 @@
 	.subagent span, .report .label { color: var(--muted-fg); }
 	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }
 	.report .label { font-size: var(--font-size-sm); }
-	.transcript[hidden] { display: none; }
-	.rewind { display: flex; flex-direction: column; flex: none; gap: var(--space-2); max-height: 45vh; padding: var(--space-3); overflow-y: auto; }
-	.rewind p { margin: 0; color: var(--muted-fg); }
-	.rewind button { min-height: var(--target-min); padding: var(--space-2); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); color: var(--color-fg); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+	.conversation { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
+	.conversation[hidden] { display: none; }
 	.panel {
 		display: flex;
 		flex-direction: column;
@@ -247,6 +254,7 @@
 
 	.transcript {
 		flex: 1;
+		min-width: 0;
 		min-height: 0;
 		overflow-y: auto;
 		padding: var(--space-6) var(--space-6) var(--space-4);
