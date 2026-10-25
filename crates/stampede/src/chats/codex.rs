@@ -14,7 +14,10 @@ use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     time::{Instant, interval, sleep, timeout},
 };
-use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
+use tokio_tungstenite::{
+    WebSocketStream, client_async_with_config,
+    tungstenite::{Message, protocol::WebSocketConfig},
+};
 
 use super::{
     AgentCommand, Answer, Builtin, CLOSING, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
@@ -119,7 +122,8 @@ async fn rejoin(
     transcript: &mut Transcript,
 ) -> io::Result<(Connection, Child)> {
     let (mut connection, proxy) = connect(cwd, env).await?;
-    let id = connection.request("thread/resume", json!({ "threadId": transcript.thread, "cwd": cwd, "config": tool_config(data_dir, &transcript.chat_id, env) })).await?;
+    let params = json!({ "threadId": transcript.thread, "cwd": cwd, "excludeTurns": true, "config": tool_config(data_dir, &transcript.chat_id, env) });
+    let id = connection.request("thread/resume", params).await?;
     let mut replay = Vec::new();
     let resumed = loop {
         let mut message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;
@@ -133,6 +137,10 @@ async fn rejoin(
             replay.push(message);
         }
     };
+    let mut held = Vec::new();
+    let turns = connection.history(&transcript.thread, &mut held).await?;
+    let mut done = HashSet::new();
+    finished(&turns, &mut done);
     let pending = transcript.settings.clone();
     transcript.settings = current(&resumed);
     for &setting in &pending.pending {
@@ -140,8 +148,15 @@ async fn rejoin(
         transcript.settings.mark_pending(setting);
     }
     transcript.report_settings();
-    let status = transcript.resumed(&resumed["thread"]["turns"]);
+    let status = transcript.resumed(&turns);
     transcript.status = status;
+    for child in transcript.subagents.keys().cloned().collect::<Vec<_>>() {
+        let read = connection.hold("thread/read", json!({ "threadId": child }), &mut held).await.unwrap_or_default();
+        let turns = connection.history(&child, &mut held).await.unwrap_or_default();
+        finished(&turns, &mut done);
+        transcript.rejoined(&child, &read["thread"], &turns);
+    }
+    replay.extend(held.into_iter().filter(|message| !stale(message, &done)));
     for message in replay {
         transcript.read(&message);
     }
@@ -161,11 +176,25 @@ async fn rejoin(
     let _ = timeout(REPLAY, connection.shells(transcript)).await;
     transcript.report(transcript.status);
     if transcript.turn.is_none() { transcript.propose(); }
-    for child in transcript.subagents.keys().cloned().collect::<Vec<_>>() {
-        let read = connection.request("thread/read", json!({ "threadId": child, "includeTurns": true })).await?;
-        transcript.reading.insert(read, child);
-    }
     Ok((connection, proxy))
+}
+
+/// Adds the ids of the turns and items `turns` holds finished.
+fn finished(turns: &[Value], done: &mut HashSet<String>) {
+    for turn in turns {
+        for value in std::iter::once(turn).chain(turn["items"].as_array().into_iter().flatten()) {
+            if value["status"] != "inProgress" && let Some(id) = value["id"].as_str() {
+                done.insert(id.to_owned());
+            }
+        }
+    }
+}
+
+/// Whether `message`, which arrived while history was paged in, notifies of something that history already holds finished.
+fn stale(message: &Value, done: &HashSet<String>) -> bool {
+    let params = &message["params"];
+    let ids = [&params["item"]["id"], &params["itemId"], &params["turn"]["id"]];
+    message.get("id").is_none() && ids.into_iter().any(|id| id.as_str().is_some_and(|id| done.contains(id)))
 }
 
 async fn reconnect(
@@ -254,7 +283,9 @@ async fn connect(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Conn
         .spawn()?;
     // The proxy relays raw bytes to the daemon's control socket, which speaks WebSocket.
     let stdio = tokio::io::join(proxy.stdout.take().unwrap(), proxy.stdin.take().unwrap());
-    let (socket, _) = client_async("ws://localhost/", stdio).await.map_err(io::Error::other)?;
+    // A page of history holding generated images can exceed tungstenite's default frame and message limits.
+    let config = WebSocketConfig::default().max_frame_size(None).max_message_size(None);
+    let (socket, _) = client_async_with_config("ws://localhost/", stdio, Some(config)).await.map_err(io::Error::other)?;
     let mut connection = Connection { socket, next: 0 };
     let client = json!({ "name": "stampede", "title": "Stampede", "version": env!("CARGO_PKG_VERSION") });
     let initialize = json!({ "clientInfo": client, "capabilities": { "experimentalApi": true } });
@@ -370,23 +401,14 @@ fn run(
                             transcript.report(Status::Working);
                             match connection.call("thread/revert", params).await {
                                 Ok(_) => {
-                                    let mut turns = Vec::new();
-                                    let mut cursor = Value::Null;
-                                    loop {
-                                        let params = json!({ "threadId": transcript.thread, "sortDirection": "asc", "itemsView": "full", "cursor": cursor });
-                                        match connection.call("thread/turns/list", params).await {
-                                            Ok(page) => {
-                                                turns.extend(page["data"].as_array().into_iter().flatten().cloned());
-                                                cursor = page["nextCursor"].clone();
-                                                if cursor.is_null() { break; }
-                                            }
-                                            Err(error) => { transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() }); break; }
-                                        }
-                                    }
+                                    let turns = connection.history(&transcript.thread, &mut Vec::new()).await;
                                     let _ = transcript.events.send(Event::QuestionsTruncated(boundary));
                                     transcript.status = Status::Done;
-                                    transcript.resumed(&json!(turns));
+                                    transcript.resumed(turns.as_deref().unwrap_or_default());
                                     let _ = transcript.events.send(Event::Reset);
+                                    if let Err(error) = turns {
+                                        transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() });
+                                    }
                                     transcript.push(Item::Notice { notice: Notice::Rewound, text: "Selected turn and every later turn removed. Files are left unchanged.".to_owned() });
                                 }
                                 Err(error) => { transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() }); }
@@ -601,16 +623,49 @@ impl Connection {
     }
 
     async fn call(&mut self, method: &str, params: Value) -> io::Result<Value> {
+        self.hold(method, params, &mut Vec::new()).await
+    }
+
+    /// Like `call`, keeping whatever arrives meanwhile in `held`.
+    async fn hold(&mut self, method: &str, params: Value, held: &mut Vec<Value>) -> io::Result<Value> {
         let id = self.request(method, params).await?;
         loop {
-            let message = self.next().await.ok_or_else(|| io::Error::other(format!("codex hung up during {method}")))?;
+            let mut message = self.next().await.ok_or_else(|| io::Error::other(format!("codex hung up during {method}")))?;
             if response(&message) == Some(id) {
                 return match message.get("error") {
                     Some(error) => Err(io::Error::other(format!("{method}: {error}"))),
-                    None => Ok(message["result"].clone()),
+                    None => Ok(message["result"].take()),
                 };
             }
+            held.push(message);
         }
+    }
+
+    async fn pages(&mut self, method: &str, mut params: Value, held: &mut Vec<Value>) -> io::Result<Vec<Value>> {
+        let mut data = Vec::new();
+        loop {
+            let mut page = self.hold(method, params.clone(), held).await?;
+            if let Value::Array(entries) = page["data"].take() { data.extend(entries); }
+            if page["nextCursor"].is_null() { return Ok(data); }
+            params["cursor"] = page["nextCursor"].take();
+        }
+    }
+
+    /// A thread's turns with their items, paged in item by item since a long thread's whole history is too large for one reply.
+    async fn history(&mut self, thread: &str, held: &mut Vec<Value>) -> io::Result<Vec<Value>> {
+        let mut items: HashMap<String, Vec<Value>> = HashMap::new();
+        for mut entry in self.pages("thread/items/list", json!({ "threadId": thread, "sortDirection": "asc" }), held).await? {
+            if let Some(turn) = entry["turnId"].as_str() {
+                items.entry(turn.to_owned()).or_default().push(entry["item"].take());
+            }
+        }
+        // Listed after the items, so that every item's turn is among them.
+        let params = json!({ "threadId": thread, "sortDirection": "asc", "itemsView": "notLoaded" });
+        let mut turns = self.pages("thread/turns/list", params, held).await?;
+        for turn in &mut turns {
+            turn["items"] = Value::Array(turn["id"].as_str().and_then(|id| items.remove(id)).unwrap_or_default());
+        }
+        Ok(turns)
     }
 
     async fn next(&mut self) -> Option<Value> {
@@ -694,7 +749,6 @@ struct Transcript {
     commands: HashMap<String, (usize, Item, Option<String>)>,
     subagents: HashMap<String, (Subagent, Transcript)>,
     delegated: HashMap<String, usize>,
-    reading: HashMap<u64, String>,
     previous: u64,
     steering: HashMap<u64, Value>,
     /// A steer that reached the daemon after its turn had ended, to start a turn with instead.
@@ -793,7 +847,6 @@ impl Transcript {
             commands: HashMap::new(),
             subagents: HashMap::new(),
             delegated: HashMap::new(),
-            reading: HashMap::new(),
             previous: 0,
             steering: HashMap::new(),
             unsteered: None,
@@ -903,7 +956,6 @@ impl Transcript {
         self.commands.clear();
         self.subagents.clear();
         self.delegated.clear();
-        self.reading.clear();
         self.asked.clear();
         self.edits.clear();
         self.steering.clear();
@@ -957,9 +1009,8 @@ impl Transcript {
         self.streaming.insert(id.to_owned(), (index, text.to_owned(), phase));
     }
 
-    fn resumed(&mut self, turns: &Value) -> Status {
+    fn resumed(&mut self, turns: &[Value]) -> Status {
         self.activity.clear(&self.events);
-        let turns = turns.as_array().map(Vec::as_slice).unwrap_or_default();
         let _ = self.events.send(Event::Truncate(0));
         self.len = 0;
         self.tools = None;
@@ -969,7 +1020,6 @@ impl Transcript {
         self.commands.clear();
         self.subagents.clear();
         self.delegated.clear();
-        self.reading.clear();
         self.steering.clear();
         self.unsteered = None;
         self.asked.clear();
@@ -997,6 +1047,30 @@ impl Transcript {
             self.push(Item::interrupted());
         }
         if self.turn.is_some() { Status::Working } else { Status::Done }
+    }
+
+    /// Rebuilds a Subagent from its thread and its history.
+    fn rejoined(&mut self, child: &str, thread: &Value, turns: &[Value]) {
+        let Some((subagent, transcript)) = self.subagents.get_mut(child) else { return };
+        for turn in turns {
+            transcript.turn = turn["id"].as_str().map(str::to_owned);
+            for item in turn["items"].as_array().into_iter().flatten() { transcript.completed(item, 0); }
+        }
+        transcript.turn = turns.last().filter(|turn| turn["status"] == "inProgress")
+            .and_then(|turn| turn["id"].as_str()).map(str::to_owned);
+        subagent.update();
+        if let Some(name) = thread["agentRole"].as_str().or(thread["agentNickname"].as_str()) {
+            subagent.name = Some(name.to_owned());
+        }
+        if subagent.model.is_none() {
+            subagent.model = thread["model"].as_str().map(str::to_owned);
+        }
+        if let Some(created) = thread["createdAt"].as_u64() {
+            subagent.started_at = created * 1000;
+        }
+        let durations = turns.iter().filter_map(|turn| turn["durationMs"].as_u64());
+        subagent.duration = durations.reduce(|total, duration| total + duration).or(subagent.duration);
+        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
     }
 
     fn propose(&self) {
@@ -1105,32 +1179,6 @@ impl Transcript {
                 eprintln!("codex thread/compact/start failed: {error}");
                 self.report(Status::Done);
             }
-            return;
-        }
-        if let Some(child) = response(message).and_then(|id| self.reading.remove(&id))
-            && let Some((subagent, transcript)) = self.subagents.get_mut(&child)
-        {
-            let thread = &message["result"]["thread"];
-            let turns = thread["turns"].as_array().map(Vec::as_slice).unwrap_or_default();
-            for turn in turns {
-                transcript.turn = turn["id"].as_str().map(str::to_owned);
-                for item in turn["items"].as_array().into_iter().flatten() { transcript.completed(item, 0); }
-            }
-            transcript.turn = turns.last().filter(|turn| turn["status"] == "inProgress")
-                .and_then(|turn| turn["id"].as_str()).map(str::to_owned);
-            subagent.update();
-            if let Some(name) = thread["agentRole"].as_str().or(thread["agentNickname"].as_str()) {
-                subagent.name = Some(name.to_owned());
-            }
-            if subagent.model.is_none() {
-                subagent.model = thread["model"].as_str().map(str::to_owned);
-            }
-            if let Some(created) = thread["createdAt"].as_u64() {
-                subagent.started_at = created * 1000;
-            }
-            let durations = turns.iter().filter_map(|turn| turn["durationMs"].as_u64());
-            subagent.duration = durations.reduce(|total, duration| total + duration).or(subagent.duration);
-            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             return;
         }
         let params = &message["params"];
@@ -1683,7 +1731,7 @@ mod tests {
         let (events, mut received) = mpsc::unbounded_channel();
         let mut transcript = Transcript::new("thread", Path::new("/project"), events);
         let item = json!({ "type": "commandExecution", "id": "shell", "command": "pnpm dev", "status": "inProgress" });
-        transcript.resumed(&json!([{ "id": "turn", "status": "completed", "items": [item] }]));
+        transcript.resumed(&[json!({ "id": "turn", "status": "completed", "items": [item] })]);
         transcript.read(&json!({ "method": "item/commandExecution/outputDelta", "params": {
             "threadId": "thread", "itemId": "shell", "delta": "Server ready\n",
         } }));
@@ -1732,7 +1780,7 @@ mod tests {
             "tool": html::TOOL, "arguments": arguments, "status": "completed", "result": { "content": [] } });
         transcript.completed(&item, 0);
         assert!(matches!(received.try_recv().unwrap(), Event::Item(0, snippet) if Some(&snippet) == html::item(&arguments).as_ref()));
-        transcript.resumed(&json!([{ "id": "turn", "status": "completed", "items": [item] }]));
+        transcript.resumed(&[json!({ "id": "turn", "status": "completed", "items": [item] })]);
         assert!(matches!(received.try_recv().unwrap(), Event::Truncate(0)));
         assert!(matches!(received.try_recv().unwrap(), Event::Item(0, snippet) if Some(&snippet) == html::item(&arguments).as_ref()));
         let mut failed = item.clone();
@@ -1752,7 +1800,7 @@ mod tests {
                 "status": "completed", "result": result });
             transcript.completed(&item, 0);
             assert!(matches!(received.try_recv().unwrap(), Event::Item(0, media) if Some(&media) == crate::media::item(&result).as_ref()));
-            transcript.resumed(&json!([{ "id": "turn", "status": "completed", "items": [item] }]));
+            transcript.resumed(&[json!({ "id": "turn", "status": "completed", "items": [item] })]);
             assert!(matches!(received.try_recv().unwrap(), Event::Truncate(0)));
             assert!(matches!(received.try_recv().unwrap(), Event::Item(0, media) if Some(&media) == crate::media::item(&result).as_ref()));
             let mut failed = item.clone();

@@ -120,22 +120,27 @@ async fn a_codex_chat_resumes_its_thread_through_server_restarts() {
             "initialize",
             "initialized",
             "thread/resume",
+            "thread/items/list",
+            "thread/turns/list",
             "model/list",
             "skills/list",
             "turn/start",
             "initialize",
             "initialized",
             "thread/resume",
+            "thread/items/list",
+            "thread/items/list",
+            "thread/turns/list",
             "model/list",
             "skills/list",
             "thread/unsubscribe",
         ]
     );
-    assert_eq!(common::without_storage(&received[8]["params"]), json!({ "threadId": THREAD, "cwd": server.root.path().join("home"), "config": {
+    assert_eq!(common::without_storage(&received[8]["params"]), json!({ "threadId": THREAD, "cwd": server.root.path().join("home"), "excludeTurns": true, "config": {
         "tools.update_plan": { "enabled": true },
         "mcp_servers.stampede_chat": { "command": env!("CARGO_BIN_EXE_stampede"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id], "tool_timeout_sec": 86400 },
     } }));
-    assert_eq!(common::without_storage(&received[14]["params"]), json!({ "threadId": THREAD, "cwd": server.root.path().join("home"), "config": {
+    assert_eq!(common::without_storage(&received[16]["params"]), json!({ "threadId": THREAD, "cwd": server.root.path().join("home"), "excludeTurns": true, "config": {
         "tools.update_plan": { "enabled": true },
         "mcp_servers.stampede_chat": { "command": env!("CARGO_BIN_EXE_stampede"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id], "tool_timeout_sec": 86400 },
     } }));

@@ -158,11 +158,48 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
     close_chat(&mut socket, server.root.path(), chat_id).await;
     let received = received(&server);
     let methods: Vec<Value> = received.iter().map(|message| message["method"].clone()).collect();
-    assert_eq!(methods, ["initialize", "initialized", "thread/resume", "model/list", "skills/list", "turn/start", "thread/unsubscribe"]);
-    assert_eq!(common::without_storage(&received[2]["params"]), json!({ "threadId": THREAD, "cwd": server.root.path().join("home"), "config": {
+    assert_eq!(methods, [
+        "initialize", "initialized", "thread/resume", "thread/items/list", "thread/items/list", "thread/turns/list",
+        "model/list", "skills/list", "turn/start", "thread/unsubscribe",
+    ]);
+    assert_eq!(common::without_storage(&received[2]["params"]), json!({ "threadId": THREAD, "cwd": server.root.path().join("home"), "excludeTurns": true, "config": {
         "tools.update_plan": { "enabled": true },
         "mcp_servers.stampede_chat": { "command": env!("CARGO_BIN_EXE_stampede"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id], "tool_timeout_sec": 86400 },
     } }));
+}
+
+#[tokio::test]
+async fn a_codex_thread_larger_than_a_websocket_message_limit_opens() {
+    let (server, mut socket, project_id) = start(RIGS, vec![("STAMPEDE_FAKE_PADDING", (65 << 20).to_string().into())]).await;
+    let chat = resume(&mut socket, &project_id, "codex", THREAD).await;
+    let chat_id = chat["id"].as_str().unwrap();
+    assert_eq!(attach(&mut socket, chat_id).await[2]["text"], "Hi there, friend!");
+    close_chat(&mut socket, server.root.path(), chat_id).await;
+}
+
+#[tokio::test]
+async fn notifications_already_in_a_paged_codex_history_are_shown_once() {
+    let mut entries: Vec<Value> = include_str!("fixtures/chats/codex/resume.recorded.jsonl").lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let resumed = entries.iter().position(|entry| entry["stdout"]["result"]["thread"]["turns"][0].is_object()).unwrap();
+    let turn = entries[resumed]["stdout"]["result"]["thread"]["turns"][0].clone();
+    let items = turn["items"].as_array().unwrap().iter().map(|item| {
+        json!({ "stdout": { "method": "item/completed", "params": { "threadId": THREAD, "turnId": turn["id"], "item": item } } })
+    });
+    let echoes: Vec<Value> = items.chain([json!({ "stdout": { "method": "turn/completed", "params": { "threadId": THREAD, "turn": turn } } })]).collect();
+    entries.splice(resumed + 1..resumed + 1, echoes);
+    let scratch = tempfile::tempdir().unwrap();
+    let fixture = scratch.path().join("echoes.recorded.jsonl");
+    fs::write(&fixture, entries.iter().map(|entry| entry.to_string() + "\n").collect::<String>()).unwrap();
+
+    let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", fixture.into())]).await;
+    let chat = resume(&mut socket, &project_id, "codex", THREAD).await;
+    let chat_id = chat["id"].as_str().unwrap();
+    assert_eq!(attach(&mut socket, chat_id).await, [
+        json!({ "kind": "user", "text": "Say hi in three words.", "images": 0 }),
+        json!({ "kind": "thinking", "seconds": 0 }),
+        json!({ "kind": "text", "text": "Hi there, friend!", "streaming": false, "phase": "final" }),
+    ]);
+    close_chat(&mut socket, server.root.path(), chat_id).await;
 }
 
 #[tokio::test]

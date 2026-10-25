@@ -205,11 +205,13 @@ async fn said(socket: &mut Socket, server: &Server, chat_id: &str, view: &mut Vi
             "initialize",
             "initialized",
             "thread/resume",
+            "thread/items/list",
+            "thread/turns/list",
             "turn/start",
             "thread/unsubscribe",
     ];
     if restored {
-        expected.splice(9..9, ["model/list", "skills/list"]);
+        expected.splice(11..11, ["model/list", "skills/list"]);
     }
     assert_eq!(methods, expected);
 }

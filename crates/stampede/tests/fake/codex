@@ -25,8 +25,12 @@ def fail(reason):
 
 FIXTURES = Path(__file__).resolve().parent.parent / 'fixtures/chats/codex'
 QUIET = ('initialize', 'initialized', 'account/rateLimits/read')
+HISTORY = ('thread/items/list', 'thread/turns/list')
+PAGE = 2
 held = []
 logging = False
+# The turns recorded results carried, served page by page instead.
+histories = {}
 
 
 def recorded(name, suffix):
@@ -85,6 +89,7 @@ def gate(name):
     path = Path(gates) / name
     path.touch()
     while path.exists():
+        waiting()
         time.sleep(0.02)
 
 
@@ -134,11 +139,14 @@ def waiting():
         start += 4 if masked else 0
         payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(buffered[start:end]))
         message = json.loads(payload)
-        if message.get('method') not in ('model/list', 'skills/list'):
+        if message.get('method') not in ('model/list', 'skills/list') + HISTORY:
             return True
         buffered = buffered[end:]
         log(message, payload)
-        answer(message)
+        if message['method'] in HISTORY:
+            history(message)
+        else:
+            answer(message)
 
 
 def handshake():
@@ -193,6 +201,9 @@ def read(expected):
         if message.get('method') == 'thread/list' != expected.get('method'):
             list_threads(message)
             continue
+        if message.get('method') in HISTORY and message.get('method') != expected.get('method'):
+            history(message)
+            continue
         if message.get('method') == 'config/read' != expected.get('method'):
             path = daemon().parent / 'config.toml'
             config = tomllib.loads(path.read_text()) if path.exists() else {}
@@ -242,6 +253,19 @@ def list_threads(message):
     send({'id': message['id'], 'result': {'data': data, 'nextCursor': None, 'backwardsCursor': None}})
 
 
+def history(message):
+    check(message, message)
+    params = message['params']
+    turns = histories.get(params['threadId'], [])
+    if message['method'] == 'thread/turns/list':
+        data = [dict(turn, items=[], itemsView='notLoaded') for turn in turns]
+    else:
+        data = [{'turnId': turn['id'], 'item': item} for turn in turns for item in turn['items']]
+    start = int(params.get('cursor') or 0)
+    end = start + PAGE
+    send({'id': message['id'], 'result': {'data': data[start:end], 'nextCursor': str(end) if end < len(data) else None, 'backwardsCursor': None}})
+
+
 def send(message):
     payload = json.dumps(message, ensure_ascii=False).replace(HERE, os.getcwd()).encode()
     length = len(payload)
@@ -274,6 +298,12 @@ def check(message, recorded):
             fail(f'{method} without chat HTML server: {mcp}')
     if method in ('thread/start', 'thread/resume') and os.path.realpath(params.get('cwd') or '') != os.path.realpath(os.getcwd()):
         fail(f'{method} cwd {params.get("cwd")} is not the proxy cwd {os.getcwd()}')
+    if method == 'thread/resume' and params.get('excludeTurns') is not True:
+        fail('thread/resume hydrates the whole history')
+    if method == 'thread/read' and params.get('includeTurns'):
+        fail('thread/read hydrates the whole history')
+    if method == 'thread/turns/list' and params.get('itemsView') != 'notLoaded':
+        fail(f'thread/turns/list loads items: {params}')
 
 
 def proxy():
@@ -320,7 +350,12 @@ def proxy():
             if 'method' not in message and message.get('id') in ids:
                 message['id'] = ids[message['id']]
             if 'thread' in (message.get('result') or {}):
-                (threads() / message['result']['thread']['id']).write_text(str(index))
+                thread = message['result']['thread']
+                (threads() / thread['id']).write_text(str(index))
+                histories[thread['id']] = thread.get('turns', [])
+                thread['turns'] = []
+                if padding := os.environ.get('STAMPEDE_FAKE_PADDING'):
+                    message['result']['padding'] = 'x' * int(padding)
             if message.get('method') == 'turn/completed' and waiting():
                 fail(f'read {buffered!r} before the turn ended')
             send(message)

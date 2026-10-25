@@ -77,6 +77,8 @@ async fn a_pending_codex_request_is_replayed_after_a_server_restart() {
         "initialize",
         "initialized",
         "thread/resume",
+        "thread/items/list",
+        "thread/turns/list",
         "model/list",
         "skills/list",
         null,
