@@ -104,7 +104,7 @@
 		max-height: min(var(--bits-floating-available-height), 100dvh - 2 * var(--space-2));
 		overflow-y: auto;
 		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
+		border-radius: var(--radius-lg);
 		background: var(--surface-2);
 		box-shadow: var(--shadow-float);
 		color: var(--color-fg);
@@ -142,7 +142,7 @@
 		gap: var(--space-2);
 		min-height: var(--target-min);
 		padding: 0 var(--space-2);
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-md);
 		cursor: pointer;
 		outline: none;
 	}

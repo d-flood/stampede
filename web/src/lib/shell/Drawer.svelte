@@ -171,6 +171,11 @@
 		transform: none;
 	}
 
+	section:not(.phone) {
+		border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+		overflow: clip;
+	}
+
 	.phone {
 		height: 100dvh;
 	}
@@ -178,6 +183,7 @@
 	.strip {
 		display: flex;
 		align-items: center;
+		padding: 0 var(--space-1);
 		border-bottom: var(--border-width) solid var(--border);
 		background: var(--surface-1);
 	}
@@ -186,8 +192,11 @@
 		display: flex;
 		flex: 1;
 		align-self: stretch;
+		align-items: flex-end;
+		gap: 2px;
 		min-width: 0;
 		min-height: calc(var(--target-min) + var(--space-2));
+		padding-top: var(--space-2);
 	}
 
 	.phone [role='tablist'] {

@@ -87,44 +87,56 @@
 
 <svelte:window bind:innerWidth={viewport} />
 
-<aside {id} aria-label="Sidebar" hidden={!open} class:phone={form() === 'phone'} class:right={form() === 'desktop' && sidebarPosition.side === 'right'} style:width={form() === 'desktop' ? `${size}px` : undefined}>
-	{#if project}
-		{#if form() === 'desktop'}<h1 title={project.path}>{label}</h1>{/if}
-		{#if git?.branch && project.worktree}
-			<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>
-		{:else if git?.branch}
-			<button class="branch" title="Switch branch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => ((switching = true), warmUp())}>
-				<GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span><CaretUpDown />
-			</button>
-			<Dialog bind:open={switching} full={form() === 'phone'} title="Switch branch" description="Uncommitted changes come along unless they clash with the branch.">
-				{#if Picker}<Picker projectId={project.id} current={git.branch} origin={!!git.origin} onswitch={() => (switching = false)} />{/if}
-			</Dialog>
-		{/if}
-		<div class="sections" role="group" aria-label="Sections">
-			{#each shown as { id, label } (id)}
-				<button aria-pressed={current === id} onclick={() => (section = id)}>{label}</button>
-			{/each}
+<aside
+	{id}
+	aria-label="Sidebar"
+	class:closed={!open}
+	class:phone={form() === 'phone'}
+	class:right={form() === 'desktop' && sidebarPosition.side === 'right'}
+	class:dragging={!!drag}
+	style:width={form() === 'desktop' ? `${open ? size : 0}px` : undefined}
+>
+	<div class="clip">
+		<div class="content" style:width={form() === 'desktop' ? `${size}px` : undefined}>
+			{#if project}
+				{#if form() === 'desktop'}<h1 title={project.path}>{label}</h1>{/if}
+				{#if git?.branch && project.worktree}
+					<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>
+				{:else if git?.branch}
+					<button class="branch" title="Switch branch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => ((switching = true), warmUp())}>
+						<GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span><CaretUpDown />
+					</button>
+					<Dialog bind:open={switching} full={form() === 'phone'} title="Switch branch" description="Uncommitted changes come along unless they clash with the branch.">
+						{#if Picker}<Picker projectId={project.id} current={git.branch} origin={!!git.origin} onswitch={() => (switching = false)} />{/if}
+					</Dialog>
+				{/if}
+				<div class="sections" role="group" aria-label="Sections">
+					{#each shown as { id, label } (id)}
+						<button aria-pressed={current === id} onclick={() => (section = id)}>{label}</button>
+					{/each}
+				</div>
+				{#if current === 'files'}
+					{#key project.id}
+						<Files projectId={project.id} {device} changes={git?.changes ?? []} {onopen} {onrename} />
+					{/key}
+				{:else if current === 'changes'}
+					{#key project.id}
+						{#if git}<Changes projectId={project.id} {git} {device} onopen={(path) => onopen(path)} {ondiff} />{/if}
+					{/key}
+				{:else if current === 'history'}
+					{#key project.id}
+						<History projectId={project.id} {device} onopen={ondiff} />
+					{/key}
+				{:else if current === 'epics'}
+					<Epics epics={epics ?? []} onopen={onepic} />
+				{/if}
+				{#key project.id}
+					<Search projectId={project.id} {device} hidden={current !== 'search'} {onopen} />
+				{/key}
+			{/if}
+			{#if form() === 'desktop'}<Usage readings={usage} {codexResets} />{/if}
 		</div>
-		{#if current === 'files'}
-			{#key project.id}
-				<Files projectId={project.id} {device} changes={git?.changes ?? []} {onopen} {onrename} />
-			{/key}
-		{:else if current === 'changes'}
-			{#key project.id}
-				{#if git}<Changes projectId={project.id} {git} {device} onopen={(path) => onopen(path)} {ondiff} />{/if}
-			{/key}
-		{:else if current === 'history'}
-			{#key project.id}
-				<History projectId={project.id} {device} onopen={ondiff} />
-			{/key}
-		{:else if current === 'epics'}
-			<Epics epics={epics ?? []} onopen={onepic} />
-		{/if}
-		{#key project.id}
-			<Search projectId={project.id} {device} hidden={current !== 'search'} {onopen} />
-		{/key}
-	{/if}
-	{#if form() === 'desktop'}<Usage readings={usage} {codexResets} />{/if}
+	</div>
 	{#if form() === 'desktop'}
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Focusable separators support keyboard resizing.) -->
 		<div
@@ -159,41 +171,83 @@
 		position: relative;
 		display: flex;
 		flex: none;
+		width: 20rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-xl);
+		background: var(--surface-1);
+		transition:
+			width var(--dur-med) var(--ease-out),
+			margin var(--dur-med) var(--ease-out),
+			visibility var(--dur-med);
+	}
+
+	.dragging {
+		transition: none;
+	}
+
+	.closed {
+		margin-right: calc(-1 * var(--gutter) - 2 * var(--border-width));
+		visibility: hidden;
+	}
+
+	.right.closed {
+		margin-right: 0;
+		margin-left: calc(-1 * var(--gutter) - 2 * var(--border-width));
+	}
+
+	.clip {
+		display: flex;
+		flex: 1;
+		min-width: 0;
+		border-radius: calc(var(--radius-xl) - var(--border-width));
+		overflow: clip;
+	}
+
+	.right .clip {
+		justify-content: flex-end;
+	}
+
+	.content {
+		display: flex;
+		flex: none;
 		flex-direction: column;
 		gap: var(--space-2);
-		width: 20rem;
-		border-right: var(--border-width) solid var(--border);
-		background: var(--surface-1);
+		min-height: 0;
 	}
 
 	.resizer {
 		position: absolute;
 		z-index: 1;
-		inset: 0 -4px 0 auto;
-		width: 8px;
+		inset: var(--radius-xl) calc(-1 * var(--gutter) - var(--border-width) - 3px) var(--radius-xl) auto;
+		width: calc(var(--gutter) + 6px);
 		cursor: col-resize;
 		touch-action: none;
 		user-select: none;
 	}
 
-	.resizer:hover,
-	.resizer:focus-visible,
-	.resizer.dragging {
-		background: var(--border);
+	.resizer::after {
+		content: '';
+		position: absolute;
+		inset: 0 calc(50% - 1px);
+		border-radius: 1px;
+	}
+
+	.resizer:hover::after,
+	.resizer:focus-visible::after,
+	.resizer.dragging::after {
+		background: var(--border-strong);
+	}
+
+	.resizer:focus-visible {
+		outline: none;
 	}
 
 	.right {
 		order: 1;
-		border-right: none;
-		border-left: var(--border-width) solid var(--border);
 	}
 
 	.right .resizer {
-		inset: 0 auto 0 -4px;
-	}
-
-	aside[hidden] {
-		display: none;
+		inset: var(--radius-xl) auto var(--radius-xl) calc(-1 * var(--gutter) - var(--border-width) - 3px);
 	}
 
 	.phone {
@@ -201,7 +255,13 @@
 		width: auto;
 		min-height: 0;
 		padding-top: var(--space-2);
-		border-right: none;
+		border: none;
+		border-radius: 0;
+	}
+
+	.phone .content {
+		flex: 1;
+		min-width: 0;
 	}
 
 	h1 {
@@ -231,7 +291,7 @@
 		margin: 0 var(--space-2);
 		padding: 0 var(--space-2);
 		border: none;
-		border-radius: var(--radius-sm);
+		border-radius: calc(var(--target-min) / 2);
 		background: none;
 		cursor: pointer;
 	}
@@ -260,21 +320,24 @@
 		flex-wrap: wrap;
 		margin: 0 var(--space-2);
 		padding: var(--space-1);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
+		border-radius: calc(var(--radius-md) + var(--space-1));
 		background: var(--surface-2);
+		box-shadow: inset 0 0 0 var(--border-width) var(--border);
 	}
 
 	.sections button {
 		flex: 1 0 auto;
 		min-height: var(--target-min);
 		border: none;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-md);
 		background: none;
 		color: var(--muted-fg);
 		font: inherit;
 		font-size: var(--font-size-sm);
 		cursor: pointer;
+		transition:
+			background var(--dur-fast),
+			color var(--dur-fast);
 	}
 
 	.sections button:hover:not(:disabled) {
@@ -288,6 +351,9 @@
 
 	.sections [aria-pressed='true'] {
 		background: var(--color-bg);
+		box-shadow:
+			var(--shadow-lift),
+			0 0 0 var(--border-width) var(--border);
 		color: var(--color-fg);
 		font-weight: 600;
 	}

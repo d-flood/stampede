@@ -335,7 +335,7 @@
 	.tree {
 		flex: 1;
 		overflow: auto;
-		padding-bottom: var(--space-3);
+		padding: 0 var(--space-2) var(--space-3);
 	}
 
 	ul {
@@ -368,6 +368,7 @@
 	.row {
 		display: flex;
 		align-items: center;
+		border-radius: var(--radius-md);
 	}
 
 	.row:hover {
@@ -383,6 +384,7 @@
 		min-height: var(--target-min);
 		padding: 0 var(--space-3) 0 calc(var(--space-2) + var(--depth) * var(--space-4));
 		border: none;
+		border-radius: inherit;
 		background: none;
 		color: var(--color-fg);
 		font: inherit;

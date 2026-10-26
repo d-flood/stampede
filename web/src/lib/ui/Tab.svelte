@@ -88,6 +88,7 @@
 		flex: none;
 		min-width: 0;
 		max-width: 14rem;
+		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 	}
 
 	.select {
@@ -100,9 +101,9 @@
 		min-height: calc(var(--target-min) + var(--space-2));
 		margin-bottom: calc(-1 * var(--border-width));
 		padding: 0 var(--space-3);
-		border: none;
-		border-right: var(--border-width) solid var(--border);
-		border-bottom: var(--border-width) solid var(--border);
+		border: var(--border-width) solid transparent;
+		border-bottom: none;
+		border-radius: inherit;
 		background: none;
 		color: var(--muted-fg);
 		font: inherit;
@@ -126,7 +127,7 @@
 	.close {
 		position: absolute;
 		top: 50%;
-		right: var(--border-width);
+		right: var(--space-1);
 		display: inline-grid;
 		place-items: center;
 		width: var(--target-min);
@@ -156,34 +157,14 @@
 	}
 
 	.active {
-		border-bottom-color: var(--color-bg);
+		border-color: var(--border);
 		background: var(--color-bg);
 		color: var(--color-fg);
-	}
-
-	.active::before {
-		content: '';
-		position: absolute;
-		top: 0;
-		right: 0;
-		left: 0;
-		height: 2px;
-		background: var(--color-fg);
 	}
 
 	.agent {
 		color: var(--color-fg);
 		font-weight: 600;
-	}
-
-	.agent::after {
-		content: '';
-		position: absolute;
-		right: 0;
-		bottom: 0;
-		left: 0;
-		height: 2px;
-		background: var(--mark);
 	}
 
 	.deleted .label {

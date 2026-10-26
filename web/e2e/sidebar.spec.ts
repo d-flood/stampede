@@ -24,7 +24,7 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', async
 	await expect(resizer).toHaveAttribute('aria-valuenow', '424');
 	await page.keyboard.press('Home');
 	await expect(resizer).toHaveAttribute('aria-valuenow', '160');
-	await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(161);
+	await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(162);
 	const sections = sidebar.getByRole('group', { name: 'Sections' });
 	await expect.poll(() => sections.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
@@ -87,7 +87,7 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', async
 	await page.setViewportSize({ width: 800, height: 800 });
 	await expect(resizer).toHaveAttribute('aria-valuemax', '480');
 	await expect(resizer).toHaveAttribute('aria-valuenow', '480');
-	await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(481);
+	await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(482);
 });
 
 test('phone sidebar fills its screen without a resize handle', async ({ page }, { project }) => {
@@ -96,4 +96,35 @@ test('phone sidebar fills its screen without a resize handle', async ({ page }, 
 	const sidebar = await showSidebar(page);
 	await expect(page.getByRole('separator', { name: 'Resize sidebar' })).toHaveCount(0);
 	await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(page.viewportSize()!.width);
+});
+
+test('desktop sidebar slides open and closed over several frames', async ({ page }, { project }) => {
+	test.skip(project.name !== 'desktop');
+	await openProject(page, 'alpha');
+	const sidebar = await showSidebar(page);
+	const slide = () =>
+		page.evaluate(
+			() =>
+				new Promise<number[]>((resolve) => {
+					const main = document.querySelector('main')!;
+					const lefts = [main.getBoundingClientRect().left];
+					const start = performance.now();
+					document.querySelector<HTMLButtonElement>('button[aria-label="Sidebar"]')!.click();
+					requestAnimationFrame(function frame(now) {
+						lefts.push(main.getBoundingClientRect().left);
+						if (now - start < 500) requestAnimationFrame(frame);
+						else resolve(lefts);
+					});
+				})
+		);
+	const closing = await slide();
+	await expect(sidebar).toBeHidden();
+	const opening = await slide();
+	await expect(sidebar).toBeVisible();
+	expect(opening.at(-1)).toBe(closing[0]);
+	for (const lefts of [closing, opening]) {
+		const [first, last] = [lefts[0], lefts.at(-1)!];
+		expect(Math.abs(last - first)).toBeGreaterThan(150);
+		expect(new Set(lefts.filter((left) => left > Math.min(first, last) + 0.5 && left < Math.max(first, last) - 0.5).map(Math.round)).size).toBeGreaterThanOrEqual(3);
+	}
 });
