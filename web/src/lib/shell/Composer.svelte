@@ -182,8 +182,9 @@
 	}
 
 	.boxed {
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
+		border: var(--border-width) solid var(--border-strong);
+		border-radius: var(--radius-xl);
+		box-shadow: var(--shadow-lift);
 	}
 
 	.boxed:focus-within {
@@ -211,13 +212,14 @@
 		padding: 0;
 		border: none;
 		background: none;
+		box-shadow: none;
 	}
 
 	.boxed.phone textarea {
 		min-height: var(--target-min);
 		padding: var(--space-3) var(--space-4);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
+		border: var(--border-width) solid var(--border-strong);
+		border-radius: var(--radius-xl);
 		background: var(--surface-1);
 		font-size: var(--font-size-lg);
 	}

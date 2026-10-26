@@ -58,7 +58,19 @@
 	let wheeled = 0;
 	let hidden = $state(document.hidden);
 	const live = $derived(device.connection === 'connected');
-	const observer = new ResizeObserver(propose);
+	let settling = 0;
+	let fallback: ReturnType<typeof setTimeout> | undefined;
+	let resizing = $state(false);
+	const observer = new ResizeObserver(() => {
+		resizing = true;
+		cancelAnimationFrame(settling);
+		clearTimeout(fallback);
+		// Proposes once the size holds for two frames, so a sliding panel resizes the PTY once.
+		settling = requestAnimationFrame(() => (settling = requestAnimationFrame(() => {
+			propose();
+			fallback = setTimeout(() => (resizing = false), 500);
+		})));
+	});
 
 	onMount(() => {
 		device.send({ type: 'terminal.attach', terminalId });
@@ -71,6 +83,8 @@
 			container.removeEventListener('keydown', keydown, true);
 			container.removeEventListener('paste', paste, true);
 			observer.disconnect();
+			cancelAnimationFrame(settling);
+			clearTimeout(fallback);
 			unlisten();
 			if (channel !== undefined) device.send({ type: 'terminal.detach', channel });
 			view?.dispose();
@@ -105,7 +119,8 @@
 		if (!focused || !view) return;
 		window.terminal = view;
 		if (composing || pending) composer?.focus();
-		else view.focus();
+		// ghostty-web's focus() retries on a timer, which can steal focus from a Drawer opened in between.
+		else view.element?.focus();
 	});
 
 	// ghostty-web can't change its theme after open(), so a new look gets a
@@ -176,6 +191,7 @@
 				if (message.terminalId !== terminalId) break;
 				size = { cols: message.cols, rows: message.rows };
 				view?.resize(message.cols, message.rows);
+				resizing = false;
 				break;
 		}
 	}
@@ -382,7 +398,7 @@
 	</div>
 	{@render children?.()}
 	<div class="view">
-		<div class="terminal" title="Copy selection (Ctrl+Shift+C or Cmd+C)" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
+		<div class="terminal" class:resizing title="Copy selection (Ctrl+Shift+C or Cmd+C)" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
 		{#if form() === 'phone'}
 			<div
 				class="rail"
@@ -449,7 +465,12 @@
 		flex: 1;
 		min-width: 0;
 		min-height: 0;
+		padding: var(--space-1) 0 var(--space-2) var(--space-2);
 		overflow: auto;
+	}
+
+	.resizing {
+		overflow: hidden;
 	}
 
 	.rail {

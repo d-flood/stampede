@@ -1374,13 +1374,25 @@
 
 	.shell {
 		display: flex;
+		gap: var(--gutter);
+		box-sizing: border-box;
 		height: 100dvh;
+		padding: var(--gutter) var(--gutter) var(--gutter) 0;
+		background: var(--surface-2);
+	}
+
+	.shell > main {
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-xl);
+		background: var(--color-bg);
+		overflow: hidden;
 	}
 
 	.phone {
 		display: flex;
 		flex-direction: column;
 		height: 100dvh;
+		background: var(--surface-2);
 	}
 
 	header {
@@ -1389,7 +1401,6 @@
 		align-items: center;
 		gap: var(--space-1);
 		padding: var(--space-1);
-		border-bottom: var(--border-width) solid var(--border);
 	}
 
 	h1 {
@@ -1414,6 +1425,9 @@
 		display: flex;
 		flex: 1;
 		min-height: 0;
+		border-top: var(--border-width) solid var(--border);
+		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+		background: var(--color-bg);
 		overflow-x: auto;
 		overflow-y: hidden;
 		overscroll-behavior-x: contain;
@@ -1454,6 +1468,7 @@
 		grid-row: 1;
 		align-items: center;
 		min-width: 0;
+		padding: 0 var(--space-1);
 		border-bottom: var(--border-width) solid var(--border);
 		background: var(--surface-1);
 		user-select: none;
@@ -1479,8 +1494,11 @@
 		display: flex;
 		flex: 1;
 		align-self: stretch;
+		align-items: flex-end;
+		gap: 2px;
 		min-width: 0;
 		min-height: calc(var(--target-min) + var(--space-2));
+		padding-top: var(--space-2);
 	}
 
 	.phone [role='tablist'] {

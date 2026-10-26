@@ -2,12 +2,10 @@
 	import type { Epic, Project } from '#lib/device.svelte.ts';
 	import type { Tile } from '#lib/projects.ts';
 	import ProjectRow from '#lib/shell/ProjectRow.svelte';
-	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import type { Snippet } from 'svelte';
 	import CaretDoubleLeft from '~icons/ph/caret-double-left';
 	import CaretDoubleRight from '~icons/ph/caret-double-right';
-	import FolderOpen from '~icons/ph/folder-open';
 	import Plus from '~icons/ph/plus';
 
 	type Props = {
@@ -110,11 +108,9 @@
 			/>
 		{/each}
 	</ol>
-	{#if open}
-		<Button onclick={onpick}><FolderOpen /> Open Project</Button>
-	{:else}
-		<IconButton label="Open Project" onclick={onpick}><Plus /></IconButton>
-	{/if}
+	<button class="add squircle" title={open ? undefined : 'Open Project'} onclick={onpick}>
+		<Plus /><span class="label">Open Project</span>
+	</button>
 	<span class="fill"></span>
 	<div class="foot">{@render attention?.()}</div>
 </nav>
@@ -124,37 +120,105 @@
 		display: flex;
 		flex: none;
 		flex-direction: column;
-		align-items: center;
 		gap: var(--space-2);
-		padding: var(--space-2);
-		border-right: var(--border-width) solid var(--border);
-		background: var(--surface-2);
+		box-sizing: border-box;
+		width: calc(var(--tile) + var(--space-3) + var(--space-1));
+		padding: var(--space-2) var(--space-1) var(--space-2) var(--space-3);
 		user-select: none;
+		transition: width var(--dur-med) var(--ease-out);
 	}
 
 	nav.open {
 		width: 17rem;
-		align-items: stretch;
 		overflow-y: auto;
 	}
 
 	.top {
 		display: flex;
+		align-self: flex-end;
 		justify-content: center;
-	}
-
-	.open .top {
-		justify-content: flex-end;
+		width: var(--tile);
 	}
 
 	ol {
 		display: flex;
 		flex-direction: column;
-		align-self: stretch;
 		gap: var(--space-2);
 		margin: 0;
 		padding: 0;
 		list-style: none;
+	}
+
+	.add {
+		display: inline-flex;
+		flex: none;
+		align-self: flex-start;
+		align-items: center;
+		justify-content: center;
+		gap: 0;
+		box-sizing: border-box;
+		width: var(--tile);
+		height: var(--tile);
+		padding: 0;
+		border: var(--border-width) dashed var(--border-strong);
+		border-radius: var(--radius-tile);
+		background: none;
+		color: var(--muted-fg);
+		font: inherit;
+		white-space: nowrap;
+		cursor: pointer;
+		transition:
+			width var(--dur-med) var(--ease-out),
+			height var(--dur-med) var(--ease-out),
+			gap var(--dur-med) var(--ease-out),
+			border-radius var(--dur-med) var(--ease-out),
+			background var(--dur-fast),
+			color var(--dur-fast);
+	}
+
+	.open .add {
+		gap: var(--space-2);
+		width: 100%;
+		height: calc(var(--target-min) + var(--space-2));
+		border-radius: var(--radius-lg);
+	}
+
+	.add :global(svg) {
+		flex: none;
+		font-size: var(--font-size-lg);
+	}
+
+	.label {
+		max-width: 0;
+		overflow: hidden;
+		opacity: 0;
+		transition:
+			max-width var(--dur-med) var(--ease-out),
+			opacity calc(var(--dur-fast) / 2) linear;
+	}
+
+	.open .label {
+		max-width: 12em;
+		opacity: 1;
+		transition:
+			max-width var(--dur-med) var(--ease-out),
+			opacity var(--dur-med) var(--dur-fast);
+	}
+
+	.add:hover {
+		background: var(--hover);
+		color: var(--color-fg);
+	}
+
+	.add:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
+		outline-offset: var(--border-width);
+	}
+
+	@supports (corner-shape: squircle) {
+		nav:not(.open) .add {
+			border-radius: calc(var(--tile) * 0.42);
+		}
 	}
 
 	.fill {
@@ -166,9 +230,6 @@
 		flex-direction: column;
 		align-items: center;
 		gap: var(--space-2);
-	}
-
-	.open .foot {
-		flex-direction: row;
+		width: var(--tile);
 	}
 </style>

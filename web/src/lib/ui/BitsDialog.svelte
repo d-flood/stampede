@@ -77,7 +77,7 @@
 		overflow-y: auto;
 		padding: var(--space-4);
 		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
+		border-radius: var(--radius-xl);
 		background: var(--surface-1);
 		box-shadow: var(--shadow-float);
 		color: var(--color-fg);

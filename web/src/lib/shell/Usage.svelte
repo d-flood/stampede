@@ -178,9 +178,11 @@
 		display: grid;
 		grid-template-columns: max-content repeat(2, minmax(0, 1fr));
 		column-gap: var(--space-3);
-		margin-top: auto;
-		padding: 0 var(--space-4);
-		border-top: var(--border-width) solid var(--border);
+		margin: auto var(--space-2) var(--space-2);
+		padding: 0 var(--space-3);
+		border-radius: var(--radius-lg);
+		background: var(--surface-2);
+		box-shadow: inset 0 0 0 var(--border-width) var(--border);
 		font-size: var(--font-size-sm);
 		container-type: inline-size;
 	}
@@ -190,9 +192,7 @@
 	}
 
 	.phone {
-		margin-top: 0;
-		border-top: none;
-		border-bottom: var(--border-width) solid var(--border);
+		margin: var(--space-2) var(--space-2) 0;
 	}
 
 	.agent {
