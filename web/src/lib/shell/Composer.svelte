@@ -93,6 +93,10 @@
 		box.focus();
 	}
 
+	export function saveAsClip() {
+		clipping = true;
+	}
+
 	export function prepend(lines: string[]) {
 		text = [...lines, text].filter(Boolean).join('\n\n');
 		keep();
@@ -121,8 +125,8 @@
 		spellcheck={!coded}
 	></textarea>
 	<div class="actions">
-		{#if text.trim()}
-			<Button aria-label="Save as Clip" title="Save as Clip" onmousedown={(event) => event.preventDefault()} onclick={() => (clipping = true)}><BookmarkSimple /></Button>
+		{#if !actions && text.trim()}
+			<Button aria-label="Save as Clip" tip="Save as Clip" onmousedown={(event) => event.preventDefault()} onclick={() => (clipping = true)}><BookmarkSimple /></Button>
 		{/if}
 		{#if actions}
 			{@render actions(text, clear)}
@@ -182,22 +186,26 @@
 	}
 
 	.boxed {
-		border: var(--border-width) solid var(--border-strong);
-		border-radius: var(--radius-xl);
-		box-shadow: var(--shadow-lift);
-	}
-
-	.boxed:focus-within {
-		border-color: var(--status-working);
+		padding: 0;
+		border: none;
+		background: none;
 	}
 
 	.boxed textarea {
+		min-height: 2lh;
 		max-height: 40vh;
-		padding: var(--space-1) var(--space-2);
-		border: none;
-		background: none;
+		padding: var(--space-3) var(--space-4);
+		border: var(--border-width) solid var(--border-strong);
+		border-radius: var(--radius-xl);
+		background: var(--surface-1);
+		box-shadow: var(--shadow-lift);
 		outline: none;
 		field-sizing: content;
+		align-content: safe center;
+	}
+
+	.boxed textarea:focus-visible {
+		border-color: var(--status-working);
 	}
 
 	.boxed .actions {
@@ -205,26 +213,28 @@
 		flex-wrap: wrap;
 	}
 
-	.boxed.phone {
-		flex-direction: column;
-		align-items: stretch;
-		gap: var(--space-3);
-		padding: 0;
-		border: none;
+	.boxed .actions > :global(button) {
+		border-color: transparent;
 		background: none;
-		box-shadow: none;
+		color: var(--muted-fg);
+	}
+
+	.boxed .actions > :global(button:hover:not(:disabled)) {
+		background: var(--hover);
+		color: var(--color-fg);
+	}
+
+	.boxed .actions > :global(button:disabled) {
+		opacity: 0.45;
+	}
+
+	.boxed.phone {
+		gap: var(--space-3);
 	}
 
 	.boxed.phone textarea {
 		min-height: var(--target-min);
-		padding: var(--space-3) var(--space-4);
-		border: var(--border-width) solid var(--border-strong);
-		border-radius: var(--radius-xl);
-		background: var(--surface-1);
+		box-shadow: none;
 		font-size: var(--font-size-lg);
-	}
-
-	.boxed.phone textarea:focus-visible {
-		border-color: var(--status-working);
 	}
 </style>

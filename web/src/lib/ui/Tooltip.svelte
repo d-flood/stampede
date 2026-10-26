@@ -2,11 +2,11 @@
 	import { Tooltip } from 'bits-ui';
 	import type { Snippet } from 'svelte';
 
-	let { text, delayDuration = 400, disabled = false, children }: { text: string; delayDuration?: number; disabled?: boolean; children: Snippet<[Record<string, unknown>]> } = $props();
+	let { text, delayDuration = 400, disabled = false, ignoreNonKeyboardFocus = false, children }: { text: string; delayDuration?: number; disabled?: boolean; ignoreNonKeyboardFocus?: boolean; children: Snippet<[Record<string, unknown>]> } = $props();
 </script>
 
 <Tooltip.Provider {delayDuration}>
-	<Tooltip.Root>
+	<Tooltip.Root {ignoreNonKeyboardFocus}>
 		<Tooltip.Trigger {disabled}>
 			{#snippet child({ props })}
 				{@render children(props)}

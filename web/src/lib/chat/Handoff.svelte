@@ -4,7 +4,6 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import { onMount } from 'svelte';
-	import GitFork from '~icons/ph/git-fork';
 
 	let { device, chat, available }: { device: Device; chat: Chat; available: boolean } = $props();
 	let open = $state(false);
@@ -29,7 +28,11 @@
 		}
 	} }));
 
-	function show() {
+	export function enabled() {
+		return ready && configured.length > 0;
+	}
+
+	export function show() {
 		rig = configured.some(({ name }) => name === chat.rig) ? chat.rig : (configured[0]?.name ?? '');
 		focus = '';
 		error = '';
@@ -44,8 +47,6 @@
 	}
 </script>
 
-<Button aria-label="New Chat from here…" title="New Chat from here…" disabled={!ready || !configured.length} onclick={show}><GitFork /></Button>
-
 <Dialog bind:open title="New Chat from here" description="Prepare a handoff, then review and edit it in the new Chat’s Composer before sending.">
 	<form id="handoff-{chat.id}" onsubmit={(event) => { event.preventDefault(); prepare(); }}>
 		<label for="handoff-rig-{chat.id}">Rig</label>
@@ -55,7 +56,7 @@
 			{/each}
 		</select>
 		<label for="handoff-focus-{chat.id}">Focus <span>(optional)</span></label>
-		<textarea id="handoff-focus-{chat.id}" bind:value={focus} disabled={preparing} placeholder="What should the new Chat focus on?" rows="3" {@attach (element) => element.focus()}></textarea>
+		<textarea id="handoff-focus-{chat.id}" bind:value={focus} disabled={preparing} placeholder="What should the new Chat focus on?" rows="3" {@attach (element) => { requestAnimationFrame(() => element.focus()); }}></textarea>
 		{#if preparing}<p role="status">Preparing handoff in {chat.rig}…</p>{/if}
 		{#if error}<p role="alert">{error}</p>{/if}
 	</form>

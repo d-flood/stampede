@@ -18,15 +18,10 @@ test('a Chat moves to a new worktree with the uncommitted changes and a note in 
 	await panel.getByRole('button', { name: 'Send', exact: true }).click();
 	await expect(panel.getByText('Hello and', { exact: false })).toBeVisible();
 	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).getByTitle('done')).toBeVisible();
-	await expect.poll(() => panel.locator('.composer .actions').evaluate((element) => {
-		const buttons = ['Attach image', 'New Chat from here…', 'Move to new worktree…', 'Send']
-			.map((label) => element.querySelector(`button[aria-label="${label}"]`)?.getBoundingClientRect());
-		const row = element.getBoundingClientRect();
-		return buttons.every((button) => button && Math.abs(button.top - buttons[0]!.top) < 1 && button.left >= row.left && button.right <= row.right);
-	})).toBe(true);
 	writeFileSync(`${alpha()}/${project.name}.txt`, 'moved\n');
 
-	await panel.getByRole('button', { name: 'Move to new worktree…' }).click();
+	await panel.getByRole('button', { name: 'More', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Move to new worktree…' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Move to new worktree' });
 	const branch = dialog.getByRole('textbox', { name: 'New branch' });
 	await expect(branch).toBeFocused();

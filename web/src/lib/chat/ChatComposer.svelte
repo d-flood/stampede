@@ -1,15 +1,19 @@
 <script lang="ts">
 	import { agentNames } from '#lib/config.svelte.ts';
+	import Chips from '#lib/chat/Chips.svelte';
+	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import FileMenu from '#lib/chat/FileMenu.svelte';
-	import Handoff from '#lib/chat/Handoff.svelte';
-	import MoveToWorktree from '#lib/chat/MoveToWorktree.svelte';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import Menu from '#lib/ui/Menu.svelte';
+	import type { Component } from 'svelte';
 	import ArrowBendUpRight from '~icons/ph/arrow-bend-up-right';
 	import At from '~icons/ph/at';
+	import BookmarkSimple from '~icons/ph/bookmark-simple';
+	import DotsThree from '~icons/ph/dots-three';
 	import ListPlus from '~icons/ph/list-plus';
 	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Paperclip from '~icons/ph/paperclip';
@@ -17,11 +21,11 @@
 	import Terminal from '~icons/ph/terminal';
 	import X from '~icons/ph/x';
 
-	let { device, chat, live, request, capabilities, choices, handoffAvailable, history, shelling, focused = false, onrun }: {
+	let { device, chat, live, request, capabilities, choices, branches, history, shelling, focused = false, onrun }: {
 		device: Device;
 		chat: Chat;
 		live: boolean;
-		handoffAvailable: boolean;
+		branches: { label: string; icon: Component; disabled: boolean; onselect(): void }[];
 		history: string[];
 		shelling: boolean;
 		focused?: boolean;
@@ -150,7 +154,7 @@
 	</div>
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${chat.rig}`} {history} code={(text) => text.trimStart().startsWith('!')} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : form() === 'phone' ? undefined : '/ commands · @ files · ! shell · ; clips'} {history} code={(text) => text.trimStart().startsWith('!')} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
 	{#snippet menu(text, replace, caret)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
 		{#if !slash?.isOpen()}
@@ -159,47 +163,56 @@
 	{/snippet}
 	{#snippet actions(text: string, clear: () => void)}
 		{#if form() === 'phone'}
-			<Button aria-label="Commands" title="Commands" aria-expanded={slash?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => slash?.toggle()}><Terminal /></Button>
-			<Button aria-label="Reference file" title="Reference file" aria-expanded={files?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => (files?.isOpen() ? files.dismiss() : composer.insert('@'))}><At /></Button>
-		{/if}
-		<Button aria-label="Attach image" title="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
-		<Handoff {device} {chat} available={handoffAvailable} />
-		<MoveToWorktree {device} {chat} />
-		{#if stoppable}
-			<Button aria-label="Interrupt" title="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
-				<span class="stop"><Stop /></span>
-			</Button>
-			<span class="gap"></span>
-		{/if}
-		{#if text.trimStart().startsWith('!')}
-			<Button variant="primary" disabled={!text.trim().slice(1).trim() || !live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
-				<Terminal /> Run
-			</Button>
-		{:else if working}
-			<Button disabled={(!text.trim() && !images.length) || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
-				<ListPlus /> Queue
-			</Button>
-			<Button
-				variant="primary"
-				disabled={(!text.trim() && !images.length) || !live || reading}
-				onmousedown={keepFocus}
-				onclick={() => send(text, false) && clear()}
-			>
-				<ArrowBendUpRight /> Steer
-			</Button>
+			<Button aria-label="Commands" tip="Commands" aria-expanded={slash?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => slash?.toggle()}><Terminal /></Button>
+			<Button aria-label="Reference file" tip="Reference file" aria-expanded={files?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => (files?.isOpen() ? files.dismiss() : composer.insert('@'))}><At /></Button>
 		{:else}
-			<Button
-				variant="primary"
-				aria-label="Send"
-				title="Send"
-				style="min-width: calc(2 * (1.2em + 2 * var(--space-3) + 2 * var(--border-width)))"
-				disabled={(!text.trim() && !images.length) || !live || reading}
-				onmousedown={keepFocus}
-				onclick={() => send(text, false) && clear()}
-			>
-				<PaperPlaneRight />
-			</Button>
+			<Chips agent={chat.agent} settings={chat.settings} {choices} docked {onrun}>
+				{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
+			</Chips>
 		{/if}
+		<Button aria-label="Attach image" tip="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
+		<Menu items={[{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]}>
+			{#snippet trigger(props)}
+				<Button {...props} aria-label="More" tip="More"><DotsThree /></Button>
+			{/snippet}
+		</Menu>
+		<div class="turn">
+			{#if stoppable}
+				<Button aria-label="Interrupt" tip="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
+					<span class="stop"><Stop /></span>
+				</Button>
+				{#if form() === 'phone'}<span class="gap"></span>{/if}
+			{/if}
+			{#if text.trimStart().startsWith('!')}
+				<Button variant="primary" disabled={!text.trim().slice(1).trim() || !live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
+					<Terminal /> Run
+				</Button>
+			{:else if working}
+				<Button disabled={(!text.trim() && !images.length) || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
+					<ListPlus /> Queue
+				</Button>
+				<Button
+					variant="primary"
+					disabled={(!text.trim() && !images.length) || !live || reading}
+					onmousedown={keepFocus}
+					onclick={() => send(text, false) && clear()}
+				>
+					<ArrowBendUpRight /> Steer
+				</Button>
+			{:else}
+				<Button
+					variant="primary"
+					aria-label="Send"
+					tip="Send"
+					style="min-width: calc(2 * (1.2em + 2 * var(--space-3) + 2 * var(--border-width)))"
+					disabled={(!text.trim() && !images.length) || !live || reading}
+					onmousedown={keepFocus}
+					onclick={() => send(text, false) && clear()}
+				>
+					<PaperPlaneRight />
+				</Button>
+			{/if}
+		</div>
 	{/snippet}
 </Composer>
 
@@ -216,5 +229,18 @@
 
 	.gap {
 		flex: 1;
+	}
+
+	.turn {
+		display: contents;
+	}
+
+	.turn > :global(button:has(.stop)) {
+		border-color: transparent;
+		background: none;
+	}
+
+	.turn > :global(button:has(.stop):hover:not(:disabled)) {
+		background: var(--hover);
 	}
 </style>

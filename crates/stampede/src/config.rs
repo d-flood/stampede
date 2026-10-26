@@ -342,6 +342,7 @@ pub struct Face {
     pub url: String,
     pub weight: String,
     pub style: &'static str,
+    pub stretch: String,
 }
 
 impl Config {
@@ -811,31 +812,34 @@ pub fn expand(path: PathBuf) -> PathBuf {
     }
 }
 
-/// Each face file's weight and style, by its path, modification time and length.
-static FACES: Mutex<BTreeMap<(PathBuf, Option<SystemTime>, u64), (String, &'static str)>> = Mutex::new(BTreeMap::new());
+/// Each face file's weight, style and stretch, by its path, modification time and length.
+static FACES: Mutex<BTreeMap<(PathBuf, Option<SystemTime>, u64), (String, &'static str, String)>> = Mutex::new(BTreeMap::new());
 
 pub fn face(path: PathBuf, url: String) -> Result<Face, Error> {
     let metadata = fs::metadata(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     let key = (path, metadata.modified().ok(), metadata.len());
-    if let Some((weight, style)) = FACES.lock().unwrap().get(&key).cloned() {
-        return Ok(Face { path: key.0, url, weight, style });
+    if let Some((weight, style, stretch)) = FACES.lock().unwrap().get(&key).cloned() {
+        return Ok(Face { path: key.0, url, weight, style, stretch });
     }
     let data = fs::read(&key.0).map_err(|error| format!("{}: {error}", key.0.display()))?;
-    let (weight, style) = match ttf_parser::Face::parse(&data, 0) {
+    let (weight, style, stretch) = match ttf_parser::Face::parse(&data, 0) {
         Ok(face) => {
-            let wght = Tag::from_bytes(b"wght");
-            let axis = face.variation_axes().into_iter().find(|axis| axis.tag == wght);
-            let weight = match axis {
+            let axis = |tag: &[u8; 4]| face.variation_axes().into_iter().find(|axis| axis.tag == Tag::from_bytes(tag));
+            let weight = match axis(b"wght") {
                 Some(axis) => format!("{} {}", axis.min_value, axis.max_value),
                 None => face.weight().to_number().to_string(),
             };
-            (weight, if face.is_italic() { "italic" } else { "normal" })
+            let stretch = match axis(b"wdth") {
+                Some(axis) => format!("{}% {}%", axis.min_value, axis.max_value),
+                None => format!("{}%", [50.0, 62.5, 75.0, 87.5, 100.0, 112.5, 125.0, 150.0, 200.0][usize::from(face.width().to_number()) - 1]),
+            };
+            (weight, if face.is_italic() { "italic" } else { "normal" }, stretch)
         }
-        Err(_) => ("400".to_owned(), "normal"),
+        Err(_) => ("400".to_owned(), "normal", "100%".to_owned()),
     };
     let path = key.0.clone();
-    FACES.lock().unwrap().insert(key, (weight.clone(), style));
-    Ok(Face { path, url, weight, style })
+    FACES.lock().unwrap().insert(key, (weight.clone(), style, stretch.clone()));
+    Ok(Face { path, url, weight, style, stretch })
 }
 
 pub fn watch(path: &Path) -> io::Result<watch::Receiver<Arc<Config>>> {

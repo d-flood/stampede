@@ -28,11 +28,11 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await expect(panel.locator('strong', { hasText: 'welcome' })).toBeVisible();
 	await expect(panel.getByText(/^Hello and welcome!/)).toBeVisible();
 	await expect(tab.getByTitle('done')).toBeVisible();
-	if (project.name === 'pixel') {
-		await expect(context).toHaveText('2%');
-	} else {
-		await expect(context).toContainText('22k / 1M');
-		await expect(panel.getByText('23k in · 32 out')).toBeVisible();
+	await expect(context).toHaveText('2%');
+	await expect(context).toHaveAttribute('aria-valuetext', '22k / 1M (2%)');
+	if (project.name === 'desktop') {
+		await context.hover();
+		await expect(page.getByRole('tooltip').filter({ hasText: 'Context 22k / 1M (2%)' })).toContainText('23k in · 32 out');
 	}
 
 	await composer.fill('Anything else?');
@@ -108,12 +108,10 @@ test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, 
 	await expect(panel.getByText('Welcome—glad you’re here.')).toBeVisible();
 	await expect(tab.getByTitle('done')).toBeVisible();
 	const context = panel.getByRole('meter', { name: 'Context' });
-	if (project.name === 'pixel') {
-		await expect(context).toHaveText('5%');
-	} else {
-		await expect(context).toContainText('22k / 475k');
-		await expect(panel.getByText('22k in · 14 out')).toBeVisible();
-	}
+	await expect(context).toHaveText('5%');
+	await expect(context).toHaveAttribute('aria-valuetext', '22k / 475k (5%)');
+	await context.hover();
+	await expect(page.getByRole('tooltip').filter({ hasText: 'Context 22k / 475k (5%)' })).toContainText('22k in · 14 out');
 
 	await tab.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();

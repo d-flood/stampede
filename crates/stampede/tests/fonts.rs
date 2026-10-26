@@ -52,6 +52,7 @@ async fn installed_fonts_are_listed_served_and_saved_without_rewriting_other_set
     for face in font["faces"].as_array().unwrap() {
         let url = face["url"].as_str().unwrap();
         assert!(url.starts_with("/fonts/system/Symbols%20Nerd%20Font%20Mono/"), "{url}");
+        assert_eq!(face["stretch"], "100%");
         served.push(get(&client, &format!("{base}{url}")).await.bytes().await.unwrap());
     }
     assert!(served.iter().any(|bytes| bytes[..] == data[..]));

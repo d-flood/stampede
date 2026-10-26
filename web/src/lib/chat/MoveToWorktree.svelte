@@ -3,7 +3,6 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import { onMount } from 'svelte';
-	import GitBranch from '~icons/ph/git-branch';
 
 	let { device, chat }: { device: Device; chat: Chat } = $props();
 	let open = $state(false);
@@ -26,7 +25,11 @@
 		}
 	} }));
 
-	function show() {
+	export function enabled() {
+		return ready;
+	}
+
+	export function show() {
 		branch = '';
 		error = '';
 		open = true;
@@ -39,8 +42,6 @@
 		device.send({ type: 'chat.move', chatId: chat.id, branch: branch.trim() });
 	}
 </script>
-
-<Button aria-label="Move to new worktree…" title="Move to new worktree…" disabled={!ready} onclick={show}><GitBranch /></Button>
 
 <Dialog bind:open title="Move to new worktree" description="Cut a new branch from the current one, carry the uncommitted changes over, and continue this Chat there.">
 	<form id="move-{chat.id}" onsubmit={(event) => { event.preventDefault(); move(); }}>

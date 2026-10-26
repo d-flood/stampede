@@ -4,7 +4,6 @@
 	import { same, subagents as flatten } from '#lib/chat/agents.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import ContextBar from '#lib/chat/ContextBar.svelte';
-	import Meters from '#lib/chat/Meters.svelte';
 	import Queued from '#lib/chat/Queued.svelte';
 	import Rewind from '#lib/chat/Rewind.svelte';
 	import MessageNav from '#lib/chat/MessageNav.svelte';
@@ -13,6 +12,8 @@
 	import Todos from '#lib/chat/Todos.svelte';
 	import Chips from '#lib/chat/Chips.svelte';
 	import Dock from '#lib/chat/Dock.svelte';
+	import Handoff from '#lib/chat/Handoff.svelte';
+	import MoveToWorktree from '#lib/chat/MoveToWorktree.svelte';
 	import Prompt from '#lib/chat/Prompt.svelte';
 	import SubagentHeader from '#lib/chat/SubagentHeader.svelte';
 	import Text from '#lib/chat/Text.svelte';
@@ -23,6 +24,8 @@
 	import { painted } from '#lib/paint.svelte.ts';
 	import { onMount, tick } from 'svelte';
 	import { on } from 'svelte/events';
+	import GitBranch from '~icons/ph/git-branch';
+	import GitFork from '~icons/ph/git-fork';
 
 	let { device, chat, chats, onchat, items, opened, onopen, active, focused = false, ondiff }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void } =
 		$props();
@@ -40,6 +43,12 @@
 	const asker = $derived(request?.subagent && subagents.find(({ subagent }) => subagent.id === request.subagent)?.subagent.task);
 	let card = $state<RequestCard>();
 	let composer = $state<ChatComposer>();
+	let handoff = $state<Handoff>();
+	let mover = $state<MoveToWorktree>();
+	const branches = $derived([
+		{ label: 'New Chat from here…', icon: GitFork, disabled: !handoff?.enabled(), onselect: () => handoff?.show() },
+		{ label: 'Move to new worktree…', icon: GitBranch, disabled: !mover?.enabled(), onselect: () => mover?.show() }
+	]);
 	const history = $derived([...new Set(items.flatMap((item) => (item.kind === 'user' && item.text ? [item.text] : item.kind === 'shell' ? [`!${item.command}`] : [])).reverse())].reverse());
 	const shelling = $derived(items.some((item) => item.kind === 'shell' && item.status === 'running'));
 	const live = $derived(device.connection === 'connected');
@@ -171,11 +180,13 @@
 <!-- svelte-ignore a11y_interactive_supports_focus (Dropped images have the Attach image button as their keyboard path.) -->
 <div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active} ondragover={dragover} ondrop={drop}>
 	{#if !selected}
-		<Chips agent={chat.agent} settings={chat.settings} {choices} onrun={run}>
-			{#if form() === 'phone' && chat.context}
-				<ContextBar context={chat.context} compact />
-			{/if}
-		</Chips>
+		{#if form() === 'phone'}
+			<Chips agent={chat.agent} settings={chat.settings} {choices} onrun={run}>
+				{#if chat.context}
+					<ContextBar context={chat.context} tokens={chat.tokens} />
+				{/if}
+			</Chips>
+		{/if}
 		{#if source || handoffs.length}
 			<div class="handoffs" aria-label="Chat handoffs">
 				{#if source}<Button onclick={() => onchat(source)}>Source Chat · {source.rig}</Button>{/if}
@@ -223,15 +234,14 @@
 			{/key}
 		{/if}
 		{#if !selected}
-			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {live} {request} {capabilities} {choices} handoffAvailable={attached && items.some((item) => item.kind === 'user')} {focused} onrun={run} />
-			{#if form() === 'desktop'}
-				<Meters {chat} />
-			{/if}
+			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {live} {request} {capabilities} {choices} {branches} {focused} onrun={run} />
 		{:else}
 			<div class="subagent"><span>Subagent</span><Button onclick={() => onopen([])}>Back to Main</Button></div>
 		{/if}
 	</div>
 </div>
+<Handoff bind:this={handoff} {device} {chat} available={attached && items.some((item) => item.kind === 'user')} />
+<MoveToWorktree bind:this={mover} {device} {chat} />
 <Rewind bind:open={rewinding} bind:target={rewindTarget} {chat} {items} {capabilities} unavailable={rewindUnavailable} onrewind={(index) => device.send({ type: 'chat.run', chatId: chat.id, command: 'rewind', value: index })} />
 
 <style>

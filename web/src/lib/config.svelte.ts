@@ -14,7 +14,7 @@ type Palette = {
 	selectionForeground: string;
 };
 type ThemeResponse = { name: string | null; light: Palette; dark: Palette };
-type Font = { family: string; faces: { url: string; weight: string; style: string }[] };
+type Font = { family: string; faces: { url: string; weight: string; style: string; stretch: string }[] };
 type EditorSettings = { keymap: 'standard' | 'vim' };
 type Keybar = { extra: string[] };
 
@@ -93,7 +93,7 @@ export async function loadConfig() {
 
 function register(previous: FontFace[], font: Font | null) {
 	for (const face of previous) document.fonts.delete(face);
-	const added = font ? font.faces.map(({ url, weight, style }) => new FontFace(font.family, `url("${url}")`, { weight, style })) : [];
+	const added = font ? font.faces.map(({ url, weight, style, stretch }) => new FontFace(font.family, `url("${url}")`, { weight, style, stretch })) : [];
 	for (const face of added) document.fonts.add(face);
 	return added;
 }

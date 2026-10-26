@@ -22,21 +22,23 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await page.getByRole('menuitem', { name: 'Handoff source', exact: true }).click();
 		const source = page.getByRole('tab', { name: /^Handoff source/ });
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
-		await expect(panel.getByRole('button', { name: 'New Chat from here…' })).toBeDisabled();
+		const handoff = async () => {
+			await panel.getByRole('button', { name: 'More', exact: true }).click();
+			return page.getByRole('menuitem', { name: 'New Chat from here…' });
+		};
+		await expect(await handoff()).toBeDisabled();
+		await page.keyboard.press('Escape');
 		await expect.poll(() => panel.locator('.composer .actions').evaluate((element) => {
-			const labels = ['Attach image', 'New Chat from here…', 'Send'];
-			const buttons = labels.map((label) => element.querySelector(`button[aria-label="${label}"]`)?.getBoundingClientRect());
+			const buttons = ['Attach image', 'More', 'Send'].map((label) => element.querySelector(`button[aria-label="${label}"]`)?.getBoundingClientRect());
 			const row = element.getBoundingClientRect();
-			return buttons.every((button) => button && Math.abs(button.top - buttons[0]!.top) < 1 && button.left >= row.left && button.right <= row.right)
-				&& Math.abs(buttons[2]!.width - 2 * buttons[0]!.width) < 1
-				&& Math.abs(buttons[1]!.width - buttons[0]!.width) < 1;
+			return buttons.every((button) => button && Math.abs(button.top - buttons[0]!.top) < 1 && button.left >= row.left && button.right <= row.right);
 		})).toBe(true);
 		await panel.getByRole('textbox', { name: 'Composer' }).fill('Discuss authentication.');
 		await panel.getByRole('button', { name: 'Send', exact: true }).click();
 		await expect(panel.getByText('Authentication discussed.', { exact: true })).toBeVisible();
 		await expect(source.getByTitle('done')).toBeVisible();
 		await panel.getByRole('textbox', { name: 'Composer' }).fill('Keep this source draft');
-		await panel.getByRole('button', { name: 'New Chat from here…' }).click();
+		await (await handoff()).click();
 		const dialog = page.getByRole('dialog', { name: 'New Chat from here' });
 		await expect(dialog.getByLabel('Rig', { exact: true })).toHaveValue('Handoff source');
 		await expect(dialog.getByLabel('Focus (optional)', { exact: true })).toHaveValue('');

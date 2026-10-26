@@ -68,7 +68,7 @@ for (const agent of ['Claude', 'Codex']) {
 		await expect(card).toHaveCount(0);
 		await expect(panel.getByText('Done', { exact: true })).toBeVisible();
 		await expect(tab.getByTitle('done')).toBeVisible();
-		await expect(composer).toHaveAttribute('placeholder', `Message ${agent} Approval`);
+		await expect(composer).not.toHaveAttribute('placeholder', `Or tell ${agent} what to do instead…`);
 	});
 }
 

@@ -1,11 +1,25 @@
 <script lang="ts">
+	import Tooltip from '#lib/ui/Tooltip.svelte';
+	import { mergeProps } from 'bits-ui';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	let { variant = 'default', children, ...rest }: HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'danger' } =
+	let { variant = 'default', tip, children: content, ...rest }: HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'danger'; tip?: string } =
 		$props();
 </script>
 
-<button class={variant} {...rest}>{@render children?.()}</button>
+{#snippet button(props: HTMLButtonAttributes)}
+	<button class={variant} {...props}>{@render content?.()}</button>
+{/snippet}
+
+{#if tip}
+	<Tooltip text={tip} delayDuration={0} ignoreNonKeyboardFocus>
+		{#snippet children(trigger)}
+			{@render button(mergeProps(trigger, rest))}
+		{/snippet}
+	</Tooltip>
+{:else}
+	{@render button(rest)}
+{/if}
 
 <style>
 	button {

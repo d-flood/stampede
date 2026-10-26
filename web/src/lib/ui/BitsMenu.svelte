@@ -98,6 +98,7 @@
 
 <style>
 	.menu {
+		z-index: 50;
 		box-sizing: border-box;
 		min-width: 10rem;
 		max-width: min(24rem, 100vw - 2 * var(--space-2));
