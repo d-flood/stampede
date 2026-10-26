@@ -2,7 +2,7 @@ mod common;
 
 use std::{env, fs, io::Write, iter, path::Path, time::Duration};
 
-use common::{Server, View, apply, control, expand, next, next_control};
+use common::{Server, View, apply, control, expand, next, next_control, watching};
 use serde_json::{Value, json};
 use tempfile::NamedTempFile;
 use tokio::{
@@ -130,6 +130,18 @@ fn holder(root: &Path, terminal_id: &str) -> u32 {
 }
 
 #[tokio::test]
+async fn a_fresh_server_uses_less_than_64_mib() {
+    let server = Server::with_config("idle-memory", "rig = []\nroots = []\n").await;
+    let client = reqwest::Client::new();
+    for _ in 0..20 {
+        client.get(format!("http://127.0.0.1:{}/api/version", server.port)).send().await.unwrap().error_for_status().unwrap();
+    }
+    let resident = resident_bytes(server.pid());
+    println!("fresh server: {:.1} MiB", resident as f64 / (1 << 20) as f64);
+    assert!(resident < 64 << 20, "the fresh server used {} MiB", resident >> 20);
+}
+
+#[tokio::test]
 async fn a_device_that_stops_reading_is_cut_off() {
     let block = "x".repeat(256 << 10);
     let fixture = turn((0..160).flat_map(|_| [
@@ -254,4 +266,29 @@ async fn a_long_command_output_reaches_a_device_once_it_expands_the_command() {
     let expanded = expand(&mut other, chat_id.as_str().unwrap(), index).await;
     assert_eq!(expanded["output"], output);
     assert_eq!(expanded.get("elided"), None);
+}
+
+#[tokio::test]
+async fn watching_a_project_of_many_directories_stays_small() {
+    let server = Server::with_config("tree-memory", "rig = []\nroots = []\n").await;
+    let tree = server.root.path().join("home/tree");
+    for outer in 0..200 {
+        for inner in 0..200 {
+            fs::create_dir_all(tree.join(format!("{outer:03}/{inner:03}"))).unwrap();
+        }
+    }
+    let mut socket = device(server.port, "device").await;
+    let idle = resident_bytes(server.pid());
+    control(&mut socket, json!({ "type": "project.open", "path": tree })).await;
+    next_control(&mut socket, "project.opened").await;
+    watching(&mut socket, &tree).await;
+
+    let deadline = Instant::now() + Duration::from_secs(35);
+    loop {
+        let grown = resident_bytes(server.pid()).saturating_sub(idle);
+        println!("watching 40,000 directories: {:.1} MiB", grown as f64 / (1 << 20) as f64);
+        if grown < 16 << 20 { break; }
+        assert!(Instant::now() < deadline, "watching 40,000 directories grew the server by {} MiB", grown >> 20);
+        sleep(Duration::from_millis(250)).await;
+    }
 }

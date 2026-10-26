@@ -264,6 +264,21 @@ pub async fn next_control(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>
     }
 }
 
+/// Waits until the open Project at `root` reports a change, which its watcher does only once it watches the whole tree.
+pub async fn watching(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, root: &Path) {
+    let started = timeout(Duration::from_secs(60), async {
+        loop {
+            fs::write(root.join("probe"), "probe").unwrap();
+            if let Ok(changed) = timeout(Duration::from_millis(500), next_control(socket, "fs.changed")).await
+                && changed["paths"].as_array().unwrap().iter().any(|path| path == "probe")
+            {
+                break;
+            }
+        }
+    });
+    started.await.expect("the watcher never reported the probe");
+}
+
 pub async fn next(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>) -> Value {
     loop {
         if let Message::Text(text) = socket.next().await.unwrap().unwrap() {

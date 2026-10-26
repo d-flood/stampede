@@ -1,26 +1,24 @@
 <script lang="ts">
 	import { renderCopyable } from '#lib/chat/markdown.ts';
 	import type { Item } from '#lib/device.svelte.ts';
-	import { onDestroy, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import { on } from 'svelte/events';
 
-	let { item }: { item: Extract<Item, { kind: 'text' }> } = $props();
+	let { item, active = true }: { item: Extract<Item, { kind: 'text' }>; active?: boolean } = $props();
 
-	let framed = $state(untrack(() => item.text));
-	let frame = 0;
-
+	let framed = $state.raw(untrack(() => ({ text: item.text, streaming: item.streaming })));
 	$effect(() => {
-		if (item.streaming && item.text !== framed && !frame) {
-			frame = requestAnimationFrame(() => {
-				frame = 0;
-				framed = item.text;
+		if (!active) return;
+		if (!item.streaming) { framed = { text: item.text, streaming: false }; return; }
+		if (item.text !== framed.text) {
+			const frame = requestAnimationFrame(() => {
+				framed = { text: item.text, streaming: item.streaming };
 			});
+			return () => cancelAnimationFrame(frame);
 		}
 	});
 
-	onDestroy(() => cancelAnimationFrame(frame));
-
-	const html = $derived(renderCopyable(item.streaming ? framed : item.text));
+	const html = $derived(renderCopyable(framed.text, !framed.streaming));
 
 	function copy(event: MouseEvent) {
 		const button = (event.target as Element).closest<HTMLElement>('.copy');

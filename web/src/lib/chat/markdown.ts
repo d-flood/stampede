@@ -5,6 +5,7 @@ import Copy from '~icons/ph/copy?raw';
 const markdown = new MarkdownIt({ breaks: true, linkify: true });
 const rules = markdown.renderer.rules;
 const copy = `<button class="copy" type="button" aria-label="Copy">${Copy}${Check}</button>`;
+const maxCacheBytes = 2 << 20;
 
 rules.link_open = (tokens, index, options, _env, self) => {
 	tokens[index].attrSet('target', '_blank');
@@ -28,11 +29,25 @@ rules.code_inline = (tokens, index, options, env, self) => {
 
 function cached(render: (text: string) => string) {
 	const rendered = new Map<string, string>();
-	return (text: string) => {
-		const html = rendered.get(text) ?? render(text);
-		rendered.delete(text);
+	let bytes = 0;
+	return (text: string, cache = true) => {
+		if (!cache) return render(text);
+		const existing = rendered.get(text);
+		if (existing !== undefined) {
+			rendered.delete(text);
+			rendered.set(text, existing);
+			return existing;
+		}
+		const html = render(text);
+		const size = 2 * (text.length + html.length);
+		if (size > maxCacheBytes) return html;
 		rendered.set(text, html);
-		if (rendered.size > 200) rendered.delete(rendered.keys().next().value!);
+		bytes += size;
+		while (rendered.size > 200 || bytes > maxCacheBytes) {
+			const [key, value] = rendered.entries().next().value!;
+			bytes -= 2 * (key.length + value.length);
+			rendered.delete(key);
+		}
 		return html;
 	};
 }

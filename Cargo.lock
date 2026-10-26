@@ -3296,6 +3296,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "ignore",
+ "inotify",
  "libghostty-vt",
  "lol_html",
  "mime_guess",
