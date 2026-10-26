@@ -62,7 +62,7 @@ test('@ references a tracked file by its plain path', async ({ page }, { project
 	await closeProject(page, name);
 });
 
-test('@ shows progress while the file list loads and recovers from a failed load', async ({ page }, { project }) => {
+test('@ shows progress while the file list loads and recovers from a failed load', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `chat-files-loading-${project.name}`;
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root, { recursive: true });

@@ -52,13 +52,11 @@ test('project images are previewed, copied, restored after reopening, and remova
 	await expect.poll(() => preview.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(256);
 	await expect.poll(() => preview.evaluate((image: HTMLImageElement) => image.naturalHeight)).toBe(128);
 	await fits(dialog);
-	await page.screenshot({ path: test.info().outputPath('project-icon-picker.png') });
 	await dialog.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect.poll(() => button.locator('img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(256);
 	await expect(button.locator('img')).toHaveCSS('object-fit', 'contain');
 	await fits(button);
-	await page.screenshot({ path: test.info().outputPath('project-icon-navigation.png') });
 	const source = await button.locator('img').getAttribute('src');
 	unlinkSync(`${root}/assets/brand & mark.svg`);
 	await closeProject(page, 'alpha');
@@ -73,7 +71,7 @@ test('project images are previewed, copied, restored after reopening, and remova
 	await expect(button).toContainText('Al');
 });
 
-test('website URL paths discover icons and failed requests preserve the saved icon', async ({ page }) => {
+test('website URL paths discover icons and failed requests preserve the saved icon', { tag: '@desktop' }, async ({ page }) => {
 	const requested: string[] = [];
 	const png = Buffer.from(await page.evaluate(() => {
 		const canvas = document.createElement('canvas');
@@ -138,7 +136,7 @@ test('website URL paths discover icons and failed requests preserve the saved ic
 	} finally { await new Promise<void>((resolve, reject) => site.close((error) => error ? reject(error) : resolve())); }
 });
 
-test('device uploads can be previewed and cancelled without changing the icon', async ({ page }) => {
+test('device uploads can be previewed and cancelled without changing the icon', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	const button = await navigation(page);
 	const dialog = await picker(page, button);

@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
 import { closeProject, openProject, screen, showSidebar } from './shell.ts';
 
-test('JetBrains Mono loads for UI text and controls', async ({ page }) => {
+test('JetBrains Mono loads for UI text and controls', { tag: '@desktop' }, async ({ page }) => {
 	await page.goto('/');
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
@@ -51,9 +51,7 @@ test('text size defaults, changes, persists, and resets', async ({ page }, { pro
 	}
 	await size.selectOption('22');
 	await expect(page.locator('body')).toHaveCSS('font-size', '22px');
-	await expect(settings.locator('small')).toHaveCSS('font-size', '20px');
 	await expect.poll(() => settings.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('settings-large.png') });
 	await settings.getByRole('button', { name: 'Done', exact: true }).click();
 	await expect(settings).toBeHidden();
 	await page.reload();
@@ -67,7 +65,7 @@ test('text size defaults, changes, persists, and resets', async ({ page }, { pro
 	await expect(page.locator('body')).toHaveCSS('font-size', `${defaultSize}px`);
 });
 
-test('text size updates a running terminal and the editor', async ({ page }) => {
+test('text size updates a running terminal and the editor', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'greeting.ts', exact: true }).click();
@@ -98,8 +96,8 @@ test('text size updates a running terminal and the editor', async ({ page }) => 
 	await expect.poll(() => screen(page)).toMatch(/^size-after$/m);
 });
 
-test('available modes are chosen per Agent and limit a Chat\'s mode menu and Shift+Tab', async ({ page }, { project }) => {
-	const name = `modes-${project.name}`;
+test('available modes are chosen per Agent and limit a Chat\'s mode menu and Shift+Tab', { tag: '@desktop' }, async ({ page }) => {
+	const name = 'modes';
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();

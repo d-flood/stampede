@@ -4,7 +4,7 @@ import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { closeProject, openProject } from './shell.ts';
 
-test('chat follows messages until scrolled up and resumes at the bottom', async ({ page }, { project, repeatEachIndex }) => {
+test('chat follows messages until scrolled up and resumes at the bottom', { tag: '@desktop' }, async ({ page }, { project, repeatEachIndex }) => {
 	let route: WebSocketRoute;
 	let chatId: string;
 	const items: Item[] = [{ kind: 'text', text: 'Start\n\n' + 'A line of history.\n\n'.repeat(80), streaming: false, phase: 'commentary' }];

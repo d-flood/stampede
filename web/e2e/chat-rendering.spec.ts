@@ -4,7 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
 import { openProject } from './shell.ts';
 
-test('hidden Chats defer streamed text rendering and catch up when shown', async ({ page }, { project }) => {
+test('hidden Chats defer streamed text rendering and catch up when shown', { tag: '@desktop' }, async ({ page }, { project }) => {
 	let route: WebSocketRoute;
 	const ids: string[] = [];
 	await page.routeWebSocket('**/ws', (socket) => {

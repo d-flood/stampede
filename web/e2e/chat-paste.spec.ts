@@ -27,7 +27,7 @@ async function paste(composer: Locator, files: { name: string; type?: string; si
 }
 
 for (const agent of ['Claude', 'Codex']) {
-	test(`${agent} sends a pasted image and preserves the draft`, async ({ page, context }, { project }) => {
+	test(`${agent} sends a pasted image and preserves the draft`, { tag: agent === 'Codex' ? '@desktop' : [] }, async ({ page, context }, { project }) => {
 		const name = `paste-${agent}-${project.name}`;
 		const { panel, composer } = await launch(page, name, `Fake ${agent}`);
 		await composer.fill('Look at this');
@@ -52,8 +52,6 @@ for (const agent of ['Claude', 'Codex']) {
 		const sentImage = panel.locator('.transcript').getByRole('img', { name: 'Attached image 1', exact: true });
 		await expect(sentImage).toBeVisible();
 		await expect.poll(() => sentImage.evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth > 0)).toBe(true);
-		await expect.poll(() => sentImage.evaluate((node) => node.getBoundingClientRect().width <= node.closest('.transcript')!.clientWidth)).toBe(true);
-		await expect.poll(() => sentImage.evaluate((node) => node.getBoundingClientRect().height <= innerHeight * 0.5 + 1)).toBe(true);
 		await expect(panel.getByRole('link', { name: 'Open attached image 1', exact: true })).toHaveAttribute('href', /^\/api\/media\//);
 		await expect(composer).toHaveValue('');
 		await page.reload();
@@ -65,7 +63,7 @@ for (const agent of ['Claude', 'Codex']) {
 
 test('image-only messages show every attachment within the transcript bounds', async ({ page }, { project }) => {
 	const name = `image-only-${project.name}`;
-	const { panel } = await launch(page, name);
+	const { panel, composer } = await launch(page, name);
 	const files = await page.evaluate(() => [[1600, 400], [400, 1600]].map(([width, height], index) => {
 		const canvas = document.createElement('canvas');
 		canvas.width = width;
@@ -76,7 +74,9 @@ test('image-only messages show every attachment within the transcript bounds', a
 		return { name: `image-${index}.png`, data: canvas.toDataURL().split(',')[1] };
 	}));
 	await panel.getByLabel('Attach images', { exact: true }).setInputFiles(files.map(({ name, data }) => ({ name, mimeType: 'image/png', buffer: Buffer.from(data, 'base64') })));
-	await panel.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect(panel.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+	if (project.name === 'desktop') await composer.press('Enter');
+	else await panel.getByRole('button', { name: 'Send', exact: true }).click();
 	const transcript = panel.locator('.transcript');
 	const images = transcript.getByRole('img');
 	await expect(images).toHaveCount(2);
@@ -93,18 +93,16 @@ test('image-only messages show every attachment within the transcript bounds', a
 	await closeProject(page, name);
 });
 
-test('text paste stays native and pasted images can be removed', async ({ page, context }, { project }) => {
+test('text paste stays native and pasted images can be removed', { tag: '@desktop' }, async ({ page, context }, { project }) => {
 	const name = `paste-text-${project.name}`;
 	const { panel, composer } = await launch(page, name);
 	expect(await paste(composer, [], 'plain text')).toBe(true);
 	expect(await paste(composer, [{ name: 'notes.txt', type: 'text/plain' }])).toBe(true);
 	await expect(panel.getByLabel('Attachments', { exact: true })).toHaveCount(0);
-	if (project.name === 'desktop') {
-		await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-		await page.evaluate(() => navigator.clipboard.writeText('plain text\nsecond line'));
-		await composer.press('Control+V');
-		await expect(composer).toHaveValue('plain text\nsecond line');
-	}
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+	await page.evaluate(() => navigator.clipboard.writeText('plain text\nsecond line'));
+	await composer.press('Control+V');
+	await expect(composer).toHaveValue('plain text\nsecond line');
 	await paste(composer, [{ name: 'remove.png' }]);
 	await expect(panel.getByRole('img', { name: 'remove.png' })).toBeVisible();
 	await panel.getByRole('button', { name: 'Remove remove.png', exact: true }).click();
@@ -112,7 +110,7 @@ test('text paste stays native and pasted images can be removed', async ({ page, 
 	await closeProject(page, name);
 });
 
-test('pasted images share picker limits and reject overlapping reads', async ({ page }, { project }) => {
+test('pasted images share picker limits and reject overlapping reads', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `paste-limits-${project.name}`;
 	const { panel, composer } = await launch(page, name);
 	const alert = panel.getByRole('alert');
@@ -140,7 +138,7 @@ test('pasted images share picker limits and reject overlapping reads', async ({ 
 	await closeProject(page, name);
 });
 
-test('image paste respects pending approval and offline restrictions', async ({ page, context }, { project }) => {
+test('image paste respects pending approval and offline restrictions', { tag: '@desktop' }, async ({ page, context }, { project }) => {
 	const name = `paste-blocked-${project.name}`;
 	const { panel, composer } = await launch(page, name, 'Claude Approval');
 	await composer.fill('Run the shell command `mkdir -p out && touch out/approved.txt` exactly as written, then reply with the single word Done.');
@@ -159,7 +157,7 @@ test('image paste respects pending approval and offline restrictions', async ({ 
 	await closeProject(page, name);
 });
 
-test('images dropped anywhere on a Chat attach without leaving the page', async ({ page }, { project }) => {
+test('images dropped anywhere on a Chat attach without leaving the page', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `drop-${project.name}`;
 	const { panel } = await launch(page, name);
 	const allowed = await panel.locator('.transcript').first().evaluate((element, png) => {

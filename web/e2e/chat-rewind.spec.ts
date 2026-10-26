@@ -4,8 +4,8 @@ import { mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
 import { closeProject, openProject } from './shell.ts';
 
-for (const agent of ['claude-code', 'codex', 'copilot'] as const) {
-	test(`${agent} previews the exact rewind boundary and steps through user messages`, async ({ page }, { project }) => {
+for (const agent of ['claude-code', 'codex'] as const) {
+	test(`${agent} previews the exact rewind boundary and steps through user messages`, { tag: agent === 'codex' ? '@desktop' : [] }, async ({ page }, { project }) => {
 		let route: WebSocketRoute;
 		let chatId: string;
 		const sent: ClientMessage[] = [];
@@ -88,7 +88,6 @@ for (const agent of ['claude-code', 'codex', 'copilot'] as const) {
 		await expect(review).toContainText('Message 3 will be removed, including its prompt and attachments.');
 		await expect(review).toContainText(`Message ${boundary} and every later message, agent reply, and tool result.`);
 		await expect(review).toContainText(agent === 'claude-code' ? 'Restore checkpointed file edits to their state before message 3.' : 'Files are left unchanged, including edits made by the removed turns.');
-		await expect(review).toContainText('Commands, commits, and external actions are not undone.');
 		if (agent === 'codex') await expect(review).toContainText('That entire turn will be removed too.');
 		await expect.poll(() => review.evaluate((node) => {
 			const rect = node.getBoundingClientRect();

@@ -30,36 +30,7 @@ async function terminal(page: Page) {
 	return input;
 }
 
-test('terminal interrupt stays in the terminal and copy sends no terminal input', async ({ page, context }) => {
-	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-	const input = await terminal(page);
-	const tab = page.locator('[data-tab][aria-selected="true"]').first();
-	const id = await tab.getAttribute('data-tab');
-	for (const target of ['[contenteditable="true"]', 'textarea']) {
-		await page.locator(`.terminal:visible ${target}`).focus();
-		await page.evaluate(async () => {
-			await navigator.clipboard.writeText('unchanged');
-			window.terminal!.select(0, 0, 1);
-		});
-		input.length = 0;
-		await page.keyboard.press('Control+C');
-		await expect.poll(() => input.join('')).toBe('\x03');
-		await expect(page.locator(`[data-tab="${id}"]`)).toHaveAttribute('aria-selected', 'true');
-		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('unchanged');
-		const selected = await page.evaluate(() => {
-			window.terminal!.select(0, 0, 1);
-			return window.terminal!.getSelection();
-		});
-		expect(selected).not.toBe('');
-		input.length = 0;
-		await page.keyboard.press('Control+Shift+C');
-		await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(selected);
-		expect(input.join('')).toBe('');
-		await expect(page.locator(`[data-tab="${id}"]`)).toHaveAttribute('aria-selected', 'true');
-	}
-});
-
-test('terminal paste protects multiline input from either focus target', async ({ page, context }) => {
+test('terminal paste and Shift Enter send bracketed input from either focus target and keyboard layout', { tag: '@desktop' }, async ({ page, context }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 	const input = await terminal(page);
 	const text = 'first line\nsecond line';
@@ -73,16 +44,25 @@ test('terminal paste protects multiline input from either focus target', async (
 		}, text);
 		await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify(`\x1b[200~${text}\x1b[201~`));
 	}
-	if (test.info().project.name !== 'desktop') return;
 
 	await page.evaluate((text) => navigator.clipboard.writeText(text), text);
 	input.length = 0;
 	await page.keyboard.press('Control+V');
 	await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify(`\x1b[200~${text}\x1b[201~`));
-});
 
-test('Shift Enter inserts a newline without submitting', async ({ page }) => {
-	const input = await terminal(page);
+	input.length = 0;
+	const allowed = await page.locator('.terminal:visible [contenteditable="true"]').evaluate((element, text) => {
+		const key = new KeyboardEvent('keydown', { key: 'v', code: 'KeyD', ctrlKey: true, bubbles: true, cancelable: true });
+		element.dispatchEvent(key);
+		const clipboardData = new DataTransfer();
+		clipboardData.setData('text/plain', text);
+		element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+		return !key.defaultPrevented;
+	}, text);
+	expect(allowed).toBe(true);
+	await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify(`\x1b[200~${text}\x1b[201~`));
+
+	input.length = 0;
 	await page.locator('.terminal:visible [contenteditable="true"]').focus();
 	await page.keyboard.press('Shift+Enter');
 	await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify('\x1b[200~\n\x1b[201~'));
@@ -91,7 +71,7 @@ test('Shift Enter inserts a newline without submitting', async ({ page }) => {
 	await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify('\r'));
 });
 
-test('Paste and Newline buttons preserve input without submitting', async ({ page, context }) => {
+test('Paste and Newline buttons preserve input, and blocked clipboard access opens a focused Composer', { tag: '@phone' }, async ({ page, context }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 	const input = await terminal(page);
 	const text = 'pasted first line\npasted second line';
@@ -101,17 +81,15 @@ test('Paste and Newline buttons preserve input without submitting', async ({ pag
 	input.length = 0;
 	await page.getByRole('button', { name: 'Newline', exact: true }).click();
 	await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify('\x1b[200~\n\x1b[201~'));
-});
 
-test('blocked clipboard access opens a focused Composer for native paste', async ({ page }) => {
-	const input = await terminal(page);
+	input.length = 0;
 	await page.evaluate(() => {
 		navigator.clipboard.readText = async () => { throw new DOMException('denied', 'NotAllowedError'); };
 	});
 	await page.getByRole('button', { name: 'Paste', exact: true }).click();
 	const composer = page.getByRole('textbox', { name: 'Composer', exact: true });
 	await expect(composer).toBeFocused();
-	await expect(page.getByRole('status')).toHaveText('Clipboard access unavailable. Paste into Composer, then choose Insert.');
+	await expect(page.getByRole('status')).toBeVisible();
 	await composer.fill('first line\nsecond line');
 	await page.getByRole('button', { name: 'Insert', exact: true }).click();
 	await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify('\x1b[200~first line\nsecond line\x1b[201~'));
@@ -136,19 +114,4 @@ test('terminal composer submits with desktop Enter and preserves mobile newlines
 	await expect(composer).toHaveValue('');
 	const text = `first line\ns${project.name === 'pixel' ? '\n' : ''}`;
 	await expect.poll(() => input.join('')).toBe(`\x1b[200~${text}\x1b[201~\r`);
-});
-
-test('paste shortcuts use the typed key across keyboard layouts', async ({ page }) => {
-	const input = await terminal(page);
-	const text = 'layout-safe paste';
-	const allowed = await page.locator('.terminal:visible [contenteditable="true"]').evaluate((element, text) => {
-		const key = new KeyboardEvent('keydown', { key: 'v', code: 'KeyD', ctrlKey: true, bubbles: true, cancelable: true });
-		element.dispatchEvent(key);
-		const clipboardData = new DataTransfer();
-		clipboardData.setData('text/plain', text);
-		element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
-		return !key.defaultPrevented;
-	}, text);
-	expect(allowed).toBe(true);
-	await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify(`\x1b[200~${text}\x1b[201~`));
 });

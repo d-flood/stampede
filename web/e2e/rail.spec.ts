@@ -2,10 +2,6 @@ import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 import { openProject, screen } from './shell.ts';
 
-test.beforeEach(({}, { project }) => {
-	test.skip(project.name !== 'desktop', 'the rail is desktop only');
-});
-
 function toggle(page: Page) {
 	return page.evaluate(
 		() =>
@@ -31,7 +27,7 @@ function between(values: number[]) {
 	return new Set(values.filter((value) => value > Math.min(first, last) + 0.5 && value < Math.max(first, last) - 0.5).map((value) => Math.round(value * 10))).size;
 }
 
-test('the project rail and its squares grow and shrink over several frames', async ({ page }) => {
+test('the project rail and its squares grow and shrink over several frames', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'beta');
 	await openProject(page, 'alpha');
 	const opening = await toggle(page);
@@ -46,7 +42,7 @@ test('the project rail and its squares grow and shrink over several frames', asy
 	expect(between(closing.heights)).toBeGreaterThanOrEqual(3);
 });
 
-test('a Terminal resizes once, not every frame, while the project rail or sidebar opens or closes', async ({ page }) => {
+test('a Terminal resizes once, not every frame, while the project rail or sidebar opens or closes', { tag: '@desktop' }, async ({ page }) => {
 	const resizes: string[] = [];
 	page.on('websocket', (socket) =>
 		socket.on('framesent', ({ payload }) => {

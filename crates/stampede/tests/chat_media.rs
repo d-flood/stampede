@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::{fs, io::Write, path::Path, process::{Command, Stdio}};
 

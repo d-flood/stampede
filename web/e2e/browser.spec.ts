@@ -100,7 +100,7 @@ test('Browser Tabs proxy a Vite app with HMR and survive reopening', async ({ pa
 			const frame = element.querySelector('iframe')!.getBoundingClientRect();
 			return output.height > 80 && frame.height > 200 && element.scrollWidth <= element.clientWidth;
 		})).toBe(true);
-		await page.screenshot({ path: test.info().outputPath(`browser-console-${project.name}.png`) });
+		if (project.name === 'pixel') return;
 		await browser.getByRole('button', { name: 'Clear console', exact: true }).click();
 		await expect(output).toHaveText('No console output.');
 		await frame.locator('body').evaluate(() => {
@@ -116,17 +116,14 @@ test('Browser Tabs proxy a Vite app with HMR and survive reopening', async ({ pa
 		await writeFile(join(root, 'message.ts'), 'export const message = "Hot update from Host";');
 		await expect(frame.getByRole('heading')).toHaveText('Hot update from Host');
 		await expect(frame.getByRole('textbox', { name: 'Preview input' })).toHaveValue('kept through HMR');
-		await page.screenshot({ path: test.info().outputPath(`browser-${project.name}.png`) });
 		await frame.getByRole('link', { name: 'Nested page' }).click();
 		await expect.poll(() => page.frames().some((frame) => frame.url() === `${src}nested/path?q=1`)).toBe(true);
 		await browser.getByRole('button', { name: 'Reload preview', exact: true }).click();
 		await expect.poll(() => page.frames().some((frame) => frame.url() === src)).toBe(true);
-		if (project.name === 'desktop') {
-			await browser.getByRole('textbox', { name: 'Host address' }).click();
-			await page.keyboard.press('Control+;');
-			await page.keyboard.press('s');
-			await expect(page.getByRole('tablist', { name: 'Right Tabs' }).getByRole('tab', { name: `localhost:${listening.port}` })).toHaveAttribute('aria-selected', 'true');
-		}
+		await browser.getByRole('textbox', { name: 'Host address' }).click();
+		await page.keyboard.press('Control+;');
+		await page.keyboard.press('s');
+		await expect(page.getByRole('tablist', { name: 'Right Tabs' }).getByRole('tab', { name: `localhost:${listening.port}` })).toHaveAttribute('aria-selected', 'true');
 		await expect.poll(() => page.evaluate(async (url) => {
 			const id = sessionStorage.getItem('deviceId');
 			const layout = await (await fetch(`/api/devices/${id}/layout`)).json();
@@ -136,7 +133,7 @@ test('Browser Tabs proxy a Vite app with HMR and survive reopening', async ({ pa
 		await page.reload();
 		await expect(browser.getByRole('textbox', { name: 'Host address' })).toHaveValue(url);
 		await expect(frame.getByRole('heading')).toHaveText('Hot update from Host');
-		if (project.name === 'desktop') await expect(page.getByRole('main').getByRole('separator')).toBeVisible();
+		await expect(page.getByRole('main').getByRole('separator')).toBeVisible();
 		await browser.getByRole('button', { name: /^Console / }).click();
 		await expect(output).toContainText('Preview startup');
 		await expect.poll(() => browser.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);

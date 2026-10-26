@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::{env, fs, io::Write, iter, path::Path, time::Duration};
 

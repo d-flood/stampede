@@ -4,7 +4,7 @@ import { openProject } from './shell.ts';
 test.use({ starterRigs: true });
 
 for (const reducedMotion of ['no-preference', 'reduce'] as const) {
-	test(`New Tab shows session loading and resizes with ${reducedMotion} motion`, async ({ page }) => {
+	test(`New Tab shows session loading and resizes with ${reducedMotion} motion`, { tag: reducedMotion === 'reduce' ? ['@desktop'] : [] }, async ({ page }) => {
 		await page.emulateMedia({ reducedMotion });
 		let release: (() => void) | undefined;
 		await page.routeWebSocket('**/ws', (socket) => {
@@ -31,7 +31,6 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) {
 		await expect.poll(() => release !== undefined).toBe(true);
 		await expect.poll(() => menu.evaluate((element) => element.getAnimations().length)).toBe(0);
 		const before = (await menu.boundingBox())!.width;
-		await menu.screenshot({ path: test.info().outputPath('loading.png') });
 		await menu.evaluate((element) => {
 			element.addEventListener('transitionrun', () => {
 				const widths: number[] = [];
@@ -60,7 +59,6 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) {
 			const bounds = element.getBoundingClientRect();
 			return bounds.left >= 0 && bounds.right <= innerWidth;
 		})).toBe(true);
-		await menu.screenshot({ path: test.info().outputPath('loaded.png') });
 		await page.keyboard.press('Escape');
 		release = undefined;
 		await page.keyboard.press('Control+T');

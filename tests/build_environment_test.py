@@ -4,7 +4,9 @@ import subprocess
 import tempfile
 import unittest
 
-from scripts.build_environment import build_environment, prune_temporary
+import fcntl
+
+from scripts.build_environment import build_environment, prune_build, prune_temporary
 
 
 class TemporaryStorage(unittest.TestCase):
@@ -55,6 +57,50 @@ class TemporaryStorage(unittest.TestCase):
             os.utime(source, (1, 1))
             prune_temporary(target)
             self.assertTrue((source / 'keep').exists())
+
+
+def make(path, old=False):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+    if old:
+        os.utime(path, (1, 1))
+    return path
+
+
+class BuildStorage(unittest.TestCase):
+    def test_units_unused_for_a_week_are_removed_whole_while_used_ones_survive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / 'debug'
+            stale = [
+                make(profile / 'deps/libold-aaaaaaaaaaaaaaaa.rlib', old=True),
+                make(profile / '.fingerprint/old-aaaaaaaaaaaaaaaa/lib-old', old=True),
+                make(profile / 'build/old-aaaaaaaaaaaaaaaa/output', old=True),
+                make(profile / 'incremental/old-1cm7ce2qlkj48/s-old', old=True),
+                make(profile / 'oikonomos', old=True),
+                make(profile / 'deps/new-bbbbbbbbbbbbbbbb.tmp1a2b', old=True),
+            ]
+            kept = [
+                make(profile / 'deps/libnew-bbbbbbbbbbbbbbbb.rlib'),
+                make(profile / '.fingerprint/new-bbbbbbbbbbbbbbbb/lib-new', old=True),
+                make(profile / 'incremental/new-25eedo906ch0z/s-new'),
+                make(profile / 'stampede'),
+            ]
+            for path in [profile / '.fingerprint/old-aaaaaaaaaaaaaaaa', profile / 'build/old-aaaaaaaaaaaaaaaa', profile / 'incremental/old-1cm7ce2qlkj48']:
+                os.utime(path, (1, 1))
+            prune_build(Path(directory))
+            self.assertEqual([path for path in stale if path.exists()], [])
+            self.assertFalse((profile / '.fingerprint/old-aaaaaaaaaaaaaaaa').exists())
+            self.assertEqual([path for path in kept if not path.exists()], [])
+
+    def test_a_profile_cargo_is_building_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / 'release'
+            stale = make(profile / 'deps/libold-aaaaaaaaaaaaaaaa.rlib', old=True)
+            (profile / '.fingerprint').mkdir()
+            with (profile / '.cargo-lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                prune_build(Path(directory))
+            self.assertTrue(stale.exists())
 
 
 if __name__ == '__main__':

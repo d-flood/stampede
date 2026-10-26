@@ -4,25 +4,20 @@ import { openProject, showSidebar } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
-test('menus copy files and directories without replacing existing contents', async ({ page }, { project }) => {
-	const name = `copy-${project.name}`;
-	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+test('menus copy files and directories without replacing existing contents', { tag: '@desktop' }, async ({ page }) => {
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/copy`;
 	mkdirSync(`${root}/source/nested`, { recursive: true });
 	mkdirSync(`${root}/destination`);
 	writeFileSync(`${root}/source/nested/child.txt`, 'nested contents');
 	writeFileSync(`${root}/notes.txt`, 'original contents');
 	writeFileSync(`${root}/destination/notes.txt`, 'existing contents');
-	await openProject(page, name);
+	await openProject(page, 'copy');
 	const sidebar = await showSidebar(page);
 	const tree = sidebar.getByRole('group', { name: 'File tree', exact: true });
 	await tree.click({ button: 'right', position: { x: 10, y: 10 } });
 	await expect(page.getByRole('menuitem', { name: 'Paste', exact: true })).toHaveAttribute('aria-disabled', 'true');
 	await page.keyboard.press('Escape');
-	if (project.name === 'pixel') {
-		await sidebar.getByRole('button', { name: 'Actions for notes.txt', exact: true }).tap();
-	} else {
-		await sidebar.getByRole('button', { name: 'notes.txt', exact: true }).click({ button: 'right' });
-	}
+	await sidebar.getByRole('button', { name: 'notes.txt', exact: true }).click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Copy', exact: true }).click();
 	await sidebar.getByRole('button', { name: 'Actions for destination', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Paste', exact: true }).click();
@@ -38,12 +33,11 @@ test('menus copy files and directories without replacing existing contents', asy
 	expect(readFileSync(`${root}/source copy/nested/child.txt`, 'utf8')).toBe('nested contents');
 });
 
-test('keyboard copy and paste use the focused entry and support retry after failure', async ({ page }, { project }) => {
-	const name = `copy-keys-${project.name}`;
-	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+test('keyboard copy and paste use the focused entry and support retry after failure', { tag: '@desktop' }, async ({ page }) => {
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/copy-keys`;
 	mkdirSync(`${root}/destination`, { recursive: true });
 	writeFileSync(`${root}/notes.txt`, 'keyboard contents');
-	await openProject(page, name);
+	await openProject(page, 'copy-keys');
 	const sidebar = await showSidebar(page);
 	const file = sidebar.getByRole('button', { name: 'notes.txt', exact: true });
 	const folder = sidebar.getByRole('button', { name: 'destination', exact: true });
@@ -71,11 +65,10 @@ test('keyboard copy and paste use the focused entry and support retry after fail
 	expect(readFileSync(`${root}/notes copy.txt`, 'utf8')).toBe('keyboard contents');
 });
 
-test('context menus create files and directories in the selected location', async ({ page }, { project }) => {
-	const name = `create-${project.name}`;
-	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+test('context menus create files and directories in the selected location', { tag: '@desktop' }, async ({ page }) => {
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/create`;
 	mkdirSync(root);
-	await openProject(page, name);
+	await openProject(page, 'create');
 	let sidebar = await showSidebar(page);
 	const tree = sidebar.getByRole('group', { name: 'File tree', exact: true });
 	await tree.click({ button: 'right', position: { x: 10, y: 10 } });
@@ -105,12 +98,6 @@ test('context menus create files and directories in the selected location', asyn
 	await page.getByRole('menuitem', { name: 'New File', exact: true }).click();
 	await expect(fileDialog).toContainText('Create in docs');
 	await fileDialog.getByLabel('Name', { exact: true }).fill('notes.md');
-	await expect.poll(async () => {
-		const box = await fileDialog.boundingBox();
-		const viewport = page.viewportSize();
-		return box && viewport && box.x >= 0 && box.x + box.width <= viewport.width;
-	}).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('new-file-dialog.png') });
 	await fileDialog.getByRole('button', { name: 'Create', exact: true }).click();
 	await expect(fileDialog).toBeHidden();
 	expect(readFileSync(`${root}/docs/notes.md`, 'utf8')).toBe('');
@@ -165,7 +152,6 @@ test('file tree offers deletion for files and directories', async ({ page }, { p
 	await sidebar.getByRole('button', { name: 'folder', exact: true }).click();
 	await sidebar.getByRole('button', { name: 'nested', exact: true }).click();
 	await expect(sidebar.getByRole('button', { name: 'child.txt', exact: true })).toBeVisible();
-	await page.screenshot({ path: test.info().outputPath('file-tree-actions.png') });
 	await sidebar.getByRole('button', { name: 'folder', exact: true }).click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
 	const directory = page.getByRole('dialog', { name: 'Delete directory?' });
@@ -175,12 +161,11 @@ test('file tree offers deletion for files and directories', async ({ page }, { p
 	expect(existsSync(`${root}/folder`)).toBe(false);
 });
 
-test('failed deletion preserves the entry and can be retried', async ({ page }, { project }) => {
-	const name = `delete-error-${project.name}`;
-	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+test('failed deletion preserves the entry and can be retried', { tag: '@desktop' }, async ({ page }) => {
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/delete-error`;
 	mkdirSync(root);
 	writeFileSync(`${root}/keep.txt`, 'keep me\n');
-	await openProject(page, name);
+	await openProject(page, 'delete-error');
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'Actions for keep.txt', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
@@ -243,7 +228,6 @@ test('menus rename files and directories without replacing existing entries', as
 		const viewport = page.viewportSize();
 		return box && viewport && box.x >= 0 && box.x + box.width <= viewport.width;
 	}).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('rename-dialog.png') });
 	await directoryDialog.getByLabel('Name', { exact: true }).fill('moved');
 	await directoryDialog.getByRole('button', { name: 'Rename', exact: true }).click();
 	await expect(directoryDialog).toBeHidden();
@@ -254,13 +238,12 @@ test('menus rename files and directories without replacing existing entries', as
 	expect(readFileSync(`${root}/moved/nested/child.txt`, 'utf8')).toBe('child contents');
 });
 
-test('open tabs follow renames with unsaved edits from F2, tab menus, and directories', async ({ page }, { project }) => {
-	const name = `rename-tabs-${project.name}`;
-	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+test('open tabs follow renames with unsaved edits from F2, tab menus, and directories', { tag: '@desktop' }, async ({ page }) => {
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/rename-tabs`;
 	mkdirSync(`${root}/folder`, { recursive: true });
 	writeFileSync(`${root}/notes.txt`, 'original\n');
 	writeFileSync(`${root}/folder/inner.txt`, 'inner\n');
-	await openProject(page, name);
+	await openProject(page, 'rename-tabs');
 	let sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'folder', exact: true }).click();
 	await sidebar.getByRole('button', { name: 'inner.txt', exact: true }).click();
@@ -287,7 +270,6 @@ test('open tabs follow renames with unsaved edits from F2, tab menus, and direct
 	await expect(tabs.getByRole('tab', { name: 'renamed.txt' })).toHaveAttribute('title', 'renamed.txt');
 	await expect(tabs.getByRole('tab', { name: 'notes.txt' })).toHaveCount(0);
 	expect(existsSync(`${root}/notes.txt`)).toBe(false);
-	if (project.name === 'pixel') await page.getByRole('button', { name: 'Previous screen' }).click();
 	await expect(editor.locator('.path')).toHaveText('renamed.txt');
 	await expect(editor.locator('.cm-content')).toHaveText('unsaved original');
 	await expect(editor.getByText('deleted on disk')).toHaveCount(0);

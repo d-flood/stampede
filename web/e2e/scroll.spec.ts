@@ -52,8 +52,7 @@ async function swipe(page: Page, target: Locator, dy: number, across = 0.5) {
 	await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 }
 
-test('the phone scroll rail scrolls a shell and sends a mouse app wheel reports', async ({ page }, { project }) => {
-	test.skip(project.name !== 'pixel', 'the rail is phone only');
+test('the phone scroll rail scrolls a shell and sends a mouse app wheel reports', { tag: '@phone' }, async ({ page }) => {
 	await newTerminal(page, 'scroll-pixel');
 	expect(await page.evaluate(() => getComputedStyle(document.documentElement).overscrollBehaviorY)).toBe('none');
 	await scrollback(page);
@@ -67,8 +66,7 @@ test('the phone scroll rail scrolls a shell and sends a mouse app wheel reports'
 	await expect.poll(() => screen(page)).toMatch(report);
 });
 
-test('the desktop wheel scrolls a shell and sends a mouse app wheel reports, not arrows', async ({ page }, { project }) => {
-	test.skip(project.name !== 'desktop', 'the wheel is desktop only');
+test('the desktop wheel scrolls a shell and sends a mouse app wheel reports, not arrows', { tag: '@desktop' }, async ({ page }) => {
 	await newTerminal(page, 'scroll-desktop');
 	await scrollback(page);
 	const canvas = page.locator('.terminal canvas').filter({ visible: true });

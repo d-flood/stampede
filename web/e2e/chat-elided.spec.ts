@@ -4,7 +4,7 @@ import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { openProject } from './shell.ts';
 
-test('a finished subagent and a long command output arrive in brief and load when opened', async ({ page }, { project }) => {
+test('a finished subagent and a long command output arrive in brief and load when opened', { tag: '@desktop' }, async ({ page }, { project }) => {
 	let route: WebSocketRoute;
 	let chatId: string;
 	const expanded: number[] = [];

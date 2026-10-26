@@ -35,21 +35,21 @@ journalctl --user -u stampede -f
 
 The last binary is retained at `~/.local/lib/stampede/stampede.previous`. To recover manually, copy it to a temporary sibling, rename that over `stampede`, then run `systemctl --user restart stampede`.
 
-Deployment checks: `python3 tests/rebuild_test.py`. Browser and agent recovery checks: `./check e2e rebuild.spec.ts` and `cargo test --test terminal_survives_restart --test chat_claude_restart --test chat_codex_restart`.
+Deployment checks: `python3 tests/rebuild_test.py`. Browser and agent recovery checks: `./check e2e rebuild.spec.ts` and `cargo test --test integration -- terminal_survives_restart:: chat_claude_restart:: chat_codex_restart::`.
 
 
 ## Checks
 
 ```sh
 ./check
-./check rust --test files
+./check rust --test integration files::
 ./check e2e editor.spec.ts
 ```
 
-`./check` runs frontend type checks, runner/GPU guard tests, Rust tests, deployment tests, and desktop/phone E2E tests. An overlapping check in the same repository, including another worktree, exits immediately. Interrupting a check stops its children and detached test processes; each E2E test has its own server, temporary data, and port, cleaned up immediately after the test.
+`./check` runs frontend type checks, runner/GPU guard tests, Rust tests, deployment tests, and desktop/phone E2E tests. An overlapping check in the same repository, including another worktree, exits immediately. Interrupting a check stops its children and detached test processes; each E2E test has its own server, temporary data, and port, cleaned up immediately after the test. E2E tests run on both the desktop and phone projects unless tagged `@desktop` or `@phone`; tag tests whose behaviour doesn't depend on the form factor so they run once.
 
-Frontend dependencies and builds are reused while their content is unchanged. Additions, deletions, configuration/version changes, and missing or modified build output invalidate the build. Frontend build, Rust test, and runner test logs are replaced on each run in `target/check/`; failures print the log tail. E2E uses the same development binary as Rust tests, with line tables instead of full debug information. Release builds remain part of `./rebuild`.
+Frontend dependencies and builds are reused while their content is unchanged. Additions, deletions, configuration/version changes, and missing or modified build output invalidate the build. Frontend build, Rust test, and runner test logs are replaced on each run in `target/check/`; failures print the log tail. Rust integration tests compile into one `integration` test binary; filter by file with its module path, such as `files::`. E2E uses the same development binary as Rust tests, with line tables for Stampede and no debug information for dependencies. Release builds remain part of `./rebuild`. Each `./check` and `./rebuild` deletes build artifacts in `target/` that no build has read for a week, skipping a profile while Cargo is building it.
 
-Defaults leave room for the desktop: four Cargo jobs, four Rust test threads, two Tokio workers per runtime, and two Playwright workers, balancing individual isolated tests across files. Override with `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS`, `TOKIO_WORKER_THREADS`, or Playwright's `--workers` argument.
+Defaults leave room for the desktop: four Cargo jobs, four Rust test threads, two Tokio workers per runtime, and three Playwright workers, balancing individual isolated tests across files. Override with `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS`, `TOKIO_WORKER_THREADS`, or Playwright's `--workers` argument.
 
 E2E requires a real GPU. Install full Chromium with `pnpm -C web exec playwright install chromium --no-shell`, and run checks with GPU access outside the agent sandbox. The [Chromium channel](https://playwright.dev/docs/browsers#chromium-new-headless-mode) uses full headless Chrome; Linux uses the [Vulkan ANGLE backend](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/gpu/using-gpu-hardware-in-headless-chrome.md) without requiring `DISPLAY`. SwiftShader fallback is disabled, and each test checks hardware compositing, rasterization, and WebGL before and after running. Software rendering fails the test.

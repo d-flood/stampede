@@ -16,6 +16,10 @@ async function chooseNewTab(page: Page, label: string) {
 test('active tabs expose a close button and preserve unsaved edits', async ({ page }, { project }) => {
 	await openProject(page, 'alpha');
 	const sidebar = await showSidebar(page);
+	if (project.name === 'pixel') {
+		await expect(page.getByRole('separator', { name: 'Resize sidebar' })).toHaveCount(0);
+		await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(page.viewportSize()!.width);
+	}
 	const file = `${project.name}.txt`;
 	await sidebar.getByRole('button', { name: file, exact: true }).click();
 	if (project.name === 'pixel') {
@@ -30,7 +34,6 @@ test('active tabs expose a close button and preserve unsaved edits', async ({ pa
 		const box = await close.boundingBox();
 		return box && box.width >= (project.name === 'pixel' ? 48 : 26) && box.height >= (project.name === 'pixel' ? 48 : 26);
 	}).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('close-file-tab.png') });
 	await page.locator('.editor:not([hidden]) .cm-content').click();
 	await page.keyboard.type('unsaved');
 	if (project.name === 'pixel') await close.tap();
@@ -63,7 +66,6 @@ test('terminal and drawer tabs close directly on desktop and tablet', async ({ p
 		const box = await close.boundingBox();
 		return box && box.width >= (project.name === 'pixel' ? 48 : 26) && box.height >= (project.name === 'pixel' ? 48 : 26);
 	}).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('close-terminal-tab.png') });
 	if (project.name === 'pixel') await close.tap();
 	else await close.click();
 	await expect(tabs.getByRole('tab')).toHaveCount(1);
@@ -82,8 +84,8 @@ test('terminal and drawer tabs close directly on desktop and tablet', async ({ p
 	await expect(drawer.getByRole('tab')).toHaveCount(0);
 });
 
-test('tab shortcuts create, activate, and close tabs in the focused area', async ({ page }, { project }) => {
-	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+test('tab shortcuts create, activate, and close tabs in the focused area', { tag: '@desktop' }, async ({ page }) => {
+	await openProject(page, 'alpha');
 	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab');
 	const count = await tabs.count();
 	for (let i = 1; i <= 2; i++) {
@@ -118,7 +120,7 @@ test('tab shortcuts create, activate, and close tabs in the focused area', async
 	await expect(tabs).toHaveCount(count);
 });
 
-test('Ctrl+Shift+T opens terminals in the focused area and ignores repeats and dialogs', async ({ page }) => {
+test('Ctrl+Shift+T opens terminals in the focused area and ignores repeats and dialogs', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'beta');
 	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab');
 	await page.keyboard.press('Control+Shift+T');
@@ -150,7 +152,7 @@ test('Ctrl+Shift+T opens terminals in the focused area and ignores repeats and d
 	await expect(tabs).toHaveCount(2);
 });
 
-test('Drawer keeps focus while a Project Terminal initializes', async ({ page }) => {
+test('Drawer keeps focus while a Project Terminal initializes', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'beta');
 	await page.evaluate(() => {
 		const load = document.fonts.load.bind(document.fonts);
@@ -174,21 +176,7 @@ test('Drawer keeps focus while a Project Terminal initializes', async ({ page })
 	await expect(drawer.locator('.terminal:visible [contenteditable="true"]')).toBeFocused();
 });
 
-test('opening a tab from the menu keeps the new tab active', async ({ page }, { project }) => {
-	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
-	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true });
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
-	await expect(page.locator('.terminal:visible canvas')).toBeVisible();
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Browser', exact: true }).click();
-	const browser = tabs.getByRole('tab', { name: 'Browser', exact: true });
-	await expect(browser).toHaveAttribute('aria-selected', 'true');
-	await expect(page.getByRole('menu')).toBeHidden();
-	await expect(browser).toHaveAttribute('aria-selected', 'true');
-});
-
-test('created tabs activate before the tab list broadcast arrives', async ({ page }, { project }) => {
+test('created tabs activate before the tab list broadcast arrives', { tag: '@desktop' }, async ({ page }) => {
 	let delaying = false;
 	let created = '';
 	const held: (() => void)[] = [];
@@ -207,7 +195,7 @@ test('created tabs activate before the tab list broadcast arrives', async ({ pag
 			socket.send(message);
 		});
 	});
-	const folder = `tab-race-${project.name}`;
+	const folder = 'tab-race';
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${folder}`, { recursive: true });
 	await openProject(page, folder);
 	for (const label of ['Terminal', 'Fake Claude']) {
@@ -218,6 +206,7 @@ test('created tabs activate before the tab list broadcast arrives', async ({ pag
 		await expect.poll(() => created).not.toBe('');
 		const tab = page.locator(`[data-tab="${created}"]`);
 		await expect(tab).toHaveAttribute('aria-selected', 'true');
+		await expect(page.getByRole('menu')).toBeHidden();
 		delaying = false;
 		for (const release of held.splice(0)) release();
 		await expect(tab).toHaveAttribute('aria-selected', 'true');
@@ -225,9 +214,9 @@ test('created tabs activate before the tab list broadcast arrives', async ({ pag
 	await closeProject(page, folder);
 });
 
-test('new tab picker matches the menu and focuses the selected content', async ({ page, context }, { project }) => {
+test('new tab picker matches the menu and focuses the selected content', { tag: '@desktop' }, async ({ page, context }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-	const folder = `tab-picker-${project.name}`;
+	const folder = 'tab-picker';
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${folder}`, { recursive: true });
 	await openProject(page, folder);
 	await page.getByRole('button', { name: 'New Tab', exact: true }).click();

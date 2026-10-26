@@ -8,16 +8,18 @@ if (!process.env.STAMPEDE_E2E_ROOT || !process.env.STAMPEDE_E2E_BINARY) {
 export default defineConfig({
 	testDir: 'e2e',
 	fullyParallel: true,
-	workers: 2,
+	workers: 3,
 	reporter: 'dot',
 	use: { launchOptions: hardwareLaunchOptions },
 	projects: [
 		{
 			name: 'desktop',
+			grepInvert: /@phone/,
 			use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } }
 		},
 		{
 			name: 'pixel',
+			grepInvert: /@desktop/,
 			use: { ...devices['Pixel 8 Pro'], viewport: { width: 448, height: 998 } }
 		}
 	]

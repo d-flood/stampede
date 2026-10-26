@@ -40,12 +40,12 @@ test('agents stage editable commands, users run them, and hidden output remains 
 	expect(call(chatId, 'read_terminal', { terminal_id: id }).pending).toBe(true);
 	await page.reload();
 	await expect(composer).toHaveValue(command);
+	await expect.poll(() => screen(page)).toMatch(/\S/);
 	expect(existsSync(output)).toBe(false);
 	await expect.poll(() => panel.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
 		return bounds.width > 0 && bounds.right <= innerWidth && element.scrollWidth <= element.clientWidth;
 	})).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('pending.png') });
 	await composer.fill("printf 'edited\\n' > staged-output\nprintf '\\033[31mvisible-result\\033[0m\\n'");
 	if (project.name === 'desktop') await composer.press('Enter');
 	else await panel.getByRole('button', { name: 'Run', exact: true }).click();

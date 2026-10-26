@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
 import { openProject } from './shell.ts';
 
-test('Clips made in Settings insert at the caret of a Chat Composer and send as typed', async ({ page }, { project }) => {
+test('Clips made in Settings insert at the caret of a Chat Composer and send as typed', { tag: '@desktop' }, async ({ page }) => {
 	const sent: string[] = [];
 	page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {
 		if (typeof payload !== 'string') return;
@@ -51,9 +51,7 @@ test('Clips made in Settings insert at the caret of a Chat Composer and send as 
 	await expect(menu.getByRole('button')).toHaveText([/^;review/, /^;verify/]);
 	await composer.pressSequentially('VE');
 	await expect(menu.getByRole('button')).toHaveText([/^;verify/]);
-	await page.screenshot({ path: test.info().outputPath('clip-menu.png') });
-	if (project.name === 'desktop') await composer.press('Enter');
-	else await menu.getByRole('button', { name: ';verify' }).click();
+	await composer.press('Enter');
 	const expected = 'Fix the bug Run the tests.\nThen commit.';
 	await expect(composer).toHaveValue(expected);
 	await expect.poll(() => composer.evaluate((node: HTMLTextAreaElement) => node.selectionStart)).toBe(expected.length);
@@ -63,14 +61,12 @@ test('Clips made in Settings insert at the caret of a Chat Composer and send as 
 	await composer.pressSequentially(' ;none');
 	await expect(menu).toBeHidden();
 	await composer.fill(expected);
-	if (project.name === 'desktop') {
-		await composer.pressSequentially(' ;');
-		await expect(menu).toBeVisible();
-		await composer.press('Escape');
-		await expect(menu).toBeHidden();
-		await composer.press('Backspace');
-		await composer.press('Backspace');
-	}
+	await composer.pressSequentially(' ;');
+	await expect(menu).toBeVisible();
+	await composer.press('Escape');
+	await expect(menu).toBeHidden();
+	await composer.press('Backspace');
+	await composer.press('Backspace');
 	await panel.getByRole('button', { name: 'Send', exact: true }).click();
 	await expect.poll(() => sent).toEqual([expected]);
 });
@@ -89,8 +85,6 @@ test('a Terminal Composer saves its text as a Clip and inserts it again', async 
 	await expect(dialog.getByRole('textbox', { name: 'Clip text', exact: true })).toHaveValue('git status --short');
 	await expect(dialog.getByRole('combobox', { name: 'Clip', exact: true })).toHaveCount(0);
 	await dialog.getByRole('textbox', { name: 'Clip name', exact: true }).fill('st');
-	await expect(dialog.getByText('Type ;st in any Composer to insert it.', { exact: true })).toBeVisible();
-	await page.screenshot({ path: test.info().outputPath('save-as-clip.png') });
 	await dialog.getByRole('button', { name: 'Save clip', exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect.poll(() => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain('[[clip]]\nname = "st"\ntext = "git status --short"');

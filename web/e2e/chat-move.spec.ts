@@ -6,7 +6,7 @@ import { openProject, showSidebar } from './shell.ts';
 const alpha = () => `${process.env.STAMPEDE_E2E_ROOT}/projects/alpha`;
 const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trimEnd();
 
-test('a Chat moves to a new worktree with the uncommitted changes and a note in its Composer', async ({ page }, { project }) => {
+test('a Chat moves to a new worktree with the uncommitted changes and a note in its Composer', { tag: '@desktop' }, async ({ page }, { project }) => {
 	git(alpha(), 'config', 'user.name', 'stampede');
 	git(alpha(), 'config', 'user.email', 'e2e@stampede.invalid');
 	await openProject(page, 'alpha');
@@ -33,7 +33,6 @@ test('a Chat moves to a new worktree with the uncommitted changes and a note in 
 	await dialog.getByRole('button', { name: 'Move', exact: true }).click();
 	await expect(dialog.getByRole('alert')).toHaveText('bad..name is not a valid branch name');
 	await branch.fill('moved');
-	await page.screenshot({ path: test.info().outputPath('move-to-worktree.png') });
 	await dialog.getByRole('button', { name: 'Move', exact: true }).click();
 	await expect(dialog).toBeHidden();
 

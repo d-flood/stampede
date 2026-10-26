@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::{fs, net::TcpListener, process::Stdio, time::Duration};
 

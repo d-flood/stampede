@@ -25,8 +25,7 @@ async function fits(card: Locator) {
 }
 
 for (const agent of ['claude-code', 'codex']) {
-	test(`${agent} rich questions support choices, text, editing, review and durable history`, async ({ page }, info) => {
-		const { project } = info;
+	test(`${agent} rich questions support choices, text, editing, review and durable history`, { tag: agent === 'codex' ? '@desktop' : [] }, async ({ page }, { project }) => {
 		const name = `rich-${agent}-${project.name}`;
 		const { panel, card, path } = await launch(page, agent, name);
 		await expect(card.locator('strong').filter({ hasText: 'storage' })).toHaveText('storage');
@@ -40,7 +39,6 @@ for (const agent of ['claude-code', 'codex']) {
 		await card.getByRole('button', { name: 'Local Recommended', exact: true }).click();
 		await card.getByRole('textbox', { name: 'Additional text (optional)' }).fill('Keep offline support.');
 		await fits(card);
-		await card.screenshot({ path: info.outputPath('questions.png') });
 		await card.getByRole('button', { name: 'Next', exact: true }).click();
 		await expect(card).toContainText('Question 2 of 6');
 		await card.getByRole('button', { name: 'Read', exact: true }).click();
@@ -101,7 +99,7 @@ for (const agent of ['claude-code', 'codex']) {
 		await closeProject(page, name);
 	});
 
-	test(`${agent} rich questions can be cancelled without submitting`, async ({ page }, { project }) => {
+	test(`${agent} rich questions can be cancelled without submitting`, { tag: '@desktop' }, async ({ page }, { project }) => {
 		const name = `rich-cancel-${agent}-${project.name}`;
 		const { panel, card, path } = await launch(page, agent, name);
 		await card.getByRole('button', { name: 'Review', exact: true }).click();

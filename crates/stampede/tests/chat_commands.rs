@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::{env, ffi::OsString, fs, path::Path, time::Duration};
 

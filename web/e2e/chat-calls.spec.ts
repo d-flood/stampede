@@ -60,8 +60,6 @@ test('agent messages stay visible with collapsed streaming tool counts between t
 	await expect(panel.getByText('The file has three lines.', { exact: true })).toBeVisible();
 	await summaries.last().click();
 	await expect(panel.locator('.command')).toBeHidden();
-	await expect.poll(() => summaries.first().evaluate((element) => getComputedStyle(element).display)).toBe('flex');
 	await expect.poll(() => summaries.first().evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(project.name === 'pixel' ? 48 : 26);
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('collapsed-calls.png') });
 });

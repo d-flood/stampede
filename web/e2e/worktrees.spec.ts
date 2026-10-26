@@ -22,16 +22,15 @@ async function mint(page: Page, branch: string, from?: string) {
 	await expect(select).toHaveValue('main');
 	if (from) await select.selectOption(from);
 	await dialog.getByRole('textbox', { name: 'New branch' }).fill(branch);
-	await page.screenshot({ path: test.info().outputPath(`new-worktree-${(branch || from!).replace('/', '-')}.png`) });
 	await dialog.getByRole('button', { name: branch ? 'Create' : 'Open' }).click();
 	await expect(dialog).toBeHidden();
 }
 
-test('a Project at a repository root mints a worktree from a chosen ref beside it until deleted', async ({ page }) => {
+test('a Project at a repository root mints worktrees from a chosen ref or an existing branch beside it until deleted', { tag: '@desktop' }, async ({ page }) => {
 	git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+	git('branch', 'keep/me');
 	await openProject(page, 'beta');
 	await openProject(page, 'alpha');
-	await projectsScreen(page);
 
 	const rail = page.getByRole('navigation', { name: 'Projects' });
 	await rail.getByRole('button', { name: 'beta', exact: true }).click({ button: 'right' });
@@ -40,35 +39,28 @@ test('a Project at a repository root mints a worktree from a chosen ref beside i
 	await page.keyboard.press('Escape');
 
 	await mint(page, 'try/it', 'origin/main');
-	const tile = rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: 'try/it', exact: true });
+	const worktrees = rail.getByRole('group', { name: 'Worktrees of alpha' });
+	const tile = worktrees.getByRole('button', { name: 'try/it', exact: true });
 	await expect(tile.locator('.tile')).toHaveText('It');
 	await expect(tile).toHaveAttribute('aria-current', 'true');
 	expect(git('rev-parse', 'try/it')).toBe(git('rev-parse', 'origin/main'));
-	const sidebar = await showSidebar(page);
-	await expect(sidebar.getByRole('paragraph').filter({ has: page.getByRole('img', { name: 'Branch' }) })).toHaveText('try/it');
+	const branch = (await showSidebar(page)).getByRole('paragraph').filter({ has: page.getByRole('img', { name: 'Branch' }) });
+	await expect(branch).toHaveText('try/it');
 
-	await projectsScreen(page);
 	await tile.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Delete worktree' }).click();
 	await expect(tile).toHaveCount(0);
 	expect(git('branch', '--list', 'try/it')).toBe('');
-});
 
-test('a worktree opened on an existing branch leaves the branch behind when deleted', async ({ page }) => {
-	git('branch', 'keep/me');
-	await openProject(page, 'alpha');
 	await mint(page, '', 'keep/me');
+	const kept = worktrees.getByRole('button', { name: 'keep/me', exact: true });
+	await expect(kept).toHaveAttribute('aria-current', 'true');
+	await showSidebar(page);
+	await expect(branch).toHaveText('keep/me');
 
-	const rail = page.getByRole('navigation', { name: 'Projects' });
-	const tile = rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: 'keep/me', exact: true });
-	await expect(tile).toHaveAttribute('aria-current', 'true');
-	const sidebar = await showSidebar(page);
-	await expect(sidebar.getByRole('paragraph').filter({ has: page.getByRole('img', { name: 'Branch' }) })).toHaveText('keep/me');
-
-	await projectsScreen(page);
-	await tile.click({ button: 'right' });
+	await kept.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Delete worktree' }).click();
-	await expect(tile).toHaveCount(0);
+	await expect(kept).toHaveCount(0);
 	expect(git('branch', '--list', 'keep/me')).toBe('keep/me');
 });
 
@@ -92,14 +84,12 @@ test('worktrees are counted on their Project and listed under it, grouped in the
 		return !!top && !!list && list.y >= top.y + top.height - 1 && (phone ? list.x > top.x : true);
 	};
 	await expect.poll(below).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('active.png') });
 
 	if (phone) return;
 
 	await rail.getByRole('button', { name: 'beta', exact: true }).click();
 	await expect(worktrees).toHaveCount(0);
 	await expect(row.locator('.count')).toHaveText('2');
-	await page.screenshot({ path: test.info().outputPath('inactive.png') });
 	await square.click();
 	await expect(worktrees.getByRole('button')).toHaveCount(2);
 	await rail.getByRole('button', { name: 'beta', exact: true }).click();
@@ -113,17 +103,15 @@ test('worktrees are counted on their Project and listed under it, grouped in the
 		const [top, list] = [await square.boundingBox(), await worktrees.boundingBox()];
 		return !!top && !!list && list.y >= top.y + top.height - 1 && list.x > top.x;
 	}).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('expanded.png') });
 
 	await page.reload();
 	await expect(rail.getByRole('button', { name: 'Collapse project rail' })).toHaveAttribute('aria-expanded', 'true');
 	await expect(row).toContainText(alpha());
 });
 
-test('a working Chat in a worktree spins on its Project square', async ({ page }) => {
+test('a working Chat in a worktree spins on its Project square', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	await mint(page, 'spin');
-	await projectsScreen(page);
 	const rail = page.getByRole('navigation', { name: 'Projects' });
 	const square = rail.getByRole('button', { name: 'alpha', exact: true });
 	await rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: 'spin', exact: true }).click();
@@ -141,8 +129,5 @@ test('a working Chat in a worktree spins on its Project square', async ({ page }
 	await composer.fill('Anything else?');
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(tab.getByTitle('working')).toBeVisible();
-
-	await projectsScreen(page);
 	await expect(square.getByTitle('working')).toBeVisible();
-	await page.screenshot({ path: test.info().outputPath('working.png') });
 });

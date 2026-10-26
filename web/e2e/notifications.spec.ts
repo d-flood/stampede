@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from './fixtures.ts';
 
-test('notifications can be disabled, stay off after reload, and be enabled again', async ({ page, request }, { project }) => {
+test('notifications can be disabled, stay off after reload, and be enabled again', { tag: '@desktop' }, async ({ page, request }) => {
 	const { key } = await (await request.get('/api/push/key')).json();
 	const subscription = { endpoint: 'https://push.example.test/current', keys: { p256dh: key, auth: 'AAAAAAAAAAAAAAAAAAAAAA' } };
 	await request.post('/api/push/subscribe', {
@@ -25,7 +25,7 @@ test('notifications can be disabled, stay off after reload, and be enabled again
 	}, subscription);
 	const saved = () => JSON.parse(readFileSync(join(process.env.STAMPEDE_E2E_ROOT!, 'data/push/subscriptions.json'), 'utf8'))
 		.map((item: { browserId: string }) => item.browserId).sort();
-	const control = (name: string) => page.getByRole(project.name === 'pixel' ? 'button' : 'menuitem', { name, exact: true });
+	const control = (name: string) => page.getByRole('menuitem', { name, exact: true });
 	await page.goto('/');
 	await expect.poll(() => page.evaluate(() => localStorage.getItem('browserId'))).not.toBeNull();
 	const browserId = await page.evaluate(() => localStorage.getItem('browserId'));
@@ -38,10 +38,6 @@ test('notifications can be disabled, stay off after reload, and be enabled again
 	await page.getByRole('button', { name: 'Attention list', exact: true }).click();
 	await expect(control('Enable notifications')).toBeEnabled();
 	expect(saved()).toEqual(['other-browser']);
-	if (project.name === 'pixel') {
-		const dialog = page.getByRole('dialog', { name: 'Needs attention' });
-		await expect.poll(() => dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	}
 	await control('Enable notifications').click();
 	await expect.poll(saved).toEqual([browserId, 'other-browser'].sort());
 	await page.reload();
@@ -52,7 +48,7 @@ test('notifications can be disabled, stay off after reload, and be enabled again
 		else await route.continue();
 	});
 	await control('Disable notifications').click();
-	if (project.name !== 'pixel') await page.getByRole('button', { name: 'Attention list', exact: true }).click();
+	await page.getByRole('button', { name: 'Attention list', exact: true }).click();
 	await expect(control('Retry disabling notifications')).toBeEnabled();
 	await page.unroute('**/api/push/subscribe');
 	await control('Retry disabling notifications').click();

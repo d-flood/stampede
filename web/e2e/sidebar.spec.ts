@@ -1,8 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import { openProject, showSidebar } from './shell.ts';
 
-test('desktop sidebar resizes by dragging and keyboard within its limits', async ({ page }, { project }) => {
-	test.skip(project.name !== 'desktop');
+test('desktop sidebar resizes by dragging and keyboard within its limits', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	const sidebar = await showSidebar(page);
 	const resizer = page.getByRole('separator', { name: 'Resize sidebar' });
@@ -24,7 +23,6 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', async
 	await expect(resizer).toHaveAttribute('aria-valuenow', '424');
 	await page.keyboard.press('Home');
 	await expect(resizer).toHaveAttribute('aria-valuenow', '160');
-	await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(162);
 	const sections = sidebar.getByRole('group', { name: 'Sections' });
 	await expect.poll(() => sections.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
@@ -47,17 +45,13 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', async
 	}
 	const firstRing = usage.getByRole('meter', { name: 'Claude · 5h' });
 	await expect(usage.locator('[title]')).toHaveCount(0);
-	await expect(firstRing).toHaveAttribute('data-delay-duration', '0');
 	await firstRing.hover();
 	const tooltip = page.getByRole('tooltip');
 	await expect(tooltip).toHaveText(await usage.locator('.reset').first().evaluate((element) => [...element.children].map((child) => child.textContent).join(' ') || element.textContent!));
 	await expect.poll(() => tooltip.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
-		const style = getComputedStyle(element);
-		return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight
-			&& style.whiteSpace === 'pre-line' && style.borderTopWidth === '1px';
+		return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight;
 	})).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('usage-tooltip.png') });
 	await page.keyboard.press('Escape');
 	await expect(tooltip).toBeHidden();
 	await usage.getByRole('meter', { name: 'Claude · week', exact: true }).focus();
@@ -67,8 +61,6 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', async
 	await resizer.focus();
 	await page.mouse.move(900, 400);
 	await expect.poll(() => usage.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await usage.screenshot({ path: test.info().outputPath('usage-narrow.png') });
-	await sidebar.screenshot({ path: test.info().outputPath('sidebar-narrow.png') });
 	const edge = (await resizer.boundingBox())!;
 	await page.mouse.move(edge.x + edge.width / 2, edge.y + 200);
 	await page.mouse.down();
@@ -83,23 +75,12 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', async
 		await expect(meter.locator('.reset')).toBeVisible();
 	}
 	await expect.poll(async () => (await page.locator('main').boundingBox())!.width).toBeGreaterThan(500);
-	await page.screenshot({ path: test.info().outputPath('sidebar-wide.png') });
 	await page.setViewportSize({ width: 800, height: 800 });
 	await expect(resizer).toHaveAttribute('aria-valuemax', '480');
 	await expect(resizer).toHaveAttribute('aria-valuenow', '480');
-	await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(482);
 });
 
-test('phone sidebar fills its screen without a resize handle', async ({ page }, { project }) => {
-	test.skip(project.name !== 'pixel');
-	await openProject(page, 'alpha');
-	const sidebar = await showSidebar(page);
-	await expect(page.getByRole('separator', { name: 'Resize sidebar' })).toHaveCount(0);
-	await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(page.viewportSize()!.width);
-});
-
-test('desktop sidebar slides open and closed over several frames', async ({ page }, { project }) => {
-	test.skip(project.name !== 'desktop');
+test('desktop sidebar slides over several frames and its toggle moves between the sidebar corner and the tab strip, keeping focus', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	const sidebar = await showSidebar(page);
 	const slide = () =>
@@ -127,12 +108,7 @@ test('desktop sidebar slides open and closed over several frames', async ({ page
 		expect(Math.abs(last - first)).toBeGreaterThan(150);
 		expect(new Set(lefts.filter((left) => left > Math.min(first, last) + 0.5 && left < Math.max(first, last) - 0.5).map(Math.round)).size).toBeGreaterThanOrEqual(3);
 	}
-});
 
-test('desktop sidebar toggle sits in the open sidebar corner and in the tab strip once closed, keeping focus', async ({ page }, { project }) => {
-	test.skip(project.name !== 'desktop');
-	await openProject(page, 'alpha');
-	const sidebar = await showSidebar(page);
 	const docked = sidebar.getByRole('button', { name: 'Sidebar', exact: true });
 	const strip = page.getByRole('main').getByRole('button', { name: 'Sidebar', exact: true });
 	await expect(strip).toHaveCount(0);

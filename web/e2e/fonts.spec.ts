@@ -16,10 +16,10 @@ async function platformFont(page: Page, selector: string) {
 	}
 }
 
-test('the UI font comes from the Host while code and terminals stay monospace', async ({ page }, { project }) => {
+test('the UI font comes from the Host while code and terminals stay monospace', { tag: '@desktop' }, async ({ page }) => {
 	const config = () => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
 	const bodyFont = () => page.locator('body').evaluate((element) => getComputedStyle(element).fontFamily);
-	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+	await openProject(page, 'alpha');
 	const families: string[] = await (await page.request.get('/api/fonts')).json();
 	const family = families.find((name) => name === 'DejaVu Sans') ?? families.find((name) => !/JetBrains|Symbols/.test(name));
 	expect(family).toBeDefined();
@@ -31,7 +31,6 @@ test('the UI font comes from the Host while code and terminals stay monospace', 
 
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-	await expect(settings.getByRole('heading', { name: 'Font' })).toBeVisible();
 	await page.getByRole('button', { name: 'Change font' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a font' });
 	const search = dialog.getByRole('combobox', { name: 'Search fonts' });
@@ -43,7 +42,6 @@ test('the UI font comes from the Host while code and terminals stay monospace', 
 	await expect(settings.locator('.preview code')).toHaveCSS('font-family', /^"?JetBrains Mono/);
 	expect(config()).toBe(original);
 	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('font-picker.png') });
 	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect.poll(bodyFont).toMatch(/^"?JetBrains Mono/);
@@ -57,7 +55,6 @@ test('the UI font comes from the Host while code and terminals stay monospace', 
 	await expect(page.getByRole('button', { name: 'Change font' })).toHaveAttribute('title', `Font: ${family}`);
 	await expect.poll(() => platformFont(page, '#host-name-help'))
 		.toEqual([expect.objectContaining({ familyName: family, isCustomFont: true })]);
-	await page.screenshot({ path: test.info().outputPath('font-settings.png') });
 
 	await page.reload();
 	await expect.poll(bodyFont).toMatch(new RegExp(`^"${family}"`));

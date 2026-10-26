@@ -1,28 +1,19 @@
 import { expect, test } from './fixtures.ts';
 
-test.beforeEach(async ({ page }, { project }) => {
+test('the project picker focuses its input and opens a path chosen with arrow keys and Enter', { tag: '@desktop' }, async ({ page }) => {
 	await page.goto('/');
-	if (project.name === 'pixel') {
-		await page.getByRole('button', { name: 'Previous screen' }).click();
-		await expect.poll(() => page.locator('.screens').evaluate((element) => element.scrollLeft)).toBe(0);
-	}
-	await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Open Project' }).click();
-});
-
-test('opening the project picker focuses its input', async ({ page }) => {
-	const input = page.getByRole('dialog').getByRole('combobox');
+	const open = page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Open Project' });
+	await open.click();
+	const dialog = page.getByRole('dialog');
+	const input = dialog.getByRole('combobox');
 	await expect(input).toBeFocused();
 	await page.keyboard.type('beta');
 	await expect(page.getByRole('option')).toHaveCount(1);
 	await page.keyboard.press('Escape');
-	await expect(page.getByRole('dialog')).toBeHidden();
-	await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Open Project' }).click();
+	await expect(dialog).toBeHidden();
+	await open.click();
 	await expect(input).toBeFocused();
 	await expect(input).toHaveValue('');
-});
-
-test('project paths can be selected with arrow keys and opened with Enter', async ({ page }) => {
-	const dialog = page.getByRole('dialog');
 	const paths = dialog.getByRole('option');
 	await expect(paths).toHaveCount(2);
 	await page.keyboard.press('ArrowDown');

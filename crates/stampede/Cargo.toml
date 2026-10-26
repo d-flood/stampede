@@ -3,6 +3,7 @@ name = "stampede"
 version = "0.1.0"
 edition = "2024"
 publish = false
+autotests = false
 
 [dependencies]
 async-trait = "0.1.89"
@@ -38,6 +39,10 @@ toml = "1.1.8"
 ttf-parser = "0.25.1"
 uuid = { version = "1.28.0", features = ["v4"] }
 web-push-native = "0.5.0"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [dev-dependencies]
 tempfile = "3.27.0"

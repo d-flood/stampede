@@ -3,7 +3,7 @@ import { expect, test } from './fixtures.ts';
 import { mkdirSync } from 'node:fs';
 import { openProject } from './shell.ts';
 
-test('chat copies code blocks and long inline code', async ({ page, context }, { project, repeatEachIndex }) => {
+test('chat copies code blocks and long inline code', { tag: '@desktop' }, async ({ page, context }, { project, repeatEachIndex }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 	let chatId: string;
 	const items: Item[] = [{ kind: 'text', text: 'Run `ls` or `pnpm install --frozen-lockfile`:\n\n```sh\necho one\necho two\n```', streaming: false, phase: 'final' }];

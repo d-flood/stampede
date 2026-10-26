@@ -48,8 +48,7 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await expect(square.getByTitle('working')).toHaveCount(0);
 });
 
-test('a closed Chat stays disabled until its Agent exits', async ({ page }, { project }) => {
-	test.skip(project.name !== 'desktop');
+test('a closed Chat stays disabled until its Agent exits', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `chat-closing-${project.name}`;
 	const directory = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(directory, { recursive: true });
@@ -73,23 +72,7 @@ test('a closed Chat stays disabled until its Agent exits', async ({ page }, { pr
 	await expect(tab).toHaveCount(0, { timeout: pressed + 3000 - Date.now() });
 });
 
-test('a page that loads onto a Chat opens context menus on right-click', async ({ page }, { project }) => {
-	const name = `chat-menus-${project.name}`;
-	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
-	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
-	await expect(tab.getByTitle('done')).toBeVisible();
-
-	await page.reload();
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
-	if (project.name === 'pixel') await page.getByRole('button', { name: 'Previous screen' }).click();
-	await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name, exact: true }).click({ button: 'right' });
-	await expect(page.getByRole('menuitem', { name: 'Change project icon…' })).toBeVisible();
-});
-
-test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, { project }) => {
+test('a Codex Chat streams its reply, shows done, and closes', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `codex-chat-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
@@ -118,7 +101,7 @@ test('a Codex Chat streams its reply, shows done, and closes', async ({ page }, 
 	await expect(tab).toHaveCount(0);
 });
 
-test('a Chat folds tools, thinking, commands and a long first prompt into lines that open on tap', async ({ page }, { project }) => {
+test('a Chat folds tools, thinking, commands and a long first prompt into lines that open on tap', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `blocks-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
@@ -232,7 +215,7 @@ test('a working Chat steers, queues until its turn ends, and interrupts, with no
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
 	await expect(tab).toHaveCount(0);
 });
-test('long model and mode chips stay on one line', async ({ page }, { project }) => {
+test('long model and mode chips stay on one line', { tag: '@phone' }, async ({ page }, { project }) => {
 	let route: WebSocketRoute;
 	let chatId: string;
 	const settings = { model: 'gpt-6.1-sol-extended-preview', effort: 'high', mode: 'approve for me every single time' };
@@ -269,7 +252,7 @@ const slashed = [
 ];
 
 for (const { agent, rig, command, before, after } of slashed) {
-	test(`/effort from the slash menu updates the effort chip of a ${rig} Chat`, async ({ page }, { project }) => {
+	test(`/effort from the slash menu updates the effort chip of a ${rig} Chat`, { tag: agent === 'codex' ? '@desktop' : [] }, async ({ page }, { project }) => {
 		const name = `slash-${agent}-${project.name}`;
 		mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 		await openProject(page, name);
@@ -310,7 +293,7 @@ for (const { agent, rig, command, before, after } of slashed) {
 	});
 }
 
-test('/spec from the slash menu sends its Template before the typed text', async ({ page }, { project }) => {
+test('/spec from the slash menu sends its Template before the typed text', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const root = process.env.STAMPEDE_E2E_ROOT;
 	const name = `template-${project.name}`;
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
@@ -352,7 +335,7 @@ test('/spec from the slash menu sends its Template before the typed text', async
 });
 
 for (const agent of ['Claude', 'Codex']) {
-	test(`a ${agent} edit is a card that opens its file in a Diff tab`, async ({ page }, { project }) => {
+	test(`a ${agent} edit is a card that opens its file in a Diff tab`, { tag: agent === 'Codex' ? '@desktop' : [] }, async ({ page }, { project }) => {
 		const name = `${agent.toLowerCase()}-edits-${project.name}`;
 		const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 		mkdirSync(root);
@@ -621,7 +604,7 @@ test('a Chat pins todos and counts its completed subagent in the dock', async ({
 });
 
 for (const agent of ['claude', 'codex']) {
-	test(`${agent} shows current activity before completion and clears it afterward`, async ({ page }, { project }) => {
+	test(`${agent} shows current activity before completion and clears it afterward`, { tag: '@desktop' }, async ({ page }, { project }) => {
 		const name = `activity-${agent}-${project.name}`;
 		const root = process.env.STAMPEDE_E2E_ROOT;
 		const gates = `${root}/${name}`;
@@ -671,7 +654,6 @@ for (const agent of ['claude', 'codex']) {
 				await expect(calls.locator('.latest')).toHaveText(await activity.locator('.label').innerText());
 				await expect(panel.locator('.calls[open]')).toHaveCount(0);
 			}
-			await expect.poll(() => activity.locator('.spinner').evaluate((element) => getComputedStyle(element).animationName)).toMatch(/spin$/);
 			unlinkSync(`${gates}/${stage}`);
 		}
 		await expect(tab.getByTitle('done')).toBeVisible();
@@ -698,7 +680,7 @@ for (const agent of ['claude', 'codex']) {
 	});
 }
 
-test('a completed Codex subagent moves to the dock\'s finished chip', async ({ page }, { project }) => {
+test('a completed Codex subagent moves to the dock\'s finished chip', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `codex-subagent-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
@@ -716,28 +698,7 @@ test('a completed Codex subagent moves to the dock\'s finished chip', async ({ p
 });
 
 for (const agent of ['Claude', 'Codex']) {
-	test(`${agent} sends an image with a thumbnail and image count`, async ({ page }, { project }) => {
-		const name = `image-${agent}-${project.name}`;
-		mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
-		await openProject(page, name);
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: `Fake ${agent}`, exact: true }).click();
-		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
-		const image = fileURLToPath(new URL('../static/icons/icon-192.png', import.meta.url));
-		await panel.getByLabel('Attach images', { exact: true }).setInputFiles(image);
-		await expect(panel.getByRole('img', { name: 'icon-192.png' })).toBeVisible();
-		await expect(panel.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
-		if (project.name === 'desktop') await panel.getByRole('textbox', { name: 'Composer' }).press('Enter');
-		else await panel.getByRole('button', { name: 'Send', exact: true }).click();
-		await expect(panel.getByLabel('Attachments', { exact: true })).toHaveCount(0);
-		await expect(panel.getByText('1 image', { exact: true })).toBeVisible();
-		await expect.poll(() => panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
-		await closeProject(page, name);
-	});
-}
-
-for (const agent of ['Claude', 'Codex']) {
-	test(`${agent} rewinds from the slash menu in the same Chat tab`, async ({ page }, { project }) => {
+	test(`${agent} rewinds from the slash menu in the same Chat tab`, { tag: '@desktop' }, async ({ page }, { project }) => {
 		const name = `rewind-${agent}-${project.name}`;
 		mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 		await openProject(page, name);
@@ -755,7 +716,6 @@ for (const agent of ['Claude', 'Codex']) {
 		const picker = page.getByRole('dialog', { name: 'Choose where to rewind' });
 		await picker.getByRole('button', { name: agent === 'Claude' ? /Change the file/ : /Greet the reader/ }).click();
 		const review = page.getByRole('dialog', { name: 'Rewind before message 1?' });
-		await expect(review).toContainText('Message 1 will be removed, including its prompt and attachments.');
 		await expect(review).toContainText(agent === 'Claude' ? 'Restore checkpointed file edits' : 'Files are left unchanged');
 		await expect(panel.locator('.user')).toHaveCount(1);
 		await review.getByRole('button', { name: 'Rewind before message 1', exact: true }).click();

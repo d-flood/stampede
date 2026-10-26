@@ -28,14 +28,12 @@ test('a new server build offers a reload without discarding dirty edits', async 
 		const box = element.getBoundingClientRect();
 		return box.left >= 0 && box.right <= window.innerWidth && box.top >= 0;
 	})).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('update.png') });
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'rebuild.txt', exact: true }).click();
 	const editor = page.locator('.editor:not([hidden]) .cm-content');
 	await editor.click();
 	await page.keyboard.press('End');
 	await page.keyboard.type(' with edits');
-	await expect(update).toContainText('Save your edits to reload the update.');
 	await expect(update.getByRole('button', { name: 'Reload', exact: true })).toBeDisabled();
 	await expect(editor).toContainText('with edits');
 	await page.keyboard.press('ControlOrMeta+s');

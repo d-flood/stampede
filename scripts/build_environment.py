@@ -2,6 +2,7 @@ from contextlib import contextmanager
 import fcntl
 import os
 from pathlib import Path
+import re
 import subprocess
 import shutil
 import tempfile
@@ -29,6 +30,7 @@ def build_environment(target, prefix):
     temporary = target / "tmp"
     temporary.mkdir(parents=True, exist_ok=True)
     prune_temporary(target)
+    prune_build(target)
     with tempfile.TemporaryDirectory(prefix=prefix, dir=temporary) as scratch:
         with (Path(scratch) / ".lease").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_SH)
@@ -72,3 +74,50 @@ def prune_temporary(target):
                 shutil.rmtree(path)
         except (BlockingIOError, FileNotFoundError):
             pass
+
+
+UNIT = re.compile(r'-([0-9a-f]{16})(?:\.|$)')
+
+
+def prune_build(target, age=7 * 86400):
+    if not target.exists():
+        return
+    cutoff = time.time() - age
+    for profile in target.iterdir():
+        if profile.is_symlink() or not (profile / '.fingerprint').is_dir():
+            continue
+        with (profile / '.cargo-lock').open('a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            units = {}
+            for folder in ('deps', 'build', '.fingerprint'):
+                for path in entries(profile / folder):
+                    if match := UNIT.search(path.name):
+                        units.setdefault(match[1], []).append(path)
+            uplifted = [[path] for path in entries(profile) if path.is_file() and not path.name.startswith('.')]
+            for paths in [*units.values(), *([path] for path in entries(profile / 'incremental')), *uplifted]:
+                if max(used(path) for path in paths) < cutoff:
+                    for path in paths:
+                        remove(path)
+            for path in entries(profile / 'deps'):
+                if '.tmp' in path.name and used(path) < time.time() - 86400:
+                    remove(path)
+
+
+def entries(directory):
+    return [path for path in directory.iterdir() if not path.is_symlink()] if directory.is_dir() else []
+
+
+def used(path):
+    if not path.is_dir():
+        return max(path.stat().st_atime, path.stat().st_mtime)
+    return max([path.stat().st_mtime, *(max(child.stat().st_atime, child.stat().st_mtime) for child in entries(path))])
+
+
+def remove(path):
+    try:
+        shutil.rmtree(path) if path.is_dir() else path.unlink()
+    except FileNotFoundError:
+        pass

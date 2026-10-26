@@ -2,14 +2,14 @@ import { expect, test } from './fixtures.ts';
 import { readFileSync } from 'node:fs';
 import { openProject, screen, showSidebar } from './shell.ts';
 
-test('theme selection updates the UI, editor, and running Terminal and survives reload', async ({ page }, { project }) => {
+test('theme selection updates the UI, editor, and running Terminal and survives reload', { tag: '@desktop' }, async ({ page }) => {
 	let terminalId: string | undefined;
 	page.on('websocket', (socket) => socket.on('framereceived', ({ payload }) => {
 		if (typeof payload !== 'string') return;
 		const message = JSON.parse(payload);
 		if (message.type === 'terminal.created') terminalId = message.terminal.id;
 	}));
-	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+	await openProject(page, 'alpha');
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal' }).click();
 	await expect.poll(() => terminalId).toBeDefined();
@@ -18,9 +18,9 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await expect.poll(() => input.evaluate((element) => window.terminal?.textarea === element)).toBe(true);
 	await input.focus();
 	await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/\S/);
-	await page.keyboard.type(`echo theme-before-${project.name}`);
+	await page.keyboard.type('echo theme-before');
 	await page.keyboard.press('Enter');
-	await expect.poll(() => screen(page)).toMatch(new RegExp(`^theme-before-${project.name}$`, 'm'));
+	await expect.poll(() => screen(page)).toMatch(/^theme-before$/m);
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
@@ -34,8 +34,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await expect(dialog).toContainText('No matching themes');
 	await search.fill('Dracula');
 	await expect(dracula).toBeVisible();
-	if (project.name === 'desktop') await search.press('Enter');
-	else await dracula.click();
+	await search.press('Enter');
 	await expect(dialog).toBeVisible();
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.theme?.background)).toBe('#282a36');
@@ -62,17 +61,17 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.theme?.background)).toBe('#282a36');
-	await expect.poll(() => screen(page)).toMatch(new RegExp(`^theme-before-${project.name}$`, 'm'));
+	await expect.poll(() => screen(page)).toMatch(/^theme-before$/m);
 	await input.focus();
-	await page.keyboard.type(`echo theme-after-${project.name}`);
+	await page.keyboard.type('echo theme-after');
 	await page.keyboard.press('Enter');
-	await expect.poll(() => screen(page)).toMatch(new RegExp(`^theme-after-${project.name}$`, 'm'));
+	await expect.poll(() => screen(page)).toMatch(/^theme-after$/m);
 	expect(readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain('theme = "Dracula"');
 
 	await page.reload();
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Dracula');
-	await expect.poll(() => screen(page)).toMatch(new RegExp(`^theme-after-${project.name}$`, 'm'));
+	await expect.poll(() => screen(page)).toMatch(/^theme-after$/m);
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	await dialog.getByRole('combobox', { name: 'Search themes' }).fill('Dracula');
 	await expect(dracula.getByLabel('Current theme')).toBeVisible();
@@ -80,29 +79,19 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await dialog.getByRole('option', { name: 'Alabaster', exact: true }).click();
 	await expect(dialog.getByRole('button', { name: 'Apply theme', exact: true })).toBeEnabled();
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(247, 247, 247)');
-	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-	if (project.name === 'pixel') {
-		await expect.poll(() => dialog.evaluate((element) => {
-			const box = element.getBoundingClientRect();
-			return box.top === 0 && box.left === 0 && box.width === window.innerWidth && box.height === window.innerHeight;
-		})).toBe(true);
-	}
-	await page.screenshot({ path: test.info().outputPath('theme-picker.png') });
 	await page.keyboard.press('Escape');
 	await expect(dialog).toBeHidden();
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.theme?.background)).toBe('#282a36');
 	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
 
-	if (project.name === 'desktop') {
-		const sidebar = await showSidebar(page);
-		await sidebar.getByRole('button', { name: 'greeting.ts', exact: true }).click();
-		await expect.poll(() => page.locator('.cm-editor').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
-	}
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'greeting.ts', exact: true }).click();
+	await expect.poll(() => page.locator('.cm-editor').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
 });
 
-test('late previews cannot replace a newer preview or restore after closing', async ({ page }, { project }) => {
-	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+test('late previews cannot replace a newer preview or restore after closing', { tag: '@desktop' }, async ({ page }) => {
+	await openProject(page, 'alpha');
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
@@ -143,8 +132,8 @@ test('late previews cannot replace a newer preview or restore after closing', as
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(original);
 });
 
-test('preview and save failures leave the saved theme intact', async ({ page }, { project }) => {
-	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+test('preview and save failures leave the saved theme intact', { tag: '@desktop' }, async ({ page }) => {
+	await openProject(page, 'alpha');
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
@@ -197,7 +186,12 @@ test('light and dark themes follow the system color scheme', async ({ page }, { 
 	await dark.click();
 	await expect.poll(background).toBe('rgb(40, 42, 54)');
 	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('theme-schemes.png') });
+	if (project.name === 'pixel') {
+		await expect.poll(() => dialog.evaluate((element) => {
+			const box = element.getBoundingClientRect();
+			return box.top === 0 && box.left === 0 && box.width === window.innerWidth && box.height === window.innerHeight;
+		})).toBe(true);
+	}
 	await dialog.getByRole('button', { name: 'Apply theme', exact: true }).click();
 	await expect(dialog).toBeHidden();
 	expect(config()).toContain('theme = "light:Alabaster,dark:Dracula"');
@@ -226,7 +220,7 @@ test('light and dark themes follow the system color scheme', async ({ page }, { 
 	await expect.poll(background).toBe('rgb(247, 247, 247)');
 });
 
-test('the color scheme button cycles light, dark, and system on this device', async ({ page }, { project }) => {
+test('the color scheme button cycles light, dark, and system on this device', { tag: '@desktop' }, async ({ page }) => {
 	const background = () => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
 	const terminalBackground = () => page.evaluate(() => window.terminal?.options.theme?.background);
 	const saved = await page.request.put('/api/theme', {
@@ -235,7 +229,7 @@ test('the color scheme button cycles light, dark, and system on this device', as
 	});
 	expect(saved.ok()).toBe(true);
 	await page.emulateMedia({ colorScheme: 'dark' });
-	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+	await openProject(page, 'alpha');
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal' }).click();
 	const toggle = page.getByRole('button', { name: /^Color scheme/ });
@@ -247,7 +241,6 @@ test('the color scheme button cycles light, dark, and system on this device', as
 	await expect(toggle).toHaveAccessibleName('Color scheme: Light');
 	await expect.poll(background).toBe('rgb(247, 247, 247)');
 	await expect.poll(terminalBackground).toBe('#f7f7f7');
-	await page.screenshot({ path: test.info().outputPath('scheme-light.png') });
 
 	await toggle.click();
 	await expect(toggle).toHaveAccessibleName('Color scheme: Dark');
@@ -257,7 +250,6 @@ test('the color scheme button cycles light, dark, and system on this device', as
 	await page.reload();
 	await expect(toggle).toHaveAccessibleName('Color scheme: Dark');
 	await expect.poll(background).toBe('rgb(40, 42, 54)');
-	await page.screenshot({ path: test.info().outputPath('scheme-dark.png') });
 
 	await toggle.click();
 	await expect(toggle).toHaveAccessibleName('Color scheme: System');

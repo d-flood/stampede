@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { openProject } from './shell.ts';
 
 for (const agent of ['claude', 'codex']) {
-	test(`${agent} subagents expose live tools, thinking and output through the server`, async ({ page }, { project }) => {
+	test(`${agent} subagents expose live tools, thinking and output through the server`, { tag: '@desktop' }, async ({ page }, { project }) => {
 		const root = process.env.STAMPEDE_E2E_ROOT!;
 		const gates = `${root}/activity-${agent}-${project.name}`;
 		const kind = agent === 'claude' ? 'claude-code' : 'codex';

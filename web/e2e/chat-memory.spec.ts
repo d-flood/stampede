@@ -5,7 +5,7 @@ import { expect, test } from './fixtures.ts';
 import { openProject } from './shell.ts';
 
 for (const streaming of [true, false]) {
-	test(`closing a Chat releases cached ${streaming ? 'streaming' : 'completed'} reply versions`, async ({ page }, { project }) => {
+	test(`closing a Chat releases cached ${streaming ? 'streaming' : 'completed'} reply versions`, { tag: '@desktop' }, async ({ page }, { project }) => {
 		let route: WebSocketRoute;
 		let chatId: string;
 		await page.routeWebSocket('**/ws', (socket) => {

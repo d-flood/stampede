@@ -3,7 +3,7 @@ import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { openProject } from './shell.ts';
 
-test('a socket that died while the page was hidden is replaced as soon as the page shows', async ({ page }, { project }) => {
+test('a socket that died while the page was hidden is replaced as soon as the page shows', { tag: '@desktop' }, async ({ page }) => {
 	let connections = 0;
 	let silenced = false;
 	await page.routeWebSocket('**/ws', (socket) => {
@@ -12,7 +12,7 @@ test('a socket that died while the page was hidden is replaced as soon as the pa
 		socket.onMessage((data) => !(first && silenced) && server.send(data));
 		server.onMessage((data) => !(first && silenced) && socket.send(data));
 	});
-	const name = `reconnect-silent-${project.name}`;
+	const name = 'reconnect-silent';
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
 	silenced = true;
@@ -21,7 +21,7 @@ test('a socket that died while the page was hidden is replaced as soon as the pa
 	await expect(page.getByRole('status').filter({ hasText: 'Reconnecting…' })).toBeHidden();
 });
 
-test('a reconnect the server never answers is retried instead of waited on', async ({ page }, { project }) => {
+test('a reconnect the server never answers is retried instead of waited on', { tag: '@desktop' }, async ({ page }) => {
 	let connections = 0;
 	let route: WebSocketRoute | undefined;
 	await page.routeWebSocket('**/ws', (socket) => {
@@ -29,7 +29,7 @@ test('a reconnect the server never answers is retried instead of waited on', asy
 		route = socket;
 		socket.connectToServer();
 	});
-	const name = `reconnect-unanswered-${project.name}`;
+	const name = 'reconnect-unanswered';
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
 	const reconnecting = page.getByRole('status').filter({ hasText: 'Reconnecting…' });

@@ -38,7 +38,6 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	expect(readFileSync(`${root}/notes.MD`, 'utf8')).toBe(original);
 	expect(await page.evaluate(() => 'markdownExecuted' in window)).toBe(false);
 	await expect.poll(() => editor.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('markdown-preview.png') });
 	await editButton.click();
 	await expect(source).toContainText('## Unsaved');
 	await source.focus();
@@ -69,12 +68,11 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	await expect(preview.getByRole('heading', { name: 'Saved from preview' })).toBeVisible();
 });
 
-test('multiline selections keep editor text visible', async ({ page }, { project }) => {
-	const name = `selection-${project.name}`;
-	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+test('multiline selections keep editor text visible', { tag: '@desktop' }, async ({ page }) => {
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/selection`;
 	mkdirSync(root);
 	writeFileSync(`${root}/selection.txt`, 'Selected text must remain visible.\nAcross multiple lines.\nIncluding this final line.\n');
-	await openProject(page, name);
+	await openProject(page, 'selection');
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'selection.txt', exact: true }).click();
 	const editor = page.locator('.editor:not([hidden])');
@@ -105,18 +103,16 @@ test('multiline selections keep editor text visible', async ({ page }, { project
 	await editor.locator('.cm-content').focus();
 	await page.keyboard.press('ControlOrMeta+a');
 	await expect(editor.locator('.cm-selectionBackground')).not.toHaveCount(0);
-	await page.screenshot({ path: test.info().outputPath('multiline-selection.png') });
 	await expect.poll(paintedText).toBeGreaterThan(unselected * 0.7);
 	await expect.poll(paintedText).toBeLessThan(unselected * 1.3);
 });
 
-test('line wrapping defaults to Markdown and toggles per editor without losing edits', async ({ page }, { project }) => {
-	const name = `wrapping-${project.name}`;
-	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+test('line wrapping defaults to Markdown and toggles per editor without losing edits', { tag: '@desktop' }, async ({ page }) => {
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/wrapping`;
 	const content = 'A long line of prose that should wrap inside the editor. '.repeat(80);
 	mkdirSync(root);
 	for (const file of ['notes.MD', 'prose.markdown', 'plain.txt']) writeFileSync(`${root}/${file}`, content);
-	await openProject(page, name);
+	await openProject(page, 'wrapping');
 	let sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'notes.MD', exact: true }).click();
 	const editor = page.locator('.editor:not([hidden])');
@@ -148,7 +144,6 @@ test('line wrapping defaults to Markdown and toggles per editor without losing e
 	await expect.poll(wrapped).toBe(false);
 	await toggle.click();
 	await expect.poll(wrapped).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('line-wrapping.png') });
 	sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'notes.MD', exact: true }).click();
 	await expect(toggle).toHaveAttribute('aria-pressed', 'false');

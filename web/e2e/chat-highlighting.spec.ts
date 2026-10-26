@@ -34,7 +34,7 @@ const items: Item[] = [
 	{ kind: 'command', command: "python3 -I - <<'EOF'\nfor line in open('x'):\n    print(line)\nEOF\necho done", status: 'ok', output: '' }
 ];
 
-test('chat highlights commands, tool arguments, and both sides of inline diffs', async ({ page }, { project, repeatEachIndex }) => {
+test('chat highlights commands, tool arguments, and both sides of inline diffs', { tag: '@desktop' }, async ({ page }, { project, repeatEachIndex }) => {
 	let route: WebSocketRoute;
 	let chatId: string;
 	const transcript = [...items];
@@ -90,10 +90,6 @@ test('chat highlights commands, tool arguments, and both sides of inline diffs',
 
 	const edit = panel.locator('.edit').filter({ hasText: 'example.ts' });
 	const unknown = panel.locator('.edit').filter({ hasText: 'notes.unknown' });
-	if (project.name === 'pixel') {
-		await edit.locator('summary').click();
-		await unknown.locator('summary').click();
-	}
 	const added = edit.locator('.code-line.added').filter({ hasText: 'enabled' });
 	await colored(added.getByText('const', { exact: true }), '--ansi-5');
 	await colored(added.getByText('true', { exact: true }), '--ansi-3');

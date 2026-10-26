@@ -27,7 +27,6 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 	await commit();
 	await expect(page).toHaveTitle('atlas');
 	expect(readFileSync(config, 'utf8')).toBe(`name = "atlas"\n${original}`);
-	await page.screenshot({ path: test.info().outputPath('host-name.png') });
 	await done();
 	if (phone) await expect(heading).toHaveText('Projects atlas');
 

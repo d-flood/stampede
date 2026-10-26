@@ -4,6 +4,8 @@ import { expect, test } from './fixtures.ts';
 import { closeProject, openProject } from './shell.ts';
 
 test('chat composer submits with Enter on desktop and keeps mobile Enter as a newline', async ({ page, context }, { project }) => {
+	const errors: string[] = [];
+	page.on('pageerror', (error) => errors.push(error.message));
 	const sent: { text: string; queue: boolean }[] = [];
 	page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {
 		if (typeof payload !== 'string') return;
@@ -18,6 +20,8 @@ test('chat composer submits with Enter on desktop and keeps mobile Enter as a ne
 	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	await expect(composer).toBeFocused();
+	expect(errors).toEqual([]);
 	await composer.fill('/eff');
 	await composer.press('Enter');
 	await expect(composer).toHaveValue('/effort ');
@@ -65,17 +69,7 @@ async function launch(page: Page, name: string) {
 	return { tab, panel, composer: panel.getByRole('textbox', { name: 'Composer' }) };
 }
 
-test('opening a Chat focuses its composer without client errors', async ({ page }, { project }) => {
-	const errors: string[] = [];
-	page.on('pageerror', (error) => errors.push(error.message));
-	const { composer } = await launch(page, `composer-focus-${project.name}`);
-	await expect(composer).toBeFocused();
-	await composer.fill('Still responsive');
-	await expect(composer).toHaveValue('Still responsive');
-	expect(errors).toEqual([]);
-});
-
-test('ArrowUp and ArrowDown recall earlier prompts without replacing a draft', async ({ page }, { project }) => {
+test('ArrowUp and ArrowDown recall earlier prompts without replacing a draft', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `composer-history-${project.name}`;
 	const { tab, panel, composer } = await launch(page, name);
 	const send = panel.getByRole('button', { name: /^(Send|Steer)$/ });
@@ -112,7 +106,7 @@ test('ArrowUp and ArrowDown recall earlier prompts without replacing a draft', a
 	await closeProject(page, name);
 });
 
-test('a sent prompt renders its markdown', async ({ page }, { project }) => {
+test('a sent prompt renders its markdown', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `composer-markdown-${project.name}`;
 	const { panel, composer } = await launch(page, name);
 	await composer.fill('**Bold** and `code` <b>raw</b>\n\n- item');
@@ -165,7 +159,7 @@ test('desktop Chats dock the settings and actions under the Composer', { tag: '@
 	await closeProject(page, name);
 });
 
-test('Shift+Tab in the composer cycles the Chat mode', async ({ page }, { project }) => {
+test('Shift+Tab in the composer cycles the Chat mode', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `composer-mode-${project.name}`;
 	const { panel, composer } = await launch(page, name);
 	await panel.getByRole('button', { name: 'Mode: default', exact: true }).click();

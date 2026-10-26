@@ -3,9 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { openProject, showSidebar } from './shell.ts';
 
-test('low storage pauses new Tickets and reports the reason', async ({ page }, { project }) => {
+test('low storage pauses new Tickets and reports the reason', { tag: '@desktop' }, async ({ page }) => {
 	const parent = process.env.STAMPEDE_E2E_ROOT!;
-	const slug = `storage-${project.name}`;
+	const slug = 'storage';
 	const root = `${parent}/projects/${slug}`;
 	mkdirSync(root);
 	const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', ...args]);
@@ -40,5 +40,4 @@ test('low storage pauses new Tickets and reports the reason', async ({ page }, {
 	})).toBe(true);
 	expect(existsSync(`${parent}/data/worktrees/${slug}/integration`)).toBe(false);
 	expect(readFileSync(`${parent}/data/epics/${slug}.jsonl`, 'utf8')).not.toContain('ticket.claimed');
-	await page.screenshot({ path: test.info().outputPath('storage-paused.png') });
 });

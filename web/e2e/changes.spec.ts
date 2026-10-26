@@ -44,7 +44,6 @@ test('Changes shows a folder tree of changed files to stage, commit and undo', a
 	await expect(staged.getByRole('button', numbers)).toHaveCount(2);
 	await expect(changes.getByRole('button', numbers)).toHaveCount(0);
 	await expect(changes.getByRole('button', { name: 'README.md', exact: true })).toBeVisible();
-	await page.screenshot({ path: test.info().outputPath('changes.png') });
 
 	const message = sidebar.getByRole('textbox', { name: 'Commit message' });
 	await message.fill('Add numbers');
@@ -69,8 +68,7 @@ test('Changes shows a folder tree of changed files to stage, commit and undo', a
 	expect(readFileSync(`${root}/README.md`, 'utf8')).toBe('# tree\n');
 });
 
-test('a folder holding over 200 changes starts collapsed, again after switching Projects', async ({ page }, { project }) => {
-	test.skip(project.name !== 'desktop');
+test('a folder holding over 200 changes starts collapsed, again after switching Projects', { tag: '@desktop' }, async ({ page }) => {
 	const { root } = repository('bulk');
 	for (const folder of ['plugins', 'uploads']) {
 		mkdirSync(`${root}/export/${folder}`, { recursive: true });
@@ -98,8 +96,7 @@ test('a folder holding over 200 changes starts collapsed, again after switching 
 	await expect(changes.getByRole('listitem')).toHaveCount(3);
 });
 
-test('Changes takes LazyGit keys', async ({ page }, { project }) => {
-	test.skip(project.name !== 'desktop');
+test('Changes takes LazyGit keys', { tag: '@desktop' }, async ({ page }) => {
 	const { root, git } = repository('keys');
 	writeFileSync(`${root}/a.txt`, 'a\n');
 	git('add', '.');
@@ -131,7 +128,7 @@ test('Changes takes LazyGit keys', async ({ page }, { project }) => {
 	expect(git('log', '-1', '--format=%s')).toBe('Edit a');
 });
 
-test('a whole new or deleted file is marked in the gutter without tinting its lines', async ({ page }) => {
+test('a whole new or deleted file is marked in the gutter without tinting its lines', { tag: '@desktop' }, async ({ page }) => {
 	const { root, git } = repository('whole');
 	writeFileSync(`${root}/gone.ts`, 'export const gone = true;\n');
 	writeFileSync(`${root}/kept.ts`, 'export const kept = 1;\n');
@@ -153,7 +150,6 @@ test('a whole new or deleted file is marked in the gutter without tinting its li
 	const removed = diff.locator('.cm-merge-a .cm-changedLine, .cm-deletedChunk').first();
 	await expect(removed).toContainText('gone');
 	await expect.poll(() => transparent(removed)).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('deleted.png') });
 
 	await (await showSidebar(page)).getByRole('list', { name: 'Changes', exact: true }).getByRole('button', { name: 'kept.ts', exact: true }).click();
 	const modified = diff.locator('.cm-merge-b .cm-changedLine', { hasText: 'kept = 2' });
@@ -161,7 +157,7 @@ test('a whole new or deleted file is marked in the gutter without tinting its li
 	await expect.poll(() => transparent(modified)).toBe(false);
 });
 
-test('a staged file diffs HEAD with the index and an unstaged one the index with disk', async ({ page }) => {
+test('a staged file diffs HEAD with the index and an unstaged one the index with disk', { tag: '@desktop' }, async ({ page }) => {
 	const { root, git } = repository('sides');
 	writeFileSync(`${root}/file.ts`, 'export const value = 1;\n');
 	git('add', '.');
@@ -173,6 +169,7 @@ test('a staged file diffs HEAD with the index and an unstaged one the index with
 	const diff = page.locator('.diff:not([hidden])');
 
 	await sidebar.getByRole('list', { name: 'Staged Changes' }).getByRole('button', { name: 'file.ts', exact: true }).click();
+	await expect(page.getByRole('tab', { name: /file\.ts/ })).toHaveAttribute('aria-selected', 'true');
 	await expect(diff.locator('.sides')).toHaveText('HEAD ↔ index');
 	await expect(diff.locator('.cm-merge-b .cm-changedLine', { hasText: 'value = 2' })).toBeVisible();
 	await (await showSidebar(page)).getByRole('list', { name: 'Changes', exact: true }).getByRole('button', { name: 'file.ts', exact: true }).click();
@@ -180,7 +177,7 @@ test('a staged file diffs HEAD with the index and an unstaged one the index with
 	await expect(diff.locator('.cm-merge-b .cm-changedLine', { hasText: 'value = 3' })).toBeVisible();
 });
 
-test('the commit Rig drafts a message for the staged changes', async ({ page }) => {
+test('the commit Rig drafts a message for the staged changes', { tag: '@desktop' }, async ({ page }) => {
 	const { root, git } = repository('draft');
 	git('commit', '-q', '--allow-empty', '-m', 'Initial commit');
 	writeFileSync(`${root}/feature.ts`, 'export const feature = true;\n');
@@ -193,23 +190,16 @@ test('the commit Rig drafts a message for the staged changes', async ({ page }) 
 	await expect(sidebar.getByRole('textbox', { name: 'Commit message' })).toHaveValue('Hello and **welcome**! 👋');
 });
 
-test('Settings chooses the Rig that drafts commit messages', async ({ page }) => {
-	await page.goto('/');
-	await page.getByRole('button', { name: 'Settings' }).click();
-	const select = page.getByRole('dialog', { name: 'Settings' }).getByRole('combobox', { name: 'Commit messages' });
-	await expect(select).toHaveValue('Fake Claude');
-	await select.selectOption('Fake Codex');
-	await expect.poll(() => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain('commit_rig = "Fake Codex"');
-	await page.reload();
-	await page.getByRole('button', { name: 'Settings' }).click();
-	await expect(page.getByRole('dialog', { name: 'Settings' }).getByRole('combobox', { name: 'Commit messages' })).toHaveValue('Fake Codex');
-});
-
-test('Settings keeps the instructions for drafting commit messages', async ({ page }) => {
+test('Settings chooses the Rig and keeps the instructions for drafting commit messages', { tag: '@desktop' }, async ({ page }) => {
 	const config = () => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
 	await page.goto('/');
 	await page.getByRole('button', { name: 'Settings' }).click();
-	const instructions = page.getByRole('dialog', { name: 'Settings' }).getByRole('textbox', { name: 'Instructions' });
+	const settings = page.getByRole('dialog', { name: 'Settings' });
+	const select = settings.getByRole('combobox', { name: 'Commit messages' });
+	const instructions = settings.getByRole('textbox', { name: 'Instructions' });
+	await expect(select).toHaveValue('Fake Claude');
+	await select.selectOption('Fake Codex');
+	await expect.poll(config).toContain('commit_rig = "Fake Codex"');
 	const initial = await instructions.inputValue();
 	expect(initial).not.toBe('');
 	await instructions.fill('Twelve words or fewer.\nNo body.');
@@ -217,6 +207,7 @@ test('Settings keeps the instructions for drafting commit messages', async ({ pa
 	await expect.poll(config).toContain('commit_instructions = ');
 	await page.reload();
 	await page.getByRole('button', { name: 'Settings' }).click();
+	await expect(select).toHaveValue('Fake Codex');
 	await expect(instructions).toHaveValue('Twelve words or fewer.\nNo body.');
 	await instructions.fill('');
 	await instructions.blur();
@@ -224,7 +215,7 @@ test('Settings keeps the instructions for drafting commit messages', async ({ pa
 	await expect.poll(config).not.toContain('commit_instructions');
 });
 
-test('a branch publishes to origin, then pushes and pulls by its counts', async ({ page }) => {
+test('a branch publishes to origin, then pushes and pulls by its counts', { tag: '@desktop' }, async ({ page }) => {
 	const origin = `${process.env.STAMPEDE_E2E_ROOT}/origin.git`;
 	execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
 	const { root, git } = repository('remote');
@@ -260,10 +251,9 @@ test('a branch publishes to origin, then pushes and pulls by its counts', async 
 	await pull.click();
 	await expect(pull).toHaveText('0');
 	expect(readFileSync(`${root}/remote.txt`, 'utf8')).toBe('remote\n');
-	await page.screenshot({ path: test.info().outputPath('remote.png') });
 });
 
-test('the sidebar branch switches to a local branch, or a fetched remote one tracked locally', async ({ page }) => {
+test('the sidebar branch switches to a local branch, or a fetched remote one tracked locally', { tag: '@desktop' }, async ({ page }) => {
 	const origin = `${process.env.STAMPEDE_E2E_ROOT}/switch-origin.git`;
 	execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
 	const { root, git } = repository('switch');
@@ -283,7 +273,6 @@ test('the sidebar branch switches to a local branch, or a fetched remote one tra
 	await sidebar.getByRole('button', { name: 'Branch main' }).click();
 	await expect(dialog.getByRole('option', { name: 'main Current branch' })).toBeVisible();
 	await expect(dialog.getByRole('option', { name: 'origin/main' })).toBeVisible();
-	await page.screenshot({ path: test.info().outputPath('switch-branch.png') });
 	await dialog.getByRole('combobox').fill('feat');
 	await expect(dialog.getByRole('option')).toHaveCount(1);
 	await dialog.getByRole('option', { name: 'feature' }).click();
@@ -311,7 +300,7 @@ test('the sidebar branch switches to a local branch, or a fetched remote one tra
 	expect(readFileSync(`${root}/file.txt`, 'utf8')).toBe('dirty\n');
 });
 
-test('changes stash away and pop back', async ({ page }) => {
+test('changes stash away and pop back', { tag: '@desktop' }, async ({ page }) => {
 	const { root, git } = repository('stash');
 	writeFileSync(`${root}/file.txt`, 'one\n');
 	git('add', '.');
@@ -325,14 +314,13 @@ test('changes stash away and pop back', async ({ page }) => {
 	await expect(stashes.getByRole('listitem')).toHaveCount(1);
 	await expect(sidebar.getByText('No uncommitted changes')).toBeVisible();
 	expect(readFileSync(`${root}/file.txt`, 'utf8')).toBe('one\n');
-	await page.screenshot({ path: test.info().outputPath('stashes.png') });
 	await stashes.getByRole('button', { name: /^Pop / }).click();
 	await expect(stashes).toHaveCount(0);
 	await expect(sidebar.getByRole('list', { name: 'Changes', exact: true }).getByRole('button', { name: 'file.txt', exact: true })).toBeVisible();
 	expect(readFileSync(`${root}/file.txt`, 'utf8')).toBe('two\n');
 });
 
-test('a merge conflict blocks committing until it is resolved and staged', async ({ page }) => {
+test('a merge conflict blocks committing until it is resolved and staged', { tag: '@desktop' }, async ({ page }) => {
 	const { root, git } = repository('conflict');
 	writeFileSync(`${root}/clash.txt`, 'base\n');
 	git('add', '.');
@@ -354,7 +342,6 @@ test('a merge conflict blocks committing until it is resolved and staged', async
 	await expect(commit).toBeDisabled();
 	await sidebar.getByRole('button', { name: 'Stage clash.txt', exact: true }).click();
 	await expect(sidebar.getByRole('alert')).toContainText('still has conflict markers');
-	await page.screenshot({ path: test.info().outputPath('conflict.png') });
 
 	writeFileSync(`${root}/clash.txt`, 'both\n');
 	await sidebar.getByRole('button', { name: 'Stage clash.txt', exact: true }).click();
@@ -365,77 +352,56 @@ test('a merge conflict blocks committing until it is resolved and staged', async
 	expect(git('log', '-1', '--format=%P').split(' ')).toHaveLength(2);
 });
 
-test('History edits the message of an earlier commit', async ({ page }) => {
-	const { root, git } = repository('reword');
-	for (const name of ['First', 'Second']) {
-		writeFileSync(`${root}/${name}.txt`, `${name}\n`);
-		git('add', '.');
-		git('commit', '-qm', name);
-	}
-	await openProject(page, 'reword');
-	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'History' }).click();
-	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD~1')}` }).click();
-	await page.getByRole('menuitem', { name: 'Edit Message…' }).click();
-	const dialog = page.getByRole('dialog', { name: 'Edit commit message' });
-	const summary = dialog.getByRole('textbox', { name: 'Summary' });
-	await expect(summary).toHaveValue('First');
-	await expect(dialog.getByRole('textbox', { name: 'Description' })).toHaveValue('');
-	await page.screenshot({ path: test.info().outputPath('reword.png') });
-	await summary.fill('First, reworded');
-	await summary.press('Enter');
-	await expect(dialog).toBeVisible();
-	await page.keyboard.type('With a body');
-	await page.keyboard.press('Control+Enter');
-	await expect(dialog).toBeHidden();
-	await expect(sidebar.getByRole('list', { name: 'Commits' }).getByRole('button', { name: /First, reworded/ })).toBeVisible();
-	expect(git('log', '-1', '--format=%B', 'HEAD~1')).toBe('First, reworded\n\nWith a body');
-	expect(git('log', '-1', '--format=%s')).toBe('Second');
-});
-
-test('History squashes newer commits into an earlier one', async ({ page }) => {
-	const { root, git } = repository('squash');
+test('History rewords and squashes earlier commits and copies their hashes', { tag: '@desktop' }, async ({ page, context }) => {
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+	const { root, git } = repository('history');
 	for (const name of ['First', 'Second', 'Third']) {
 		writeFileSync(`${root}/${name}.txt`, `${name}\n`);
 		git('add', '.');
 		git('commit', '-qm', name === 'Second' ? 'Second\n\nWhy it changed' : name);
 	}
-	await openProject(page, 'squash');
+	const head = git('rev-parse', '--short', 'HEAD');
+	const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+	await openProject(page, 'history');
 	const sidebar = await showSidebar(page);
+	const commits = sidebar.getByRole('list', { name: 'Commits' });
 	await sidebar.getByRole('button', { name: 'History' }).click();
-	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD')}` }).click();
+	await sidebar.getByRole('button', { name: `Actions for ${head}` }).click();
 	await expect(page.getByRole('menuitem', { name: 'Edit Message…' })).toBeVisible();
 	await expect(page.getByRole('menuitem', { name: /Squash/ })).toHaveCount(0);
-	await page.keyboard.press('Escape');
+	await page.getByRole('menuitem', { name: 'Copy Short Hash' }).click();
+	await expect.poll(clipboard).toBe(head);
+
 	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD~1')}` }).click();
 	await page.getByRole('menuitem', { name: 'Squash Newer Commits Into This…' }).click();
-	const dialog = page.getByRole('dialog', { name: 'Squash 2 commits' });
-	await expect(dialog.getByRole('textbox', { name: 'Summary' })).toHaveValue('Second');
-	await expect(dialog.getByRole('textbox', { name: 'Description' })).toHaveValue('Why it changed\n\nThird');
-	await page.screenshot({ path: test.info().outputPath('squash.png') });
-	await dialog.getByRole('textbox', { name: 'Summary' }).fill('Second and third');
-	await dialog.getByRole('button', { name: 'Squash' }).click();
-	await expect(dialog).toBeHidden();
-	await expect(sidebar.getByRole('list', { name: 'Commits' }).getByRole('button', { name: /Second and third/ })).toBeVisible();
+	const squash = page.getByRole('dialog', { name: 'Squash 2 commits' });
+	await expect(squash.getByRole('textbox', { name: 'Summary' })).toHaveValue('Second');
+	await expect(squash.getByRole('textbox', { name: 'Description' })).toHaveValue('Why it changed\n\nThird');
+	await squash.getByRole('textbox', { name: 'Summary' }).fill('Second and third');
+	await squash.getByRole('button', { name: 'Squash' }).click();
+	await expect(squash).toBeHidden();
+	await expect(commits.getByRole('button', { name: /Second and third/ })).toBeVisible();
 	expect(git('log', '--format=%s')).toBe('Second and third\nFirst');
 	expect(git('log', '-1', '--format=%B')).toBe('Second and third\n\nWhy it changed\n\nThird');
 	expect(git('ls-files')).toBe('First.txt\nSecond.txt\nThird.txt');
-});
 
-test('History copies the short and full hash of a commit', async ({ page, context }) => {
-	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-	const { root, git } = repository('hashes');
-	writeFileSync(`${root}/README.md`, '# hashes\n');
-	git('add', '.');
-	git('commit', '-qm', 'Initial');
-	const short = git('rev-parse', '--short', 'HEAD');
-	await openProject(page, 'hashes');
-	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'History' }).click();
-	await sidebar.getByRole('button', { name: `Actions for ${short}` }).click();
-	await page.getByRole('menuitem', { name: 'Copy Short Hash' }).click();
-	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(short);
-	await sidebar.getByRole('list', { name: 'Commits' }).getByRole('button', { name: /Initial/ }).focus();
+	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD~1')}` }).click();
+	await page.getByRole('menuitem', { name: 'Edit Message…' }).click();
+	const reword = page.getByRole('dialog', { name: 'Edit commit message' });
+	const summary = reword.getByRole('textbox', { name: 'Summary' });
+	await expect(summary).toHaveValue('First');
+	await expect(reword.getByRole('textbox', { name: 'Description' })).toHaveValue('');
+	await summary.fill('First, reworded');
+	await summary.press('Enter');
+	await expect(reword).toBeVisible();
+	await page.keyboard.type('With a body');
+	await page.keyboard.press('Control+Enter');
+	await expect(reword).toBeHidden();
+	await expect(commits.getByRole('button', { name: /First, reworded/ })).toBeVisible();
+	expect(git('log', '-1', '--format=%B', 'HEAD~1')).toBe('First, reworded\n\nWith a body');
+	expect(git('log', '-1', '--format=%s')).toBe('Second and third');
+
+	await commits.getByRole('button', { name: /Second and third/ }).focus();
 	await page.keyboard.press('Shift+Y');
-	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(git('rev-parse', 'HEAD'));
+	await expect.poll(clipboard).toBe(git('rev-parse', 'HEAD'));
 });

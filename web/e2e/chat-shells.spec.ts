@@ -50,7 +50,6 @@ test('running shells stay visible across sessions and disappear when finished', 
 		await page.getByRole('dialog', { name: 'Subagents' }).getByRole('button', { name: /^Build the app/ }).click();
 	} else await dock.getByRole('button', { name: /^Build the app/ }).click();
 	await expect(shells.getByText('Server ready', { exact: true })).toBeVisible();
-	await page.screenshot({ path: test.info().outputPath('running-shells.png') });
 	if (phone) {
 		await expect(header).toBeInViewport();
 		await header.click();

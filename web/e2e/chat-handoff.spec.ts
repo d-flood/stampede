@@ -7,7 +7,7 @@ import { openProject } from './shell.ts';
 const summary = 'Continue implementing authentication.\n\nKeep local-first behavior. Login is unfinished; next inspect src/auth.ts. Verification: no tests run.';
 
 for (const agent of ['claude-code', 'codex'] as const) {
-	test(`${agent} prepares an editable handoff in the chosen Rig`, async ({ page, request }) => {
+	test(`${agent} prepares an editable handoff in the chosen Rig`, { tag: agent === 'codex' ? '@desktop' : [] }, async ({ page, request }) => {
 		const root = process.env.STAMPEDE_E2E_ROOT!;
 		const fixture = fileURLToPath(new URL(`../../crates/stampede/tests/fixtures/chats/${agent}/handoff.synthetic.jsonl`, import.meta.url));
 		mkdirSync(`${root}/handoff`);

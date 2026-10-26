@@ -37,7 +37,6 @@ test('image files open as previews, fit the viewport, and refresh after disk cha
 				&& box.x >= 0 && box.right <= innerWidth && box.bottom <= innerHeight;
 		})).toBe(true);
 	}
-	await page.screenshot({ path: test.info().outputPath('image-preview.png') });
 	const png = page.getByRole('tabpanel').getByRole('img', { name: 'image.png', exact: true });
 	const original = await png.getAttribute('src');
 	writeFileSync(`${root}/image.png`, Buffer.from(images[2], 'base64'));
@@ -54,7 +53,7 @@ test('image files open as previews, fit the viewport, and refresh after disk cha
 	await expect(page.getByRole('tabpanel').getByRole('alert')).toHaveText('Unable to display image');
 });
 
-test('SVG toggles between rendered and editable source without losing edits or running scripts', async ({ page }, { project }) => {
+test('SVG toggles between rendered and editable source without losing edits or running scripts', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `svg-${project.name}`;
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root);
@@ -73,7 +72,6 @@ test('SVG toggles between rendered and editable source without losing edits or r
 	await expect(source).toBeVisible();
 	await expect(source).toContainText('width="200"');
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('svg-source.png') });
 	await source.focus();
 	await page.keyboard.press('ControlOrMeta+a');
 	await page.keyboard.insertText(svg(300));
@@ -107,5 +105,4 @@ test('SVG toggles between rendered and editable source without losing edits or r
 	await expect.poll(() => readFileSync(`${root}/drawing.SVG`, 'utf8')).toBe(svg(500));
 	expect(await page.evaluate(() => 'svgExecuted' in window)).toBe(false);
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await page.screenshot({ path: test.info().outputPath('svg-preview.png') });
 });

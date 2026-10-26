@@ -100,8 +100,7 @@ test('switching Tab or Project paints within 50 ms, and opening a file within 10
 	check('Open file', opens, 100);
 });
 
-test('an idle Terminal draws nothing, and a hidden one catches up when shown', async ({ page }, { project }) => {
-	test.skip(project.name !== 'desktop', 'measured on the desktop only');
+test('an idle Terminal draws nothing, and a hidden one catches up when shown', { tag: '@desktop' }, async ({ page }) => {
 	await page.addInitScript(() => {
 		const request = window.requestAnimationFrame.bind(window);
 		window.animationFrames = 0;
@@ -121,7 +120,7 @@ test('an idle Terminal draws nothing, and a hidden one catches up when shown', a
 		return { all: window.animationFrames! - before, beyondVisible: window.animationFrames! - before - visible };
 	});
 	const ready = () => expect.poll(() => page.evaluate(() => window.terminal?.hasBracketedPaste())).toBe(true);
-	await openProject(page, fixture(`perf-${project.name}-idle`));
+	await openProject(page, fixture('perf-idle'));
 	const first = await newTerminal(page);
 	await page.locator('.terminal:visible [contenteditable="true"]').focus();
 	await ready();
@@ -145,9 +144,8 @@ test('an idle Terminal draws nothing, and a hidden one catches up when shown', a
 	await expect.poll(() => screen(page)).toMatch(/^40$/m);
 });
 
-test('a fresh load on the phone paints the active Terminal within 1.5 s', async ({ page, context }, { project }) => {
-	test.skip(project.name !== 'pixel', 'measured on the phone only');
-	await openProject(page, fixture(`perf-${project.name}-cold`));
+test('a fresh load on the phone paints the active Terminal within 1.5 s', { tag: '@phone' }, async ({ page, context }) => {
+	await openProject(page, fixture('perf-cold'));
 	const terminal = await newTerminal(page);
 	const deviceId = await page.evaluate(() => sessionStorage.getItem('deviceId'));
 	const layout = () => page.request.get(`/api/devices/${deviceId}/layout`).then((response) => response.text());

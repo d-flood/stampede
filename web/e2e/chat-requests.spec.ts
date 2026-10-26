@@ -5,14 +5,14 @@ import { closeProject, openProject } from './shell.ts';
 
 const prompt = 'Run the shell command `mkdir -p out && touch out/approved.txt` exactly as written, then reply with the single word Done.';
 
-test('past Claude questions reopen with their full options, previews and answers', async ({ page }, { project }) => {
+test('past Claude questions reopen with their full options, previews and answers', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `past-questions-${project.name}`;
 	const root = process.env.STAMPEDE_E2E_ROOT;
 	const path = `${root}/projects/${name}`;
 	const sessions = `${root}/claude/projects/${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
 	mkdirSync(path, { recursive: true });
 	mkdirSync(sessions, { recursive: true });
-	const session = project.name === 'pixel' ? '450deab6-5332-4d11-b2e4-06bbbd5902c5' : 'fbcf4472-975e-4690-993d-a4cda05e7c84';
+	const session = 'fbcf4472-975e-4690-993d-a4cda05e7c84';
 	const questions = [{ header: 'Icons', question: 'Which icon mapping?', options: [{ label: 'Distinct icons', description: 'Use a different icon for every tool.', preview: 'Read   file-text\nEdit   pencil-simple' }, { label: 'One icon', description: 'Use the same icon for every tool.' }], multiSelect: false }];
 	const entries = [
 		{ type: 'user', uuid: 'prompt', parentUuid: null, sessionId: session, message: { role: 'user', content: 'Review previous choices' } },
@@ -56,7 +56,7 @@ async function launch(page: Page, rig: string, name: string) {
 }
 
 for (const agent of ['Claude', 'Codex']) {
-	test(`tapping Allow on a ${agent} approval card resolves it`, async ({ page }, { project }) => {
+	test(`tapping Allow on a ${agent} approval card resolves it`, { tag: agent === 'Codex' ? '@desktop' : [] }, async ({ page }, { project }) => {
 		const { tab, panel, composer, card } = await launch(page, `${agent} Approval`, `requests-${agent}-${project.name}`);
 		await expect(card.getByRole('heading', { name: `${agent} wants to run a command` })).toBeVisible();
 		await expect(card.locator('pre')).toHaveText('mkdir -p out\ntouch out/approved.txt');
@@ -72,7 +72,7 @@ for (const agent of ['Claude', 'Codex']) {
 	});
 }
 
-test('sending from the Composer while a card is up denies the request instead', async ({ page }, { project }) => {
+test('sending from the Composer while a card is up denies the request instead', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const { tab, panel, composer, card } = await launch(page, 'Claude Approval', `requests-deny-${project.name}`);
 	await expect(card).toBeVisible();
 	await composer.fill('/');
@@ -88,7 +88,7 @@ test('sending from the Composer while a card is up denies the request instead', 
 });
 
 for (const agent of ['Claude', 'Codex']) {
-	test(`${agent} approval rules show shortened prefixes and scope`, async ({ page }, { project }) => {
+	test(`${agent} approval rules show shortened prefixes and scope`, { tag: agent === 'Codex' ? '@desktop' : [] }, async ({ page }, { project }) => {
 		const { card, panel } = await launch(page, `${agent} Approval`, `rules-${agent}-${project.name}`);
 		await card.getByRole('button', { name: 'Always allow' }).click();
 		await expect(card.getByLabel('Rule scope')).toHaveValue('chat');
@@ -103,7 +103,7 @@ for (const agent of ['Claude', 'Codex']) {
 		await closeProject(page, `rules-${agent}-${project.name}`);
 	});
 
-	test(`${agent} questions step through choices and dock a plan`, async ({ page }, { project }) => {
+	test(`${agent} questions step through choices and dock a plan`, { tag: agent === 'Codex' ? '@desktop' : [] }, async ({ page }, { project }) => {
 		const { panel } = await launch(page, `${agent} Questions`, `questions-${agent}-${project.name}`);
 		const question = panel.getByRole('region', { name: 'Question', exact: true });
 		await expect(question).toContainText('Question 1 of 2');

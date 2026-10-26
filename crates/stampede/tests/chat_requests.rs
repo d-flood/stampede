@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::{env, fs, time::Duration};
 
@@ -47,7 +47,7 @@ async fn a_codex_deny_cancels_and_a_deny_with_an_instruction_declines_then_steer
         "Run the shell command `touch approved.txt`, then reply with the single word Done.",
     )
     .await;
-    assert!(device.items.contains(&json!({ "kind": "user", "text": INSTEAD, "images": 0 })));
+    assert!(device.items.contains(&json!({ "kind": "user", "text": INSTEAD, "images": 0, "rewindFrom": 3 })));
     close_chat(&mut device.socket, launched.server.root.path(), &device.chat_id).await;
     assert_eq!(launched.answers(), [json!({ "decision": "cancel" }), json!({ "decision": "decline" })]);
     let received = launched.received();
