@@ -31,8 +31,6 @@
 
 	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, needs, focused, onfocus, onreorder, onclose, ondelete, onworktree, onmenu, onpick, onicon, attention }: Props = $props();
 
-	const gutter = $derived(projects.some((project) => worktrees.get(project.id)?.length));
-
 	let list: HTMLOListElement;
 	let drag = $state<{ id: string; y: number; order: string[]; moved: boolean }>();
 	let dragged = false;
@@ -94,7 +92,6 @@
 				working={working.has(project.id)}
 				needs={needs.get(project.id) ?? 0}
 				compact={!open}
-				{gutter}
 				{focused}
 				dragging={!!drag?.moved && drag.id === project.id}
 				onfocus={(id) => {

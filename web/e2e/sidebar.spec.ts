@@ -109,7 +109,7 @@ test('desktop sidebar slides open and closed over several frames', async ({ page
 					const main = document.querySelector('main')!;
 					const lefts = [main.getBoundingClientRect().left];
 					const start = performance.now();
-					document.querySelector<HTMLButtonElement>('button[aria-label="Sidebar"]')!.click();
+					[...document.querySelectorAll<HTMLButtonElement>('button[aria-label="Sidebar"]')].find((button) => button.checkVisibility({ visibilityProperty: true }))!.click();
 					requestAnimationFrame(function frame(now) {
 						lefts.push(main.getBoundingClientRect().left);
 						if (now - start < 500) requestAnimationFrame(frame);
@@ -127,4 +127,25 @@ test('desktop sidebar slides open and closed over several frames', async ({ page
 		expect(Math.abs(last - first)).toBeGreaterThan(150);
 		expect(new Set(lefts.filter((left) => left > Math.min(first, last) + 0.5 && left < Math.max(first, last) - 0.5).map(Math.round)).size).toBeGreaterThanOrEqual(3);
 	}
+});
+
+test('desktop sidebar toggle sits in the open sidebar corner and in the tab strip once closed, keeping focus', async ({ page }, { project }) => {
+	test.skip(project.name !== 'desktop');
+	await openProject(page, 'alpha');
+	const sidebar = await showSidebar(page);
+	const docked = sidebar.getByRole('button', { name: 'Sidebar', exact: true });
+	const strip = page.getByRole('main').getByRole('button', { name: 'Sidebar', exact: true });
+	await expect(strip).toHaveCount(0);
+	const [panel, corner] = [(await sidebar.boundingBox())!, (await docked.boundingBox())!];
+	expect(panel.x + panel.width - (corner.x + corner.width)).toBeLessThan(12);
+	expect(corner.y - panel.y).toBeLessThan(12);
+
+	await docked.focus();
+	await page.keyboard.press('Enter');
+	await expect(sidebar).toBeHidden();
+	await expect(strip).toBeFocused();
+	await page.keyboard.press('Enter');
+	await expect(sidebar).toBeVisible();
+	await expect(strip).toHaveCount(0);
+	await expect(docked).toBeFocused();
 });

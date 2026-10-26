@@ -94,16 +94,7 @@ test('worktrees are counted on their Project and listed under it, grouped in the
 	await expect.poll(below).toBe(true);
 	await page.screenshot({ path: test.info().outputPath('active.png') });
 
-	if (phone) {
-		const fold = row.getByRole('button', { name: 'Hide worktrees of alpha' });
-		await expect(fold).toHaveAttribute('aria-expanded', 'true');
-		await fold.click();
-		await expect(worktrees).toHaveCount(0);
-		await expect(row.locator('.count')).toHaveText('2');
-		await row.getByRole('button', { name: 'Show worktrees of alpha' }).click();
-		await expect(worktrees.getByRole('button')).toHaveCount(2);
-		return;
-	}
+	if (phone) return;
 
 	await rail.getByRole('button', { name: 'beta', exact: true }).click();
 	await expect(worktrees).toHaveCount(0);
@@ -123,9 +114,6 @@ test('worktrees are counted on their Project and listed under it, grouped in the
 		return !!top && !!list && list.y >= top.y + top.height - 1 && list.x > top.x;
 	}).toBe(true);
 	await page.screenshot({ path: test.info().outputPath('expanded.png') });
-	await row.getByRole('button', { name: 'Hide worktrees of alpha' }).click();
-	await expect(worktrees).toHaveCount(0);
-	await expect(row.locator('.count')).toHaveText('2');
 
 	await page.reload();
 	await expect(rail.getByRole('button', { name: 'Collapse project rail' })).toHaveAttribute('aria-expanded', 'true');

@@ -94,6 +94,7 @@
 	let dragged = false;
 	let main: HTMLElement;
 	let sidebar = $state(restored.sidebar?.open ?? form() === 'desktop');
+	let handoff = false;
 	let section = $state<Section>(restored.sidebar?.section ?? 'files');
 	let rail = $state(restored.rail?.open ?? false);
 	let closing = $state<OpenFile>();
@@ -855,11 +856,23 @@
 		onrename={(from, to) => focused && retarget(focused.id, from, to)}
 		ondiff={(change, against) => focused && openDiff(focused.id, change, against)}
 		onepic={(slug) => focused && openEpic(focused.id, slug)}
-	/>
+	>
+		{#snippet toggle()}{@render sidebarToggle(true)}{/snippet}
+	</Sidebar>
 {/snippet}
 
-{#snippet sidebarToggle()}
-	<IconButton label="Sidebar" aria-expanded={sidebar} onclick={() => (sidebar = !sidebar)}>
+{#snippet sidebarToggle(inside: boolean)}
+	<IconButton
+		label="Sidebar"
+		aria-expanded={sidebar}
+		onclick={() => ((handoff = true), (sidebar = !sidebar))}
+		{@attach (node) => {
+			if (sidebar === inside && handoff) {
+				handoff = false;
+				node.focus();
+			}
+		}}
+	>
 		<SidebarSimple style={sidebarPosition.side === 'right' ? 'transform: scaleX(-1)' : undefined} />
 	</IconButton>
 {/snippet}
@@ -878,8 +891,8 @@
 				onfocusin={() => focused && group.active && choose(focused.id, group.active)}
 				onpointerdown={grab}
 			>
-				{#if !phone && sidebarPosition.side === 'left' && index === 0}
-					{@render sidebarToggle()}
+				{#if !phone && !sidebar && sidebarPosition.side === 'left' && index === 0}
+					{@render sidebarToggle(false)}
 				{/if}
 				<div role="tablist" aria-label={split ? `${index ? 'Right' : 'Left'} Tabs` : 'Tabs'}>
 					{#if focused}
@@ -984,8 +997,8 @@
 						{/snippet}
 					</Menu>
 				{/if}
-				{#if !phone && sidebarPosition.side === 'right' && index === groups.length - 1}
-					{@render sidebarToggle()}
+				{#if !phone && !sidebar && sidebarPosition.side === 'right' && index === groups.length - 1}
+					{@render sidebarToggle(false)}
 				{/if}
 			</div>
 		{/each}

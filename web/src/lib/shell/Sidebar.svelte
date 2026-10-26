@@ -37,6 +37,7 @@
 	import Search from '#lib/shell/Search.svelte';
 	import Usage from '#lib/shell/Usage.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import type { Snippet } from 'svelte';
 	import CaretUpDown from '~icons/ph/caret-up-down';
 	import GitBranch from '~icons/ph/git-branch';
 
@@ -54,9 +55,10 @@
 		onrename(from: string, to: string): void;
 		ondiff(change: Change, against: Against): void;
 		onepic(slug: string): void;
+		toggle?: Snippet;
 	};
 
-	let { open, project, label, git, device, section = $bindable(), usage, codexResets, epics, onopen, onrename, ondiff, onepic }: Props = $props();
+	let { open, project, label, git, device, section = $bindable(), usage, codexResets, epics, onopen, onrename, ondiff, onepic, toggle }: Props = $props();
 
 	let switching = $state(false);
 	const Picker = $derived(picker());
@@ -98,8 +100,13 @@
 >
 	<div class="clip">
 		<div class="content" style:width={form() === 'desktop' ? `${size}px` : undefined}>
+			{#if form() === 'desktop'}
+				<header>
+					{#if project}<h1 title={project.path}>{label}</h1>{/if}
+					{@render toggle?.()}
+				</header>
+			{/if}
 			{#if project}
-				{#if form() === 'desktop'}<h1 title={project.path}>{label}</h1>{/if}
 				{#if git?.branch && project.worktree}
 					<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>
 				{:else if git?.branch}
@@ -177,8 +184,7 @@
 		background: var(--surface-1);
 		transition:
 			width var(--dur-med) var(--ease-out),
-			margin var(--dur-med) var(--ease-out),
-			visibility var(--dur-med);
+			margin var(--dur-med) var(--ease-out);
 	}
 
 	.dragging {
@@ -188,6 +194,10 @@
 	.closed {
 		margin-right: calc(-1 * var(--gutter) - 2 * var(--border-width));
 		visibility: hidden;
+		transition:
+			width var(--dur-med) var(--ease-out),
+			margin var(--dur-med) var(--ease-out),
+			visibility var(--dur-med);
 	}
 
 	.right.closed {
@@ -264,9 +274,23 @@
 		min-width: 0;
 	}
 
+	header {
+		display: flex;
+		justify-content: flex-end;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-2) var(--space-2) 0 var(--space-4);
+	}
+
+	.right header {
+		flex-direction: row-reverse;
+		padding: var(--space-2) var(--space-4) 0 var(--space-2);
+	}
+
 	h1 {
+		flex: 1;
+		min-width: 0;
 		margin: 0;
-		padding: var(--space-3) var(--space-4) 0;
 		overflow: hidden;
 		font-size: var(--font-size-lg);
 		text-overflow: ellipsis;

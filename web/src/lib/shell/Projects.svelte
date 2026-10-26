@@ -24,8 +24,6 @@
 	};
 
 	let { projects, labels, worktrees, epics, roots, working, needs, focused, onfocus, onclose, ondelete, onworktree, onmenu, onpick, onicon }: Props = $props();
-
-	const gutter = $derived(projects.some((project) => worktrees.get(project.id)?.length));
 </script>
 
 <nav aria-label="Projects">
@@ -40,7 +38,6 @@
 				root={roots.has(project.id)}
 				working={working.has(project.id)}
 				needs={needs.get(project.id) ?? 0}
-				{gutter}
 				{focused}
 				{onfocus}
 				{onclose}

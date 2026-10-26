@@ -4,10 +4,7 @@
 	import { counts } from '#lib/epics.svelte.ts';
 	import type { Tile } from '#lib/projects.ts';
 	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
-	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
-	import CaretDown from '~icons/ph/caret-down';
-	import CaretRight from '~icons/ph/caret-right';
 	import CircleNotchBold from '~icons/ph/circle-notch-bold';
 
 	type Props = {
@@ -20,7 +17,6 @@
 		working?: boolean;
 		needs?: number;
 		compact?: boolean;
-		gutter?: boolean;
 		focused?: string;
 		dragging?: boolean;
 		onfocus(id: string): void;
@@ -31,13 +27,12 @@
 		onicon(project: Project): void;
 	};
 
-	let { project, label, labels, tiles, epics, root, working = false, needs = 0, compact = false, gutter = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onmenu, onicon }: Props =
+	let { project, label, labels, tiles, epics, root, working = false, needs = 0, compact = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onmenu, onicon }: Props =
 		$props();
 
-	let folded = $state(false);
 	const runs = $derived(epics.filter((epic) => epic.run && !epic.archived));
 	const active = $derived(project.id === focused || tiles.some((tile) => tile.id === focused));
-	const listed = $derived(tiles.length > 0 && (compact ? active : !folded));
+	const listed = $derived(tiles.length > 0 && (!compact || active));
 
 	function select(event: MouseEvent & { currentTarget: HTMLElement }, id: string) {
 		// A long-press opens the menu on a timer, and its release still clicks.
@@ -46,51 +41,42 @@
 </script>
 
 <li class={compact ? 'compact' : 'card'} class:tray={compact && listed}>
-	<div class="head" class:reserve={!compact && gutter}>
-		<Menu context items={[
-			{ label: 'Change project icon…', onselect: () => onicon(project) },
-			...(root ? [{ label: 'New worktree…', onselect: () => onworktree(project) }] : []),
-			{ label: 'Close', onselect: () => onclose(project.id) }
-		]} onopen={() => onmenu(project.id)}>
-			{#snippet trigger(props)}
-				<button
-					{...props}
-					tabindex={0}
-					class="project squircle"
-					class:focused={project.id === focused}
-					class:dragging
-					aria-label={label}
-					aria-current={project.id === focused}
-					title={compact ? label : undefined}
-					data-project={project.id}
-					onclick={(event) => select(event, project.id)}
-				>
-					<span class="square squircle">
-						<ProjectIcon {project} />
-						{#if needs}<span class="attention">{needs}</span>{/if}
-						{#if tiles.length}<span class="count" title="{tiles.length} {tiles.length === 1 ? 'worktree' : 'worktrees'}">{tiles.length}</span>{/if}
-						{#if working}<span class="spinner" title="working"><CircleNotchBold /></span>{/if}
-					</span>
-					<span class="text">
-						<strong>{label}</strong>
-						<span class="path">{project.path}</span>
-						{#each runs as epic (epic.slug)}
-							{@const tally = counts(epic)}
-							<span class="run">Run {epic.slug} · <span class="resolved">{tally.merged + tally.skipped} of {epic.tickets.length}</span></span>
-							<Progress {epic} />
-						{/each}
-					</span>
-				</button>
-			{/snippet}
-		</Menu>
-		{#if !compact && tiles.length}
-			<span class="fold">
-				<IconButton label="{folded ? 'Show' : 'Hide'} worktrees of {label}" aria-expanded={!folded} onclick={() => (folded = !folded)}>
-					{#if folded}<CaretRight />{:else}<CaretDown />{/if}
-				</IconButton>
-			</span>
-		{/if}
-	</div>
+	<Menu context items={[
+		{ label: 'Change project icon…', onselect: () => onicon(project) },
+		...(root ? [{ label: 'New worktree…', onselect: () => onworktree(project) }] : []),
+		{ label: 'Close', onselect: () => onclose(project.id) }
+	]} onopen={() => onmenu(project.id)}>
+		{#snippet trigger(props)}
+			<button
+				{...props}
+				tabindex={0}
+				class="project squircle"
+				class:focused={project.id === focused}
+				class:dragging
+				aria-label={label}
+				aria-current={project.id === focused}
+				title={compact ? label : undefined}
+				data-project={project.id}
+				onclick={(event) => select(event, project.id)}
+			>
+				<span class="square squircle">
+					<ProjectIcon {project} />
+					{#if needs}<span class="attention">{needs}</span>{/if}
+					{#if tiles.length}<span class="count" title="{tiles.length} {tiles.length === 1 ? 'worktree' : 'worktrees'}">{tiles.length}</span>{/if}
+					{#if working}<span class="spinner" title="working"><CircleNotchBold /></span>{/if}
+				</span>
+				<span class="text">
+					<strong>{label}</strong>
+					<span class="path">{project.path}</span>
+					{#each runs as epic (epic.slug)}
+						{@const tally = counts(epic)}
+						<span class="run">Run {epic.slug} · <span class="resolved">{tally.merged + tally.skipped} of {epic.tickets.length}</span></span>
+						<Progress {epic} />
+					{/each}
+				</span>
+			</button>
+		{/snippet}
+	</Menu>
 	{#if tiles.length}
 		<div class="worktrees" class:shut={!listed} role="group" aria-label="Worktrees of {label}">
 			{#each tiles as tile (tile.id)}
@@ -157,27 +143,8 @@
 	.tray {
 		margin: calc(-1 * var(--space-1));
 		padding: var(--space-1);
-		background: var(--surface-1);
-		box-shadow: inset 0 0 0 var(--border-width) var(--border);
-	}
-
-	.head {
-		position: relative;
-		display: flex;
-		align-items: center;
-		transition: padding var(--dur-med) var(--ease-out);
-	}
-
-	.reserve {
-		padding-right: calc(var(--target-min) + var(--space-2));
-	}
-
-	.fold {
-		position: absolute;
-		top: 50%;
-		right: 0;
-		translate: 0 -50%;
-		animation: appear var(--dur-med) ease-out var(--dur-fast) backwards;
+		background: var(--color-bg);
+		box-shadow: inset 0 0 0 var(--border-width) var(--border-strong);
 	}
 
 	.project {
@@ -232,7 +199,8 @@
 		color: var(--color-fg);
 	}
 
-	.project::before {
+	.project::before,
+	.tile::before {
 		content: '';
 		position: absolute;
 		top: 22%;
@@ -248,7 +216,12 @@
 			scale var(--dur-med) var(--ease-out);
 	}
 
-	.compact .project.focused::before {
+	.tile::before {
+		left: calc(-1 * var(--space-3) - var(--square) + var(--target-min));
+	}
+
+	.compact .project.focused::before,
+	.compact .worktree.focused .tile::before {
 		opacity: 1;
 		scale: 1;
 	}
@@ -331,6 +304,7 @@
 	}
 
 	.count {
+		z-index: 1;
 		bottom: calc(-1 * var(--space-1) - var(--border-width));
 		left: calc(-1 * var(--space-1) - var(--border-width));
 		color: var(--muted-fg);
@@ -393,8 +367,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-1);
-		overflow: clip;
-		overflow-clip-margin: var(--space-1);
+		padding-left: calc(var(--square) - var(--target-min));
+		clip-path: inset(calc(-1 * var(--space-1)) -100vmax);
 		transition:
 			height var(--dur-med) var(--ease-out),
 			margin var(--dur-med) var(--ease-out),
@@ -422,9 +396,9 @@
 		align-items: center;
 		gap: 0;
 		box-sizing: border-box;
-		width: var(--square);
-		min-height: calc(var(--square) - 6px);
-		padding: 0 0 0 3px;
+		width: var(--target-min);
+		min-height: var(--target-min);
+		padding: 0;
 		border: none;
 		border-radius: var(--radius-md);
 		background: none;
@@ -451,15 +425,16 @@
 	.worktree:not(:last-child)::after {
 		content: '';
 		position: absolute;
-		left: calc(-1 * var(--space-3));
+		left: calc(-1 * var(--space-2));
 		border-left: var(--border-width) solid var(--border-strong);
-		opacity: 0;
-		transition: opacity calc(var(--dur-fast) / 2) linear;
+		transition:
+			left var(--dur-med) var(--ease-out),
+			width var(--dur-med) var(--ease-out);
 	}
 
 	.worktree::before {
 		top: calc(-1 * var(--space-1));
-		width: calc(var(--space-3) - var(--space-1));
+		width: var(--space-1);
 		height: calc(50% + var(--space-1));
 		border-bottom: var(--border-width) solid var(--border-strong);
 		border-bottom-left-radius: var(--radius-md);
@@ -472,8 +447,11 @@
 
 	.card .worktree::before,
 	.card .worktree:not(:last-child)::after {
-		opacity: 1;
-		transition: opacity var(--dur-med) var(--dur-fast);
+		left: calc(-1 * var(--space-3));
+	}
+
+	.card .worktree::before {
+		width: calc(var(--space-3) - var(--space-1));
 	}
 
 	.card .worktree:hover {
@@ -489,8 +467,8 @@
 		flex: none;
 		place-items: center;
 		box-sizing: border-box;
-		width: calc(var(--square) - 6px);
-		height: calc(var(--square) - 6px);
+		width: var(--target-min);
+		height: var(--target-min);
 		border: var(--border-width) solid var(--muted-fg);
 		border-radius: calc(var(--radius-tile) - 2px);
 		background: var(--surface-1);
@@ -512,8 +490,8 @@
 	}
 
 	.compact .worktree.focused .tile {
-		outline: var(--border-width) solid var(--color-fg);
-		outline-offset: var(--border-width);
+		border-color: currentColor;
+		background: var(--surface-3);
 	}
 
 	.tile.working,
@@ -558,12 +536,6 @@
 	@keyframes spin {
 		to {
 			transform: rotate(1turn);
-		}
-	}
-
-	@keyframes appear {
-		from {
-			opacity: 0;
 		}
 	}
 </style>
