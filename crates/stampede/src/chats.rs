@@ -712,16 +712,16 @@ pub struct Chat {
 pub struct Session {
     pub agent: Agent,
     pub session_id: String,
-    pub first_prompt: String,
+    pub title: String,
     pub updated_at: u64,
 }
 
-const PROMPT: usize = 200;
+const SESSION_TITLE: usize = 200;
 
 impl Session {
-    fn new(agent: Agent, session_id: &str, prompt: &str, updated_at: u64) -> Self {
-        let first_prompt = prompt.chars().take(PROMPT).collect();
-        Self { agent, session_id: session_id.to_owned(), first_prompt, updated_at }
+    fn new(agent: Agent, session_id: &str, title: &str, updated_at: u64) -> Self {
+        let title = title.chars().take(SESSION_TITLE).collect();
+        Self { agent, session_id: session_id.to_owned(), title, updated_at }
     }
 }
 

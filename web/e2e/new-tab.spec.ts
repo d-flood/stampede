@@ -13,7 +13,7 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) {
 				if (typeof message === 'string') {
 					const data = JSON.parse(message);
 					if (data.type === 'sessions.listed') {
-						release = () => socket.send(JSON.stringify({ ...data, sessions: [{ agent: 'codex', sessionId: 'past-session', firstPrompt: 'Continue investigating the manuscript transcription workflow', updatedAt: Date.now() }] }));
+						release = () => socket.send(JSON.stringify({ ...data, sessions: [{ agent: 'codex', sessionId: 'past-session', title: 'Continue investigating the manuscript transcription workflow', updatedAt: Date.now() }] }));
 						return;
 					}
 				}

@@ -374,7 +374,7 @@ async fn copilot_lists_models_and_saved_sessions() {
     let sessions = timeout(Duration::from_secs(15), next_control(&mut socket, "sessions.listed")).await.unwrap()["sessions"].clone();
     let saved = sessions.as_array().unwrap().iter().find(|session| session["agent"] == "copilot").unwrap();
     assert_eq!(saved["sessionId"], "saved-copilot-session");
-    assert_eq!(saved["firstPrompt"], "A saved Copilot conversation");
+    assert_eq!(saved["title"], "A saved Copilot conversation");
     assert_eq!(saved["updatedAt"], 1792411200000_u64);
     close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
 }

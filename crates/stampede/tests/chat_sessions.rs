@@ -94,14 +94,56 @@ async fn both_agents_past_sessions_are_listed_newest_first() {
     assert_eq!(
         list(&mut socket, &project_id).await,
         json!([
-            { "agent": "claude-code", "sessionId": GRILL, "firstPrompt": "/grill the past sessions menu", "updatedAt": 1_792_182_860_000u64 },
-            { "agent": "codex", "sessionId": EXEC, "firstPrompt": "Reply with exactly: ok", "updatedAt": 1_792_182_853_000u64 },
-            { "agent": "claude-code", "sessionId": COLOR, "firstPrompt": "Name a color in one word.", "updatedAt": 1_792_182_850_000u64 },
-            { "agent": "codex", "sessionId": THREAD, "firstPrompt": "Say hi in three words.", "updatedAt": 1_792_182_848_000u64 },
+            { "agent": "claude-code", "sessionId": GRILL, "title": "/grill the past sessions menu", "updatedAt": 1_792_182_860_000u64 },
+            { "agent": "codex", "sessionId": EXEC, "title": "Reply with exactly: ok", "updatedAt": 1_792_182_853_000u64 },
+            { "agent": "claude-code", "sessionId": COLOR, "title": "Color naming request", "updatedAt": 1_792_182_850_000u64 },
+            { "agent": "codex", "sessionId": THREAD, "title": "Say hi in three words.", "updatedAt": 1_792_182_848_000u64 },
         ])
     );
     let methods: Vec<Value> = received(&server).iter().map(|message| message["method"].clone()).collect();
     assert_eq!(methods, ["initialize", "initialized", "thread/list"]);
+}
+
+#[tokio::test]
+async fn codex_sessions_prefer_names_and_fall_back_to_previews() {
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("threads.synthetic.json");
+    let mut threads: Value = serde_json::from_str(include_str!("fixtures/chats/codex/threads.recorded.json")).unwrap();
+    threads[0]["name"] = json!("A named Codex session");
+    threads[0].as_object_mut().unwrap().remove("preview");
+    threads[1]["name"] = json!(" \n ");
+    fs::write(&path, threads.to_string()).unwrap();
+    let config = RIGS.replace("STAMPEDE_FAKE_THREADS = \"threads\"", &format!("STAMPEDE_FAKE_THREADS = {:?}", path));
+    let (_server, mut socket, project_id) = start(&config, Vec::new()).await;
+    let listed = list(&mut socket, &project_id).await;
+    let codex: Vec<_> = listed.as_array().unwrap().iter().filter(|session| session["agent"] == "codex").map(|session| &session["title"]).collect();
+    assert_eq!(codex, ["A named Codex session", "Say hi in three words."]);
+}
+
+#[tokio::test]
+async fn claude_sessions_prefer_native_metadata_in_long_transcripts() {
+    let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
+    let path = sessions(&server).join(format!("{COLOR}.jsonl"));
+    let prompt = json!({ "type": "user", "message": { "content": "Original prompt" } }).to_string();
+    let padding = json!({ "type": "assistant", "message": { "content": "漢".repeat(800_000) } }).to_string();
+    for (head, tail, expected) in [
+        (json!({ "customTitle": "Manual title in the head" }), json!({ "aiTitle": "Generated title" }), "Manual title in the head"),
+        (json!({ "customTitle": "Old title" }), json!({ "customTitle": "Renamed session", "aiTitle": "Generated title" }), "Renamed session"),
+        (json!({ "aiTitle": "Old generated title" }), json!({ "customTitle": "  ", "aiTitle": "New generated title" }), "New generated title"),
+        (json!({ "aiTitle": "Generated title in the head" }), json!({ "lastPrompt": "Recent prompt" }), "Generated title in the head"),
+        (json!({}), json!({ "lastPrompt": "Recent prompt", "summary": "Older summary" }), "Recent prompt"),
+        (json!({}), json!({ "summary": "Conversation summary" }), "Conversation summary"),
+        (json!({}), json!({ "customTitle": "", "aiTitle": " ", "lastPrompt": "", "summary": "" }), "Original prompt"),
+    ] {
+        fs::write(&path, format!("{head}\n{prompt}\n{padding}\n{tail}\n")).unwrap();
+        let listed = list(&mut socket, &project_id).await;
+        let session = listed.as_array().unwrap().iter().find(|session| session["sessionId"] == COLOR).unwrap();
+        assert_eq!(session["title"], expected);
+    }
+    fs::write(&path, json!({ "type": "custom-title", "customTitle": "Title without a prompt" }).to_string()).unwrap();
+    let listed = list(&mut socket, &project_id).await;
+    let session = listed.as_array().unwrap().iter().find(|session| session["sessionId"] == COLOR).unwrap();
+    assert_eq!(session["title"], "Title without a prompt");
 }
 
 #[tokio::test]

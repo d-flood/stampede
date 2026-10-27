@@ -2,7 +2,7 @@ import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { Locator, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { closeProject, openProject, showSidebar, showScreen } from './shell.ts';
 
@@ -503,25 +503,28 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 	const session = '9afa077a-3173-4e49-9197-7ed54344b24e';
 	const fixture = new URL(`../../crates/stampede/tests/fixtures/chats/claude-code/sessions/${session}.jsonl`, import.meta.url);
 	copyFileSync(fileURLToPath(fixture), `${sessions}/${session}.jsonl`);
+	appendFileSync(`${sessions}/${session}.jsonl`, `\n${JSON.stringify({ type: 'custom-title', customTitle: 'Palette study' })}\n`);
 	utimesSync(`${sessions}/${session}.jsonl`, new Date(), new Date());
 	await openProject(page, name);
 
 	const newTab = page.getByRole('button', { name: 'New Tab' });
 	const listed = page.getByRole('group', { name: 'Sessions' }).getByRole('menuitem');
 	await newTab.click();
-	await expect(listed).toHaveText([/Name a color in one word\./, /Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
+	await expect(listed).toHaveText([/Palette study/, /Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
 	await expect
 		.poll(() => page.getByRole('menu').evaluate((menu) => menu.getBoundingClientRect().bottom <= window.innerHeight))
 		.toBe(true);
 	await listed.getByText('Search sessions…').click();
 	const palette = page.getByRole('dialog', { name: 'Past Sessions' });
-	await palette.getByPlaceholder('Find a session by its first prompt').fill('three');
+	await palette.getByPlaceholder('Find a session by title').fill('palette');
+	await expect(palette.getByRole('option')).toHaveText([/Palette study/]);
+	await palette.getByPlaceholder('Find a session by title').fill('three');
 	await expect(palette.getByRole('option')).toHaveText([/Say hi in three words\./]);
 	await page.keyboard.press('Escape');
 	await expect(palette).toBeHidden();
 
 	await newTab.click();
-	await listed.filter({ hasText: 'Name a color in one word.' }).click();
+	await listed.filter({ hasText: 'Palette study' }).click();
 	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });

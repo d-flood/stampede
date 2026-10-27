@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt,
     fs::{self, File},
-    io::{self, BufRead, Read},
+    io::{self, BufRead, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process::Stdio,
     time::UNIX_EPOCH,
@@ -594,7 +594,6 @@ fn image_urls(content: &Value) -> Vec<String> {
     }).collect()
 }
 
-/// The sessions Claude keeps for `cwd`, each with the first prompt found in its file's head.
 pub fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
     let Some(config) = config_dir(env) else { return Ok(Vec::new()) };
     let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
@@ -608,19 +607,38 @@ pub fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Se
         if path.extension() != Some("jsonl".as_ref()) {
             continue;
         }
-        let (Some(id), Some(prompt)) = (path.file_stem().and_then(|stem| stem.to_str()), first_prompt(&path)) else {
+        let (Some(id), Some(title)) = (path.file_stem().and_then(|stem| stem.to_str()), session_title(&path)) else {
             continue;
         };
         let Some(updated) = entry.metadata().and_then(|metadata| metadata.modified()).ok() else { continue };
         let updated = updated.duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_millis() as u64;
-        sessions.push(Session::new(Agent::ClaudeCode, id, &prompt, updated));
+        sessions.push(Session::new(Agent::ClaudeCode, id, &title, updated));
     }
     Ok(sessions)
 }
 
-fn first_prompt(path: &Path) -> Option<String> {
-    let head = std::io::BufReader::new(File::open(path).ok()?.take(HEAD));
-    let entries = head.lines().map_while(Result::ok).filter_map(|line| serde_json::from_str::<Value>(&line).ok());
+fn session_title(path: &Path) -> Option<String> {
+    let mut file = File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    let mut head = Vec::new();
+    (&mut file).take(HEAD).read_to_end(&mut head).ok()?;
+    let mut tail = Vec::new();
+    if size > HEAD {
+        file.seek(SeekFrom::Start(size.saturating_sub(HEAD))).ok()?;
+        (&mut file).take(HEAD).read_to_end(&mut tail).ok()?;
+    }
+    let entries: Vec<Value> = tail.split(|byte| *byte == b'\n').rev().chain(head.split(|byte| *byte == b'\n').rev())
+        .filter_map(|line| serde_json::from_slice(line).ok()).collect();
+    for field in ["customTitle", "aiTitle", "lastPrompt", "summary"] {
+        if let Some(title) = entries.iter().find_map(|entry| entry[field].as_str().filter(|title| !title.trim().is_empty())) {
+            return Some(title.to_owned());
+        }
+    }
+    first_prompt(&head)
+}
+
+fn first_prompt(head: &[u8]) -> Option<String> {
+    let entries = head.split(|byte| *byte == b'\n').filter_map(|line| serde_json::from_slice::<Value>(line).ok());
     entries.filter(|entry| entry["type"] == "user" && entry["isMeta"] != true && entry["isSidechain"] != true).find_map(|entry| {
         let text = match &entry["message"]["content"] {
             Value::String(text) => text.clone(),

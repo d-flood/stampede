@@ -225,11 +225,12 @@ pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<
         let params = json!({ "cwd": cwd, "sourceKinds": SOURCES, "sortKey": "updated_at", "cursor": cursor });
         let listed = connection.call("thread/list", params).await?;
         for thread in listed["data"].as_array().into_iter().flatten() {
-            if let (Some(id), Some(preview), Some(updated)) =
-                (thread["id"].as_str(), thread["preview"].as_str(), thread["updatedAt"].as_u64())
-                && !preview.is_empty()
+            let title = thread["name"].as_str().filter(|title| !title.trim().is_empty())
+                .or_else(|| thread["preview"].as_str().filter(|preview| !preview.trim().is_empty()));
+            if let (Some(id), Some(title), Some(updated)) =
+                (thread["id"].as_str(), title, thread["updatedAt"].as_u64())
             {
-                sessions.push(Session::new(Agent::Codex, id, preview, updated * 1000));
+                sessions.push(Session::new(Agent::Codex, id, title, updated * 1000));
             }
         }
         cursor = listed["nextCursor"].clone();

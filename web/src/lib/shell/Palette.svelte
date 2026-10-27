@@ -74,9 +74,9 @@
 		{ heading: 'Files', entries: files },
 		{
 			heading: 'Sessions',
-			entries: find(scope === 'sessions' ? sessions : [], (session) => session.firstPrompt).map((session) => ({
+			entries: find(scope === 'sessions' ? sessions : [], (session) => session.title).map((session) => ({
 				value: `session:${session.sessionId}`,
-				label: session.firstPrompt,
+				label: session.title,
 				icon: logos[session.agent],
 				hint: ago(session.updatedAt),
 				onselect: () => onsession(session)
@@ -99,7 +99,7 @@
 
 <Command.Root label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[scope]} shouldFilter={false} loop>
 	<Command.Input
-		placeholder={{ all: 'Switch Project, launch a Rig, or open a file', files: 'Find a file', sessions: 'Find a session by its first prompt', tabs: 'Choose what to open' }[scope]}
+		placeholder={{ all: 'Switch Project, launch a Rig, or open a file', files: 'Find a file', sessions: 'Find a session by title', tabs: 'Choose what to open' }[scope]}
 		autocomplete="off"
 		spellcheck={false}
 	>

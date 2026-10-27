@@ -109,7 +109,7 @@ export type Reading = { agent: Agent; window: 'five-hour' | 'weekly' | 'monthly'
 
 export type ResetCredits = { availableCount: number; expiresAt?: number; creditId?: string };
 
-export type Session = { agent: Agent; sessionId: string; firstPrompt: string; updatedAt: number };
+export type Session = { agent: Agent; sessionId: string; title: string; updatedAt: number };
 
 export type TicketStatus = 'not-started' | 'in-progress' | 'merging' | 'merged' | 'skipped';
 export type TicketTag = 'routine' | 'judgment' | 'frontend-design';

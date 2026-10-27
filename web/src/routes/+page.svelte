@@ -621,7 +621,7 @@
 			{ label: 'Open file', icon: FileCode, onselect: () => openPalette('files') }
 		];
 		const recent = (sessions[projectId] ?? []).slice(0, RECENT).map((session) => ({
-			label: session.firstPrompt,
+			label: session.title,
 			icon: logos[session.agent],
 			hint: ago(session.updatedAt),
 			onselect: () => reopen(projectId, session)
