@@ -56,6 +56,7 @@
 	let rewinding = $state(false);
 	let rewindTarget = $state<number>();
 	let scroller = $state<HTMLElement>();
+	let messageNavHeight = $state(0);
 	const rewindUnavailable = $derived.by(() => {
 		if (!live) return 'Reconnect to rewind.';
 		if (!attached) return 'Loading the conversation…';
@@ -198,13 +199,13 @@
 		<SubagentHeader subagent={selected} {trail} onopen={open} />
 	{/if}
 	<div class="conversation" hidden={!!selected}>
-		<div class="transcript" bind:this={scroller} {@attach follow}>
+		<div class="transcript" bind:this={scroller} style:padding-top="max(var(--space-6), {messageNavHeight}px)" {@attach follow}>
 			<div class="column">
 				<Transcript {items} {active} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} onopen={open} onattend={attend} {ondiff} onrewind={(index) => run('rewind', index)} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
 			</div>
 		</div>
-		<MessageNav {items} {scroller} />
+		<MessageNav {items} {scroller} bind:height={messageNavHeight} />
 	</div>
 	{#if selected}
 		{#key opened.join('/')}

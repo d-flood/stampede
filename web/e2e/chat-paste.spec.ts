@@ -169,3 +169,33 @@ test('images dropped anywhere on a Chat attach without leaving the page', { tag:
 	await expect(panel.getByRole('img', { name: 'dropped.png' })).toBeVisible();
 	await closeProject(page, name);
 });
+
+test('mobile attachment controls leave the previews unobscured', { tag: '@phone' }, async ({ page }, { project }) => {
+	const name = `attachment-controls-${project.name}`;
+	const { panel, composer } = await launch(page, name);
+	await paste(composer, [{ name: 'first.png' }, { name: 'second.png' }]);
+	const attachments = panel.getByLabel('Attachments', { exact: true });
+	await expect(attachments.locator('img')).toHaveCount(2);
+	for (const width of [448, 320]) {
+		await page.setViewportSize({ width, height: 998 });
+		for (const name of ['first.png', 'second.png']) {
+			const image = attachments.getByRole('img', { name, exact: true });
+			const remove = attachments.getByRole('button', { name: `Remove ${name}`, exact: true });
+			await expect.poll(async () => {
+				const [preview, button] = await Promise.all([image.boundingBox(), remove.boundingBox()]);
+				if (!preview || !button) return -1;
+				return Math.max(0, Math.min(preview.x + preview.width, button.x + button.width) - Math.max(preview.x, button.x))
+					* Math.max(0, Math.min(preview.y + preview.height, button.y + button.height) - Math.max(preview.y, button.y));
+			}).toBe(0);
+			await expect.poll(async () => {
+				const button = await remove.boundingBox();
+				return button && button.width >= 48 && button.height >= 48;
+			}).toBe(true);
+		}
+		await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+	}
+	await attachments.getByRole('button', { name: 'Remove first.png', exact: true }).click();
+	await expect(attachments.getByRole('img', { name: 'first.png', exact: true })).toHaveCount(0);
+	await expect(attachments.getByRole('img', { name: 'second.png', exact: true })).toBeVisible();
+	await closeProject(page, name);
+});

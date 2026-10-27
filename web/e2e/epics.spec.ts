@@ -3,7 +3,7 @@ import type { Locator, Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { openProject, showSidebar } from './shell.ts';
+import { openProject, showSidebar, showScreen } from './shell.ts';
 
 const stampede = process.env.STAMPEDE_E2E_BINARY ?? fileURLToPath(new URL('../../target/debug/stampede', import.meta.url));
 
@@ -637,7 +637,7 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 	await run.getByRole('button', { name: 'Start Run' }).click();
 	await expect(run).toContainText('Run live');
 
-	if (phone) await page.getByRole('button', { name: 'Previous screen' }).click();
+	if (phone) await showScreen(page, 'projects');
 	const rail = page.getByRole('navigation', { name: 'Projects' });
 	const parent = rail.getByRole('button', { name: slug, exact: true });
 	const row = rail.getByRole('listitem').filter({ has: page.getByRole('button', { name: slug, exact: true }) });
@@ -661,8 +661,7 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 	await expect(worktree.getByRole('region', { name: 'Changes' }).getByRole('button', { name: 'work.txt', exact: true })).toBeVisible();
 
 	if (phone) {
-		await page.getByRole('button', { name: 'Previous screen' }).click();
-		await page.getByRole('button', { name: 'Previous screen' }).click();
+		await showScreen(page, 'projects');
 	}
 	const integration = worktrees.getByRole('button', { name: `Integration ${slug}`, exact: true });
 	await expect.poll(() => (rmSync(gate, { force: true }), worktrees.getByRole('button').count()), { timeout: 20000 }).toBe(1);

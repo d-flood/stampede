@@ -4,7 +4,7 @@ import type { Locator, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { closeProject, openProject, showSidebar } from './shell.ts';
+import { closeProject, openProject, showSidebar, showScreen } from './shell.ts';
 
 test('a Claude Code Chat streams its reply, shows done, and asks before closing while working', async ({ page }, { project }) => {
 	const name = `chat-${project.name}`;
@@ -430,7 +430,7 @@ test('four Usage window meters show their readings and turn amber from 90%', asy
 	await page.goto('/');
 	let usage = page.getByRole('region', { name: 'Usage windows' });
 	if (project.name === 'pixel') {
-		await page.getByRole('button', { name: 'Previous screen' }).click();
+		await showScreen(page, 'projects');
 		await expect(page.getByRole('navigation', { name: 'Projects' })).toBeInViewport();
 	} else {
 		await expect(page.getByRole('button', { name: 'Sidebar' })).toBeVisible();

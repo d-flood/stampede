@@ -98,7 +98,7 @@
 					<option value="right">Right</option>
 				</select>
 			</div>
-			<p id="sidebar-side-help">Places the desktop sidebar on the left or right. Saved in this browser.</p>
+			<p id="sidebar-side-help">Places the sidebar left or right of tabs, including mobile screens. Saved in this browser.</p>
 		</section>
 		<section aria-labelledby="theme-label">
 			<div class="row">

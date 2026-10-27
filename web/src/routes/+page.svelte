@@ -48,7 +48,7 @@
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import Tab from '#lib/ui/Tab.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { on } from 'svelte/events';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import CaretLeft from '~icons/ph/caret-left';
@@ -111,7 +111,12 @@
 	let afterPalette: (() => void) | undefined;
 	let unfocused = $state(false);
 	let directories = $state<string[]>([]);
-	let screen = $state(1);
+	type Screen = 'projects' | 'tabs' | 'sidebar';
+	let screen = $state<Screen>('tabs');
+	const order: Screen[] = $derived(sidebarPosition.side === 'left' ? ['projects', 'sidebar', 'tabs'] : ['projects', 'tabs', 'sidebar']);
+	const screenIndex = $derived(order.indexOf(screen));
+	let sliding = false;
+	let animationFrame = 0;
 	let screens: HTMLElement | undefined;
 	let held = $state(false);
 	let drawer: Drawer;
@@ -156,7 +161,7 @@
 	const split = $derived(form() === 'desktop' ? layout : undefined);
 	const groups = $derived(split ? [split.left, split.right] : [whole]);
 	const phone = $derived(form() === 'phone');
-	const foreground = $derived(visible && (!phone || (screen === 1 && !drawerOpen)));
+	const foreground = $derived(visible && (!phone || (screen === 'tabs' && !drawerOpen)));
 	const shownChats = $derived(foreground ? chatTabs.filter((chat) => showing(chat.id)).map((chat) => chat.id) : []);
 	const shownEpics = $derived(foreground ? openEpics.filter((epic) => showing(epic.id)).map((epic) => epic.slug) : []);
 	const label = $derived(focused && projectLabels.get(focused.id));
@@ -178,11 +183,11 @@
 			}));
 		});
 	});
-	const titles = $derived([
-		{ title: 'Projects', sub: hostName() ?? undefined },
-		{ title: label ?? 'Tabs' },
-		{ title: sectionShowing(section, focused && git.get(focused.id)).label, sub: label }
-	]);
+	const titles = $derived({
+		projects: { title: 'Projects', sub: hostName() ?? undefined },
+		tabs: { title: label ?? 'Tabs', sub: undefined },
+		sidebar: { title: sectionShowing(section, focused && git.get(focused.id)).label, sub: label }
+	});
 	const deviceLayout = $derived(
 		capture({ chosen, terminals, chats, files, browsers, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section }, rail: { open: rail } })
 	);
@@ -246,7 +251,7 @@
 					if (staged) {
 						place(message.projectId, staged.id);
 						choose(message.projectId, staged.id);
-						if (message.projectId === focused?.id) slide(1);
+						if (message.projectId === focused?.id) slide('tabs');
 					}
 				}
 				break;
@@ -258,7 +263,7 @@
 					if (!owned.some((terminal) => terminal.id === id)) owned.push(message.terminal);
 					place(owner.project, id);
 					choose(owner.project, id);
-					if (owner.project === focused?.id) slide(1);
+					if (owner.project === focused?.id) slide('tabs');
 				}
 				break;
 			}
@@ -337,7 +342,7 @@
 				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
 				place(message.chat.projectId, message.chat.id);
 				choose(message.chat.projectId, message.chat.id);
-				if (message.chat.projectId === focused?.id) slide(1);
+				if (message.chat.projectId === focused?.id) slide('tabs');
 				break;
 			}
 			case 'chat.moved': {
@@ -455,31 +460,92 @@
 
 	function focus(projectId: string) {
 		chosen = projectId;
-		slide(1);
+		slide('tabs');
 	}
 
-	function slide(index: number) {
-		screen = index;
-		screens?.scrollTo({ left: index * screens.clientWidth });
+	function stopSlide() {
+		cancelAnimationFrame(animationFrame);
+		sliding = false;
+		screens?.style.removeProperty('scroll-snap-type');
 	}
 
-	function swipeable(element: HTMLElement) {
+	function slide(target: Screen) {
+		const from = screens?.scrollLeft ?? 0;
+		stopSlide();
+		screen = target;
+		if (!screens) return;
+		const element = screens;
+		const to = order.indexOf(target) * element.clientWidth;
+		if (matchMedia('(prefers-reduced-motion: reduce)').matches || Math.abs(to - from) < 1) {
+			element.scrollTo({ left: to, behavior: 'instant' });
+			return;
+		}
+		sliding = true;
+		element.style.scrollSnapType = 'none';
+		const started = performance.now();
+		animationFrame = requestAnimationFrame(animate);
+		function animate(now: number) {
+			const progress = Math.min(1, Math.max(0, (now - started) / 160));
+			element.scrollLeft = from + (to - from) * (1 - (1 - progress) ** 3);
+			if (progress < 1) animationFrame = requestAnimationFrame(animate);
+			else stopSlide();
+		}
+	}
+
+	function swipeable(element: HTMLElement, sequence: Screen[]) {
 		screens = element;
-		screen = 1;
-		element.scrollTo({ left: element.clientWidth, behavior: 'instant' });
-		const release = () => (held = false);
+		element.scrollTo({ left: sequence.indexOf(untrack(() => screen)) * element.clientWidth, behavior: 'instant' });
+		let gesture: { x: number; y: number; left: number; time: number; horizontal: boolean } | undefined;
+		const start = (event: TouchEvent) => {
+			if (gesture?.horizontal) slide(screen);
+			gesture = undefined;
+			hold(event);
+			if (held || event.touches.length !== 1) return;
+			const { clientX: x, clientY: y } = event.touches[0];
+			gesture = { x, y, left: element.scrollLeft, time: performance.now(), horizontal: false };
+		};
+		const move = (event: TouchEvent) => {
+			if (!gesture) return;
+			const dx = event.touches[0].clientX - gesture.x;
+			const dy = event.touches[0].clientY - gesture.y;
+			if (!gesture.horizontal) {
+				if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+				if (Math.abs(dy) >= Math.abs(dx) || !event.cancelable) {
+					gesture = undefined;
+					return;
+				}
+				stopSlide();
+				gesture.horizontal = true;
+				sliding = true;
+				element.style.scrollSnapType = 'none';
+			}
+			event.preventDefault();
+			element.scrollLeft = gesture.left - dx;
+		};
+		const release = (event: TouchEvent) => {
+			held = false;
+			if (gesture?.horizontal) {
+				const dx = event.changedTouches[0].clientX - gesture.x;
+				const distance = Math.abs(dx);
+				const advance = event.type !== 'touchcancel' && (distance > element.clientWidth * 0.2 || distance / (performance.now() - gesture.time) > 0.5);
+				const index = Math.round(gesture.left / element.clientWidth) + (advance ? -Math.sign(dx) : 0);
+				slide(sequence[Math.max(0, Math.min(sequence.length - 1, index))]);
+			}
+			gesture = undefined;
+		};
 		const off = [
-			on(element, 'touchstart', hold, { passive: true }),
+			on(element, 'touchstart', start, { passive: true }),
+			on(element, 'touchmove', move, { passive: false }),
 			on(element, 'touchend', release),
 			on(element, 'touchcancel', release)
 		];
 		return () => {
+			stopSlide();
 			off.forEach((listener) => listener());
 			screens = undefined;
 		};
 	}
 
-	// overscroll-behavior would also trap swipes on scrollers that fit, so the screens stop scrolling instead.
 	function hold({ target }: TouchEvent) {
 		for (let element = target as Element | null; element && element !== screens; element = element.parentElement) {
 			if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) {
@@ -490,7 +556,7 @@
 	}
 
 	function landed() {
-		if (screens) screen = Math.round(screens.scrollLeft / screens.clientWidth);
+		if (screens && !sliding) screen = order[Math.round(screens.scrollLeft / screens.clientWidth)];
 	}
 
 	async function freshen(projectId: string) {
@@ -730,7 +796,7 @@
 			place(tab.projectId, tab.id);
 		}
 		choose(tab.projectId, tab.id);
-		slide(1);
+		slide('tabs');
 		return existing ?? tab;
 	}
 
@@ -750,7 +816,7 @@
 			place(projectId, browser.id);
 		}
 		choose(projectId, browser.id);
-		slide(1);
+		slide('tabs');
 	}
 
 	function closeBrowser(browser: OpenBrowser) {
@@ -768,7 +834,7 @@
 			place(projectId, epic.id);
 		}
 		choose(projectId, epic.id);
-		slide(1);
+		slide('tabs');
 	}
 
 	function closeEpic(epic: OpenEpic) {
@@ -1092,7 +1158,7 @@
 								{device}
 								{chat}
 								chats={allChats}
-								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); slide(1); }}
+								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); slide('tabs'); }}
 								items={chatItems[chat.id] ?? []}
 								opened={openSubagents[chat.id] ?? []}
 								onopen={(path) => (openSubagents[chat.id] = path)}
@@ -1162,39 +1228,45 @@
 	{@const { title, sub } = titles[screen]}
 	<div class="phone">
 		<header>
-			<IconButton label="Previous screen" disabled={screen === 0} onclick={() => slide(screen - 1)}>
+			<IconButton label="Previous screen" disabled={screenIndex === 0} onclick={() => slide(order[screenIndex - 1])}>
 				<CaretLeft />
 			</IconButton>
 			<h1>{title}{#if sub}{' '}<span class="sub">{sub}</span>{/if}</h1>
 			{@render attention()}
 			<IconButton label="Drawer" onclick={() => drawer.toggle()}><TerminalWindow /></IconButton>
-			<IconButton label="Next screen" disabled={screen === titles.length - 1} onclick={() => slide(screen + 1)}>
+			<IconButton label="Next screen" disabled={screenIndex === order.length - 1} onclick={() => slide(order[screenIndex + 1])}>
 				<CaretRight />
 			</IconButton>
 		</header>
-		<div class="screens" class:held {@attach swipeable} onscrollend={landed}>
-			<div class="screen" inert={screen !== 0}>
-				<Usage readings={usage} {codexResets} />
-				<Projects
-					projects={ownProjects}
-					labels={projectLabels}
-					worktrees={nested}
-					{epics}
-					{roots}
-					{working}
-					focused={focused?.id}
-					onfocus={focus}
-					onclose={(projectId) => closeProject(projectId)}
-					ondelete={(projectId) => removeWorktree(projectId)}
-					onworktree={(project) => (branching = project)}
-					onmenu={freshen}
-					onpick={pick}
-					onicon={(project) => (iconProject = project)}
-					{needs}
-				/>
-			</div>
-			<div class="screen" inert={screen !== 1}>{@render workspace()}</div>
-			<div class="screen" inert={screen !== 2}>{@render sidebarPanel()}</div>
+		<div class="screens" class:held {@attach (element) => swipeable(element, order)} onscrollend={landed}>
+			{#each order as name (name)}
+				<div class="screen" data-screen={name} inert={screen !== name}>
+					{#if name === 'projects'}
+						<Usage readings={usage} {codexResets} />
+						<Projects
+							projects={ownProjects}
+							labels={projectLabels}
+							worktrees={nested}
+							{epics}
+							{roots}
+							{working}
+							focused={focused?.id}
+							onfocus={focus}
+							onclose={(projectId) => closeProject(projectId)}
+							ondelete={(projectId) => removeWorktree(projectId)}
+							onworktree={(project) => (branching = project)}
+							onmenu={freshen}
+							onpick={pick}
+							onicon={(project) => (iconProject = project)}
+							{needs}
+						/>
+					{:else if name === 'tabs'}
+						{@render workspace()}
+					{:else}
+						{@render sidebarPanel()}
+					{/if}
+				</div>
+			{/each}
 		</div>
 	</div>
 {:else}
@@ -1450,12 +1522,6 @@
 
 	.held {
 		overflow-x: hidden;
-	}
-
-	@media (prefers-reduced-motion: no-preference) {
-		.screens {
-			scroll-behavior: smooth;
-		}
 	}
 
 	.screen {

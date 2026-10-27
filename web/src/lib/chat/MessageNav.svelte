@@ -8,7 +8,7 @@
 	import CaretUp from '~icons/ph/caret-up';
 	import ListNumbers from '~icons/ph/list-numbers';
 
-	let { items, scroller }: { items: Item[]; scroller?: HTMLElement } = $props();
+	let { items, scroller, height = $bindable(0) }: { items: Item[]; scroller?: HTMLElement; height?: number } = $props();
 	const messages = $derived(items.flatMap((item, index) => item.kind === 'user' ? [{ index, summary: item.text.trim().split('\n')[0] || `${item.images} attached image${item.images === 1 ? '' : 's'}` }] : []));
 	let nav = $state<HTMLElement>();
 	let current = $state<number>();
@@ -68,7 +68,7 @@
 </script>
 
 {#if messages.length && scroller}
-	<nav bind:this={nav} aria-label="User messages" class:shown class:phone={form() === 'phone'} style:right="{gutter}px" inert={!shown} {@attach () => watch(scroller!)}>
+	<nav bind:this={nav} bind:offsetHeight={height} aria-label="User messages" class:shown class:phone={form() === 'phone'} style:right="{gutter}px" inert={!shown} {@attach () => watch(scroller!)}>
 		<div class="row">
 			<Menu items={messages.map((message, number) => ({ label: `${number + 1}. ${message.summary}`, checked: message.index === current, onselect: () => jump(scroller?.querySelector<HTMLElement>(`[data-user-message="${message.index}"]`)) }))}>
 				{#snippet trigger(props)}

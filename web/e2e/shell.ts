@@ -8,30 +8,43 @@ function phone() {
 export async function openProject(page: Page, name: string) {
 	await page.goto('/');
 	if (phone()) {
-		await page.getByRole('button', { name: 'Previous screen' }).click();
-		await settled(page, 0);
+		await showScreen(page, 'projects');
 	}
 	await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Open Project' }).click();
 	await page.getByRole('option', { name: new RegExp(`/${name}$`) }).click();
 	await expect(page.getByRole('dialog')).toBeHidden();
-	if (phone()) await settled(page, 1);
+	if (phone()) await settled(page, 'tabs');
 }
 
 export async function showSidebar(page: Page) {
 	const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
 	if (phone()) {
-		await page.getByRole('button', { name: 'Next screen' }).click();
-		await settled(page, 2);
+		await showScreen(page, 'sidebar');
 	}
 	else if (!(await sidebar.isVisible())) await page.getByRole('button', { name: 'Sidebar' }).click();
 	return sidebar;
 }
 
-async function settled(page: Page, index: number) {
-	await expect.poll(() => page.locator('.screens').evaluate((element, index) => {
-		const screen = element.children[index] as HTMLElement;
-		return !screen.inert && Math.abs(element.scrollLeft - element.clientWidth * index) < 1;
-	}, index)).toBe(true);
+export async function showScreen(page: Page, name: 'projects' | 'tabs' | 'sidebar') {
+	const screens = page.locator('.screens');
+	await expect(screens.locator('.screen')).toHaveCount(3);
+	const names = await screens.locator('.screen').evaluateAll((elements) => elements.map((element) => (element as HTMLElement).dataset.screen!));
+	const target = names.indexOf(name);
+	const current = await screens.locator('.screen:not([inert])').getAttribute('data-screen');
+	await settled(page, current!);
+	const index = names.indexOf(current!);
+	for (let step = index; step !== target; step += Math.sign(target - index)) {
+		await page.getByRole('button', { name: target > index ? 'Next screen' : 'Previous screen' }).click();
+		await settled(page, names[step + Math.sign(target - index)]);
+	}
+	await settled(page, name);
+}
+
+async function settled(page: Page, name: string) {
+	await expect.poll(() => page.locator('.screens').evaluate((element, name) => {
+		const screen = element.querySelector<HTMLElement>(`[data-screen="${name}"]`)!;
+		return !screen.inert && Math.abs(element.scrollLeft - screen.offsetLeft) < 1 && element instanceof HTMLElement && !element.style.scrollSnapType;
+	}, name)).toBe(true);
 }
 
 export function screen(page: Page) {

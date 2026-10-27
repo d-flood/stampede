@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import type { Locator, Page } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { openProject, screen, showSidebar } from './shell.ts';
+import { openProject, screen, showSidebar, showScreen } from './shell.ts';
 
 declare global {
 	interface Window {
@@ -86,7 +86,7 @@ test('switching Tab or Project paints within 50 ms, and opening a file within 10
 	const projectSwitches = [];
 	for (let run = 0; run < runs; run++) {
 		const [name, id] = run % 2 ? [one, terminals[0]] : [two, other];
-		if (phone) await page.getByRole('button', { name: 'Previous screen' }).click();
+		if (phone) await showScreen(page, 'projects');
 		const entry = page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name, exact: true });
 		projectSwitches.push(await measure(page, entry, tab(id)));
 	}

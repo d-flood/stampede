@@ -147,7 +147,7 @@
 
 <input bind:this={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple aria-label="Attach images" hidden onchange={choose} />
 {#if images.length}
-	<div class="attachments" aria-label="Attachments">
+	<div class="attachments" class:phone={form() === 'phone'} aria-label="Attachments">
 		{#each images as image, index}
 			<div class="thumbnail"><img src="data:{image.mediaType};base64,{image.data}" alt={image.name} /><button aria-label="Remove {image.name}" onclick={() => (images = images.filter((_, at) => at !== index))}><X /></button></div>
 		{/each}
@@ -221,6 +221,8 @@
 	.thumbnail { position: relative; flex: none; }
 	.thumbnail img { width: 64px; height: 64px; object-fit: cover; border-radius: var(--radius-md); }
 	.thumbnail button { position: absolute; top: 0; right: 0; min-width: var(--target-min); min-height: var(--target-min); border: 0; border-radius: var(--radius-md); background: var(--surface-2); color: var(--color-fg); cursor: pointer; }
+	.phone .thumbnail { display: flex; align-items: center; gap: var(--space-1); }
+	.phone .thumbnail button { position: static; display: inline-grid; place-items: center; }
 	[role='alert'] { color: var(--ansi-1); }
 	.stop {
 		display: inline-flex;

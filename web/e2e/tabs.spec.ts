@@ -24,7 +24,7 @@ test('active tabs expose a close button and preserve unsaved edits', async ({ pa
 	await sidebar.getByRole('button', { name: file, exact: true }).click();
 	if (project.name === 'pixel') {
 		await expect.poll(() => page.locator('.screens').evaluate((element) =>
-			Math.abs(element.scrollLeft - element.clientWidth) < 1
+			Math.abs(element.scrollLeft - element.querySelector<HTMLElement>('[data-screen="tabs"]')!.offsetLeft) < 1
 		)).toBe(true);
 	}
 	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true });

@@ -1,3 +1,4 @@
+import { showScreen } from './shell.ts';
 import { expect, test } from './fixtures.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -14,7 +15,7 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 
 	await page.goto('/');
 	if (phone) {
-		await page.getByRole('button', { name: 'Previous screen' }).click();
+		await showScreen(page, 'projects');
 		await expect(heading).toHaveText('Projects');
 		await expect(heading.locator('.sub')).toHaveCount(0);
 	}
