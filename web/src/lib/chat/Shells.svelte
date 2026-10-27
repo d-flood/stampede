@@ -1,27 +1,67 @@
 <script lang="ts">
 	import Command from '#lib/chat/Command.svelte';
+	import { commands } from '#lib/chat/shells.ts';
 	import type { Item } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { untrack } from 'svelte';
+	import { cubicOut } from 'svelte/easing';
+	import { prefersReducedMotion } from 'svelte/motion';
+	import { SvelteMap } from 'svelte/reactivity';
+	import { slide } from 'svelte/transition';
 	import CaretDown from '~icons/ph/caret-down';
+
+	const DELAY = 1500;
+	const LINGER = 1000;
 
 	let { items }: { items: Item[] } = $props();
 
-	function running(items: Item[], parent = '', owner = 'Main'): { id: string; owner: string; item: Extract<Item, { kind: 'command' }> }[] {
-		return items.flatMap((item, index) => {
-			const id = `${parent}/${index}`;
-			if (item.kind === 'subagent') return running(item.items, id, item.name || item.task);
-			return item.kind === 'command' && item.status === 'running' ? [{ id, owner, item }] : [];
-		});
+	const all = $derived(commands(items));
+	const times = new SvelteMap<string, { since: number; until?: number }>();
+	let now = $state(Date.now());
+
+	$effect(() => {
+		for (const { id, item } of all) {
+			const time = untrack(() => times.get(id));
+			if (item.status === 'running' && !time) times.set(id, { since: Date.now() });
+			else if (item.status !== 'running' && time && !time.until) times.set(id, { ...time, until: Date.now() });
+		}
+	});
+
+	const shells = $derived(all.filter(({ id }) => {
+		const time = times.get(id);
+		return !!time && (time.until ?? now) - time.since >= DELAY && now - (time.until ?? now) < LINGER;
+	}));
+	const running = $derived(shells.filter(({ item }) => item.status === 'running').length);
+	const ticking = $derived([...times.values()].some(({ until }) => until === undefined || now - until < LINGER));
+
+	$effect(() => {
+		if (!ticking) return;
+		const timer = setInterval(() => (now = Date.now()), 100);
+		return () => clearInterval(timer);
+	});
+
+	const motion = $derived({ duration: prefersReducedMotion.current ? 0 : 250, easing: cubicOut });
+
+	function grow(node: HTMLElement) {
+		const style = getComputedStyle(node);
+		const gap = parseFloat(getComputedStyle(node.parentElement!).rowGap) || 0;
+		const height = node.getBoundingClientRect().height;
+		const [top, bottom, above, below] = [style.paddingTop, style.paddingBottom, style.borderTopWidth, style.borderBottomWidth].map(parseFloat);
+		const edge = above + below;
+		return {
+			...motion,
+			css: (t: number) => `overflow: hidden; box-sizing: border-box; opacity: ${t}; height: ${edge + t * (height - edge)}px; padding-top: ${t * top}px; padding-bottom: ${t * bottom}px; margin-bottom: ${(t - 1) * (gap + edge)}px`
+		};
 	}
 
-	const shells = $derived(running(items));
 	const phone = $derived(form() === 'phone');
+	const heading = $derived(running ? `Running shells · ${running}` : 'Shells finished');
 </script>
 
 {#snippet list()}
 	<div class="shells">
 		{#each shells as shell (shell.id)}
-			<div class="shell">
+			<div class="shell" transition:slide={motion}>
 				{#if shell.owner !== 'Main'}<span class="owner">{shell.owner}</span>{/if}
 				<Command item={shell.item} />
 			</div>
@@ -30,14 +70,14 @@
 {/snippet}
 
 {#if shells.length}
-	<section aria-label="Running shells" class:phone>
+	<section aria-label="Running shells" class:phone transition:grow>
 		{#if phone}
 			<details>
-				<summary><strong>Running shells · {shells.length}</strong><span class="caret"><CaretDown /></span></summary>
+				<summary><strong>{heading}</strong><span class="caret"><CaretDown /></span></summary>
 				{@render list()}
 			</details>
 		{:else}
-			<strong>Running shells · {shells.length}</strong>
+			<strong>{heading}</strong>
 			{@render list()}
 		{/if}
 	</section>

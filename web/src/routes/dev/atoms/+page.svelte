@@ -31,9 +31,10 @@
 		'--status-working',
 		'--status-waiting',
 		'--status-done',
+		'--status-background',
 		...Array.from({ length: 16 }, (_, n) => `--ansi-${n}`)
 	];
-	const statuses = [undefined, 'working', 'waiting', 'done'] as const;
+	const statuses = [undefined, 'working', 'waiting', 'background', 'done'] as const;
 
 	let open = $state(false);
 	let chosen = $state('nothing yet');

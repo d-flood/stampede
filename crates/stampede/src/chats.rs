@@ -39,6 +39,8 @@ pub use html::{ChatToolsArgs, serve as chat_tools};
 pub use delegation::listen as listen_delegations;
 
 const CLOSING: Duration = Duration::from_secs(5);
+/// How long an Agent may take to resume after its last shell finishes before its Chat counts as done.
+const RESUMING: Duration = Duration::from_millis(1500);
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
@@ -680,6 +682,9 @@ pub struct Chat {
     pub closing: bool,
     #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub activity: Option<String>,
+    /// A shell is still running, so a done Chat will pick up again when it finishes.
+    #[serde(default, skip_deserializing, skip_serializing_if = "std::ops::Not::not")]
+    pub background: bool,
     pub viewed_since_done: bool,
     #[serde(default)]
     pub context: Option<Context>,
@@ -745,6 +750,7 @@ pub async fn sessions(cwd: &Path, claude: &Rig, codex: &Rig, copilot: &Rig) -> V
 pub enum Change {
     Chats(String),
     Status(String, Status),
+    Background(String, bool),
     Activity(String, Option<String>),
     Queued(String, Vec<String>, u64),
     Truncated(String),
@@ -812,6 +818,8 @@ struct Transcript {
     items: Vec<Item>,
     requests: Vec<Request>,
     reported: Status,
+    /// How many turns have started, so a delayed alert can tell whether the Agent resumed.
+    turns: u64,
     handoff: Option<Handoff>,
     questions: HashMap<String, oneshot::Sender<questions::Reply>>,
 }
@@ -917,6 +925,7 @@ impl Chats {
             status: Status::Done,
             closing: false,
             activity: None,
+            background: false,
             viewed_since_done: true,
             context: None,
             tokens: None,
@@ -1077,7 +1086,7 @@ impl Chats {
     }
 
     fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>, storage: crate::storage::Session) {
-        let transcript = Transcript { recoverable: false, seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status, handoff: None, questions: HashMap::new() };
+        let transcript = Transcript { recoverable: false, seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status, turns: 0, handoff: None, questions: HashMap::new() };
         let entry = Arc::new(Entry {
             _storage: storage,
             chat: Mutex::new(chat),
@@ -1166,7 +1175,10 @@ impl Chats {
                     }
                     drop(chat);
                     let mut transcript = entry.transcript.lock().unwrap();
-                    if status == Status::Working { transcript.recoverable = false; }
+                    if status == Status::Working {
+                        transcript.recoverable = false;
+                        transcript.turns += 1;
+                    }
                     transcript.reported = status;
                     if status == Status::Done {
                         let pending: Vec<_> =
@@ -1235,6 +1247,7 @@ impl Chats {
                     }
                     let mut transcript = entry.transcript.lock().unwrap();
                     if matches!(&item, Item::User { .. }) { transcript.recoverable = false; }
+                    let shells = matches!(&item, Item::Command { .. } | Item::Subagent { .. });
                     let appended = transcript.items.get(index).and_then(|existing| appended(existing, &item));
                     match transcript.items.get_mut(index) {
                         Some(existing) => *existing = item.clone(),
@@ -1252,6 +1265,7 @@ impl Chats {
                         None => Change::Item { chat_id: id.clone(), seq, index, item },
                     };
                     let _ = self.changed.send(change);
+                    if shells { self.background(&entry, &transcript); }
                 }
                 Event::Usage(readings) => self.usage.record(readings),
                 Event::Truncate(len) => {
@@ -1261,6 +1275,7 @@ impl Chats {
                     transcript.requests.clear();
                     transcript.seq += 1;
                     let _ = self.changed.send(Change::Truncated(id.clone()));
+                    self.background(&entry, &transcript);
                 }
                 Event::Reset => {
                     let mut chat = entry.chat.lock().unwrap();
@@ -1318,7 +1333,7 @@ impl Chats {
         if status == Status::Done {
             chat.viewed_since_done = self.shown(&id);
         }
-        let item = (chat.parent.is_none() && !chat.closing).then(|| chat.attention());
+        let item = (chat.parent.is_none() && !chat.closing && !(status == Status::Done && chat.background)).then(|| chat.attention());
         self.save(entry, chat);
         let _ = self.changed.send(Change::Status(id.clone(), status));
         let _ = self.lifecycle.send(Lifecycle::Status(id.clone(), status));
@@ -1644,6 +1659,41 @@ impl Chats {
         showing.filter_map(|(browser, _)| browser.clone()).collect()
     }
 
+    fn background(self: &Arc<Self>, entry: &Arc<Entry>, transcript: &Transcript) {
+        let background = shelling(&transcript.items);
+        let mut chat = entry.chat.lock().unwrap();
+        if chat.background == background {
+            return;
+        }
+        chat.background = background;
+        let id = chat.id.clone();
+        let finished = chat.status == Status::Done && !background;
+        if finished { chat.viewed_since_done |= self.shown(&id); }
+        drop(chat);
+        let _ = self.changed.send(Change::Background(id, background));
+        self.refresh_attention();
+        if finished {
+            let (chats, entry, turns) = (self.clone(), entry.clone(), transcript.turns);
+            tokio::spawn(async move {
+                tokio::time::sleep(RESUMING).await;
+                chats.alert(&entry, turns);
+            });
+        }
+    }
+
+    fn alert(&self, entry: &Entry, turns: u64) {
+        if entry.transcript.lock().unwrap().turns != turns {
+            return;
+        }
+        let chat = entry.chat.lock().unwrap();
+        if chat.status != Status::Done || chat.background || chat.parent.is_some() || chat.closing {
+            return;
+        }
+        let (item, id) = (chat.attention(), chat.id.clone());
+        drop(chat);
+        self.attention.call(item, self.showing(&id));
+    }
+
     fn refresh_attention(&self) {
         let items = self.list().iter().filter(|chat| chat.needs_attention()).map(Chat::attention).collect();
         self.attention.publish(Source::Chats, items);
@@ -1668,7 +1718,7 @@ impl Chat {
     fn needs_attention(&self) -> bool {
         !self.closing && match self.status {
             Status::Waiting => true,
-            Status::Done => !self.viewed_since_done,
+            Status::Done => !self.viewed_since_done && !self.background,
             Status::Working => false,
         }
     }
@@ -1681,6 +1731,14 @@ impl Chat {
             status: self.status,
         }
     }
+}
+
+fn shelling(items: &[Item]) -> bool {
+    items.iter().any(|item| match item {
+        Item::Command { status: CommandStatus::Running, .. } => true,
+        Item::Subagent { items, .. } => shelling(items),
+        _ => false,
+    })
 }
 
 fn record_path(data_dir: &Path, id: &str) -> PathBuf {

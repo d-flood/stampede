@@ -290,6 +290,11 @@
 					if (chat.id === message.chatId) chat.status = message.status;
 				}
 				break;
+			case 'chat.background':
+				for (const chat of Object.values(chats).flat()) {
+					if (chat.id === message.chatId) chat.background = message.background;
+				}
+				break;
 			case 'chat.activity':
 				for (const chat of Object.values(chats).flat()) {
 					if (chat.id === message.chatId) chat.activity = message.activity;
@@ -447,7 +452,8 @@
 	}
 
 	function chatStatus(chat: Chat) {
-		return chat.status === 'done' ? (subagents(chatItems[chat.id] ?? []).find(({ subagent }) => subagent.status !== 'done')?.subagent.status ?? 'done') : chat.status;
+		if (chat.status !== 'done') return chat.status;
+		return subagents(chatItems[chat.id] ?? []).find(({ subagent }) => subagent.status !== 'done')?.subagent.status ?? (chat.background ? 'background' : 'done');
 	}
 
 	function attend(projectId: string, tabId: string) {

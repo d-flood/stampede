@@ -51,6 +51,76 @@ async fn a_finished_chat_needs_attention_until_viewed_and_pushes_to_browsers_not
     assert_eq!(feed(&mut socket).await, json!([]));
 }
 
+#[tokio::test]
+async fn a_done_chat_with_a_running_shell_waits_for_the_shell_before_it_needs_attention() {
+    let gates = tempfile::tempdir().unwrap();
+    let fixture = format!("{}/tests/fixtures/chats/claude-code/background-shell.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
+    let config = format!("[[rig]]\nname = \"claude\"\nagent = \"claude-code\"\ncommand = \"claude\"\nenv = {{ STAMPEDE_FAKE_FIXTURE = {fixture:?}, STAMPEDE_FAKE_GATES = {:?} }}\n", gates.path());
+    let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
+    let server = Server::with_env("background", &config, vec![("PATH", path.into())]).await;
+    let mut pushes = subscribe(&server, &["away"]).await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device", "browserId": "away" })).await;
+    next_control(&mut socket, "hello").await;
+    control(&mut socket, json!({ "type": "project.open", "path": "~" })).await;
+    let project_id = next_control(&mut socket, "project.opened").await["projectId"].clone();
+    let chat_id = start(&mut socket, &project_id, false).await;
+
+    let seen = settled(&mut socket, &chat_id).await;
+    assert!(seen.contains(&json!(["chat.background", true])), "the shell is running when the turn ends: {seen:?}");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(pushes.try_recv().is_err(), "a done Chat with a running shell was pushed");
+
+    let gate = gates.path().join("shell");
+    timeout(Duration::from_secs(10), async { while !gate.exists() { tokio::time::sleep(Duration::from_millis(20)).await; } }).await.unwrap();
+    fs::remove_file(&gate).unwrap();
+    assert_eq!(settled(&mut socket, &chat_id).await, [json!(["chat.background", false]), json!(["chat.status", "working"]), json!(["chat.status", "done"])]);
+    let item = json!({ "projectId": project_id, "chatId": chat_id, "label": "claude", "status": "done" });
+    assert_eq!(pushed(&mut pushes).await, ("away".into(), item));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(pushes.try_recv().is_err(), "the resumed turn was announced twice");
+}
+
+#[tokio::test]
+async fn a_shell_that_finishes_without_the_agent_resuming_announces_the_chat_once() {
+    let gates = tempfile::tempdir().unwrap();
+    let fixture = format!("{}/tests/fixtures/chats/claude-code/background-shell-idle.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
+    let config = format!("[[rig]]\nname = \"claude\"\nagent = \"claude-code\"\ncommand = \"claude\"\nenv = {{ STAMPEDE_FAKE_FIXTURE = {fixture:?}, STAMPEDE_FAKE_GATES = {:?} }}\n", gates.path());
+    let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
+    let server = Server::with_env("background-idle", &config, vec![("PATH", path.into())]).await;
+    let mut pushes = subscribe(&server, &["away"]).await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device", "browserId": "away" })).await;
+    next_control(&mut socket, "hello").await;
+    control(&mut socket, json!({ "type": "project.open", "path": "~" })).await;
+    let project_id = next_control(&mut socket, "project.opened").await["projectId"].clone();
+    let chat_id = start(&mut socket, &project_id, false).await;
+    settled(&mut socket, &chat_id).await;
+    let gate = gates.path().join("shell");
+    timeout(Duration::from_secs(10), async { while !gate.exists() { tokio::time::sleep(Duration::from_millis(20)).await; } }).await.unwrap();
+    fs::remove_file(&gate).unwrap();
+    let item = json!({ "projectId": project_id, "chatId": chat_id, "label": "claude", "status": "done" });
+    assert_eq!(feed(&mut socket).await, json!([item]));
+    assert_eq!(pushed(&mut pushes).await, ("away".into(), item));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(pushes.try_recv().is_err(), "the Chat was announced twice");
+}
+
+/// The Chat's status and background changes until it is next done.
+async fn settled(socket: &mut Socket, chat_id: &str) -> Vec<Value> {
+    let mut seen = Vec::new();
+    timeout(Duration::from_secs(10), async {
+        while !seen.contains(&json!(["chat.status", "done"])) {
+            let Message::Text(text) = socket.next().await.unwrap().unwrap() else { continue };
+            let message: Value = serde_json::from_str(&text).unwrap();
+            if message["chatId"] == chat_id && matches!(message["type"].as_str(), Some("chat.status" | "chat.background")) {
+                seen.push(json!([message["type"], message.get("status").or(message.get("background"))]));
+            }
+        }
+    }).await.expect("the Chat never finished");
+    seen
+}
+
 /// Creates a Chat, shown on the socket's Device or not, and starts a turn that runs to done.
 async fn start(socket: &mut Socket, project_id: &Value, shown: bool) -> String {
     control(socket, json!({ "type": "chat.create", "projectId": project_id, "rig": "claude" })).await;

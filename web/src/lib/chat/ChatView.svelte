@@ -9,6 +9,7 @@
 	import MessageNav from '#lib/chat/MessageNav.svelte';
 	import RequestCard from '#lib/chat/RequestCard.svelte';
 	import Shells from '#lib/chat/Shells.svelte';
+	import { commands } from '#lib/chat/shells.ts';
 	import Todos from '#lib/chat/Todos.svelte';
 	import Chips from '#lib/chat/Chips.svelte';
 	import Dock from '#lib/chat/Dock.svelte';
@@ -31,6 +32,7 @@
 		$props();
 
 	const subagents = $derived(flatten(items));
+	const shell = $derived(chat.background ? commands(items).findLast(({ item }) => item.status === 'running')?.item.command : undefined);
 	const selected = $derived(subagents.find(({ path }) => same(path, opened))?.subagent);
 	const trail = $derived(subagents.filter(({ path }) => path.length < opened.length && same(path, opened.slice(0, path.length))));
 	const source = $derived(chats.find(({ id }) => id === chat.handoffFrom));
@@ -234,7 +236,7 @@
 			{/key}
 		{/if}
 		{#if !selected}
-			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {live} {request} {capabilities} {choices} {branches} {focused} onrun={run} />
+			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {shell} {live} {request} {capabilities} {choices} {branches} {focused} onrun={run} />
 		{:else}
 			<div class="subagent"><span>Subagent</span><Button onclick={() => onopen([])}>Back to Main</Button></div>
 		{/if}

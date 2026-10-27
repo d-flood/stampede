@@ -661,7 +661,12 @@ impl Transcript {
                     let _ = self.events.send(Event::Meters(Some(Context { used, window }), None));
                 }
             }
-            "session.compaction_complete" if data["success"] == true => { self.push(Item::compacted()); }
+            "session.compaction_complete" if data["success"] == true => {
+                self.push(Item::compacted());
+                if !history && let (Some(used), Some(window)) = (data["postCompactionTokens"].as_u64(), data["tokenLimit"].as_u64()) {
+                    let _ = self.events.send(Event::Meters(Some(Context { used, window }), None));
+                }
+            }
             "session.model_change" => {
                 if let Some(model) = data["newModel"].as_str() { self.settings.chosen.model = Some(model.to_owned()); self.report_settings(); }
             }

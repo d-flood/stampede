@@ -93,6 +93,9 @@ async fn claude_built_ins_reach_the_agent_as_control_requests_and_user_text() {
     let first = record(&server, &chat_id)["agentSession"].clone();
     assert_eq!(first, "3aaa0747-0136-4d46-af51-0ec0de032562");
     view.turn(&mut socket, &chat_id, json!({ "type": "chat.run", "chatId": chat_id, "command": "compact" })).await;
+    timeout(Duration::from_secs(10), async {
+        while record(&server, &chat_id)["context"]["used"] != 4436 { sleep(Duration::from_millis(20)).await; }
+    }).await.expect("the context meter shows Claude's post-compact usage");
     view.turn(&mut socket, &chat_id, json!({ "type": "chat.run", "chatId": chat_id, "command": "clear" })).await;
     assert_eq!(view.items, Vec::<Value>::new(), "/clear leaves an empty transcript");
     assert_eq!(record(&server, &chat_id)["agentSession"], "6fc0d30d-f1f5-4ff0-93f6-de0071507543");
@@ -119,6 +122,7 @@ async fn claude_built_ins_reach_the_agent_as_control_requests_and_user_text() {
             json!({ "subtype": "set_permission_mode", "mode": "plan" }),
             json!(OK),
             json!("/compact"),
+            json!({ "subtype": "get_context_usage", "detail": "summary" }),
             json!("/clear"),
         ]
     );
@@ -174,6 +178,7 @@ async fn codex_built_ins_ride_the_next_turn_or_reach_the_daemon_as_requests() {
     assert!(record(&server, &chat_id)["context"].is_object());
     assert!(record(&server, &chat_id)["tokens"].is_object());
     view.turn(&mut socket, &chat_id, json!({ "type": "chat.run", "chatId": chat_id, "command": "compact" })).await;
+    assert_eq!(record(&server, &chat_id)["context"], json!({ "used": 14094, "window": 258400 }), "Codex's post-compact estimate reaches the meter");
     run(&mut socket, &chat_id, json!({ "command": "clear" })).await;
     view.follow(&mut socket, &chat_id, |view| view.items.is_empty() && view.last()["pending"] != json!([])).await;
     let collaboration = |mode| {

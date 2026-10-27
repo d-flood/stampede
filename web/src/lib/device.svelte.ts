@@ -94,6 +94,7 @@ export type Chat = {
 	closing?: true;
 	agentSession?: string;
 	activity?: string | null;
+	background?: boolean;
 	context: Context | null;
 	tokens: Tokens | null;
 	queued: string[];
@@ -206,6 +207,7 @@ export type ServerMessage =
 	| { type: 'chat.item'; chatId: string; index: number; item: Item }
 	| { type: 'chat.append'; chatId: string; index: number; text: string }
 	| { type: 'chat.status'; chatId: string; status: Status }
+	| { type: 'chat.background'; chatId: string; background: boolean }
 	| { type: 'chat.activity'; chatId: string; activity: string | null }
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
 	| { type: 'sessions.listed'; projectId: string; sessions: Session[] }

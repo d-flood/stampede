@@ -325,6 +325,7 @@
 
 	.fill {
 		stroke: var(--brand);
+		transition: stroke-dasharray calc(4 * var(--dur-med)) var(--ease-out);
 	}
 
 	.percent,

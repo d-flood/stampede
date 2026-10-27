@@ -23,10 +23,11 @@
 	import Terminal from '~icons/ph/terminal';
 	import X from '~icons/ph/x';
 
-	let { device, chat, live, request, capabilities, choices, branches, history, shelling, focused = false, onrun }: {
+	let { device, chat, live, request, capabilities, choices, branches, history, shelling, shell, focused = false, onrun }: {
 		device: Device;
 		chat: Chat;
 		live: boolean;
+		shell?: string;
 		branches: { label: string; icon: Component; disabled: boolean; onselect(): void }[];
 		history: string[];
 		shelling: boolean;
@@ -160,7 +161,7 @@
 {#if error}<div role="alert">{error}</div>{/if}
 <Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : form() === 'phone' ? undefined : '/ commands · @ files · ! shell · ; clips'} {history} code={(text) => text.trimStart().startsWith('!')} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
 	{#snippet border()}
-		<TurnRing status={chat.status} activity={chat.activity} />
+		<TurnRing status={chat.status} activity={chat.activity} {shell} />
 	{/snippet}
 	{#snippet menu(text, replace, caret)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />

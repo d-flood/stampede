@@ -3,6 +3,7 @@
 	import Progress from '#lib/epics/Progress.svelte';
 	import { counts } from '#lib/epics.svelte.ts';
 	import type { Tile } from '#lib/projects.ts';
+	import ShellMark from '#lib/ui/ShellMark.svelte';
 	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import CircleNotchBold from '~icons/ph/circle-notch-bold';
@@ -93,7 +94,7 @@
 							title={tile.status ? `${name} ${tile.status}` : name}
 							onclick={(event) => select(event, tile.id)}
 						>
-							<span class="tile squircle {tile.status ?? ''}">{tile.mark}</span>
+							<span class="tile squircle {tile.status ?? ''}">{tile.mark}{#if tile.status === 'background'}<span class="badge"><ShellMark /></span>{/if}</span>
 							<span class="name">{name}</span>
 						</button>
 					{/snippet}
@@ -463,6 +464,7 @@
 	}
 
 	.tile {
+		position: relative;
 		display: grid;
 		flex: none;
 		place-items: center;
@@ -496,6 +498,7 @@
 
 	.tile.working,
 	.tile.waiting,
+	.tile.background,
 	.tile.done {
 		border-width: 2px;
 		border-color: currentColor;
@@ -509,8 +512,24 @@
 		color: var(--status-waiting);
 	}
 
+	.tile.background {
+		color: var(--status-background);
+	}
+
 	.tile.done {
 		color: var(--status-done);
+	}
+
+	.badge {
+		position: absolute;
+		right: -5px;
+		bottom: -5px;
+		display: grid;
+		place-items: center;
+		border: var(--border-width) solid currentColor;
+		border-radius: var(--radius-sm);
+		background: var(--color-bg);
+		font-size: 8px;
 	}
 
 	.tile.stopping {

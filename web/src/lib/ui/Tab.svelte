@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Agent } from '#lib/config.svelte.ts';
 	import { logos } from '#lib/chat/sessions.ts';
+	import ShellMark from '#lib/ui/ShellMark.svelte';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 	import Article from '~icons/ph/article';
 	import CheckBold from '~icons/ph/check-bold';
@@ -17,7 +18,7 @@
 		label: string;
 		agent?: Agent;
 		against?: string;
-		status?: 'working' | 'waiting' | 'done';
+		status?: 'working' | 'waiting' | 'background' | 'done';
 		active?: boolean;
 		dirty?: boolean;
 		deleted?: boolean;
@@ -42,7 +43,7 @@
 	}: Props = $props();
 
 	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe, epic: Article };
-	const marks = { working: CircleNotchBold, waiting: HandPalmFill, done: CheckBold };
+	const marks = { working: CircleNotchBold, waiting: HandPalmFill, background: ShellMark, done: CheckBold };
 	const Icon = $derived(variant === 'agent' ? logos[agent] : icons[variant]);
 	const Mark = $derived(status && marks[status]);
 </script>
@@ -203,6 +204,10 @@
 	.waiting {
 		--mark: var(--status-waiting);
 		background: color-mix(in oklab, var(--status-waiting) 16%, transparent);
+	}
+
+	.background {
+		--mark: var(--status-background);
 	}
 
 	.done {

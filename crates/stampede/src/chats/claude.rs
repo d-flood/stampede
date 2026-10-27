@@ -393,6 +393,13 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                     {
                         transcript.read(&message);
                     }
+                    if transcript.stale && transcript.status == Status::Done {
+                        transcript.stale = false;
+                        let request = transcript.request(json!({ "subtype": "get_context_usage", "detail": "summary" }), Asked::Context);
+                        if writer.write_all(&request).await.is_err() {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -962,6 +969,9 @@ struct Transcript {
     /// The model of the main loop's latest API call, and how many tokens it was sent.
     call: Option<(String, u64)>,
     window: Option<u64>,
+    /// A compact left the meter stale. Claude does not push the new size, so the driver asks once the turn ends,
+    /// unless another API call reports it first.
+    stale: bool,
     steering: HashSet<String>,
     asked: HashMap<String, Asked>,
     models: Vec<Value>,
@@ -974,6 +984,7 @@ enum Asked {
     Initialize,
     Settings,
     Set(Setting, String),
+    Context,
 }
 
 impl Transcript {
@@ -1018,6 +1029,7 @@ impl Transcript {
             inputs: HashMap::new(),
             call: None,
             window: None,
+            stale: false,
             steering: HashSet::new(),
             asked: HashMap::new(),
             models: Vec::new(),
@@ -1095,6 +1107,12 @@ impl Transcript {
                         *self.settings.get_mut(setting) = applied.clone();
                     }
                     self.changed(setting);
+                }
+            }
+            Asked::Context if success => {
+                if let (Some(used), Some((_, sent))) = (body["totalTokens"].as_u64(), self.call.as_mut()) {
+                    *sent = used;
+                    self.meter(None);
                 }
             }
             _ => {}
@@ -1452,8 +1470,14 @@ impl Transcript {
                     self.tasks.insert(task.to_owned(), tool.to_owned());
                 }
             }
+            Some("system") if message["subtype"] == "session_state_changed" => {
+                if message["state"] == "running" && self.status == Status::Done {
+                    self.report(Status::Working);
+                }
+            }
             Some("system") if message["subtype"] == "compact_boundary" => {
                 self.push(Item::compacted());
+                self.stale = !self.replaying;
             }
             Some("system") => {
                 if message["subtype"] == "init"
@@ -1641,6 +1665,7 @@ impl Transcript {
         let sent = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"];
         let used = sent.iter().filter_map(|field| usage[field].as_u64()).sum();
         self.call = message["model"].as_str().map(|model| (model.to_owned(), used));
+        self.stale = false;
         self.meter(None);
     }
 
@@ -2057,6 +2082,21 @@ fn prompt(content: &str) -> Option<String> {
 #[cfg(test)]
 mod result_tests {
     use super::*;
+
+    #[test]
+    fn a_turn_claude_starts_itself_shows_as_working() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        transcript.read(&json!({ "type": "system", "subtype": "session_state_changed", "state": "running" }));
+        transcript.read(&json!({ "type": "result", "subtype": "success" }));
+        transcript.read(&json!({ "type": "system", "subtype": "session_state_changed", "state": "idle" }));
+        transcript.read(&json!({ "type": "system", "subtype": "session_state_changed", "state": "running" }));
+        let mut statuses = Vec::new();
+        while let Ok(event) = received.try_recv() {
+            if let Event::Status(status) = event { statuses.push(status); }
+        }
+        assert_eq!(statuses, [Status::Working, Status::Done, Status::Working]);
+    }
 
     #[test]
     fn api_errors_are_reported_once_without_hiding_later_failures() {

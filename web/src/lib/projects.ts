@@ -1,6 +1,6 @@
 import type { Chat, Epic, Project, Status, Worktree } from '#lib/device.svelte.ts';
 
-export type Tile = { id: string; mark: string; status?: Status | 'stopping' };
+export type Tile = { id: string; mark: string; status?: Status | 'background' | 'stopping' };
 
 function segments(path: string): string[] {
 	return path.split('/').filter(Boolean);
@@ -43,7 +43,8 @@ export function worktrees(projects: Project[], epics: Record<string, Epic[]>, ch
 		const tickets = epics[parent]?.find((epic) => epic.slug === slug)?.tickets ?? [];
 		const ticket = role === 'integration' ? undefined : tickets.find(({ number }) => number === role.ticket);
 		const chat = role === 'integration' ? tickets.find(({ resolver }) => resolver)?.resolver : ticket?.claim?.chat;
-		const status = ticket?.releasing ? 'stopping' : chats.find((other) => other.id === chat)?.status;
+		const claimed = chats.find((other) => other.id === chat);
+		const status = ticket?.releasing ? 'stopping' : claimed?.status === 'done' && claimed.background ? 'background' : claimed?.status;
 		const mark = role === 'integration' ? 'In' : String(role.ticket);
 		tiles.set(parent, [...(tiles.get(parent) ?? []), { id, mark, status }]);
 	}

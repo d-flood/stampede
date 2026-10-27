@@ -17,12 +17,12 @@
 			}
 		}
 	});
-	const latest = $derived(activity || last?.text || '');
+	const latest = $derived(activity || last?.text || 'Thoughts');
 </script>
 
-{#if count}
+{#if count || items.length > 1}
 	<details class="calls" {open}>
-		<summary><span class="caret"><CaretRight /></span><span class="count">{count} tool {count === 1 ? 'call' : 'calls'}</span>{#if last?.icon}<span class="icon"><last.icon /></span>{/if}<span class="latest">{latest}</span></summary>
+		<summary><span class="caret"><CaretRight /></span>{#if count}<span class="count">{count} tool {count === 1 ? 'call' : 'calls'}</span>{/if}{#if last?.icon}<span class="icon"><last.icon /></span>{/if}<span class="latest">{latest}</span></summary>
 		<div class="content">{@render children()}</div>
 	</details>
 {:else}

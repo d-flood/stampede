@@ -155,7 +155,7 @@ while True:
         reply(request, {})
     elif method == 'session.history.compact':
         reply(request, {'success': True, 'messagesRemoved': 0, 'tokensRemoved': 0})
-        event('session.compaction_complete', {'success': True})
+        event('session.compaction_complete', {'success': True, 'preCompactionTokens': 145, 'postCompactionTokens': 60, 'tokenLimit': 200000})
     elif method == 'session.history.truncate':
         at = next(i for i, entry in enumerate(history) if entry['id'] == params['eventId'])
         removed = len(history) - at

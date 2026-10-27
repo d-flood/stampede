@@ -315,6 +315,9 @@ async fn connect(
                 Ok(chats::Change::Status(chat_id, status)) => {
                     send(&device.outgoing, json!({ "type": "chat.status", "chatId": chat_id, "status": status }));
                 }
+                Ok(chats::Change::Background(chat_id, background)) => {
+                    send(&device.outgoing, json!({ "type": "chat.background", "chatId": chat_id, "background": background }));
+                }
                 Ok(chats::Change::Activity(chat_id, activity)) => {
                     send(&device.outgoing, json!({ "type": "chat.activity", "chatId": chat_id, "activity": activity }));
                 }

@@ -66,6 +66,7 @@
 	--status-working: var(--ansi-4);
 	--status-waiting: var(--ansi-3);
 	--status-done: var(--ansi-2);
+	--status-background: var(--ansi-6);
 
 	--git-modified: var(--ansi-3);
 	--git-renamed: var(--ansi-6);

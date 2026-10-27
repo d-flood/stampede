@@ -393,12 +393,21 @@ async fn copilot_settings_compaction_rewind_and_clear_use_sdk_operations() {
     }).await.unwrap();
     control(&mut socket, json!({ "type": "chat.run", "chatId": id, "command": "compact" })).await;
     timeout(Duration::from_secs(10), async { while next(&mut socket).await["item"]["notice"] != "compacted" {} }).await.unwrap();
+    let meters = timeout(Duration::from_secs(10), next_control(&mut socket, "chat.meters")).await.unwrap();
+    assert_eq!(meters["context"], json!({ "used": 60, "window": 200000 }));
     control(&mut socket, json!({ "type": "chat.run", "chatId": id, "command": "rewind", "value": 0 })).await;
     timeout(Duration::from_secs(10), next_control(&mut socket, "chat.items")).await.unwrap();
     let rewound = items(&mut socket, &chat).await["items"].clone();
     assert!(rewound.as_array().unwrap().iter().all(|item| item["notice"] == "rewound"));
     control(&mut socket, json!({ "type": "chat.send", "chatId": id, "text": "Again" })).await;
-    done(&mut socket).await;
+    timeout(Duration::from_secs(10), async {
+        let mut working = false;
+        loop {
+            let message = next(&mut socket).await;
+            if message["type"] != "chat.status" { continue; }
+            if message["status"] == "working" { working = true; } else if working && message["status"] == "done" { break; }
+        }
+    }).await.expect("the attach snapshot's status is not the end of the new turn");
     let before: Value = serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{id}.json"))).unwrap()).unwrap();
     control(&mut socket, json!({ "type": "chat.run", "chatId": id, "command": "clear" })).await;
     timeout(Duration::from_secs(10), next_control(&mut socket, "chat.items")).await.unwrap();
