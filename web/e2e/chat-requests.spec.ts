@@ -66,7 +66,7 @@ for (const agent of ['Claude', 'Codex']) {
 
 		await card.getByRole('button', { name: 'Allow', exact: true }).click();
 		await expect(card).toHaveCount(0);
-		await expect(panel.getByText('Done', { exact: true })).toBeVisible();
+		await expect(panel.locator('.transcript:visible').getByText('Done', { exact: true })).toBeVisible();
 		await expect(tab.getByTitle('done')).toBeVisible();
 		await expect(composer).not.toHaveAttribute('placeholder', `Or tell ${agent} what to do instead…`);
 	});
@@ -99,7 +99,7 @@ for (const agent of ['Claude', 'Codex']) {
 		await expect.poll(() => card.evaluate((node) => node.scrollWidth <= node.clientWidth && node.getBoundingClientRect().bottom <= window.innerHeight)).toBe(true);
 		await card.getByRole('button', { name: 'Allow rules', exact: true }).click();
 		await expect(card).toHaveCount(0);
-		await expect(panel.getByText('Done', { exact: true })).toBeVisible();
+		await expect(panel.locator('.transcript:visible').getByText('Done', { exact: true })).toBeVisible();
 		await closeProject(page, `rules-${agent}-${project.name}`);
 	});
 

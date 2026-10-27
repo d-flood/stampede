@@ -21,9 +21,10 @@
 		onsend?(text: string, enter: boolean): boolean;
 		/** Replaces Insert and Send, and boxes the Composer in a Chat's column. */
 		actions?: Snippet<[text: string, clear: () => void]>;
+		border?: Snippet;
 	};
 
-	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], onsend, actions, menu, onkeydown, onpaste }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], onsend, actions, border, menu, onkeydown, onpaste }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
@@ -106,24 +107,27 @@
 <div class="composer" class:boxed={actions} class:phone>
 	{@render menu?.(text, replace, caret)}
 	<ClipMenu bind:this={clipMenu} {text} {caret} {replace} />
-	<textarea
-		{@attach (element) => { if (focused) element.focus(); }}
-		bind:this={box}
-		bind:value={text}
-		oninput={(event) => { keep(); track(event); }}
-		onkeydown={keydown}
-		onkeyup={track}
-		onpointerup={track}
-		onfocus={track}
-		{onpaste}
-		aria-label="Composer"
-		class:code={coded}
-		{placeholder}
-		rows={actions ? (phone ? 2 : 1) : 3}
-		autocorrect={coded ? 'off' : 'on'}
-		autocapitalize={coded ? 'off' : 'sentences'}
-		spellcheck={!coded}
-	></textarea>
+	<div class="field">
+		<textarea
+			{@attach (element) => { if (focused) element.focus(); }}
+			bind:this={box}
+			bind:value={text}
+			oninput={(event) => { keep(); track(event); }}
+			onkeydown={keydown}
+			onkeyup={track}
+			onpointerup={track}
+			onfocus={track}
+			{onpaste}
+			aria-label="Composer"
+			class:code={coded}
+			{placeholder}
+			rows={actions ? (phone ? 2 : 1) : 3}
+			autocorrect={coded ? 'off' : 'on'}
+			autocapitalize={coded ? 'off' : 'sentences'}
+			spellcheck={!coded}
+		></textarea>
+		{@render border?.()}
+	</div>
 	<div class="actions">
 		{#if !actions && text.trim()}
 			<Button aria-label="Save as Clip" tip="Save as Clip" onmousedown={(event) => event.preventDefault()} onclick={() => (clipping = true)}><BookmarkSimple /></Button>
@@ -159,6 +163,11 @@
 		padding: var(--space-2);
 		border-top: var(--border-width) solid var(--border);
 		background: var(--surface-1);
+	}
+
+	.field {
+		position: relative;
+		display: grid;
 	}
 
 	textarea {

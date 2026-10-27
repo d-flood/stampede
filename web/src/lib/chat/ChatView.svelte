@@ -33,7 +33,6 @@
 	const subagents = $derived(flatten(items));
 	const selected = $derived(subagents.find(({ path }) => same(path, opened))?.subagent);
 	const trail = $derived(subagents.filter(({ path }) => path.length < opened.length && same(path, opened.slice(0, path.length))));
-	const current = $derived(selected ?? chat);
 	const source = $derived(chats.find(({ id }) => id === chat.handoffFrom));
 	const handoffs = $derived(chats.filter(({ handoffFrom }) => handoffFrom === chat.id));
 	let requests = $state<Request[]>([]);
@@ -225,7 +224,7 @@
 	{/if}
 	<div class="foot">
 		<Shells {items} />
-		<Activity status={current.status} activity={current.activity} />
+		{#if selected}<Activity status={selected.status} activity={selected.activity} />{/if}
 		{#if subagents.length}
 			<Dock {subagents} onopen={open} onattend={attend} />
 		{/if}

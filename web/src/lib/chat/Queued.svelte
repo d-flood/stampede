@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { prefersReducedMotion } from 'svelte/motion';
+	import { fly } from 'svelte/transition';
 	import X from '~icons/ph/x';
 
 	let { queued, disabled, oncancel }: { queued: string[]; disabled: boolean; oncancel(index: number): void } = $props();
@@ -7,7 +9,7 @@
 {#if queued.length}
 	<ol aria-label="Queued">
 		{#each queued as text, index (index)}
-			<li><button type="button" aria-label="Cancel queued message" title="Return to composer" {disabled} onclick={() => oncancel(index)}><X /></button>{text}</li>
+			<li in:fly|global={{ y: prefersReducedMotion.current ? 0 : 12, duration: 250 }}><button type="button" aria-label="Cancel queued message" title="Return to composer" {disabled} onclick={() => oncancel(index)}><X /></button>{text}</li>
 		{/each}
 	</ol>
 {/if}

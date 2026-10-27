@@ -4,12 +4,14 @@
 	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import FileMenu from '#lib/chat/FileMenu.svelte';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
+	import TurnRing from '#lib/chat/TurnRing.svelte';
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import type { Component } from 'svelte';
+	import { prefersReducedMotion } from 'svelte/motion';
 	import ArrowBendUpRight from '~icons/ph/arrow-bend-up-right';
 	import At from '~icons/ph/at';
 	import BookmarkSimple from '~icons/ph/bookmark-simple';
@@ -42,6 +44,7 @@
 	let images = $state<(Image & { name: string })[]>([]);
 	let error = $state('');
 	let reading = $state(false);
+	let launching = $state(false);
 
 	function choose() {
 		const files = [...(picker.files ?? [])];
@@ -111,6 +114,7 @@
 			onrun(command, value);
 			return true;
 		}
+		launching = !working && !prefersReducedMotion.current;
 		device.send({ type: 'chat.send', chatId: chat.id, text, queue, images: images.map(({ mediaType, data }) => ({ mediaType, data })) });
 		images = [];
 		error = '';
@@ -155,6 +159,9 @@
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
 <Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : form() === 'phone' ? undefined : '/ commands · @ files · ! shell · ; clips'} {history} code={(text) => text.trimStart().startsWith('!')} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
+	{#snippet border()}
+		<TurnRing status={chat.status} activity={chat.activity} />
+	{/snippet}
 	{#snippet menu(text, replace, caret)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
 		{#if !slash?.isOpen()}
@@ -187,7 +194,7 @@
 				<Button variant="primary" disabled={!text.trim().slice(1).trim() || !live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
 					<Terminal /> Run
 				</Button>
-			{:else if working}
+			{:else if working && !launching}
 				<Button disabled={(!text.trim() && !images.length) || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
 					<ListPlus /> Queue
 				</Button>
@@ -209,7 +216,7 @@
 					onmousedown={keepFocus}
 					onclick={() => send(text, false) && clear()}
 				>
-					<PaperPlaneRight />
+					<span class="plane" class:launching onanimationend={() => (launching = false)}><PaperPlaneRight /></span>
 				</Button>
 			{/if}
 		</div>
@@ -231,6 +238,19 @@
 
 	.gap {
 		flex: 1;
+	}
+
+	.plane {
+		display: inline-flex;
+	}
+
+	.launching {
+		animation: launch 450ms var(--ease-out);
+	}
+
+	@keyframes launch {
+		45% { opacity: 0; translate: 1.2em -0.9em; }
+		46% { opacity: 0; translate: -1.2em 0.9em; }
 	}
 
 	.turn {
