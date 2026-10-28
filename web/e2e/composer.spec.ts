@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
 import { closeProject, openProject } from './shell.ts';
 
@@ -58,16 +58,71 @@ test('chat composer submits with Enter on desktop and keeps mobile Enter as a ne
 	await closeProject(page, name);
 });
 
-async function launch(page: Page, name: string) {
+async function launch(page: Page, name: string, rig = 'Fake Claude') {
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	await page.getByRole('menuitem', { name: rig, exact: true }).click();
+	const tab = page.getByRole('tab', { name: new RegExp(`^${rig}`) });
 	await expect(tab.getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	return { tab, panel, composer: panel.getByRole('textbox', { name: 'Composer' }) };
 }
+
+test('the composer comet stays aligned through a long turn', async ({ page }, { project }) => {
+	const name = `composer-comet-${project.name}`;
+	const { tab, panel, composer } = await launch(page, name, `Fake Claude Gated ${project.name}`);
+	await composer.fill('Keep working');
+	await panel.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect.poll(() => existsSync(`${process.env.STAMPEDE_E2E_ROOT}/gated-${project.name}/verdict`)).toBe(true);
+	const ring = panel.locator('svg.ring');
+	await expect(ring).toBeVisible();
+	for (const elapsed of [0, 60_000, 600_000, 3_600_000]) {
+		await composer.fill(elapsed ? 'A draft\nwith several\nlines' : '');
+		if (elapsed >= 600_000) {
+			await page.getByRole('button', { name: 'New Tab', exact: true }).click();
+			await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+			await expect(panel).toBeHidden();
+			await tab.click();
+			await expect(panel).toBeVisible();
+		}
+		await expect.poll(() => panel.evaluate((element) => {
+			const tail = element.querySelector('.tail')!;
+			const trace = element.querySelector('.trace')!;
+			return tail.getAnimations()[0]?.startTime != null && trace.getAnimations().some((animation) => animation.startTime != null);
+		})).toBe(true);
+		await expect.poll(() => panel.evaluate((element, elapsed) => {
+			const tail = element.querySelector<SVGRectElement>('.tail')!;
+			const animation = tail.getAnimations()[0];
+			const duration = Number(animation.effect!.getComputedTiming().duration);
+			const width = tail.getBBox().width;
+			const radius = parseFloat(getComputedStyle(tail).rx);
+			const phase = (((width / 2 - radius) / tail.getTotalLength() - 0.155) % 1 + 1) % 1;
+			const delta = (Math.floor(elapsed / duration) + phase) * duration - Number(animation.currentTime);
+			for (const node of element.querySelectorAll('.comet rect, .legend span')) {
+				for (const current of node.getAnimations()) {
+					if (current.effect?.getTiming().iterations === Infinity) {
+						current.startTime = Number(current.startTime) - delta;
+					}
+				}
+			}
+
+			const head = element.querySelector<SVGRectElement>('.head')!;
+			const trace = element.querySelector<HTMLElement>('.trace')!;
+			const end = (node: SVGRectElement) => {
+				const style = getComputedStyle(node);
+				return ((-parseFloat(style.strokeDashoffset) + parseFloat(style.strokeDasharray)) % 100 + 100) % 100;
+			};
+			const separation = Math.abs(end(tail) - end(head));
+			const point = head.getPointAtLength(head.getTotalLength() * ((end(head) - 2.5 + 100) % 100) / 100);
+			const headX = head.getBoundingClientRect().left - 0.5 + point.x;
+			const traceStyle = getComputedStyle(trace);
+			const traceX = trace.getBoundingClientRect().left + parseFloat(traceStyle.backgroundPositionX) + parseFloat(traceStyle.backgroundSize);
+			return Math.max(Math.min(separation, 100 - separation) / 100 * tail.getTotalLength(), Math.abs(headX - traceX));
+		}, elapsed)).toBeLessThan(2);
+	}
+	await closeProject(page, name);
+});
 
 test('ArrowUp and ArrowDown recall earlier prompts without replacing a draft', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `composer-history-${project.name}`;
