@@ -714,9 +714,21 @@ pub struct Chat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duty: Option<Duty>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shell_context: Vec<String>,
+}
+
+/// What a Run started a Chat to do, which decides the actions of its `epic` tool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Duty {
+    Ticket,
+    Resolver,
+    Reviewer,
+    Remediator,
 }
 
 #[derive(Serialize)]
@@ -903,15 +915,15 @@ impl Chats {
     }
 
     /// Starts a Chat owned by `project` that runs in `cwd`: the Project's own directory, or a Ticket Worktree.
-    pub async fn create(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>) -> io::Result<Chat> {
-        self.start(&project.id, cwd, rig, session, None, None).await
+    pub async fn create(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>, duty: Option<Duty>) -> io::Result<Chat> {
+        self.start(&project.id, cwd, rig, session, None, None, duty).await
     }
 
     pub async fn create_handoff(self: &Arc<Self>, project: &Project, source: &Chat, rig: &Rig, text: String) -> io::Result<Chat> {
-        self.start(&project.id, &source.cwd, rig, None, Some((source.id.clone(), text)), None).await
+        self.start(&project.id, &source.cwd, rig, None, Some((source.id.clone(), text)), None, None).await
     }
 
-    async fn start(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>, parent: Option<String>) -> io::Result<Chat> {
+    async fn start(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>, parent: Option<String>, duty: Option<Duty>) -> io::Result<Chat> {
         if session.is_some() && self.chats.lock().unwrap().iter().any(|entry| entry.chat.lock().unwrap().agent_session.as_deref() == session) {
             return Err(io::Error::other("Another Chat is still running that conversation."));
         }
@@ -944,6 +956,7 @@ impl Chats {
             answered_questions: Vec::new(),
             handoff_from,
             parent,
+            duty,
             draft,
             shell_context: Vec::new(),
         };

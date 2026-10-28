@@ -281,18 +281,15 @@ async fn a_conflicted_merge_is_resolved_by_a_resolver_chat_while_later_merges_wa
     lp.chat_status(&resolver, "done").await;
     control(&mut lp.socket, json!({ "type": "chat.attach", "chatId": resolver })).await;
     let items = lp.follow(|message| message["type"] == "chat.items" && message["chatId"] == resolver).await;
-    let data = lp.root.join("data").display().to_string();
     let commit = lp.log().iter().find(|entry| entry["kind"] == "ticket.completed" && entry["ticket"] == 2).unwrap()["commit"].clone();
     let merge = format!(
-        "Your merge is work/2, Two: its commit `{}` conflicted in README when merged into `stampede/work/epic`. On this Host `stampede` is `{}`; run it by that path if it is not on your PATH.",
-        commit.as_str().unwrap(),
-        env!("CARGO_BIN_EXE_stampede")
+        "Your merge is work/2, Two: its commit `{}` conflicted in README when merged into `stampede/work/epic`.",
+        commit.as_str().unwrap()
     );
     assert_eq!(items["items"][0], json!({ "kind": "user", "text": format!("/resolver {merge}"), "images": 0, "template": "resolver" }));
     let stdin = fs::read_to_string(lp.root.join("home/.claude/fake-received.jsonl")).unwrap();
     let template = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/templates/resolver.md")).unwrap();
-    let note = format!("This Stampede server keeps its data in {data}, so pass `--data-dir {data}` to every `stampede` command.");
-    let prompt = json!(format!("{}\n\n{note}\n\n{merge}", template.trim_end()));
+    let prompt = json!(format!("{}\n\n{merge}", template.trim_end()));
     let sent = stdin.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).filter(|message| message["type"] == "user");
     assert_eq!(sent.filter(|message| message["message"]["content"] == prompt).count(), 1, "the Resolver got the Template and its merge");
 

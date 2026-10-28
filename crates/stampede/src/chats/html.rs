@@ -43,9 +43,12 @@ pub fn item(arguments: &Value) -> Option<Item> {
     Some(Item::Html { title: snippet.title, html: snippet.html })
 }
 
-fn can_delegate(args: &ChatToolsArgs) -> bool {
+fn record(args: &ChatToolsArgs) -> Option<super::Chat> {
     args.chat_id.as_deref().and_then(|id| super::read_record(&super::record_path(&args.data_dir, id)).ok())
-        .is_none_or(|chat| chat.parent.is_none())
+}
+
+fn can_delegate(args: &ChatToolsArgs) -> bool {
+    record(args).is_none_or(|chat| chat.parent.is_none())
 }
 
 fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
@@ -63,6 +66,7 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
         }),
         Some("ping") => json!({}),
         Some("tools/list") => {
+            let chat = record(args);
             let mut catalog = json!({ "tools": [super::questions::tool(), super::terminal_tools::stage_tool(), super::terminal_tools::read_tool(), {
                 "name": TOOL,
                 "description": format!("Render a small self-contained HTML snippet inline for visual explanations. Inline CSS/SVG/JS supported; no network, external assets, parent access, forms or popups. Make it mobile-responsive; do not repeat HTML in chat.{canvas}"),
@@ -90,9 +94,11 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
                 },
                 "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
             }] });
-            if can_delegate(args) {
-                catalog["tools"].as_array_mut().unwrap().splice(0..0, [super::delegation::list_tool(), super::delegation::tool()]);
+            let tools = catalog["tools"].as_array_mut().unwrap();
+            if chat.as_ref().is_none_or(|chat| chat.parent.is_none()) {
+                tools.splice(0..0, [super::delegation::list_tool(), super::delegation::tool()]);
             }
+            tools.extend(chat.and_then(|chat| chat.duty).map(crate::cli::tool));
             catalog
         }
         Some("tools/call") if matches!(request["params"]["name"].as_str(), Some(super::delegation::LIST | super::delegation::TOOL)) && !can_delegate(args) => {
@@ -107,6 +113,9 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
                 "content": [{ "type": "text", "text": if valid { "Rendered HTML in the chat." } else { "Provide a title (1–200 characters) and nonempty HTML (up to 256 KiB), with no other arguments." } }],
                 "isError": !valid,
             })
+        }
+        Some("tools/call") if request["params"]["name"] == crate::cli::TOOL => {
+            crate::cli::call(data_dir, args.chat_id.as_deref(), request["params"]["arguments"].clone())
         }
         Some("tools/call") if request["params"]["name"] == crate::media::TOOL => {
             crate::media::call(data_dir, &request["params"]["arguments"])

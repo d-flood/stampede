@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
@@ -19,13 +19,13 @@ use uuid::Uuid;
 
 use crate::{
     attention::{Attention, Feed, Source, Tab},
-    chats::{self, Chat, Chats, Lifecycle},
+    chats::{self, Chat, Chats, Duty, Lifecycle},
     config::{Config, Rig},
     epics::{Author, Call, Continuation, Epic, Epics, Event, Keep, Pause, Review, Run, Status},
     git,
     holder::Owner,
     projects::{Kind, Project, Projects, Role, Worktree},
-    templates::{self, REMEDIATOR, RESOLVER, REVIEWER, TICKET},
+    templates::{REMEDIATOR, RESOLVER, REVIEWER, TICKET},
     terminals::Terminals,
     usage::Usage,
 };
@@ -44,7 +44,6 @@ pub struct Runs {
     data_dir: PathBuf,
     storage: crate::storage::Storage,
     worktrees: String,
-    cli: String,
     epics: Arc<Epics>,
     chats: Arc<Chats>,
     terminals: Arc<Terminals>,
@@ -81,7 +80,6 @@ impl Runs {
             data_dir: data_dir.to_owned(),
             storage: crate::storage::Storage::new(data_dir),
             worktrees: utf8(fs::canonicalize(data_dir)?.join("worktrees"))?,
-            cli: utf8(env::current_exe()?)?,
             epics,
             chats,
             terminals,
@@ -355,7 +353,7 @@ impl Runs {
                 .map_err(|error| format!("Stampede could not check out the submodules of its worktree: {error}"))?;
             let place = format!("Reviewer {number}'s new worktree");
             run_setup(&self.storage, epic.setup.as_deref().unwrap_or_default(), &worktree, &place).await?;
-            self.chats.create(&project, Path::new(&worktree), &rig, None).await.map_err(|error| format!("Its Chat could not start: {error}."))
+            self.chats.create(&project, Path::new(&worktree), &rig, None, Some(Duty::Reviewer)).await.map_err(|error| format!("Its Chat could not start: {error}."))
         };
         let chat = match started.await {
             Ok(chat) => chat,
@@ -381,7 +379,7 @@ impl Runs {
         let integration = epic.integration.as_deref().ok_or_else(|| format!("{slug} has no Integration Worktree to remediate"))?;
         let project = self.project(&epic).await?;
         let project = self.home(slug, &project, &integration.to_string_lossy(), Role::Integration);
-        let chat = self.chats.create(&project, integration, &rig, None).await.map_err(|error| format!("Its Chat could not start: {error}."))?;
+        let chat = self.chats.create(&project, integration, &rig, None, Some(Duty::Remediator)).await.map_err(|error| format!("Its Chat could not start: {error}."))?;
         if let Err(error) = self.epics.record(slug, Event::RemediationStarted { rig: rig.name.clone(), chat: chat.id.clone() }) {
             self.chats.close(&chat.id);
             return Err(error);
@@ -867,7 +865,7 @@ impl Runs {
             _ => rig.clone(),
         };
         let home = self.home(slug, project, &worktree, Role::Ticket(number));
-        let chat = match self.chats.create(&home, Path::new(&worktree), &rig, resume.map(|resume| resume.session.as_str())).await {
+        let chat = match self.chats.create(&home, Path::new(&worktree), &rig, resume.map(|resume| resume.session.as_str()), Some(Duty::Ticket)).await {
             Ok(chat) => chat,
             Err(error) => return abandon(format!("cannot start a Chat for {slug}/{number}: {error}")).await,
         };
@@ -935,9 +933,8 @@ impl Runs {
         let ticket = &epic.tickets[&number];
         let reference = format!("{}/{number}", epic.slug);
         format!(
-            "{}\n\nYour Ticket is {reference}, on the branch `{branch}`. {}\n\n## {reference}: {}\n\n{}",
+            "{}\n\nYour Ticket is {reference}, on the branch `{branch}`.\n\n## {reference}: {}\n\n{}",
             TICKET.opening(&self.data_dir),
-            self.binary(),
             ticket.title,
             ticket.body.trim_end()
         )
@@ -946,54 +943,42 @@ impl Runs {
     /// What a resumed session is sent in place of the Ticket Template.
     fn carry_on(&self, epic: &Epic, number: u32, branch: &str) -> String {
         let reference = format!("{}/{number}", epic.slug);
-        let mut text = format!(
-            "Stampede stopped this Chat before {reference} had its Verdict, and has resumed it in the same worktree. Carry on where you stopped, and finish with exactly one Verdict.\n\nYour Ticket is {reference}, on the branch `{branch}`. {}",
-            self.binary()
-        );
-        if let Some(sentence) = templates::data_dir_sentence(&self.data_dir) {
-            text = format!("{text} {sentence}");
-        }
-        text
+        format!(
+            "Stampede stopped this Chat before {reference} had its Verdict, and has resumed it in the same worktree. Carry on where you stopped, and finish with exactly one Verdict.\n\nYour Ticket is {reference}, on the branch `{branch}`."
+        )
     }
 
     /// The Resolver Template, then the merge it resolves, which `templates::recognize` shows as what followed `/resolver`.
     fn resolver_prompt(&self, epic: &Epic, number: u32, commit: &str, files: &str) -> String {
         let slug = &epic.slug;
         format!(
-            "{}\n\nYour merge is {slug}/{number}, {}: its commit `{commit}` conflicted in {files} when merged into `{}`. {}",
+            "{}\n\nYour merge is {slug}/{number}, {}: its commit `{commit}` conflicted in {files} when merged into `{}`.",
             RESOLVER.opening(&self.data_dir),
             epic.tickets[&number].title,
-            epic_branch(slug),
-            self.binary()
+            epic_branch(slug)
         )
     }
 
     /// The Reviewer Template, then which Reviewer it is, which `templates::recognize` shows as what followed `/reviewer`.
     fn reviewer_prompt(&self, epic: &Epic, number: u32) -> String {
         format!(
-            "{}\n\nYou are Reviewer {number} of the Epic {}, reviewing `{}` against `{}`. {}",
+            "{}\n\nYou are Reviewer {number} of the Epic {}, reviewing `{}` against `{}`.",
             REVIEWER.opening(&self.data_dir),
             epic.slug,
             epic_branch(&epic.slug),
-            epic.base.as_deref().unwrap_or("the branch it was cut from"),
-            self.binary()
+            epic.base.as_deref().unwrap_or("the branch it was cut from")
         )
     }
 
     /// The Remediator Template, then the Epic it remediates, which `templates::recognize` shows as what followed `/remediator`.
     fn remediator_prompt(&self, epic: &Epic) -> String {
         format!(
-            "{}\n\nYou are the Remediator of the Epic {}, on `{}`, which was cut from `{}`. {}",
+            "{}\n\nYou are the Remediator of the Epic {}, on `{}`, which was cut from `{}`.",
             REMEDIATOR.opening(&self.data_dir),
             epic.slug,
             epic_branch(&epic.slug),
-            epic.base.as_deref().unwrap_or("the branch it was cut from"),
-            self.binary()
+            epic.base.as_deref().unwrap_or("the branch it was cut from")
         )
-    }
-
-    fn binary(&self) -> String {
-        format!("On this Host `stampede` is `{}`; run it by that path if it is not on your PATH.", quote(&self.cli))
     }
 
     /// Commits what the Ticket's Chat left uncommitted, records the Verdict, and queues the merge.
@@ -1160,7 +1145,7 @@ impl Runs {
         let project = self.home(slug, &project, &integration.to_string_lossy(), Role::Integration);
         let chat = self
             .chats
-            .create(&project, integration, &rig, None)
+            .create(&project, integration, &rig, None, Some(Duty::Resolver))
             .await
             .map_err(|error| format!("Its Resolver Chat could not start: {error}."))?;
         if let Err(error) = self.epics.record(slug, Event::MergeConflicted { ticket: number, resolver: chat.id.clone() }) {
@@ -1365,12 +1350,4 @@ async fn discard(repo: &str, worktree: &str, branch: &str) {
 
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64)
-}
-
-fn quote(text: &str) -> String {
-    if text.chars().all(|char| char.is_ascii_alphanumeric() || "/._-+=:@,%".contains(char)) {
-        text.to_owned()
-    } else {
-        format!("'{}'", text.replace('\'', r"'\''"))
-    }
 }

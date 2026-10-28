@@ -2,8 +2,9 @@ use crate::common;
 
 use std::{
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     time::Duration,
 };
 
@@ -221,13 +222,8 @@ async fn a_started_ticket_is_worked_merged_and_cleaned_up_and_unblocks_the_next(
         .unwrap()
         .to_owned();
     let template = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/templates/ticket.md")).unwrap();
-    let data = lp.root.join("data").display().to_string();
-    let note = format!("This Stampede server keeps its data in {data}, so pass `--data-dir {data}` to every `stampede` command.");
-    let ticket = format!(
-        "Your Ticket is work/1, on the branch `stampede/work/1`. On this Host `stampede` is `{}`; run it by that path if it is not on your PATH.\n\n## work/1: Write work.txt\n\nWrite **work.txt**.",
-        env!("CARGO_BIN_EXE_stampede")
-    );
-    assert_eq!(prompt, format!("{}\n\n{note}\n\n{ticket}", template.trim_end()));
+    let ticket = "Your Ticket is work/1, on the branch `stampede/work/1`.\n\n## work/1: Write work.txt\n\nWrite **work.txt**.";
+    assert_eq!(prompt, format!("{}\n\n{ticket}", template.trim_end()));
 
     let mut device = connect_async(format!("ws://127.0.0.1:{}/ws", lp.server.port)).await.unwrap().0;
     control(&mut device, json!({ "type": "hello", "deviceId": "second" })).await;
@@ -235,6 +231,51 @@ async fn a_started_ticket_is_worked_merged_and_cleaned_up_and_unblocks_the_next(
     assert!(hello["chats"].as_array().unwrap().iter().all(|chat| chat["id"] != chat_id));
 
     assert_eq!(lp.ok(&["frontier", "work"], ""), "work/2 Then more\n");
+}
+
+/// What the Chat-tools server of `chat` replies to each request, in order.
+fn chat_tools(data_dir: &Path, chat: &str, requests: &[Value]) -> Vec<Value> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stampede"))
+        .arg("chat-tools").arg("--data-dir").arg(data_dir).arg("--chat-id").arg(chat)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let lines: String = requests.iter().map(|request| format!("{request}\n")).collect();
+    child.stdin.take().unwrap().write_all(lines.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).unwrap().lines().map(|line| serde_json::from_str::<Value>(line).unwrap()["result"].clone()).collect()
+}
+
+#[tokio::test]
+async fn a_tickets_chat_works_only_its_own_ticket_through_its_epic_tool() {
+    let mut lp = Loop::new("loop-ticket-tool").await;
+    lp.ok(&["ticket", "add", "work", "1", "--title", "Moot", "--body", "-"], "Already there.\n");
+    lp.ok(&["epic", "set-setup", "work", ""], "");
+    let chat_id = lp.start(1, "Done").await.unwrap();
+    lp.chat_status(&chat_id, "done").await;
+    let data = lp.root.join("data");
+    let list = json!({ "id": 1, "method": "tools/list" });
+    let call = |arguments: Value| json!({ "id": 2, "method": "tools/call", "params": { "name": "epic", "arguments": arguments } });
+    let text = |reply: &Value| (reply["content"][0]["text"].as_str().unwrap().to_owned(), reply["isError"] == true);
+    let replies = chat_tools(&data, &chat_id, &[
+        list.clone(),
+        call(json!({ "action": "ticket" })),
+        call(json!({ "action": "note", "text": "Chose the shorter path." })),
+        call(json!({ "action": "reviewed" })),
+        call(json!({ "action": "skip", "text": "The codebase already has it." })),
+    ]);
+    let tool = replies[0]["tools"].as_array().unwrap().iter().find(|tool| tool["name"] == "epic").unwrap();
+    assert_eq!(tool["inputSchema"]["properties"]["action"]["enum"], json!(["brief", "ticket", "note", "complete", "skip"]));
+    assert!(text(&replies[1]).0.starts_with("# work/1: Moot\n\nStatus: in progress\n"), "{}", replies[1]);
+    assert_eq!(text(&replies[2]), ("Added a Note to work/1.".to_owned(), false));
+    assert_eq!(text(&replies[3]), ("`reviewed` is not an action of this Chat".to_owned(), true));
+    assert_eq!(text(&replies[4]), ("Recorded the Verdict: work/1 is skipped.".to_owned(), false));
+    let skipped = lp.ticket_until(1, |ticket| ticket["status"] == "skipped").await;
+    let notes: Vec<_> = skipped["notes"].as_array().unwrap().iter().map(|note| note["text"].clone()).collect();
+    assert_eq!(notes, ["Chose the shorter path.", "The codebase already has it."]);
+
+    let stranger = chat_tools(&data, "0000000000000000", &[list, call(json!({ "action": "brief" }))]);
+    assert!(stranger[0]["tools"].as_array().unwrap().iter().all(|tool| tool["name"] != "epic"));
+    assert_eq!(text(&stranger[1]), ("this Chat has no part in a Run".to_owned(), true));
 }
 
 #[tokio::test]
@@ -251,10 +292,7 @@ async fn a_verdict_is_taken_only_inside_its_worktree_and_complete_accepts_a_clea
 
     control(&mut lp.socket, json!({ "type": "chat.attach", "chatId": chat_id })).await;
     let items = lp.follow(|message| message["type"] == "chat.items" && message["chatId"] == chat_id).await;
-    let ticket = format!(
-        "Your Ticket is work/1, on the branch `stampede/work/1`. On this Host `stampede` is `{}`; run it by that path if it is not on your PATH.\n\n## work/1: Nothing to do\n\nAlready done.",
-        env!("CARGO_BIN_EXE_stampede")
-    );
+    let ticket = "Your Ticket is work/1, on the branch `stampede/work/1`.\n\n## work/1: Nothing to do\n\nAlready done.";
     let first = json!({ "kind": "user", "text": format!("/ticket {ticket}"), "images": 0, "template": "ticket" });
     assert_eq!(items["items"][0], first, "the Template collapses to /ticket and the Ticket");
 

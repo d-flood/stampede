@@ -484,7 +484,7 @@ impl Device {
                 let Some(rig) = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned() else {
                     return eprintln!("cannot launch rig {rig} as a chat: not in the config");
                 };
-                match self.chats.create(project, Path::new(&project.path), &rig, None).await {
+                match self.chats.create(project, Path::new(&project.path), &rig, None, None).await {
                     Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
                     Err(error) => eprintln!("cannot create a chat: {error}"),
                 }
@@ -532,7 +532,7 @@ impl Device {
                     return eprintln!("cannot resume a chat in {project_id}: not open");
                 };
                 let rig = self.config.borrow().rig_for(agent);
-                match self.chats.create(project, Path::new(&project.path), &rig, Some(&session_id)).await {
+                match self.chats.create(project, Path::new(&project.path), &rig, Some(&session_id), None).await {
                     Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
                     Err(error) => eprintln!("cannot resume session {session_id}: {error}"),
                 }

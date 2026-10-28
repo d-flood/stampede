@@ -201,7 +201,7 @@ impl Chats {
             return Err(io::Error::other("Return your result to the calling agent instead of delegating again."));
         }
         let mut changes = self.subscribe();
-        let child = self.start(&source.project_id, &source.cwd, rig, None, None, Some(source.id.clone())).await?;
+        let child = self.start(&source.project_id, &source.cwd, rig, None, None, Some(source.id.clone()), None).await?;
         let entry = self.get(&child.id).ok_or_else(|| io::Error::other("The delegated agent did not start."))?;
         let mut report = Report { id: child.id.clone(), rig: child.rig.clone(), task, model: child.settings.chosen.model.clone(),
             started_at: super::now(), outcome: None, report: None, totals: Totals { duration_ms: 0, tools: 0, tokens: None } };
