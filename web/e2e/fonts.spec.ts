@@ -32,7 +32,7 @@ test('UI, chat and code fonts each come from the Host and apply only to their ow
 	const settings = await openSettings(page, 'Appearance');
 	const roles = [
 		{ name: 'UI font', key: 'ui_font', sample: '.preview span:first-child', bundled: /^"?Fira Sans/ },
-		{ name: 'Chat font', key: 'chat_font', sample: '.preview .chat', bundled: /^"?Crimson Pro/ },
+		{ name: 'Chat font', key: 'chat_font', sample: '.preview .chat', bundled: /^"?Literata/ },
 		{ name: 'Code font', key: 'code_font', sample: '.preview code', bundled: /^"?JetBrains Mono/ }
 	];
 	for (const [index, { name, key, sample, bundled }] of roles.entries()) {

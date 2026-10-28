@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
 import { closeProject, openProject, openSettings, screen, showSidebar } from './shell.ts';
 
-test('Fira Sans loads for the UI, Crimson Pro for chat text and JetBrains Mono for code', { tag: '@desktop' }, async ({ page }) => {
+test('Fira Sans loads for the UI, Literata for chat text and JetBrains Mono for code', { tag: '@desktop' }, async ({ page }) => {
 	await page.goto('/');
 	const settings = await openSettings(page, 'Appearance');
 	for (const element of [
@@ -11,11 +11,11 @@ test('Fira Sans loads for the UI, Crimson Pro for chat text and JetBrains Mono f
 	]) {
 		await expect(element).toHaveCSS('font-family', /^"?Fira Sans/);
 	}
-	await expect(settings.locator('.preview .chat')).toHaveCSS('font-family', /^"?Crimson Pro/);
+	await expect(settings.locator('.preview .chat')).toHaveCSS('font-family', /^"?Literata/);
 	await expect(settings.locator('.preview code')).toHaveCSS('font-family', /^"?JetBrains Mono/);
 	const faces = await page.evaluate(async () => Promise.all(
 		['400 16px "Fira Sans"', '500 16px "Fira Sans"', '600 16px "Fira Sans"', '700 16px "Fira Sans"', 'italic 400 16px "Fira Sans"',
-			'400 16px "Crimson Pro Variable"', 'italic 400 16px "Crimson Pro Variable"',
+			'400 16px "Literata Variable"', 'italic 400 16px "Literata Variable"',
 			'400 16px "JetBrains Mono"', '700 16px "JetBrains Mono"', 'italic 400 16px "JetBrains Mono"', 'italic 700 16px "JetBrains Mono"'
 		].map(async (font) => {
 			const loaded = await document.fonts.load(font);
@@ -28,7 +28,7 @@ test('Fira Sans loads for the UI, Crimson Pro for chat text and JetBrains Mono f
 		await session.send('DOM.enable');
 		await session.send('CSS.enable');
 		const { root } = await session.send('DOM.getDocument');
-		for (const [selector, familyName] of [['.preview span:first-child', 'Fira Sans'], ['.preview .chat', 'Crimson Pro'], ['.preview code', 'JetBrains Mono']]) {
+		for (const [selector, familyName] of [['.preview span:first-child', 'Fira Sans'], ['.preview .chat', 'Literata'], ['.preview code', 'JetBrains Mono']]) {
 			const { nodeId } = await session.send('DOM.querySelector', { nodeId: root.nodeId, selector });
 			await expect.poll(async () => (await session.send('CSS.getPlatformFontsForNode', { nodeId })).fonts)
 				.toEqual([expect.objectContaining({ familyName: expect.stringContaining(familyName), isCustomFont: true })]);
@@ -40,7 +40,7 @@ test('Fira Sans loads for the UI, Crimson Pro for chat text and JetBrains Mono f
 
 test('UI, chat and code sizes default per device, change, persist, and reset', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
-	const defaults = { ui: phone ? 16 : 13, chat: phone ? 19 : 16, code: phone ? 16 : 13 };
+	const defaults = { ui: phone ? 16 : 13, chat: phone ? 18 : 16, code: phone ? 16 : 13 };
 	await page.goto('/');
 	await expect(page.locator('body')).toHaveCSS('font-size', `${defaults.ui}px`);
 	const settings = await openSettings(page, 'Appearance');

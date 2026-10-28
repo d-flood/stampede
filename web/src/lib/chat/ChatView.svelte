@@ -156,6 +156,12 @@
 		let pinned = true;
 		let top = 0;
 		let visible = false;
+		// Scroll anchoring nudges a pinned transcript off the bottom when web fonts swap in.
+		const pin = (bottom: boolean) => {
+			pinned = bottom;
+			scroller.style.overflowAnchor = bottom ? 'none' : '';
+		};
+		pin(true);
 		const observer = new ResizeObserver(() => {
 			if (!scroller.getClientRects().length) { visible = false; return; }
 			if (pinned) scroller.scrollTop = scroller.scrollHeight;
@@ -169,7 +175,7 @@
 			if (!scroller.getClientRects().length) return;
 			const next = scroller.scrollTop;
 			const bottom = scroller.scrollHeight - next - scroller.clientHeight < 2;
-			if (next < top || bottom) pinned = bottom;
+			if (next < top || bottom) pin(bottom);
 			top = scroller.scrollTop;
 		});
 		return () => {

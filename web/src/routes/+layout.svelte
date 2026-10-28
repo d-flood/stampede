@@ -1,6 +1,6 @@
 <script lang="ts">
-	import '@fontsource-variable/crimson-pro/wght-italic.css';
-	import '@fontsource-variable/crimson-pro/wght.css';
+	import '@fontsource-variable/literata/opsz-italic.css';
+	import '@fontsource-variable/literata/opsz.css';
 	import '@fontsource/fira-sans/400-italic.css';
 	import '@fontsource/fira-sans/400.css';
 	import '@fontsource/fira-sans/500.css';

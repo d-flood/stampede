@@ -51,7 +51,7 @@ let previewingFont: FontRole | null = null;
 export const editor = $state<EditorSettings>({ keymap: 'standard' });
 export const selectedTheme = $state<{ name: string | null; light: string | null; dark: string | null }>({ name: null, light: null, dark: null });
 export const fonts = $state<Record<FontRole, string | null>>({ ui: null, chat: null, code: null });
-export const defaultFonts = $state<Record<FontRole, string>>({ ui: 'Fira Sans', chat: 'Crimson Pro', code: 'JetBrains Mono' });
+export const defaultFonts = $state<Record<FontRole, string>>({ ui: 'Fira Sans', chat: 'Literata', code: 'JetBrains Mono' });
 
 async function get<T>(path: string): Promise<T> {
 	const response = await fetch(path);

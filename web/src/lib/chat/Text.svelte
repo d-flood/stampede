@@ -42,7 +42,7 @@
 
 	.commentary {
 		color: color-mix(in oklab, var(--color-fg) 76%, var(--color-bg));
-		font-size: 0.95em;
+		font-size: calc(0.95 * var(--font-size-chat));
 	}
 
 	.text > :global(:first-child) {

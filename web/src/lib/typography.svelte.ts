@@ -5,7 +5,7 @@ const keys: Record<FontRole, string> = { ui: 'stampede.text-size', chat: 'stampe
 const variables: Record<FontRole, string> = { ui: '--ui-size', chat: '--chat-size', code: '--code-size' };
 export const defaultSizes: Record<FontRole, { desktop: number; phone: number }> = {
 	ui: { desktop: 13, phone: 16 },
-	chat: { desktop: 16, phone: 19 },
+	chat: { desktop: 16, phone: 18 },
 	code: { desktop: 13, phone: 16 }
 };
 export const typography = $state<Record<FontRole, number | null>>({ ui: null, chat: null, code: null });

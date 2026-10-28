@@ -76,7 +76,7 @@
 	--git-conflicted: var(--ansi-5);
 
 	--font-ui: 'Fira Sans', 'Symbols Nerd Font Mono', sans-serif;
-	--font-chat: 'Crimson Pro Variable', 'Symbols Nerd Font Mono', serif;
+	--font-chat: 'Literata Variable', 'Symbols Nerd Font Mono', serif;
 	--font-mono: 'JetBrains Mono', 'Symbols Nerd Font Mono', monospace;
 
 	--radius-sm: 6px;
@@ -141,7 +141,7 @@
 @media (pointer: coarse) and (max-width: 767px) {
 	:root {
 		--font-size-base: var(--ui-size, 16px);
-		--font-size-chat: var(--chat-size, 19px);
+		--font-size-chat: var(--chat-size, 18px);
 		--font-size-code: var(--code-size, 16px);
 	}
 }
