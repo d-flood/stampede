@@ -27,11 +27,13 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	await expect(search).toBeFocused();
 	const dracula = dialog.getByRole('option', { name: /^Dracula(?: Current theme)?$/ });
+	const all = dialog.getByRole('checkbox', { name: 'Show all themes' });
 	const config = `${process.env.STAMPEDE_E2E_ROOT}/config.toml`;
 	const original = readFileSync(config, 'utf8');
 	const originalBackground = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
 	await page.keyboard.type('no-theme-matches-this');
 	await expect(dialog).toContainText('No matching themes');
+	await all.check();
 	await search.fill('Dracula');
 	await expect(dracula).toBeVisible();
 	await search.press('Enter');
@@ -53,6 +55,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	expect(readFileSync(config, 'utf8')).toBe(original);
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	await expect(search).toBeFocused();
+	await all.check();
 	await search.fill('Dracula');
 	await dracula.click();
 	await dialog.getByRole('button', { name: 'Apply theme', exact: true }).click();
@@ -73,6 +76,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Dracula');
 	await expect.poll(() => screen(page)).toMatch(/^theme-after$/m);
 	await page.getByRole('button', { name: 'Change theme' }).click();
+	await all.check();
 	await dialog.getByRole('combobox', { name: 'Search themes' }).fill('Dracula');
 	await expect(dracula.getByLabel('Current theme')).toBeVisible();
 	await search.fill('Alabaster');
@@ -99,6 +103,7 @@ test('late previews cannot replace a newer preview or restore after closing', { 
 	const original = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
 	let release!: () => void;
 	const gate = new Promise<void>((resolve) => { release = resolve; });
+	await dialog.getByRole('checkbox', { name: 'Show all themes' }).check();
 	await page.route('**/api/themes/Dracula', async (route) => {
 		const response = await route.fetch();
 		await gate;
@@ -141,6 +146,7 @@ test('preview and save failures leave the saved theme intact', { tag: '@desktop'
 	const original = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
 	const config = `${process.env.STAMPEDE_E2E_ROOT}/config.toml`;
 	const saved = readFileSync(config, 'utf8');
+	await dialog.getByRole('checkbox', { name: 'Show all themes' }).check();
 	await page.route('**/api/themes/Dracula', (route) => route.fulfill({ status: 400, body: 'Invalid theme' }));
 	await search.fill('Dracula');
 	await dialog.getByRole('option', { name: 'Dracula', exact: true }).click();
@@ -170,8 +176,10 @@ test('light and dark themes follow the system color scheme', async ({ page }, { 
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	const light = dialog.getByRole('button', { name: /^Light/ });
 	const dark = dialog.getByRole('button', { name: /^Dark/ });
+	const all = dialog.getByRole('checkbox', { name: 'Show all themes' });
 	await expect(dark).toHaveAttribute('aria-pressed', 'true');
 	await expect(light).toHaveAttribute('aria-pressed', 'false');
+	await all.check();
 	await search.fill('Dracula');
 	await dialog.getByRole('option', { name: 'Dracula', exact: true }).click();
 	await expect.poll(background).toBe('rgb(40, 42, 54)');
@@ -208,6 +216,7 @@ test('light and dark themes follow the system color scheme', async ({ page }, { 
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	await expect(light).toHaveAttribute('aria-pressed', 'true');
 	await expect(dialog.getByRole('button', { name: 'Apply theme', exact: true })).toBeDisabled();
+	await all.check();
 	await search.fill('Alabaster');
 	await expect(dialog.getByRole('option', { name: /^Alabaster(?: Current theme)?$/ }).getByLabel('Current theme')).toBeVisible();
 	await dark.click();
@@ -218,6 +227,35 @@ test('light and dark themes follow the system color scheme', async ({ page }, { 
 	expect(config()).toContain('theme = "Alabaster"');
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await expect.poll(background).toBe('rgb(247, 247, 247)');
+});
+
+test('the picker shortlists light and dark themes until all are shown', async ({ page }, { project }) => {
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+	await openSettings(page, 'Appearance');
+	await page.getByRole('button', { name: 'Change theme' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
+	const search = dialog.getByRole('combobox', { name: 'Search themes' });
+	const preview = dialog.locator('.preview strong');
+	const option = (name: string) => dialog.getByRole('option', { name, exact: true });
+	await expect(search).toHaveAttribute('placeholder', 'Search dark themes');
+	await expect(option('Vesper')).toBeVisible();
+	await expect(option('Dawnfox')).toBeHidden();
+	await expect(option('Dracula')).toBeHidden();
+	await dialog.getByRole('button', { name: 'Previous theme', exact: true }).click();
+	await expect(preview).toHaveText('Zenbones Dark');
+	await dialog.getByRole('button', { name: /^Light/ }).click();
+	await expect(search).toHaveAttribute('placeholder', 'Search light themes');
+	await expect(option('Dawnfox')).toBeVisible();
+	await expect(option('Vesper')).toBeHidden();
+	await dialog.getByRole('button', { name: 'Next theme', exact: true }).click();
+	await expect(preview).toHaveText('3024 Day');
+	await dialog.getByRole('checkbox', { name: 'Show all themes' }).check();
+	await expect(search).toHaveAttribute('placeholder', 'Search all themes');
+	await expect(option('Dracula')).toBeVisible();
+	await expect(option('Vesper')).toBeVisible();
+	await expect(option('Dawnfox')).toBeVisible();
+	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
 test('the color scheme button cycles light, dark, and system on this device', { tag: '@desktop' }, async ({ page }) => {
@@ -271,6 +309,7 @@ test('theme previews dock into the app and hand back to the picker', async ({ pa
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
+	await dialog.getByRole('checkbox', { name: 'Show all themes' }).check();
 	await search.fill('Dracula');
 	await dialog.getByRole('option', { name: 'Dracula', exact: true }).click();
 	await expect.poll(background).toBe('rgb(40, 42, 54)');

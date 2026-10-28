@@ -5,12 +5,11 @@
 	let { project }: { project: Project } = $props();
 	let failed = $state<string>();
 	const image = $derived(!!project.icon && failed !== project.icon);
-	const hue = $derived(([...project.path].reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % 6) + 1);
 </script>
 
-<span class="icon" class:monogram={!image} style:--hue={image ? undefined : `var(--ansi-${hue})`} aria-hidden="true">
+<span class="icon squircle" class:monogram={!image} aria-hidden="true">
 	{#if image}
-		<img src="/api/project-icons/{project.icon}" alt="" onerror={() => (failed = project.icon)} />
+		<img class="squircle" src="/api/project-icons/{project.icon}" alt="" onerror={() => (failed = project.icon)} />
 	{:else}
 		{monogram(project.path)}
 	{/if}
