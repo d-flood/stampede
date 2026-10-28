@@ -48,13 +48,15 @@ async fn both_agents_get_owned_scratch_and_shared_worktree_build_settings() {
                 sleep(Duration::from_millis(20)).await;
             }
         }).await.unwrap();
-        let first_scratch = PathBuf::from(environments[0]["TMPDIR"].as_str().unwrap());
-        let second_scratch = PathBuf::from(environments[1]["TMPDIR"].as_str().unwrap());
+        let first_scratch = PathBuf::from(environments[0]["CLAUDE_CODE_TMPDIR"].as_str().unwrap());
+        let second_scratch = PathBuf::from(environments[1]["CLAUDE_CODE_TMPDIR"].as_str().unwrap());
         assert_ne!(first_scratch, second_scratch);
         assert!(first_scratch.starts_with(server.root.path().join("data/storage/scratch")), "{first_scratch:?} outside {:?}", server.root.path());
         assert!(second_scratch.exists());
         for environment in &environments {
-            assert_eq!(environment["CLAUDE_CODE_TMPDIR"], environment["TMPDIR"]);
+            let temp = environment["TMPDIR"].as_str().unwrap();
+            assert!(temp.len() <= 40, "{temp} is too long for Unix socket paths beneath it");
+            assert_eq!(fs::canonicalize(temp).unwrap().to_str(), environment["CLAUDE_CODE_TMPDIR"].as_str());
             assert_eq!(Path::new(environment["CARGO_TARGET_DIR"].as_str().unwrap()), repo.join("target"));
             assert_eq!(environment["NODE_COMPILE_CACHE"], environments[0]["NODE_COMPILE_CACHE"]);
         }

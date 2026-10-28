@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     fs::{self, File, OpenOptions},
     io,
-    os::unix::fs::MetadataExt,
+    os::unix::fs::{DirBuilderExt, MetadataExt},
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -58,10 +58,14 @@ impl Storage {
         cache_lease.lock_shared()?;
         fs::write(scratch.join(".cache"), cache.as_os_str().as_encoded_bytes())?;
         fs::write(cache.join(".used"), b"")?;
+        let temp = alias(&scratch).unwrap_or_else(|error| {
+            eprintln!("cannot alias temporary storage for {owner}: {error}");
+            scratch.clone()
+        });
         let mut env = BTreeMap::from([
-            ("TMPDIR".to_owned(), scratch.to_string_lossy().into_owned()),
-            ("TMP".to_owned(), scratch.to_string_lossy().into_owned()),
-            ("TEMP".to_owned(), scratch.to_string_lossy().into_owned()),
+            ("TMPDIR".to_owned(), temp.to_string_lossy().into_owned()),
+            ("TMP".to_owned(), temp.to_string_lossy().into_owned()),
+            ("TEMP".to_owned(), temp.to_string_lossy().into_owned()),
             ("CLAUDE_CODE_TMPDIR".to_owned(), scratch.to_string_lossy().into_owned()),
             ("NODE_COMPILE_CACHE".to_owned(), cache.join("node").to_string_lossy().into_owned()),
             ("npm_config_cache".to_owned(), cache.join("npm").to_string_lossy().into_owned()),
@@ -90,6 +94,7 @@ impl Storage {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {},
                 result => result?,
             }
+            if let Ok(link) = alias_path(path) { let _ = fs::remove_file(link); }
         }
         Ok(())
     }
@@ -170,6 +175,32 @@ pub fn inherited_leases() -> io::Result<Vec<File>> {
         file.lock_shared()?;
         Ok(file)
     }).collect()
+}
+
+fn alias_path(scratch: &Path) -> io::Result<PathBuf> {
+    let uid = fs::metadata("/proc/self")?.uid();
+    let name: String = Sha256::digest(scratch.as_os_str().as_encoded_bytes()).iter().take(8).map(|byte| format!("{byte:02x}")).collect();
+    Ok(PathBuf::from(format!("/tmp/stampede-{uid}")).join(name))
+}
+
+/// Links a short path to `scratch` for TMPDIR, since Chrome and others bind Unix sockets under TMPDIR and a socket
+/// path must fit in 108 bytes.
+fn alias(scratch: &Path) -> io::Result<PathBuf> {
+    let link = alias_path(scratch)?;
+    let base = link.parent().expect("an alias has a parent");
+    match fs::DirBuilder::new().mode(0o700).create(base) {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
+        result => result?,
+    }
+    let metadata = fs::symlink_metadata(base)?;
+    if !metadata.is_dir() || metadata.uid() != fs::metadata("/proc/self")?.uid() || metadata.mode() & 0o077 != 0 {
+        return Err(io::Error::other(format!("{} is not a private directory", base.display())));
+    }
+    match std::os::unix::fs::symlink(scratch, &link) {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists && fs::read_link(&link)? == scratch => {},
+        result => result?,
+    }
+    Ok(link)
 }
 
 fn active_storage() -> HashSet<PathBuf> {
@@ -286,7 +317,20 @@ mod tests {
         let overrides = BTreeMap::from([("CARGO_TARGET_DIR".to_owned(), "/custom/target".to_owned())]);
         let session = storage.prepare("setup", root.path(), &overrides).await.unwrap();
         assert_eq!(session.env["CARGO_TARGET_DIR"], "/custom/target");
-        assert_eq!(session.env["TMPDIR"], session.scratch.to_string_lossy());
+        assert_eq!(fs::canonicalize(&session.env["TMPDIR"]).unwrap(), session.scratch);
+    }
+
+    #[tokio::test]
+    async fn tmpdir_is_a_short_alias_of_scratch_that_goes_with_it() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = Storage::new(root.path());
+        let session = storage.prepare("setup", root.path(), &BTreeMap::new()).await.unwrap();
+        let temp = PathBuf::from(&session.env["TMPDIR"]);
+        assert!(temp.as_os_str().len() <= 40, "{}", temp.display());
+        assert_eq!(fs::canonicalize(&temp).unwrap(), session.scratch);
+        assert_eq!(session.env["CLAUDE_CODE_TMPDIR"], session.scratch.to_string_lossy());
+        drop(session);
+        assert!(fs::symlink_metadata(&temp).is_err());
     }
 
     #[test]
