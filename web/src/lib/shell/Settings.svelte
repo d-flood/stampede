@@ -3,6 +3,7 @@
 	import { form } from '#lib/form.ts';
 	import { colorScheme, selectScheme, type Scheme } from '#lib/scheme.svelte.ts';
 	import { selectSidebarSide, sidebarPosition, type SidebarSide } from '#lib/sidebar.svelte.ts';
+	import { themeBar, type ThemeChoice } from '#lib/themes.svelte.ts';
 	import ClipEditor from '#lib/shell/ClipEditor.svelte';
 	import RigEditor from '#lib/shell/RigEditor.svelte';
 	import FontSwitcher from '#lib/shell/FontSwitcher.svelte';
@@ -31,6 +32,7 @@
 	let refusal = $state<string | null>(null);
 	let commitRefusal = $state<string | null>(null);
 	let modesRefusal = $state<string | null>(null);
+	let docking: ThemeChoice | undefined;
 	const agents = Object.keys(agentNames) as Agent[];
 	const phone = $derived(form() === 'phone');
 	const current = $derived(chosen ?? (phone ? undefined : 'general'));
@@ -84,6 +86,13 @@
 		}
 	}
 
+	function dock(event: Event) {
+		if (!docking) return;
+		event.preventDefault();
+		themeBar.choice = docking;
+		docking = undefined;
+	}
+
 	async function rename(input: HTMLInputElement) {
 		try {
 			await saveHostName(input.value.trim() || null);
@@ -102,7 +111,7 @@
 {/snippet}
 
 <IconButton label="Settings" aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}><Gear /></IconButton>
-<Dialog bind:open full={phone} wide title="Settings">
+<Dialog bind:open full={phone} wide title="Settings" oncloseautofocus={dock}>
 	<div class="settings" class:phone>
 		{#if !phone || !current}
 			<nav aria-label="Settings sections">
@@ -159,7 +168,7 @@
 								<span class="label" id="theme-label">Theme</span>{@render scope(true)}
 								<p>One theme for light mode and one for dark.</p>
 							</div>
-							<div class="control"><ThemeSwitcher /></div>
+							<div class="control"><ThemeSwitcher onpreview={(choice) => ((docking = choice), (open = false))} /></div>
 						</section>
 					</div>
 					<h4 id="fonts-label">Fonts</h4>
