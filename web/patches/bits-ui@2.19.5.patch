@@ -1,0 +1,46 @@
+diff --git a/dist/bits/utilities/focus-scope/focus-scope.svelte.js b/dist/bits/utilities/focus-scope/focus-scope.svelte.js
+index 7a2c1609d5c6d045ba8731d5c3f05eed9eb35e89..88282e0d2b948442e14f9963f79bd9ff116ab1fc 100644
+--- a/dist/bits/utilities/focus-scope/focus-scope.svelte.js
++++ b/dist/bits/utilities/focus-scope/focus-scope.svelte.js
+@@ -1,4 +1,4 @@
+-import { getActiveElement, onDestroyEffect } from "svelte-toolbelt";
++import { contains, getActiveElement, onDestroyEffect } from "svelte-toolbelt";
+ import { FocusScopeManager } from "./focus-scope-manager.js";
+ import { focusable, isFocusable, tabbable } from "tabbable";
+ import { on } from "svelte/events";
+@@ -59,7 +59,7 @@ export class FocusScope {
+                 if (!this.#container ||
+                     this.#paused ||
+                     !this.#manager.isActiveScope(this) ||
+-                    this.#container.contains(getActiveElement(this.#container.ownerDocument))) {
++                    contains(this.#container, getActiveElement(this.#container.ownerDocument))) {
+                     return;
+                 }
+                 const firstTabbable = this.#getFirstTabbable();
+@@ -105,7 +105,7 @@ export class FocusScope {
+             const target = e.composedPath()[0];
+             if (!target)
+                 return;
+-            const isInside = container.contains(target);
++            const isInside = contains(container, target);
+             if (isInside) {
+                 // store last focused element
+                 this.#manager.setFocusMemory(this, target);
+@@ -113,7 +113,7 @@ export class FocusScope {
+             else {
+                 // focus escaped - bring it back
+                 const lastFocused = this.#manager.getFocusMemory(this);
+-                if (lastFocused && container.contains(lastFocused) && isFocusable(lastFocused)) {
++                if (lastFocused && contains(container, lastFocused) && isFocusable(lastFocused)) {
+                     e.preventDefault();
+                     lastFocused.focus();
+                 }
+@@ -147,7 +147,7 @@ export class FocusScope {
+         this.#cleanupFns.push(on(doc, "focusin", handleFocus, { capture: true }), on(container, "keydown", handleKeydown));
+         const observer = new MutationObserver(() => {
+             const lastFocused = this.#manager.getFocusMemory(this);
+-            if (lastFocused && !container.contains(lastFocused)) {
++            if (lastFocused && !contains(container, lastFocused)) {
+                 // last focused element was removed
+                 const firstTabbable = this.#getFirstTabbable();
+                 const firstFocusable = this.#getAllFocusables()[0];

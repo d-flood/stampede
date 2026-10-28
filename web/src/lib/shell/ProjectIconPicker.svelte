@@ -9,6 +9,7 @@
 	let website = $state('');
 	let path = $state('');
 	let browsing = $state(false);
+	let emojis = $state(false);
 	let entries = $state<Entry[]>([]);
 	let selected = $state<{ blob: Blob; src: string }>();
 	let error = $state<string>();
@@ -53,6 +54,25 @@
 			entries = found.filter((entry) => entry.name !== '.git' && (entry.dir || image(entry.path)));
 			path = directory;
 			browsing = true;
+			emojis = false;
+		});
+	}
+
+	async function selectEmoji(unicode: string, font: string) {
+		await run(async () => {
+			const canvas = document.createElement('canvas');
+			canvas.width = canvas.height = 256;
+			const context = canvas.getContext('2d');
+			if (!context) throw new Error('Unable to prepare this emoji.');
+			context.font = `192px ${font}`;
+			const { actualBoundingBoxLeft: left, actualBoundingBoxRight: right, actualBoundingBoxAscent: ascent, actualBoundingBoxDescent: descent } = context.measureText(unicode);
+			const scale = Math.min(1, 224 / Math.max(left + right, ascent + descent));
+			context.translate(128, 128);
+			context.scale(scale, scale);
+			context.fillText(unicode, (left - right) / 2, (ascent - descent) / 2);
+			const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Unable to prepare this emoji.')), 'image/png'));
+			await select(blob);
+			emojis = false;
 		});
 	}
 
@@ -84,6 +104,7 @@
 		</div>
 	</form>
 	<div class="sources">
+		<Button disabled={busy} onclick={() => { emojis = !emojis; browsing = false; }} aria-expanded={emojis}>Choose emoji…</Button>
 		<Button disabled={busy} onclick={() => browse('')}>Choose from project…</Button>
 		<Button disabled={busy} onclick={() => upload.click()}>Upload image…</Button>
 		<input bind:this={upload} type="file" accept="image/*,.ico,.svg" hidden onchange={() => {
@@ -92,6 +113,17 @@
 			upload.value = '';
 		}} />
 	</div>
+	{#if emojis}
+		<div inert={busy}>
+			{#await import('#lib/shell/EmojiPicker.svelte')}
+				<p role="status">Loading emoji…</p>
+			{:then { default: EmojiPicker }}
+				<EmojiPicker onselect={selectEmoji} />
+			{:catch}
+				<p class="error" role="alert">Unable to load emoji. Close the emoji browser and try again.</p>
+			{/await}
+		</div>
+	{/if}
 	{#if browsing}
 		<section aria-label="Project images">
 			<div class="directory">

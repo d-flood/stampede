@@ -28,10 +28,105 @@ async function picker(page: Page, button: Locator) {
 async function fits(element: Locator) {
 	await expect.poll(() => element.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
+		const root = element.getRootNode();
+		const container = root instanceof ShadowRoot ? root.host.getBoundingClientRect() : { left: 0, right: innerWidth, top: 0, bottom: innerHeight };
 		return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight
+			&& bounds.left >= container.left && bounds.right <= container.right && bounds.top >= container.top && bounds.bottom <= container.bottom
 			&& element.scrollWidth <= element.clientWidth;
 	})).toBe(true);
 }
+
+test('emoji load on demand locally, support search and categories, and persist as project images', async ({ page, baseURL }) => {
+	const requests: string[] = [];
+	page.on('request', (request) => requests.push(request.url()));
+	await openProject(page, 'alpha');
+	let button = await navigation(page);
+	let dialog = await picker(page, button);
+	expect(requests.some((url) => /\/data[.-][^/]+\.json$/.test(url))).toBe(false);
+	await dialog.getByRole('button', { name: 'Choose emoji…' }).click();
+	const emojis = dialog.locator('emoji-picker');
+	const catalog = await emojis.getAttribute('data-source');
+	expect(catalog).toMatch(/\.json$/);
+	await expect.poll(() => requests.includes(new URL(catalog!, baseURL).href)).toBe(true);
+	expect(requests.every((url) => url.startsWith(baseURL!))).toBe(true);
+	await emojis.getByRole('tab', { name: 'Animals and nature' }).click();
+	await expect(emojis.getByRole('tab', { name: 'Animals and nature' })).toHaveAttribute('aria-selected', 'true');
+	await fits(emojis);
+	await fits(dialog);
+	if (test.info().project.name === 'pixel') {
+		for (const width of [320, 375, 448]) {
+			await page.setViewportSize({ width, height: 998 });
+			await fits(emojis);
+			await fits(dialog);
+			await fits(emojis.getByRole('tab', { name: 'Flags', exact: true }).locator('.nav-emoji'));
+		}
+	}
+	await emojis.getByRole('combobox', { name: 'Search', exact: true }).fill('rocket');
+	await emojis.getByRole('option', { name: /🚀.*rocket/ }).click();
+	await expect(emojis).toHaveCount(0);
+	const preview = dialog.getByRole('img', { name: 'Selected project icon' });
+	await expect.poll(() => preview.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(256);
+	const pixels = await preview.evaluate((image: HTMLImageElement) => {
+		const canvas = document.createElement('canvas');
+		canvas.width = canvas.height = 256;
+		const context = canvas.getContext('2d')!;
+		context.drawImage(image, 0, 0);
+		const data = context.getImageData(0, 0, 256, 256).data;
+		let colored = 0;
+		let edge = 0;
+		for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) {
+			const offset = (y * 256 + x) * 4;
+			if (!data[offset + 3]) continue;
+			if (data[offset] !== data[offset + 1] || data[offset + 1] !== data[offset + 2]) colored++;
+			if (x === 0 || y === 0 || x === 255 || y === 255) edge++;
+		}
+		return { colored, edge };
+	});
+	expect(pixels.colored).toBeGreaterThan(1000);
+	expect(pixels.edge).toBe(0);
+	await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(dialog).toBeHidden();
+	await expect.poll(() => button.locator('img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(256);
+	const source = await button.locator('img').getAttribute('src');
+	await page.reload();
+	button = await navigation(page);
+	await expect(button.locator('img')).toHaveAttribute('src', source!);
+	dialog = await picker(page, button);
+	await dialog.getByRole('button', { name: 'Choose emoji…' }).click();
+	const search = dialog.locator('emoji-picker').getByRole('combobox', { name: 'Search', exact: true });
+	await search.fill('books');
+	await expect(dialog.getByRole('option', { name: /📚.*books/ })).toBeVisible();
+	await expect(search).toBeFocused();
+	await search.press('Shift+Tab');
+	await expect(dialog.getByRole('button', { name: 'Upload image…' })).toBeFocused();
+	await dialog.getByRole('button', { name: 'Upload image…' }).press('Tab');
+	await expect(search).toBeFocused();
+	await search.press('ArrowDown');
+	await expect(dialog.getByRole('option', { name: /📚.*books/ })).toHaveAttribute('aria-selected', 'true');
+	await search.press('Enter');
+	await expect(dialog.getByRole('img', { name: 'Selected project icon' })).toBeVisible();
+	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(button.locator('img')).toHaveAttribute('src', source!);
+	dialog = await picker(page, button);
+	await dialog.getByRole('button', { name: 'Use initials (Al)' }).click();
+	await expect(button.locator('img')).toHaveCount(0);
+	await expect(button).toContainText('Al');
+});
+
+test('a failed emoji catalog leaves image choices available', async ({ page }) => {
+	await page.route(/\/data[.-][^/]+\.json$/, (route) => route.abort());
+	await openProject(page, 'alpha');
+	const button = await navigation(page);
+	const dialog = await picker(page, button);
+	await dialog.getByRole('button', { name: 'Choose emoji…' }).click();
+	await expect(dialog.getByRole('alert')).toContainText('Could not load emoji');
+	await expect(dialog.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+	await dialog.getByRole('button', { name: 'Choose from project…' }).click();
+	await expect(dialog.locator('emoji-picker')).toHaveCount(0);
+	await expect(dialog.getByRole('region', { name: 'Project images' })).toBeVisible();
+	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(button).toContainText('Al');
+});
 
 test('project images are previewed, copied, restored after reopening, and removable', async ({ page }) => {
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/alpha`;
