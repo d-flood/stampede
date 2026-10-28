@@ -174,11 +174,17 @@ async fn reviewers_take_the_runs_slots_in_turn_then_one_remediator_judges_and_fi
 
     fs::remove_file(lp.gate()).unwrap();
     lp.until("Reviewer 2 at its gate", |lp| lp.entries("reviewer.started").len() == 2 && lp.gate().exists()).await;
-    assert!(!review.exists(), "a Reviewer's worktree is discarded once it reports");
-    assert!(!lp.chat_exists(&first[0]["chat"]), "a Reviewer's Chat ends once it reports");
+    lp.until("Reviewer 1's worktree to go once it reports", |_| !review.exists()).await;
+    lp.until("Reviewer 1's Chat to end once it reports", |lp| !lp.chat_exists(&first[0]["chat"])).await;
     fs::remove_file(lp.gate()).unwrap();
 
     lp.until("the Run to finish", |lp| !lp.entries("run.finished").is_empty()).await;
+    let remediated = lp.gates.path().join("remediated");
+    lp.until("the Remediator past its Verdict", |_| remediated.exists()).await;
+    sleep(SETTLE).await;
+    let remediator = lp.entries("remediation.started")[0]["chat"].clone();
+    assert!(lp.chat_exists(&remediator), "a Remediator's Chat finishes its turn after its Verdict");
+    fs::remove_file(remediated).unwrap();
     assert_eq!(
         lp.kinds(),
         [
@@ -192,7 +198,6 @@ async fn reviewers_take_the_runs_slots_in_turn_then_one_remediator_judges_and_fi
     assert_eq!(lp.entries("review.remediated")[0]["commit"], json!(output(&integration, &["rev-parse", "HEAD"])));
     assert_eq!(fs::read_to_string(integration.join("work.txt")).unwrap(), "Remediated.\n");
     assert_eq!(output(&integration, &["status", "--porcelain"]), "");
-    let remediator = lp.entries("remediation.started")[0]["chat"].clone();
     lp.until("the Remediator's Chat to end", |lp| !lp.chat_exists(&remediator)).await;
     assert!(!lp.worktree("review-2").exists());
     let findings = lp.cli.ok(&lp.repo, &["finding", "list", "work"], "");

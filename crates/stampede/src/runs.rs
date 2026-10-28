@@ -200,7 +200,7 @@ impl Runs {
                             Lifecycle::Status(chat, chats::Status::Done) => self.limited(chat),
                             _ => {}
                         }
-                        slugs.extend(self.epics.holding(event.chat()));
+                        slugs.extend(self.epics.holding(event.chat()).or_else(|| self.epics.reviewed(event.chat())));
                         if matches!(event, Lifecycle::Status(_, chats::Status::Done) | Lifecycle::Ended(_))
                             && let Some(slug) = self.epics.resolving(event.chat())
                         {
@@ -393,12 +393,15 @@ impl Runs {
         found.ok_or_else(|| format!("Its Rig {name} is no longer in the config."))
     }
 
-    /// Ends the Chats of the Reviewers and the Remediator that are done, and of all of them once their Run has ended,
-    /// removing each Reviewer's worktree with its Chat.
+    /// Ends the Chats of the Reviewers and the Remediator that are done once their turns end, and of the rest once their
+    /// Run has ended, removing each Reviewer's worktree with its Chat.
     async fn sweep(&self, slug: &str) {
         let Ok(epic) = self.epics.get(slug) else { return };
         let Some(review) = &epic.review else { return };
-        for reviewer in review.reviewers.iter().filter(|reviewer| review.ended || reviewer.done()) {
+        let live = self.chats.list();
+        let idle = |chat: &Option<String>| chat.as_ref().is_none_or(|id| live.iter().all(|other| other.id != *id || other.status == chats::Status::Done));
+        let over = |done: bool, chat: &Option<String>| if done { idle(chat) } else { review.ended };
+        for reviewer in review.reviewers.iter().filter(|reviewer| over(reviewer.done(), &reviewer.chat)) {
             if let Some(chat) = &reviewer.chat {
                 self.chats.end(chat);
             }
@@ -408,7 +411,7 @@ impl Runs {
                 remove_worktree(integration, worktree).await;
             }
         }
-        if let Some(chat) = review.remediator.as_ref().filter(|remediator| review.ended || remediator.done()).and_then(|remediator| remediator.chat.as_ref()) {
+        if let Some(chat) = review.remediator.as_ref().filter(|remediator| over(remediator.done(), &remediator.chat)).and_then(|remediator| remediator.chat.as_ref()) {
             self.chats.end(chat);
         }
     }

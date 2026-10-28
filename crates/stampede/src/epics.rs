@@ -1229,13 +1229,22 @@ impl Epics {
 
     /// The Epic whose live Review has `chat` as a Reviewer or its Remediator.
     pub fn reviewing(&self, chat: &str) -> Option<String> {
+        self.review_of(chat).filter(|(_, ended)| !ended).map(|(slug, _)| slug)
+    }
+
+    /// The Epic whose Review, live or ended, has `chat` as a Reviewer or its Remediator.
+    pub fn reviewed(&self, chat: &str) -> Option<String> {
+        self.review_of(chat).map(|(slug, _)| slug)
+    }
+
+    fn review_of(&self, chat: &str) -> Option<(String, bool)> {
         let epics = self.epics.lock().unwrap();
-        epics.values().find(|epic| {
-            epic.reviewing().is_some_and(|review| {
-                let reviewers = review.reviewers.iter().filter_map(|reviewer| reviewer.chat.as_deref());
-                reviewers.chain(review.remediator.iter().filter_map(|remediator| remediator.chat.as_deref())).any(|other| other == chat)
-            })
-        }).map(|epic| epic.slug.clone())
+        epics.values().find_map(|epic| {
+            let review = epic.review.as_ref()?;
+            let reviewers = review.reviewers.iter().filter_map(|reviewer| reviewer.chat.as_deref());
+            let mut chats = reviewers.chain(review.remediator.iter().filter_map(|remediator| remediator.chat.as_deref()));
+            chats.any(|other| other == chat).then(|| (epic.slug.clone(), review.ended))
+        })
     }
 
     pub fn list(&self, project: &Path) -> Vec<Epic> {
