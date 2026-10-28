@@ -13,16 +13,26 @@ const FINDING: &str = "reviewed.txt contains an incorrect value. Replace it with
 
 #[tokio::test]
 async fn claude_delegates_a_review_to_codex_then_fixes_the_finding() {
-    review("claude-code", "codex").await;
+    review("claude-code", "codex", FINDING).await;
 }
 
 #[tokio::test]
 async fn codex_delegates_a_review_to_claude_then_fixes_the_finding() {
-    review("codex", "claude-code").await;
+    review("codex", "claude-code", FINDING).await;
 }
 
-async fn review(agent: &str, target: &str) {
-    let (server, mut socket, source, _fixtures) = launch(agent, target, true).await;
+#[tokio::test]
+async fn oversized_delegation_reports_stay_complete_after_restart() {
+    let finding = format!("{FINDING}\n{}", "界".repeat(5000));
+    review("claude-code", "codex", &finding).await;
+    review("codex", "claude-code", &finding).await;
+}
+
+async fn review(agent: &str, target: &str, finding: &str) {
+    let (mut server, mut socket, source, fixtures) = launch(agent, target, true).await;
+    if finding != FINDING {
+        fixture(&fixtures.path().join("target.jsonl"), target, None, true, finding);
+    }
     fs::write(server.root.path().join("home/reviewed.txt"), "incorrect value\n").unwrap();
     control(&mut socket, json!({ "type": "chat.send", "chatId": source["id"], "text": "Review this with the other rig and fix any issues found." })).await;
     gate(&server, "review").await;
@@ -44,6 +54,12 @@ async fn review(agent: &str, target: &str) {
     assert_eq!(child["cwd"], source["cwd"]);
     assert_eq!(child["projectId"], source["projectId"]);
     assert_eq!(child["parent"], source["id"]);
+    let catalog = catalog(&server, &child).await;
+    let names: Vec<_> = catalog["tools"].as_array().unwrap().iter().map(|tool| tool["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["ask_questions", "stage_command", "read_terminal", "render_html", "render_media"]);
+    for name in ["list_rigs", "delegate_to_rig"] {
+        assert_eq!(call(&server, &child, name, json!({ "rig": "source", "task": TASK })).await["isError"], true);
+    }
     if target == "codex" {
         let received = fs::read_to_string(server.root.path().join("home/.codex/fake-daemon/received.jsonl")).unwrap();
         let started = received.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).find(|message| message["method"] == "thread/start").unwrap();
@@ -63,7 +79,15 @@ async fn review(agent: &str, target: &str) {
     assert!(finished.is_ok(), "messages: {received:?}; result: {:?}", fs::read_to_string(server.root.path().join("home/delegation-result.json")));
     let result: Value = serde_json::from_slice(&fs::read(server.root.path().join("home/delegation-result.json")).unwrap()).unwrap();
     assert_eq!(result["isError"], false);
-    assert_eq!(result["structuredContent"]["report"], FINDING);
+    let reply = &result["structuredContent"];
+    for field in ["task", "model", "started_at", "totals"] { assert!(reply.get(field).is_none(), "{reply}"); }
+    if finding.len() > 8 * 1024 {
+        assert_eq!(reply["truncated"], true);
+        let excerpt = reply["report"].as_str().unwrap();
+        assert!(excerpt.len() <= 8 * 1024);
+        assert!(finding.starts_with(excerpt));
+        assert_eq!(fs::read_to_string(reply["report_path"].as_str().unwrap()).unwrap(), finding);
+    } else { assert_eq!(reply["report"], finding); }
     assert_eq!(fs::read_to_string(server.root.path().join("home/reviewed.txt")).unwrap(), "corrected value\n");
     control(&mut socket, json!({ "type": "chat.attach", "chatId": source["id"] })).await;
     let attached = next_control(&mut socket, "chat.items").await;
@@ -72,16 +96,54 @@ async fn review(agent: &str, target: &str) {
     assert_eq!(delegated[0]["status"], "done");
     assert_eq!(delegated[0]["origin"], "stampede");
     assert_eq!(delegated[0]["outcome"], "completed");
-    assert_eq!(delegated[0]["report"], FINDING);
+    assert_eq!(delegated[0]["report"], finding);
     assert_eq!(delegated[0]["elided"], true);
     let index = attached["items"].as_array().unwrap().iter().position(|item| item["kind"] == "subagent").unwrap();
     let expanded = expand(&mut socket, source["id"].as_str().unwrap(), index).await;
-    assert!(expanded["items"].as_array().unwrap().iter().any(|item| item["kind"] == "text" && item["text"] == FINDING));
+    assert!(expanded["items"].as_array().unwrap().iter().any(|item| item["kind"] == "text" && item["text"] == finding));
     let id = live["id"].as_str().unwrap();
     timeout(Duration::from_secs(10), async {
         while server.root.path().join(format!("data/chats/{id}.json")).exists() { sleep(Duration::from_millis(20)).await; }
     }).await.unwrap();
+    if agent == "codex" {
+        let path = fixtures.path().join("source.jsonl");
+        let mut entries: Vec<Value> = fs::read_to_string(&path).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let mut resumed = entries.iter().find(|entry| entry["stdout"]["result"]["thread"].is_object()).unwrap()["stdout"].clone();
+        let mut items: Vec<_> = entries.iter().filter(|entry| entry["stdout"]["method"] == "item/completed").map(|entry| entry["stdout"]["params"]["item"].clone()).collect();
+        items.insert(items.len() - 1, json!({ "type": "mcpToolCall", "id": "rig-review", "server": "stampede_chat", "tool": "delegate_to_rig",
+            "arguments": { "rig": "target", "task": TASK }, "status": "completed", "result": result }));
+        resumed["id"] = json!(91);
+        resumed["result"]["thread"]["turns"] = json!([{ "id": "handoff-turn-0", "status": "completed", "items": items }]);
+        entries.extend([
+            json!({ "stdin": { "method": "thread/resume", "id": 91 } }), json!({ "stdout": resumed }),
+            json!({ "stdin": { "method": "thread/unsubscribe", "id": 92 } }), json!({ "stdout": { "id": 92, "result": {} } }),
+        ]);
+        fs::write(path, entries.iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
+    }
+    server.restart().await;
+    let (mut restored, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut restored, json!({ "type": "hello", "deviceId": "test" })).await;
+    next_control(&mut restored, "hello").await;
+    control(&mut restored, json!({ "type": "chat.attach", "chatId": source["id"] })).await;
+    let replayed = timeout(Duration::from_secs(10), next_control(&mut restored, "chat.items")).await.unwrap();
+    let delegated = replayed["items"].as_array().unwrap().iter().find(|item| item["kind"] == "subagent").unwrap();
+    assert_eq!(delegated["prompt"], TASK);
+    assert_eq!(delegated["report"], finding);
+    assert_eq!(delegated["outcome"], "completed");
+    assert!(delegated["model"].is_string());
+    socket = restored;
     close_chat(&mut socket, server.root.path(), source["id"].as_str().unwrap()).await;
+}
+
+async fn catalog(server: &Server, chat: &Value) -> Value {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stampede"))
+        .arg("chat-tools").arg("--data-dir").arg(server.root.path().join("data"))
+        .arg("--chat-id").arg(chat["id"].as_str().unwrap())
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).kill_on_drop(true).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(b"{\"id\":1,\"method\":\"tools/list\"}\n").await.unwrap();
+    let output = timeout(Duration::from_secs(10), child.wait_with_output()).await.unwrap().unwrap();
+    assert!(output.status.success());
+    serde_json::from_slice::<Value>(&output.stdout).unwrap()["result"].clone()
 }
 
 #[tokio::test]

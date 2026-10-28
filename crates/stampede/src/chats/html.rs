@@ -43,11 +43,16 @@ pub fn item(arguments: &Value) -> Option<Item> {
     Some(Item::Html { title: snippet.title, html: snippet.html })
 }
 
+fn can_delegate(args: &ChatToolsArgs) -> bool {
+    args.chat_id.as_deref().and_then(|id| super::read_record(&super::record_path(&args.data_dir, id)).ok())
+        .is_none_or(|chat| chat.parent.is_none())
+}
+
 fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
     let data_dir = &args.data_dir;
     let id = request.get("id")?;
     let canvas = args.chat_id.as_deref().map(|chat_id| format!(
-        " For a page or document the user may iterate on, write it instead as an .html file in {}; Stampede renders it live beside the chat, so revise it with small edits rather than rewriting it.",
+        " For editable pages or substantial HTML, write .html files in {}; Stampede renders them live.",
         crate::canvas::dir(data_dir, chat_id).display(),
     )).unwrap_or_default();
     let result = match request["method"].as_str() {
@@ -57,33 +62,42 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
             "serverInfo": { "name": SERVER, "version": env!("CARGO_PKG_VERSION") },
         }),
         Some("ping") => json!({}),
-        Some("tools/list") => json!({ "tools": [super::delegation::list_tool(), super::delegation::tool(), super::questions::tool(), super::terminal_tools::stage_tool(), super::terminal_tools::read_tool(), {
-            "name": TOOL,
-            "description": format!("Render an HTML snippet inline in Stampede chat. Use for diagrams, charts, tables, and visual explanations instead of ASCII art. Supply self-contained HTML with inline CSS, SVG, and optional inline JavaScript. It runs in an isolated sandbox: no network, external assets, parent-page access, forms, or popups. Make layouts responsive for narrow mobile screens. Do not repeat the HTML in a code block.{canvas}"),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
-                    "html": { "type": "string", "minLength": 1, "maxLength": LIMIT },
+        Some("tools/list") => {
+            let mut catalog = json!({ "tools": [super::questions::tool(), super::terminal_tools::stage_tool(), super::terminal_tools::read_tool(), {
+                "name": TOOL,
+                "description": format!("Render a small self-contained HTML snippet inline for visual explanations. Inline CSS/SVG/JS supported; no network, external assets, parent access, forms or popups. Make it mobile-responsive; do not repeat HTML in chat.{canvas}"),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+                        "html": { "type": "string", "minLength": 1, "maxLength": LIMIT },
+                    },
+                    "required": ["title", "html"],
+                    "additionalProperties": false,
                 },
-                "required": ["title", "html"],
-                "additionalProperties": false,
-            },
-            "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false },
-        }, {
-            "name": crate::media::TOOL,
-            "description": "Display an existing image or screen recording inline in Stampede chat. Supply an absolute local file path and a descriptive title (also used as image alt text). Supports PNG, JPEG, GIF, WebP, MP4, and WebM up to 100 MiB; use browser-compatible video codecs. The file is copied into durable storage, so temporary source files may be removed afterward. Create screenshots and recordings with your existing tools before calling this tool. Do not encode media as base64 or repeat it in a code block.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
-                    "path": { "type": "string", "minLength": 1 },
+                "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false },
+            }, {
+                "name": crate::media::TOOL,
+                "description": "Display a local image or recording inline. Pass an absolute path and accessible title. Supports PNG/JPEG/GIF/WebP/MP4/WebM up to 100 MiB; use browser-compatible codecs. Stampede copies the file to durable storage. Do not embed base64 or repeat media in code blocks.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+                        "path": { "type": "string", "minLength": 1 },
+                    },
+                    "required": ["title", "path"],
+                    "additionalProperties": false,
                 },
-                "required": ["title", "path"],
-                "additionalProperties": false,
-            },
-            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
-        }] }),
+                "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
+            }] });
+            if can_delegate(args) {
+                catalog["tools"].as_array_mut().unwrap().splice(0..0, [super::delegation::list_tool(), super::delegation::tool()]);
+            }
+            catalog
+        }
+        Some("tools/call") if matches!(request["params"]["name"].as_str(), Some(super::delegation::LIST | super::delegation::TOOL)) && !can_delegate(args) => {
+            json!({ "content": [{ "type": "text", "text": "Delegation tools are unavailable in delegated chats. Return your result to the calling agent." }], "isError": true })
+        }
         Some("tools/call") if matches!(request["params"]["name"].as_str(), Some(super::delegation::LIST | super::delegation::TOOL | super::questions::TOOL | super::terminal_tools::STAGE | super::terminal_tools::READ)) => {
             super::delegation::call(args, request["params"].clone())
         }

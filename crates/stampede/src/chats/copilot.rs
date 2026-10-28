@@ -312,6 +312,7 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
     let history = if chat.agent_session.is_some() { rpc(session.get_events()).await? } else { Vec::new() };
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(&chat.cwd, events, chat.settings.clone());
+    transcript.data_dir = Some(data_dir.to_owned());
     transcript.capabilities.models = models.iter().filter_map(|model| model["id"].as_str().map(str::to_owned)).collect();
     transcript.capabilities.modes = Agent::Copilot.modes().iter().map(|mode| Choice::mode(mode)).collect();
     if let Ok(current) = rpc(session.rpc().model().get_current()).await {
@@ -398,7 +399,7 @@ async fn drive(
                     if result.is_ok() { report_cost(&session, &location.chat.id, &transcript.events).await; }
                     result
                 }
-                Some(Action::Delegated(item)) => { transcript.push(item); Ok(()) }
+                Some(Action::Delegated(item)) => { transcript.delegated(item); Ok(()) }
                 Some(Action::Close) | None => {
                     pending.clear();
                     let _ = timeout(CLOSING, async {
@@ -499,6 +500,7 @@ async fn run(client: &Client, location: &Location, session: &mut CopilotSession,
 }
 
 struct Transcript {
+    data_dir: Option<PathBuf>,
     cwd: PathBuf,
     events: UnboundedSender<Event>,
     items: Vec<Item>,
@@ -517,7 +519,7 @@ struct Transcript {
 
 impl Transcript {
     fn new(cwd: &Path, events: UnboundedSender<Event>, settings: Settings) -> Self {
-        Self { cwd: cwd.to_owned(), events, items: Vec::new(), seen: HashSet::new(), messages: HashMap::new(), user_events: HashMap::new(), last_input: None, tools: HashMap::new(), thinking: None, settings, capabilities: Capabilities::default(), efforts: HashMap::new(), status: Status::Done, tokens: Tokens { input: 0, output: 0 } }
+        Self { data_dir: None, cwd: cwd.to_owned(), events, items: Vec::new(), seen: HashSet::new(), messages: HashMap::new(), user_events: HashMap::new(), last_input: None, tools: HashMap::new(), thinking: None, settings, capabilities: Capabilities::default(), efforts: HashMap::new(), status: Status::Done, tokens: Tokens { input: 0, output: 0 } }
     }
 
     fn push(&mut self, item: Item) -> usize {
@@ -528,6 +530,19 @@ impl Transcript {
     }
 
     fn changed(&self, index: usize) { let _ = self.events.send(Event::Item(index, self.items[index].clone())); }
+
+    fn delegated(&mut self, item: Item) {
+        let Item::Subagent { id, name, prompt, .. } = &item else { return };
+        let index = self.items.iter().position(|item| matches!(item, Item::Subagent { id: existing, .. } if existing == id))
+            .or_else(|| self.tools.values().find_map(|(index, start)| {
+                (start["mcpServerName"] == html::SERVER && start["mcpToolName"] == super::delegation::TOOL
+                    && name.as_deref().is_some_and(|name| start["arguments"]["rig"] == name)
+                    && prompt.as_deref().is_some_and(|prompt| start["arguments"]["task"] == prompt)
+                    && !matches!(self.items[*index], Item::Subagent { .. })).then_some(*index)
+            }));
+        if let Some(index) = index { self.items[index] = item; self.changed(index); }
+        else { self.push(item); }
+    }
     fn status(&mut self, status: Status) { self.status = status; let _ = self.events.send(Event::Status(status)); }
     fn error(&mut self, text: String) { self.push(Item::Notice { notice: Notice::Error, text }); }
     fn report_settings(&self) {
@@ -699,7 +714,11 @@ impl Transcript {
 
     fn tool_complete(&mut self, data: &Value) {
         let Some((index, start)) = data["toolCallId"].as_str().and_then(|id| self.tools.get(id)).cloned() else { return };
-        if let Item::Shell { status, output, .. } = &mut self.items[index] {
+        if start["mcpServerName"] == html::SERVER && start["mcpToolName"] == super::delegation::TOOL {
+            if !matches!(self.items[index], Item::Subagent { .. })
+                && let Some(item) = super::delegation::item(&data["result"], self.data_dir.as_deref())
+            { self.items[index] = item; self.changed(index); }
+        } else if let Item::Shell { status, output, .. } = &mut self.items[index] {
             *status = if data["success"] == true { CommandStatus::Ok } else { CommandStatus::Failed };
             if output.is_empty() && let Some(content) = data["result"]["content"].as_str().or(data["error"]["message"].as_str()) { *output = content.to_owned(); }
             self.changed(index);
@@ -730,6 +749,34 @@ fn tool(name: &str, args: &Value, kind: ToolKind) -> Item {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_delegation_results_restore_reports_without_duplicate_live_items() {
+        let directory = tempfile::tempdir().unwrap();
+        let id = "0123456789abcdef";
+        let report = json!({ "id": id, "rig": "Reviewer", "task": "Review this task", "model": "model", "started_at": 42,
+            "outcome": "failed", "report": "Full report".repeat(1000), "totals": { "durationMs": 1000, "tools": 3, "tokens": 100 } });
+        std::fs::create_dir(directory.path().join("delegations")).unwrap();
+        std::fs::write(directory.path().join(format!("delegations/{id}.json")), report.to_string()).unwrap();
+        let start = json!({ "toolCallId": "delegate", "toolName": "delegate_to_rig", "mcpServerName": html::SERVER,
+            "mcpToolName": super::super::delegation::TOOL, "arguments": { "rig": "Reviewer", "task": "Review this task" } });
+        let complete = json!({ "toolCallId": "delegate", "success": false, "result": { "content": json!({
+            "id": id, "rig": "Reviewer", "outcome": "failed", "report": "Excerpt", "truncated": true,
+        }).to_string() } });
+        let full = super::super::delegation::item(&json!({ "structuredContent": report }), None).unwrap();
+        for live in [false, true] {
+            let (events, _) = mpsc::unbounded_channel();
+            let mut transcript = Transcript::new(Path::new("/project"), events, Settings::default());
+            transcript.data_dir = Some(directory.path().to_owned());
+            transcript.tool_start(&start);
+            if live {
+                transcript.delegated(full.clone());
+                transcript.delegated(full.clone());
+            }
+            transcript.tool_complete(&complete);
+            assert_eq!(transcript.items, vec![full.clone()]);
+        }
+    }
 
     #[test]
     fn lost_commands_keep_output_and_completed_results() {

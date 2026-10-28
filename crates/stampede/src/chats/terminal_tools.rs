@@ -12,6 +12,7 @@ pub const CLAUDE_STAGE: &str = "mcp__stampede_chat__stage_command";
 pub const CLAUDE_READ: &str = "mcp__stampede_chat__read_terminal";
 const MAX_COMMAND: usize = 64 * 1024;
 const MAX_OUTPUT: usize = 64 * 1024;
+const DEFAULT_OUTPUT: usize = 8 * 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,14 +24,17 @@ struct Read {
     terminal_id: String,
     #[serde(default = "default_lines")]
     lines: usize,
+    #[serde(default = "default_bytes")]
+    max_bytes: usize,
 }
 
-fn default_lines() -> usize { 200 }
+fn default_lines() -> usize { 50 }
+fn default_bytes() -> usize { DEFAULT_OUTPUT }
 
 pub fn stage_tool() -> Value {
     json!({
         "name": STAGE,
-        "description": "Open a Stampede terminal in this chat's working directory and stage a command for the user to inspect, edit, and run. Use when a command requires sudo or permissions you do not have. The command stays in an editable composer and is never sent to the shell until the user submits it. Returns terminal_id for read_terminal. Tell the user why their action is needed, then wait for them to run it. Never ask for their password or claim the staged command has run.",
+        "description": "Stage a command in an editable Stampede terminal for the user to inspect and run, typically for sudo or unavailable permissions. Returns terminal_id for read_terminal. Explain why user action is needed and wait. Staging never executes the command. Never request passwords or claim it has run.",
         "inputSchema": {
             "type": "object", "properties": {
                 "command": { "type": "string", "minLength": 1, "maxLength": MAX_COMMAND, "description": "Literal shell command, including any needed sudo. Multiline commands are supported." },
@@ -43,11 +47,12 @@ pub fn stage_tool() -> Value {
 pub fn read_tool() -> Value {
     json!({
         "name": READ,
-        "description": "Read plain-text scrollback from a terminal created by stage_command in this chat, even when its tab is hidden. Returns the latest lines, capped at 64 KiB, whether the command is still pending, and whether output was truncated. This is a snapshot; it does not indicate command completion or exit status. Password input that the terminal does not echo is absent from output. Read after the user runs the command; do not busy-poll while waiting for the user.",
+        "description": "Read recent scrollback from a terminal staged in this chat. Returns output, pending status and truncation status; this snapshot does not prove command completion or exit status. Read after the user runs the command; do not busy-poll. Maximum output: 64 KiB. Defaults: 50 lines, 8 KiB; increase lines and max_bytes explicitly for more.",
         "inputSchema": {
             "type": "object", "properties": {
                 "terminal_id": { "type": "string", "minLength": 1 },
-                "lines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 200 },
+                "lines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 50 },
+                "max_bytes": { "type": "integer", "minimum": 1, "maximum": MAX_OUTPUT, "default": DEFAULT_OUTPUT },
             }, "required": ["terminal_id"], "additionalProperties": false,
         },
         "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false },
@@ -80,15 +85,15 @@ pub async fn call(chats: &Chats, terminals: &Arc<Terminals>, chat_id: Option<Str
         }
         READ => {
             let input = match serde_json::from_value::<Read>(arguments) {
-                Ok(input) if (1..=2000).contains(&input.lines) => input,
-                _ => return error("Provide terminal_id and optionally lines between 1 and 2000."),
+                Ok(input) if (1..=2000).contains(&input.lines) && (1..=MAX_OUTPUT).contains(&input.max_bytes) => input,
+                _ => return error("Provide terminal_id, optionally lines (1–2000) and max_bytes (1–65536)."),
             };
             let Some(terminal) = terminals.for_chat(&input.terminal_id, &chat_id) else {
                 return error("That terminal was not created by this chat or is no longer open.");
             };
             match terminals.read(&terminal.id).await {
                 Ok(output) => {
-                    let (output, truncated) = tail(&output, input.lines);
+                    let (output, truncated) = tail(&output, input.lines, input.max_bytes);
                     result(json!({ "terminal_id": terminal.id, "pending": terminal.pending.is_some(), "state": terminal.state,
                         "output": output, "truncated": truncated }))
                 }
@@ -99,9 +104,9 @@ pub async fn call(chats: &Chats, terminals: &Arc<Terminals>, chat_id: Option<Str
     }
 }
 
-fn tail(output: &str, lines: usize) -> (&str, bool) {
+fn tail(output: &str, lines: usize, max_bytes: usize) -> (&str, bool) {
     let mut start = output.rmatch_indices('\n').nth(lines - 1).map_or(0, |(index, _)| index + 1);
-    start = start.max(output.len().saturating_sub(MAX_OUTPUT));
+    start = start.max(output.len().saturating_sub(max_bytes));
     while !output.is_char_boundary(start) { start += 1; }
     (&output[start..], start > 0)
 }
@@ -112,12 +117,19 @@ mod tests {
 
     #[test]
     fn output_keeps_latest_lines_and_bounds_unicode_bytes() {
-        assert_eq!(tail("first\nsecond\nthird", 2), ("second\nthird", true));
-        assert_eq!(tail("first\nsecond", 2), ("first\nsecond", false));
+        assert_eq!(tail("first\nsecond\nthird", 2, MAX_OUTPUT), ("second\nthird", true));
+        assert_eq!(tail("first\nsecond", 2, MAX_OUTPUT), ("first\nsecond", false));
         let output = format!("x{}", "界".repeat(MAX_OUTPUT));
-        let (text, truncated) = tail(&output, 200);
+        let (text, truncated) = tail(&output, 200, DEFAULT_OUTPUT);
         assert!(truncated);
-        assert!(text.len() <= MAX_OUTPUT);
+        assert!(text.len() <= DEFAULT_OUTPUT);
         assert!(text.chars().all(|character| character == '界'));
+        let (expanded, _) = tail(&output, 200, MAX_OUTPUT);
+        assert!(expanded.len() > text.len());
+        assert!(expanded.len() <= MAX_OUTPUT);
+        assert_eq!(tail("界", 1, 1), ("", true));
+        let defaults: Read = serde_json::from_value(json!({ "terminal_id": "terminal" })).unwrap();
+        assert_eq!(defaults.lines, 50);
+        assert_eq!(defaults.max_bytes, DEFAULT_OUTPUT);
     }
 }

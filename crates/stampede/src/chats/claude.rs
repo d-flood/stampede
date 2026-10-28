@@ -1861,7 +1861,7 @@ impl Transcript {
                 }
             }
             if self.delegating.remove(id)
-                && let Some(item) = super::delegation::item(block)
+                && let Some(item) = super::delegation::item(block, self.location.as_ref().map(|location| location.data_dir.as_path()))
             {
                 if let Item::Subagent { id, .. } = &item
                     && !self.delegated.contains_key(id)
