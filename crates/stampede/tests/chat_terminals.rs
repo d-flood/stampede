@@ -107,6 +107,7 @@ async fn terminal_tools_read_hidden_scrollback_and_reject_unrelated_or_invalid_r
     assert_eq!(call(&server, &other, "read_terminal", json!({ "terminal_id": id })).await["isError"], true);
     assert_eq!(call(&server, &json!({ "id": "missing" }), "stage_command", json!({ "command": "echo hi" })).await["isError"], true);
     for arguments in [json!({ "terminal_id": id, "lines": 0 }), json!({ "terminal_id": id, "lines": 2001 }),
+        json!({ "terminal_id": id, "max_bytes": 0 }), json!({ "terminal_id": id, "max_bytes": 65537 }),
         json!({ "terminal_id": "../../config" }), json!({ "terminal_id": id, "extra": true })] {
         assert_eq!(call(&server, &chat, "read_terminal", arguments).await["isError"], true);
     }
@@ -121,6 +122,12 @@ async fn terminal_tools_read_hidden_scrollback_and_reject_unrelated_or_invalid_r
     assert!(output.contains("\n99\n100\ncomplete\n"), "{output}");
     assert!(!output.contains('\u{001b}'), "{output}");
     assert_eq!(full["truncated"], false);
+    let defaults = call(&server, &chat, "read_terminal", json!({ "terminal_id": id })).await;
+    assert_eq!(defaults["structuredContent"]["truncated"], true);
+    assert!(defaults["structuredContent"]["output"].as_str().unwrap().lines().count() <= 50);
+    let bounded = call(&server, &chat, "read_terminal", json!({ "terminal_id": id, "lines": 200, "max_bytes": 32 })).await;
+    assert_eq!(bounded["structuredContent"]["truncated"], true);
+    assert!(bounded["structuredContent"]["output"].as_str().unwrap().len() <= 32);
     let latest = read(&server, &chat, id, 3).await;
     assert_eq!(latest["truncated"], true);
     assert!(latest["output"].as_str().unwrap().lines().count() <= 3);

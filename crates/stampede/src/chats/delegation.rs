@@ -11,6 +11,7 @@ pub const LIST: &str = "list_rigs";
 pub const TOOL: &str = "delegate_to_rig";
 pub const CLAUDE_LIST: &str = "mcp__stampede_chat__list_rigs";
 pub const CLAUDE_TOOL: &str = "mcp__stampede_chat__delegate_to_rig";
+const MAX_REPORT: usize = 8 * 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +40,24 @@ struct Report {
 }
 
 impl Report {
+    fn reply(&self, data_dir: &Path, parent_id: &str) -> io::Result<Value> {
+        let directory = data_dir.join("delegations");
+        fs::create_dir_all(&directory)?;
+        fs::write(directory.join(format!("{}.json", self.id)), serde_json::to_vec(self)?)?;
+        let mut value = json!({ "id": self.id, "rig": self.rig, "outcome": self.outcome, "report": self.report });
+        if let Some(report) = &self.report && report.len() > MAX_REPORT {
+            let directory = crate::canvas::dir(data_dir, parent_id).join("reports");
+            fs::create_dir_all(&directory)?;
+            let path = directory.join(format!("{}.txt", self.id));
+            fs::write(&path, report)?;
+            value["report"] = json!(&report[..report.floor_char_boundary(MAX_REPORT)]);
+            value["truncated"] = json!(true);
+            value["report_path"] = json!(path);
+        }
+        Ok(json!({ "content": [{ "type": "text", "text": value.to_string() }], "structuredContent": value,
+            "isError": self.outcome != Some(Outcome::Completed) }))
+    }
+
     fn item(&self, status: Status, activity: Option<String>, items: Vec<Item>) -> Item {
         Item::Subagent {
             id: self.id.clone(), origin: super::SubagentOrigin::Stampede, name: Some(self.rig.clone()), task: self.task.lines().next().unwrap_or_default().chars().take(200).collect(),
@@ -48,12 +67,23 @@ impl Report {
     }
 }
 
-pub fn item(result: &Value) -> Option<Item> {
-    let report: Report = serde_json::from_value(result["structuredContent"].clone()).ok().or_else(|| {
+pub fn item(result: &Value, data_dir: Option<&Path>) -> Option<Item> {
+    let value: Value = result.get("structuredContent").filter(|value| value.is_object()).cloned().or_else(|| {
         let content = &result["content"];
         if let Some(text) = content.as_str() { return serde_json::from_str(text).ok(); }
         content.as_array()?.iter().filter(|block| block["type"] == "text")
             .find_map(|block| serde_json::from_str(block["text"].as_str()?).ok())
+    })?;
+    let report = data_dir.and_then(|data_dir| {
+        let id = value["id"].as_str().filter(|id| id.len() == 16 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))?;
+        let saved: Report = serde_json::from_slice(&fs::read(data_dir.join("delegations").join(format!("{id}.json"))).ok()?).ok()?;
+        (saved.id == id && value["rig"] == saved.rig).then_some(saved)
+    }).or_else(|| serde_json::from_value::<Report>(value.clone()).ok()).or_else(|| {
+        Some(Report {
+            id: value["id"].as_str()?.to_owned(), rig: value["rig"].as_str()?.to_owned(), task: "Delegated task".to_owned(),
+            model: None, started_at: 0, outcome: serde_json::from_value(value["outcome"].clone()).ok(),
+            report: value["report"].as_str().map(str::to_owned), totals: Totals { duration_ms: 0, tools: 0, tokens: None },
+        })
     })?;
     let items = report.report.iter().map(|text| Item::Text { text: text.clone(), streaming: false, phase: Phase::Final }).collect();
     Some(report.item(Status::Done, None, items))
@@ -62,7 +92,7 @@ pub fn item(result: &Value) -> Option<Item> {
 pub fn list_tool() -> Value {
     json!({
         "name": LIST,
-        "description": "List the configured Stampede rigs, their agent harnesses and model settings. Call this to find a rig when the user asks another agent, such as Codex or Claude Code, to review or work on a task.",
+        "description": "List configured Stampede rigs and their harness/model settings. Use the returned names for delegate_to_rig.",
         "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
         "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false },
     })
@@ -71,7 +101,7 @@ pub fn list_tool() -> Value {
 pub fn tool() -> Value {
     json!({
         "name": TOOL,
-        "description": "Delegate a task to a configured Stampede rig and wait for its result. Use when the user asks another rig or agent to review or work on something, including Codex reviewing Claude Code's work or vice versa. Use list_rigs to find its exact name. The child uses that rig's model, environment and permission mode, in this chat's working directory with access to the same files. It starts with a fresh conversation: supply a self-contained task, relevant paths, review scope and expected output. For review-and-fix requests, ask the child to review without editing, then assess its findings and make the appropriate fixes yourself. Its activity and approval requests appear as a subagent in this chat. Do not claim success if the returned outcome is failed or stopped.",
+        "description": "Delegate to another rig when the user requests it, and wait for its result. Use list_rigs for names. The child shares this working directory and files but starts a fresh conversation with its own model and permissions. Supply a self-contained task, relevant paths and expected output. For review-and-fix requests, request review only, then assess and apply fixes yourself. Treat failed or stopped outcomes as incomplete. Oversized reports return an excerpt and a path to the full report.",
         "inputSchema": {
             "type": "object", "properties": {
                 "rig": { "type": "string", "minLength": 1, "description": "Exact configured rig name from list_rigs." },
@@ -141,8 +171,7 @@ pub fn listen(data_dir: &Path, chats: Arc<Chats>, terminals: Arc<crate::terminal
                                     match (request.chat_id, rig) {
                                         (Some(parent), Some(rig)) => {
                                             match chats.delegate(&parent, &rig, task.task, &mut reader).await {
-                                                Ok(report) => json!({ "content": [{ "type": "text", "text": serde_json::to_string(&report).unwrap() }], "structuredContent": report,
-                                                    "isError": report.outcome != Some(Outcome::Completed) }),
+                                                Ok(report) => report.reply(&chats.data_dir, &parent).unwrap_or_else(|cause| error(format!("Could not save delegation report: {cause}"))),
                                                 Err(cause) => error(cause),
                                             }
                                         }
@@ -172,7 +201,7 @@ impl Chats {
             return Err(io::Error::other("Return your result to the calling agent instead of delegating again."));
         }
         let mut changes = self.subscribe();
-        let child = self.start(&source.project_id, &source.cwd, rig, None, None, Some(source.id.clone())).await?;
+        let child = self.start(&source.project_id, &source.cwd, rig, None, None, Some(source.id.clone()), None).await?;
         let entry = self.get(&child.id).ok_or_else(|| io::Error::other("The delegated agent did not start."))?;
         let mut report = Report { id: child.id.clone(), rig: child.rig.clone(), task, model: child.settings.chosen.model.clone(),
             started_at: super::now(), outcome: None, report: None, totals: Totals { duration_ms: 0, tools: 0, tokens: None } };
@@ -187,7 +216,7 @@ impl Chats {
                 report.totals.duration_ms = super::now().saturating_sub(report.started_at);
                 report.totals.tokens = chat.tokens.map(|tokens| tokens.input + tokens.output);
                 report.totals.tools = transcript.items.iter().map(|item| match item {
-                    Item::Tools { calls } => calls.len(), Item::Command { .. } | Item::Edit { .. } => 1, _ => 0,
+                    Item::Tools { calls } => calls.len(), Item::Command { .. } | Item::Edit { .. } | Item::Canvas { .. } => 1, _ => 0,
                 }).sum();
                 let begun = transcript.items.iter().any(|item| matches!(item, Item::User { .. } | Item::Notice { notice: Notice::Error, .. }));
                 (chat.status, chat.activity.clone(), transcript.items.clone(), begun && transcript.reported == Status::Done)
@@ -270,5 +299,36 @@ impl Chats {
         let requests: Vec<_> = transcript.requests.iter().filter(|request| request.id().starts_with(&prefix)).map(|request| request.id().to_owned()).collect();
         for id in requests { self.resolve(&mut transcript, &parent_id, &id); }
         self.settle(parent, &transcript);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_results_preserve_full_reports_and_legacy_replay() {
+        let data = tempfile::tempdir().unwrap();
+        let mut report = Report {
+            id: "0123456789abcdef".to_owned(), rig: "Reviewer".to_owned(), task: "Review this task".to_owned(),
+            model: Some("model".to_owned()), started_at: 42, outcome: Some(Outcome::Completed),
+            report: Some("界".repeat(MAX_REPORT)), totals: Totals { duration_ms: 1000, tools: 3, tokens: Some(100) },
+        };
+        for outcome in [Outcome::Completed, Outcome::Failed, Outcome::Stopped] {
+            report.outcome = Some(outcome);
+            let result = report.reply(data.path(), "parent").unwrap();
+            assert_eq!(result["isError"], outcome != Outcome::Completed);
+            let reply = &result["structuredContent"];
+            for field in ["task", "model", "started_at", "totals"] { assert!(reply.get(field).is_none()); }
+            assert_eq!(reply["truncated"], true);
+            assert!(reply["report"].as_str().unwrap().len() <= MAX_REPORT);
+            assert_eq!(fs::read_to_string(reply["report_path"].as_str().unwrap()).unwrap(), report.report.as_deref().unwrap());
+            let expected = report.item(Status::Done, None, vec![Item::Text { text: report.report.clone().unwrap(), streaming: false, phase: Phase::Final }]);
+            assert_eq!(item(&json!({ "content": serde_json::to_string(&report).unwrap() }), None), Some(expected.clone()));
+            for encoded in [result.clone(), json!({ "content": result["content"] }), json!({ "content": [{ "type": "text", "text": serde_json::to_string(&report).unwrap() }] })] {
+                assert_eq!(item(&encoded, Some(data.path())), Some(expected.clone()));
+            }
+            assert!(item(&result, None).is_some());
+        }
     }
 }

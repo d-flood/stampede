@@ -3,14 +3,13 @@ import json
 import os
 import re
 import select
-import shlex
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from rig_tools import ask, delegate
+from rig_tools import ask, call, delegate
 
 FLAGS = {'--input-format': 'stream-json', '--output-format': 'stream-json'}
 SWITCHES = ['--verbose', '--include-partial-messages', '--permission-prompt-tool=stdio']
@@ -131,27 +130,13 @@ def record(entry):
         session.write(remap(entry) + '\n')
 
 
-def verdict(name, prompt):
-    binary = re.search(r'`stampede` is `([^`]+)`', prompt) or fail(f'no stampede binary in {prompt!r}')
-    reference = re.search(r'Your Ticket is (\S+?),', prompt) or fail(f'no Ticket reference in {prompt!r}')
-    data_dir = re.search(r'pass `--data-dir ([^`]+)`', prompt)
-    command = shlex.split(binary.group(1)) + [name, reference.group(1)]
-    command += ['-m', 'Fake verdict'] if name == 'complete' else ['Fake verdict']
-    command += ['--data-dir', data_dir.group(1)] if data_dir else []
-    run(command)
+def epic(arguments):
+    result = call(mcp, 'epic', arguments)
+    print(f'fake claude called epic {arguments}: {result}', file=sys.stderr)
 
 
-def cli(entry, prompt):
-    binary = re.search(r'`stampede` is `([^`]+)`', prompt) or fail(f'no stampede binary in {prompt!r}')
-    epic = re.search(r' of the Epic (\S+?),', prompt) or fail(f'no Epic in {prompt!r}')
-    data_dir = re.search(r'pass `--data-dir ([^`]+)`', prompt)
-    command = shlex.split(binary.group(1)) + [arg.replace('{epic}', epic.group(1)) for arg in entry['cli']]
-    command += ['--data-dir', data_dir.group(1)] if data_dir else []
-    run(command, entry.get('input'))
-
-
-def run(command, input=None):
-    ran = subprocess.run(command, input=input, capture_output=True, text=True)
+def run(command):
+    ran = subprocess.run(command, capture_output=True, text=True)
     print(f'fake claude ran {command}: {ran.returncode} {ran.stdout}{ran.stderr}', file=sys.stderr)
 
 
@@ -196,8 +181,10 @@ if os.environ.get('CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING') == 'true':
     mcp = json.loads(args[args.index('--mcp-config') + 1])['mcpServers']['stampede_chat']
     if not Path(mcp['command']).is_file() or mcp['args'][:2] != ['chat-tools', '--data-dir'] or len(mcp['args']) != 5 or mcp['args'][3] != '--chat-id' or not mcp['args'][4] or not Path(mcp['args'][2]).is_absolute():
         fail(f'invalid chat HTML server: {mcp}')
-    if args[args.index('--allowedTools') + 1] != 'mcp__stampede_chat__render_html,mcp__stampede_chat__render_media,mcp__stampede_chat__list_rigs,mcp__stampede_chat__delegate_to_rig,mcp__stampede_chat__ask_questions,mcp__stampede_chat__stage_command,mcp__stampede_chat__read_terminal':
+    if args[args.index('--allowedTools') + 1] != 'mcp__stampede_chat__render_html,mcp__stampede_chat__render_media,mcp__stampede_chat__list_rigs,mcp__stampede_chat__delegate_to_rig,mcp__stampede_chat__ask_questions,mcp__stampede_chat__stage_command,mcp__stampede_chat__read_terminal,mcp__stampede_chat__epic':
         fail('chat HTML tool is not allowed')
+    if '--add-dir' not in args or args[args.index('--add-dir') + 1] != str(Path(mcp['args'][2]) / 'canvases'):
+        fail(f'chat canvases are not writable: {args}')
 
 entries = [json.loads(line) for line in fixture().read_text().splitlines()]
 start = 0
@@ -210,7 +197,6 @@ else:
 request_ids = {}
 uuids = {}
 pending = b''
-prompt = ''
 for entry in entries[start:]:
     if 'resume' in entry or 'restart' in entry:
         break
@@ -224,8 +210,6 @@ for entry in entries[start:]:
             request_ids[entry['stdin']['request_id']] = message['request_id']
         if 'uuid' in message and 'uuid' in entry['stdin']:
             uuids[entry['stdin']['uuid']] = message['uuid']
-        if message.get('type') == 'user':
-            prompt = message['message']['content']
     elif 'ask' in entry:
         result = ask(mcp, entry['ask'])
         print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'rich-questions', 'content': result['content'], 'is_error': result['isError']}]}}), flush=True)
@@ -241,10 +225,8 @@ for entry in entries[start:]:
         path.write_text(entry['file']['text'])
     elif 'session' in entry:
         record(entry['session'])
-    elif 'verdict' in entry:
-        verdict(entry['verdict'], prompt)
-    elif 'cli' in entry:
-        cli(entry, prompt)
+    elif 'epic' in entry:
+        epic(entry['epic'])
     elif 'run' in entry:
         run(entry['run'])
     elif 'gate' in entry:

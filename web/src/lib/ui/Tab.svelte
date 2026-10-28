@@ -4,6 +4,7 @@
 	import ShellMark from '#lib/ui/ShellMark.svelte';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 	import Article from '~icons/ph/article';
+	import Browsers from '~icons/ph/browsers';
 	import CheckBold from '~icons/ph/check-bold';
 	import CircleNotchBold from '~icons/ph/circle-notch-bold';
 	import FileCode from '~icons/ph/file-code';
@@ -14,7 +15,7 @@
 	import X from '~icons/ph/x';
 
 	type Props = HTMLButtonAttributes & {
-		variant: 'agent' | 'terminal' | 'editor' | 'diff' | 'browser' | 'epic';
+		variant: 'agent' | 'terminal' | 'editor' | 'diff' | 'browser' | 'canvas' | 'epic';
 		label: string;
 		agent?: Agent;
 		against?: string;
@@ -42,7 +43,7 @@
 		...rest
 	}: Props = $props();
 
-	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe, epic: Article };
+	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe, canvas: Browsers, epic: Article };
 	const marks = { working: CircleNotchBold, waiting: HandPalmFill, background: ShellMark, done: CheckBold };
 	const Icon = $derived(variant === 'agent' ? logos[agent] : icons[variant]);
 	const Mark = $derived(status && marks[status]);

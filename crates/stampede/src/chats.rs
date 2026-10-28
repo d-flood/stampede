@@ -72,6 +72,13 @@ pub enum Item {
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         write: bool,
     },
+    Canvas {
+        canvas: String,
+        added: usize,
+        removed: usize,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        write: bool,
+    },
     Command { command: String, status: CommandStatus, output: String },
     Shell {
         command: String,
@@ -320,7 +327,7 @@ impl Subagent {
             duration_ms: self.duration.unwrap_or(self.finished_at.saturating_sub(self.started_at)),
             tools: self.tools.unwrap_or_else(|| items.iter().map(|item| match item {
                 Item::Tools { calls } => calls.len(),
-                Item::Command { .. } | Item::Edit { .. } | Item::Html { .. } => 1,
+                Item::Command { .. } | Item::Edit { .. } | Item::Canvas { .. } | Item::Html { .. } => 1,
                 _ => 0,
             }).sum()),
             tokens: self.tokens,
@@ -707,9 +714,21 @@ pub struct Chat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duty: Option<Duty>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shell_context: Vec<String>,
+}
+
+/// What a Run started a Chat to do, which decides the actions of its `epic` tool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Duty {
+    Ticket,
+    Resolver,
+    Reviewer,
+    Remediator,
 }
 
 #[derive(Serialize)]
@@ -896,15 +915,15 @@ impl Chats {
     }
 
     /// Starts a Chat owned by `project` that runs in `cwd`: the Project's own directory, or a Ticket Worktree.
-    pub async fn create(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>) -> io::Result<Chat> {
-        self.start(&project.id, cwd, rig, session, None, None).await
+    pub async fn create(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>, duty: Option<Duty>) -> io::Result<Chat> {
+        self.start(&project.id, cwd, rig, session, None, None, duty).await
     }
 
     pub async fn create_handoff(self: &Arc<Self>, project: &Project, source: &Chat, rig: &Rig, text: String) -> io::Result<Chat> {
-        self.start(&project.id, &source.cwd, rig, None, Some((source.id.clone(), text)), None).await
+        self.start(&project.id, &source.cwd, rig, None, Some((source.id.clone(), text)), None, None).await
     }
 
-    async fn start(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>, parent: Option<String>) -> io::Result<Chat> {
+    async fn start(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>, parent: Option<String>, duty: Option<Duty>) -> io::Result<Chat> {
         if session.is_some() && self.chats.lock().unwrap().iter().any(|entry| entry.chat.lock().unwrap().agent_session.as_deref() == session) {
             return Err(io::Error::other("Another Chat is still running that conversation."));
         }
@@ -937,6 +956,7 @@ impl Chats {
             answered_questions: Vec::new(),
             handoff_from,
             parent,
+            duty,
             draft,
             shell_context: Vec::new(),
         };
@@ -1095,12 +1115,13 @@ impl Chats {
             capabilities: Mutex::default(),
             driver,
         });
+        let _ = fs::create_dir_all(crate::canvas::dir(&self.data_dir, &entry.chat.lock().unwrap().id));
         self.chats.lock().unwrap().push(Arc::clone(&entry));
         tokio::spawn(Arc::clone(self).follow(entry, events));
     }
 
     async fn follow(self: Arc<Self>, entry: Arc<Entry>, mut events: UnboundedReceiver<Event>) {
-        let id = entry.chat.lock().unwrap().id.clone();
+        let (id, cwd) = { let chat = entry.chat.lock().unwrap(); (chat.id.clone(), chat.cwd.clone()) };
         while let Some(event) = events.recv().await {
             match event {
                 Event::Recoverable => entry.transcript.lock().unwrap().recoverable = true,
@@ -1240,6 +1261,7 @@ impl Chats {
                 }
                 Event::Item(index, mut item) => {
                     crate::media::cache_images(&self.data_dir, &mut item);
+                    crate::canvas::recognize(&self.data_dir, &cwd, &mut item);
                     if let Item::User { text, template, .. } = &mut item
                         && let Some((name, typed)) = templates::recognize(text, &self.data_dir)
                     {
@@ -1312,6 +1334,7 @@ impl Chats {
         }
         self.chats.lock().unwrap().retain(|other| !Arc::ptr_eq(other, &entry));
         let _ = fs::remove_file(record_path(&self.data_dir, &id));
+        let _ = fs::remove_dir(crate::canvas::dir(&self.data_dir, &id));
         let project_id = entry.chat.lock().unwrap().project_id.clone();
         let _ = self.changed.send(Change::Chats(project_id));
         self.refresh_attention();

@@ -20,30 +20,34 @@
 	function ride(lead: number, layer: 'background' | 'mask', at: (x: number, progress: number) => Keyframe) {
 		return (node: HTMLElement) => {
 			const tail = ring?.querySelector<SVGRectElement>('.tail');
-			const comet = status !== 'waiting' && tail?.getAnimations()[0];
-			if (!ring || !tail || !comet) return;
+			if (!ring || !tail) return;
 			const field = ring;
 			let animation: Animation | undefined;
-			const place = () => comet.ready.then(() => {
-				animation?.cancel();
-				const box = field.getBoundingClientRect();
-				const rect = node.getBoundingClientRect();
-				const radius = parseFloat(getComputedStyle(tail).rx);
-				const [left, straight] = [box.left + 0.5 + radius, box.width - 1 - 2 * radius];
-				const perimeter = 2 * (straight + box.height - 1 - 2 * radius) + 2 * Math.PI * radius;
-				const corner = (radius * Math.PI) / 2;
-				const across = (distance: number) => left + (distance < 0 ? -radius * Math.sin(Math.min(-distance, corner) / radius) : distance > straight ? straight + radius * Math.sin(Math.min(distance - straight, corner) / radius) : distance);
-				const along = (x: number) => (x < left ? -radius * Math.asin(Math.min(1, (left - x) / radius)) : x > left + straight ? straight + radius * Math.asin(Math.min(1, (x - left - straight) / radius)) : x - left);
-				const orbit = Number(comet.effect?.getComputedTiming().duration);
-				const size = parseFloat(getComputedStyle(node)[`${layer}Size`]);
-				const [from, to] = [along(rect.left + (lead - 1) * size), along(rect.right + lead * size)];
-				const arcs = Array.from({ length: 12 }, (_, step) => ((step + 1) / 12) * corner);
-				const marks = [from, (from + to) / 2, to, 0, straight, ...arcs.map((arc) => -arc), ...arcs.map((arc) => straight + arc)].filter((mark) => mark >= from && mark <= to).sort((a, b) => a - b);
-				const frames: Keyframe[] = marks.map((mark) => ({ offset: (mark - from) / perimeter, ...at(across(mark) - rect.left - lead * size, (mark - from) / (to - from)) }));
-				const gone = { offset: (marks[marks.length - 1] - from) / perimeter, ...at(rect.width, 1), easing: 'steps(1, end)' };
-				animation = node.animate([...frames, gone, { offset: 1, ...at(-size, 0) }], { duration: orbit, iterations: Infinity });
-				animation.startTime = Number(comet.startTime) + ((((from / perimeter - HEAD) % 1) + 1) % 1) * orbit - orbit;
-			});
+			const place = () => {
+				const comet = status !== 'waiting' && tail.getAnimations()[0];
+				if (!comet) return;
+				return comet.ready.then(() => {
+					if (comet !== tail.getAnimations()[0]) return;
+					animation?.cancel();
+					const box = field.getBoundingClientRect();
+					const rect = node.getBoundingClientRect();
+					const radius = parseFloat(getComputedStyle(tail).rx);
+					const [left, straight] = [box.left + 0.5 + radius, box.width - 1 - 2 * radius];
+					const perimeter = 2 * (straight + box.height - 1 - 2 * radius) + 2 * Math.PI * radius;
+					const corner = (radius * Math.PI) / 2;
+					const across = (distance: number) => left + (distance < 0 ? -radius * Math.sin(Math.min(-distance, corner) / radius) : distance > straight ? straight + radius * Math.sin(Math.min(distance - straight, corner) / radius) : distance);
+					const along = (x: number) => (x < left ? -radius * Math.asin(Math.min(1, (left - x) / radius)) : x > left + straight ? straight + radius * Math.asin(Math.min(1, (x - left - straight) / radius)) : x - left);
+					const orbit = Number(comet.effect?.getComputedTiming().duration);
+					const size = parseFloat(getComputedStyle(node)[`${layer}Size`]);
+					const [from, to] = [along(rect.left + (lead - 1) * size), along(rect.right + lead * size)];
+					const arcs = Array.from({ length: 12 }, (_, step) => ((step + 1) / 12) * corner);
+					const marks = [from, (from + to) / 2, to, 0, straight, ...arcs.map((arc) => -arc), ...arcs.map((arc) => straight + arc)].filter((mark) => mark >= from && mark <= to).sort((a, b) => a - b);
+					const frames: Keyframe[] = marks.map((mark) => ({ offset: (mark - from) / perimeter, ...at(across(mark) - rect.left - lead * size, (mark - from) / (to - from)) }));
+					const gone = { offset: (marks[marks.length - 1] - from) / perimeter, ...at(rect.width, 1), easing: 'steps(1, end)' };
+					animation = node.animate([...frames, gone, { offset: 1, ...at(-size, 0) }], { duration: orbit, iterations: Infinity });
+					animation.startTime = Number(comet.startTime) + ((((from / perimeter - HEAD) % 1) + 1) % 1) * orbit - orbit;
+				}, () => {});
+			};
 			place();
 			const observer = new ResizeObserver(place);
 			observer.observe(field);

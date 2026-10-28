@@ -9,16 +9,21 @@ use std::{
 
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt},
     net::UnixListener,
 };
 
 use crate::{
+    chats::Duty,
     epics::{Author, Epic, Epics, Event, Tag},
     git,
     runs::Runs,
 };
+
+pub const TOOL: &str = "epic";
+pub const CLAUDE_TOOL: &str = "mcp__stampede_chat__epic";
 
 #[derive(Subcommand)]
 pub enum CliCommand {
@@ -331,6 +336,8 @@ enum Request {
     Reviewed { epic: String, cwd: PathBuf },
     #[serde(rename = "remediated")]
     Remediated { epic: String, message: String, cwd: PathBuf },
+    #[serde(rename = "tool")]
+    Tool { chat: String, arguments: Value },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -346,23 +353,78 @@ fn socket_path(data_dir: &Path) -> PathBuf {
 
 pub fn cli(command: CliCommand) -> Result<(), String> {
     let (connection, request) = request(command)?;
-    let path = socket_path(&connection.data_dir);
+    match exchange(&connection.data_dir, &request)? {
+        text if text.ends_with('\n') => print!("{text}"),
+        text => println!("{text}"),
+    }
+    Ok(())
+}
+
+fn exchange(data_dir: &Path, request: &Request) -> Result<String, String> {
+    let path = socket_path(data_dir);
     let unreachable = |error: io::Error| {
         format!("cannot reach the Stampede server at {}: {error}; is it running with this --data-dir?", path.display())
     };
     let address = crate::unix::path(&path).map_err(unreachable)?;
     let mut stream = UnixStream::connect(&address).map_err(unreachable)?;
-    let mut line = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+    let mut line = serde_json::to_vec(request).map_err(|error| error.to_string())?;
     line.push(b'\n');
     stream.write_all(&line).map_err(unreachable)?;
     let mut reply = String::new();
     BufReader::new(stream).read_line(&mut reply).map_err(unreachable)?;
     match serde_json::from_str(&reply).map_err(|error| format!("cannot read the server's reply: {error}"))? {
-        Response::Output(text) if text.ends_with('\n') => print!("{text}"),
-        Response::Output(text) => println!("{text}"),
-        Response::Error(message) => return Err(message),
+        Response::Output(text) => Ok(text),
+        Response::Error(message) => Err(message),
     }
-    Ok(())
+}
+
+/// The `epic` tool of a Chat a Run started, offering only the actions of its Duty. Its calls reach the server from
+/// the Chat's MCP server, so an Agent's command sandbox cannot block them as it blocks the CLI's socket.
+pub fn tool(duty: Duty) -> Value {
+    let text = json!({ "type": "string" });
+    let number = json!({ "type": "integer", "minimum": 1 });
+    let (description, actions, mut properties) = match duty {
+        Duty::Ticket => (
+            "Your Ticket and its Epic. brief: the Epic's Brief. ticket: a Ticket with its Notes and Blockers, yours unless `ticket` names another. note: add `text` as a Note on your Ticket. complete: commit what is left uncommitted in your worktree with the message `text`, and record the Verdict. skip: retire your Ticket as moot, with `text` as the reason.",
+            json!(["brief", "ticket", "note", "complete", "skip"]),
+            json!({ "ticket": number, "text": text }),
+        ),
+        Duty::Resolver => (
+            "The Epic whose merge you resolve. brief: the Epic's Brief. ticket: a Ticket with its Notes, the one you merge unless `ticket` names another. note: add `text` as a Note on the Ticket you merge.",
+            json!(["brief", "ticket", "note"]),
+            json!({ "ticket": number, "text": text }),
+        ),
+        Duty::Reviewer => (
+            "The Epic you review. brief: the Epic's Brief. ticket: Ticket `ticket` with its Notes. finding: record a verified defect, `title` on one line and `text` its Markdown body. reviewed: report that your Review is done.",
+            json!(["brief", "ticket", "finding", "reviewed"]),
+            json!({ "ticket": number, "title": text, "text": text }),
+        ),
+        Duty::Remediator => (
+            "The Epic you remediate. brief: the Epic's Brief. ticket: Ticket `ticket` with its Notes. findings: every Finding with its judgment. accept, reject: judge Finding `finding`, with `text` as the reason. remediated: commit what is left uncommitted with the message `text`, and record the Verdict.",
+            json!(["brief", "ticket", "findings", "accept", "reject", "remediated"]),
+            json!({ "ticket": number, "finding": number, "text": text }),
+        ),
+    };
+    properties["action"] = json!({ "enum": actions });
+    json!({
+        "name": TOOL,
+        "description": description,
+        "inputSchema": { "type": "object", "properties": properties, "required": ["action"], "additionalProperties": false },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
+    })
+}
+
+/// Answers an `epic` tool call for `chat` with what the server replies.
+pub fn call(data_dir: &Path, chat: Option<&str>, arguments: Value) -> Value {
+    let reply = match chat {
+        Some(chat) => exchange(data_dir, &Request::Tool { chat: chat.to_owned(), arguments }),
+        None => Err("this Chat has no part in a Run".to_owned()),
+    };
+    let (text, failed) = match reply {
+        Ok(text) => (text, false),
+        Err(text) => (text, true),
+    };
+    json!({ "content": [{ "type": "text", "text": text }], "isError": failed })
 }
 
 fn cwd() -> Result<PathBuf, String> {
@@ -520,7 +582,61 @@ async fn handle(epics: &Epics, runs: &Runs, request: Request) -> Result<String, 
         Request::Judge { epic, finding, accepted, reason, cwd } => runs.judge(&epic, finding, accepted, &reason, &cwd),
         Request::Reviewed { epic, cwd } => runs.reviewed(&epic, &cwd),
         Request::Remediated { epic, message, cwd } => runs.remediated(&epic, &cwd, &message).await,
+        Request::Tool { chat, arguments } => Box::pin(handle(epics, runs, on_behalf(epics, &chat, arguments)?)).await,
     }
+}
+
+#[derive(Deserialize)]
+struct Call {
+    action: String,
+    ticket: Option<u32>,
+    finding: Option<u32>,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    text: String,
+}
+
+/// The request an `epic` tool call makes for `chat`, in the worktree of its part in a Run.
+fn on_behalf(epics: &Epics, chat: &str, arguments: Value) -> Result<Request, String> {
+    let call: Call = serde_json::from_value(arguments).map_err(|error| format!("cannot read the arguments: {error}"))?;
+    let slug = epics.holding(chat).or_else(|| epics.resolving(chat)).or_else(|| epics.reviewing(chat));
+    let epic = epics.get(&slug.ok_or("this Chat has no part in a Run")?)?;
+    let slug = epic.slug.clone();
+    let held = epic.tickets.iter().find(|(_, ticket)| ticket.claim.as_ref().is_some_and(|claim| claim.chat == chat))
+        .map(|(&number, ticket)| (number, ticket.worktree.clone().unwrap_or_default()));
+    let resolving = epic.tickets.iter().find(|(_, ticket)| ticket.resolver.as_deref() == Some(chat)).map(|(&number, _)| number);
+    let review = epic.reviewing();
+    let reviewer = review.and_then(|review| review.reviewers.iter().find(|reviewer| reviewer.chat.as_deref() == Some(chat)))
+        .map(|reviewer| reviewer.worktree.clone().unwrap_or_default());
+    let integration = review.and_then(|review| review.remediator.as_ref())
+        .filter(|remediator| remediator.chat.as_deref() == Some(chat))
+        .and(epic.integration.clone());
+    let own = held.as_ref().map(|(number, _)| *number).or(resolving);
+    let refused = || format!("`{}` is not an action of this Chat", call.action);
+    Ok(match call.action.as_str() {
+        "brief" => Request::Brief { epic: slug },
+        "ticket" => Request::Ticket { epic: slug, ticket: call.ticket.or(own).ok_or("name the Ticket with `ticket`")? },
+        "note" => Request::Note { epic: slug, ticket: own.ok_or_else(refused)?, text: call.text },
+        "complete" => {
+            let (ticket, cwd) = held.ok_or_else(refused)?;
+            Request::Complete { epic: slug, ticket, message: call.text, cwd }
+        }
+        "skip" => {
+            let (ticket, cwd) = held.ok_or_else(refused)?;
+            Request::Skip { epic: slug, ticket, reason: call.text, cwd }
+        }
+        "finding" => Request::AddFinding { epic: slug, title: call.title, body: call.text, cwd: reviewer.ok_or_else(refused)? },
+        "reviewed" => Request::Reviewed { epic: slug, cwd: reviewer.ok_or_else(refused)? },
+        "findings" if integration.is_some() => Request::Findings { epic: slug },
+        "accept" | "reject" => {
+            let cwd = integration.ok_or_else(refused)?;
+            let finding = call.finding.ok_or("name the Finding with `finding`")?;
+            Request::Judge { epic: slug, finding, accepted: call.action == "accept", reason: call.text, cwd }
+        }
+        "remediated" => Request::Remediated { epic: slug, message: call.text, cwd: integration.ok_or_else(refused)? },
+        _ => return Err(refused()),
+    })
 }
 
 fn findings(epic: &Epic) -> String {

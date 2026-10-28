@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Command from '#lib/chat/Command.svelte';
 	import Calls from '#lib/chat/Calls.svelte';
+	import Canvas from '#lib/chat/Canvas.svelte';
 	import Edit from '#lib/chat/Edit.svelte';
 	import { icon } from '#lib/chat/icons.ts';
 	import Html from '#lib/chat/Html.svelte';
@@ -16,14 +17,14 @@
 	import type { AnsweredQuestions, Item, Subagent } from '#lib/device.svelte.ts';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
-	let { items, active = true, answered = [], activity, path = [], onopen, onattend, ondiff, onexpand, onrewind }: { items: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; onexpand?(index: number): void; onrewind?(index: number): void } = $props();
+	let { items, active = true, answered = [], activity, path = [], onopen, onattend, ondiff, oncanvas, onexpand, onrewind }: { items: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(index: number): void; onrewind?(index: number): void } = $props();
 	const entries = $derived.by(() => {
 		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map((record) => ({ kind: 'questions', record }));
 		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
 	});
 
 	function interim(item: Entry) {
-		return !['user', 'shell', 'text', 'html', 'media', 'notice', 'questions'].includes(item.kind);
+		return !['user', 'shell', 'text', 'html', 'media', 'notice', 'questions'].includes(item.kind) && !(item.kind === 'canvas' && item.write);
 	}
 
 	const runs = $derived(
@@ -62,6 +63,8 @@
 		<Media {item} />
 	{:else if item.kind === 'edit'}
 		<Edit {item} {ondiff} />
+	{:else if item.kind === 'canvas'}
+		<Canvas {item} {oncanvas} />
 	{:else if item.kind === 'command'}
 		<Command {item} onexpand={onexpand && (() => onexpand(items.indexOf(item)))} />
 	{:else if item.kind === 'shell'}

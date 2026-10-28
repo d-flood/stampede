@@ -43,7 +43,7 @@ pub const HANDOFF: Template =
 impl Template {
     pub fn opening(&self, data_dir: &Path) -> String {
         let text = self.text.trim_end();
-        match data_dir_sentence(data_dir) {
+        match data_dir_sentence(data_dir).filter(|_| text.contains("`stampede ")) {
             Some(sentence) => format!("{text}\n\n{sentence}"),
             None => text.to_owned(),
         }
@@ -51,7 +51,7 @@ impl Template {
 }
 
 /// The CLI only finds a server on a non-default data directory when told it.
-pub fn data_dir_sentence(data_dir: &Path) -> Option<String> {
+fn data_dir_sentence(data_dir: &Path) -> Option<String> {
     (data_dir != crate::data_dir()).then(|| {
         let dir = data_dir.display();
         format!("This Stampede server keeps its data in {dir}, so pass `--data-dir {dir}` to every `stampede` command.")

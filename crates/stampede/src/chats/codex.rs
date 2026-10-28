@@ -98,6 +98,7 @@ pub async fn start(
     let (events, received) = mpsc::unbounded_channel();
     let _ = events.send(Event::Session(thread.to_owned()));
     let mut transcript = Transcript::new(thread, cwd, events);
+    transcript.data_dir = Some(data_dir.to_owned());
     transcript.chat_id = chat_id.to_owned();
     transcript.settings = current(&started);
     Ok((run(connection, proxy, transcript, data_dir, cwd, env), received))
@@ -107,6 +108,7 @@ pub async fn resume(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>
     let thread = chat.agent_session.as_deref().ok_or_else(|| io::Error::other("the chat has no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(thread, &chat.cwd, events);
+    transcript.data_dir = Some(data_dir.to_owned());
     transcript.chat_id = chat.id.clone();
     transcript.status = chat.status;
     transcript.settings = chat.settings.clone();
@@ -305,7 +307,7 @@ fn run(
 ) -> Codex {
     let (requests, mut pending) = mpsc::unbounded_channel();
     let (data_dir, cwd, env) = (data_dir.to_owned(), cwd.to_owned(), env.clone());
-    transcript.storage_roots = writable_roots(&env);
+    transcript.storage_roots = writable_roots(&data_dir, &env);
     tokio::spawn(async move {
         // The proxy outlives a daemon that has gone until it next relays something.
         let mut heartbeat = interval(HEARTBEAT);
@@ -560,14 +562,15 @@ fn tool_config(data_dir: &Path, chat_id: &str, env: &BTreeMap<String, String>) -
     let mut config = json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.stampede_chat": config });
     if !environment.is_empty() {
         config["shell_environment_policy.set"] = json!(environment);
-        config["sandbox_workspace_write.writable_roots"] = json!(writable_roots(env));
+        config["sandbox_workspace_write.writable_roots"] = json!(writable_roots(data_dir, env));
     }
     config
 }
 
-fn writable_roots(env: &BTreeMap<String, String>) -> Vec<String> {
+fn writable_roots(data_dir: &Path, env: &BTreeMap<String, String>) -> Vec<String> {
     ["STAMPEDE_SCRATCH", "STAMPEDE_CACHE", "CARGO_TARGET_DIR"].into_iter()
-        .filter_map(|name| env.get(name)).filter(|path| Path::new(path).is_absolute()).cloned().collect()
+        .filter_map(|name| env.get(name)).filter(|path| Path::new(path).is_absolute()).cloned()
+        .chain([crate::canvas::root(data_dir).display().to_string()]).collect()
 }
 
 fn codex(cwd: &Path, env: &BTreeMap<String, String>) -> Command {
@@ -733,6 +736,7 @@ fn response(message: &Value) -> Option<u64> {
 }
 
 struct Transcript {
+    data_dir: Option<PathBuf>,
     last_input: Option<Value>,
     thread: String,
     chat_id: String,
@@ -831,6 +835,7 @@ impl Transcript {
 
     fn new(thread: &str, cwd: &Path, events: UnboundedSender<Event>) -> Self {
         Self {
+            data_dir: None,
             last_input: None,
             thread: thread.to_owned(),
             chat_id: String::new(),
@@ -1452,7 +1457,7 @@ impl Transcript {
             }
             Some("mcpToolCall") => {
                 if item["server"] == html::SERVER && item["tool"] == super::delegation::TOOL {
-                    if let Some(delegated) = super::delegation::item(&item["result"]) {
+                    if let Some(delegated) = super::delegation::item(&item["result"], self.data_dir.as_deref()) {
                         if let Item::Subagent { id, .. } = &delegated
                             && !self.delegated.contains_key(id)
                         {

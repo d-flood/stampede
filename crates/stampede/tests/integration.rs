@@ -2,6 +2,7 @@ mod common;
 
 mod browser;
 mod chat_attention;
+mod chat_canvas;
 mod chat_claude;
 mod chat_claude_restart;
 mod chat_codex;
