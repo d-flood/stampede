@@ -63,6 +63,7 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
             "protocolVersion": "2025-11-25",
             "capabilities": { "tools": {} },
             "serverInfo": { "name": SERVER, "version": env!("CARGO_PKG_VERSION") },
+            "instructions": format!("You are running in Stampede, a browser IDE that shows visual work inline: use render_html for mockups, diagrams and other visuals.{canvas}"),
         }),
         Some("ping") => json!({}),
         Some("tools/list") => {
