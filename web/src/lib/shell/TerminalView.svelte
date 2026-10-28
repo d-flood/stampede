@@ -63,6 +63,8 @@
 	let resizing = $state(false);
 	const observer = new ResizeObserver(() => {
 		resizing = true;
+		const dimensions = fit?.proposeDimensions();
+		if (dimensions) view?.resize(dimensions.cols, dimensions.rows);
 		cancelAnimationFrame(settling);
 		clearTimeout(fallback);
 		// Proposes once the size holds for two frames, so a sliding panel resizes the PTY once.
