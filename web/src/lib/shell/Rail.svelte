@@ -16,6 +16,7 @@
 		epics: Record<string, Epic[]>;
 		roots: Set<string>;
 		working: Set<string>;
+		background: Set<string>;
 		needs: Map<string, number>;
 		focused?: string;
 		onfocus(id: string): void;
@@ -29,7 +30,7 @@
 		attention?: Snippet;
 	};
 
-	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, needs, focused, onfocus, onreorder, onclose, ondelete, onworktree, onmenu, onpick, onicon, attention }: Props = $props();
+	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, background, needs, focused, onfocus, onreorder, onclose, ondelete, onworktree, onmenu, onpick, onicon, attention }: Props = $props();
 
 	let list: HTMLOListElement;
 	let drag = $state<{ id: string; y: number; order: string[]; moved: boolean }>();
@@ -90,6 +91,7 @@
 				epics={epics[project.id] ?? []}
 				root={roots.has(project.id)}
 				working={working.has(project.id)}
+				background={background.has(project.id)}
 				needs={needs.get(project.id) ?? 0}
 				compact={!open}
 				{focused}
@@ -226,7 +228,12 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-2);
+		gap: 2px;
+		box-sizing: border-box;
 		width: var(--tile);
+		padding: 3px 0;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-tile);
+		background: var(--surface-1);
 	}
 </style>

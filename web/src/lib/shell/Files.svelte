@@ -416,6 +416,8 @@
 	.name {
 		flex: 1;
 		overflow: hidden;
+		font-family: var(--font-mono);
+		font-size: var(--font-size-code);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}

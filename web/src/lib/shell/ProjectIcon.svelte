@@ -4,10 +4,12 @@
 
 	let { project }: { project: Project } = $props();
 	let failed = $state<string>();
+	const image = $derived(!!project.icon && failed !== project.icon);
+	const hue = $derived(([...project.path].reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % 6) + 1);
 </script>
 
-<span class="icon" aria-hidden="true">
-	{#if project.icon && failed !== project.icon}
+<span class="icon" class:monogram={!image} style:--hue={image ? undefined : `var(--ansi-${hue})`} aria-hidden="true">
+	{#if image}
 		<img src="/api/project-icons/{project.icon}" alt="" onerror={() => (failed = project.icon)} />
 	{:else}
 		{monogram(project.path)}
@@ -21,6 +23,12 @@
 		width: 100%;
 		height: 100%;
 		border-radius: inherit;
+	}
+
+	.monogram {
+		background: color-mix(in oklab, var(--hue) 15%, transparent);
+		color: color-mix(in oklab, var(--hue), var(--color-fg) 30%);
+		font-weight: 700;
 	}
 
 	img {

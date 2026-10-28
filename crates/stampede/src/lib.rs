@@ -51,7 +51,7 @@ use tower_http::compression::{CompressionLayer, DefaultPredicate, Predicate, pre
 
 use attention::Feed;
 use chats::Chats;
-use config::{Agent, Config, Editor, Font, Keybar, Rig};
+use config::{Agent, Config, Editor, Font, FontRole, Keybar, Rig};
 use epics::{Author, Epics, Event, Pause};
 pub use chats::{ChatToolsArgs, HoldChatArgs, hold_chat, chat_tools};
 pub use cli::{CliCommand, cli};
@@ -124,7 +124,7 @@ fn router(state: AppState) -> Router {
         .route("/api/font", get(font))
         .route("/api/fonts", get(font_families))
         .route("/api/fonts/{family}", get(preview_font))
-        .route("/api/ui-font", get(ui_font).put(set_ui_font))
+        .route("/api/font-choice/{role}", get(chosen_font).put(choose_font))
         .route("/api/rigs", get(rigs).put(rigs::save).delete(rigs::delete))
         .route("/api/rigs/options", get(rigs::options))
         .route("/api/commit-rig", get(commit_rig).put(set_commit_rig))
@@ -392,8 +392,8 @@ async fn preview_font(Path(family): Path<String>) -> Result<Json<Font>, files::F
     Ok(Json(font))
 }
 
-async fn ui_font(State(state): State<AppState>) -> Result<Json<Option<Font>>, files::Failure> {
-    let family = state.config.borrow().ui_font.clone();
+async fn chosen_font(State(state): State<AppState>, Path(role): Path<FontRole>) -> Result<Json<Option<Font>>, files::Failure> {
+    let family = state.config.borrow().chosen_font(role);
     tokio::task::spawn_blocking(move || family.map(|family| fonts::resolve(&family)).transpose())
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
@@ -401,7 +401,7 @@ async fn ui_font(State(state): State<AppState>) -> Result<Json<Option<Font>>, fi
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
 }
 
-async fn set_ui_font(State(state): State<AppState>, Json(family): Json<Option<String>>) -> Result<Json<Option<Font>>, files::Failure> {
+async fn choose_font(State(state): State<AppState>, Path(role): Path<FontRole>, Json(family): Json<Option<String>>) -> Result<Json<Option<Font>>, files::Failure> {
     tokio::task::spawn_blocking(move || -> Result<_, config::Error> {
         let font = family.as_deref().map(fonts::resolve).transpose()?;
         if let Some(font) = &font
@@ -409,7 +409,7 @@ async fn set_ui_font(State(state): State<AppState>, Json(family): Json<Option<St
         {
             return Err(format!("no installed font family {:?}", font.family).into());
         }
-        config::write_ui_font(&state.config_path, family.as_deref())?;
+        config::write_font(&state.config_path, role, family.as_deref())?;
         Ok(font)
     })
     .await

@@ -2,7 +2,7 @@ import { expect, test } from './fixtures.ts';
 import type { Locator, Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { openProject, showSidebar } from './shell.ts';
+import { openProject, openSettings, showSidebar } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
@@ -193,7 +193,7 @@ test('the commit Rig drafts a message for the staged changes', { tag: '@desktop'
 test('Settings chooses the Rig and keeps the instructions for drafting commit messages', { tag: '@desktop' }, async ({ page }) => {
 	const config = () => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
 	await page.goto('/');
-	await page.getByRole('button', { name: 'Settings' }).click();
+	await openSettings(page, 'Agents');
 	const settings = page.getByRole('dialog', { name: 'Settings' });
 	const select = settings.getByRole('combobox', { name: 'Commit messages' });
 	const instructions = settings.getByRole('textbox', { name: 'Instructions' });
@@ -206,7 +206,7 @@ test('Settings chooses the Rig and keeps the instructions for drafting commit me
 	await instructions.blur();
 	await expect.poll(config).toContain('commit_instructions = ');
 	await page.reload();
-	await page.getByRole('button', { name: 'Settings' }).click();
+	await openSettings(page, 'Agents');
 	await expect(select).toHaveValue('Fake Codex');
 	await expect(instructions).toHaveValue('Twelve words or fewer.\nNo body.');
 	await instructions.fill('');

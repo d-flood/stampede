@@ -1,24 +1,25 @@
 <script lang="ts">
-	import { beginFontPreview, selectUiFont, uiFont } from '#lib/config.svelte.ts';
-	import { onDestroy, tick } from 'svelte';
+	import { beginFontPreview, defaultFonts, fontVariables, fonts, selectFont, type FontRole } from '#lib/config.svelte.ts';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import { Command } from 'bits-ui';
 	import Check from '~icons/ph/check';
 
-	let { onselect }: { onselect(): void } = $props();
+	let { role, onselect }: { role: FontRole; onselect(): void } = $props();
 
 	let families = $state<string[]>([]);
 	let query = $state('');
 	let loading = $state(true);
 	let saving = $state(false);
-	let candidate = $state(uiFont.family);
-	let previewed = $state(uiFont.family);
+	const previewing = untrack(() => role);
+	let candidate = $state(fonts[previewing]);
+	let previewed = $state(fonts[previewing]);
 	let pending = $state(false);
 	let error = $state<string>();
 	let request = 0;
 	const needle = $derived(query.toLowerCase().trim());
 	const matches = $derived(families.filter((family) => family.toLowerCase().includes(needle)));
-	const preview = beginFontPreview();
+	const preview = beginFontPreview(previewing);
 	onDestroy(() => preview.end());
 
 	async function load() {
@@ -55,7 +56,7 @@
 		saving = true;
 		error = undefined;
 		try {
-			await selectUiFont(candidate);
+			await selectFont(role, candidate);
 			onselect();
 		} catch (failure) {
 			error = failure instanceof Error ? failure.message : 'Could not save font.';
@@ -67,10 +68,10 @@
 	load();
 </script>
 
-<p class="current">Saved: {uiFont.family ?? 'Default'}</p>
+<p class="current">Saved: {fonts[role] ?? 'Default'}</p>
 <div class="preview" role="status" aria-live="polite">
 	<span>{pending ? 'Loading preview…' : 'Preview'}</span>
-	<strong>{candidate ?? 'Default'}</strong>
+	<strong style:font-family="var({fontVariables[role]})">{candidate ?? defaultFonts[role]}</strong>
 </div>
 <Command.Root shouldFilter={false} loop>
 	<Command.Input placeholder="Search installed fonts" aria-label="Search fonts" autocomplete="off" spellcheck={false}>
@@ -86,8 +87,8 @@
 						<Command.Item value="Default" disabled={saving} onSelect={() => choose(null)}>
 							{#snippet child({ props })}
 								<div {...props} class="item">
-									<span>Default <small>Same as code</small></span>
-									{#if uiFont.family === null}<Check aria-label="Current font" />{/if}
+									<span>Default <small>{defaultFonts[role]}</small></span>
+									{#if fonts[role] === null}<Check aria-label="Current font" />{/if}
 								</div>
 							{/snippet}
 						</Command.Item>
@@ -97,7 +98,7 @@
 							{#snippet child({ props })}
 								<div {...props} class="item">
 									<span>{family}</span>
-									{#if family === uiFont.family}<Check aria-label="Current font" />{/if}
+									{#if family === fonts[role]}<Check aria-label="Current font" />{/if}
 								</div>
 							{/snippet}
 						</Command.Item>
@@ -111,7 +112,7 @@
 </Command.Root>
 <div class="actions">
 	<Button onclick={onselect}>Cancel</Button>
-	<Button variant="primary" disabled={saving || pending || candidate !== previewed || candidate === uiFont.family} onclick={apply}>Apply font</Button>
+	<Button variant="primary" disabled={saving || pending || candidate !== previewed || candidate === fonts[role]} onclick={apply}>Apply font</Button>
 </div>
 {#if saving}<p class="status" role="status">Applying font…</p>{/if}
 {#if error}

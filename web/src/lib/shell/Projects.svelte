@@ -12,6 +12,7 @@
 		epics: Record<string, Epic[]>;
 		roots: Set<string>;
 		working: Set<string>;
+		background: Set<string>;
 		needs: Map<string, number>;
 		focused?: string;
 		onfocus(id: string): void;
@@ -23,7 +24,7 @@
 		onicon(project: Project): void;
 	};
 
-	let { projects, labels, worktrees, epics, roots, working, needs, focused, onfocus, onclose, ondelete, onworktree, onmenu, onpick, onicon }: Props = $props();
+	let { projects, labels, worktrees, epics, roots, working, background, needs, focused, onfocus, onclose, ondelete, onworktree, onmenu, onpick, onicon }: Props = $props();
 </script>
 
 <nav aria-label="Projects">
@@ -37,6 +38,7 @@
 				epics={epics[project.id] ?? []}
 				root={roots.has(project.id)}
 				working={working.has(project.id)}
+				background={background.has(project.id)}
 				needs={needs.get(project.id) ?? 0}
 				{focused}
 				{onfocus}

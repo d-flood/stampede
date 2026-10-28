@@ -67,6 +67,11 @@ test('running shells stay visible across sessions and disappear when finished', 
 	items[1] = { ...child, status: 'done', items: [{ ...watcher, status: 'failed' }] };
 	route!.send(JSON.stringify({ type: 'chat.item', chatId: chatId!, index: 1, item: items[1] }));
 	await expect(shells).toHaveCount(0);
+	const tile = page.locator(`nav[aria-label="Projects"] button[aria-label="${name}"]`);
+	route!.send(JSON.stringify({ type: 'chat.background', chatId: chatId!, background: true }));
+	await expect(tile.getByTitle('background')).toBeVisible();
+	route!.send(JSON.stringify({ type: 'chat.background', chatId: chatId!, background: false }));
+	await expect(tile.getByTitle('background')).toHaveCount(0);
 	await panel.locator('.calls > summary').click();
 	await expect(panel.locator('.transcript .command')).toContainText(command);
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);

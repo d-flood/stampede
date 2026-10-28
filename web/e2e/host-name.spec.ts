@@ -1,4 +1,4 @@
-import { showScreen } from './shell.ts';
+import { openSettings, showScreen } from './shell.ts';
 import { expect, test } from './fixtures.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -21,7 +21,7 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 	}
 	await expect(page).toHaveTitle('Stampede');
 
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'General');
 	await expect(field).toHaveValue('');
 	await expect(field).toHaveAttribute('placeholder', 'Stampede');
 	await field.fill('atlas');
@@ -35,7 +35,7 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 	await other.goto('/');
 	await expect(other).toHaveTitle('atlas');
 	const loaded = await other.evaluate(() => performance.timeOrigin);
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'General');
 	await expect(field).toHaveValue('atlas');
 	await field.fill('zeus');
 	await commit();

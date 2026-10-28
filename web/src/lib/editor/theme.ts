@@ -7,7 +7,7 @@ const chrome = EditorView.theme({
 		height: '100%',
 		backgroundColor: 'var(--color-bg)',
 		color: 'var(--color-fg)',
-		fontSize: 'var(--font-size-md)'
+		fontSize: 'var(--font-size-code)'
 	},
 	'&.cm-focused': { outline: 'none' },
 	'.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.5' },

@@ -16,6 +16,7 @@
 		epics: Epic[];
 		root: boolean;
 		working?: boolean;
+		background?: boolean;
 		needs?: number;
 		compact?: boolean;
 		focused?: string;
@@ -28,7 +29,7 @@
 		onicon(project: Project): void;
 	};
 
-	let { project, label, labels, tiles, epics, root, working = false, needs = 0, compact = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onmenu, onicon }: Props =
+	let { project, label, labels, tiles, epics, root, working = false, background = false, needs = 0, compact = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onmenu, onicon }: Props =
 		$props();
 
 	const runs = $derived(epics.filter((epic) => epic.run && !epic.archived));
@@ -64,7 +65,7 @@
 					<ProjectIcon {project} />
 					{#if needs}<span class="attention">{needs}</span>{/if}
 					{#if tiles.length}<span class="count" title="{tiles.length} {tiles.length === 1 ? 'worktree' : 'worktrees'}">{tiles.length}</span>{/if}
-					{#if working}<span class="spinner" title="working"><CircleNotchBold /></span>{/if}
+					{#if working}<span class="spinner" title="working"><CircleNotchBold /></span>{:else if background}<span class="shell" title="background"><ShellMark /></span>{/if}
 				</span>
 				<span class="text">
 					<strong>{label}</strong>
@@ -276,7 +277,8 @@
 
 	.attention,
 	.count,
-	.spinner {
+	.spinner,
+	.shell {
 		position: absolute;
 		display: grid;
 		place-items: center;
@@ -311,10 +313,18 @@
 		color: var(--muted-fg);
 	}
 
-	.spinner {
+	.spinner,
+	.shell {
 		right: calc(-1 * var(--space-1) - var(--border-width));
 		bottom: calc(-1 * var(--space-1) - var(--border-width));
+	}
+
+	.spinner {
 		color: var(--status-working);
+	}
+
+	.shell {
+		color: var(--status-background);
 	}
 
 	.spinner :global(svg) {

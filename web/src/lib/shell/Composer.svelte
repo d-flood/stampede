@@ -186,6 +186,7 @@
 
 	textarea.code {
 		font-family: var(--font-mono);
+		font-size: var(--font-size-code);
 	}
 
 	.actions {
@@ -220,21 +221,6 @@
 	.boxed .actions {
 		align-items: center;
 		flex-wrap: wrap;
-	}
-
-	.boxed .actions > :global(button) {
-		border-color: transparent;
-		background: none;
-		color: var(--muted-fg);
-	}
-
-	.boxed .actions > :global(button:hover:not(:disabled)) {
-		background: var(--hover);
-		color: var(--color-fg);
-	}
-
-	.boxed .actions > :global(button:disabled) {
-		opacity: 0.45;
 	}
 
 	.boxed.phone {

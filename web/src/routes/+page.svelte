@@ -142,6 +142,9 @@
 	const working = $derived(
 		new Set(projects.filter((project) => chats[project.id]?.some((chat) => chatStatus(chat) === 'working')).map((project) => project.worktree?.parent ?? project.id))
 	);
+	const background = $derived(
+		new Set(projects.filter((project) => chats[project.id]?.some((chat) => chatStatus(chat) === 'background')).map((project) => project.worktree?.parent ?? project.id))
+	);
 	const needs = $derived(attentionList.reduce((map, item) => map.set(item.projectId, (map.get(item.projectId) ?? 0) + 1), new Map<string, number>()));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
 	const tabs = $derived((focused && terminals[focused.id]) || []);
@@ -950,7 +953,7 @@
 <svelte:window onpagehide={() => sendClosing(deviceLayout)} />
 
 {#snippet attention()}
-	<SchemeToggle />
+	{#if !phone}<SchemeToggle />{/if}
 	<Settings />
 	<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
 {/snippet}
@@ -1316,6 +1319,7 @@
 							{epics}
 							{roots}
 							{working}
+							{background}
 							focused={focused?.id}
 							onfocus={focus}
 							onclose={(projectId) => closeProject(projectId)}
@@ -1345,6 +1349,7 @@
 			{epics}
 			{roots}
 			{working}
+			{background}
 			focused={focused?.id}
 			onfocus={(id) => (chosen = id)}
 			onreorder={reorder}

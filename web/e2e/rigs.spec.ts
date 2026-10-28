@@ -1,12 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { openProject } from './shell.ts';
+import { openProject, openSettings } from './shell.ts';
 
 test('numbered rigs can be reordered and launched with Ctrl+Shift+number', { tag: '@desktop' }, async ({ page, request }) => {
 	await openProject(page, 'beta');
 	await page.keyboard.press('Control+Shift+1');
 	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).getByTitle('done')).toBeVisible();
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Rigs');
 	const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
 	const rig = dialog.getByRole('combobox', { name: 'Rig', exact: true });
 	await rig.selectOption('Fake Codex');
@@ -27,7 +27,7 @@ test('numbered rigs can be reordered and launched with Ctrl+Shift+number', { tag
 	await expect(name).toHaveValue('Unsaved name');
 	await dialog.getByRole('button', { name: 'Move down', exact: true }).click();
 	await expect(rig.locator('option:checked')).toHaveText('2. Fake Codex');
-	await expect(dialog.getByText('Launch with Ctrl+Shift+2.', { exact: true })).toBeVisible();
+	await expect(dialog.getByText('Launch with Ctrl+Shift+2', { exact: true })).toBeVisible();
 	const configured: { name: string }[] = await (await request.get('/api/rigs')).json();
 	expect(configured.slice(0, 2).map((rig) => rig.name)).toEqual(['Fake Claude', 'Fake Codex']);
 	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
@@ -37,7 +37,7 @@ test('numbered rigs can be reordered and launched with Ctrl+Shift+number', { tag
 	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
 	await expect(page.getByRole('menuitem', { name: 'Fake Codex', exact: true })).toContainText('Ctrl+Shift+2');
 	await page.keyboard.press('Escape');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Rigs');
 	await rig.selectOption('Fake Codex');
 	await expect(rig.locator('option:checked')).toHaveText('2. Fake Codex');
 });
@@ -50,7 +50,7 @@ test.describe('starter rigs', () => {
 		mkdirSync(directory, { recursive: true });
 		writeFileSync(`${directory}/config.toml`, 'model = "gpt-6-luna"\nmodel_reasoning_effort = "high"\n');
 		await page.goto('/');
-		await page.getByRole('button', { name: 'Settings', exact: true }).click();
+		await openSettings(page, 'Rigs');
 		const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
 		const rig = dialog.getByRole('combobox', { name: 'Rig', exact: true });
 		await rig.selectOption('Codex');
@@ -62,7 +62,7 @@ test.describe('starter rigs', () => {
 		await expect(dialog.getByRole('status')).toHaveText('Rig saved.');
 		writeFileSync(`${directory}/config.toml`, 'model = "gpt-6-astra"\nmodel_reasoning_effort = "medium"\n');
 		await page.reload();
-		await page.getByRole('button', { name: 'Settings', exact: true }).click();
+		await openSettings(page, 'Rigs');
 		await rig.selectOption('Codex');
 		await expect(model).toBeEnabled();
 		await expect(model).toHaveValue('gpt-6-luna');
@@ -72,7 +72,7 @@ test.describe('starter rigs', () => {
 	test('both starters fill in their actual starting settings and can be renamed and configured through the normal editor', { tag: '@desktop' }, async ({ page, request }) => {
 		await openProject(page, 'alpha');
 		expect((await (await request.get('/api/rigs')).json()).map((rig: { name: string }) => rig.name)).toEqual(['Claude Code', 'Codex']);
-		await page.getByRole('button', { name: 'Settings', exact: true }).click();
+		await openSettings(page, 'Rigs');
 		const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
 		const rig = dialog.getByRole('combobox', { name: 'Rig', exact: true });
 		for (const [name, model, effort, mode] of [
@@ -107,7 +107,7 @@ test.describe('starter rigs', () => {
 			await expect(rig.locator(`option[value="${original}"]`)).toHaveCount(0);
 		}
 		await page.reload();
-		await page.getByRole('button', { name: 'Settings', exact: true }).click();
+		await openSettings(page, 'Rigs');
 		await rig.selectOption('Reviewer');
 		await expect(dialog.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue('gpt-6-sol');
 		await expect(dialog.getByRole('combobox', { name: 'Effort level', exact: true })).toHaveValue('xhigh');
@@ -121,7 +121,7 @@ test.describe('starter rigs', () => {
 
 test('named rigs can be created, selected and renamed', async ({ page }) => {
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Rigs');
 	const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
 	const rig = dialog.getByRole('combobox', { name: 'Rig', exact: true });
 	const name = dialog.getByRole('textbox', { name: 'Name', exact: true });
@@ -145,7 +145,7 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 	await page.getByRole('menuitem', { name: created, exact: true }).click();
 	await expect(page.getByRole('tab', { name: new RegExp(`^${created}`) }).getByTitle('done')).toBeVisible();
 	await page.reload();
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Rigs');
 	await rig.selectOption(created);
 	await expect(model).toBeEnabled();
 	await expect(model).toHaveValue('opus');
@@ -160,7 +160,7 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
 	await expect(page.getByRole('tab', { name: /^Careful Reviewer/ })).toBeVisible();
 	await page.reload();
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Rigs');
 	await rig.selectOption('Careful Reviewer');
 	await expect(name).toHaveValue('Careful Reviewer');
 	await expect(model).toBeEnabled();
@@ -199,7 +199,7 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 test('rig names must be nonempty and unique, discovery failures can be retried and save failures keep the draft', { tag: '@desktop' }, async ({ page }) => {
 	await page.route('**/api/rigs/options?*', (route) => route.fulfill({ status: 502, body: 'Provider unavailable' }));
 	await page.goto('/');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Rigs');
 	const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
 	const save = dialog.getByRole('button', { name: 'Save rig', exact: true });
 	await expect(dialog.getByRole('alert')).toHaveText('Provider unavailable');
@@ -237,7 +237,7 @@ test('rig deletion can be cancelled and retried while preserving existing chats'
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
 	const chat = page.getByRole('tab', { name: /^Fake Claude/ });
 	await expect(chat.getByTitle('done')).toBeVisible();
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Rigs');
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 	const rig = settings.getByRole('combobox', { name: 'Rig', exact: true });
 	await expect(settings.getByRole('button', { name: 'Delete rig', exact: true })).toHaveCount(0);
@@ -268,13 +268,13 @@ test('rig deletion can be cancelled and retried while preserving existing chats'
 	await expect(page.getByRole('menuitem', { name: 'Fake Codex', exact: true })).toBeVisible();
 	await page.reload();
 	await expect(chat).toBeVisible();
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Rigs');
 	await expect(rig.locator('option[value="Fake Claude"]')).toHaveCount(0);
 });
 
 test('Copilot rigs use CLI models and open a chat', { tag: '@desktop' }, async ({ page, request }) => {
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Rigs');
 	const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
 	await dialog.getByRole('combobox', { name: 'Provider', exact: true }).selectOption('copilot');
 	const model = dialog.getByRole('combobox', { name: 'Model', exact: true });

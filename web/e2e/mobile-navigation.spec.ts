@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
-import { openProject, showScreen } from './shell.ts';
+import { openProject, openSettings, showScreen } from './shell.ts';
 
 async function settled(page: Page, name: string) {
 	await expect.poll(() => page.locator('.screens').evaluate((element, name) => {
@@ -15,7 +15,7 @@ for (const side of ['left', 'right']) {
 		await showScreen(page, 'sidebar');
 		await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'greeting.ts', exact: true }).click();
 		await settled(page, 'tabs');
-		await page.getByRole('button', { name: 'Settings', exact: true }).click();
+		await openSettings(page, 'General');
 		const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 		await settings.getByRole('combobox', { name: 'Sidebar position' }).selectOption(side);
 		await settings.getByRole('button', { name: 'Done', exact: true }).click();

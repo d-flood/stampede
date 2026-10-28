@@ -134,7 +134,7 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	await meter.focus();
 	await page.clock.runFor(500);
 	await expect(tooltip).toBeHidden();
-	const reset = `${await usage.locator('time').first().textContent()} ${await usage.locator('.countdown').first().textContent()}`;
+	const reset = `${await usage.locator('time').first().textContent()} · ${await usage.locator('.countdown').first().textContent()}`;
 	const resizer = page.getByRole('separator', { name: 'Resize sidebar' });
 	await resizer.focus();
 	await page.mouse.move(900, 400);
@@ -188,7 +188,7 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	await expect(copilot.locator('.cycle')).toHaveText('Oct 1 – Nov 1');
 	await expect(copilot.getByRole('meter')).toHaveCount(0);
 	await expect.poll(() => copilot.evaluate((element) => element.getBoundingClientRect().top >= element.previousElementSibling!.getBoundingClientRect().bottom)).toBe(true);
-	await expect(usage.locator('.countdown')).toHaveText(['(in 3h 9m)', '(in 6d 14h)', '(in 4d 20h)']);
+	await expect(usage.locator('.countdown')).toHaveText(['in 3h 9m', 'in 6d 14h', 'in 4d 20h']);
 	await expect(usage.getByRole('meter', { name: 'Codex · 5h' })).toHaveCount(0);
 	await expect(usage.getByText('Reset unavailable')).toHaveCount(0);
 	await expect(usage.getByRole('group', { name: 'Claude', exact: true }).locator('.age')).toHaveText('2m ago');
@@ -264,13 +264,13 @@ test('usage groups agents into rows, fits narrow screens, and updates reset coun
 	await expect(copilot.getByText('Cost not reported', { exact: true })).toBeVisible();
 	await checkNarrowBilling('requests');
 	await page.clock.fastForward(minute);
-	await expect(usage.locator('.countdown').first()).toHaveText('(in 3h 8m)');
+	await expect(usage.locator('.countdown').first()).toHaveText('in 3h 8m');
 	update([{ ...readings[0], resetsAt: now + 2 * minute }]);
-	await expect(usage.locator('.countdown')).toHaveText('(in 1m)');
+	await expect(usage.locator('.countdown')).toHaveText('in 1m');
 	await page.clock.fastForward(minute);
-	await expect(usage.locator('.countdown')).toHaveText('(now)');
+	await expect(usage.locator('.countdown')).toHaveText('now');
 	await page.clock.fastForward(minute);
-	await expect(usage.locator('.countdown')).toHaveText('(now)');
+	await expect(usage.locator('.countdown')).toHaveText('now');
 	update([]);
 	await expect(usage).toBeHidden();
 	await expect(usage.getByRole('group')).toHaveCount(0);

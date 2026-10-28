@@ -431,12 +431,15 @@
 		flex: none;
 		max-width: 70%;
 		overflow: hidden;
+		font-family: var(--font-mono);
+		font-size: var(--font-size-code);
 		text-overflow: ellipsis;
 	}
 
 	.dir {
 		overflow: hidden;
 		color: var(--muted-fg);
+		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		text-overflow: ellipsis;
 	}

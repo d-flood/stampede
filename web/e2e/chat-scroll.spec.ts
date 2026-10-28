@@ -2,7 +2,7 @@ import type { Item, ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, openProject, openSettings } from './shell.ts';
 
 test('chat follows messages until scrolled up and resumes at the bottom', { tag: '@desktop' }, async ({ page }, { project, repeatEachIndex }) => {
 	let route: WebSocketRoute;
@@ -96,9 +96,10 @@ test('the initial message stays below the navigator at the top of a chat', async
 	}).toBeGreaterThanOrEqual(0);
 	await unobscured();
 	await expect(nav.getByRole('button', { name: 'Previous message', exact: true })).toBeDisabled();
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Appearance');
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-	await settings.getByRole('combobox', { name: 'Text size', exact: true }).selectOption('22');
+	await settings.getByRole('combobox', { name: 'UI font size', exact: true }).selectOption('22');
+	await settings.getByRole('combobox', { name: 'Chat font size', exact: true }).selectOption('26');
 	await settings.getByRole('button', { name: 'Done', exact: true }).click();
 	await expect(nav).toHaveCSS('opacity', '1');
 	await unobscured();

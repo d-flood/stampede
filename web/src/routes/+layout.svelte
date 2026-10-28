@@ -1,4 +1,11 @@
 <script lang="ts">
+	import '@fontsource-variable/crimson-pro/wght-italic.css';
+	import '@fontsource-variable/crimson-pro/wght.css';
+	import '@fontsource/fira-sans/400-italic.css';
+	import '@fontsource/fira-sans/400.css';
+	import '@fontsource/fira-sans/500.css';
+	import '@fontsource/fira-sans/600.css';
+	import '@fontsource/fira-sans/700.css';
 	import { hostName } from '#lib/config.svelte.ts';
 	import '#lib/tokens.css';
 

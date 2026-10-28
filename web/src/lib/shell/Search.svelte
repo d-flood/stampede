@@ -327,7 +327,12 @@
 		gap: var(--space-2);
 		min-height: var(--target-min);
 		padding: 0 var(--space-3);
+		font-family: var(--font-mono);
 		white-space: nowrap;
+	}
+
+	.name {
+		font-size: var(--font-size-code);
 	}
 
 	.file .name {

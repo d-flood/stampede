@@ -78,17 +78,19 @@
 
 <div class="clip-editor">
 	{#if !ondone}
-		<label for="editing-clip">Clip</label>
-		<select id="editing-clip" value={selected} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
-			<option value="">New clip</option>
-			{#each clips() as clip, index (clip.name)}<option value={clip.name}>{index + 1}. {clip.name}</option>{/each}
-		</select>
-		{#if selected}
-			<div class="order" role="group" aria-label="Clip order">
-				<Button disabled={busy || position <= 0} onclick={() => move(-1)}>Move up</Button>
-				<Button disabled={busy || position === clips().length - 1} onclick={() => move(1)}>Move down</Button>
-			</div>
-		{/if}
+		<div class="picker">
+			<label for="editing-clip">Clip</label>
+			<select id="editing-clip" value={selected} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
+				<option value="">New clip</option>
+				{#each clips() as clip, index (clip.name)}<option value={clip.name}>{index + 1}. {clip.name}</option>{/each}
+			</select>
+			{#if selected}
+				<div class="order" role="group" aria-label="Clip order">
+					<Button variant="ghost" disabled={busy || position <= 0} onclick={() => move(-1)}>Move up</Button>
+					<Button variant="ghost" disabled={busy || position === clips().length - 1} onclick={() => move(1)}>Move down</Button>
+				</div>
+			{/if}
+		</div>
 	{/if}
 	<fieldset disabled={busy}>
 		<label for="clip-name">Clip name</label>
@@ -128,6 +130,52 @@
 		border: 0;
 	}
 
+	.clip-editor {
+		container-type: inline-size;
+	}
+
+	.picker {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: var(--space-2) var(--space-3);
+		margin-bottom: var(--space-2);
+		padding-bottom: var(--space-4);
+		border-bottom: var(--border-width) solid var(--border);
+	}
+
+	.picker label {
+		margin: 0;
+		font-weight: 600;
+	}
+
+	.picker .order {
+		grid-column: 1 / -1;
+		justify-content: flex-start;
+		margin: 0;
+	}
+
+	@container (min-width: 30rem) {
+		fieldset {
+			grid-template-columns: 9rem minmax(0, 1fr);
+			align-items: center;
+			column-gap: var(--space-4);
+		}
+
+		fieldset label {
+			margin: 0;
+		}
+
+		fieldset p {
+			grid-column: 2;
+		}
+
+		label[for='clip-text'] {
+			align-self: start;
+			margin-top: var(--space-2);
+		}
+	}
+
 	label {
 		margin-top: var(--space-2);
 		font-size: var(--font-size-sm);
@@ -141,9 +189,9 @@
 		min-width: 0;
 		min-height: var(--target-min);
 		padding: var(--space-1) var(--space-2);
-		border: var(--border-width) solid var(--border);
+		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-md);
-		background: var(--color-bg);
+		background: var(--surface-1);
 		color: var(--color-fg);
 		font: inherit;
 	}
@@ -155,8 +203,8 @@
 	select:focus-visible,
 	input:focus-visible,
 	textarea:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-		outline-offset: var(--border-width);
+		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
+		outline-offset: 1px;
 	}
 
 	p {

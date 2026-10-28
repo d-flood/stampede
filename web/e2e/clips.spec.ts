@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { openProject } from './shell.ts';
+import { openProject, openSettings } from './shell.ts';
 
 test('Clips made in Settings insert at the caret of a Chat Composer and send as typed', { tag: '@desktop' }, async ({ page }) => {
 	const sent: string[] = [];
@@ -10,7 +10,7 @@ test('Clips made in Settings insert at the caret of a Chat Composer and send as 
 		if (message.type === 'chat.send') sent.push(message.text);
 	}));
 	await page.goto('/');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Clips');
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 	const section = settings.getByRole('region', { name: 'Clips', exact: true });
 	const clip = section.getByRole('combobox', { name: 'Clip', exact: true });

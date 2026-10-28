@@ -26,6 +26,8 @@ struct Settings {
     theme: Theme,
     font: Fonts,
     ui_font: Option<String>,
+    chat_font: Option<String>,
+    code_font: Option<String>,
     #[serde(deserialize_with = "rigs")]
     rig: Vec<Rig>,
     commit_rig: Option<String>,
@@ -51,6 +53,8 @@ impl Default for Settings {
             theme: Theme::default(),
             font: Fonts::default(),
             ui_font: None,
+            chat_font: None,
+            code_font: None,
             rig: Vec::new(),
             commit_rig: None,
             commit_instructions: None,
@@ -287,6 +291,8 @@ pub struct Config {
     pub theme: Theme,
     pub font: Font,
     pub ui_font: Option<String>,
+    pub chat_font: Option<String>,
+    pub code_font: Option<String>,
     pub rigs: Vec<Rig>,
     pub commit_rig: Option<String>,
     pub commit_instructions: Option<String>,
@@ -309,6 +315,8 @@ impl Default for Config {
             theme: Theme::default(),
             font: Font::default(),
             ui_font: None,
+            chat_font: None,
+            code_font: None,
             rigs: Vec::new(),
             commit_rig: None,
             commit_instructions: None,
@@ -319,6 +327,24 @@ impl Default for Config {
             language_servers: LanguageServers::default(),
             pause_at: Loop::default().pause_at,
             storage: Storage::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FontRole {
+    Ui,
+    Chat,
+    Code,
+}
+
+impl FontRole {
+    fn key(self) -> &'static str {
+        match self {
+            FontRole::Ui => "ui_font",
+            FontRole::Chat => "chat_font",
+            FontRole::Code => "code_font",
         }
     }
 }
@@ -346,6 +372,14 @@ pub struct Face {
 }
 
 impl Config {
+    pub fn chosen_font(&self, role: FontRole) -> Option<String> {
+        match role {
+            FontRole::Ui => self.ui_font.clone(),
+            FontRole::Chat => self.chat_font.clone(),
+            FontRole::Code => self.code_font.clone(),
+        }
+    }
+
     fn parse(text: &str) -> Result<Self, toml::de::Error> {
         let Settings {
             name,
@@ -355,6 +389,8 @@ impl Config {
             theme,
             font: Fonts { mono },
             ui_font,
+            chat_font,
+            code_font,
             rig: rigs,
             commit_rig,
             commit_instructions,
@@ -373,7 +409,9 @@ impl Config {
             scrollback,
             theme,
             font: Font { family: mono.family, faces: mono.files },
-            ui_font: ui_font.map(|family| family.trim().to_owned()).filter(|family| !family.is_empty()),
+            ui_font: family(ui_font),
+            chat_font: family(chat_font),
+            code_font: family(code_font),
             rigs,
             commit_rig,
             commit_instructions: commit_instructions.map(|text| text.trim().to_owned()).filter(|text| !text.is_empty()),
@@ -470,12 +508,12 @@ pub fn write_host_name(path: &Path, name: Option<&str>) -> Result<Option<String>
     Ok(name.map(str::to_owned))
 }
 
-pub fn write_ui_font(path: &Path, family: Option<&str>) -> Result<(), Error> {
+pub fn write_font(path: &Path, role: FontRole, family: Option<&str>) -> Result<(), Error> {
     let text = match fs::read_to_string(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         text => text?,
     };
-    fs::write(path, with_top_level(text, "ui_font", family)?)?;
+    fs::write(path, with_top_level(text, role.key(), family)?)?;
     Ok(())
 }
 
@@ -803,6 +841,10 @@ fn faces<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Face>, D::Err
     files.into_iter().enumerate()
         .map(|(index, path)| face(expand(path), format!("/fonts/host/{index}")))
         .collect::<Result<_, _>>().map_err(D::Error::custom)
+}
+
+fn family(name: Option<String>) -> Option<String> {
+    name.map(|family| family.trim().to_owned()).filter(|family| !family.is_empty())
 }
 
 pub fn expand(path: PathBuf) -> PathBuf {

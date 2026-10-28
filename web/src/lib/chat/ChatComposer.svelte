@@ -171,22 +171,22 @@
 	{/snippet}
 	{#snippet actions(text: string, clear: () => void)}
 		{#if form() === 'phone'}
-			<Button aria-label="Commands" tip="Commands" aria-expanded={slash?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => slash?.toggle()}><Terminal /></Button>
-			<Button aria-label="Reference file" tip="Reference file" aria-expanded={files?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => (files?.isOpen() ? files.dismiss() : composer.insert('@'))}><At /></Button>
+			<Button variant="ghost" aria-label="Commands" tip="Commands" aria-expanded={slash?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => slash?.toggle()}><Terminal /></Button>
+			<Button variant="ghost" aria-label="Reference file" tip="Reference file" aria-expanded={files?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => (files?.isOpen() ? files.dismiss() : composer.insert('@'))}><At /></Button>
 		{:else}
 			<Chips agent={chat.agent} settings={chat.settings} {choices} docked {onrun}>
 				{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
 			</Chips>
 		{/if}
-		<Button aria-label="Attach image" tip="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
+		<Button variant="ghost" aria-label="Attach image" tip="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
 		<Menu items={[{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]}>
 			{#snippet trigger(props)}
-				<Button {...props} aria-label="More" tip="More"><DotsThree /></Button>
+				<Button {...props} variant="ghost" aria-label="More" tip="More"><DotsThree /></Button>
 			{/snippet}
 		</Menu>
 		<div class="turn">
 			{#if stoppable}
-				<Button aria-label="Interrupt" tip="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
+				<Button variant="ghost" aria-label="Interrupt" tip="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
 					<span class="stop"><Stop /></span>
 				</Button>
 				{#if form() === 'phone'}<span class="gap"></span>{/if}
@@ -196,16 +196,17 @@
 					<Terminal /> Run
 				</Button>
 			{:else if working && !launching}
-				<Button disabled={(!text.trim() && !images.length) || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
-					<ListPlus /> Queue
+				<Button aria-label={form() === 'phone' ? 'Queue' : undefined} disabled={(!text.trim() && !images.length) || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
+					<ListPlus />{#if form() !== 'phone'} Queue{/if}
 				</Button>
 				<Button
 					variant="primary"
+					aria-label={form() === 'phone' ? 'Steer' : undefined}
 					disabled={(!text.trim() && !images.length) || !live || reading}
 					onmousedown={keepFocus}
 					onclick={() => send(text, false) && clear()}
 				>
-					<ArrowBendUpRight /> Steer
+					<ArrowBendUpRight />{#if form() !== 'phone'} Steer{/if}
 				</Button>
 			{:else}
 				<Button
@@ -256,14 +257,5 @@
 
 	.turn {
 		display: contents;
-	}
-
-	.turn > :global(button:has(.stop)) {
-		border-color: transparent;
-		background: none;
-	}
-
-	.turn > :global(button:has(.stop):hover:not(:disabled)) {
-		background: var(--hover);
 	}
 </style>

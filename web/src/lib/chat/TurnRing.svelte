@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { brief } from '#lib/chat/brief.ts';
 	import type { Status } from '#lib/device.svelte.ts';
 	import { cubicOut } from 'svelte/easing';
 	import { prefersReducedMotion } from 'svelte/motion';
@@ -10,7 +11,7 @@
 	let { status, activity, shell }: { status: Status; activity?: string | null; shell?: string } = $props();
 
 	const background = $derived(status === 'done' && !!shell);
-	const label = $derived(status === 'waiting' ? 'Waiting for your response' : background ? shell : activity || 'Working…');
+	const label = $derived(brief(status === 'waiting' ? 'Waiting for your response' : background ? shell ?? '' : activity || 'Working…'));
 	const rise = $derived({ y: prefersReducedMotion.current ? 0 : 4, duration: 200 });
 	/** How far the comet's head runs ahead of its tail's dash start, as a share of the path, per the dash lengths below. */
 	const HEAD = 0.155;
@@ -103,7 +104,7 @@
 	.background .track { stroke: var(--status-background); opacity: 0.25; }
 	.background .comet { opacity: 0.6; }
 	.background .comet rect { stroke: var(--status-background); }
-	.background .comet .body, .background .comet .glow { display: none; }
+	.background .comet .body, .background .comet .glow { opacity: 0; }
 	.halo { stroke: var(--status-waiting); stroke-width: 6; filter: blur(3px); opacity: 0; }
 	.waiting .halo { animation: breathe 2.4s ease-in-out var(--pulse); }
 	.comet { transition: opacity var(--dur-med); }

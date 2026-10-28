@@ -129,18 +129,20 @@
 </script>
 
 <div class="rig-editor">
-	<label for="editing-rig">Rig</label>
-	<select id="editing-rig" value={selected} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
-		<option value="">New rig</option>
-		{#each rigs() as rig, index (rig.name)}<option value={rig.name}>{index + 1}. {rig.name}</option>{/each}
-	</select>
-	{#if selected}
-		<div class="order" role="group" aria-label="Rig order">
-			<Button disabled={busy || position <= 0} onclick={() => move(-1)}>Move up</Button>
-			<Button disabled={busy || position === rigs().length - 1} onclick={() => move(1)}>Move down</Button>
-		</div>
-		{#if position < 9}<p>Launch with Ctrl+Shift+{position + 1}.</p>{/if}
-	{/if}
+	<div class="picker">
+		<label for="editing-rig">Rig</label>
+		<select id="editing-rig" value={selected} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
+			<option value="">New rig</option>
+			{#each rigs() as rig, index (rig.name)}<option value={rig.name}>{index + 1}. {rig.name}</option>{/each}
+		</select>
+		{#if selected}
+			<div class="order" role="group" aria-label="Rig order">
+				<Button variant="ghost" disabled={busy || position <= 0} onclick={() => move(-1)}>Move up</Button>
+				<Button variant="ghost" disabled={busy || position === rigs().length - 1} onclick={() => move(1)}>Move down</Button>
+				{#if position < 9}<p>Launch with <kbd>Ctrl+Shift+{position + 1}</kbd></p>{/if}
+			</div>
+		{/if}
+	</div>
 	<fieldset disabled={busy}>
 		<label for="rig-name">Name</label>
 		<input id="rig-name" bind:value={name} required placeholder="e.g. Reviewer" oninput={() => (saved = '')} />
@@ -191,6 +193,56 @@
 		min-width: 0;
 	}
 
+	.rig-editor {
+		container-type: inline-size;
+	}
+
+	.picker {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: var(--space-2) var(--space-3);
+		margin-bottom: var(--space-2);
+		padding-bottom: var(--space-4);
+		border-bottom: var(--border-width) solid var(--border);
+	}
+
+	.picker label {
+		margin: 0;
+		font-weight: 600;
+	}
+
+	.picker .order {
+		grid-column: 1 / -1;
+		justify-content: flex-start;
+		margin: 0;
+	}
+
+	.order p {
+		margin: 0 0 0 auto;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	kbd {
+		padding: 0 var(--space-1);
+		border: var(--border-width) solid var(--border-strong);
+		border-radius: var(--radius-sm);
+		font-family: var(--font-mono);
+	}
+
+	@container (min-width: 30rem) {
+		fieldset {
+			grid-template-columns: 9rem minmax(0, 1fr);
+			align-items: center;
+			column-gap: var(--space-4);
+		}
+
+		fieldset label {
+			margin: 0;
+		}
+	}
+
 	fieldset {
 		margin: 0;
 		padding: 0;
@@ -209,17 +261,17 @@
 		min-width: 0;
 		min-height: var(--target-min);
 		padding: var(--space-1) var(--space-2);
-		border: var(--border-width) solid var(--border);
+		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-md);
-		background: var(--color-bg);
+		background: var(--surface-1);
 		color: var(--color-fg);
 		font: inherit;
 	}
 
 	select:focus-visible,
 	input:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-		outline-offset: var(--border-width);
+		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
+		outline-offset: 1px;
 	}
 
 	p {

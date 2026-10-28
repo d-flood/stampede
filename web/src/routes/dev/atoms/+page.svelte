@@ -66,6 +66,8 @@
 			<Button variant="primary">Primary</Button>
 			<Button disabled>Disabled</Button>
 			<Button variant="primary" disabled>Primary disabled</Button>
+			<Button variant="ghost">Ghost</Button>
+			<Button variant="danger">Danger</Button>
 			<Button><Plus /> With icon</Button>
 		</div>
 	</Section>

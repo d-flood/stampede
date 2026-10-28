@@ -47,7 +47,7 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', { tag
 	await expect(usage.locator('[title]')).toHaveCount(0);
 	await firstRing.hover();
 	const tooltip = page.getByRole('tooltip');
-	await expect(tooltip).toHaveText(await usage.locator('.reset').first().evaluate((element) => [...element.children].map((child) => child.textContent).join(' ') || element.textContent!));
+	await expect(tooltip).toHaveText(await usage.locator('.reset').first().evaluate((element) => [...element.children].map((child) => child.textContent).join(' · ') || element.textContent!));
 	await expect.poll(() => tooltip.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
 		return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight;
@@ -55,7 +55,7 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', { tag
 	await page.keyboard.press('Escape');
 	await expect(tooltip).toBeHidden();
 	await usage.getByRole('meter', { name: 'Claude · week', exact: true }).focus();
-	await expect(tooltip).toHaveText(await usage.locator('.reset').nth(1).evaluate((element) => [...element.children].map((child) => child.textContent).join(' ') || element.textContent!));
+	await expect(tooltip).toHaveText(await usage.locator('.reset').nth(1).evaluate((element) => [...element.children].map((child) => child.textContent).join(' · ') || element.textContent!));
 	await page.keyboard.press('Escape');
 	await expect(tooltip).toBeHidden();
 	await resizer.focus();

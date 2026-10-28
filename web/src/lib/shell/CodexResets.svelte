@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ResetCredits } from '#lib/device.svelte.ts';
+	import Button from '#lib/ui/Button.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 
 	let { credits, now }: { credits: ResetCredits; now: number } = $props();
@@ -55,12 +56,12 @@
 			</Tooltip>
 		{/if}
 	</div>
-	<button disabled={!credits.availableCount || busy || confirming} aria-label="Use a Codex reset" onclick={() => { confirming = true; message = ''; }}>Use</button>
+	<Button disabled={!credits.availableCount || busy || confirming} aria-label="Use a Codex reset" onclick={() => { confirming = true; message = ''; }}>Use</Button>
 	{#if confirming}
 		<div class="confirmation">
 			<span>Use 1 reset?</span>
-			<button disabled={busy} onclick={redeem}>{busy ? 'Using…' : attempt ? 'Retry' : 'Confirm'}</button>
-			<button disabled={busy} onclick={() => { confirming = false; error = ''; }}>Cancel</button>
+			<Button variant="ghost" disabled={busy} onclick={() => { confirming = false; error = ''; }}>Cancel</Button>
+			<Button variant="primary" disabled={busy} onclick={redeem}>{busy ? 'Using…' : attempt ? 'Retry' : 'Confirm'}</Button>
 		</div>
 	{/if}
 	{#if error}<div class="error" role="alert">{error}</div>{/if}
@@ -93,29 +94,9 @@
 		white-space: nowrap;
 	}
 
-	button {
-		min-height: var(--target-min);
-		padding: 0 var(--space-1);
-		border: none;
-		border-radius: var(--radius-sm);
-		background: none;
-		color: var(--color-fg);
-		font: inherit;
-		cursor: pointer;
-	}
-
-	button:hover:not(:disabled) {
-		background: var(--hover);
-	}
-
-	button:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-		outline-offset: var(--border-width);
-	}
-
-	button:disabled {
-		color: var(--muted-fg);
-		cursor: default;
+	.resets :global(button) {
+		padding: 0 var(--space-2);
+		font-size: var(--font-size-sm);
 	}
 
 	.confirmation {
@@ -123,7 +104,12 @@
 		flex-basis: 100%;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0 var(--space-2);
+		gap: var(--space-1) var(--space-2);
+		margin-top: var(--space-1);
+	}
+
+	.confirmation span {
+		flex: 1;
 	}
 
 	.error,

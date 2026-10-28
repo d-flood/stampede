@@ -136,14 +136,14 @@
 					{/snippet}
 				</Tooltip>
 			{:else}
-				{#each windows as { window, label: period, name } (window)}
+				{#each windows as { window, label: period, name }, column (window)}
 					{@const reading = readings.find((reading) => reading.agent === agent && reading.window === window)}
 					{@const used = reading?.used}
 					{#if used !== undefined}
 						{@const percent = Math.round(used * 100)}
 						{@const description = details(reading)}
-						{@const reset = reading?.resetsAt === undefined ? '' : `${resetTime(reading.resetsAt)} (${until(reading.resetsAt)})`}
-						<div class="meter" class:high={used >= 0.9}>
+						{@const reset = reading?.resetsAt === undefined ? '' : `${resetTime(reading.resetsAt)} · ${until(reading.resetsAt)}`}
+						<div class="meter" class:high={used >= 0.9} style:grid-column={column + 2}>
 							<Tooltip delayDuration={0} text={reset} disabled={!compact || !reset}>
 								{#snippet children(props)}
 									<span {...props} class="ring" role="meter" aria-label="{label} · {name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% used. ${description}`}>
@@ -159,7 +159,7 @@
 							{#if reading?.resetsAt !== undefined}
 								<span class="reset">
 									<time aria-label="Resets {new Date(reading.resetsAt).toLocaleString()}" datetime={new Date(reading.resetsAt).toISOString()}>{resetTime(reading.resetsAt)}</time>
-									<span class="countdown">({until(reading.resetsAt)})</span>
+									<span class="countdown">{until(reading.resetsAt)}</span>
 								</span>
 							{/if}
 						</div>
@@ -178,11 +178,9 @@
 		display: grid;
 		grid-template-columns: max-content repeat(2, minmax(0, 1fr));
 		column-gap: var(--space-3);
-		margin: auto var(--space-2) var(--space-2);
-		padding: 0 var(--space-3);
-		border-radius: var(--radius-lg);
-		background: var(--surface-2);
-		box-shadow: inset 0 0 0 var(--border-width) var(--border);
+		margin-top: auto;
+		padding: var(--space-1) var(--space-4);
+		border-top: var(--border-width) solid var(--border);
 		font-size: var(--font-size-sm);
 		container-type: inline-size;
 	}
@@ -192,7 +190,9 @@
 	}
 
 	.phone {
-		margin: var(--space-2) var(--space-2) 0;
+		margin: 0;
+		border-top: none;
+		border-bottom: var(--border-width) solid var(--border);
 	}
 
 	.agent {
@@ -205,7 +205,7 @@
 	}
 
 	.agent + .agent {
-		border-top: var(--border-width) solid var(--border);
+		border-top: var(--border-width) dashed var(--border);
 	}
 
 	.billing {
@@ -220,7 +220,6 @@
 		flex-wrap: wrap;
 		align-items: baseline;
 		gap: 0 var(--space-1);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-md);
 		font-variant-numeric: tabular-nums;
 	}
@@ -277,9 +276,18 @@
 	.meter {
 		display: grid;
 		grid-template-columns: 32px minmax(0, 1fr);
+		grid-template-rows: auto auto;
 		align-items: center;
-		gap: var(--space-1) var(--space-2);
+		column-gap: var(--space-2);
 		min-width: 0;
+	}
+
+	.meter > .ring {
+		grid-row: span 2;
+	}
+
+	.meter:not(:has(.reset)) .label {
+		grid-row: span 2;
 	}
 
 	.label,
@@ -287,12 +295,22 @@
 		color: var(--muted-fg);
 	}
 
+	.label {
+		color: var(--color-fg);
+		font-weight: 500;
+	}
+
 	.reset {
 		display: flex;
-		grid-column: 1 / -1;
+		grid-column: 2;
 		flex-wrap: wrap;
 		gap: 0 var(--space-1);
+		margin-top: calc(-1 * var(--space-1));
 		font-size: var(--font-size-sm);
+	}
+
+	.reset time::after {
+		content: ' ·';
 	}
 
 	time,
@@ -320,7 +338,7 @@
 	}
 
 	.track {
-		stroke: var(--surface-3);
+		stroke: color-mix(in oklab, var(--brand) 16%, var(--surface-3));
 	}
 
 	.fill {
@@ -330,7 +348,6 @@
 
 	.percent,
 	.age {
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-variant-numeric: tabular-nums;
 	}
@@ -338,7 +355,6 @@
 	.age {
 		margin-top: var(--space-1);
 		color: var(--muted-fg);
-		font-family: var(--font-ui);
 		white-space: nowrap;
 	}
 
@@ -352,6 +368,17 @@
 
 	:global([data-scheme='dark']) .codex {
 		--brand: #b7c5ee;
+	}
+
+	@container (min-width: 22rem) {
+		.phone .meter {
+			grid-template-columns: 40px minmax(0, 1fr);
+		}
+
+		.phone .ring {
+			width: 40px;
+			height: 40px;
+		}
 	}
 
 	@container (max-width: 16rem) {
@@ -378,6 +405,10 @@
 
 		.reset time {
 			display: none;
+		}
+
+		.reset {
+			margin-top: 0;
 		}
 
 		.billing .period,
@@ -413,14 +444,8 @@
 		}
 
 		.ring {
-			grid-row: span 2;
-			align-self: start;
 			width: 44px;
 			height: 44px;
-		}
-
-		.reset {
-			grid-column: 2;
 		}
 	}
 </style>

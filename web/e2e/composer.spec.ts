@@ -1,4 +1,5 @@
-import type { Page } from '@playwright/test';
+import type { Item, ServerMessage } from '#lib/device.svelte.ts';
+import type { Page, WebSocketRoute } from '@playwright/test';
 import { existsSync, mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
 import { closeProject, openProject } from './shell.ts';
@@ -121,6 +122,42 @@ test('the composer comet stays aligned through a long turn', async ({ page }, { 
 			return Math.max(Math.min(separation, 100 - separation) / 100 * tail.getTotalLength(), Math.abs(headX - traceX));
 		}, elapsed)).toBeLessThan(2);
 	}
+	await closeProject(page, name);
+});
+
+test('the composer comet stays in one piece after a background shell', async ({ page }, { project }) => {
+	let route: WebSocketRoute;
+	let chatId: string;
+	const items: Item[] = [{ kind: 'command', command: 'pnpm dev', status: 'running', output: '' }];
+	await page.routeWebSocket('**/ws', (socket) => {
+		route = socket;
+		const server = socket.connectToServer();
+		server.onMessage((data) => {
+			if (typeof data !== 'string') return socket.send(data);
+			const message: ServerMessage = JSON.parse(data);
+			if (message.type === 'chat.created') chatId = message.chat.id;
+			socket.send(message.type === 'chat.items' && message.chatId === chatId ? JSON.stringify({ ...message, items }) : data);
+		});
+	});
+	const name = `composer-background-${project.name}`;
+	const { panel } = await launch(page, name);
+	const send = (message: object) => route!.send(JSON.stringify({ chatId: chatId!, ...message }));
+	const ring = panel.locator('svg.ring');
+	send({ type: 'chat.status', status: 'working' });
+	await expect(ring).toBeVisible();
+	send({ type: 'chat.status', status: 'done' });
+	send({ type: 'chat.background', background: true });
+	await expect(ring).toHaveClass(/background/);
+	await page.waitForTimeout(1000);
+	send({ type: 'chat.status', status: 'working' });
+	await expect(ring).not.toHaveClass(/background/);
+	await expect.poll(() => ring.evaluate((element) => {
+		const ends = [...element.querySelectorAll('.comet rect')].map((rect) => {
+			const style = getComputedStyle(rect);
+			return (((-parseFloat(style.strokeDashoffset) + parseFloat(style.strokeDasharray)) % 100) + 100) % 100;
+		});
+		return Math.max(...ends.map((end) => Math.min(Math.abs(end - ends[0]), 100 - Math.abs(end - ends[0]))));
+	})).toBeLessThan(1);
 	await closeProject(page, name);
 });
 

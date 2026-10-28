@@ -41,6 +41,7 @@
 	import ArrowsClockwise from '~icons/ph/arrows-clockwise';
 	import CaretRight from '~icons/ph/caret-right';
 	import Check from '~icons/ph/check';
+	import CheckCircle from '~icons/ph/check-circle';
 	import CloudArrowUp from '~icons/ph/cloud-arrow-up';
 	import Copy from '~icons/ph/copy';
 	import DotsThree from '~icons/ph/dots-three';
@@ -362,26 +363,28 @@
 			{/snippet}
 		</Menu>
 	</header>
-	<div class="commit">
-		<textarea
-			bind:this={box}
-			bind:value={() => message, (value) => (messages[projectId] = value)}
-			aria-label="Commit message"
-			placeholder="Commit message"
-			rows="3"
-			spellcheck="true"
-			onkeydown={commitKey}
-		></textarea>
-		<div class="buttons">
-			<Button title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || !git.staged.length} onclick={draftMessage}>
-				<Sparkle />{drafting ? 'Drafting…' : 'Draft'}
-			</Button>
-			<Button variant="primary" title="Commit (Ctrl+Enter)" disabled={!committable} onclick={commitStaged}>
-				<Check />{git.operation === 'merge' ? 'Commit Merge' : 'Commit'}
-			</Button>
+	{#if git.changes.length || git.operation || message || failure}
+		<div class="commit">
+			<textarea
+				bind:this={box}
+				bind:value={() => message, (value) => (messages[projectId] = value)}
+				aria-label="Commit message"
+				placeholder="Commit message"
+				rows="3"
+				spellcheck="true"
+				onkeydown={commitKey}
+			></textarea>
+			<div class="buttons">
+				<Button title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || !git.staged.length} onclick={draftMessage}>
+					<Sparkle />{drafting ? 'Drafting…' : 'Draft'}
+				</Button>
+				<Button variant="primary" title="Commit (Ctrl+Enter)" disabled={!committable} onclick={commitStaged}>
+					<Check />{git.operation === 'merge' ? 'Commit Merge' : 'Commit'}
+				</Button>
+			</div>
+			{#if failure}<pre class="failure" role="alert">{failure}</pre>{/if}
 		</div>
-		{#if failure}<pre class="failure" role="alert">{failure}</pre>{/if}
-	</div>
+	{/if}
 	{#if operation}<p class="operation" role="status">{operation}</p>{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions (Keys act on the focused row.) -->
 	<div class="list" bind:this={list} onkeydown={key} aria-busy={busy}>
@@ -425,7 +428,11 @@
 				</ul>
 			{/if}
 		{:else}
-			<p>No uncommitted changes</p>
+			<div class="clean">
+				<span class="mark"><CheckCircle /></span>
+				<p>No uncommitted changes</p>
+				<small>The working tree matches {git.branch ?? 'HEAD'}.</small>
+			</div>
 		{/each}
 		{#if saved.length}
 			{@const open = !collapsed.has('stashes')}
@@ -672,6 +679,11 @@
 		white-space: nowrap;
 	}
 
+	ul .entry .name {
+		font-family: var(--font-mono);
+		font-size: var(--font-size-code);
+	}
+
 	.file .name {
 		color: var(--git);
 	}
@@ -718,9 +730,34 @@
 		font-size: var(--font-size-sm);
 	}
 
-	p {
-		margin: 0;
-		padding: var(--space-2) var(--space-3);
+	.clean {
+		display: grid;
+		justify-items: center;
+		gap: var(--space-1);
+		padding: var(--space-6) var(--space-4);
 		color: var(--muted-fg);
+		text-align: center;
+	}
+
+	.clean p {
+		margin: 0;
+		color: var(--color-fg);
+		font-weight: 500;
+	}
+
+	.clean small {
+		font-size: var(--font-size-sm);
+	}
+
+	.mark {
+		display: grid;
+		place-items: center;
+		width: 2.5em;
+		height: 2.5em;
+		margin-bottom: var(--space-2);
+		border-radius: 50%;
+		background: color-mix(in oklab, var(--status-done) 14%, transparent);
+		color: var(--status-done);
+		font-size: var(--font-size-lg);
 	}
 </style>

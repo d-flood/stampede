@@ -50,6 +50,10 @@
 	.rewind { display: inline-flex; align-self: flex-end; align-items: center; gap: var(--space-1); min-height: var(--target-min); padding: 0 var(--space-2); border: none; border-radius: var(--radius-sm); background: none; color: var(--muted-fg); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
 	.rewind:hover { background: var(--hover); color: var(--color-fg); }
 	.rewind:focus-visible { outline: var(--border-width) solid var(--status-working); }
+	@media (hover: hover) {
+		.rewind { opacity: 0; transition: opacity var(--dur-med) var(--ease-out); }
+		.message:hover .rewind, .rewind:focus-visible { opacity: 1; }
+	}
 	.user {
 		align-self: flex-end;
 		max-width: 85%;

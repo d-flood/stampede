@@ -84,8 +84,8 @@
 {/if}
 
 <style>
-	section { min-width: 0; border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); padding: var(--space-2) var(--space-3); }
-	strong { color: var(--status-working); font-size: var(--font-size-sm); }
+	section { min-width: 0; border-radius: var(--radius-lg); padding: var(--space-2) var(--space-3); background: color-mix(in oklab, var(--status-working) 7%, var(--surface-1)); }
+	strong { color: var(--status-working); font-size: var(--font-size-sm); font-weight: 600; }
 	.shells { max-height: 25vh; overflow: auto; }
 	.shell { min-width: 0; }
 	.owner { color: var(--muted-fg); font-size: var(--font-size-sm); overflow-wrap: anywhere; }

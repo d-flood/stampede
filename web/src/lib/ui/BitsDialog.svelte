@@ -7,6 +7,7 @@
 	type Props = {
 		open?: boolean;
 		full?: boolean;
+		wide?: boolean;
 		title: string;
 		description?: string;
 		children?: Snippet;
@@ -14,7 +15,7 @@
 		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { open = $bindable(false), full = false, title, description, children, actions, oncloseautofocus }: Props = $props();
+	let { open = $bindable(false), full = false, wide = false, title, description, children, actions, oncloseautofocus }: Props = $props();
 </script>
 
 <Dialog.Root bind:open>
@@ -26,14 +27,14 @@
 		</Dialog.Overlay>
 	<Dialog.Content onCloseAutoFocus={oncloseautofocus}>
 			{#snippet child({ props })}
-				<div {...props} class="dialog" class:full class:footed={!!actions}>
+				<div {...props} class="dialog" class:wide class:full class:footed={!!actions}>
 					<div class="heading">
 						<Dialog.Title>
 							{#snippet child({ props })}
 								<h2 {...props}>{title}</h2>
 							{/snippet}
 						</Dialog.Title>
-						{#if full}
+						{#if full || wide}
 							<Dialog.Close>
 								{#snippet child({ props })}
 									<IconButton {...props} label="Close"><X /></IconButton>
@@ -63,7 +64,9 @@
 		position: fixed;
 		inset: 0;
 		z-index: 50;
-		background: color-mix(in oklab, var(--color-bg) 60%, transparent);
+		background: color-mix(in oklab, var(--ansi-0) 45%, transparent);
+		backdrop-filter: blur(2px);
+		animation: fade var(--dur-med) var(--ease-out);
 	}
 
 	.dialog {
@@ -84,6 +87,28 @@
 		font-family: var(--font-ui);
 		transform: translate(-50%, -50%);
 		outline: none;
+		animation: rise var(--dur-med) var(--ease-out);
+	}
+
+	.wide {
+		display: flex;
+		flex-direction: column;
+		width: min(54rem, calc(100vw - 2 * var(--space-4)));
+		height: min(42rem, calc(100dvh - 2 * var(--space-4)));
+		padding: 0;
+		overflow: hidden;
+	}
+
+	.wide .heading {
+		margin: 0;
+		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-6);
+		border-bottom: var(--border-width) solid var(--border);
+	}
+
+	.wide footer {
+		margin: 0;
+		padding: var(--space-3) var(--space-4);
+		border-top: var(--border-width) solid var(--border);
 	}
 
 	.full {
@@ -97,6 +122,11 @@
 		border-radius: 0;
 		box-shadow: none;
 		transform: none;
+		animation: none;
+	}
+
+	.wide.full {
+		overflow: hidden;
 	}
 
 	.full.footed {
@@ -127,5 +157,18 @@
 		justify-content: flex-end;
 		gap: var(--space-2);
 		margin-top: var(--space-4);
+	}
+
+	@keyframes fade {
+		from {
+			opacity: 0;
+		}
+	}
+
+	@keyframes rise {
+		from {
+			opacity: 0;
+			scale: 0.98;
+		}
 	}
 </style>

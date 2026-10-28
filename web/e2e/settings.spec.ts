@@ -1,71 +1,90 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { closeProject, openProject, screen, showSidebar } from './shell.ts';
+import { closeProject, openProject, openSettings, screen, showSidebar } from './shell.ts';
 
-test('JetBrains Mono loads for UI text and controls', { tag: '@desktop' }, async ({ page }) => {
+test('Fira Sans loads for the UI, Crimson Pro for chat text and JetBrains Mono for code', { tag: '@desktop' }, async ({ page }) => {
 	await page.goto('/');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
-	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+	const settings = await openSettings(page, 'Appearance');
 	for (const element of [
 		page.locator('body'), settings, settings.locator('h2'),
-		settings.locator('#host-name'), settings.locator('#text-size'),
-		settings.getByRole('button', { name: 'Done', exact: true }),
-		settings.locator('.preview span'), settings.locator('.preview code')
+		settings.getByRole('button', { name: 'Done', exact: true }), settings.locator('.preview span:first-child')
 	]) {
-		await expect(element).toHaveCSS('font-family', /^"?JetBrains Mono/);
+		await expect(element).toHaveCSS('font-family', /^"?Fira Sans/);
 	}
+	await expect(settings.locator('.preview .chat')).toHaveCSS('font-family', /^"?Crimson Pro/);
+	await expect(settings.locator('.preview code')).toHaveCSS('font-family', /^"?JetBrains Mono/);
 	const faces = await page.evaluate(async () => Promise.all(
-		['400', '700', 'italic 400', 'italic 700'].map(async (style) => {
-			const loaded = await document.fonts.load(`${style} 16px "JetBrains Mono"`);
+		['400 16px "Fira Sans"', '500 16px "Fira Sans"', '600 16px "Fira Sans"', '700 16px "Fira Sans"', 'italic 400 16px "Fira Sans"',
+			'400 16px "Crimson Pro Variable"', 'italic 400 16px "Crimson Pro Variable"',
+			'400 16px "JetBrains Mono"', '700 16px "JetBrains Mono"', 'italic 400 16px "JetBrains Mono"', 'italic 700 16px "JetBrains Mono"'
+		].map(async (font) => {
+			const loaded = await document.fonts.load(font);
 			return loaded.length > 0 && loaded.every((face) => face.status === 'loaded');
 		})
 	));
-	expect(faces).toEqual([true, true, true, true]);
+	expect(faces.every(Boolean)).toBe(true);
 	const session = await page.context().newCDPSession(page);
 	try {
 		await session.send('DOM.enable');
 		await session.send('CSS.enable');
 		const { root } = await session.send('DOM.getDocument');
-		const { nodeId } = await session.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#host-name-help' });
-		await expect.poll(async () => (await session.send('CSS.getPlatformFontsForNode', { nodeId })).fonts)
-			.toEqual([expect.objectContaining({ familyName: 'JetBrains Mono', isCustomFont: true })]);
+		for (const [selector, familyName] of [['.preview span:first-child', 'Fira Sans'], ['.preview .chat', 'Crimson Pro'], ['.preview code', 'JetBrains Mono']]) {
+			const { nodeId } = await session.send('DOM.querySelector', { nodeId: root.nodeId, selector });
+			await expect.poll(async () => (await session.send('CSS.getPlatformFontsForNode', { nodeId })).fonts)
+				.toEqual([expect.objectContaining({ familyName: expect.stringContaining(familyName), isCustomFont: true })]);
+		}
 	} finally {
 		await session.detach();
 	}
 });
 
-test('text size defaults, changes, persists, and resets', async ({ page }, { project }) => {
-	const defaultSize = project.name === 'pixel' ? 16 : 13;
+test('UI, chat and code sizes default per device, change, persist, and reset', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
+	const defaults = { ui: phone ? 16 : 13, chat: phone ? 19 : 16, code: phone ? 16 : 13 };
 	await page.goto('/');
-	await expect(page.locator('body')).toHaveCSS('font-size', `${defaultSize}px`);
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
-	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-	const size = settings.getByRole('combobox', { name: 'Text size', exact: true });
-	await expect(size).toHaveValue(String(defaultSize));
-	await expect(settings.getByRole('button', { name: 'Reset', exact: true })).toBeDisabled();
-	if (project.name === 'pixel') {
+	await expect(page.locator('body')).toHaveCSS('font-size', `${defaults.ui}px`);
+	const settings = await openSettings(page, 'Appearance');
+	const samples = { ui: page.locator('body'), chat: settings.locator('.preview .chat'), code: settings.locator('.preview code') };
+	const sizes = {
+		ui: settings.getByRole('combobox', { name: 'UI font size', exact: true }),
+		chat: settings.getByRole('combobox', { name: 'Chat font size', exact: true }),
+		code: settings.getByRole('combobox', { name: 'Code font size', exact: true })
+	};
+	for (const role of ['ui', 'chat', 'code'] as const) {
+		await expect(sizes[role]).toHaveValue('');
+		await expect(sizes[role].locator('option:checked')).toHaveText(`Default · ${defaults[role]} px`);
+		await expect(samples[role]).toHaveCSS('font-size', `${defaults[role]}px`);
+	}
+	if (phone) {
 		await expect.poll(() => settings.evaluate((element) => {
 			const box = element.getBoundingClientRect();
 			return box.top === 0 && box.left === 0 && box.width === innerWidth && box.height === innerHeight;
 		})).toBe(true);
 	}
-	await size.selectOption('22');
-	await expect(page.locator('body')).toHaveCSS('font-size', '22px');
+	await sizes.ui.selectOption('22');
+	await sizes.chat.selectOption('24');
+	await sizes.code.selectOption('18');
+	await expect(samples.ui).toHaveCSS('font-size', '22px');
+	await expect(samples.chat).toHaveCSS('font-size', '24px');
+	await expect(samples.code).toHaveCSS('font-size', '18px');
 	await expect.poll(() => settings.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 	await settings.getByRole('button', { name: 'Done', exact: true }).click();
 	await expect(settings).toBeHidden();
 	await page.reload();
 	await expect(page.locator('body')).toHaveCSS('font-size', '22px');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
-	await expect(size).toHaveValue('22');
-	await settings.getByRole('button', { name: 'Reset', exact: true }).click();
-	await expect(page.locator('body')).toHaveCSS('font-size', `${defaultSize}px`);
-	await expect(size).toHaveValue(String(defaultSize));
+	await openSettings(page, 'Appearance');
+	await expect(sizes.ui).toHaveValue('22');
+	await expect(sizes.chat).toHaveValue('24');
+	await expect(sizes.code).toHaveValue('18');
+	for (const role of ['ui', 'chat', 'code'] as const) {
+		await sizes[role].selectOption('');
+		await expect(samples[role]).toHaveCSS('font-size', `${defaults[role]}px`);
+	}
 	await page.reload();
-	await expect(page.locator('body')).toHaveCSS('font-size', `${defaultSize}px`);
+	await expect(page.locator('body')).toHaveCSS('font-size', `${defaults.ui}px`);
 });
 
-test('text size updates a running terminal and the editor', { tag: '@desktop' }, async ({ page }) => {
+test('code size updates a running terminal and the editor', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'greeting.ts', exact: true }).click();
@@ -79,9 +98,8 @@ test('text size updates a running terminal and the editor', { tag: '@desktop' },
 	await page.keyboard.press('Enter');
 	await expect.poll(() => screen(page)).toMatch(/^size-before$/m);
 	const columns = await page.evaluate(() => window.terminal!.cols);
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
-	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-	await settings.getByRole('combobox', { name: 'Text size', exact: true }).selectOption('20');
+	const settings = await openSettings(page, 'Appearance');
+	await settings.getByRole('combobox', { name: 'Code font size', exact: true }).selectOption('20');
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.fontSize)).toBe(20);
 	await expect.poll(() => page.evaluate(() => window.terminal!.cols)).toBeLessThan(columns);
 	await expect(page.locator('.cm-editor')).toHaveCSS('font-size', '20px');
@@ -100,8 +118,7 @@ test('available modes are chosen per Agent and limit a Chat\'s mode menu and Shi
 	const name = 'modes';
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
-	const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+	const dialog = await openSettings(page, 'Agents');
 	const claude = dialog.getByRole('group', { name: 'Claude Code', exact: true });
 	await claude.getByRole('checkbox', { name: 'accept edits', exact: true }).uncheck();
 	await expect.poll(() => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain('[modes]\nclaude-code = ["default", "plan", "auto", "dontAsk", "bypassPermissions"]');

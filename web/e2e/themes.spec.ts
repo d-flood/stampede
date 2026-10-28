@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures.ts';
 import { readFileSync } from 'node:fs';
-import { openProject, screen, showSidebar } from './shell.ts';
+import { openProject, openSettings, screen, showSidebar } from './shell.ts';
 
 test('theme selection updates the UI, editor, and running Terminal and survives reload', { tag: '@desktop' }, async ({ page }) => {
 	let terminalId: string | undefined;
@@ -21,7 +21,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await page.keyboard.type('echo theme-before');
 	await page.keyboard.press('Enter');
 	await expect.poll(() => screen(page)).toMatch(/^theme-before$/m);
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Appearance');
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
@@ -69,7 +69,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	expect(readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain('theme = "Dracula"');
 
 	await page.reload();
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Appearance');
 	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Dracula');
 	await expect.poll(() => screen(page)).toMatch(/^theme-after$/m);
 	await page.getByRole('button', { name: 'Change theme' }).click();
@@ -92,7 +92,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 
 test('late previews cannot replace a newer preview or restore after closing', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Appearance');
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
@@ -134,7 +134,7 @@ test('late previews cannot replace a newer preview or restore after closing', { 
 
 test('preview and save failures leave the saved theme intact', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Appearance');
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
@@ -164,7 +164,7 @@ test('light and dark themes follow the system color scheme', async ({ page }, { 
 	const config = () => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Appearance');
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
@@ -203,7 +203,7 @@ test('light and dark themes follow the system color scheme', async ({ page }, { 
 
 	await page.reload();
 	await expect.poll(background).toBe('rgb(247, 247, 247)');
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await openSettings(page, 'Appearance');
 	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Light: Alabaster · Dark: Dracula');
 	await page.getByRole('button', { name: 'Change theme' }).click();
 	await expect(light).toHaveAttribute('aria-pressed', 'true');

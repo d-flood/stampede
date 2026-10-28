@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import { readFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
-import { openProject, screen } from './shell.ts';
+import { openProject, openSettings, screen } from './shell.ts';
 
 async function platformFont(page: Page, selector: string) {
 	const session = await page.context().newCDPSession(page);
@@ -16,56 +16,69 @@ async function platformFont(page: Page, selector: string) {
 	}
 }
 
-test('the UI font comes from the Host while code and terminals stay monospace', { tag: '@desktop' }, async ({ page }) => {
+test('UI, chat and code fonts each come from the Host and apply only to their own text', { tag: '@desktop' }, async ({ page }) => {
 	const config = () => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
-	const bodyFont = () => page.locator('body').evaluate((element) => getComputedStyle(element).fontFamily);
 	await openProject(page, 'alpha');
 	const families: string[] = await (await page.request.get('/api/fonts')).json();
 	const family = families.find((name) => name === 'DejaVu Sans') ?? families.find((name) => !/JetBrains|Symbols/.test(name));
 	expect(family).toBeDefined();
+	const chosen = new RegExp(`^"${family}"`);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal' }).click();
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.fontFamily)).toMatch(/^"JetBrains Mono"/);
 	await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/\S/);
 	const original = config();
 
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
-	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-	await page.getByRole('button', { name: 'Change font' }).click();
-	const dialog = page.getByRole('dialog', { name: 'Choose a font' });
-	const search = dialog.getByRole('combobox', { name: 'Search fonts' });
-	await expect(search).toBeFocused();
-	await expect(dialog.getByRole('option', { name: /^Default/ }).getByLabel('Current font')).toBeVisible();
-	await search.fill(family!);
-	await dialog.getByRole('option', { name: family, exact: true }).click();
-	await expect.poll(bodyFont).toMatch(new RegExp(`^"${family}"`));
-	await expect(settings.locator('.preview code')).toHaveCSS('font-family', /^"?JetBrains Mono/);
-	expect(config()).toBe(original);
-	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-	await expect(dialog).toBeHidden();
-	await expect.poll(bodyFont).toMatch(/^"?JetBrains Mono/);
+	const settings = await openSettings(page, 'Appearance');
+	const roles = [
+		{ name: 'UI font', key: 'ui_font', sample: '.preview span:first-child', bundled: /^"?Fira Sans/ },
+		{ name: 'Chat font', key: 'chat_font', sample: '.preview .chat', bundled: /^"?Crimson Pro/ },
+		{ name: 'Code font', key: 'code_font', sample: '.preview code', bundled: /^"?JetBrains Mono/ }
+	];
+	for (const [index, { name, key, sample, bundled }] of roles.entries()) {
+		const change = settings.getByRole('button', { name: `Change ${name}`, exact: true });
+		const picker = page.getByRole('dialog', { name, exact: true });
+		const search = picker.getByRole('combobox', { name: 'Search fonts' });
+		const saved = config();
+		await change.click();
+		await expect(search).toBeFocused();
+		await expect(picker.getByRole('option', { name: /^Default/ }).getByLabel('Current font')).toBeVisible();
+		await search.fill(family!);
+		await picker.getByRole('option', { name: family, exact: true }).click();
+		await expect(settings.locator(sample)).toHaveCSS('font-family', chosen);
+		for (const later of roles.slice(index + 1)) await expect(settings.locator(later.sample)).toHaveCSS('font-family', later.bundled);
+		expect(config()).toBe(saved);
+		await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+		await expect(picker).toBeHidden();
+		await expect(settings.locator(sample)).toHaveCSS('font-family', bundled);
 
-	await page.getByRole('button', { name: 'Change font' }).click();
-	await search.fill(family!);
-	await dialog.getByRole('option', { name: family, exact: true }).click();
-	await dialog.getByRole('button', { name: 'Apply font', exact: true }).click();
-	await expect(dialog).toBeHidden();
-	expect(config()).toContain(`ui_font = "${family}"`);
-	await expect(page.getByRole('button', { name: 'Change font' })).toHaveAttribute('title', `Font: ${family}`);
-	await expect.poll(() => platformFont(page, '#host-name-help'))
-		.toEqual([expect.objectContaining({ familyName: family, isCustomFont: true })]);
+		await change.click();
+		await search.fill(family!);
+		await picker.getByRole('option', { name: family, exact: true }).click();
+		await picker.getByRole('button', { name: 'Apply font', exact: true }).click();
+		await expect(picker).toBeHidden();
+		expect(config()).toContain(`${key} = "${family}"`);
+		await expect(change).toHaveAttribute('title', `${name}: ${family}`);
+		await expect.poll(() => platformFont(page, sample)).toEqual([expect.objectContaining({ familyName: family, isCustomFont: true })]);
+	}
+	await expect.poll(() => page.evaluate(() => window.terminal?.options.fontFamily)).toMatch(chosen);
+	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
 	await page.reload();
-	await expect.poll(bodyFont).toMatch(new RegExp(`^"${family}"`));
-	await expect.poll(() => page.evaluate(() => window.terminal?.options.fontFamily)).toMatch(/^"JetBrains Mono"/);
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
-	await page.getByRole('button', { name: 'Change font' }).click();
-	await search.fill('default');
-	await dialog.getByRole('option', { name: /^Default/ }).click();
-	await expect.poll(bodyFont).toMatch(/^"?JetBrains Mono/);
-	await dialog.getByRole('button', { name: 'Apply font', exact: true }).click();
-	await expect(dialog).toBeHidden();
+	await expect(page.locator('body')).toHaveCSS('font-family', chosen);
+	await expect.poll(() => page.evaluate(() => window.terminal?.options.fontFamily)).toMatch(chosen);
+	await openSettings(page, 'Appearance');
+	for (const { name, sample, bundled } of roles) {
+		const picker = page.getByRole('dialog', { name, exact: true });
+		await expect(settings.locator(sample)).toHaveCSS('font-family', chosen);
+		await settings.getByRole('button', { name: `Change ${name}`, exact: true }).click();
+		await picker.getByRole('combobox', { name: 'Search fonts' }).fill('default');
+		await picker.getByRole('option', { name: /^Default/ }).click();
+		await picker.getByRole('button', { name: 'Apply font', exact: true }).click();
+		await expect(picker).toBeHidden();
+		await expect(settings.locator(sample)).toHaveCSS('font-family', bundled);
+		await expect(settings.getByRole('button', { name: `Change ${name}`, exact: true })).toHaveAttribute('title', `${name}: Default`);
+	}
 	expect(config()).toBe(original);
-	await expect(page.getByRole('button', { name: 'Change font' })).toHaveAttribute('title', 'Font: Default');
+	await expect.poll(() => page.evaluate(() => window.terminal?.options.fontFamily)).toMatch(/^"JetBrains Mono"/);
 });

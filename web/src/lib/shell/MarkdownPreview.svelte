@@ -15,6 +15,8 @@
 		height: 100%;
 		overflow: auto;
 		padding: var(--space-4);
+		font-family: var(--font-chat);
+		font-size: var(--font-size-chat);
 		overflow-wrap: anywhere;
 	}
 
@@ -41,7 +43,7 @@
 		border-radius: var(--radius-md);
 		background: var(--surface-2);
 		font-family: var(--font-mono);
-		font-size: 0.92em;
+		font-size: var(--font-size-code);
 	}
 
 	article :global(pre) {

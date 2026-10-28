@@ -16,16 +16,16 @@ async fn json(response: reqwest::Response) -> Value {
     serde_json::from_str(&response.text().await.unwrap()).unwrap()
 }
 
-async fn save(client: &reqwest::Client, base: &str, family: Value) -> reqwest::Response {
-    client.put(format!("{base}/api/ui-font"))
+async fn save(client: &reqwest::Client, base: &str, role: &str, family: Value) -> reqwest::Response {
+    client.put(format!("{base}/api/font-choice/{role}"))
         .header("Content-Type", "application/json")
         .body(family.to_string())
         .send().await.unwrap()
 }
 
-async fn settled(client: &reqwest::Client, base: &str, expected: &Value) {
+async fn settled(client: &reqwest::Client, base: &str, role: &str, expected: &Value) {
     tokio::time::timeout(Duration::from_secs(5), async {
-        while json(get(client, &format!("{base}/api/ui-font")).await).await != *expected {
+        while json(get(client, &format!("{base}/api/font-choice/{role}")).await).await != *expected {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     }).await.unwrap();
@@ -60,25 +60,29 @@ async fn installed_fonts_are_listed_served_and_saved_without_rewriting_other_set
     assert_eq!(get(&client, &format!("{base}/fonts/system/Symbols%20Nerd%20Font%20Mono/9999")).await.status(), 404);
     assert_eq!(get(&client, &format!("{base}/fonts/system/No%20Such%20Font/0")).await.status(), 404);
 
-    assert_eq!(json(get(&client, &format!("{base}/api/ui-font")).await).await, Value::Null);
-    let response = save(&client, &base, json!(FAMILY)).await;
-    assert_eq!(response.status(), 200);
-    assert_eq!(json(response).await, font);
-    assert_eq!(fs::read_to_string(&config).unwrap(), format!("ui_font = \"{FAMILY}\"\n{ORIGINAL}"));
-    settled(&client, &base, &font).await;
+    for role in ["ui", "chat", "code"] {
+        let key = format!("{role}_font");
+        assert_eq!(json(get(&client, &format!("{base}/api/font-choice/{role}")).await).await, Value::Null);
+        let response = save(&client, &base, role, json!(FAMILY)).await;
+        assert_eq!(response.status(), 200);
+        assert_eq!(json(response).await, font);
+        assert_eq!(fs::read_to_string(&config).unwrap(), format!("{key} = \"{FAMILY}\"\n{ORIGINAL}"));
+        settled(&client, &base, role, &font).await;
 
-    let response = save(&client, &base, json!("No Such Font")).await;
-    assert_eq!(response.status(), 400);
-    assert_eq!(fs::read_to_string(&config).unwrap(), format!("ui_font = \"{FAMILY}\"\n{ORIGINAL}"));
+        let response = save(&client, &base, role, json!("No Such Font")).await;
+        assert_eq!(response.status(), 400);
+        assert_eq!(fs::read_to_string(&config).unwrap(), format!("{key} = \"{FAMILY}\"\n{ORIGINAL}"));
 
-    fs::write(&config, format!("ui_font = 'Uninstalled'\n{ORIGINAL}")).unwrap();
-    settled(&client, &base, &json!({ "family": "Uninstalled", "faces": [] })).await;
+        fs::write(&config, format!("{key} = 'Uninstalled'\n{ORIGINAL}")).unwrap();
+        settled(&client, &base, role, &json!({ "family": "Uninstalled", "faces": [] })).await;
 
-    let response = save(&client, &base, Value::Null).await;
-    assert_eq!(response.status(), 200);
-    assert_eq!(json(response).await, Value::Null);
-    assert_eq!(fs::read_to_string(&config).unwrap(), ORIGINAL);
-    settled(&client, &base, &Value::Null).await;
+        let response = save(&client, &base, role, Value::Null).await;
+        assert_eq!(response.status(), 200);
+        assert_eq!(json(response).await, Value::Null);
+        assert_eq!(fs::read_to_string(&config).unwrap(), ORIGINAL);
+        settled(&client, &base, role, &Value::Null).await;
+    }
+    assert_eq!(get(&client, &format!("{base}/api/font-choice/heading")).await.status(), 400);
 }
 
 #[tokio::test]

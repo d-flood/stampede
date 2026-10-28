@@ -1,7 +1,7 @@
 import type { ITheme } from 'ghostty-web';
 import { isDark } from '#lib/scheme.svelte.ts';
 import { loadSidebarSide } from '#lib/sidebar.svelte.ts';
-import { loadTextSize, textSize } from '#lib/typography.svelte.ts';
+import { loadTextSizes, textSize } from '#lib/typography.svelte.ts';
 
 type Palette = {
 	name: string | null;
@@ -19,6 +19,7 @@ type EditorSettings = { keymap: 'standard' | 'vim' };
 type Keybar = { extra: string[] };
 
 export type Appearance = { theme: ITheme; fontFamily: string; fontSize: number; scrollback: number };
+export type FontRole = 'ui' | 'chat' | 'code';
 export type Agent = 'claude-code' | 'codex' | 'copilot';
 export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex', copilot: 'GitHub Copilot' };
 export type Rig = { name: string; agent: Agent; shortcut?: string; model?: string; effort?: string; mode?: string };
@@ -28,7 +29,10 @@ export type Clip = { name: string; text: string };
 
 let revision = $state(0);
 let faces: FontFace[] = [];
-let uiFaces: FontFace[] = [];
+const roleFaces: Record<FontRole, FontFace[]> = { ui: [], chat: [], code: [] };
+export const fontVariables: Record<FontRole, string> = { ui: '--font-ui', chat: '--font-chat', code: '--font-mono' };
+export const fontNames: Record<FontRole, string> = { ui: 'UI font', chat: 'Chat font', code: 'Code font' };
+const generics: Record<FontRole, string> = { ui: 'sans-serif', chat: 'serif', code: 'monospace' };
 let configured = $state.raw<Rig[]>([]);
 let offered = $state.raw<Template[]>([]);
 let kept = $state.raw<Clip[]>([]);
@@ -41,12 +45,13 @@ let instructions = $state('');
 let offeredModes = $state.raw<Partial<Record<Agent, Mode[]>>>({});
 let savedTheme: ThemeResponse | undefined;
 let previewing = false;
-let savedUiFont: Font | null = null;
-let previewingFont = false;
+const savedFonts: Record<FontRole, Font | null> = { ui: null, chat: null, code: null };
+let previewingFont: FontRole | null = null;
 
 export const editor = $state<EditorSettings>({ keymap: 'standard' });
 export const selectedTheme = $state<{ name: string | null; light: string | null; dark: string | null }>({ name: null, light: null, dark: null });
-export const uiFont = $state<{ family: string | null }>({ family: null });
+export const fonts = $state<Record<FontRole, string | null>>({ ui: null, chat: null, code: null });
+export const defaultFonts = $state<Record<FontRole, string>>({ ui: 'Fira Sans', chat: 'Crimson Pro', code: 'JetBrains Mono' });
 
 async function get<T>(path: string): Promise<T> {
 	const response = await fetch(path);
@@ -55,13 +60,15 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export async function loadConfig() {
-	loadTextSize();
+	loadTextSizes();
 	loadSidebarSide();
-	const [name, theme, font, ui, rigs, settings, leaderKey, keys, lines, listed, commitRigName, commitText, agentModes, saved] = await Promise.all([
+	const [name, theme, font, ui, chat, code, rigs, settings, leaderKey, keys, lines, listed, commitRigName, commitText, agentModes, saved] = await Promise.all([
 		get<string | null>('/api/host-name'),
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
-		get<Font | null>('/api/ui-font'),
+		get<Font | null>('/api/font-choice/ui'),
+		get<Font | null>('/api/font-choice/chat'),
+		get<Font | null>('/api/font-choice/code'),
 		get<Rig[]>('/api/rigs'),
 		get<EditorSettings>('/api/editor'),
 		get<string>('/api/leader'),
@@ -83,8 +90,10 @@ export async function loadConfig() {
 	scrollback = lines;
 	keepTheme(theme);
 	faces = register(faces, font);
-	document.documentElement.style.setProperty('--font-mono', `"${font.family}", "Symbols Nerd Font Mono", monospace`);
-	keepUiFont(ui);
+	defaultFonts.code = font.family;
+	keepFont('ui', ui);
+	keepFont('chat', chat);
+	keepFont('code', code);
 	configured = rigs;
 	offered = listed;
 	kept = saved;
@@ -98,37 +107,39 @@ function register(previous: FontFace[], font: Font | null) {
 	return added;
 }
 
-function applyUiFont(font: Font | null) {
-	uiFaces = register(uiFaces, font);
+function applyFont(role: FontRole, font: Font | null) {
+	roleFaces[role] = register(roleFaces[role], font);
+	const family = font?.family ?? (role === 'code' ? defaultFonts.code : null);
 	const style = document.documentElement.style;
-	if (font) style.setProperty('--font-ui', `"${font.family}", "Symbols Nerd Font Mono", sans-serif`);
-	else style.removeProperty('--font-ui');
+	if (family) style.setProperty(fontVariables[role], `"${family}", "Symbols Nerd Font Mono", ${generics[role]}`);
+	else style.removeProperty(fontVariables[role]);
+	revision++;
 }
 
-function keepUiFont(font: Font | null) {
-	savedUiFont = font;
-	uiFont.family = font?.family ?? null;
-	if (!previewingFont) applyUiFont(font);
+function keepFont(role: FontRole, font: Font | null) {
+	savedFonts[role] = font;
+	fonts[role] = font?.family ?? null;
+	if (previewingFont !== role) applyFont(role, font);
 }
 
-export async function selectUiFont(family: string | null) {
-	const response = await fetch('/api/ui-font', {
+export async function selectFont(role: FontRole, family: string | null) {
+	const response = await fetch(`/api/font-choice/${role}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(family)
 	});
 	if (!response.ok) throw new Error(await response.text());
-	keepUiFont(await response.json());
+	keepFont(role, await response.json());
 }
 
-export function beginFontPreview() {
-	previewingFont = true;
+export function beginFontPreview(role: FontRole) {
+	previewingFont = role;
 	return preview(
 		(family: string | null) => (family === null ? Promise.resolve(null) : get<Font>(`/api/fonts/${encodeURIComponent(family)}`)),
-		applyUiFont,
+		(font: Font | null) => applyFont(role, font),
 		() => {
-			previewingFont = false;
-			applyUiFont(savedUiFont);
+			previewingFont = null;
+			applyFont(role, savedFonts[role]);
 		}
 	);
 }
@@ -373,7 +384,7 @@ export function appearance(): Appearance {
 			brightWhite: ansi(15)
 		},
 		fontFamily: token('--font-mono'),
-		fontSize: textSize(15),
+		fontSize: textSize('code'),
 		scrollback
 	};
 }

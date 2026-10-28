@@ -47,6 +47,13 @@ async function settled(page: Page, name: string) {
 	}, name)).toBe(true);
 }
 
+export async function openSettings(page: Page, section: 'General' | 'Appearance' | 'Agents' | 'Rigs' | 'Clips') {
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+	await settings.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: new RegExp(`^${section}`) }).click();
+	return settings;
+}
+
 export function screen(page: Page) {
 	return page.evaluate(() => {
 		const buffer = window.terminal?.buffer.active;

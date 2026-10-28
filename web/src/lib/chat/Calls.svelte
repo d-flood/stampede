@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { canvasName } from '#lib/canvas.svelte.ts';
+	import { brief } from '#lib/chat/brief.ts';
 	import { icon, icons } from '#lib/chat/icons.ts';
 	import type { Item } from '#lib/device.svelte.ts';
 	import type { Snippet } from 'svelte';
@@ -24,7 +25,7 @@
 
 {#if count || items.length > 1}
 	<details class="calls" {open}>
-		<summary><span class="caret"><CaretRight /></span>{#if count}<span class="count">{count} tool {count === 1 ? 'call' : 'calls'}</span>{/if}{#if last?.icon}<span class="icon"><last.icon /></span>{/if}<span class="latest">{latest}</span></summary>
+		<summary><span class="caret"><CaretRight /></span>{#if count}<span class="count">{count} tool {count === 1 ? 'call' : 'calls'}</span>{/if}{#if last?.icon}<span class="icon"><last.icon /></span>{/if}<span class="latest" title={latest}>{brief(latest)}</span></summary>
 		<div class="content">{@render children()}</div>
 	</details>
 {:else}
@@ -39,7 +40,7 @@
 	summary:hover { color: var(--color-fg); }
 	.count { flex: none; }
 	.count::after { content: ' ·'; }
-	.latest { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+	.latest { min-width: 0; overflow: hidden; color: color-mix(in oklab, var(--muted-fg) 80%, var(--color-bg)); text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 	.icon { display: inline-flex; flex: none; }
 	.content { padding-top: var(--space-2); }
 </style>

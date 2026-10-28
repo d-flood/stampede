@@ -117,8 +117,9 @@
 	}
 
 	.phone {
-		padding: var(--space-2) var(--space-4);
-		font-size: var(--font-size-md);
+		padding: 0 var(--space-3);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
 	}
 
 	.docked {
