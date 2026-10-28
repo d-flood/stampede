@@ -1,5 +1,6 @@
 import type { Item, ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
+import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { closeProject, openProject } from './shell.ts';
 
@@ -88,5 +89,38 @@ test('chat HTML is responsive, isolated, interactive, and restored on reload', a
 	await expect(preview).not.toBeVisible();
 	await page.reload();
 	await expect(content.getByText('Publish', { exact: true })).toBeVisible();
+	await closeProject(page, name);
+});
+
+test('chat HTML that arrives while its Chat is hidden loads with layout once shown', { tag: '@desktop' }, async ({ page }, { repeatEachIndex }) => {
+	let chatId = '';
+	let route: WebSocketRoute;
+	let items: Item[] = [];
+	await page.routeWebSocket('**/ws', (socket) => {
+		route = socket;
+		const server = socket.connectToServer();
+		server.onMessage((data) => {
+			if (typeof data !== 'string') return socket.send(data);
+			const message: ServerMessage = JSON.parse(data);
+			if (message.type === 'chat.created') chatId = message.chat.id;
+			socket.send(message.type === 'chat.items' && message.chatId === chatId ? JSON.stringify({ ...message, items }) : data);
+		});
+	});
+	const name = `html-hidden-${repeatEachIndex}`;
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	const chat = page.getByRole('tab', { name: /^Fake Claude/ });
+	await expect(chat).toHaveAttribute('aria-selected', 'true');
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+	await expect(chat).toHaveAttribute('aria-selected', 'false');
+	items = [{ kind: 'html', title: 'Measured', html: '<script>document.body.dataset.width = String(innerWidth)</script>' }];
+	route!.send(JSON.stringify({ type: 'chat.items', chatId, items }));
+	await expect(page.locator('section[aria-label="Measured"]')).toBeAttached();
+	await chat.click();
+	const content = page.getByRole('region', { name: 'Measured' }).locator('iframe').contentFrame();
+	await expect(content.locator('body')).toHaveAttribute('data-width', /^[1-9]/);
 	await closeProject(page, name);
 });

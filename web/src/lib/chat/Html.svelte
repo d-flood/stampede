@@ -14,6 +14,10 @@
 	new ResizeObserver(resize).observe(document.body);
 	resize();
 });`));
+	let width = $state(0);
+	let applied: string | undefined;
+	// Hold new HTML while hidden: a frame loaded without layout measures everything as zero.
+	const loaded = $derived.by(() => (width ? (applied = srcdoc) : applied));
 
 	function resize(event: MessageEvent) {
 		if (event.source !== frame?.contentWindow || event.data?.type !== 'stampede-html-size') return;
@@ -24,7 +28,7 @@
 
 <svelte:window onmessage={resize} />
 
-<section class="html" class:full aria-label={item.title}>
+<section class="html" class:full aria-label={item.title} bind:clientWidth={width}>
 	<div class="heading">
 		<div class="title">{item.title}</div>
 		{#if full}
@@ -33,7 +37,7 @@
 			<IconButton label="Full screen" onclick={() => preview(item)}><ArrowsOut /></IconButton>
 		{/if}
 	</div>
-	<iframe bind:this={frame} title={item.title} {srcdoc} sandbox="allow-scripts" referrerpolicy="no-referrer" style:height={full ? undefined : `${height}px`}></iframe>
+	<iframe bind:this={frame} title={item.title} srcdoc={loaded} sandbox="allow-scripts" referrerpolicy="no-referrer" style:height={full ? undefined : `${height}px`}></iframe>
 </section>
 
 <style>

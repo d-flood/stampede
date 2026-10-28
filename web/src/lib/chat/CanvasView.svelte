@@ -12,6 +12,10 @@
 	const shown = $derived(canvas.version ?? canvas.versions);
 	const srcdoc = $derived(canvas.html === undefined ? undefined : sandboxed(canvas.html, `addEventListener('load', () => scrollTo(${scroll.x}, ${scroll.y}));
 addEventListener('scroll', () => parent.postMessage({ type: 'stampede-canvas-scroll', x: scrollX, y: scrollY }, '*'), { passive: true });`));
+	let width = $state(0);
+	let applied: string | undefined;
+	// Hold new HTML while hidden: a frame loaded without layout measures everything as zero.
+	const loaded = $derived.by(() => (width ? (applied = srcdoc) : applied));
 
 	onMount(() => {
 		canvas.load(canvas.version);
@@ -31,7 +35,7 @@ addEventListener('scroll', () => parent.postMessage({ type: 'stampede-canvas-scr
 
 <svelte:window onmessage={scrolled} />
 
-<section class="canvas" aria-label={canvas.name}>
+<section class="canvas" aria-label={canvas.name} bind:clientWidth={width}>
 	<div class="heading">
 		<div class="title">{canvas.name}</div>
 		{#if canvas.versions > 1}
@@ -43,7 +47,7 @@ addEventListener('scroll', () => parent.postMessage({ type: 'stampede-canvas-scr
 	{#if canvas.missing}
 		<p class="missing">This canvas is no longer on disk.</p>
 	{:else if srcdoc}
-		<iframe bind:this={frame} title={canvas.name} {srcdoc} sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
+		<iframe bind:this={frame} title={canvas.name} srcdoc={loaded} sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
 	{/if}
 </section>
 
