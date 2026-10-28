@@ -8,6 +8,7 @@
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
 	import { hostName, rigs, type Rig } from '#lib/config.svelte.ts';
+	import { previewThemes, themeBar } from '#lib/themes.svelte.ts';
 	import {
 		connect,
 		tabOf,
@@ -33,6 +34,7 @@
 	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
 	import SchemeToggle from '#lib/shell/SchemeToggle.svelte';
+	import ThemeBar from '#lib/shell/ThemeBar.svelte';
 	import Settings from '#lib/shell/Settings.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
@@ -1338,6 +1340,7 @@
 				</div>
 			{/each}
 		</div>
+		{#if themeBar.choice}<ThemeBar choice={themeBar.choice} />{/if}
 	</div>
 {:else}
 	<div class="shell">
@@ -1365,6 +1368,7 @@
 		{@render sidebarPanel()}
 		{@render workspace()}
 	</div>
+	{#if themeBar.choice}<ThemeBar choice={themeBar.choice} />{/if}
 {/if}
 
 <Drawer bind:this={drawer} bind:open={drawerOpen} {device} />
@@ -1412,7 +1416,7 @@
 					{projects}
 					labels={projectLabels}
 					{focused}
-					actions={palette === 'tabs' ? tabActions : [{ label: 'Open config', run: openConfig }]}
+					actions={palette === 'tabs' ? tabActions : [{ label: 'Open config', run: openConfig }, { label: 'Preview themes', run: () => ((afterPalette = previewThemes), (palette = undefined)) }]}
 					sessions={focused && sessions[focused.id]}
 					loadingSessions={!!readingSessions[palette === 'tabs' ? tabTarget ?? '' : focused?.id ?? '']}
 					onproject={(projectId) => ((chosen = projectId), (palette = undefined))}

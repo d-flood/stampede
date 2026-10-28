@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { beginThemePreview, selectedTheme, selectTheme, themeLabel } from '#lib/config.svelte.ts';
-	import { isDark } from '#lib/scheme.svelte.ts';
+	import { selectedTheme, themeLabel } from '#lib/config.svelte.ts';
+	import { other, ThemeChoice, themeBar, type Slot } from '#lib/themes.svelte.ts';
 	import { onDestroy, tick } from 'svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -11,108 +11,35 @@
 	import Moon from '~icons/ph/moon';
 	import Sun from '~icons/ph/sun';
 
-	type Scheme = 'light' | 'dark';
-
-	let { onselect }: { onselect(): void } = $props();
+	let { onselect, onpreview }: { onselect(): void; onpreview(choice: ThemeChoice): void } = $props();
 
 	const schemes = [
 		{ scheme: 'light', label: 'Light', Icon: Sun },
 		{ scheme: 'dark', label: 'Dark', Icon: Moon }
 	] as const;
-	let names = $state<string[]>([]);
-	let query = $state('');
-	let loading = $state(true);
-	let saving = $state(false);
-	let scheme = $state<Scheme>(isDark() ? 'dark' : 'light');
-	const chosen = $state({ light: selectedTheme.light, dark: selectedTheme.dark });
-	const previewed = $state({ light: selectedTheme.light, dark: selectedTheme.dark });
-	let pending = $state(false);
-	let error = $state<string>();
-	let request = 0;
-	const matches = $derived(names.filter((name) => name.toLowerCase().includes(query.toLowerCase().trim())));
-	const candidate = $derived(chosen[scheme] ?? chosen[other(scheme)]);
-	const light = $derived(chosen.light ?? chosen.dark);
-	const dark = $derived(chosen.dark ?? chosen.light);
-	const spec = $derived(light === dark ? light : `light:${light},dark:${dark}`);
-	const ready = $derived(!saving && !pending && spec !== null && chosen.light === previewed.light && chosen.dark === previewed.dark);
-	const preview = beginThemePreview();
-	onDestroy(() => preview.end());
+	const choice = themeBar.choice ?? new ThemeChoice();
+	themeBar.choice = undefined;
+	let docked = false;
+	onDestroy(() => docked || choice.end());
 
-	async function load() {
-		loading = true;
-		error = undefined;
-		try {
-			const response = await fetch('/api/themes');
-			if (!response.ok) throw new Error('Could not load themes.');
-			names = await response.json();
-		} catch (failure) {
-			error = failure instanceof Error ? failure.message : 'Could not load themes.';
-		} finally {
-			loading = false;
-		}
-	}
-
-	function other(slot: Scheme): Scheme {
-		return slot === 'light' ? 'dark' : 'light';
-	}
-
-	function describe(slot: Scheme) {
-		return chosen[slot] ?? (chosen[other(slot)] ? `Same as ${other(slot)}` : 'Default');
-	}
-
-	async function show(name: string) {
-		const current = ++request;
-		pending = true;
-		error = undefined;
-		try {
-			return await preview.preview(name);
-		} catch (failure) {
-			error = failure instanceof Error ? failure.message : 'Could not preview theme.';
-			return false;
-		} finally {
-			if (current === request) pending = false;
-		}
-	}
-
-	async function choose(name: string) {
-		if (saving) return;
-		const slot = scheme;
-		chosen[slot] = name;
-		if (await show(name)) previewed[slot] = name;
-	}
-
-	function pick(slot: Scheme) {
-		scheme = slot;
-		if (candidate) show(candidate);
-	}
-
-	function cycle(direction: number) {
-		const index = matches.indexOf(chosen[scheme] ?? '');
-		const next = index < 0 ? (direction > 0 ? 0 : matches.length - 1) : (index + direction + matches.length) % matches.length;
-		if (matches[next]) choose(matches[next]);
+	function describe(slot: Slot) {
+		return choice.chosen[slot] ?? (choice.chosen[other(slot)] ? `Same as ${other(slot)}` : 'Default');
 	}
 
 	async function apply() {
-		if (!ready || !spec) return;
-		saving = true;
-		error = undefined;
-		try {
-			await selectTheme(spec);
-			onselect();
-		} catch (failure) {
-			error = failure instanceof Error ? failure.message : 'Could not save theme.';
-		} finally {
-			saving = false;
-		}
+		if (await choice.apply()) onselect();
 	}
 
-	load();
+	function dock() {
+		docked = true;
+		onpreview(choice);
+	}
 </script>
 
 <p class="current">Saved: {themeLabel()}</p>
 <div class="schemes" role="group" aria-label="Color scheme">
 	{#each schemes as { scheme: slot, label, Icon } (slot)}
-		<button type="button" aria-pressed={scheme === slot} disabled={saving} onclick={() => pick(slot)}>
+		<button type="button" aria-pressed={choice.scheme === slot} disabled={choice.saving} onclick={() => choice.pick(slot)}>
 			<Icon aria-hidden="true" />
 			<span>{label}</span>
 			<strong>{describe(slot)}</strong>
@@ -120,34 +47,34 @@
 	{/each}
 </div>
 <div class="cycler">
-	<IconButton label="Previous theme" disabled={saving || matches.length === 0} onclick={() => cycle(-1)}><CaretLeft /></IconButton>
+	<IconButton label="Previous theme" disabled={choice.saving || choice.matches.length === 0} onclick={() => choice.cycle(-1)}><CaretLeft /></IconButton>
 	<div class="preview" role="status" aria-live="polite">
-		<span>{pending ? 'Loading preview…' : 'Preview'}</span>
-		<strong>{candidate ?? 'Default'}</strong>
+		<span>{choice.pending ? 'Loading preview…' : 'Preview'}</span>
+		<strong>{choice.candidate ?? 'Default'}</strong>
 	</div>
-	<IconButton label="Next theme" disabled={saving || matches.length === 0} onclick={() => cycle(1)}><CaretRight /></IconButton>
+	<IconButton label="Next theme" disabled={choice.saving || choice.matches.length === 0} onclick={() => choice.cycle(1)}><CaretRight /></IconButton>
 </div>
 <Command.Root shouldFilter={false} loop>
 	<Command.Input placeholder="Search Ghostty themes" aria-label="Search themes" autocomplete="off" spellcheck={false}>
 		{#snippet child({ props })}
-			<input {...props} class="query" bind:value={query} {@attach (element) => { tick().then(() => element.focus()); }} />
+			<input {...props} class="query" bind:value={choice.query} {@attach (element) => { tick().then(() => element.focus()); }} />
 		{/snippet}
 	</Command.Input>
-	<Command.List aria-label="Ghostty themes" aria-busy={loading || saving}>
+	<Command.List aria-label="Ghostty themes" aria-busy={choice.loading || choice.saving}>
 		{#snippet child({ props })}
 			<div {...props} class="list">
 				<Command.Viewport>
-					{#each matches as name (name)}
-						<Command.Item value={name} disabled={saving} onSelect={() => choose(name)}>
+					{#each choice.matches as name (name)}
+						<Command.Item value={name} disabled={choice.saving} onSelect={() => choice.choose(name)}>
 						{#snippet child({ props })}
 							<div {...props} class="item">
 								<span>{name}</span>
-								{#if name === selectedTheme[scheme]}<Check aria-label="Current theme" />{/if}
+								{#if name === selectedTheme[choice.scheme]}<Check aria-label="Current theme" />{/if}
 							</div>
 						{/snippet}
 						</Command.Item>
 					{:else}
-						<p class="status">{loading ? 'Loading themes…' : 'No matching themes'}</p>
+						<p class="status">{choice.loading ? 'Loading themes…' : 'No matching themes'}</p>
 					{/each}
 				</Command.Viewport>
 			</div>
@@ -155,13 +82,14 @@
 	</Command.List>
 </Command.Root>
 <div class="actions">
+	<Button variant="ghost" disabled={choice.saving} onclick={dock}>Preview in app</Button>
 	<Button onclick={onselect}>Cancel</Button>
-	<Button variant="primary" disabled={!ready || spec === selectedTheme.name} onclick={apply}>Apply theme</Button>
+	<Button variant="primary" disabled={!choice.ready || choice.spec === selectedTheme.name} onclick={apply}>Apply theme</Button>
 </div>
-{#if saving}<p class="status" role="status">Applying theme…</p>{/if}
-{#if error}
-	<p class="error" role="alert">{error}</p>
-	{#if names.length === 0}<Button onclick={load}>Retry</Button>{/if}
+{#if choice.saving}<p class="status" role="status">Applying theme…</p>{/if}
+{#if choice.error}
+	<p class="error" role="alert">{choice.error}</p>
+	{#if choice.names.length === 0}<Button onclick={() => choice.load()}>Retry</Button>{/if}
 {/if}
 
 <style>
@@ -235,9 +163,14 @@
 
 	.actions {
 		display: flex;
+		flex-wrap: wrap;
 		justify-content: flex-end;
 		gap: var(--space-2);
 		margin-top: var(--space-3);
+	}
+
+	.actions > :global(:first-child) {
+		margin-inline-end: auto;
 	}
 
 	.current,

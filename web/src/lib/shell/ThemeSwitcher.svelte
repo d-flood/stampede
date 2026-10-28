@@ -7,11 +7,22 @@
 <script lang="ts">
 	import { themeLabel } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import type { ThemeChoice } from '#lib/themes.svelte.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import CaretRight from '~icons/ph/caret-right';
 
+	let { onpreview }: { onpreview(choice: ThemeChoice): void } = $props();
+
 	let open = $state(false);
+	let docking: ThemeChoice | undefined;
 	const Picker = $derived(picker());
+
+	function dock(event: Event) {
+		if (!docking) return;
+		event.preventDefault();
+		onpreview(docking);
+		docking = undefined;
+	}
 </script>
 
 <button
@@ -31,10 +42,11 @@
 <Dialog
 	bind:open
 	full={form() === 'phone'}
+	oncloseautofocus={dock}
 	title="Choose a theme"
 	description="Pick one theme for light mode and one for dark. Apply to save on every device; closing restores your saved themes."
 >
-	{#if Picker}<Picker onselect={() => (open = false)} />{/if}
+	{#if Picker}<Picker onselect={() => (open = false)} onpreview={(choice) => ((docking = choice), (open = false))} />{/if}
 </Dialog>
 
 <style>

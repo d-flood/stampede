@@ -260,3 +260,77 @@ test('the color scheme button cycles light, dark, and system on this device', { 
 	await expect(toggle).toHaveAccessibleName('Color scheme: System');
 	await expect.poll(background).toBe('rgb(40, 42, 54)');
 });
+
+test('theme previews dock into the app and hand back to the picker', async ({ page }, { project }) => {
+	const background = () => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
+	const config = `${process.env.STAMPEDE_E2E_ROOT}/config.toml`;
+	const saved = readFileSync(config, 'utf8');
+	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+	const original = await background();
+	const settings = await openSettings(page, 'Appearance');
+	await page.getByRole('button', { name: 'Change theme' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
+	const search = dialog.getByRole('combobox', { name: 'Search themes' });
+	await search.fill('Dracula');
+	await dialog.getByRole('option', { name: 'Dracula', exact: true }).click();
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await dialog.getByRole('button', { name: 'Preview in app', exact: true }).click();
+	await expect(dialog).toBeHidden();
+	await expect(settings).toBeHidden();
+	const bar = page.getByRole('region', { name: 'Theme preview' });
+	const status = bar.getByRole('status');
+	await expect(bar.getByRole('button', { name: 'Next theme', exact: true })).toBeFocused();
+	await expect(status).toHaveText(/^Dracula 1 of 2$/);
+	await page.keyboard.press('ArrowRight');
+	await expect(status).toHaveText(/^Dracula\+ 2 of 2$/);
+	await expect(await showSidebar(page)).toBeVisible();
+	await bar.getByRole('button', { name: 'Next theme', exact: true }).click();
+	await expect(status).toHaveText(/^Dracula 1 of 2$/);
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	if (project.name === 'pixel') {
+		await expect.poll(() => bar.evaluate((element) => {
+			const box = element.getBoundingClientRect();
+			return box.left === 0 && box.width === window.innerWidth && Math.abs(box.bottom - window.innerHeight) < 1;
+		})).toBe(true);
+	}
+
+	await openSettings(page, 'Appearance');
+	await page.getByRole('button', { name: 'Change theme' }).click();
+	await expect(bar).toBeHidden();
+	await expect(search).toHaveValue('Dracula');
+	await expect(dialog.locator('.preview strong')).toHaveText('Dracula');
+	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await dialog.getByRole('button', { name: 'Preview in app', exact: true }).click();
+	await expect(bar.getByRole('button', { name: 'Next theme', exact: true })).toBeFocused();
+	await page.keyboard.press('Escape');
+	await expect(bar).toBeHidden();
+	await expect.poll(background).toBe(original);
+	expect(readFileSync(config, 'utf8')).toBe(saved);
+});
+
+test('the command palette previews themes in the app and applies one', { tag: '@desktop' }, async ({ page }) => {
+	await openProject(page, 'alpha');
+	await page.keyboard.press('Control+;');
+	await page.keyboard.press('p');
+	const palette = page.getByRole('dialog', { name: 'Command Palette' });
+	await palette.getByRole('combobox').fill('Preview themes');
+	await palette.getByRole('option', { name: 'Preview themes' }).click();
+	await expect(palette).toBeHidden();
+	const bar = page.getByRole('region', { name: 'Theme preview' });
+	const status = bar.getByRole('status');
+	const apply = bar.getByRole('button', { name: 'Apply', exact: true });
+	await expect(bar.getByRole('button', { name: 'Next theme', exact: true })).toBeFocused();
+	await expect(status).toHaveText(/^Default \d+ themes$/);
+	await expect(apply).toBeDisabled();
+	await page.keyboard.press('ArrowRight');
+	await expect(status).toHaveText(/ 1 of \d+$/);
+	await expect(apply).toBeEnabled();
+	const name = await status.locator('strong').textContent();
+	await apply.click();
+	await expect(bar).toBeHidden();
+	expect(readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain(`theme = ${JSON.stringify(name)}`);
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: /^Appearance/ }).click();
+	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', `Theme: ${name}`);
+});
