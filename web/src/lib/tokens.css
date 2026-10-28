@@ -89,9 +89,9 @@
 	--space-3: 9px;
 	--space-4: 12px;
 	--space-6: 18px;
-	--font-size-base: var(--ui-size, 13px);
+	--font-size-base: var(--ui-size, 16px);
 	--font-size-chat: var(--chat-size, 16px);
-	--font-size-code: var(--code-size, 13px);
+	--font-size-code: var(--code-size, 16px);
 	--font-size-sm: calc(var(--font-size-base) - 2px);
 	--font-size-md: var(--font-size-base);
 	--font-size-lg: calc(var(--font-size-base) + 2px);
@@ -140,9 +140,7 @@
 
 @media (pointer: coarse) and (max-width: 767px) {
 	:root {
-		--font-size-base: var(--ui-size, 16px);
 		--font-size-chat: var(--chat-size, 18px);
-		--font-size-code: var(--code-size, 16px);
 	}
 }
 

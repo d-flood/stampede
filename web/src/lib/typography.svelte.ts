@@ -4,9 +4,9 @@ import { form } from '#lib/form.ts';
 const keys: Record<FontRole, string> = { ui: 'stampede.text-size', chat: 'stampede.chat-size', code: 'stampede.code-size' };
 const variables: Record<FontRole, string> = { ui: '--ui-size', chat: '--chat-size', code: '--code-size' };
 export const defaultSizes: Record<FontRole, { desktop: number; phone: number }> = {
-	ui: { desktop: 13, phone: 16 },
+	ui: { desktop: 16, phone: 16 },
 	chat: { desktop: 16, phone: 18 },
-	code: { desktop: 13, phone: 16 }
+	code: { desktop: 16, phone: 16 }
 };
 export const typography = $state<Record<FontRole, number | null>>({ ui: null, chat: null, code: null });
 

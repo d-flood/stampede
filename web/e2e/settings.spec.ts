@@ -40,7 +40,7 @@ test('Fira Sans loads for the UI, Literata for chat text and JetBrains Mono for 
 
 test('UI, chat and code sizes default per device, change, persist, and reset', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
-	const defaults = { ui: phone ? 16 : 13, chat: phone ? 18 : 16, code: phone ? 16 : 13 };
+	const defaults = { ui: 16, chat: phone ? 18 : 16, code: 16 };
 	await page.goto('/');
 	await expect(page.locator('body')).toHaveCSS('font-size', `${defaults.ui}px`);
 	const settings = await openSettings(page, 'Appearance');
