@@ -46,6 +46,10 @@ pub fn item(arguments: &Value) -> Option<Item> {
 fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
     let data_dir = &args.data_dir;
     let id = request.get("id")?;
+    let canvas = args.chat_id.as_deref().map(|chat_id| format!(
+        " For a page or document the user may iterate on, write it instead as an .html file in {}; Stampede renders it live beside the chat, so revise it with small edits rather than rewriting it.",
+        crate::canvas::dir(data_dir, chat_id).display(),
+    )).unwrap_or_default();
     let result = match request["method"].as_str() {
         Some("initialize") => json!({
             "protocolVersion": "2025-11-25",
@@ -55,7 +59,7 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
         Some("ping") => json!({}),
         Some("tools/list") => json!({ "tools": [super::delegation::list_tool(), super::delegation::tool(), super::questions::tool(), super::terminal_tools::stage_tool(), super::terminal_tools::read_tool(), {
             "name": TOOL,
-            "description": "Render an HTML snippet inline in Stampede chat. Use for diagrams, charts, tables, and visual explanations instead of ASCII art. Supply self-contained HTML with inline CSS, SVG, and optional inline JavaScript. It runs in an isolated sandbox: no network, external assets, parent-page access, forms, or popups. Make layouts responsive for narrow mobile screens. Do not repeat the HTML in a code block.",
+            "description": format!("Render an HTML snippet inline in Stampede chat. Use for diagrams, charts, tables, and visual explanations instead of ASCII art. Supply self-contained HTML with inline CSS, SVG, and optional inline JavaScript. It runs in an isolated sandbox: no network, external assets, parent-page access, forms, or popups. Make layouts responsive for narrow mobile screens. Do not repeat the HTML in a code block.{canvas}"),
             "inputSchema": {
                 "type": "object",
                 "properties": {

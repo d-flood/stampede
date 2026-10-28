@@ -1,5 +1,6 @@
 mod attention;
 mod browser;
+mod canvas;
 mod chats;
 mod cli;
 mod clips;
@@ -91,6 +92,7 @@ fn data_dir() -> PathBuf {
 #[derive(Clone)]
 struct AppState {
     media_dir: PathBuf,
+    canvases: Arc<canvas::Canvases>,
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
     attention: Arc<Feed>,
@@ -139,6 +141,7 @@ fn router(state: AppState) -> Router {
         .route("/api/scrollback", get(scrollback))
         .route("/api/config/file", get(files::read_config).put(files::write_config))
         .route("/api/media/{asset}", get(media::read))
+        .route("/api/canvases/{dir}/{name}", get(canvas::read))
         .route("/api/project-icons/{asset}", get(project_icons::read))
         .route("/api/project-icons/website", post(project_icons::website))
         .route("/api/push/key", get(push::key))
@@ -231,7 +234,8 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk, devices.subscribe());
     eprintln!("stampede listening on http://{}", listener.local_addr()?);
-    let state = AppState { media_dir: args.data_dir.join("media"), terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs, devices };
+    let canvases = canvas::Canvases::watch(&args.data_dir)?;
+    let state = AppState { media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs, devices };
     let listener = listener.tap_io(|stream| {
         let _ = stream.set_nodelay(true);
     });

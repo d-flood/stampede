@@ -28,7 +28,7 @@
 	import GitBranch from '~icons/ph/git-branch';
 	import GitFork from '~icons/ph/git-fork';
 
-	let { device, chat, chats, onchat, items, opened, onopen, active, focused = false, ondiff }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void } =
+	let { device, chat, chats, onchat, items, opened, onopen, active, focused = false, ondiff, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void; oncanvas(canvas: string): void } =
 		$props();
 
 	const subagents = $derived(flatten(items));
@@ -202,7 +202,7 @@
 	<div class="conversation" hidden={!!selected}>
 		<div class="transcript" bind:this={scroller} style:padding-top="max(var(--space-6), {messageNavHeight}px)" {@attach follow}>
 			<div class="column">
-				<Transcript {items} {active} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} onopen={open} onattend={attend} {ondiff} onrewind={(index) => run('rewind', index)} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
+				<Transcript {items} {active} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={(index) => run('rewind', index)} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
 			</div>
 		</div>
@@ -213,7 +213,7 @@
 			<div class="transcript" {@attach follow}>
 				<div class="column">
 					{#if selected.prompt}<Prompt prompt={selected.prompt} />{/if}
-					<Transcript items={selected.items} {active} activity={selected.activity} path={opened} onopen={open} onattend={attend} {ondiff} />
+					<Transcript items={selected.items} {active} activity={selected.activity} path={opened} onopen={open} onattend={attend} {ondiff} {oncanvas} />
 					{#if selected.report}
 						<section class="report" aria-label="Report">
 							<span class="label">Report</span>

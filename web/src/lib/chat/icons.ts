@@ -32,5 +32,5 @@ export function icon(item: Item): Component | undefined {
 		return icons[kinds.size === 1 ? [...kinds][0] : 'other'];
 	}
 	if (item.kind === 'command' || item.kind === 'subagent') return icons[item.kind];
-	if (item.kind === 'edit') return icons[item.write ? 'write' : 'edit'];
+	if (item.kind === 'edit' || item.kind === 'canvas') return icons[item.write ? 'write' : 'edit'];
 }

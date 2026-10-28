@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { version } from '$app/env';
 	import { OpenBrowser } from '#lib/browser.svelte.ts';
+	import { OpenCanvas } from '#lib/canvas.svelte.ts';
 	import Browser from '#lib/shell/Browser.svelte';
 	import { ago, logos } from '#lib/chat/sessions.ts';
 	import { same, subagents } from '#lib/chat/agents.ts';
@@ -82,6 +83,8 @@
 	let visible = $state(document.visibilityState === 'visible');
 	let files = $state<Record<string, OpenFile[]>>(restored.files);
 	let browsers = $state<Record<string, OpenBrowser[]>>(restored.browsers);
+	let canvases = $state<Record<string, OpenCanvas[]>>(restored.canvases);
+	const offered = new Set<string>();
 	let epicTabs = $state<Record<string, OpenEpic[]>>(restored.epics);
 	let epics = $state.raw<Record<string, Epic[]>>({});
 	const subscribed = new Set<string>();
@@ -145,11 +148,13 @@
 	const chatTabs = $derived((focused && chats[focused.id]) || []);
 	const fileTabs = $derived((focused && files[focused.id]) || []);
 	const browserTabs = $derived((focused && browsers[focused.id]) || []);
+	const canvasTabs = $derived((focused && canvases[focused.id]) || []);
 	const openEpics = $derived((focused && epicTabs[focused.id]) || []);
 	const tabIds = $derived([
 		...tabs.map((tab) => tab.id),
 		...chatTabs.map((chat) => chat.id),
 		...browserTabs.map((browser) => browser.id),
+		...canvasTabs.map((canvas) => canvas.id),
 		...openEpics.map((epic) => epic.id),
 		...fileTabs.map((file) => file.id)
 	]);
@@ -189,7 +194,7 @@
 		sidebar: { title: sectionShowing(section, focused && git.get(focused.id)).label, sub: label }
 	});
 	const deviceLayout = $derived(
-		capture({ chosen, terminals, chats, files, browsers, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section }, rail: { open: rail } })
+		capture({ chosen, terminals, chats, files, browsers, canvases, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section }, rail: { open: rail } })
 	);
 
 	$effect(() => device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics }));
@@ -381,6 +386,9 @@
 				for (const projectId in browsers) {
 					if (!projects.some((project) => project.id === projectId)) delete browsers[projectId];
 				}
+				for (const projectId in canvases) {
+					if (!projects.some((project) => project.id === projectId)) delete canvases[projectId];
+				}
 				for (const projectId in files) {
 					if (!projects.some((project) => project.id === projectId)) delete files[projectId];
 				}
@@ -437,6 +445,14 @@
 			case 'fs.changed':
 				invalidate(message.projectId);
 				break;
+			case 'canvas.changed': {
+				for (const canvas of Object.values(canvases).flat()) {
+					if (canvas.canvas === message.canvas) canvas.changed(message.versions);
+				}
+				const chat = allChats.find((chat) => message.canvas.startsWith(`${chat.id}/`));
+				if (message.versions === 1 && chat && showing(chat.id) && !offered.has(message.canvas)) openCanvas(chat.projectId, message.canvas, chat.id, true);
+				break;
+			}
 			case 'picker.listed':
 				directories = message.directories;
 				break;
@@ -769,10 +785,12 @@
 		if (!focused || !activeTab) return;
 		const file = fileTabs.find((file) => file.id === activeTab);
 		const browser = browserTabs.find((browser) => browser.id === activeTab);
+		const canvas = canvasTabs.find((canvas) => canvas.id === activeTab);
 		const epic = openEpics.find((epic) => epic.id === activeTab);
 		const chat = chatTabs.find((chat) => chat.id === activeTab);
 		if (file) closeFile(file);
 		else if (browser) closeBrowser(browser);
+		else if (canvas) closeCanvas(canvas);
 		else if (epic) closeEpic(epic);
 		else if (chat) closeChat(chat);
 		else closeTab(focused.id, activeTab);
@@ -828,6 +846,30 @@
 	function closeBrowser(browser: OpenBrowser) {
 		leave(browser.projectId, browser.id);
 		browsers[browser.projectId] = browsers[browser.projectId].filter((open) => open.id !== browser.id);
+	}
+
+	function openCanvas(projectId: string, name: string, beside: string, offer = false) {
+		offered.add(name);
+		canvases[projectId] ??= [];
+		let canvas = canvases[projectId].find((open) => open.canvas === name);
+		if (!canvas) {
+			canvas = new OpenCanvas(projectId, name);
+			canvases[projectId].push(canvas);
+			place(projectId, canvas.id);
+			if (projectId === focused?.id && form() === 'desktop') {
+				move(canvas.id, splits[projectId]?.right.tabs.includes(beside) ? 'left' : 'right');
+				choose(projectId, canvas.id);
+				return;
+			}
+		}
+		if (offer) return;
+		choose(projectId, canvas.id);
+		slide('tabs');
+	}
+
+	function closeCanvas(canvas: OpenCanvas) {
+		leave(canvas.projectId, canvas.id);
+		canvases[canvas.projectId] = canvases[canvas.projectId].filter((open) => open !== canvas);
 	}
 
 	function openEpic(projectId: string, slug: string) {
@@ -974,6 +1016,7 @@
 							{@const chat = chatTabs.find((chat) => chat.id === id)}
 							{@const file = fileTabs.find((file) => file.id === id)}
 							{@const browser = browserTabs.find((browser) => browser.id === id)}
+							{@const canvas = canvasTabs.find((canvas) => canvas.id === id)}
 							{@const epic = openEpics.find((epic) => epic.id === id)}
 							{#if tab?.state === 'closing'}
 								<Tab variant="terminal" label={tab.label} closing />
@@ -1019,6 +1062,13 @@
 									{#snippet trigger(props)}
 										<Tab {...props} data-tab={id} variant="browser" label={browser.name} active={id === group.active}
 											onclose={() => closeBrowser(browser)} onclick={() => { if (!dragged) choose(projectId, id); }} />
+									{/snippet}
+								</Menu>
+							{:else if canvas}
+								<Menu context items={[{ label: 'Close', onselect: () => closeCanvas(canvas) }]}>
+									{#snippet trigger(props)}
+										<Tab {...props} data-tab={id} variant="canvas" label={canvas.name} active={id === group.active}
+											onclose={() => closeCanvas(canvas)} onclick={() => { if (!dragged) choose(projectId, id); }} />
 									{/snippet}
 								</Menu>
 							{:else if epic}
@@ -1093,6 +1143,15 @@
 			{#each Object.values(browsers).flat() as browser (browser.id)}
 				<div class="view" hidden={!showing(browser.id)} style:grid-column={column(browser.id)} onfocusin={() => choose(browser.projectId, browser.id)}>
 					{#if showing(browser.id) || warm()}<Browser {browser} focused={browser.id === activeTab} />{/if}
+				</div>
+			{/each}
+			{#each Object.values(canvases).flat() as canvas (canvas.id)}
+				<div class="view" hidden={!showing(canvas.id)} style:grid-column={column(canvas.id)} onfocusin={() => choose(canvas.projectId, canvas.id)}>
+					{#if showing(canvas.id) || warm()}
+						{#await import('#lib/chat/CanvasView.svelte') then { default: CanvasView }}
+							<CanvasView {canvas} />
+						{/await}
+					{/if}
 				</div>
 			{/each}
 			{#each Object.values(epicTabs).flat() as epic (epic.id)}
@@ -1171,6 +1230,7 @@
 								active={showing(chat.id)}
 								focused={chat.id === activeTab}
 								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}
+								oncanvas={(canvas) => openCanvas(chat.projectId, canvas, chat.id)}
 							/>
 						{/await}
 					{/if}

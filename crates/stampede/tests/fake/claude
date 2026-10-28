@@ -198,6 +198,8 @@ if os.environ.get('CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING') == 'true':
         fail(f'invalid chat HTML server: {mcp}')
     if args[args.index('--allowedTools') + 1] != 'mcp__stampede_chat__render_html,mcp__stampede_chat__render_media,mcp__stampede_chat__list_rigs,mcp__stampede_chat__delegate_to_rig,mcp__stampede_chat__ask_questions,mcp__stampede_chat__stage_command,mcp__stampede_chat__read_terminal':
         fail('chat HTML tool is not allowed')
+    if '--add-dir' not in args or args[args.index('--add-dir') + 1] != str(Path(mcp['args'][2]) / 'canvases'):
+        fail(f'chat canvases are not writable: {args}')
 
 entries = [json.loads(line) for line in fixture().read_text().splitlines()]
 start = 0

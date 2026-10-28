@@ -201,7 +201,7 @@ struct Device {
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, chats, attention, usage, projects, mut config, disk, git, languages, epics, runs, devices, .. }: AppState,
+    AppState { terminals, chats, attention, usage, projects, mut config, disk, canvases, git, languages, epics, runs, devices, .. }: AppState,
 ) {
     let _connected = devices.connect();
     let (mut sink, mut stream) = socket.split();
@@ -224,6 +224,7 @@ async fn connect(
     let mut attention_changes = attention.subscribe();
     let mut usage_changes = usage.subscribe();
     let mut disk = disk.subscribe();
+    let mut canvases = canvases.subscribe();
     let mut git = git.subscribe();
     let mut switches = languages.subscribe();
     let mut epic_changes = epics.subscribe();
@@ -306,6 +307,11 @@ async fn connect(
                 Err(RecvError::Closed) => break,
             },
             changed = disk.recv() => match changed {
+                Ok(changed) => send(&device.outgoing, json!(changed)),
+                Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => break,
+            },
+            changed = canvases.recv() => match changed {
                 Ok(changed) => send(&device.outgoing, json!(changed)),
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => break,

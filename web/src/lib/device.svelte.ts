@@ -45,6 +45,7 @@ export type Item =
 	| { kind: 'media'; title: string; asset: string }
 	| Subagent
 	| { kind: 'edit'; path: string; diff: string; added: number; removed: number; write?: true }
+	| { kind: 'canvas'; canvas: string; added: number; removed: number; write?: true }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string; elided?: true }
 	| { kind: 'shell'; command: string; status: 'running' | 'ok' | 'failed'; output: string; pending?: true; elided?: true }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
@@ -225,6 +226,7 @@ export type ServerMessage =
 	| { type: 'project.error'; path: string; error: string }
 	| { type: 'picker.listed'; directories: string[] }
 	| { type: 'fs.changed'; projectId: string; paths: string[]; git?: true }
+	| { type: 'canvas.changed'; canvas: string; versions: number }
 	| { type: 'attention.changed'; items: Attention[] }
 	| { type: 'usage.changed'; readings: Reading[]; codexResets?: ResetCredits | null }
 	| { type: 'git.changed'; projectId: string }

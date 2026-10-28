@@ -305,7 +305,7 @@ fn run(
 ) -> Codex {
     let (requests, mut pending) = mpsc::unbounded_channel();
     let (data_dir, cwd, env) = (data_dir.to_owned(), cwd.to_owned(), env.clone());
-    transcript.storage_roots = writable_roots(&env);
+    transcript.storage_roots = writable_roots(&data_dir, &env);
     tokio::spawn(async move {
         // The proxy outlives a daemon that has gone until it next relays something.
         let mut heartbeat = interval(HEARTBEAT);
@@ -560,14 +560,15 @@ fn tool_config(data_dir: &Path, chat_id: &str, env: &BTreeMap<String, String>) -
     let mut config = json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.stampede_chat": config });
     if !environment.is_empty() {
         config["shell_environment_policy.set"] = json!(environment);
-        config["sandbox_workspace_write.writable_roots"] = json!(writable_roots(env));
+        config["sandbox_workspace_write.writable_roots"] = json!(writable_roots(data_dir, env));
     }
     config
 }
 
-fn writable_roots(env: &BTreeMap<String, String>) -> Vec<String> {
+fn writable_roots(data_dir: &Path, env: &BTreeMap<String, String>) -> Vec<String> {
     ["STAMPEDE_SCRATCH", "STAMPEDE_CACHE", "CARGO_TARGET_DIR"].into_iter()
-        .filter_map(|name| env.get(name)).filter(|path| Path::new(path).is_absolute()).cloned().collect()
+        .filter_map(|name| env.get(name)).filter(|path| Path::new(path).is_absolute()).cloned()
+        .chain([crate::canvas::root(data_dir).display().to_string()]).collect()
 }
 
 fn codex(cwd: &Path, env: &BTreeMap<String, String>) -> Command {

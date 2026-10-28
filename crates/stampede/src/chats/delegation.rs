@@ -187,7 +187,7 @@ impl Chats {
                 report.totals.duration_ms = super::now().saturating_sub(report.started_at);
                 report.totals.tokens = chat.tokens.map(|tokens| tokens.input + tokens.output);
                 report.totals.tools = transcript.items.iter().map(|item| match item {
-                    Item::Tools { calls } => calls.len(), Item::Command { .. } | Item::Edit { .. } => 1, _ => 0,
+                    Item::Tools { calls } => calls.len(), Item::Command { .. } | Item::Edit { .. } | Item::Canvas { .. } => 1, _ => 0,
                 }).sum();
                 let begun = transcript.items.iter().any(|item| matches!(item, Item::User { .. } | Item::Notice { notice: Notice::Error, .. }));
                 (chat.status, chat.activity.clone(), transcript.items.clone(), begun && transcript.reported == Status::Done)

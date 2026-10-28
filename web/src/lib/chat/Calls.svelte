@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { canvasName } from '#lib/canvas.svelte.ts';
 	import { icon, icons } from '#lib/chat/icons.ts';
 	import type { Item } from '#lib/device.svelte.ts';
 	import type { Snippet } from 'svelte';
@@ -6,11 +7,12 @@
 
 	let { items, activity, open = false, children }: { items: Item[]; activity?: string | null; open?: boolean; children: Snippet } = $props();
 
-	const count = $derived(items.reduce((count, item) => count + (item.kind === 'tools' ? item.calls.length : ['command', 'edit'].includes(item.kind) ? 1 : 0), 0));
+	const count = $derived(items.reduce((count, item) => count + (item.kind === 'tools' ? item.calls.length : ['command', 'edit', 'canvas'].includes(item.kind) ? 1 : 0), 0));
 	const last = $derived.by(() => {
 		for (const item of items.toReversed()) {
 			if (item.kind === 'command') return { icon: icons.command, text: `$ ${item.command}` };
 			if (item.kind === 'edit') return { icon: icon(item), text: `Edited ${item.path}` };
+			if (item.kind === 'canvas') return { icon: icon(item), text: `Edited canvas ${canvasName(item.canvas)}` };
 			if (item.kind === 'tools') {
 				const call = item.calls.at(-1);
 				if (call) return { icon: icons[call.kind], text: `${call.name}${call.kind === 'other' || call.kind === 'mcp' ? '' : ` ${call.detail}`}` };
