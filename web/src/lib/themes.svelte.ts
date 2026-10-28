@@ -3,6 +3,30 @@ import { isDark } from '#lib/scheme.svelte.ts';
 
 export type Slot = 'light' | 'dark';
 
+const shortlist: Record<Slot, string[]> = {
+	light: ['3024 Day', 'Bluloco Light', 'Dawnfox', 'Dayfox', 'Havn Daggry', 'Monokai Pro Light', 'Spring', 'Zenbones Light'],
+	dark: [
+		'0x96f',
+		'Horizon',
+		'Lab Fox',
+		'Laser',
+		'Matte Black',
+		'Mirage',
+		'Modus Vivendi Tinted',
+		'Monokai Pro',
+		'Niji',
+		'Oxocarbon',
+		'Seti',
+		'Tomorrow Night Burns',
+		'Twilight',
+		'Ubuntu',
+		'Under The Sea',
+		'Vesper',
+		'Violite',
+		'Zenbones Dark'
+	]
+};
+
 export function other(slot: Slot): Slot {
 	return slot === 'light' ? 'dark' : 'light';
 }
@@ -10,6 +34,7 @@ export function other(slot: Slot): Slot {
 export class ThemeChoice {
 	names = $state<string[]>([]);
 	query = $state('');
+	all = $state(false);
 	loading = $state(true);
 	saving = $state(false);
 	pending = $state(false);
@@ -26,7 +51,8 @@ export class ThemeChoice {
 
 	// Getters rather than $derived: a choice outlives the picker that creates it, and Svelte freezes deriveds whose owning effect is destroyed.
 	get matches() {
-		return this.names.filter((name) => name.toLowerCase().includes(this.query.toLowerCase().trim()));
+		const query = this.query.toLowerCase().trim();
+		return this.names.filter((name) => (this.all || shortlist[this.scheme].includes(name)) && name.toLowerCase().includes(query));
 	}
 
 	get candidate() {

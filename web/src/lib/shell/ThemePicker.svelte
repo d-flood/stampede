@@ -55,7 +55,7 @@
 	<IconButton label="Next theme" disabled={choice.saving || choice.matches.length === 0} onclick={() => choice.cycle(1)}><CaretRight /></IconButton>
 </div>
 <Command.Root shouldFilter={false} loop>
-	<Command.Input placeholder="Search Ghostty themes" aria-label="Search themes" autocomplete="off" spellcheck={false}>
+	<Command.Input placeholder="Search {choice.all ? 'all' : choice.scheme} themes" aria-label="Search themes" autocomplete="off" spellcheck={false}>
 		{#snippet child({ props })}
 			<input {...props} class="query" bind:value={choice.query} {@attach (element) => { tick().then(() => element.focus()); }} />
 		{/snippet}
@@ -81,6 +81,7 @@
 		{/snippet}
 	</Command.List>
 </Command.Root>
+<label class="all"><input type="checkbox" bind:checked={choice.all} disabled={choice.saving} /> Show all themes</label>
 <div class="actions">
 	<Button variant="ghost" disabled={choice.saving} onclick={dock}>Preview in app</Button>
 	<Button onclick={onselect}>Cancel</Button>
@@ -202,6 +203,17 @@
 		max-height: min(24rem, 50dvh);
 		margin-top: var(--space-2);
 		overflow-y: auto;
+	}
+
+	.all {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		min-height: var(--target-min);
+		margin-top: var(--space-2);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		cursor: pointer;
 	}
 
 	.item {

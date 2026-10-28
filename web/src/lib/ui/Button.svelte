@@ -73,23 +73,16 @@
 	}
 
 	.primary {
-		--sheen: color-mix(in oklab, white 28%, transparent);
-		border-color: color-mix(in oklab, var(--status-working), var(--ansi-0) 22%);
-		background: linear-gradient(color-mix(in oklab, var(--status-working), white 14%), var(--status-working));
-		box-shadow:
-			inset 0 1px 0 var(--sheen),
-			var(--shadow-lift),
-			0 4px 14px -6px color-mix(in oklab, var(--status-working) 75%, transparent);
+		--fill: var(--status-working);
+		border-color: color-mix(in oklab, var(--fill), var(--color-fg) 16%);
+		background: linear-gradient(color-mix(in oklab, var(--fill), var(--color-fg) 3%), var(--fill));
 		color: var(--color-bg);
 		font-weight: 600;
 	}
 
 	.primary:hover:not(:disabled) {
-		background: linear-gradient(color-mix(in oklab, var(--status-working), white 24%), color-mix(in oklab, var(--status-working), white 8%));
-		box-shadow:
-			inset 0 1px 0 var(--sheen),
-			var(--shadow-lift),
-			0 6px 18px -6px color-mix(in oklab, var(--status-working) 90%, transparent);
+		--fill: color-mix(in oklab, var(--status-working), var(--color-fg) 8%);
+		background: linear-gradient(color-mix(in oklab, var(--fill), var(--color-fg) 3%), var(--fill));
 	}
 
 	.primary:disabled {
