@@ -22,8 +22,8 @@
 	import Gear from '~icons/ph/gear';
 	import PaintBrush from '~icons/ph/paint-brush';
 	import Robot from '~icons/ph/robot';
+	import RocketLaunch from '~icons/ph/rocket-launch';
 	import SlidersHorizontal from '~icons/ph/sliders-horizontal';
-	import Stack from '~icons/ph/stack';
 
 	type Page = 'general' | 'appearance' | 'agents' | 'rigs' | 'clips';
 
@@ -41,7 +41,7 @@
 		{ id: 'general', label: 'General', icon: SlidersHorizontal, summary: () => hostName() ?? 'Stampede' },
 		{ id: 'appearance', label: 'Appearance', icon: PaintBrush, summary: () => themeLabel() },
 		{ id: 'agents', label: 'Agents', icon: Robot, summary: () => 'Commit messages and modes' },
-		{ id: 'rigs', label: 'Rigs', icon: Stack, summary: () => count(rigs().length, 'Rig') },
+		{ id: 'rigs', label: 'Rigs', icon: RocketLaunch, summary: () => count(rigs().length, 'Rig') },
 		{ id: 'clips', label: 'Clips', icon: BookmarkSimple, summary: () => count(clips().length, 'Clip') }
 	];
 	const roles: { role: FontRole; description: string }[] = [
