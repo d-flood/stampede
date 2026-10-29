@@ -160,6 +160,7 @@
 		width: var(--square);
 		height: var(--square);
 		min-width: 0;
+		min-height: 0;
 		padding: 0;
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-tile);
@@ -384,6 +385,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-1);
+		min-height: 0;
 		padding-left: calc(var(--square) - var(--target-min));
 		clip-path: inset(calc(-1 * var(--space-1)) -100vmax);
 		transition:

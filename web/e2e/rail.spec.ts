@@ -27,7 +27,11 @@ function between(values: number[]) {
 	return new Set(values.filter((value) => value > Math.min(first, last) + 0.5 && value < Math.max(first, last) - 0.5).map((value) => Math.round(value * 10))).size;
 }
 
-test('the project rail and its squares grow and shrink over several frames', { tag: '@desktop' }, async ({ page }) => {
+function lastStep(values: number[]) {
+	return values.slice(1).map((value, index) => Math.abs(value - values[index])).filter(Boolean).at(-1) ?? 0;
+}
+
+test('the project rail and its squares grow and shrink over several frames and settle without a jump', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'beta');
 	await openProject(page, 'alpha');
 	const opening = await toggle(page);
@@ -40,6 +44,8 @@ test('the project rail and its squares grow and shrink over several frames', { t
 	expect(closing.heights.at(-1)).toBe(opening.heights[0]);
 	expect(between(closing.widths)).toBeGreaterThanOrEqual(3);
 	expect(between(closing.heights)).toBeGreaterThanOrEqual(3);
+	expect(lastStep(opening.heights)).toBeLessThan(1);
+	expect(lastStep(closing.heights)).toBeLessThan(1);
 });
 
 test('a Terminal resizes once, not every frame, while the project rail or sidebar opens or closes', { tag: '@desktop' }, async ({ page }) => {
