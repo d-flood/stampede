@@ -203,7 +203,7 @@ async fn unpushed_commits_squash_into_one_without_touching_the_work() {
     assert_eq!((status, body.as_str()), (409, "The branch has new commits. Look them over and squash again."));
     assert_eq!(post(server.port, &squash, json!({ "sha": head, "head": head, "message": "Alone" })).await.0, 409);
     let (status, body) = post(server.port, &squash, json!({ "sha": one, "head": head, "message": "Pushed" })).await;
-    assert_eq!(status, 409);
+    assert_eq!(status, 428);
     assert!(body.contains("origin/main"), "{body}");
 
     assert_eq!(post(server.port, &squash, json!({ "sha": &two[..7], "head": head, "message": "Two to four\n\nSquashed\n" })).await.0, 204);
@@ -229,6 +229,13 @@ async fn unpushed_commits_squash_into_one_without_touching_the_work() {
     assert_eq!(log_message(&repo, "HEAD"), "Across");
     assert_eq!(rev_parse(&repo, "HEAD^@"), one);
     assert_eq!(rev_parse(&repo, "HEAD^{tree}"), tree);
+
+    let head = rev_parse(&repo, "HEAD");
+    assert_eq!(post(server.port, &squash, json!({ "sha": one, "head": head, "message": "Everything", "force": true })).await.0, 204);
+    assert_eq!(log_message(&repo, "HEAD"), "Everything");
+    assert_eq!(rev_parse(&repo, "HEAD^{tree}"), tree);
+    let output = Command::new("git").arg("-C").arg(&repo).args(["rev-list", "--count", "HEAD"]).output().unwrap();
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim_end(), "1");
 }
 
 #[tokio::test]

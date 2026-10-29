@@ -42,6 +42,8 @@ pub struct Squash {
     sha: String,
     head: String,
     message: String,
+    #[serde(default)]
+    force: bool,
 }
 
 #[derive(Deserialize)]
@@ -156,7 +158,9 @@ pub async fn squash(State(state): State<AppState>, Param(id): Param<String>, Jso
     if commit == head {
         return Err(refuse("There are no newer commits to squash."));
     }
-    unpushed(&dir, &commit).await?;
+    if !request.force {
+        unpushed(&dir, &commit).await.map_err(|(_, reason)| (StatusCode::PRECONDITION_REQUIRED, reason))?;
+    }
     let tip = squashed(&dir, &commit, &head, message).await.map_err(|output| (StatusCode::BAD_REQUEST, output))?;
     let reason = format!("squash: {}", message.lines().next().unwrap_or_default());
     change(&state, &id, &dir, &["update-ref", "-m", &reason, "HEAD", &tip, &head]).await

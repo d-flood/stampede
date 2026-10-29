@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Device } from '#lib/device.svelte.ts';
+	import { RequestError } from '#lib/files.svelte.ts';
 	import { commitFiles, letters, log, message, reword, split, squash, undo, type Change, type Commit } from '#lib/git.ts';
 	import { restoreMessage } from '#lib/shell/Changes.svelte';
 	import CopyMode from '#lib/shell/CopyMode.svelte';
@@ -28,6 +29,7 @@
 	let edits = 0;
 	let saving = $state(false);
 	let refusal = $state<string>();
+	let pushed = $state(false);
 	let failure = $state<string>();
 	let copying = $state<string>();
 	let refreshes = 0;
@@ -74,6 +76,7 @@
 		const generation = ++edits;
 		editing = { commits: range, summary: '', description: '', loaded: false };
 		refusal = undefined;
+		pushed = false;
 		try {
 			const messages = await Promise.all(range.toReversed().map(({ sha }) => message(projectId, sha)));
 			const [summary, ...rest] = messages.join('\n\n').split('\n');
@@ -96,11 +99,12 @@
 		saving = true;
 		refusal = undefined;
 		try {
-			if (range.length > 1) await squash(projectId, range.at(-1)!.sha, range[0].sha, text);
+			if (range.length > 1) await squash(projectId, range.at(-1)!.sha, range[0].sha, text, pushed);
 			else await reword(projectId, range[0].sha, text);
 			editing = undefined;
 		} catch (error) {
 			refusal = error instanceof Error ? error.message : String(error);
+			pushed = error instanceof RequestError && error.status === 428;
 		} finally {
 			saving = false;
 		}
@@ -262,8 +266,8 @@
 	{/if}
 	{#snippet actions()}
 		<Button disabled={saving} onclick={() => (editing = undefined)}>Cancel</Button>
-		<Button type="submit" form="reword" variant="primary" disabled={saving || !editing?.loaded || !editing.summary.trim()}>
-			{saving ? 'Saving…' : editing && editing.commits.length > 1 ? 'Squash' : 'Save'}
+		<Button type="submit" form="reword" variant={pushed ? 'danger' : 'primary'} disabled={saving || !editing?.loaded || !editing.summary.trim()}>
+			{saving ? 'Saving…' : pushed ? 'Squash Anyway' : editing && editing.commits.length > 1 ? 'Squash' : 'Save'}
 		</Button>
 	{/snippet}
 </Dialog>

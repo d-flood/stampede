@@ -405,3 +405,29 @@ test('History rewords and squashes earlier commits and copies their hashes', { t
 	await page.keyboard.press('Shift+Y');
 	await expect.poll(clipboard).toBe(git('rev-parse', 'HEAD'));
 });
+
+test('History squashes pushed commits after a warning', { tag: '@desktop' }, async ({ page }) => {
+	const { root, git } = repository('pushed');
+	const origin = `${process.env.STAMPEDE_E2E_ROOT}/pushed.git`;
+	execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+	git('remote', 'add', 'origin', origin);
+	for (const name of ['First', 'Second']) {
+		writeFileSync(`${root}/${name}.txt`, `${name}\n`);
+		git('add', '.');
+		git('commit', '-qm', name);
+	}
+	git('push', '-qu', 'origin', 'main');
+	await openProject(page, 'pushed');
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'History' }).click();
+	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD~1')}` }).click();
+	await page.getByRole('menuitem', { name: 'Squash Newer Commits Into This…' }).click();
+	const squash = page.getByRole('dialog', { name: 'Squash 2 commits' });
+	await expect(squash.getByRole('textbox', { name: 'Summary' })).toHaveValue('First');
+	await squash.getByRole('button', { name: 'Squash', exact: true }).click();
+	await expect(squash.getByRole('alert')).toContainText('origin/main');
+	expect(git('log', '--format=%s')).toBe('Second\nFirst');
+	await squash.getByRole('button', { name: 'Squash Anyway' }).click();
+	await expect(squash).toBeHidden();
+	expect(git('log', '--format=%s')).toBe('First');
+});

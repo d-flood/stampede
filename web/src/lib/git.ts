@@ -78,8 +78,8 @@ export async function reword(projectId: string, sha: string, message: string): P
 	await post(projectId, 'reword', { sha, message });
 }
 
-export async function squash(projectId: string, sha: string, head: string, message: string): Promise<void> {
-	await post(projectId, 'squash', { sha, head, message });
+export async function squash(projectId: string, sha: string, head: string, message: string, force: boolean): Promise<void> {
+	await post(projectId, 'squash', { sha, head, message, force });
 }
 
 export async function draft(projectId: string): Promise<string> {
