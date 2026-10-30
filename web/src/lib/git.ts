@@ -25,7 +25,7 @@ export type Git = {
 
 export type Trunk = { branch: string; behind: number };
 
-export type Update = { behind: number; subjects: string[]; pulled: boolean };
+export type Update = { behind: number; subjects: string[]; pulled: boolean; head: string };
 
 export type Stash = { message: string; date: string };
 

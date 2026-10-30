@@ -33,7 +33,9 @@
 
 	let { update }: { update?: Update } = $props();
 
+	const seenKey = 'stampede.update-seen';
 	let open = $state(false);
+	let seen = $state(storedSeen());
 	let chosen = $state<Page>();
 	let refusal = $state<string | null>(null);
 	let commitRefusal = $state<string | null>(null);
@@ -43,6 +45,7 @@
 	const agents = Object.keys(agentNames) as Agent[];
 	const phone = $derived(form() === 'phone');
 	const current = $derived(chosen ?? (phone ? undefined : 'general'));
+	const unseen = $derived(update && update.head !== seen);
 	const count = (total: number, noun: string) => `${total} ${noun}${total === 1 ? '' : 's'}`;
 	const pages: { id: Page; label: string; icon: Component; summary: () => string }[] = [
 		{ id: 'general', label: 'General', icon: SlidersHorizontal, summary: () => (update ? 'Update available' : (hostName() ?? 'Stampede')) },
@@ -62,6 +65,22 @@
 		{ value: 'light', label: 'Light' },
 		{ value: 'dark', label: 'Dark' }
 	];
+
+	$effect(() => {
+		if (!open || current !== 'general' || !update || update.head === seen) return;
+		seen = update.head;
+		try {
+			localStorage.setItem(seenKey, seen);
+		} catch {}
+	});
+
+	function storedSeen() {
+		try {
+			return localStorage.getItem(seenKey);
+		} catch {
+			return null;
+		}
+	}
 
 	async function toggleMode(agent: Agent, input: HTMLInputElement) {
 		const chosen = modes(agent).filter((mode) => (mode.value === input.value ? input.checked : mode.available));
@@ -126,8 +145,8 @@
 	</span>
 {/snippet}
 
-<IconButton label={update ? 'Settings, Stampede update available' : 'Settings'} title={update ? 'Stampede update available' : undefined} aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}>
-	<span class="gear"><Gear />{#if update}<span class="dot"></span>{/if}</span>
+<IconButton label={unseen ? 'Settings, Stampede update available' : 'Settings'} title={unseen ? 'Stampede update available' : undefined} aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}>
+	<span class="gear"><Gear />{#if unseen}<span class="dot"></span>{/if}</span>
 </IconButton>
 <Dialog bind:open full={phone} wide title="Settings" oncloseautofocus={dock}>
 	<div class="settings" class:phone>

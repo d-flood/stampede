@@ -47,6 +47,7 @@ pub struct Update {
     behind: u32,
     subjects: Vec<String>,
     pulled: bool,
+    head: String,
 }
 
 /// Fetches every open repository once a Device connects and every EVERY while one stays connected, when settings
@@ -173,7 +174,8 @@ async fn update(dir: &Path, built: &str) -> Option<Update> {
     let (listed, range) = (format!("--max-count={LISTED}"), format!("{built}..{origin}"));
     let subjects = git::run(dir, &["log", "--format=%s", &listed, &range, "--"]).await.ok()?;
     let pulled = git::run(dir, &["merge-base", "--is-ancestor", &origin, "HEAD"]).await.is_ok();
-    Some(Update { behind, subjects: subjects.lines().map(str::to_owned).collect(), pulled })
+    let head = git::run(dir, &["rev-parse", &origin]).await.ok()?;
+    Some(Update { behind, subjects: subjects.lines().map(str::to_owned).collect(), pulled, head })
 }
 
 /// The branch origin's HEAD names, else main or master, whichever origin has.
@@ -226,10 +228,10 @@ mod tests {
         git(&other, &["commit", "-q", "--allow-empty", "-m", "Third"]);
         git(&other, &["push", "-q", "origin", "main"]);
         git(&source, &["fetch", "-q"]);
-        let subjects = vec!["Third".to_owned(), "Second".to_owned()];
-        assert_eq!(update(&source, &built).await, Some(Update { behind: 2, subjects: subjects.clone(), pulled: false }));
+        let (subjects, head) = (vec!["Third".to_owned(), "Second".to_owned()], git(&source, &["rev-parse", "origin/main"]));
+        assert_eq!(update(&source, &built).await, Some(Update { behind: 2, subjects: subjects.clone(), pulled: false, head: head.clone() }));
         git(&source, &["pull", "-q", "--ff-only"]);
-        assert_eq!(update(&source, &built).await, Some(Update { behind: 2, subjects, pulled: true }));
+        assert_eq!(update(&source, &built).await, Some(Update { behind: 2, subjects, pulled: true, head }));
 
         git(&source, &["commit", "-q", "--allow-empty", "-m", "Mine"]);
         let diverged = git(&source, &["rev-parse", "HEAD"]);
