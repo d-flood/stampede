@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { refs, switchBranch, sync, type Refs } from '#lib/git.ts';
+	import { createBranch, refs, switchBranch, sync, type Refs } from '#lib/git.ts';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
@@ -7,6 +7,7 @@
 	import { onMount } from 'svelte';
 	import ArrowsClockwise from '~icons/ph/arrows-clockwise';
 	import Check from '~icons/ph/check';
+	import Plus from '~icons/ph/plus';
 
 	type Props = { projectId: string; current?: string; origin: boolean; onswitch(): void };
 
@@ -21,6 +22,8 @@
 		{ heading: 'Local branches', names: find(listed?.local ?? []) },
 		{ heading: 'Remote branches', names: find(listed?.remote ?? []) }
 	]);
+	const name = $derived(query.trim());
+	const creatable = $derived(!!listed && !!name && !listed.local.includes(name) && !listed.remote.includes(name));
 
 	onMount(() => run(load));
 
@@ -56,11 +59,18 @@
 			onswitch();
 		});
 	}
+
+	function create() {
+		run(async () => {
+			await createBranch(projectId, name);
+			onswitch();
+		});
+	}
 </script>
 
 <Command.Root label="Branches" shouldFilter={false} loop>
 	<div class="search">
-		<Command.Input placeholder="Find a branch" autocomplete="off" spellcheck={false}>
+		<Command.Input placeholder="Find or create a branch" autocomplete="off" spellcheck={false}>
 			{#snippet child({ props })}
 				<TextField {...props} mono bind:value={query} {@attach (element) => element.focus()} />
 			{/snippet}
@@ -100,7 +110,17 @@
 							</Command.Group>
 						{/if}
 					{/each}
-					{#if listed && groups.every(({ names }) => !names.length)}
+					{#if creatable}
+						<Command.Item value="create" disabled={busy} onSelect={create}>
+							{#snippet child({ props })}
+								<div {...props} class="item">
+									<Plus aria-hidden="true" />
+									<span>Create branch</span>
+									<span class="name">{name}</span>
+								</div>
+							{/snippet}
+						</Command.Item>
+					{:else if listed && groups.every(({ names }) => !names.length)}
 						<p class="empty">{query ? 'No matching branch' : 'No branches yet'}</p>
 					{/if}
 				</Command.Viewport>

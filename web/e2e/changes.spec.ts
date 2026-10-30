@@ -305,7 +305,8 @@ test('the sidebar branch switches to a local branch, or a fetched remote one tra
 	await expect(dialog.getByRole('option', { name: 'main Current branch' })).toBeVisible();
 	await expect(dialog.getByRole('option', { name: 'origin/main' })).toBeVisible();
 	await dialog.getByRole('combobox').fill('feat');
-	await expect(dialog.getByRole('option')).toHaveCount(1);
+	await expect(dialog.getByRole('option')).toHaveCount(2);
+	await expect(dialog.getByRole('option').last()).toHaveAccessibleName('Create branch feat');
 	await dialog.getByRole('option', { name: 'feature' }).click();
 	await expect(dialog).toBeHidden();
 	await expect(sidebar.getByRole('button', { name: 'Branch feature' })).toBeVisible();
@@ -328,6 +329,32 @@ test('the sidebar branch switches to a local branch, or a fetched remote one tra
 	await dialog.getByRole('option', { name: 'feature' }).click();
 	await expect(dialog.getByRole('alert')).toContainText('would be overwritten');
 	expect(git('branch', '--show-current')).toBe('fresh');
+	expect(readFileSync(`${root}/file.txt`, 'utf8')).toBe('dirty\n');
+});
+
+test('the sidebar branch picker creates a new branch from the one checked out', { tag: '@desktop' }, async ({ page }) => {
+	const { root, git } = repository('create-branch');
+	writeFileSync(`${root}/file.txt`, 'one\n');
+	git('add', '.');
+	git('commit', '-qm', 'Initial commit');
+	writeFileSync(`${root}/file.txt`, 'dirty\n');
+	await openProject(page, 'create-branch');
+	const sidebar = await showSidebar(page);
+	const dialog = page.getByRole('dialog', { name: 'Switch branch' });
+
+	await sidebar.getByRole('button', { name: 'Branch main' }).click();
+	await dialog.getByRole('combobox').fill('main');
+	await expect(dialog.getByRole('option')).toHaveCount(1);
+	await dialog.getByRole('combobox').fill('two words');
+	await expect(dialog.getByRole('option', { name: 'Create branch two words' })).toBeVisible();
+	await dialog.getByRole('combobox').press('Enter');
+	await expect(dialog.getByRole('alert')).toContainText('not a valid branch name');
+
+	await dialog.getByRole('combobox').fill(' topic ');
+	await dialog.getByRole('combobox').press('Enter');
+	await expect(dialog).toBeHidden();
+	await expect(sidebar.getByRole('button', { name: 'Branch topic' })).toBeVisible();
+	expect(git('rev-parse', 'topic')).toBe(git('rev-parse', 'main'));
 	expect(readFileSync(`${root}/file.txt`, 'utf8')).toBe('dirty\n');
 });
 

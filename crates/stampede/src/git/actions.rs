@@ -262,11 +262,7 @@ pub async fn publish(State(state): State<AppState>, Param(id): Param<String>) ->
 
 /// Checks out a local branch, or a remote one as the local branch of its name, tracking it when new.
 pub async fn switch(State(state): State<AppState>, Param(id): Param<String>, Json(Branch { branch }): Json<Branch>) -> Result<StatusCode, Failure> {
-    if state.projects.list().iter().any(|project| project.id == id && project.worktree.is_some()) {
-        return Err(refuse("A worktree stays on its own branch."));
-    }
-    let (dir, status) = open(&state, &id).await?;
-    settled(&status)?;
+    let dir = movable(&state, &id).await?;
     if exists(&dir, "heads", &branch).await {
         return change(&state, &id, &dir, &["switch", "-q", &branch]).await;
     }
@@ -278,6 +274,20 @@ pub async fn switch(State(state): State<AppState>, Param(id): Param<String>, Jso
         return change(&state, &id, &dir, &["switch", "-q", local]).await;
     }
     change(&state, &id, &dir, &["switch", "-q", "-c", local, "--track", &branch]).await
+}
+
+pub async fn branch(State(state): State<AppState>, Param(id): Param<String>, Json(Branch { branch }): Json<Branch>) -> Result<StatusCode, Failure> {
+    let dir = movable(&state, &id).await?;
+    change(&state, &id, &dir, &["switch", "-q", "-c", &branch]).await
+}
+
+async fn movable(state: &AppState, id: &str) -> Result<PathBuf, Failure> {
+    if state.projects.list().iter().any(|project| project.id == id && project.worktree.is_some()) {
+        return Err(refuse("A worktree stays on its own branch."));
+    }
+    let (dir, status) = open(state, id).await?;
+    settled(&status)?;
+    Ok(dir)
 }
 
 async fn open(state: &AppState, id: &str) -> Result<(PathBuf, Status), Failure> {

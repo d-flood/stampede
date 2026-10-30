@@ -415,6 +415,27 @@ async fn branches_switch_most_recent_first_tracking_remote_ones_when_new() {
 }
 
 #[tokio::test]
+async fn branches_are_created_from_head_under_valid_new_names() {
+    let server = Server::start("git-branch").await;
+    let repo = repository(&server, "branch");
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "Initial commit"]);
+    let id = open(server.port, &repo).await;
+    let url = format!("/api/projects/{id}/git");
+    let create = |branch: &str| {
+        let (path, body) = (format!("/api/projects/{id}/git/branch"), json!({ "branch": branch }));
+        async move { post(server.port, &path, body).await }
+    };
+
+    assert_eq!(create("topic").await.0, 204);
+    assert_eq!(get(server.port, &url).await["branch"], "topic");
+    assert_eq!(rev_parse(&repo, "topic"), rev_parse(&repo, "main"));
+    for invalid in ["topic", "main", "two words", "--detach", ""] {
+        assert_eq!(create(invalid).await.0, 400, "{invalid}");
+    }
+    assert_eq!(get(server.port, &url).await["branch"], "topic");
+}
+
+#[tokio::test]
 async fn changes_stash_and_come_back() {
     let server = Server::start("git-stash").await;
     let repo = repository(&server, "stash");
