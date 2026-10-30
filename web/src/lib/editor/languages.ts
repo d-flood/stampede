@@ -1,19 +1,21 @@
-import { StreamLanguage } from '@codemirror/language';
+import { LanguageDescription, LanguageSupport, StreamLanguage, type StreamParser } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 
-type Load = () => Promise<Extension>;
+type Load = () => Promise<LanguageSupport>;
+
+const stream = <T>(parser: StreamParser<T>) => new LanguageSupport(StreamLanguage.define(parser));
 
 const typescript: Load = async () => (await import('@codemirror/lang-javascript')).javascript({ typescript: true });
 const javascript: Load = async () => (await import('@codemirror/lang-javascript')).javascript();
 const python: Load = async () => (await import('@codemirror/lang-python')).python();
-const markdown: Load = async () => (await import('@codemirror/lang-markdown')).markdown();
+const markdown: Load = async () => (await import('@codemirror/lang-markdown')).markdown({ codeLanguages });
 const yaml: Load = async () => (await import('@codemirror/lang-yaml')).yaml();
 const json: Load = async () => (await import('@codemirror/lang-json')).json();
-const xml: Load = async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/xml')).xml);
-const diff: Load = async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/diff')).diff);
+const xml: Load = async () => stream((await import('@codemirror/legacy-modes/mode/xml')).xml);
+const diff: Load = async () => stream((await import('@codemirror/legacy-modes/mode/diff')).diff);
 const shell: Load = async () => {
 	const { shell } = await import('@codemirror/legacy-modes/mode/shell');
-	return StreamLanguage.define({
+	return stream({
 		...shell,
 		token(stream, state) {
 			const style = shell.token(stream, state);
@@ -57,13 +59,25 @@ const loaders: Record<string, Load> = {
 	sh: shell,
 	bash: shell,
 	zsh: shell,
-	toml: async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/toml')).toml),
-	dockerfile: async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/dockerfile')).dockerFile),
+	toml: async () => stream((await import('@codemirror/legacy-modes/mode/toml')).toml),
+	dockerfile: async () => stream((await import('@codemirror/legacy-modes/mode/dockerfile')).dockerFile),
 	diff,
 	patch: diff,
 	svelte: async () => (await import('@replit/codemirror-lang-svelte')).svelte(),
 	vue: async () => (await import('@codemirror/lang-vue')).vue()
 };
+
+const fenceNames: Record<string, string[]> = {
+	ts: ['typescript'],
+	js: ['javascript'],
+	py: ['python'],
+	rs: ['rust'],
+	sh: ['shell']
+};
+
+const codeLanguages = Object.entries(loaders).map(([name, load]) =>
+	LanguageDescription.of({ name, alias: fenceNames[name], load })
+);
 
 export function extension(path: string): string {
 	if (/(?:^|\/)Dockerfile$/.test(path)) return 'dockerfile';
