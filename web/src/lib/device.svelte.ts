@@ -1,5 +1,6 @@
 import { loadConfig, type Agent } from '#lib/config.svelte.ts';
 import type { State } from '#lib/editor/lsp.svelte.ts';
+import type { Trunk, Update } from '#lib/git.ts';
 import { on } from 'svelte/events';
 
 export type Project = { id: string; path: string; icon?: string; worktree?: Worktree };
@@ -230,6 +231,7 @@ export type ServerMessage =
 	| { type: 'attention.changed'; items: Attention[] }
 	| { type: 'usage.changed'; readings: Reading[]; codexResets?: ResetCredits | null }
 	| { type: 'git.changed'; projectId: string }
+	| { type: 'origin.changed'; trunks: Record<string, Trunk>; update?: Update }
 	| { type: 'epics.changed'; projectId: string; epics: Epic[] }
 	| { type: 'epic.changed'; projectId: string; epic: Epic }
 	| { type: 'ticket.started'; projectId: string; epic: string; ticket: number; chatId: string }

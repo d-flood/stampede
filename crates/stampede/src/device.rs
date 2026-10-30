@@ -35,6 +35,7 @@ use crate::{
     git,
     holder::Owner,
     language_servers::{self, Input, LanguageServers, Server, Switch},
+    origin::Origin,
     projects::{self, Projects},
     protocol::Size,
     runs::Runs,
@@ -197,11 +198,12 @@ struct Device {
     epics: Arc<Epics>,
     epic_projects: HashMap<String, PathBuf>,
     runs: Arc<Runs>,
+    origin: watch::Receiver<Origin>,
 }
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, chats, attention, usage, projects, mut config, disk, canvases, git, languages, epics, runs, devices, .. }: AppState,
+    AppState { terminals, chats, attention, usage, projects, mut config, disk, canvases, git, languages, epics, runs, devices, mut origin, .. }: AppState,
 ) {
     let _connected = devices.connect();
     let (mut sink, mut stream) = socket.split();
@@ -251,8 +253,10 @@ async fn connect(
         epics,
         epic_projects: HashMap::new(),
         runs,
+        origin: origin.clone(),
     };
     config.mark_unchanged();
+    origin.mark_unchanged();
     loop {
         tokio::select! {
             message = stream.next() => {
@@ -395,6 +399,10 @@ async fn connect(
                 let readings = usage_changes.borrow_and_update().clone();
                 device.usage_changed(&readings);
             }
+            Ok(()) = origin.changed() => {
+                let changed = origin.borrow_and_update().clone();
+                send(&device.outgoing, json!(changed));
+            }
             changed = git.recv() => match changed {
                 Ok(changed) => send(&device.outgoing, json!(changed)),
                 Err(RecvError::Lagged(_)) => {}
@@ -438,6 +446,7 @@ impl Device {
                 send(&self.outgoing, hello);
                 self.attention_changed(&self.attention.items());
                 self.usage_changed(&self.usage.snapshot());
+                send(&self.outgoing, json!(*self.origin.borrow()));
                 self.send_switches();
             }
             Control::Create { project_id, owner } => {

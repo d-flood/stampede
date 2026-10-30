@@ -253,6 +253,37 @@ test('a branch publishes to origin, then pushes and pulls by its counts', { tag:
 	expect(readFileSync(`${root}/remote.txt`, 'utf8')).toBe('remote\n');
 });
 
+test('a default branch origin has moved ahead marks its Project, and the Changes header off that branch', { tag: '@desktop' }, async ({ page }) => {
+	const origin = `${process.env.STAMPEDE_E2E_ROOT}/ahead.git`;
+	execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+	const { git } = repository('ahead');
+	git('remote', 'add', 'origin', origin);
+	git('commit', '-q', '--allow-empty', '-m', 'Initial commit');
+	git('push', '-qu', 'origin', 'main');
+	git('switch', '-qc', 'feature');
+	git('push', '-qu', 'origin', 'feature');
+	const other = `${process.env.STAMPEDE_E2E_ROOT}/ahead-other`;
+	execFileSync('git', ['clone', '-q', origin, other]);
+	for (const args of [['-c', 'user.name=other', '-c', 'user.email=other@stampede.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'Remote'], ['push', '-q']]) {
+		execFileSync('git', ['-C', other, ...args]);
+	}
+	const sidebar = await changesPanel(page, 'ahead');
+	const badge = page.getByRole('navigation', { name: 'Projects' }).getByTitle('1 new on origin/main');
+	const chip = sidebar.getByTitle('1 new on origin/main');
+	await expect(badge).toHaveCount(0);
+
+	await sidebar.getByRole('button', { name: 'Fetch' }).click();
+	await expect(badge).toBeVisible();
+	await expect(chip).toHaveText('main1');
+
+	git('switch', '-q', 'main');
+	await expect(sidebar.getByText('origin/main')).toBeVisible();
+	await expect(chip).toHaveCount(0);
+	await expect(badge).toBeVisible();
+	await sidebar.getByRole('button', { name: 'Pull' }).click();
+	await expect(badge).toHaveCount(0);
+});
+
 test('the sidebar branch switches to a local branch, or a fetched remote one tracked locally', { tag: '@desktop' }, async ({ page }) => {
 	const origin = `${process.env.STAMPEDE_E2E_ROOT}/switch-origin.git`;
 	execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);

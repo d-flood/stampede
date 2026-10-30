@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Epic, Project } from '#lib/device.svelte.ts';
+	import type { Trunk } from '#lib/git.ts';
 	import type { Tile } from '#lib/projects.ts';
 	import ProjectRow from '#lib/shell/ProjectRow.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -18,6 +19,7 @@
 		working: Set<string>;
 		background: Set<string>;
 		needs: Map<string, number>;
+		trunks: Record<string, Trunk>;
 		focused?: string;
 		onfocus(id: string): void;
 		onreorder(order: string[]): void;
@@ -30,7 +32,7 @@
 		attention?: Snippet;
 	};
 
-	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, background, needs, focused, onfocus, onreorder, onclose, ondelete, onworktree, onmenu, onpick, onicon, attention }: Props = $props();
+	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, background, needs, trunks, focused, onfocus, onreorder, onclose, ondelete, onworktree, onmenu, onpick, onicon, attention }: Props = $props();
 
 	let list: HTMLOListElement;
 	let drag = $state<{ id: string; y: number; order: string[]; moved: boolean }>();
@@ -93,6 +95,7 @@
 				working={working.has(project.id)}
 				background={background.has(project.id)}
 				needs={needs.get(project.id) ?? 0}
+				trunk={trunks[project.id]}
 				compact={!open}
 				{focused}
 				dragging={!!drag?.moved && drag.id === project.id}

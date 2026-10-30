@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { Git } from '#lib/git.ts';
+	import type { Git, Trunk } from '#lib/git.ts';
 	import { lazy, warmUp } from '#lib/paint.svelte.ts';
 
 	const picker = lazy(() => import('#lib/shell/BranchPicker.svelte'));
@@ -46,6 +46,7 @@
 		project?: Project;
 		label?: string;
 		git?: Git;
+		trunk?: Trunk;
 		device: Device;
 		section: Section;
 		usage: Reading[];
@@ -58,7 +59,7 @@
 		toggle?: Snippet;
 	};
 
-	let { open, project, label, git, device, section = $bindable(), usage, codexResets, epics, onopen, onrename, ondiff, onepic, toggle }: Props = $props();
+	let { open, project, label, git, trunk, device, section = $bindable(), usage, codexResets, epics, onopen, onrename, ondiff, onepic, toggle }: Props = $props();
 
 	let switching = $state(false);
 	const Picker = $derived(picker());
@@ -128,7 +129,7 @@
 					{/key}
 				{:else if current === 'changes'}
 					{#key project.id}
-						{#if git}<Changes projectId={project.id} {git} {device} onopen={(path) => onopen(path)} {ondiff} />{/if}
+						{#if git}<Changes projectId={project.id} {git} {trunk} {device} onopen={(path) => onopen(path)} {ondiff} />{/if}
 					{/key}
 				{:else if current === 'history'}
 					{#key project.id}

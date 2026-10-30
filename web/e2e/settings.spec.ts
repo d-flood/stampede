@@ -114,6 +114,18 @@ test('code size updates a running terminal and the editor', { tag: '@desktop' },
 	await expect.poll(() => screen(page)).toMatch(/^size-after$/m);
 });
 
+test('checking origin in the background is on until turned off in the config', async ({ page }) => {
+	await page.goto('/');
+	const settings = await openSettings(page, 'General');
+	const checking = settings.getByRole('radiogroup', { name: 'Check origin' });
+	await expect(checking.getByRole('radio', { name: 'On', exact: true })).toBeChecked();
+	await checking.getByRole('radio', { name: 'Off', exact: true }).click();
+	await expect(checking.getByRole('radio', { name: 'Off', exact: true })).toBeChecked();
+	await expect.poll(() => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toMatch(/^auto_fetch = false$/m);
+	await checking.getByRole('radio', { name: 'On', exact: true }).click();
+	await expect.poll(() => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).not.toContain('auto_fetch');
+});
+
 test('available modes are chosen per Agent and limit a Chat\'s mode menu and Shift+Tab', { tag: '@desktop' }, async ({ page }) => {
 	const name = 'modes';
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });

@@ -27,7 +27,7 @@
 	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
 	import { image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Against, type Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { deleteWorktree, status, type Change, type Git } from '#lib/git.ts';
+	import { deleteWorktree, status, type Change, type Git, type Trunk, type Update } from '#lib/git.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
@@ -82,6 +82,8 @@
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
 	let codexResets = $state<ResetCredits | null>(null);
+	let trunks = $state.raw<Record<string, Trunk>>({});
+	let update = $state.raw<Update>();
 	let visible = $state(document.visibilityState === 'visible');
 	let files = $state<Record<string, OpenFile[]>>(restored.files);
 	let browsers = $state<Record<string, OpenBrowser[]>>(restored.browsers);
@@ -427,6 +429,10 @@
 			}
 			case 'git.changed':
 				staleGit.add(message.projectId);
+				break;
+			case 'origin.changed':
+				trunks = message.trunks;
+				update = message.update;
 				break;
 			case 'epics.changed':
 				closeArchived(message.projectId, message.epics);
@@ -956,7 +962,7 @@
 
 {#snippet attention()}
 	{#if !phone}<SchemeToggle />{/if}
-	<Settings />
+	<Settings {update} />
 	<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
 {/snippet}
 
@@ -966,6 +972,7 @@
 		project={focused}
 		{label}
 		git={focused && git.get(focused.id)}
+		trunk={focused && trunks[focused.id]}
 		{device}
 		bind:section
 		{usage}
@@ -1331,6 +1338,7 @@
 							onpick={pick}
 							onicon={(project) => (iconProject = project)}
 							{needs}
+							{trunks}
 						/>
 					{:else if name === 'tabs'}
 						{@render workspace()}
@@ -1363,6 +1371,7 @@
 			onpick={pick}
 			onicon={(project) => (iconProject = project)}
 			{needs}
+			{trunks}
 			{attention}
 		/>
 		{@render sidebarPanel()}

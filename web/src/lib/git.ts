@@ -23,6 +23,10 @@ export type Git = {
 	conflicted: Change[];
 };
 
+export type Trunk = { branch: string; behind: number };
+
+export type Update = { behind: number; subjects: string[]; pulled: boolean };
+
 export type Stash = { message: string; date: string };
 
 export type Refs = { local: string[]; remote: string[] };

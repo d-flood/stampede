@@ -2,10 +2,12 @@
 	import type { Epic, Project } from '#lib/device.svelte.ts';
 	import Progress from '#lib/epics/Progress.svelte';
 	import { counts } from '#lib/epics.svelte.ts';
+	import type { Trunk } from '#lib/git.ts';
 	import type { Tile } from '#lib/projects.ts';
 	import ShellMark from '#lib/ui/ShellMark.svelte';
 	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import ArrowDown from '~icons/ph/arrow-down-bold';
 	import CircleNotchBold from '~icons/ph/circle-notch-bold';
 
 	type Props = {
@@ -18,6 +20,7 @@
 		working?: boolean;
 		background?: boolean;
 		needs?: number;
+		trunk?: Trunk;
 		compact?: boolean;
 		focused?: string;
 		dragging?: boolean;
@@ -29,7 +32,7 @@
 		onicon(project: Project): void;
 	};
 
-	let { project, label, labels, tiles, epics, root, working = false, background = false, needs = 0, compact = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onmenu, onicon }: Props =
+	let { project, label, labels, tiles, epics, root, working = false, background = false, needs = 0, trunk, compact = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onmenu, onicon }: Props =
 		$props();
 
 	const runs = $derived(epics.filter((epic) => epic.run && !epic.archived));
@@ -66,6 +69,7 @@
 				<span class="square squircle">
 					<ProjectIcon {project} />
 					{#if needs}<span class="attention">{needs}</span>{/if}
+					{#if trunk}<span class="behind" title="{trunk.behind} new on origin/{trunk.branch}"><ArrowDown /></span>{/if}
 					{#if tiles.length}<span class="count" title="{tiles.length} {tiles.length === 1 ? 'worktree' : 'worktrees'}">{tiles.length}</span>{/if}
 					{#if working}<span class="spinner" title="working"><CircleNotchBold /></span>{:else if background}<span class="shell" title="background"><ShellMark /></span>{/if}
 				</span>
@@ -283,6 +287,7 @@
 	}
 
 	.attention,
+	.behind,
 	.count,
 	.spinner,
 	.shell {
@@ -311,6 +316,12 @@
 		right: calc(-1 * var(--space-1) - var(--border-width));
 		background: var(--status-waiting);
 		color: var(--color-bg);
+	}
+
+	.behind {
+		top: calc(-1 * var(--space-1) - var(--border-width));
+		left: calc(-1 * var(--space-1) - var(--border-width));
+		color: var(--muted-fg);
 	}
 
 	.count {

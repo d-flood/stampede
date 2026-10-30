@@ -120,6 +120,12 @@ class Deployment(unittest.TestCase):
         command = next(call for call in self.calls if call[0] == "cargo")
         self.assertEqual(command[command.index("--target-dir") + 1], str(self.root / "target"))
         self.assertEqual(self.binary.read_text(), self.build)
+        head = subprocess.run(["git", "-C", str(other), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(self.environment["STAMPEDE_COMMIT"], head)
+
+    def test_first_run_builds_without_a_commit_outside_git(self):
+        self.deploy()
+        self.assertEqual(self.environment["STAMPEDE_COMMIT"], "")
 
     def test_failed_build_cleans_disk_backed_temporary_files(self):
         self.fail_build = True

@@ -112,6 +112,7 @@ def deploy(arguments):
     target = target_directory(ROOT)
     with build_environment(target, "stampede-rebuild-") as environment:
         environment["STAMPEDE_BUILD_ID"] = build
+        environment["STAMPEDE_COMMIT"] = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
         run("pnpm", "-C", "web", "install", "--frozen-lockfile", cwd=ROOT, env=environment)
         run("pnpm", "-C", "web", "build", cwd=ROOT, env=environment)
         run("cargo", "build", "--release", "--target-dir", target, cwd=ROOT, env=environment)

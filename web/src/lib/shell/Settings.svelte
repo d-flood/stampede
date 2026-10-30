@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { agentNames, clips, commitInstructions, commitRig, fontNames, hostName, modes, rigs, saveCommitInstructions, saveCommitRig, saveHostName, saveModes, themeLabel, type Agent, type FontRole } from '#lib/config.svelte.ts';
+	import { agentNames, autoFetch, clips, commitInstructions, commitRig, fontNames, hostName, modes, rigs, saveAutoFetch, saveCommitInstructions, saveCommitRig, saveHostName, saveModes, themeLabel, type Agent, type FontRole } from '#lib/config.svelte.ts';
+	import type { Update } from '#lib/git.ts';
 	import { form } from '#lib/form.ts';
 	import { colorScheme, selectScheme, type Scheme } from '#lib/scheme.svelte.ts';
 	import { selectSidebarSide, sidebarPosition, type SidebarSide } from '#lib/sidebar.svelte.ts';
@@ -29,18 +30,21 @@
 
 	type Page = 'general' | 'appearance' | 'agents' | 'rigs' | 'clips';
 
+	let { update }: { update?: Update } = $props();
+
 	let open = $state(false);
 	let chosen = $state<Page>();
 	let refusal = $state<string | null>(null);
 	let commitRefusal = $state<string | null>(null);
 	let modesRefusal = $state<string | null>(null);
+	let fetchRefusal = $state<string | null>(null);
 	let docking: ThemeChoice | undefined;
 	const agents = Object.keys(agentNames) as Agent[];
 	const phone = $derived(form() === 'phone');
 	const current = $derived(chosen ?? (phone ? undefined : 'general'));
 	const count = (total: number, noun: string) => `${total} ${noun}${total === 1 ? '' : 's'}`;
 	const pages: { id: Page; label: string; icon: Component; summary: () => string }[] = [
-		{ id: 'general', label: 'General', icon: SlidersHorizontal, summary: () => hostName() ?? 'Stampede' },
+		{ id: 'general', label: 'General', icon: SlidersHorizontal, summary: () => (update ? 'Update available' : (hostName() ?? 'Stampede')) },
 		{ id: 'appearance', label: 'Appearance', icon: PaintBrush, summary: () => themeLabel() },
 		{ id: 'agents', label: 'Agents', icon: Robot, summary: () => 'Commit messages and modes' },
 		{ id: 'rigs', label: 'Rigs', icon: RocketLaunch, summary: () => count(rigs().length, 'Rig') },
@@ -66,6 +70,15 @@
 		} catch (error) {
 			input.checked = !input.checked;
 			modesRefusal = (error as Error).message;
+		}
+	}
+
+	async function chooseAutoFetch(on: boolean) {
+		try {
+			await saveAutoFetch(on);
+			fetchRefusal = null;
+		} catch (error) {
+			fetchRefusal = (error as Error).message;
 		}
 	}
 
@@ -112,7 +125,9 @@
 	</span>
 {/snippet}
 
-<IconButton label="Settings" aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}><Gear /></IconButton>
+<IconButton label={update ? 'Settings, Stampede update available' : 'Settings'} title={update ? 'Stampede update available' : undefined} aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}>
+	<span class="gear"><Gear />{#if update}<span class="dot"></span>{/if}</span>
+</IconButton>
 <Dialog bind:open full={phone} wide title="Settings" oncloseautofocus={dock}>
 	<div class="settings" class:phone>
 		{#if !phone || !current}
@@ -131,6 +146,18 @@
 				{#if phone}<button class="back" aria-label="All settings" onclick={() => (chosen = undefined)}><CaretLeft /> Settings</button>{/if}
 				{#if current === 'general'}
 					<h3>General</h3>
+					{#if update}
+						<section class="group row update" aria-labelledby="update-label">
+							<div class="text">
+								<span class="label" id="update-label">Stampede update</span>
+								<p>{update.pulled ? `Pulled ${count(update.behind, 'new commit')}. Run ./rebuild to apply them.` : `${count(update.behind, 'new commit')} on origin. Pull, then run ./rebuild.`}</p>
+								<ul>
+									{#each update.subjects as subject, index (index)}<li>{subject}</li>{/each}
+									{#if update.behind > update.subjects.length}<li>and {update.behind - update.subjects.length} more</li>{/if}
+								</ul>
+							</div>
+						</section>
+					{/if}
 					<div class="group">
 						<section class="row" aria-labelledby="host-name-label">
 							<div class="text">
@@ -149,6 +176,18 @@
 								<option value="left">Left</option>
 								<option value="right">Right</option>
 							</select>
+						</section>
+						<section class="row" aria-labelledby="auto-fetch-label">
+							<div class="text">
+								<span class="label" id="auto-fetch-label">Check origin</span>{@render scope(true)}
+								<p>Fetches each Project's origin every half hour and marks default branches a pull would fast-forward. Never pulls.</p>
+								{#if fetchRefusal}<p role="alert">{fetchRefusal}</p>{/if}
+							</div>
+							<div class="segments control" role="radiogroup" aria-labelledby="auto-fetch-label">
+								{#each [true, false] as on (on)}
+									<button role="radio" aria-checked={autoFetch() === on} onclick={() => chooseAutoFetch(on)}>{on ? 'On' : 'Off'}</button>
+								{/each}
+							</div>
 						</section>
 					</div>
 				{:else if current === 'appearance'}
@@ -371,6 +410,33 @@
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg);
 		background: var(--color-bg);
+	}
+
+	.update {
+		margin-bottom: var(--space-4);
+	}
+
+	ul {
+		margin: var(--space-2) 0 0;
+		padding-left: 1.2em;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		line-height: 1.5;
+	}
+
+	.gear {
+		position: relative;
+		display: inline-grid;
+	}
+
+	.dot {
+		position: absolute;
+		top: -1px;
+		right: -2px;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--status-working);
 	}
 
 	.padded {

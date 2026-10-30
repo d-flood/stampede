@@ -25,7 +25,8 @@
 		unstash,
 		type Change,
 		type Git,
-		type Stash
+		type Stash,
+		type Trunk
 	} from '#lib/git.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
@@ -60,12 +61,13 @@
 	type Props = {
 		projectId: string;
 		git: Git;
+		trunk?: Trunk;
 		device: Device;
 		onopen(path: string): void;
 		ondiff(change: Change, against: 'index' | 'staged'): void;
 	};
 
-	let { projectId, git, device, onopen, ondiff }: Props = $props();
+	let { projectId, git, trunk, device, onopen, ondiff }: Props = $props();
 
 	const LARGE = 200;
 	const collapsed = new SvelteSet<string>();
@@ -352,6 +354,9 @@
 		{:else}
 			<span class="upstream">{git.detached ? 'Detached HEAD' : 'Local branch'}</span>
 		{/if}
+		{#if trunk && trunk.branch !== git.branch}
+			<span class="trunk" title="{trunk.behind} new on origin/{trunk.branch}">{trunk.branch}<ArrowDown />{trunk.behind}</span>
+		{/if}
 		<Menu
 			items={[
 				{ label: 'Stash All Changes', icon: Archive, hint: 's', disabled: busy || !git.changes.length, onselect: () => run(() => stash(projectId)) },
@@ -508,6 +513,16 @@
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.trunk {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		padding: 0 var(--space-2);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
 		white-space: nowrap;
 	}
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Epic, Project } from '#lib/device.svelte.ts';
+	import type { Trunk } from '#lib/git.ts';
 	import type { Tile } from '#lib/projects.ts';
 	import ProjectRow from '#lib/shell/ProjectRow.svelte';
 	import Button from '#lib/ui/Button.svelte';
@@ -14,6 +15,7 @@
 		working: Set<string>;
 		background: Set<string>;
 		needs: Map<string, number>;
+		trunks: Record<string, Trunk>;
 		focused?: string;
 		onfocus(id: string): void;
 		onclose(id: string): void;
@@ -24,7 +26,7 @@
 		onicon(project: Project): void;
 	};
 
-	let { projects, labels, worktrees, epics, roots, working, background, needs, focused, onfocus, onclose, ondelete, onworktree, onmenu, onpick, onicon }: Props = $props();
+	let { projects, labels, worktrees, epics, roots, working, background, needs, trunks, focused, onfocus, onclose, ondelete, onworktree, onmenu, onpick, onicon }: Props = $props();
 </script>
 
 <nav aria-label="Projects">
@@ -40,6 +42,7 @@
 				working={working.has(project.id)}
 				background={background.has(project.id)}
 				needs={needs.get(project.id) ?? 0}
+				trunk={trunks[project.id]}
 				{focused}
 				{onfocus}
 				{onclose}

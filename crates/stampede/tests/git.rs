@@ -1,14 +1,15 @@
 use crate::common;
 
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path, process::Command, time::Duration};
 
 use common::{Server, control, next_control};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
+    time::timeout,
 };
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 #[tokio::test]
 async fn changes_are_everything_uncommitted_against_head() {
@@ -324,6 +325,51 @@ async fn branches_publish_push_fetch_and_fast_forward_against_origin() {
 }
 
 #[tokio::test]
+async fn devices_hear_when_origin_moves_the_default_branch_ahead_of_any_checkout() {
+    let mut server = Server::start("git-origin").await;
+    let origin = server.root.path().join("origin.git");
+    git(server.root.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    let other = server.root.path().join("other");
+    git(server.root.path(), &["clone", "-q", origin.to_str().unwrap(), other.to_str().unwrap()]);
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "Initial commit"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+    let repo = server.root.path().join("local");
+    git(server.root.path(), &["clone", "-q", origin.to_str().unwrap(), repo.to_str().unwrap()]);
+    git(&repo, &["switch", "-q", "-c", "feature"]);
+    let id = open(server.port, &repo).await;
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "Remote"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    let ahead = heard(&mut socket, |trunks| trunks.get(&id).is_some()).await;
+    assert_eq!(ahead[&id], json!({ "branch": "main", "behind": 1 }));
+
+    git(&repo, &["switch", "-q", "main"]);
+    git(&repo, &["merge", "-q", "--ff-only", "origin/main"]);
+    heard(&mut socket, |trunks| trunks.as_object().unwrap().is_empty()).await;
+}
+
+#[tokio::test]
+async fn the_auto_fetch_setting_is_saved_in_the_config() {
+    let server = Server::start("git-auto-fetch").await;
+    let config = server.root.path().join("config.toml");
+    let original = fs::read_to_string(&config).unwrap();
+    assert_eq!(get(server.port, "/api/auto-fetch").await, json!(true));
+    assert_eq!(put(server.port, "/api/auto-fetch", json!(false)).await, (200, "false".to_owned()));
+    assert_eq!(fs::read_to_string(&config).unwrap(), format!("auto_fetch = false\n{original}"));
+    let reloaded = async {
+        while get(server.port, "/api/auto-fetch").await != json!(false) {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    };
+    timeout(Duration::from_secs(5), reloaded).await.unwrap();
+    assert_eq!(put(server.port, "/api/auto-fetch", json!(true)).await, (200, "true".to_owned()));
+    assert_eq!(fs::read_to_string(&config).unwrap(), original);
+}
+
+#[tokio::test]
 async fn branches_switch_most_recent_first_tracking_remote_ones_when_new() {
     let server = Server::start("git-switch").await;
     let origin = server.root.path().join("origin.git");
@@ -591,6 +637,19 @@ fn rev_parse(repo: &Path, rev: &str) -> String {
 async fn sides(port: u16, id: &str, sha: &str, from: &str, path: &str) -> [String; 2] {
     let show = |rev: &str, path: &str| text(port, format!("/api/projects/{id}/git/show?sha={rev}&path={path}"));
     [show(&format!("{sha}%5E"), from).await, show(sha, path).await]
+}
+
+/// Waits for the `origin.changed` whose trunks pass `wanted`, giving those trunks.
+async fn heard(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, wanted: impl Fn(&Value) -> bool) -> Value {
+    let waited = timeout(Duration::from_secs(30), async {
+        loop {
+            let changed = next_control(socket, "origin.changed").await;
+            if wanted(&changed["trunks"]) {
+                return changed["trunks"].clone();
+            }
+        }
+    });
+    waited.await.expect("origin.changed never reported the expected trunks")
 }
 
 async fn get(port: u16, path: &str) -> Value {

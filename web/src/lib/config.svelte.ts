@@ -40,6 +40,7 @@ let chord = $state('ctrl+;');
 let extras = $state.raw<string[]>([]);
 let scrollback = $state(10_000);
 let named = $state<string | null>(null);
+let fetching = $state(true);
 let committer = $state<string | null>(null);
 let instructions = $state('');
 let offeredModes = $state.raw<Partial<Record<Agent, Mode[]>>>({});
@@ -62,7 +63,7 @@ async function get<T>(path: string): Promise<T> {
 export async function loadConfig() {
 	loadTextSizes();
 	loadSidebarSide();
-	const [name, theme, font, ui, chat, code, rigs, settings, leaderKey, keys, lines, listed, commitRigName, commitText, agentModes, saved] = await Promise.all([
+	const [name, theme, font, ui, chat, code, rigs, settings, leaderKey, keys, lines, listed, commitRigName, commitText, agentModes, saved, autoFetching] = await Promise.all([
 		get<string | null>('/api/host-name'),
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
@@ -78,9 +79,11 @@ export async function loadConfig() {
 		get<string | null>('/api/commit-rig'),
 		get<string>('/api/commit-instructions'),
 		get<Record<Agent, Mode[]>>('/api/modes'),
-		get<Clip[]>('/api/clips')
+		get<Clip[]>('/api/clips'),
+		get<boolean>('/api/auto-fetch')
 	]);
 	named = name;
+	fetching = autoFetching;
 	committer = commitRigName;
 	instructions = commitText;
 	offeredModes = agentModes;
@@ -214,6 +217,20 @@ export async function saveHostName(name: string | null) {
 	});
 	if (!response.ok) throw new Error(await response.text());
 	named = await response.json();
+}
+
+export function autoFetch(): boolean {
+	return fetching;
+}
+
+export async function saveAutoFetch(on: boolean) {
+	const response = await fetch('/api/auto-fetch', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(on)
+	});
+	if (!response.ok) throw new Error(await response.text());
+	fetching = await response.json();
 }
 
 export function beginThemePreview() {

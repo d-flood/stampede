@@ -16,6 +16,7 @@ mod language_servers;
 mod layouts;
 mod media;
 mod memory;
+mod origin;
 mod projects;
 mod project_icons;
 mod protocol;
@@ -110,6 +111,7 @@ struct AppState {
     epics: Arc<Epics>,
     runs: Arc<Runs>,
     devices: device::Devices,
+    origin: watch::Receiver<origin::Origin>,
 }
 
 fn router(state: AppState) -> Router {
@@ -234,9 +236,10 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     });
     let (disk, opened) = watcher::spawn(projects.subscribe());
     let git = git::spawn(projects.subscribe(), &disk, devices.subscribe());
+    let origin = origin::spawn(projects.subscribe(), config.clone(), devices.subscribe(), git.clone());
     eprintln!("stampede listening on http://{}", listener.local_addr()?);
     let canvases = canvas::Canvases::watch(&args.data_dir)?;
-    let state = AppState { media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs, devices };
+    let state = AppState { media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs, devices, origin };
     let listener = listener.tap_io(|stream| {
         let _ = stream.set_nodelay(true);
     });
