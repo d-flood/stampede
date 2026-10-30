@@ -2,6 +2,7 @@
 	import { rigs } from '#lib/config.svelte.ts';
 	import type { Ticket } from '#lib/device.svelte.ts';
 	import { record, type OpenEpic } from '#lib/epics.svelte.ts';
+	import Select from '#lib/ui/Select.svelte';
 
 	type Props = { open: OpenEpic; ticket: Ticket; defaultRig?: string; label?: string; disabled?: boolean };
 
@@ -21,7 +22,7 @@
 </script>
 
 <div>
-	<select
+	<Select
 		aria-label={label}
 		title={selected || defaultRig}
 		value={selected}
@@ -35,7 +36,7 @@
 		{#each choices as choice (choice.name)}
 			<option value={choice.name}>{choice.name}</option>
 		{/each}
-	</select>
+	</Select>
 	{#if error}<p role="alert">{error}</p>{/if}
 </div>
 
@@ -44,25 +45,8 @@
 		min-width: 0;
 	}
 
-	select {
-		box-sizing: border-box;
-		width: 100%;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-1);
-		color: var(--color-fg);
-		font: inherit;
+	div > :global(select) {
 		font-size: var(--font-size-sm);
-		text-overflow: ellipsis;
-	}
-	select:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-	}
-
-	select:disabled {
-		color: var(--muted-fg);
 	}
 
 	p {

@@ -3,6 +3,7 @@
 	import type { Chat, Device } from '#lib/device.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import Select from '#lib/ui/Select.svelte';
 	import TextArea from '#lib/ui/TextArea.svelte';
 	import { onMount } from 'svelte';
 
@@ -51,11 +52,11 @@
 <Dialog bind:open title="New Chat from here" description="Prepare a handoff, then review and edit it in the new Chat’s Composer before sending.">
 	<form id="handoff-{chat.id}" onsubmit={(event) => { event.preventDefault(); prepare(); }}>
 		<label for="handoff-rig-{chat.id}">Rig</label>
-		<select id="handoff-rig-{chat.id}" bind:value={rig} disabled={preparing}>
+		<Select id="handoff-rig-{chat.id}" bind:value={rig} disabled={preparing}>
 			{#each configured as option (option.name)}
 				<option value={option.name}>{option.name} · {agentNames[option.agent]}</option>
 			{/each}
-		</select>
+		</Select>
 		<label for="handoff-focus-{chat.id}">Focus <span>(optional)</span></label>
 		<TextArea id="handoff-focus-{chat.id}" bind:value={focus} disabled={preparing} placeholder="What should the new Chat focus on?" rows={3} {@attach (element) => { requestAnimationFrame(() => element.focus()); }} />
 		{#if preparing}<p role="status">Preparing handoff in {chat.rig}…</p>{/if}
@@ -77,9 +78,7 @@
 	label:not(:first-child) { margin-top: var(--space-2); }
 	span, p { color: var(--muted-fg); }
 	span { font-weight: normal; }
-	select { box-sizing: border-box; width: 100%; min-height: var(--target-min); padding: var(--space-2); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg); font: inherit; }
 	form > :global(textarea) { max-height: 30vh; }
-	select:focus-visible { outline: var(--border-width) solid var(--status-working); outline-offset: var(--border-width); }
 	p { margin: var(--space-2) 0 0; }
 	[role='alert'] { color: var(--ansi-1); }
 </style>

@@ -3,6 +3,7 @@
 	import { agentNames, deleteRig, reorderRigs, rigs, saveRig, type Agent } from '#lib/config.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import Select from '#lib/ui/Select.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 
 	type Model = { value: string; label: string; efforts: string[] };
@@ -132,10 +133,10 @@
 <div class="rig-editor">
 	<div class="picker">
 		<label for="editing-rig">Rig</label>
-		<select id="editing-rig" value={selected} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
+		<Select id="editing-rig" value={selected} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
 			<option value="">New rig</option>
 			{#each rigs() as rig, index (rig.name)}<option value={rig.name}>{index + 1}. {rig.name}</option>{/each}
-		</select>
+		</Select>
 		{#if selected}
 			<div class="order" role="group" aria-label="Rig order">
 				<Button variant="ghost" disabled={busy || position <= 0} onclick={() => move(-1)}>Move up</Button>
@@ -148,26 +149,26 @@
 		<label for="rig-name">Name</label>
 		<TextField id="rig-name" bind:value={name} required placeholder="e.g. Reviewer" oninput={() => (saved = '')} />
 		<label for="rig-provider">Provider</label>
-		<select id="rig-provider" value={agent} onchange={(event) => provider(event.currentTarget.value as Agent)}>
+		<Select id="rig-provider" value={agent} onchange={(event) => provider(event.currentTarget.value as Agent)}>
 			{#each Object.entries(agentNames) as [value, label]}<option {value}>{label}</option>{/each}
-		</select>
+		</Select>
 		<label for="rig-model">Model</label>
-		<select id="rig-model" bind:value={model} disabled={loading || !options.models.length} onchange={() => { effort = ''; saved = ''; }}>
+		<Select id="rig-model" bind:value={model} disabled={loading || !options.models.length} onchange={() => { effort = ''; saved = ''; }}>
 			<option value="">Provider default</option>
 			{#if model && !options.models.some((choice) => choice.value === model)}<option value={model}>{model} (configured)</option>{/if}
 			{#each options.models as choice (choice.value)}<option value={choice.value}>{choice.label}</option>{/each}
-		</select>
+		</Select>
 		<label for="rig-effort">Effort level</label>
-		<select id="rig-effort" bind:value={effort} disabled={loading || !efforts.length} onchange={() => (saved = '')}>
+		<Select id="rig-effort" bind:value={effort} disabled={loading || !efforts.length} onchange={() => (saved = '')}>
 			<option value="">Provider default</option>
 			{#if effort && !efforts.includes(effort)}<option value={effort}>{effort} (configured)</option>{/if}
 			{#each efforts as value}<option {value}>{value}</option>{/each}
-		</select>
+		</Select>
 		<label for="rig-mode">Permission mode</label>
-		<select id="rig-mode" bind:value={mode} disabled={loading || !options.modes.length} onchange={() => (saved = '')}>
+		<Select id="rig-mode" bind:value={mode} disabled={loading || !options.modes.length} onchange={() => (saved = '')}>
 			{#if !options.modes.some((choice) => choice.value === mode)}<option value={mode}>{mode}</option>{/if}
 			{#each options.modes as choice (choice.value)}<option value={choice.value}>{choice.label}</option>{/each}
-		</select>
+		</Select>
 	</fieldset>
 	{#if loading}<p role="status">Loading provider choices…</p>{/if}
 	{#if error}<p role="alert">{error}</p><Button disabled={loading || busy} onclick={load}>Reload choices</Button>{/if}
@@ -253,24 +254,6 @@
 	label {
 		margin-top: var(--space-2);
 		font-size: var(--font-size-sm);
-	}
-
-	select {
-		box-sizing: border-box;
-		width: 100%;
-		min-width: 0;
-		min-height: var(--target-min);
-		padding: var(--space-1) var(--space-2);
-		border: var(--border-width) solid var(--border-strong);
-		border-radius: var(--radius-md);
-		background: var(--surface-1);
-		color: var(--color-fg);
-		font: inherit;
-	}
-
-	select:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
-		outline-offset: 1px;
 	}
 
 	p {

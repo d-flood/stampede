@@ -13,6 +13,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import Select from '#lib/ui/Select.svelte';
 	import TextArea from '#lib/ui/TextArea.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import type { Component } from 'svelte';
@@ -172,10 +173,12 @@
 								<label id="sidebar-side-label" for="sidebar-side">Sidebar position</label>{@render scope(false)}
 								<p id="sidebar-side-help">Left or right of the tabs, including on phones.</p>
 							</div>
-							<select id="sidebar-side" class="control" value={sidebarPosition.side} onchange={(event) => selectSidebarSide(event.currentTarget.value as SidebarSide)} aria-describedby="sidebar-side-help">
-								<option value="left">Left</option>
-								<option value="right">Right</option>
-							</select>
+							<div class="control">
+								<Select id="sidebar-side" value={sidebarPosition.side} onchange={(event) => selectSidebarSide(event.currentTarget.value as SidebarSide)} aria-describedby="sidebar-side-help">
+									<option value="left">Left</option>
+									<option value="right">Right</option>
+								</Select>
+							</div>
 						</section>
 						<section class="row" aria-labelledby="auto-fetch-label">
 							<div class="text">
@@ -223,10 +226,10 @@
 								</div>
 								<div class="control font">
 									<FontSwitcher {role} />
-									<select aria-label="{fontNames[role]} size" value={typography[role] ?? ''} onchange={(event) => selectTextSize(role, event.currentTarget.value ? Number(event.currentTarget.value) : null)}>
+									<Select aria-label="{fontNames[role]} size" value={typography[role] ?? ''} onchange={(event) => selectTextSize(role, event.currentTarget.value ? Number(event.currentTarget.value) : null)}>
 										<option value="">Default · {defaultSizes[role][phone ? 'phone' : 'desktop']} px</option>
 										{#each sizes as size (size)}<option value={size}>{size} px</option>{/each}
-									</select>
+									</Select>
 								</div>
 							</section>
 						{/each}
@@ -244,13 +247,15 @@
 								<label id="commit-rig-label" for="commit-rig">Commit messages</label>{@render scope(true)}
 								<p id="commit-rig-help">The Rig that drafts commit messages from staged changes.</p>
 							</div>
-							<select id="commit-rig" class="control" value={commitRig() ?? ''} disabled={!rigs().length} onchange={(event) => chooseCommitRig(event.currentTarget.value)} aria-describedby="commit-rig-help">
-								{#each rigs() as rig (rig.name)}
-									<option value={rig.name}>{rig.name}</option>
-								{:else}
-									<option value="">No Rigs</option>
-								{/each}
-							</select>
+							<div class="control">
+								<Select id="commit-rig" value={commitRig() ?? ''} disabled={!rigs().length} onchange={(event) => chooseCommitRig(event.currentTarget.value)} aria-describedby="commit-rig-help">
+									{#each rigs() as rig (rig.name)}
+										<option value={rig.name}>{rig.name}</option>
+									{:else}
+										<option value="">No Rigs</option>
+									{/each}
+								</Select>
+							</div>
 							<div class="field">
 								<label for="commit-instructions">Instructions</label>
 								<TextArea id="commit-instructions" rows={4} value={commitInstructions()} onchange={(event) => instruct(event.currentTarget)} aria-describedby="commit-instructions-help" />
@@ -505,8 +510,9 @@
 		gap: var(--space-2);
 	}
 
-	.font select {
+	.font > :global(select) {
 		flex: none;
+		width: auto;
 	}
 
 	.field {
@@ -519,22 +525,6 @@
 	.field > label {
 		font-size: var(--font-size-sm);
 		font-weight: 600;
-	}
-
-	select {
-		box-sizing: border-box;
-		min-height: var(--target-min);
-		padding: var(--space-1) var(--space-2);
-		border: var(--border-width) solid var(--border-strong);
-		border-radius: var(--radius-md);
-		background: var(--surface-1);
-		color: var(--color-fg);
-		font: inherit;
-	}
-
-	select:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
-		outline-offset: 1px;
 	}
 
 	.segments {

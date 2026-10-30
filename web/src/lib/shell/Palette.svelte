@@ -11,6 +11,7 @@
 	import { listing } from '#lib/files.svelte.ts';
 	import { split } from '#lib/git.ts';
 	import Loading from '#lib/ui/Loading.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
 	import fuzzysort, { type Key } from 'fuzzysort';
 
@@ -104,7 +105,7 @@
 		spellcheck={false}
 	>
 		{#snippet child({ props })}
-			<input {...props} class="query" bind:value={query} {@attach (element) => element.focus()} />
+			<TextField {...props} bind:value={query} {@attach (element) => element.focus()} />
 		{/snippet}
 	</Command.Input>
 	{#if reading}
@@ -152,23 +153,6 @@
 </Command.Root>
 
 <style>
-	.query {
-		box-sizing: border-box;
-		width: 100%;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font: inherit;
-		outline: none;
-	}
-
-	.query:focus-visible {
-		border-color: var(--status-working);
-	}
-
 	.list {
 		max-height: min(24rem, 50dvh);
 		margin-top: var(--space-2);

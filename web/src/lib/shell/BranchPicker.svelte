@@ -2,6 +2,7 @@
 	import { refs, switchBranch, sync, type Refs } from '#lib/git.ts';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import { Command, computeCommandScore } from 'bits-ui';
 	import { onMount } from 'svelte';
 	import ArrowsClockwise from '~icons/ph/arrows-clockwise';
@@ -61,7 +62,7 @@
 	<div class="search">
 		<Command.Input placeholder="Find a branch" autocomplete="off" spellcheck={false}>
 			{#snippet child({ props })}
-				<input {...props} class="query" bind:value={query} {@attach (element) => element.focus()} />
+				<TextField {...props} mono bind:value={query} {@attach (element) => element.focus()} />
 			{/snippet}
 		</Command.Input>
 		{#if origin}
@@ -113,25 +114,6 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-	}
-
-	.query {
-		box-sizing: border-box;
-		flex: 1;
-		min-width: 0;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font: inherit;
-		font-family: var(--font-mono);
-		outline: none;
-	}
-
-	.query:focus-visible {
-		border-color: var(--status-working);
 	}
 
 	.error {

@@ -2,6 +2,7 @@
 	import type { Project } from '#lib/device.svelte.ts';
 	import { createWorktree, refs, type Refs } from '#lib/git.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Select from '#lib/ui/Select.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount } from 'svelte';
 
@@ -43,7 +44,7 @@
 
 <form onsubmit={create}>
 	<label for="worktree-from">From</label>
-	<select id="worktree-from" bind:value={from} disabled={!listed || creating}>
+	<Select id="worktree-from" bind:value={from} disabled={!listed || creating}>
 		{#if listed}
 			<optgroup label="Local branches">
 				{#each listed.local as name (name)}<option value={name}>{name}</option>{/each}
@@ -54,7 +55,7 @@
 				</optgroup>
 			{/if}
 		{/if}
-	</select>
+	</Select>
 	<label for="worktree-branch">New branch</label>
 	<TextField
 		id="worktree-branch"
@@ -84,24 +85,6 @@
 	label {
 		margin-top: var(--space-2);
 		font-size: var(--font-size-sm);
-	}
-
-	select {
-		box-sizing: border-box;
-		width: 100%;
-		min-width: 0;
-		min-height: var(--target-min);
-		padding: var(--space-1) var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font: inherit;
-	}
-
-	select:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-		outline-offset: var(--border-width);
 	}
 
 	p {

@@ -15,7 +15,7 @@
 		padding: var(--space-1) var(--space-2);
 		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-md);
-		background: var(--surface-1);
+		background: var(--color-bg);
 		color: var(--color-fg);
 		font: inherit;
 	}

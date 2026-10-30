@@ -2,6 +2,7 @@
 	import { clips, deleteClip, reorderClips, saveClip } from '#lib/config.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import Select from '#lib/ui/Select.svelte';
 	import TextArea from '#lib/ui/TextArea.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 
@@ -82,10 +83,10 @@
 	{#if !ondone}
 		<div class="picker">
 			<label for="editing-clip">Clip</label>
-			<select id="editing-clip" value={selected} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
+			<Select id="editing-clip" value={selected} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
 				<option value="">New clip</option>
 				{#each clips() as clip, index (clip.name)}<option value={clip.name}>{index + 1}. {clip.name}</option>{/each}
-			</select>
+			</Select>
 			{#if selected}
 				<div class="order" role="group" aria-label="Clip order">
 					<Button variant="ghost" disabled={busy || position <= 0} onclick={() => move(-1)}>Move up</Button>
@@ -181,24 +182,6 @@
 	label {
 		margin-top: var(--space-2);
 		font-size: var(--font-size-sm);
-	}
-
-	select {
-		box-sizing: border-box;
-		width: 100%;
-		min-width: 0;
-		min-height: var(--target-min);
-		padding: var(--space-1) var(--space-2);
-		border: var(--border-width) solid var(--border-strong);
-		border-radius: var(--radius-md);
-		background: var(--surface-1);
-		color: var(--color-fg);
-		font: inherit;
-	}
-
-	select:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
-		outline-offset: 1px;
 	}
 
 	p {

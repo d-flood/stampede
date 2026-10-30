@@ -4,6 +4,7 @@
 	import { onDestroy, tick } from 'svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
 	import Check from '~icons/ph/check';
 	import CaretLeft from '~icons/ph/caret-left';
@@ -57,7 +58,7 @@
 <Command.Root shouldFilter={false} loop>
 	<Command.Input placeholder="Search {choice.all ? 'all' : choice.scheme} themes" aria-label="Search themes" autocomplete="off" spellcheck={false}>
 		{#snippet child({ props })}
-			<input {...props} class="query" bind:value={choice.query} {@attach (element) => { tick().then(() => element.focus()); }} />
+			<TextField {...props} bind:value={choice.query} {@attach (element) => { tick().then(() => element.focus()); }} />
 		{/snippet}
 	</Command.Input>
 	<Command.List aria-label="Ghostty themes" aria-busy={choice.loading || choice.saving}>
@@ -180,23 +181,6 @@
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		overflow-wrap: anywhere;
-	}
-
-	.query {
-		box-sizing: border-box;
-		width: 100%;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font: inherit;
-		outline: none;
-	}
-
-	.query:focus-visible {
-		border-color: var(--status-working);
 	}
 
 	.list {

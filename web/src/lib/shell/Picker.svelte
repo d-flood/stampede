@@ -1,4 +1,5 @@
 <script lang="ts">
+	import TextField from '#lib/ui/TextField.svelte';
 	import { Command, computeCommandScore } from 'bits-ui';
 
 	let { directories, onopen }: { directories: string[]; onopen(path: string): Promise<string | undefined> } =
@@ -37,7 +38,7 @@
 		spellcheck={false}
 	>
 		{#snippet child({ props })}
-			<input {...props} class="query" bind:value={query} {@attach (element) => element.focus()} />
+			<TextField {...props} mono bind:value={query} {@attach (element) => element.focus()} />
 		{/snippet}
 	</Command.Input>
 	{#if error}
@@ -74,28 +75,6 @@
 </Command.Root>
 
 <style>
-	.query {
-		box-sizing: border-box;
-		width: 100%;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font: inherit;
-		font-family: var(--font-mono);
-		outline: none;
-	}
-
-	.query:focus-visible {
-		border-color: var(--status-working);
-	}
-
-	.query[aria-invalid='true'] {
-		border-color: var(--ansi-1);
-	}
-
 	.error {
 		margin: var(--space-1) 0 0;
 		color: var(--ansi-1);

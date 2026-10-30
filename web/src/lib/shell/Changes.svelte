@@ -32,6 +32,7 @@
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import TextArea from '#lib/ui/TextArea.svelte';
 	import { onMount, tick } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import Archive from '~icons/ph/archive';
@@ -370,15 +371,15 @@
 	</header>
 	{#if git.changes.length || git.operation || message || failure}
 		<div class="commit">
-			<textarea
-				bind:this={box}
+			<TextArea
+				bind:ref={box}
 				bind:value={() => message, (value) => (messages[projectId] = value)}
 				aria-label="Commit message"
 				placeholder="Commit message"
-				rows="3"
+				rows={3}
 				spellcheck="true"
 				onkeydown={commitKey}
-			></textarea>
+			/>
 			<div class="buttons">
 				<Button title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || !git.staged.length} onclick={draftMessage}>
 					<Sparkle />{drafting ? 'Drafting…' : 'Draft'}
@@ -559,25 +560,6 @@
 		display: grid;
 		gap: var(--space-2);
 		padding: 0 var(--space-3) var(--space-2);
-	}
-
-	textarea {
-		box-sizing: border-box;
-		width: 100%;
-		min-height: calc(3 * 1.5em);
-		padding: var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font: inherit;
-		line-height: 1.5;
-		resize: vertical;
-	}
-
-	textarea:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-		outline-offset: calc(-1 * var(--border-width));
 	}
 
 	.buttons {

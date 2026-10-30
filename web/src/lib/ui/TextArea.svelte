@@ -1,10 +1,10 @@
 <script lang="ts">
 	import type { HTMLTextareaAttributes } from 'svelte/elements';
 
-	let { value = $bindable(), ...rest }: HTMLTextareaAttributes = $props();
+	let { value = $bindable(), ref = $bindable(), ...rest }: HTMLTextareaAttributes & { ref?: HTMLTextAreaElement } = $props();
 </script>
 
-<textarea bind:value {...rest}></textarea>
+<textarea bind:this={ref} bind:value {...rest}></textarea>
 
 <style>
 	textarea {
@@ -16,7 +16,7 @@
 		padding: var(--space-1) var(--space-2);
 		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-md);
-		background: var(--surface-1);
+		background: var(--color-bg);
 		color: var(--color-fg);
 		font: inherit;
 		line-height: 1.5;

@@ -4,6 +4,7 @@
 	import type { Answer, Request } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Select from '#lib/ui/Select.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
@@ -93,7 +94,7 @@
 		{#if request.kind === 'command'}
 			<pre class="code"><Code code={request.words.map((words) => words.map(quote).join(' ')).join('\n')} path="command.sh" /></pre>
 			{#if picking}
-				<label>Rule scope <select aria-label="Rule scope" bind:value={scope} {disabled}><option value="chat">This Chat</option><option value="always">Always</option></select></label>
+				<label>Rule scope <Select aria-label="Rule scope" bind:value={scope} {disabled}><option value="chat">This Chat</option><option value="always">Always</option></Select></label>
 				{#if scope === 'always' && !request.sessionPrefixes && request.words.length > 1}<div class="progress">Additional compound rules take effect after Codex restarts.</div>{/if}
 				{#if scope === 'chat' && !request.sessionPrefixes}<div class="progress">This Chat allows the exact command. Prefix rules require Always.</div>{/if}
 				{#each request.words as words, index}
@@ -136,12 +137,13 @@
 	.progress { color: var(--muted-fg); font-size: var(--font-size-sm); }
 	.asker { display: flex; align-items: center; gap: var(--space-1); color: var(--muted-fg); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 	.asker :global(svg) { flex: none; }
-	.option, .word, select { padding: var(--space-2) var(--space-3); min-height: var(--target-min); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg); font: inherit; }
+	.option, .word { padding: var(--space-2) var(--space-3); min-height: var(--target-min); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg); font: inherit; }
 	button[aria-pressed='true'] { border-color: var(--status-waiting); background: var(--hover); }
 	.word { max-width: 100%; overflow-wrap: anywhere; }
 	.words { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 	label { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 	label > :global(input) { flex: 1; }
+	label > :global(select) { width: auto; }
 	output { font-family: var(--font-mono); overflow-wrap: anywhere; }
 	.card {
 		max-height: 55dvh;

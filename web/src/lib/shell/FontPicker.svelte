@@ -2,6 +2,7 @@
 	import { beginFontPreview, defaultFonts, fontVariables, fonts, selectFont, type FontRole } from '#lib/config.svelte.ts';
 	import { onDestroy, tick, untrack } from 'svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
 	import Check from '~icons/ph/check';
 
@@ -76,7 +77,7 @@
 <Command.Root shouldFilter={false} loop>
 	<Command.Input placeholder="Search installed fonts" aria-label="Search fonts" autocomplete="off" spellcheck={false}>
 		{#snippet child({ props })}
-			<input {...props} class="query" bind:value={query} {@attach (element) => { tick().then(() => element.focus()); }} />
+			<TextField {...props} bind:value={query} {@attach (element) => { tick().then(() => element.focus()); }} />
 		{/snippet}
 	</Command.Input>
 	<Command.List aria-label="Installed fonts" aria-busy={loading || saving}>
@@ -150,23 +151,6 @@
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		overflow-wrap: anywhere;
-	}
-
-	.query {
-		box-sizing: border-box;
-		width: 100%;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font: inherit;
-		outline: none;
-	}
-
-	.query:focus-visible {
-		border-color: var(--status-working);
 	}
 
 	.list {

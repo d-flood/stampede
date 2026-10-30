@@ -15,6 +15,7 @@
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import Select from '#lib/ui/Select.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount } from 'svelte';
 	import CaretDown from '~icons/ph/caret-down';
@@ -254,11 +255,11 @@
 	{@const parallel = epic.run?.parallel ?? open.parallel}
 	<label class="setting">
 		<span>Rig</span>
-		<select value={epic.run?.rig ?? rig} onchange={(event) => chooseRig(event.currentTarget.value)}>
+		<Select value={epic.run?.rig ?? rig} onchange={(event) => chooseRig(event.currentTarget.value)}>
 			{#each choices as choice (choice.name)}
 				<option value={choice.name}>{choice.name}</option>
 			{/each}
-		</select>
+		</Select>
 	</label>
 	<span class="setting" role="group" aria-label="Parallel">
 		<span aria-hidden="true">Parallel</span>
@@ -280,11 +281,11 @@
 	{#if reviewers.length}
 		<label class="setting">
 			<span>Remediator</span>
-			<select value={remediator} disabled={reviewing && !!review?.remediator} onchange={(event) => chooseRemediator(event.currentTarget.value)}>
+			<Select value={remediator} disabled={reviewing && !!review?.remediator} onchange={(event) => chooseRemediator(event.currentTarget.value)}>
 				{#each choices as choice (choice.name)}
 					<option value={choice.name}>{choice.name}</option>
 				{/each}
-			</select>
+			</Select>
 		</label>
 	{/if}
 {/snippet}
@@ -853,16 +854,6 @@
 		color: var(--muted-fg);
 	}
 
-	select {
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-1);
-		color: var(--color-fg);
-		font: inherit;
-	}
-
 	.limit {
 		min-width: 1.5em;
 		color: var(--color-fg);
@@ -911,7 +902,7 @@
 		flex: 1;
 	}
 
-	.phone .setting select {
+	.phone .setting > :global(select) {
 		flex: 1;
 	}
 
