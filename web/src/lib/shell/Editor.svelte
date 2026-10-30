@@ -41,8 +41,10 @@
 	let view = $state.raw<EditorView>();
 	let note = $state<string>();
 	let wrap = $state(false);
+	let spell = $state(false);
 	const svg = $derived(/\.svg$/i.test(file.path) && !(file instanceof OpenConfig));
 	const markdown = $derived(/\.(md|markdown)$/i.test(file.path) && !(file instanceof OpenConfig));
+	const prose = $derived(/\.(md|markdown|txt)$/i.test(file.path) && !(file instanceof OpenConfig));
 	const original = $derived(git?.isRepo ? (git.changes.find((change) => change.path === file.path)?.from ?? file.path) : undefined);
 	const head = $derived(git?.head);
 	let rendered = $state(false);
@@ -50,6 +52,7 @@
 	const sync = new Sync(() => file, () => view);
 	const keys = new Compartment();
 	const wrapping = new Compartment();
+	const spelling = new Compartment();
 	const syntax = new Compartment();
 	const server = new Compartment();
 	let loaded: string;
@@ -74,6 +77,7 @@
 						extensions: [
 							keys.of([]),
 							wrapping.of(wrap ? EditorView.lineWrapping : []),
+							spelling.of([]),
 							keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 							basicSetup,
 							changeMarkers,
@@ -103,6 +107,12 @@
 		if (!view) return;
 		wrap = !wrap;
 		view.dispatch({ effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []) });
+	}
+
+	function toggleSpell() {
+		if (!view) return;
+		spell = !spell;
+		view.dispatch({ effects: spelling.reconfigure(spell ? EditorView.contentAttributes.of({ spellcheck: 'true' }) : []) });
 	}
 
 	$effect(() => {
@@ -178,6 +188,7 @@
 		{#if !rendered}<ServerSwitch {servers} projectId={file.projectId} path={file.path} attached />{/if}
 		{#if view && !rendered}
 			<Button aria-label="Line wrapping" aria-pressed={wrap} variant={wrap ? 'primary' : 'default'} onclick={toggleWrap}>Wrap</Button>
+			{#if prose}<Button aria-label="Spell check" aria-pressed={spell} variant={spell ? 'primary' : 'default'} onclick={toggleSpell}>Spell</Button>{/if}
 		{/if}
 		{#if (form() === 'phone' || rendered) && view}
 			<Button onclick={() => sync.write()} disabled={!file.dirty}><FloppyDisk /> Save</Button>
