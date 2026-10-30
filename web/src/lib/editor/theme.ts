@@ -16,7 +16,7 @@ const chrome = EditorView.theme({
 	'.cm-fat-cursor': { background: 'var(--color-cursor)', color: 'var(--color-bg)' },
 	'&:not(.cm-focused) .cm-fat-cursor': { background: 'none', outline: 'var(--border-width) solid var(--color-cursor)' },
 	'.cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-content ::selection':
-		{ backgroundColor: 'color-mix(in oklab, var(--color-selection-bg) 30%, transparent)' },
+		{ backgroundColor: 'var(--color-editor-selection)' },
 	'.cm-activeLine': { backgroundColor: 'color-mix(in oklab, var(--hover) 50%, transparent)' },
 	'.cm-gutters': { backgroundColor: 'var(--color-bg)', color: 'var(--muted-fg)', border: 'none' },
 	'.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--color-fg)' },

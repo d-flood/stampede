@@ -54,6 +54,7 @@
 	--color-cursor: var(--light-cursor);
 	--color-selection-bg: var(--light-selection-bg);
 	--color-selection-fg: var(--light-selection-fg);
+	--color-editor-selection: var(--light-editor-selection);
 
 	--surface-1: color-mix(in oklab, var(--color-bg) 96%, var(--color-fg));
 	--surface-2: color-mix(in oklab, var(--color-bg) 92%, var(--color-fg));
@@ -130,6 +131,7 @@
 	--color-cursor: var(--dark-cursor);
 	--color-selection-bg: var(--dark-selection-bg);
 	--color-selection-fg: var(--dark-selection-fg);
+	--color-editor-selection: var(--dark-editor-selection);
 }
 
 @media (pointer: coarse) {

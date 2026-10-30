@@ -35,7 +35,7 @@ journalctl --user -u stampede -f
 
 The last binary is retained at `~/.local/lib/stampede/stampede.previous`. To recover manually, copy it to a temporary sibling, rename that over `stampede`, then run `systemctl --user restart stampede`.
 
-Deployment checks: `python3 tests/rebuild_test.py`. Browser and agent recovery checks: `./check e2e rebuild.spec.ts` and `cargo test --test integration -- terminal_survives_restart:: chat_claude_restart:: chat_codex_restart::`.
+Deployment checks: `python3 -m unittest discover -s tests -p rebuild_test.py`. Browser and agent recovery checks: `./check e2e rebuild.spec.ts` and `cargo test --test integration -- terminal_survives_restart:: chat_claude_restart:: chat_codex_restart::`.
 
 
 ## Checks

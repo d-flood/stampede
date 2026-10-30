@@ -157,6 +157,26 @@ export function themeLabel(): string {
 	return light === dark ? (light ?? 'Default') : `Light: ${light} · Dark: ${dark}`;
 }
 
+function luminance(hex: string): number {
+	const [r, g, b] = [1, 3, 5].map((i) => {
+		const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+		return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+	});
+	return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a: string, b: string): number {
+	const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+	return (light + 0.05) / (dark + 0.05);
+}
+
+// Inverting themes rely on selection-foreground, which the editor can't apply over syntax colors, so tint instead.
+function editorSelection({ foreground, background, selectionBackground }: Palette): string {
+	return contrast(foreground, selectionBackground) < 3
+		? `color-mix(in oklab, ${selectionBackground} 30%, ${background})`
+		: selectionBackground;
+}
+
 function applyTheme(theme: ThemeResponse) {
 	const style = document.documentElement.style;
 	for (const scheme of ['light', 'dark'] as const) {
@@ -167,6 +187,7 @@ function applyTheme(theme: ThemeResponse) {
 		style.setProperty(`--${scheme}-cursor`, palette.cursor);
 		style.setProperty(`--${scheme}-selection-bg`, palette.selectionBackground);
 		style.setProperty(`--${scheme}-selection-fg`, palette.selectionForeground);
+		style.setProperty(`--${scheme}-editor-selection`, editorSelection(palette));
 	}
 	revision++;
 }
