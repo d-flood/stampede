@@ -1,3 +1,5 @@
+import type { Item } from '#lib/device.svelte.ts';
+
 export class OpenCanvas {
 	html = $state<string>();
 	versions = $state(0);
@@ -35,4 +37,9 @@ export class OpenCanvas {
 
 export function canvasName(canvas: string) {
 	return canvas.split('/').at(-1)!.replace(/\.html$/, '');
+}
+
+export function canvases(items: Item[]): string[] {
+	const written = (items: Item[]): string[] => items.flatMap((item) => (item.kind === 'subagent' ? written(item.items) : item.kind === 'canvas' ? [item.canvas] : []));
+	return [...new Set(written(items).reverse())];
 }

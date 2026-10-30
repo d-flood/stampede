@@ -13,6 +13,8 @@
 	import Todos from '#lib/chat/Todos.svelte';
 	import Chips from '#lib/chat/Chips.svelte';
 	import Dock from '#lib/chat/Dock.svelte';
+	import Canvases from '#lib/chat/Canvases.svelte';
+	import { canvases as written } from '#lib/canvas.svelte.ts';
 	import Handoff from '#lib/chat/Handoff.svelte';
 	import MoveToWorktree from '#lib/chat/MoveToWorktree.svelte';
 	import Prompt from '#lib/chat/Prompt.svelte';
@@ -32,6 +34,7 @@
 		$props();
 
 	const subagents = $derived(flatten(items));
+	const canvases = $derived(written(items));
 	const shell = $derived(chat.background ? commands(items).findLast(({ item }) => item.status === 'running')?.item.command : undefined);
 	const selected = $derived(subagents.find(({ path }) => same(path, opened))?.subagent);
 	const trail = $derived(subagents.filter(({ path }) => path.length < opened.length && same(path, opened.slice(0, path.length))));
@@ -233,8 +236,11 @@
 	<div class="foot">
 		<Shells {items} />
 		{#if selected}<Activity status={selected.status} activity={selected.activity} />{/if}
-		{#if subagents.length}
-			<Dock {subagents} onopen={open} onattend={attend} />
+		{#if subagents.length || canvases.length}
+			<div class="tray">
+				{#if subagents.length}<Dock {subagents} onopen={open} onattend={attend} />{/if}
+				{#if canvases.length}<Canvases {canvases} {oncanvas} />{/if}
+			</div>
 		{/if}
 		{#if request}
 			{#key request.id}
@@ -254,6 +260,7 @@
 
 <style>
 	.handoffs { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: var(--border-width) solid var(--border); font-size: var(--font-size-sm); }
+	.tray { display: flex; align-items: center; gap: var(--space-2); }
 	.subagent { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); }
 	.subagent span, .report .label { color: var(--muted-fg); }
 	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }

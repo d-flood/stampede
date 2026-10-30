@@ -82,7 +82,7 @@
 </section>
 
 <style>
-	.dock { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-sm); }
+	.dock { display: flex; flex: 1; align-items: center; min-width: 0; gap: var(--space-2); font-size: var(--font-size-sm); }
 	.pills { display: flex; flex: 1; gap: var(--space-2); min-width: 0; overflow: hidden; }
 	.pill, .chip { display: inline-flex; flex: none; align-items: center; gap: var(--space-1); min-height: var(--target-min); padding: 0 var(--space-2); border: var(--border-width) solid var(--border); border-radius: calc(var(--target-min) / 2); background: var(--surface-1); color: var(--color-fg); font: inherit; white-space: nowrap; cursor: pointer; }
 	.pill { flex: 0 1 auto; max-width: 22em; }

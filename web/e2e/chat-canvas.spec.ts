@@ -60,5 +60,8 @@ test('a chat canvas opens beside its chat, follows edits, and keeps versions', a
 	await expect(content.getByRole('heading', { name: 'Fourth draft' })).toBeAttached();
 	await page.getByRole('button', { name: 'Close report' }).click();
 	await expect(tab).not.toBeVisible();
+	await page.getByRole('region', { name: 'Canvases' }).getByRole('button', { name: 'report' }).click();
+	await expect(content.getByRole('heading', { name: 'Fourth draft' })).toBeAttached();
+	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await closeProject(page, name);
 });
