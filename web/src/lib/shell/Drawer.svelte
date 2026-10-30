@@ -157,7 +157,7 @@
 		z-index: 10;
 		display: flex;
 		flex-direction: column;
-		height: 50dvh;
+		height: calc(100dvh - 48px);
 		border-bottom: var(--border-width) solid var(--border);
 		background: var(--color-bg);
 		outline: none;
