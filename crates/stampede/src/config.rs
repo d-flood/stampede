@@ -41,6 +41,7 @@ struct Settings {
     language_servers: LanguageServers,
     r#loop: Loop,
     storage: Storage,
+    auto_fetch: bool,
 }
 
 impl Default for Settings {
@@ -65,6 +66,7 @@ impl Default for Settings {
             language_servers: LanguageServers::default(),
             r#loop: Loop::default(),
             storage: Storage::default(),
+            auto_fetch: true,
         }
     }
 }
@@ -303,6 +305,7 @@ pub struct Config {
     pub language_servers: LanguageServers,
     pub pause_at: f64,
     pub storage: Storage,
+    pub auto_fetch: bool,
 }
 
 impl Default for Config {
@@ -327,6 +330,7 @@ impl Default for Config {
             language_servers: LanguageServers::default(),
             pause_at: Loop::default().pause_at,
             storage: Storage::default(),
+            auto_fetch: Settings::default().auto_fetch,
         }
     }
 }
@@ -401,6 +405,7 @@ impl Config {
             language_servers,
             r#loop,
             storage,
+            auto_fetch,
         } = toml::from_str(text)?;
         Ok(Self {
             name: name.map(|name| name.trim().to_owned()).filter(|name| !name.is_empty()),
@@ -422,6 +427,7 @@ impl Config {
             language_servers,
             pause_at: r#loop.pause_at,
             storage,
+            auto_fetch,
         })
     }
 
@@ -506,6 +512,15 @@ pub fn write_host_name(path: &Path, name: Option<&str>) -> Result<Option<String>
     let text = with_host_name(text, name)?;
     fs::write(path, text)?;
     Ok(name.map(str::to_owned))
+}
+
+pub fn write_auto_fetch(path: &Path, on: bool) -> Result<bool, Error> {
+    let text = match fs::read_to_string(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        text => text?,
+    };
+    fs::write(path, with_value(text, "auto_fetch", (!on).then_some(toml::Value::Boolean(false)))?)?;
+    Ok(on)
 }
 
 pub fn write_font(path: &Path, role: FontRole, family: Option<&str>) -> Result<(), Error> {
@@ -754,10 +769,14 @@ fn with_host_name(text: String, name: Option<&str>) -> Result<String, Error> {
     with_top_level(text, "name", name)
 }
 
-fn with_top_level(mut text: String, key: &str, value: Option<&str>) -> Result<String, Error> {
+fn with_top_level(text: String, key: &str, value: Option<&str>) -> Result<String, Error> {
+    with_value(text, key, value.map(|value| toml::Value::String(value.to_owned())))
+}
+
+fn with_value(mut text: String, key: &str, value: Option<toml::Value>) -> Result<String, Error> {
     let document: BTreeMap<toml::Spanned<String>, toml::Spanned<toml::Value>> = toml::from_str(&text)?;
     let old = document.iter().find(|(name, _)| name.get_ref() == key).map(|(_, old)| old.span());
-    let value = value.map(|value| toml::Value::String(value.to_owned()).to_string());
+    let value = value.map(|value| value.to_string());
     match (old, value) {
         (Some(old), Some(value)) => text.replace_range(old, &value),
         (None, Some(value)) => text.insert_str(0, &format!("{key} = {value}\n")),

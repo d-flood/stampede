@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Device, ServerMessage } from '#lib/device.svelte.ts';
+	import { find } from '#lib/editor/find.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { languageServer } from '#lib/editor/lsp-editor.ts';
 	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
@@ -197,7 +198,7 @@
 	function build(a: string | Text, b: string | Text): Shown {
 		shown?.destroy();
 		const whole = !a.length !== !b.length;
-		const shared = [basicSetup, syntax ?? [], theme, diffTheme(whole)];
+		const shared = [basicSetup, find, syntax ?? [], theme, diffTheme(whole)];
 		const working = [
 			keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 			shared,

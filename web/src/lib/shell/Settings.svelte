@@ -12,6 +12,8 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import TextArea from '#lib/ui/TextArea.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import type { Component } from 'svelte';
 	import BookmarkSimple from '~icons/ph/bookmark-simple';
 	import Browser from '~icons/ph/browser';
@@ -136,7 +138,7 @@
 								<p id="host-name-help">Names the installed app and windows. Installed apps pick up a new name within about a day.</p>
 								{#if refusal}<p role="alert">{refusal}</p>{/if}
 							</div>
-							<input id="host-name" class="control" type="text" placeholder="Stampede" value={hostName() ?? ''} onchange={(event) => rename(event.currentTarget)} aria-describedby="host-name-help" />
+							<div class="control"><TextField id="host-name" placeholder="Stampede" value={hostName() ?? ''} onchange={(event) => rename(event.currentTarget)} aria-describedby="host-name-help" /></div>
 						</section>
 						<section class="row" aria-labelledby="sidebar-side-label">
 							<div class="text">
@@ -212,7 +214,7 @@
 							</select>
 							<div class="field">
 								<label for="commit-instructions">Instructions</label>
-								<textarea id="commit-instructions" rows="4" value={commitInstructions()} onchange={(event) => instruct(event.currentTarget)} aria-describedby="commit-instructions-help"></textarea>
+								<TextArea id="commit-instructions" rows={4} value={commitInstructions()} onchange={(event) => instruct(event.currentTarget)} aria-describedby="commit-instructions-help" />
 								<p id="commit-instructions-help">The Rig reads only these, recent commit subjects and the staged diff: no tools, settings or AGENTS.md files (Codex still reads its AGENTS.md). Clear to restore the default.</p>
 								{#if commitRefusal}<p role="alert">{commitRefusal}</p>{/if}
 							</div>
@@ -453,9 +455,7 @@
 		font-weight: 600;
 	}
 
-	select,
-	input,
-	textarea {
+	select {
 		box-sizing: border-box;
 		min-height: var(--target-min);
 		padding: var(--space-1) var(--space-2);
@@ -466,15 +466,7 @@
 		font: inherit;
 	}
 
-	textarea {
-		width: 100%;
-		resize: vertical;
-		line-height: 1.5;
-	}
-
-	select:focus-visible,
-	input:focus-visible,
-	textarea:focus-visible {
+	select:focus-visible {
 		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
 		outline-offset: 1px;
 	}

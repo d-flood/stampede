@@ -2,6 +2,7 @@
 	import type { Project } from '#lib/device.svelte.ts';
 	import { createWorktree, refs, type Refs } from '#lib/git.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount } from 'svelte';
 
 	type Props = { project: Project; current?: string; oncreate(projectId: string): void; oncancel(): void };
@@ -55,7 +56,7 @@
 		{/if}
 	</select>
 	<label for="worktree-branch">New branch</label>
-	<input
+	<TextField
 		id="worktree-branch"
 		bind:value={branch}
 		placeholder={from && `Leave blank to check out ${from}`}
@@ -85,8 +86,7 @@
 		font-size: var(--font-size-sm);
 	}
 
-	select,
-	input {
+	select {
 		box-sizing: border-box;
 		width: 100%;
 		min-width: 0;
@@ -99,8 +99,7 @@
 		font: inherit;
 	}
 
-	select:focus-visible,
-	input:focus-visible {
+	select:focus-visible {
 		outline: var(--border-width) solid var(--status-working);
 		outline-offset: var(--border-width);
 	}

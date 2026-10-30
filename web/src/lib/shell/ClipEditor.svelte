@@ -2,6 +2,8 @@
 	import { clips, deleteClip, reorderClips, saveClip } from '#lib/config.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import TextArea from '#lib/ui/TextArea.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 
 	let { draft = '', ondone }: { draft?: string; ondone?: () => void } = $props();
 
@@ -94,10 +96,10 @@
 	{/if}
 	<fieldset disabled={busy}>
 		<label for="clip-name">Clip name</label>
-		<input id="clip-name" bind:value={name} required placeholder="e.g. verify" autocapitalize="off" autocomplete="off" spellcheck="false" aria-describedby="clip-name-help" oninput={() => (saved = '')} />
+		<TextField id="clip-name" bind:value={name} required placeholder="e.g. verify" autocapitalize="off" autocomplete="off" spellcheck="false" aria-describedby="clip-name-help" oninput={() => (saved = '')} />
 		<p id="clip-name-help">Type ;{name.trim() || 'name'} in any Composer to insert it.</p>
 		<label for="clip-text">Clip text</label>
-		<textarea id="clip-text" bind:value={text} rows="6" oninput={() => (saved = '')}></textarea>
+		<TextArea id="clip-text" bind:value={text} rows={6} oninput={() => (saved = '')} />
 	</fieldset>
 	{#if error}<p role="alert">{error}</p>{/if}
 	<div class="actions">
@@ -181,9 +183,7 @@
 		font-size: var(--font-size-sm);
 	}
 
-	select,
-	input,
-	textarea {
+	select {
 		box-sizing: border-box;
 		width: 100%;
 		min-width: 0;
@@ -196,13 +196,7 @@
 		font: inherit;
 	}
 
-	textarea {
-		resize: vertical;
-	}
-
-	select:focus-visible,
-	input:focus-visible,
-	textarea:focus-visible {
+	select:focus-visible {
 		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
 		outline-offset: 1px;
 	}

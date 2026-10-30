@@ -118,6 +118,7 @@ fn router(state: AppState) -> Router {
         .route("/api/version", get(version))
         .route("/api/browser", post(browser::open))
         .route("/api/host-name", get(host_name).put(set_host_name))
+        .route("/api/auto-fetch", get(auto_fetch).put(set_auto_fetch))
         .route("/api/theme", get(theme).put(set_theme))
         .route("/api/themes", get(theme_names))
         .route("/api/themes/{name}", get(preview_theme))
@@ -255,6 +256,18 @@ async fn host_name(State(state): State<AppState>) -> Json<Option<String>> {
 
 async fn set_host_name(State(state): State<AppState>, Json(name): Json<Option<String>>) -> Result<Json<Option<String>>, files::Failure> {
     tokio::task::spawn_blocking(move || config::write_host_name(&state.config_path, name.as_deref()))
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+
+async fn auto_fetch(State(state): State<AppState>) -> Json<bool> {
+    Json(state.config.borrow().auto_fetch)
+}
+
+async fn set_auto_fetch(State(state): State<AppState>, Json(on): Json<bool>) -> Result<Json<bool>, files::Failure> {
+    tokio::task::spawn_blocking(move || config::write_auto_fetch(&state.config_path, on))
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .map(Json)

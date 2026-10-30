@@ -15,6 +15,7 @@
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount } from 'svelte';
 	import CaretDown from '~icons/ph/caret-down';
 	import CaretLeft from '~icons/ph/caret-left';
@@ -232,7 +233,7 @@
 {#snippet command(epic: Epic)}
 	{#if setup !== undefined}
 		<form class="setup" onsubmit={saveSetup}>
-			<input bind:value={setup} aria-label="Setup Command" placeholder="pnpm install" spellcheck="false" autocomplete="off" enterkeyhint="done" />
+			<TextField mono bind:value={setup} aria-label="Setup Command" placeholder="pnpm install" spellcheck="false" autocomplete="off" enterkeyhint="done" />
 			<p class="unset">Leave it empty when a fresh worktree needs nothing.</p>
 			{#if error}<p class="error" role="alert">{error}</p>{/if}
 			<div class="buttons">
@@ -435,7 +436,7 @@
 	{:else if open.page === 'new-ticket'}
 		{@render editing(`${epic.slug}/${next}`, 'Add', !!draft.trim() && !!title.trim())}
 		<div class="fields">
-			<input bind:value={title} aria-label="Title" placeholder="Title" autocomplete="off" />
+			<TextField bind:value={title} aria-label="Title" placeholder="Title" autocomplete="off" />
 			<div class="field">
 				<span>Tags</span>
 				<Tags {tags} onchange={(value) => (tags = value)} />
@@ -717,27 +718,6 @@
 		gap: var(--space-2);
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
-	}
-
-	input {
-		box-sizing: border-box;
-		width: 100%;
-		min-height: var(--target-min);
-		padding: 0 var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-1);
-		color: var(--color-fg);
-		font: inherit;
-		outline: none;
-	}
-
-	input:focus-visible {
-		border-color: var(--status-working);
-	}
-
-	.setup input {
-		font-family: var(--font-mono);
 	}
 
 	.setup {

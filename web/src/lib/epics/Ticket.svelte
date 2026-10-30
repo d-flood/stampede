@@ -9,6 +9,7 @@
 	import { label, marks, onFrontier, record, resolved, toggle, tones, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import CaretRight from '~icons/ph/caret-right';
 
@@ -148,7 +149,7 @@
 			<p>No Notes yet.</p>
 		{/each}
 		<form onsubmit={add}>
-			<input bind:value={draft} aria-label="Add a Note" placeholder="Add a Note…" enterkeyhint="send" autocomplete="off" readonly={adding} />
+			<TextField bind:value={draft} aria-label="Add a Note" placeholder="Add a Note…" enterkeyhint="send" autocomplete="off" readonly={adding} />
 		</form>
 		{#if unsaved}<p class="error" role="alert">{unsaved}</p>{/if}
 	</section>
@@ -277,23 +278,6 @@
 	.error {
 		color: var(--ansi-1);
 		font-size: var(--font-size-sm);
-	}
-
-	input {
-		box-sizing: border-box;
-		width: 100%;
-		min-height: var(--target-min);
-		padding: 0 var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--surface-1);
-		color: var(--color-fg);
-		font: inherit;
-		outline: none;
-	}
-
-	input:focus-visible {
-		border-color: var(--status-working);
 	}
 
 	.actions,

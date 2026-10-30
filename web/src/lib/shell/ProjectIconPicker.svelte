@@ -3,6 +3,7 @@
 	import { image, list, type Entry } from '#lib/files.svelte.ts';
 	import { monogram } from '#lib/projects.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import Folder from '~icons/ph/folder';
 
 	let { project, onclose }: { project: Project; onclose(): void } = $props();
@@ -99,7 +100,7 @@
 	<form onsubmit={(event) => { event.preventDefault(); fetchIcon(); }}>
 		<label for="project-icon-website">Website URL</label>
 		<div class="website">
-			<input id="project-icon-website" bind:value={website} placeholder="example.org/project/" autocomplete="url" inputmode="url" disabled={busy} />
+			<TextField id="project-icon-website" bind:value={website} placeholder="example.org/project/" autocomplete="url" inputmode="url" disabled={busy} />
 			<Button type="submit" disabled={busy || !website.trim()}>Fetch icon</Button>
 		</div>
 	</form>
@@ -164,19 +165,6 @@
 	form { gap: var(--space-1); }
 	.website, .sources, .directory, .preview, .actions { display: flex; align-items: center; gap: var(--space-2); }
 	.sources, .actions { flex-wrap: wrap; }
-	input:not([hidden]) {
-		box-sizing: border-box;
-		flex: 1;
-		min-width: 0;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font: inherit;
-	}
-	input:focus-visible { outline: var(--border-width) solid var(--status-working); }
 	.directory { justify-content: space-between; min-height: var(--target-min); }
 	strong { min-width: 0; overflow-wrap: anywhere; }
 	.files {

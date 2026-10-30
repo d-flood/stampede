@@ -3,6 +3,7 @@
 	import { painted } from '#lib/paint.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount, tick } from 'svelte';
 	import ArrowClockwise from '~icons/ph/arrow-clockwise';
 	import ArrowSquareOut from '~icons/ph/arrow-square-out';
@@ -102,7 +103,7 @@
 <div class="browser" role="tabpanel" aria-label="Browser">
 	<form onsubmit={(event) => { event.preventDefault(); navigate(); }}>
 		<IconButton label="Reload preview" type="button" disabled={!src || pending} onclick={reloadPreview}><ArrowClockwise /></IconButton>
-		<input aria-label="Host address" bind:value={address} placeholder="http://localhost:5173" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="url" {@attach (element) => { if (focused) element.focus(); }} />
+		<TextField mono aria-label="Host address" bind:value={address} placeholder="http://localhost:5173" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="url" {@attach (element) => { if (focused) element.focus(); }} />
 		<Button type="submit" disabled={pending}>{pending ? 'Opening…' : 'Go'}</Button>
 		<IconButton label="Open preview in new window" type="button" disabled={!src} onclick={() => window.open(src, '_blank', 'noopener')}><ArrowSquareOut /></IconButton>
 	</form>
@@ -149,24 +150,6 @@
 		gap: var(--space-1);
 		padding: var(--space-1);
 		border-bottom: var(--border-width) solid var(--border);
-	}
-
-	input {
-		flex: 1;
-		min-width: 0;
-		min-height: var(--target-min);
-		box-sizing: border-box;
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-	}
-
-	input:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
 	}
 
 	iframe {

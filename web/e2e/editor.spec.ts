@@ -213,3 +213,34 @@ test('Editor markers and Agent file changes preserve explicit edits', async ({ p
 		try { return readFileSync(ignored, 'utf8'); } catch { return ''; }
 	}).toContain('with unsaved edits');
 });
+
+test('find panel searches, steps, replaces and closes', async ({ page }, { project }) => {
+	const name = `find-${project.name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+	mkdirSync(root);
+	writeFileSync(`${root}/code.ts`, 'const alpha = 1;\nconst Alpha = alpha + 1;\n');
+	await openProject(page, name);
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'code.ts', exact: true }).click();
+	const editor = page.getByRole('tabpanel');
+	const source = editor.locator('.cm-content');
+	await source.click();
+	await page.keyboard.press('ControlOrMeta+f');
+	const panel = editor.getByRole('search');
+	const find = panel.getByRole('textbox', { name: 'Find', exact: true });
+	await expect(find).toBeFocused();
+	await find.fill('alpha');
+	await expect(editor.locator('.cm-searchMatch')).toHaveCount(3);
+	await panel.getByRole('button', { name: 'Match case' }).click();
+	await expect(editor.locator('.cm-searchMatch')).toHaveCount(2);
+	await find.press('Enter');
+	await expect(editor.locator('.cm-searchMatch-selected')).toHaveCount(1);
+	await panel.getByRole('textbox', { name: 'Replace', exact: true }).fill('beta');
+	await panel.getByRole('button', { name: 'Replace all' }).click();
+	await expect(source).toHaveText(/const beta = 1;\s*const Alpha = beta \+ 1;/);
+	await source.click();
+	await page.keyboard.press('ControlOrMeta+f');
+	await expect(find).toBeFocused();
+	await page.keyboard.press('Escape');
+	await expect(panel).toBeHidden();
+});

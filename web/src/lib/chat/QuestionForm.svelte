@@ -3,6 +3,7 @@
 	import type { Answer, Question, QuestionResponse } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import TextArea from '#lib/ui/TextArea.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Media from '#lib/chat/Media.svelte';
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
@@ -74,7 +75,7 @@
 							{/each}
 						</div>
 					{/if}
-					<label>{question.type === 'text' ? 'Answer' : 'Additional text (optional)'}<textarea rows="4" maxlength="16384" value={response.text} {disabled} oninput={(event) => text(event.currentTarget.value)}></textarea></label>
+					<label>{question.type === 'text' ? 'Answer' : 'Additional text (optional)'}<TextArea rows={4} maxlength={16384} value={response.text} {disabled} oninput={(event) => text(event.currentTarget.value)} /></label>
 				</div>
 			</div>
 			<div class="actions">
@@ -123,7 +124,6 @@
 	.choice { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); width: 100%; font-weight: 600; }
 	.recommended { font-weight: 400; color: var(--status-waiting); font-size: var(--font-size-sm); }
 	.description { display: flex; flex-direction: column; gap: var(--space-1); padding: 0 var(--space-3) var(--space-2); }
-	textarea { box-sizing: border-box; width: 100%; min-width: 0; resize: vertical; padding: var(--space-2) var(--space-3); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg); font: inherit; }
 	.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 	.review { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
 	.review li { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); padding-bottom: var(--space-3); border-bottom: var(--border-width) solid var(--border); }

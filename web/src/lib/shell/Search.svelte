@@ -6,6 +6,8 @@
 	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
+	import Toggle from '#lib/ui/Toggle.svelte';
 	import { onMount } from 'svelte';
 	import Eye from '~icons/ph/eye';
 	import EyeSlash from '~icons/ph/eye-slash';
@@ -23,7 +25,7 @@
 	let results = $state.raw<Result[]>([]);
 	let shown = $state(PAGE);
 	let done = $state<{ truncated: boolean; error?: string }>();
-	let input: HTMLInputElement;
+	let input = $state<HTMLInputElement>();
 	let current: string | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let pending: Result[] = [];
@@ -47,7 +49,7 @@
 	});
 
 	$effect(() => {
-		if (!hidden && form() === 'desktop') input.focus();
+		if (!hidden && form() === 'desktop') input?.focus();
 	});
 
 	function message(message: ServerMessage) {
@@ -128,9 +130,10 @@
 		}}
 	>
 		<div class="query">
-			<input
-				bind:this={input}
+			<TextField
+				bind:ref={input}
 				bind:value={query}
+				mono
 				oninput={schedule}
 				placeholder="Search"
 				aria-label="Search"
@@ -139,12 +142,13 @@
 				autocomplete="off"
 				spellcheck={false}
 			/>
-			<button type="button" title="Match case" aria-label="Match case" aria-pressed={toggles.caseSensitive} onclick={() => flip('caseSensitive')}>Aa</button>
-			<button type="button" class="word" title="Match whole word" aria-label="Match whole word" aria-pressed={toggles.wholeWord} onclick={() => flip('wholeWord')}>ab</button>
-			<button type="button" title="Use regular expression" aria-label="Use regular expression" aria-pressed={toggles.regex} onclick={() => flip('regex')}>.*</button>
+			<Toggle label="Match case" pressed={toggles.caseSensitive} onclick={() => flip('caseSensitive')}>Aa</Toggle>
+			<Toggle label="Match whole word" pressed={toggles.wholeWord} onclick={() => flip('wholeWord')}><u>ab</u></Toggle>
+			<Toggle label="Use regular expression" pressed={toggles.regex} onclick={() => flip('regex')}>.*</Toggle>
 		</div>
-		<input
+		<TextField
 			bind:value={include}
+			mono
 			oninput={schedule}
 			placeholder="Files to include, e.g. *.ts, src/**"
 			aria-label="Files to include"
@@ -152,8 +156,9 @@
 			autocomplete="off"
 			spellcheck={false}
 		/>
-		<input
+		<TextField
 			bind:value={exclude}
+			mono
 			oninput={schedule}
 			placeholder="Files to exclude"
 			aria-label="Files to exclude"
@@ -222,68 +227,9 @@
 		padding: 0 var(--space-2);
 	}
 
-	input {
-		box-sizing: border-box;
-		width: 100%;
-		min-width: 0;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font: inherit;
-		font-family: var(--font-mono);
-		outline: none;
-	}
-
-	input:focus-visible {
-		border-color: var(--status-working);
-	}
-
-	input[aria-invalid='true'] {
-		border-color: var(--ansi-1);
-	}
-
 	.query {
 		display: flex;
 		gap: var(--space-1);
-	}
-
-	.query input {
-		flex: 1;
-	}
-
-	.query button {
-		flex: none;
-		min-width: var(--target-min);
-		min-height: var(--target-min);
-		border: var(--border-width) solid transparent;
-		border-radius: var(--radius-sm);
-		background: none;
-		color: var(--muted-fg);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-		cursor: pointer;
-	}
-
-	.query button:hover {
-		background: var(--hover);
-		color: var(--color-fg);
-	}
-
-	.query button:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-	}
-
-	.query [aria-pressed='true'] {
-		border-color: var(--status-working);
-		background: var(--surface-3);
-		color: var(--color-fg);
-	}
-
-	.word {
-		text-decoration: underline;
 	}
 
 	header {

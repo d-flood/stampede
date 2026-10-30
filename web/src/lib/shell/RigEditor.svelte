@@ -3,6 +3,7 @@
 	import { agentNames, deleteRig, reorderRigs, rigs, saveRig, type Agent } from '#lib/config.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 
 	type Model = { value: string; label: string; efforts: string[] };
 	type Options = { models: Model[]; modes: { value: string; label: string }[]; settings?: { model?: string; effort?: string } };
@@ -145,7 +146,7 @@
 	</div>
 	<fieldset disabled={busy}>
 		<label for="rig-name">Name</label>
-		<input id="rig-name" bind:value={name} required placeholder="e.g. Reviewer" oninput={() => (saved = '')} />
+		<TextField id="rig-name" bind:value={name} required placeholder="e.g. Reviewer" oninput={() => (saved = '')} />
 		<label for="rig-provider">Provider</label>
 		<select id="rig-provider" value={agent} onchange={(event) => provider(event.currentTarget.value as Agent)}>
 			{#each Object.entries(agentNames) as [value, label]}<option {value}>{label}</option>{/each}
@@ -254,8 +255,7 @@
 		font-size: var(--font-size-sm);
 	}
 
-	select,
-	input {
+	select {
 		box-sizing: border-box;
 		width: 100%;
 		min-width: 0;
@@ -268,8 +268,7 @@
 		font: inherit;
 	}
 
-	select:focus-visible,
-	input:focus-visible {
+	select:focus-visible {
 		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
 		outline-offset: 1px;
 	}

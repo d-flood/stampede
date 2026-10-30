@@ -2,6 +2,7 @@
 	import { editor as settings } from '#lib/config.svelte.ts';
 	import type { Device } from '#lib/device.svelte.ts';
 	import { changeMarkers, setBaseline } from '#lib/editor/changes.ts';
+	import { find } from '#lib/editor/find.ts';
 	import { keybindings } from '#lib/editor/keymap.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { languageServer } from '#lib/editor/lsp-editor.ts';
@@ -80,6 +81,7 @@
 							spelling.of([]),
 							keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 							basicSetup,
+							find,
 							changeMarkers,
 							syntax.of(highlighting),
 							theme,

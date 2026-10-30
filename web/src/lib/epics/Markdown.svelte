@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { editor as settings } from '#lib/config.svelte.ts';
+	import { find } from '#lib/editor/find.ts';
 	import { keybindings } from '#lib/editor/keymap.ts';
 	import { theme } from '#lib/editor/theme.ts';
 	import { form } from '#lib/form.ts';
@@ -26,6 +27,7 @@
 					keys.of([]),
 					keymap.of([{ key: 'Mod-s', run: () => (onsave(), true) }]),
 					basicSetup,
+					find,
 					markdown(),
 					EditorView.lineWrapping,
 					EditorView.contentAttributes.of({ 'aria-label': label }),

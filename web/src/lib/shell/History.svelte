@@ -8,6 +8,8 @@
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import TextArea from '#lib/ui/TextArea.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import ArrowUUpLeft from '~icons/ph/arrow-u-up-left';
@@ -239,7 +241,7 @@
 				if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) save();
 			}}
 		>
-			<input
+			<TextField
 				bind:value={editing.summary}
 				aria-label="Summary"
 				placeholder="Summary"
@@ -253,14 +255,14 @@
 					event.currentTarget.form?.querySelector('textarea')?.focus();
 				}}
 			/>
-			<textarea
+			<TextArea
 				bind:value={editing.description}
 				aria-label="Description"
 				placeholder="Description"
-				rows="8"
+				rows={8}
 				spellcheck="true"
 				disabled={!editing.loaded || saving}
-			></textarea>
+			/>
 			{#if refusal}<p role="alert">{refusal}</p>{/if}
 		</form>
 	{/if}
@@ -346,25 +348,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
-	}
-
-	input,
-	textarea {
-		box-sizing: border-box;
-		width: 100%;
-		padding: var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--surface-2);
-		color: var(--color-fg);
-		font: inherit;
-		line-height: 1.5;
-		resize: vertical;
-	}
-
-	input:focus-visible,
-	textarea:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
 	}
 
 	.failure {

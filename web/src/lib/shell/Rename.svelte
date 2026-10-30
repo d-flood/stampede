@@ -2,6 +2,7 @@
 	import { rename, RequestError } from '#lib/files.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 
 	type Props = { projectId: string; onrename(from: string, to: string): void };
 
@@ -49,7 +50,7 @@
 <Dialog bind:open title={target.dir ? 'Rename Directory' : 'Rename File'} description={`Rename “${target.path}”`}>
 	<form id={`${id}-form`} onsubmit={submit}>
 		<label for={`${id}-name`}>Name</label>
-		<input
+		<TextField
 			id={`${id}-name`}
 			bind:value={name}
 			required
@@ -74,21 +75,5 @@
 	label {
 		display: block;
 		margin-bottom: var(--space-1);
-	}
-
-	input {
-		box-sizing: border-box;
-		width: 100%;
-		min-height: var(--target-min);
-		padding: var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--surface-2);
-		color: var(--color-fg);
-		font: inherit;
-	}
-
-	input:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
 	}
 </style>

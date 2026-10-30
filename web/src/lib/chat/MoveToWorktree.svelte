@@ -2,6 +2,7 @@
 	import type { Chat, Device } from '#lib/device.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount } from 'svelte';
 
 	let { device, chat }: { device: Device; chat: Chat } = $props();
@@ -46,7 +47,7 @@
 <Dialog bind:open title="Move to new worktree" description="Cut a new branch from the current one, carry the uncommitted changes over, and continue this Chat there.">
 	<form id="move-{chat.id}" onsubmit={(event) => { event.preventDefault(); move(); }}>
 		<label for="move-branch-{chat.id}">New branch</label>
-		<input id="move-branch-{chat.id}" bind:value={branch} required autocomplete="off" autocapitalize="off" spellcheck="false" disabled={moving} {@attach (element) => element.focus()} />
+		<TextField id="move-branch-{chat.id}" bind:value={branch} required autocomplete="off" autocapitalize="off" spellcheck="false" disabled={moving} {@attach (element) => element.focus()} />
 		{#if moving}<p role="status">Moving {chat.rig}…</p>{/if}
 		{#if error}<p role="alert">{error}</p>{/if}
 	</form>
@@ -60,7 +61,5 @@
 	form { display: flex; flex-direction: column; gap: var(--space-2); }
 	label { font-weight: 600; }
 	p { margin: var(--space-2) 0 0; color: var(--muted-fg); overflow-wrap: anywhere; }
-	input { box-sizing: border-box; width: 100%; min-height: var(--target-min); padding: var(--space-2); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg); font: inherit; }
-	input:focus-visible { outline: var(--border-width) solid var(--status-working); outline-offset: var(--border-width); }
 	[role='alert'] { color: var(--ansi-1); }
 </style>
