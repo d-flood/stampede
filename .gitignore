@@ -6,3 +6,7 @@
 /web/test-results
 /web/playwright-report
 __pycache__/
+/promo/node_modules
+/promo/public/footage
+/promo/out
+/promo/public/music

@@ -1,0 +1,26 @@
+:root {
+	--font-display: 'Fraunces', Georgia, serif;
+	--font-body: 'Inter', system-ui, sans-serif;
+	--tide: #0e7490;
+	--surface: #fbfaf7;
+	--surface-raised: #f0eee8;
+	--border: #e2dfd6;
+	--muted: #6b6a64;
+	color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--tide: #67e8f9;
+		--surface: #111315;
+		--surface-raised: #1b1e21;
+		--border: #2a2e33;
+		--muted: #9a9a94;
+	}
+}
+
+body {
+	margin: 0;
+	background: var(--surface);
+	font-family: var(--font-body);
+}

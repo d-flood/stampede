@@ -231,6 +231,8 @@ for entry in entries[start:]:
         run(entry['run'])
     elif 'gate' in entry:
         gate(entry['gate'])
+    elif 'sleep' in entry:
+        time.sleep(entry['sleep'])
     else:
         message = entry['stdout']
         response = message.get('response', {})

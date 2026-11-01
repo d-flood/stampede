@@ -339,6 +339,8 @@ def proxy():
             send({'method': 'item/completed', 'params': {'threadId': entry['thread'], 'turnId': entry['turn'], 'item': {'type': 'mcpToolCall', 'id': 'rig-review', 'server': 'stampede_chat', 'tool': 'delegate_to_rig', 'arguments': entry['delegate'], 'status': 'completed', 'result': result}}})
         elif 'gate' in entry:
             gate(entry['gate'])
+        elif 'sleep' in entry:
+            time.sleep(entry['sleep'])
         elif 'daemon' in entry:
             # Like the real proxy, which notices that its daemon has gone only once it relays something.
             stdin.read(1)
