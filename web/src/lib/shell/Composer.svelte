@@ -40,7 +40,7 @@
 		else localStorage.removeItem(key);
 	}
 
-	function clear() {
+	export function clear() {
 		text = '';
 		keep();
 		box.focus();

@@ -178,7 +178,8 @@ async fn codex_built_ins_ride_the_next_turn_or_reach_the_daemon_as_requests() {
     assert!(record(&server, &chat_id)["context"].is_object());
     assert!(record(&server, &chat_id)["tokens"].is_object());
     view.turn(&mut socket, &chat_id, json!({ "type": "chat.run", "chatId": chat_id, "command": "compact" })).await;
-    assert_eq!(record(&server, &chat_id)["context"], json!({ "used": 14094, "window": 258400 }), "Codex's post-compact estimate reaches the meter");
+    let cache = json!({ "expires": 1792187053113u64, "then": "probably-warm" });
+    assert_eq!(record(&server, &chat_id)["context"], json!({ "used": 14094, "window": 258400, "cache": cache }), "Codex's post-compact estimate reaches the meter");
     run(&mut socket, &chat_id, json!({ "command": "clear" })).await;
     view.follow(&mut socket, &chat_id, |view| view.items.is_empty() && view.last()["pending"] != json!([])).await;
     let collaboration = |mode| {

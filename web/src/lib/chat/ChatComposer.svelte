@@ -1,14 +1,18 @@
 <script lang="ts">
 	import { agentNames } from '#lib/config.svelte.ts';
+	import { cold, warmth } from '#lib/chat/cache.ts';
 	import Chips from '#lib/chat/Chips.svelte';
 	import ContextBar from '#lib/chat/ContextBar.svelte';
+	import { count } from '#lib/chat/count.ts';
 	import FileMenu from '#lib/chat/FileMenu.svelte';
+	import { ago } from '#lib/chat/sessions.ts';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
 	import TurnRing from '#lib/chat/TurnRing.svelte';
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import Dialog from '#lib/ui/Dialog.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import type { Component } from 'svelte';
 	import { prefersReducedMotion } from 'svelte/motion';
@@ -46,6 +50,7 @@
 	let error = $state('');
 	let reading = $state(false);
 	let launching = $state(false);
+	let confirming = $state<{ text: string; queue: boolean; probably: boolean }>();
 
 	function choose() {
 		const files = [...(picker.files ?? [])];
@@ -87,7 +92,7 @@
 	const stoppable = $derived(working || shelling);
 	const agent = $derived(chat.agent === 'claude-code' ? 'Claude' : agentNames[chat.agent]);
 
-	function send(text: string, queue: boolean) {
+	function send(text: string, queue: boolean, confirmed = false) {
 		if (!live || reading || (!text.trim() && !images.length)) return false;
 		if (images.length > 20) { error = 'Attach up to 20 images.'; return false; }
 		if (images.reduce((size, image) => size + image.data.length * 3 / 4, 0) > 20 * 1024 * 1024) { error = 'Keep attachments under 20 MB per message.'; return false; }
@@ -115,11 +120,22 @@
 			onrun(command, value);
 			return true;
 		}
+		const lapse = chat.context?.cache && warmth(chat.context.cache);
+		if (!confirmed && !working && cold(lapse) && chat.context!.used >= 100_000) {
+			confirming = { text, queue, probably: lapse === 'probably-cold' };
+			return false;
+		}
 		launching = !working && !prefersReducedMotion.current;
 		device.send({ type: 'chat.send', chatId: chat.id, text, queue, images: images.map(({ mediaType, data }) => ({ mediaType, data })) });
 		images = [];
 		error = '';
 		return true;
+	}
+
+	function confirm() {
+		const { text, queue } = confirming!;
+		confirming = undefined;
+		if (send(text, queue, true)) composer.clear();
 	}
 
 	function interrupt() {
@@ -224,6 +240,23 @@
 		</div>
 	{/snippet}
 </Composer>
+
+<Dialog
+	bind:open={() => !!confirming, (open) => !open && (confirming = undefined)}
+	title={confirming?.probably ? 'Cache probably cold' : 'Cache cold'}
+	description={chat.context?.cache
+		? `The prompt cache ${confirming?.probably ? 'probably expired' : 'expired'} ${ago(chat.context.cache.expires)}, so this message ${confirming?.probably ? 'probably re-reads' : 're-reads'} all ${count(chat.context.used)} tokens of context uncached.`
+		: ''}
+	oncloseautofocus={(event) => {
+		event.preventDefault();
+		composer.focus();
+	}}
+>
+	{#snippet actions()}
+		<Button onclick={() => (confirming = undefined)}>Cancel</Button>
+		<Button variant="primary" onclick={confirm}>Send anyway</Button>
+	{/snippet}
+</Dialog>
 
 <style>
 	.attachments { display: flex; gap: var(--space-2); overflow-x: auto; }

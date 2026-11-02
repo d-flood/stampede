@@ -67,7 +67,9 @@ export type Image = { mediaType: string; data: string };
 export type Answer = { allow: true; rule?: { prefix: string[]; scope: 'chat' | 'always' }[] } | { allow: false; instead?: string } | { answers: string[][] } | { responses: Record<string, QuestionResponse> };
 export type Todo = { text: string; status: 'pending' | 'active' | 'done' };
 
-export type Context = { used: number; window: number };
+export type Cache = { expires: number; then: 'probably-warm' | 'probably-cold' | 'cold'; settles?: number };
+
+export type Context = { used: number; window: number; cache?: Cache };
 
 export type Tokens = { input: number; output: number };
 

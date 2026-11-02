@@ -113,6 +113,24 @@ async fn a_codex_chat_reports_its_context_and_tokens() {
 }
 
 #[tokio::test]
+async fn a_chat_estimates_when_its_prompt_cache_lapses() {
+    const HOUR: u64 = 3_600_000;
+    let started = now();
+    let (server, mut socket, chat) = launch("claude-code", "simple-turn", Vec::new()).await;
+    let chat_id = chat["id"].as_str().unwrap();
+    turn(&mut socket, chat_id, &chat).await;
+    let cache = &record(&server, chat_id)["context"]["cache"];
+    assert_eq!(cache["then"], "cold", "{cache}");
+    assert!((started - 60_000 + HOUR..=now() + HOUR).contains(&cache["expires"].as_u64().unwrap()), "{cache}");
+
+    let (server, mut socket, chat) = launch("codex", "simple-turn", Vec::new()).await;
+    let chat_id = chat["id"].as_str().unwrap();
+    turn(&mut socket, chat_id, &chat).await;
+    let cache = json!({ "expires": 1792180267514u64 + HOUR, "then": "probably-warm" });
+    assert_eq!(record(&server, chat_id)["context"]["cache"], cache, "an hour from Codex's last usage report");
+}
+
+#[tokio::test]
 async fn a_claude_chat_keeps_its_meters_through_a_restart_mid_turn() {
     let scratch = tempfile::tempdir().unwrap();
     let gates = scratch.path().join("gates");
@@ -306,7 +324,7 @@ async fn follow(
                 continue;
             }
             match message["type"].as_str().unwrap() {
-                "chat.meters" => meters = json!({ "context": message["context"], "tokens": message["tokens"] }),
+                "chat.meters" => meters = self::meters(&message),
                 "chat.status" => status = message["status"].as_str().unwrap().to_owned(),
                 _ => {}
             }
@@ -317,8 +335,13 @@ async fn follow(
     meters
 }
 
+/// The Chat's meters, less the prompt-cache estimate, which counts from the wall clock.
 fn meters(chat: &Value) -> Value {
-    json!({ "context": chat["context"], "tokens": chat["tokens"] })
+    let mut context = chat["context"].clone();
+    if let Some(context) = context.as_object_mut() {
+        context.remove("cache");
+    }
+    json!({ "context": context, "tokens": chat["tokens"] })
 }
 
 fn record(server: &Server, chat_id: &str) -> Value {
