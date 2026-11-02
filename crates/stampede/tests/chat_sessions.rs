@@ -160,6 +160,15 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
     assert_eq!(attach(&mut socket, chat_id).await, color);
     let running = leftovers(server.root.path());
     assert!(running.iter().any(|process| process.contains(&format!(" --resume {COLOR}"))), "{running:?}");
+    let record = server.root.path().join(format!("data/chats/{chat_id}.json"));
+    let context = timeout(Duration::from_secs(10), async {
+        loop {
+            let chat: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+            if !chat["context"].is_null() { break chat["context"].clone(); }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    });
+    assert_eq!(context.await.expect("the resumed chat never reported its context"), json!({ "used": 4436, "window": 1000000 }));
 
     let listed = list(&mut socket, &project_id).await;
     let ids: Vec<&Value> = listed.as_array().unwrap().iter().map(|session| &session["sessionId"]).collect();

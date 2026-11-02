@@ -221,6 +221,9 @@ async fn launch(
     }
     transcript.settings.chosen = settings.clone();
     transcript.discover(&mut writer).await?;
+    if session.is_some() {
+        writer.write_all(&transcript.request(json!({ "subtype": "get_context_usage", "detail": "summary" }), Asked::Context)).await?;
+    }
     Ok((frames, writer, transcript, received))
 }
 
@@ -1111,8 +1114,10 @@ impl Transcript {
                 }
             }
             Asked::Context if success => {
-                if let (Some(used), Some((_, sent))) = (body["totalTokens"].as_u64(), self.call.as_mut()) {
-                    *sent = used;
+                let model = self.call.as_ref().map(|(model, _)| model.clone()).or_else(|| body["model"].as_str().map(str::to_owned));
+                if let (Some(model), Some(used)) = (model, body["totalTokens"].as_u64()) {
+                    self.call = Some((model, used));
+                    self.window = self.window.or(body["maxTokens"].as_u64());
                     self.meter(None);
                 }
             }
