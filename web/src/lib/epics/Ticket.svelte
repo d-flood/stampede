@@ -11,7 +11,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
-	import CaretRight from '~icons/ph/caret-right';
+	import ChatCircle from '~icons/ph/chat-circle';
 
 	type Props = {
 		epic: Epic;
@@ -21,13 +21,16 @@
 		chat?: Chat;
 		device: Device;
 		onchat(chatId: string): void;
+		onselect(number: number): void;
 	};
 
-	let { epic, ticket, onedit, open, chat, device, onchat }: Props = $props();
+	let { epic, ticket, onedit, open, chat, device, onchat, onselect }: Props = $props();
 
 	const phone = $derived(form() === 'phone');
 	const authors = { agent: 'Agent', david: 'David', stampede: 'Stampede' };
 	const others = $derived(epic.tickets.filter((other) => other.number !== ticket.number));
+	const blockedBy = $derived(others.filter((other) => ticket.blockers.includes(other.number)));
+	const blocks = $derived(others.filter((other) => other.blockers.includes(ticket.number)));
 	const Mark = $derived(marks[ticket.status]);
 	const startable = $derived(!epic.run && onFrontier(epic, ticket));
 	const reopenable = $derived(resolved(ticket.status) || ticket.status === 'in-progress');
@@ -37,9 +40,12 @@
 	const choices = $derived(rigs());
 	const defaultRig = $derived(choices.some((choice) => choice.name === open.rig) ? open.rig : choices[0]?.name);
 	const rig = $derived(ticket.rig ?? defaultRig);
+	const held = $derived(ticket.status === 'in-progress' ? ticket.claim : undefined);
+	const chatStatus = $derived(ticket.releasing ? 'stopping' : (chat?.status ?? 'closed'));
 	let tagging = $state(false);
 	let tagError = $state<string>();
 	let refused = $state<string>();
+	let changing = $state(false);
 	let draft = $state('');
 	let adding = $state(false);
 	let unsaved = $state<string>();
@@ -83,93 +89,135 @@
 {/snippet}
 
 {#snippet start()}
-	<div class="start">
-		<div class="rig">
-			<span>Rig</span>
-			<RigSelect {open} {ticket} {defaultRig} disabled={starting} />
-		</div>
-		<Button
-			variant="primary"
-			disabled={!choices.some((choice) => choice.name === rig) || epic.setup === null || starting || open.savingRigs.includes(ticket.number)}
-			onclick={() => rig && open.start(device, ticket.number, rig)}
-		>
-			{starting ? 'Starting…' : 'Start'}
-		</Button>
-	</div>
+	<Button
+		variant="primary"
+		disabled={!choices.some((choice) => choice.name === rig) || epic.setup === null || starting || open.savingRigs.includes(ticket.number)}
+		onclick={() => rig && open.start(device, ticket.number, rig)}
+	>
+		{starting ? 'Starting…' : 'Start'}
+	</Button>
 {/snippet}
 
-<div class="ticket" class:phone>
-	{#if phone}
-		<h1>{ticket.title}</h1>
-	{/if}
-	{#if phone || edited}
-		<div class="chips">
-			{#if phone}
-				<span class="status" style:--tone={tones[ticket.status]}><Mark />{label(ticket.status)}</span>
-				{#if ticket.blockers.length}<span>after {ticket.blockers.join(', ')}</span>{/if}
-			{/if}
-			{#if edited}<span style:--tone="var(--status-waiting)">edited since its Chat started</span>{/if}
-		</div>
-	{/if}
+{#snippet openChat(chat: Chat, primary: boolean)}
+	<Button variant={primary ? 'primary' : 'default'} onclick={() => onchat(chat.id)}><ChatCircle /> Open Chat</Button>
+{/snippet}
+
+{#snippet ref(other: Ticket)}
+	{@const Other = marks[other.status]}
+	<button class="ref" title={other.title} onclick={() => onselect(other.number)}>
+		<span class="mark" style:color={tones[other.status]}><Other /></span>
+		<span class="number">{other.number}</span>
+		<span class="title">{other.title}</span>
+	</button>
+{/snippet}
+
+<article class="ticket" class:phone aria-label="{epic.slug}/{ticket.number}">
+	{#if !phone}<p class="crumb">{epic.slug}/{ticket.number}</p>{/if}
+	<h2>{ticket.title}</h2>
+	<div class="state">
+		<span class="status" style:--tone={tones[ticket.status]}><Mark />{label(ticket.status)}</span>
+		{#if held}
+			<span class="holder">{held.rig}, <span style:color={chat ? `var(--status-${chat.status})` : undefined}>{chatStatus}</span></span>
+		{/if}
+		{#if edited}<span class="edited">edited since its Chat started</span>{/if}
+		{#if !phone}
+			<span class="actions">
+				{#if chat}{@render openChat(chat, chat.status === 'waiting')}{/if}
+				<Button onclick={onedit}>Edit</Button>
+				{#if reopenable}{@render move()}{/if}
+				{#if startable}{@render start()}{/if}
+			</span>
+		{/if}
+	</div>
 	{#if ticket.attention}
 		<p class="attention" role="status">{ticket.attention}</p>
 	{/if}
 	{#if error}
 		<p class="attention" role="alert">{error}</p>
 	{/if}
-	{#if phone && chat}
-		<button class="chat" onclick={() => onchat(chat.id)}>
-			<span>Chat · <span style:color="var(--status-{chat.status})">{chat.status}</span></span>
-			<CaretRight />
-		</button>
-	{/if}
-	<section aria-label="Body">
-		<Text item={{ kind: 'text', text: ticket.body, streaming: false, phase: 'final' }} />
-	</section>
-	<section aria-label="Tags">
-		<h2>Tags</h2>
-		<Tags tags={ticket.tags ?? []} onchange={tag} disabled={tagging} />
-		{#if tagError}<p role="alert">{tagError}</p>{/if}
-	</section>
-	{#if others.length}
-		<section aria-label="Blockers">
-			<h2>Blocked by</h2>
-			<Blockers tickets={others} blockers={ticket.blockers} ontoggle={block} />
-			{#if refused}<p class="error" role="alert">{refused}</p>{/if}
-		</section>
-	{/if}
-	<section aria-label="Notes">
-		<h2>Notes</h2>
-		{#each ticket.notes as note, index (index)}
-			<div class="note">
-				<span class="meta">{authors[note.author]} · {ago(note.at)}</span>
-				<Text item={{ kind: 'text', text: note.text, streaming: false, phase: 'final' }} />
-			</div>
-		{:else}
-			<p>No Notes yet.</p>
-		{/each}
-		<form onsubmit={add}>
-			<TextField bind:value={draft} aria-label="Add a Note" placeholder="Add a Note…" enterkeyhint="send" autocomplete="off" readonly={adding} />
-		</form>
-		{#if unsaved}<p class="error" role="alert">{unsaved}</p>{/if}
-	</section>
-	{#if !phone}
-		<div class="actions">
-			<Button onclick={onedit}>Edit</Button>
-			{#if chat}<Button onclick={() => onchat(chat.id)}>Open Chat</Button>{/if}
-			{#if reopenable}{@render move()}{/if}
-			{#if startable}{@render start()}{/if}
-		</div>
-	{:else if startable}
-		{@render start()}
-	{:else if reopenable}
-		{@render move()}
-	{/if}
 	{#if unmoved}<p class="error" role="alert">{unmoved}</p>{/if}
 	{#if startable && epic.setup === null}
 		<p class="hint">Record a Setup Command before starting a Ticket.</p>
 	{/if}
-</div>
+	{#if phone && (blockedBy.length || blocks.length)}
+		<div class="chips">
+			{#each blockedBy as other (other.number)}
+				{@const Other = marks[other.status]}
+				<button class="chip" onclick={() => onselect(other.number)}><span class="mark" style:color={tones[other.status]}><Other /></span>after {other.number}</button>
+			{/each}
+			{#each blocks as other (other.number)}
+				<button class="chip" onclick={() => onselect(other.number)}>blocks {other.number}</button>
+			{/each}
+		</div>
+	{/if}
+	<div class="columns">
+		<div class="doc">
+			<section aria-label="Body">
+				<Text item={{ kind: 'text', text: ticket.body, streaming: false, phase: 'final' }} />
+			</section>
+			<section aria-label="Notes">
+				<h3>Notes</h3>
+				{#each ticket.notes as note, index (index)}
+					<div class="note">
+						<span class="meta">{authors[note.author]} · {ago(note.at)}</span>
+						<Text item={{ kind: 'text', text: note.text, streaming: false, phase: 'final' }} />
+					</div>
+				{:else}
+					<p>No Notes yet.</p>
+				{/each}
+				<form onsubmit={add}>
+					<TextField bind:value={draft} aria-label="Add a Note" placeholder="Add a Note…" enterkeyhint="send" autocomplete="off" readonly={adding} />
+				</form>
+				{#if unsaved}<p class="error" role="alert">{unsaved}</p>{/if}
+			</section>
+		</div>
+		<div class="props">
+			<div class="prop">
+				<h3>Rig</h3>
+				{#if ticket.status === 'not-started'}
+					<RigSelect {open} {ticket} {defaultRig} disabled={starting} />
+				{:else}
+					<p class="value">{ticket.claim?.rig ?? ticket.rig ?? 'Run default'}</p>
+				{/if}
+			</div>
+			{#if others.length}
+				<section class="prop" aria-label="Blockers">
+					<div class="heading">
+						<h3>Blocked by</h3>
+						<button class="link" aria-expanded={changing} onclick={() => (changing = !changing)}>{changing ? 'Done' : 'Change'}</button>
+					</div>
+					{#if changing}
+						<Blockers tickets={others} blockers={ticket.blockers} ontoggle={block} />
+					{:else}
+						{#each blockedBy as other (other.number)}{@render ref(other)}{:else}<p>None</p>{/each}
+					{/if}
+					{#if refused}<p class="error" role="alert">{refused}</p>{/if}
+				</section>
+			{/if}
+			{#if blocks.length}
+				<div class="prop">
+					<h3>Blocks</h3>
+					{#each blocks as other (other.number)}{@render ref(other)}{/each}
+				</div>
+			{/if}
+			<section class="prop" aria-label="Tags">
+				<h3>Tags</h3>
+				<Tags tags={ticket.tags ?? []} onchange={tag} disabled={tagging} />
+				{#if tagError}<p role="alert">{tagError}</p>{/if}
+			</section>
+		</div>
+	</div>
+	{#if phone && (startable || chat || reopenable)}
+		<div class="bottom">
+			{#if startable}
+				{@render start()}
+			{:else if chat}
+				{@render openChat(chat, true)}
+			{/if}
+			{#if reopenable}{@render move()}{/if}
+		</div>
+	{/if}
+</article>
 
 <Dialog
 	bind:open={confirming}
@@ -186,36 +234,65 @@
 	.ticket {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-4);
+		gap: var(--space-3);
 		line-height: 1.5;
 	}
 
-	h1 {
-		margin: 0;
-		font-size: var(--font-size-lg);
-	}
-
-	.chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-2);
+	.crumb {
+		color: var(--muted-fg);
+		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 	}
 
-	h1 + .chips {
+	h2 {
+		max-width: 40ch;
+		margin: 0;
+		font-size: calc(var(--font-size-lg) + 4px);
+		line-height: 1.25;
+	}
+
+	.crumb + h2 {
 		margin-top: calc(-1 * var(--space-2));
 	}
 
-	.chips span {
-		padding: 1px var(--space-3);
-		border: var(--border-width) solid var(--tone, var(--border));
-		border-radius: 1em;
-		color: var(--tone, var(--muted-fg));
+	.state {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-2) var(--space-3);
+		padding-bottom: var(--space-4);
+		border-bottom: var(--border-width) solid var(--border);
+		font-size: var(--font-size-sm);
 	}
 
-	.status :global(svg) {
-		margin-right: var(--space-1);
-		vertical-align: -0.125em;
+	.status {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		padding: 1px var(--space-3) 1px var(--space-2);
+		border-radius: 1em;
+		background: color-mix(in oklab, var(--tone) 15%, transparent);
+		color: var(--tone);
+		font-weight: 500;
+	}
+
+	.holder {
+		color: var(--muted-fg);
+	}
+
+	.edited {
+		padding: 1px var(--space-3);
+		border: var(--border-width) solid var(--status-waiting);
+		border-radius: 1em;
+		color: var(--status-waiting);
+	}
+
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+		margin-left: auto;
+		font-size: var(--font-size-md);
 	}
 
 	.attention {
@@ -226,38 +303,118 @@
 		overflow-wrap: anywhere;
 	}
 
-	.chat {
-		display: flex;
-		align-items: center;
+	.columns {
+		display: grid;
+		grid-template-columns: minmax(0, 68ch) minmax(11rem, 15rem);
 		justify-content: space-between;
-		min-height: var(--target-min);
-		padding: 0 var(--space-4);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: none;
-		color: var(--color-fg);
-		font: inherit;
+		gap: var(--space-6) calc(2 * var(--space-6));
+		padding-top: var(--space-2);
 	}
 
-	.chat :global(svg) {
-		color: var(--muted-fg);
+	@container (max-width: 44rem) {
+		.columns {
+			grid-template-columns: minmax(0, 1fr);
+		}
 	}
 
-	section[aria-label='Notes'],
-	section[aria-label='Tags'],
-	section[aria-label='Blockers'] {
+	.doc,
+	.props,
+	section,
+	.prop {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
+		min-width: 0;
 	}
 
-	h2 {
+	.doc,
+	.props {
+		gap: var(--space-6);
+	}
+
+	h3 {
 		margin: 0;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
+	}
+
+	.heading {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+	}
+
+	.link {
+		padding: 0;
+		border: none;
+		background: none;
+		color: var(--status-working);
+		font: inherit;
+		font-size: var(--font-size-sm);
+		cursor: pointer;
+	}
+
+	.ref {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		min-height: var(--target-min);
+		padding: 0;
+		border: none;
+		background: none;
+		color: var(--color-fg);
+		font: inherit;
+		font-size: var(--font-size-sm);
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.ref:hover .title {
+		text-decoration: underline;
+	}
+
+	.ref .title {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.mark {
+		display: flex;
+		flex: none;
+	}
+
+	.number {
+		color: var(--muted-fg);
+		font-family: var(--font-mono);
+	}
+
+	.value {
+		color: var(--color-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+	}
+
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		min-height: var(--target-min);
+		padding: 0 var(--space-3);
+		border: var(--border-width) solid var(--border);
+		border-radius: 999px;
+		background: none;
+		color: var(--muted-fg);
+		font: inherit;
+		font-size: var(--font-size-sm);
+		cursor: pointer;
 	}
 
 	.note {
@@ -280,45 +437,44 @@
 		font-size: var(--font-size-sm);
 	}
 
-	.actions,
-	.start {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: var(--space-2);
-	}
-
-	.actions .start {
-		margin-left: auto;
-	}
-
-	.start .rig {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		color: var(--muted-fg);
-	}
-
-	.rig > :global(div) {
-		flex: 1;
-		min-width: 0;
-	}
-
 	.hint {
 		font-size: var(--font-size-sm);
+	}
+
+	.link:focus-visible,
+	.ref:focus-visible,
+	.chip:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
+	}
+
+	.bottom {
+		position: sticky;
+		bottom: calc(-1 * var(--space-3));
+		display: flex;
+		gap: var(--space-2);
+		margin: 0 calc(-1 * var(--space-3)) calc(-1 * var(--space-3));
+		padding: var(--space-2) var(--space-3) var(--space-3);
+		border-top: var(--border-width) solid var(--border);
+		background: var(--color-bg);
+	}
+
+	.bottom > :global(button:first-child) {
+		flex: 1;
 	}
 
 	.phone {
 		font-size: var(--font-size-lg);
 	}
 
-	.phone h1 {
+	.phone h2 {
 		font-size: 1.25em;
 	}
 
-	.phone .start {
-		flex-direction: column;
-		align-items: stretch;
+	.phone .state {
+		padding-bottom: var(--space-3);
 	}
 
+	.phone .columns {
+		grid-template-columns: minmax(0, 1fr);
+	}
 </style>

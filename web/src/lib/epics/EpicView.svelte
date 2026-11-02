@@ -4,11 +4,10 @@
 	import { rigs } from '#lib/config.svelte.ts';
 	import type { Chat, Device, Epic, Finding, Review, Reviewer, Ticket, TicketTag } from '#lib/device.svelte.ts';
 	import Blockers from '#lib/epics/Blockers.svelte';
-	import RigSelect from '#lib/epics/RigSelect.svelte';
 	import Tags from '#lib/epics/Tags.svelte';
 	import Progress from '#lib/epics/Progress.svelte';
 	import TicketDetail from '#lib/epics/Ticket.svelte';
-	import { counts, label, land, marks, record, resolved, statuses, ticketTags, toggle, tones, type Edit, type OpenEpic } from '#lib/epics.svelte.ts';
+	import { label, land, marks, record, resolved, toggle, tones, type Edit, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -17,15 +16,21 @@
 	import Menu from '#lib/ui/Menu.svelte';
 	import Select from '#lib/ui/Select.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
-	import { onMount } from 'svelte';
+	import { Popover } from 'bits-ui';
+	import { onMount, type Component } from 'svelte';
 	import CaretDown from '~icons/ph/caret-down';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
+	import FileText from '~icons/ph/file-text';
+	import GitBranch from '~icons/ph/git-branch';
 	import Minus from '~icons/ph/minus';
 	import Pause from '~icons/ph/pause';
 	import Play from '~icons/ph/play';
 	import Plus from '~icons/ph/plus';
+	import SealCheck from '~icons/ph/seal-check';
+	import SlidersHorizontal from '~icons/ph/sliders-horizontal';
 	import Stop from '~icons/ph/stop';
+	import TerminalWindow from '~icons/ph/terminal-window';
 
 	type Props = {
 		open: OpenEpic;
@@ -37,13 +42,26 @@
 		onchat: (chatId: string) => void;
 	};
 
+	type Page = 'brief' | 'setup' | 'worktree' | 'review';
+
 	let { open, epic, loaded, active, device, chats, onchat }: Props = $props();
 
 	const phone = $derived(form() === 'phone');
 	const tickets = $derived(epic?.tickets ?? []);
 	const ticket = $derived(tickets.find((ticket) => ticket.number === open.ticket));
-	const folded = $derived(phone ? tickets.filter((ticket) => resolved(ticket.status)).length : 0);
-	const shown = $derived(folded && !open.showResolved ? tickets.filter((ticket) => !resolved(ticket.status)) : tickets);
+	const page = $derived.by((): Page | undefined => {
+		if (ticket) return;
+		return (['brief', 'setup', 'worktree', 'review'] as const).find((target) => target === open.page) ?? (phone ? undefined : 'brief');
+	});
+	const settled = $derived(tickets.filter((ticket) => resolved(ticket.status)));
+	const groups = $derived([
+		{
+			name: 'Working',
+			tickets: tickets.filter((ticket) => ticket.status === 'in-progress' || ticket.status === 'merging').sort((a, b) => Number(needsYou(b)) - Number(needsYou(a)))
+		},
+		{ name: 'Frontier', tickets: tickets.filter((ticket) => ticket.status === 'not-started' && !pending(ticket).length) },
+		{ name: 'Blocked', tickets: tickets.filter((ticket) => ticket.status === 'not-started' && pending(ticket).length > 0) }
+	]);
 	const lines = $derived(epic?.brief.trimEnd().split('\n').length ?? 0);
 	const next = $derived(Math.max(0, ...tickets.map((ticket) => ticket.number)) + 1);
 	const choices = $derived(rigs());
@@ -73,6 +91,11 @@
 		const unstarted = waiting.filter(({ number }) => !review.reviewers.some((reviewer) => reviewer.number === number));
 		return [...review.reviewers, ...unstarted].sort((a, b) => a.number - b.number);
 	});
+	const summary = $derived.by(() => {
+		const parallel = epic?.run?.parallel ?? open.parallel;
+		const reviewed = reviewers.length === 1 ? `, ${reviewers[0]} reviews` : reviewers.length ? `, ${reviewers.length} Reviewers` : '';
+		return `${epic?.run?.rig ?? rig ?? 'No Rig'} ×${parallel}${reviewed}`;
+	});
 
 	let draft = $state('');
 	let title = $state('');
@@ -90,6 +113,17 @@
 	let returnTo: OpenEpic['page'];
 
 	onMount(() => painted(open.id));
+
+	function select(number: number) {
+		open.page = undefined;
+		open.ticket = number;
+	}
+
+	function show(target?: Page) {
+		open.ticket = undefined;
+		open.page = target;
+		setup = undefined;
+	}
 
 	function edit(page: 'edit-brief' | 'edit-ticket' | 'new-ticket', text: string) {
 		draft = text;
@@ -133,6 +167,16 @@
 		if (epic) refused = await record(epic.slug, edit);
 	}
 
+	function startRun() {
+		open.showRun = false;
+		if (rig) run({ kind: 'run.started', rig, parallel: open.parallel, reviewers, remediator: reviewers.length ? remediator : undefined });
+	}
+
+	function stopRun() {
+		if (working.length) stopping = true;
+		else run({ kind: 'run.stopped' });
+	}
+
 	function chooseRig(name: string) {
 		if (epic?.run) run({ kind: 'run.changed', rig: name });
 		else open.rig = name;
@@ -171,6 +215,14 @@
 		return chats.find((chat) => chat.id === chatId)?.status ?? 'closed';
 	}
 
+	function pending(ticket: Ticket) {
+		return ticket.blockers.filter((number) => !tickets.some((other) => other.number === number && resolved(other.status)));
+	}
+
+	function needsYou(ticket: Ticket) {
+		return !!ticket.attention || chatOf(ticket)?.status === 'waiting';
+	}
+
 	function reviewState(review: Review, findings: Finding[]) {
 		const remediator = review.remediator;
 		if (remediator?.commit) return `Remediated at ${remediator.commit.slice(0, 12)}`;
@@ -197,23 +249,18 @@
 		if (!finding.judgment) return { label: 'Not judged', tone: 'var(--status-waiting)' };
 		return finding.judgment.accepted ? { label: 'Accepted', tone: 'var(--status-done)' } : { label: 'Rejected', tone: 'var(--muted-fg)' };
 	}
-
-	function holder(ticket: Ticket) {
-		if (ticket.status !== 'in-progress' || !ticket.claim) return ticket.attention ? 'needs attention' : '';
-		return `${ticket.claim.rig} · ${ticket.releasing ? 'stopping' : (chatOf(ticket)?.status ?? 'closed')}`;
-	}
 </script>
 
-{#snippet back(title: string, onclick: () => void, onedit?: () => void)}
-	<header class="screen">
-		<IconButton label="Back to {open.slug}" {onclick}><CaretLeft /></IconButton>
+{#snippet back(title: string, action?: { label: string; onclick: () => void })}
+	<header class="top">
+		<IconButton label="Back to {open.slug}" onclick={() => show()}><CaretLeft /></IconButton>
 		<h2>{title}</h2>
-		{#if onedit}<button class="link" onclick={onedit}>Edit</button>{/if}
+		{#if action}<button class="link" onclick={action.onclick}>{action.label}</button>{/if}
 	</header>
 {/snippet}
 
 {#snippet editing(title: string, action: string, ready: boolean)}
-	<header class="screen editing">
+	<header class="top editing">
 		<h2>{title}</h2>
 		<Button onclick={() => (open.page = returnTo)}>Cancel</Button>
 		<Button variant="primary" disabled={saving || !ready} onclick={saveDraft}>{action}</Button>
@@ -290,60 +337,108 @@
 	{/if}
 {/snippet}
 
+{#snippet liveLabel(live: NonNullable<Epic['run']>)}
+	<span class="live" class:paused={!!live.paused}>{live.paused ? 'Run paused' : reviewing ? (review?.remediator ? 'Remediating' : 'Reviewing') : 'Run live'}</span>
+{/snippet}
+
+{#snippet runNotes(epic: Epic)}
+	{#if epic.run?.paused?.reason === 'storage'}
+		<p class="note error" role="status">{epic.run.paused.message} New Tickets wait; active Chats continue.</p>
+	{/if}
+	{#if !epic.run && epic.setup === null}<p class="note">Record a Setup Command before starting a Run.</p>{/if}
+	{#if refused}<p class="note error" role="alert">{refused}</p>{/if}
+{/snippet}
+
+{#snippet startButton(epic: Epic)}
+	<Button variant="primary" disabled={!rig || epic.setup === null || open.savingRigs.length > 0} onclick={startRun}><Play /> Start Run</Button>
+{/snippet}
+
 {#snippet runBar(epic: Epic)}
 	{@const live = epic.run}
 	<section class="run" aria-label="Run">
-		{#if live}
-			<div class="top">
-				<span class="live" class:paused={!!live.paused}>{live.paused ? 'Run paused' : reviewing ? (review?.remediator ? 'Remediating' : 'Reviewing') : 'Run live'}</span>
-				{#if phone}
-					<button class="summary" aria-expanded={open.showRun} onclick={() => (open.showRun = !open.showRun)}>
-						{live.rig} · ×{live.parallel}{#if reviewers.length}{' '}· {reviewers.length} {reviewers.length === 1 ? 'Reviewer' : 'Reviewers'}{/if}
-						<CaretDown />
-					</button>
-				{/if}
-			</div>
-		{/if}
-		{#if !phone || !live || open.showRun}
-			<div class="settings">{@render settings(epic)}</div>
-		{/if}
-		{#if live}
-			{#if live.paused?.reason === 'storage'}
-				<p class="note error" role="status">{live.paused.message} New Tickets wait; active Chats continue.</p>
-			{/if}
-			<div class="controls">
+		<div class="controls">
+			{#if live}{@render liveLabel(live)}{/if}
+			<Popover.Root bind:open={open.showRun}>
+				<Popover.Trigger>
+					{#snippet child({ props })}
+						<button class="picker" {...props} aria-label="Run settings, {summary}">
+							<span>{summary}</span>
+							<CaretDown />
+						</button>
+					{/snippet}
+				</Popover.Trigger>
+				<Popover.Content sideOffset={6} align="end" collisionPadding={8}>
+					{#snippet child({ wrapperProps, props })}
+						<div {...wrapperProps}>
+							<div {...props} class="popover" role="dialog" aria-label="Run settings">{@render settings(epic)}</div>
+						</div>
+					{/snippet}
+				</Popover.Content>
+			</Popover.Root>
+			{#if live}
 				{#if live.paused}
-					<Button onclick={() => run({ kind: 'run.resumed' })}><Play /> Resume</Button>
+					<IconButton label="Resume" onclick={() => run({ kind: 'run.resumed' })}><Play /></IconButton>
 				{:else}
-					<Button onclick={() => run({ kind: 'run.paused', reason: 'david' })}><Pause /> Pause</Button>
+					<IconButton label="Pause" onclick={() => run({ kind: 'run.paused', reason: 'david' })}><Pause /></IconButton>
 				{/if}
-				<Button variant="danger" onclick={() => (working.length ? (stopping = true) : run({ kind: 'run.stopped' }))}><Stop /> Stop</Button>
-			</div>
-		{:else}
-			<Button variant="primary" disabled={!rig || epic.setup === null || open.savingRigs.length > 0} onclick={() => rig && run({ kind: 'run.started', rig, parallel: open.parallel, reviewers, remediator: reviewers.length ? remediator : undefined })}>
-				<Play /> Start Run
-			</Button>
-			{#if epic.setup === null}<p class="note">Record a Setup Command before starting a Run.</p>{/if}
-		{/if}
-		{#if refused}<p class="note error" role="alert">{refused}</p>{/if}
+				<IconButton label="Stop" onclick={stopRun}><Stop /></IconButton>
+			{:else}
+				{@render startButton(epic)}
+			{/if}
+		</div>
+		{@render runNotes(epic)}
 	</section>
 {/snippet}
 
+{#snippet runStrip(epic: Epic)}
+	{@const live = epic.run}
+	<section class="run strip" aria-label="Run">
+		{#if live}
+			<div class="controls">
+				{@render liveLabel(live)}
+				<span class="summary">{summary}</span>
+				{#if live.paused}
+					<IconButton label="Resume" onclick={() => run({ kind: 'run.resumed' })}><Play /></IconButton>
+				{:else}
+					<IconButton label="Pause" onclick={() => run({ kind: 'run.paused', reason: 'david' })}><Pause /></IconButton>
+				{/if}
+				<IconButton label="Stop" onclick={stopRun}><Stop /></IconButton>
+				<IconButton label="Run settings" aria-expanded={open.showRun} onclick={() => (open.showRun = !open.showRun)}><SlidersHorizontal /></IconButton>
+			</div>
+		{/if}
+		{#if !live || open.showRun}
+			<div class="settings">{@render settings(epic)}</div>
+		{/if}
+		{#if !live}{@render startButton(epic)}{/if}
+		{@render runNotes(epic)}
+	</section>
+{/snippet}
+
+{#snippet progress()}
+	{#if epic && tickets.length}
+		<div class="progress">
+			<span class="meter"><Progress {epic} segmented /></span>
+			<span>{settled.length} of {tickets.length} resolved</span>
+		</div>
+	{/if}
+{/snippet}
+
 {#snippet landButton(epic: Epic)}
-	<Button variant="primary" disabled={!!unlandable} onclick={() => ((unlanded = undefined), (confirming = true))}>
+	<Button variant="primary" disabled={!!unlandable} title={phone ? undefined : unlandable} onclick={() => ((unlanded = undefined), (confirming = true))}>
 		{epic.base ? `Land into ${epic.base}` : 'Land'}
 	</Button>
-	{#if unlandable}<p class="hint">{unlandable}</p>{/if}
 {/snippet}
 
 {#snippet worktree(epic: Epic)}
-	<section aria-label="Integration Worktree" class="worktree">
-		<div class="heading">
-			<h2>Integration Worktree</h2>
-			{#if epic.integration}
-				<button class="link" onclick={() => epic.integration && device.send({ type: 'project.open', path: epic.integration })}>Open</button>
-			{/if}
-		</div>
+	<section aria-label="Integration Worktree" class="page">
+		{#if !phone}
+			<div class="heading">
+				<h2>Integration Worktree</h2>
+				{#if epic.integration}
+					<Button onclick={() => epic.integration && device.send({ type: 'project.open', path: epic.integration })}>Open</Button>
+				{/if}
+			</div>
+		{/if}
 		{#if epic.integration}
 			<p class="unset">{merges} {merges === 1 ? 'merge' : 'merges'}{#if epic.base}{' '}· cut from {epic.base}{/if}</p>
 		{:else if !epic.landed}
@@ -360,7 +455,6 @@
 				</ul>
 			</div>
 		{/if}
-		{#if !phone}{@render landButton(epic)}{/if}
 		{#each epic.notes ?? [] as note, index (index)}
 			<div class="entry">
 				<span class="meta">{authors[note.author]} · {ago(note.at)}</span>
@@ -371,9 +465,9 @@
 {/snippet}
 
 {#snippet reviewSection(review: Review | undefined)}
-	<section aria-label="Review" class="review">
+	<section aria-label="Review" class="page review">
 		<div class="heading">
-			<h2>Review</h2>
+			{#if !phone}<h2>Review</h2>{/if}
 			{#if review}<span class="unset">{reviewState(review, findings)}</span>{/if}
 		</div>
 		{#if review}
@@ -421,8 +515,93 @@
 	</section>
 {/snippet}
 
-{#snippet archive()}
-	{#if !epic?.archived}<div class="archive"><Button onclick={() => ((error = undefined), (archiving = true))}>Archive Epic</Button></div>{/if}
+{#snippet pageView(epic: Epic, page?: Page)}
+	{#if page === 'brief'}
+		<section aria-label="Brief" class="page">
+			{#if !phone}
+				<div class="heading">
+					<h2>Brief</h2>
+					<Button onclick={() => edit('edit-brief', epic.brief)}>Edit</Button>
+				</div>
+			{/if}
+			{@render brief(epic)}
+		</section>
+	{:else if page === 'setup'}
+		<section aria-label="Setup Command" class="page">
+			{#if !phone}
+				<div class="heading">
+					<h2>Setup Command</h2>
+					{#if setup === undefined}<Button onclick={() => editSetup(epic.setup)}>Edit</Button>{/if}
+				</div>
+			{/if}
+			{@render command(epic)}
+		</section>
+	{:else if page === 'worktree'}
+		{@render worktree(epic)}
+	{:else if page === 'review'}
+		{@render reviewSection(review)}
+	{/if}
+{/snippet}
+
+{#snippet pageItem(target: Page, Icon: Component, name: string, meta: string, mono = false)}
+	<button class="item" aria-current={page === target ? 'page' : undefined} onclick={() => show(target)}>
+		<Icon />
+		<span class="title">{name}</span>
+		<span class="meta" class:mono>{meta}</span>
+	</button>
+{/snippet}
+
+{#snippet row(ticket: Ticket)}
+	{@const Mark = marks[ticket.status]}
+	{@const chat = chatOf(ticket)}
+	{@const after = pending(ticket)}
+	<button class="item" class:resolved={resolved(ticket.status)} aria-current={!phone && open.ticket === ticket.number ? 'true' : undefined} onclick={() => select(ticket.number)}>
+		<span class="mark" style:color={tones[ticket.status]}><Mark /></span>
+		<span class="number">{ticket.number}</span>
+		<span class="title">{ticket.title}</span>
+		<span class="label" class:shown={ticket.status === 'merging'} style:color={tones[ticket.status]}>{label(ticket.status)}</span>
+		{#if ticket.attention}
+			<span class="meta flagged">needs attention</span>
+		{:else if ticket.status === 'in-progress'}
+			<span class="meta">
+				{ticket.claim?.rig}{#if ticket.claim?.edited}{' '}· edited{/if}
+				<span class="dot" style:background={chat ? `var(--status-${chat.status})` : 'var(--muted-fg)'} title={ticket.releasing ? 'stopping' : (chat?.status ?? 'closed')}></span>
+			</span>
+		{:else if ticket.status === 'not-started' && (after.length || ticket.rig)}
+			<span class="meta">{after.length ? `after ${after.join(', ')}` : ticket.rig}</span>
+		{/if}
+	</button>
+{/snippet}
+
+{#snippet list(epic: Epic)}
+	{@const setupText = epic.setup === null ? 'Not set yet' : epic.setup || 'Nothing to run'}
+	<nav class="pages" aria-label="Epic">
+		{@render pageItem('brief', FileText, 'Brief', `${lines} ${lines === 1 ? 'line' : 'lines'}`)}
+		{@render pageItem('setup', TerminalWindow, phone ? 'Setup' : 'Setup Command', setupText, !!epic.setup)}
+		{@render pageItem('worktree', GitBranch, phone ? 'Worktree' : 'Integration Worktree', epic.landed ? 'Landed' : epic.integration ? `${merges} ${merges === 1 ? 'merge' : 'merges'}` : 'Not cut yet')}
+		{#if review || findings.length}
+			{@render pageItem('review', SealCheck, 'Review', review ? reviewState(review, findings) : `${findings.length} ${findings.length === 1 ? 'Finding' : 'Findings'}`)}
+		{/if}
+	</nav>
+	<section aria-label="Tickets" class="tickets">
+		{#each groups as group (group.name)}
+			{#if group.tickets.length}
+				<h3 class="group">{group.name}<span class="count">{group.tickets.length}</span></h3>
+				{#each group.tickets as ticket (ticket.number)}{@render row(ticket)}{/each}
+			{/if}
+		{/each}
+		{#if settled.length}
+			<button class="group fold" aria-expanded={open.showResolved} onclick={() => (open.showResolved = !open.showResolved)}>
+				<CaretRight />Resolved<span class="count">{settled.length}</span>
+			</button>
+			{#if open.showResolved}
+				{#each settled as ticket (ticket.number)}{@render row(ticket)}{/each}
+			{/if}
+		{/if}
+		{#if !tickets.length}<p class="unset">No Tickets yet.</p>{/if}
+		<button class="add" onclick={() => edit('new-ticket', '')}><Plus /> Add a Ticket</button>
+	</section>
+	{#if !epic.archived}<button class="archive" onclick={() => ((error = undefined), (archiving = true))}>Archive Epic</button>{/if}
 {/snippet}
 
 <div class="epic" class:phone role="tabpanel" aria-label={open.name} hidden={!active}>
@@ -450,132 +629,65 @@
 			{/if}
 		</div>
 		{@render markdown('Body', false)}
-	{:else if open.page === 'brief'}
-		{@render back('Brief', () => (open.page = undefined), () => edit('edit-brief', epic.brief))}
-		<div class="scroll">{@render brief(epic)}</div>
-	{:else if open.page === 'setup'}
-		{@render back('Setup Command', () => ((open.page = undefined), (setup = undefined)), setup === undefined ? () => editSetup(epic.setup) : undefined)}
-		<div class="scroll">{@render command(epic)}</div>
 	{:else if phone && ticket}
-		{@render back(`${epic.slug}/${ticket.number}`, () => (open.ticket = undefined), () => edit('edit-ticket', ticket.body))}
+		{@render back(`${epic.slug}/${ticket.number}`, { label: 'Edit', onclick: () => edit('edit-ticket', ticket.body) })}
 		<div class="scroll">
-			<TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} {open} chat={chatOf(ticket)} {device} {onchat} />
+			{#key ticket.number}
+				<TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} {open} chat={chatOf(ticket)} {device} {onchat} onselect={select} />
+			{/key}
 		</div>
-	{:else}
-		{@const tally = counts(epic)}
+	{:else if phone && page === 'brief'}
+		{@render back('Brief', { label: 'Edit', onclick: () => edit('edit-brief', epic.brief) })}
+		<div class="scroll">{@render pageView(epic, page)}</div>
+	{:else if phone && page === 'setup'}
+		{@render back('Setup Command', setup === undefined ? { label: 'Edit', onclick: () => editSetup(epic.setup) } : undefined)}
+		<div class="scroll">{@render pageView(epic, page)}</div>
+	{:else if phone && page === 'worktree'}
+		{@render back('Integration Worktree', epic.integration ? { label: 'Open', onclick: () => epic.integration && device.send({ type: 'project.open', path: epic.integration }) } : undefined)}
+		<div class="scroll">{@render pageView(epic, page)}</div>
+	{:else if phone && page === 'review'}
+		{@render back('Review')}
+		<div class="scroll">{@render pageView(epic, page)}</div>
+	{:else if phone}
 		<div class="scroll">
 			<header class="head">
 				<div class="name">
 					<h1>{epic.slug}</h1>
-					{#if epic.archived}<span>Archived</span>{/if}
-					<span>{epic.title}</span>
+					{#if epic.archived}<span class="badge">Archived</span>{/if}
 				</div>
-				<div class="progress">
-					<Progress {epic} />
-					<ul class="legend">
-						{#each statuses as status (status)}
-							{#if tally[status]}
-								{@const Mark = marks[status]}
-								<li><span class="count" style:--tone={tones[status]}><Mark />{tally[status]}</span> {label(status)}</li>
-							{/if}
-						{/each}
-					</ul>
-				</div>
+				<p class="title">{epic.title}</p>
+				{@render progress()}
 			</header>
+			{@render runStrip(epic)}
+			{@render list(epic)}
+		</div>
+		<footer class="land">
+			{@render landButton(epic)}
+			{#if unlandable}<p class="hint">{unlandable}</p>{/if}
+		</footer>
+	{:else}
+		<header class="bar">
+			<div class="name">
+				<h1>{epic.slug}</h1>
+				{#if epic.archived}<span class="badge">Archived</span>{/if}
+				<span class="title">{epic.title}</span>
+			</div>
+			{@render progress()}
 			{@render runBar(epic)}
-			{#if phone}
-				<div class="pages">
-					<button onclick={() => (open.page = 'brief')}>Brief <CaretRight /></button>
-					<button onclick={() => (open.page = 'setup')}>Setup <CaretRight /></button>
-				</div>
-			{/if}
-			<div class="body">
-				<div class="main">
-					<section aria-label="Tickets" class="tickets">
-						{#if !phone}
-							<div class="row columns" aria-hidden="true">
-								<span>#</span><span>Ticket</span><span>Blockers</span><span>Status</span><span>Held by</span>
-							</div>
-						{/if}
-						{#each shown as ticket (ticket.number)}
-							{@const expanded = !phone && open.ticket === ticket.number}
-							{@const Mark = marks[ticket.status]}
-							<div class="ticket-entry">
-								<button
-									class="row"
-									class:resolved={resolved(ticket.status)}
-									class:expanded
-									aria-expanded={phone ? undefined : expanded}
-									onclick={() => (open.ticket = expanded ? undefined : ticket.number)}
-								>
-									<span class="number">{ticket.number}</span>
-									{#if phone}
-										<span class="text">
-											<span class="title">{ticket.title}</span>
-											<span class="sub" style:--tone={tones[ticket.status]}>
-												<Mark />{label(ticket.status)}{#if ticket.blockers.length}{' '}· after {ticket.blockers.join(', ')}{/if}{#if holder(ticket)}{' '}· {holder(ticket)}{/if}{#if ticket.claim?.edited}{' '}· edited{/if}
-											</span>
-										</span>
-										<CaretRight />
-									{:else}
-										<span class="title">{ticket.title}</span>
-										<span class="number">{ticket.blockers.join(', ')}</span>
-										<span class="status" style:--tone={tones[ticket.status]}><Mark />{label(ticket.status)}</span>
-										<span class="held" class:flagged={!!ticket.attention}>{holder(ticket)}</span>
-									{/if}
-								</button>
-								<div class="ticket-options">
-									<div class="tags" aria-label="Ticket tags">
-										{#each ticket.tags ?? [] as tag}<span title={ticketTags[tag].description}>{ticketTags[tag].label}</span>{/each}
-									</div>
-									<div class="ticket-rig">
-										<RigSelect {open} {ticket} defaultRig={epic.run?.rig ?? rig} label={`Rig for ticket ${ticket.number}`} disabled={open.starting.includes(ticket.number)} />
-									</div>
-								</div>
-							</div>
-							{#if expanded}
-								<div class="detail">
-									<TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} {open} chat={chatOf(ticket)} {device} {onchat} />
-								</div>
-							{/if}
-						{/each}
-						{#if !tickets.length}<p class="unset">No Tickets yet.</p>{/if}
-						{#if folded}
-							<button class="fold" onclick={() => (open.showResolved = !open.showResolved)}>
-								{open.showResolved ? 'Hide' : 'Show'} {folded} resolved
-							</button>
-						{/if}
-						<button class="add" onclick={() => edit('new-ticket', '')}><Plus /> Add a Ticket</button>
-					</section>
-					{#if review || findings.length}{@render reviewSection(review)}{/if}
-				</div>
-				{#if phone}
-					{@render worktree(epic)}
-					{@render archive()}
+			{@render landButton(epic)}
+		</header>
+		<div class="split">
+			<div class="list">{@render list(epic)}</div>
+			<div class="pane">
+				{#if ticket}
+					{#key ticket.number}
+						<TicketDetail {epic} {ticket} onedit={() => edit('edit-ticket', ticket.body)} {open} chat={chatOf(ticket)} {device} {onchat} onselect={select} />
+					{/key}
 				{:else}
-					<aside>
-						<section aria-label="Brief">
-							<div class="heading">
-								<h2>Brief</h2>
-								<button class="link" onclick={() => edit('edit-brief', epic.brief)}>Edit</button>
-							</div>
-							<div class="preview">{@render brief(epic)}</div>
-							<button class="link" onclick={() => (open.page = 'brief')}>Read all {lines} lines</button>
-						</section>
-						<section aria-label="Setup Command">
-							<div class="heading">
-								<h2>Setup Command</h2>
-								{#if setup === undefined}<button class="link" onclick={() => editSetup(epic.setup)}>Edit</button>{/if}
-							</div>
-							{@render command(epic)}
-						</section>
-						{@render worktree(epic)}
-						{@render archive()}
-					</aside>
+					{@render pageView(epic, page)}
 				{/if}
 			</div>
 		</div>
-		{#if phone}<footer class="land">{@render landButton(epic)}</footer>{/if}
 	{/if}
 </div>
 
@@ -645,10 +757,6 @@
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
-		padding: var(--space-4) var(--space-6) var(--space-6);
-	}
-
-	.phone .scroll {
 		padding: var(--space-3);
 	}
 
@@ -662,7 +770,7 @@
 		padding: var(--space-6);
 	}
 
-	header.screen {
+	header.top {
 		display: flex;
 		flex: none;
 		align-items: center;
@@ -671,7 +779,7 @@
 		border-bottom: var(--border-width) solid var(--border);
 	}
 
-	header.screen h2 {
+	header.top h2 {
 		flex: 1;
 		min-width: 0;
 		margin: 0;
@@ -687,7 +795,7 @@
 		padding-left: var(--space-3);
 	}
 
-	header.screen .link {
+	header.top .link {
 		align-self: stretch;
 		padding: 0 var(--space-3);
 		font-size: var(--font-size-md);
@@ -733,92 +841,92 @@
 		gap: var(--space-2);
 	}
 
-	.head {
+	.bar {
 		display: flex;
+		flex: none;
 		flex-wrap: wrap;
-		align-items: flex-end;
-		justify-content: space-between;
+		align-items: center;
 		gap: var(--space-3) var(--space-6);
-		margin-bottom: var(--space-4);
+		padding: var(--space-3) var(--space-4) var(--space-3) var(--space-6);
+		border-bottom: var(--border-width) solid var(--border);
 	}
 
 	.name {
 		display: flex;
-		flex-direction: column;
-		gap: var(--space-1);
+		align-items: baseline;
+		gap: var(--space-3);
+		min-width: 0;
 	}
 
-	.name span {
-		color: var(--muted-fg);
+	.bar .name {
+		flex: 1 1 8rem;
 	}
 
 	h1 {
+		flex: none;
 		margin: 0;
-		font-size: 1.5em;
+		font-size: var(--font-size-lg);
 	}
 
-	.phone h1 {
-		font-size: 1.25em;
+	.name .title {
+		min-width: 0;
+		overflow: hidden;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.badge {
+		flex: none;
+		padding: 0 var(--space-2);
+		border: var(--border-width) solid var(--border);
+		border-radius: 1em;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
 	}
 
 	.progress {
 		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-		width: 22rem;
-		max-width: 100%;
-	}
-
-	.phone .progress {
-		width: 100%;
-	}
-
-	.legend {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-1) var(--space-4);
-		margin: 0;
-		padding: 0;
+		align-items: center;
+		gap: var(--space-3);
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
-		list-style: none;
-	}
-
-	.count {
-		color: var(--tone);
 		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 
-	.count :global(svg),
-	.status :global(svg),
-	.sub :global(svg),
-	.mark :global(svg) {
-		margin-right: var(--space-1);
-		vertical-align: -0.125em;
+	.meter {
+		display: block;
+		width: 10rem;
 	}
 
 	.run {
 		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: var(--space-2) var(--space-4);
-		margin-bottom: var(--space-4);
-		padding: var(--space-2) var(--space-4);
-		border-radius: var(--radius-lg);
-		background: var(--surface-2);
+		flex-direction: column;
+		align-items: flex-end;
+		gap: var(--space-1);
+		max-width: 100%;
 	}
 
-	.top {
+	.bar .run {
+		padding-left: var(--space-6);
+		border-left: var(--border-width) solid var(--border);
+	}
+
+	.controls {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
 		gap: var(--space-2);
+		min-width: 0;
 	}
 
 	.live {
 		display: flex;
+		flex: none;
 		align-items: center;
 		gap: var(--space-2);
+		font-size: var(--font-size-sm);
 		font-weight: 600;
 	}
 
@@ -834,17 +942,32 @@
 		background: var(--status-waiting);
 	}
 
-	.controls {
-		display: flex;
-		gap: var(--space-2);
+	.note {
+		max-width: 28rem;
+		margin: 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		overflow-wrap: anywhere;
 	}
 
-	.settings {
+	.note.error {
+		color: var(--ansi-1);
+	}
+
+	.popover {
+		z-index: 50;
 		display: flex;
-		flex: 1;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: var(--space-2) var(--space-4);
+		flex-direction: column;
+		gap: var(--space-3);
+		padding: var(--space-4);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-lg);
+		background: var(--surface-2);
+		box-shadow: var(--shadow-float);
+		color: var(--color-fg);
+		font-family: var(--font-ui);
+		font-size: var(--font-size-md);
+		outline: none;
 	}
 
 	.setting {
@@ -854,6 +977,18 @@
 		color: var(--muted-fg);
 	}
 
+	.setting > span:first-child {
+		flex: 1;
+		min-width: 7rem;
+	}
+
+	.popover .setting > :global(select),
+	.popover .picker {
+		width: 12rem;
+		max-width: none;
+		justify-content: space-between;
+	}
+
 	.limit {
 		min-width: 1.5em;
 		color: var(--color-fg);
@@ -861,329 +996,11 @@
 		text-align: center;
 	}
 
-	.run .note {
-		flex-basis: 100%;
-		margin: 0;
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-		overflow-wrap: anywhere;
-	}
-
-	.run .error {
-		color: var(--ansi-1);
-	}
-
-	.summary {
-		display: flex;
-		align-items: center;
-		gap: var(--space-1);
-		min-height: var(--target-min);
-		padding: 0;
-		border: none;
-		background: none;
-		color: var(--muted-fg);
-		font: inherit;
-		font-size: var(--font-size-sm);
-	}
-
-	.phone .run {
-		flex-direction: column;
-		align-items: stretch;
-		margin-bottom: var(--space-3);
-		padding: var(--space-3);
-	}
-
-	.phone .settings {
-		flex-direction: column;
-		align-items: stretch;
-	}
-
-	.phone .controls > :global(button) {
-		flex: 1;
-	}
-
-	.phone .setting > :global(select) {
-		flex: 1;
-	}
-
-	.phone .setting > span:first-child {
-		min-width: 10ch;
-	}
-
-	.phone [role='group'] > span:first-child {
-		flex: 1;
-	}
-
-	.pages {
-		display: flex;
-		gap: var(--space-2);
-		margin-bottom: var(--space-3);
-	}
-
-	.pages button {
-		display: flex;
-		flex: 1;
-		align-items: center;
-		justify-content: space-between;
-		min-height: var(--target-min);
-		padding: 0 var(--space-4);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: none;
-		color: var(--color-fg);
-		font: inherit;
-	}
-
-	.pages :global(svg),
-	.phone .row > :global(svg) {
-		flex: none;
-		color: var(--muted-fg);
-	}
-
-	.body {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-start;
-		gap: var(--space-6);
-	}
-
-	.main {
-		display: flex;
-		flex: 1 1 32rem;
-		flex-direction: column;
-		gap: var(--space-6);
-		min-width: 0;
-	}
-
-	.phone .main {
-		gap: var(--space-4);
-	}
-
-	.tickets {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-		overflow: hidden;
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-	}
-
-	.phone .tickets {
-		gap: var(--space-2);
-		overflow: visible;
-		border: none;
-	}
-
-	.tickets > .unset {
-		padding: var(--space-3) var(--space-4);
-	}
-
-	.row {
-		display: grid;
-		grid-template-columns: 2.5rem minmax(0, 1fr) 6rem 7rem 8rem;
-		gap: var(--space-3);
-		align-items: baseline;
-		padding: var(--space-2) var(--space-4);
-		border: none;
-		border-left: 2px solid transparent;
-		background: none;
-		color: var(--color-fg);
-		font: inherit;
-		text-align: left;
-	}
-
-	.ticket-entry {
-		border-bottom: var(--border-width) solid var(--border);
-	}
-
-	.ticket-entry > .row {
-		box-sizing: border-box;
-		width: 100%;
-	}
-
-	.ticket-options {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-2);
-		padding: 0 var(--space-4) var(--space-2) calc(2.5rem + var(--space-4) + var(--space-3));
-	}
-
-	.tags {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-1);
-	}
-
-	.tags span {
-		padding: 1px var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: 1em;
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-	}
-
-	.ticket-rig {
-		width: 12rem;
-		max-width: 100%;
-		margin-left: auto;
-	}
-
-	.phone .ticket-entry {
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-	}
-
-	.phone .ticket-entry > .row {
-		border: none;
-	}
-
-	.phone .ticket-options {
-		align-items: stretch;
-		flex-direction: column;
-		padding: 0 var(--space-3) var(--space-3);
-	}
-
-	.phone .ticket-rig {
-		width: 100%;
-	}
-
-	button.row {
-		cursor: pointer;
-	}
-
-	button.row:hover {
-		background: var(--hover);
-	}
-
-	button.row:focus-visible,
-	.pages button:focus-visible,
-	.fold:focus-visible,
-	.link:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-		outline-offset: calc(-1 * var(--border-width));
-	}
-
-	.columns {
-		border-bottom: var(--border-width) solid var(--border);
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-	}
-
-	.resolved {
-		color: var(--muted-fg);
-	}
-
-	.expanded {
-		border-left-color: var(--color-fg);
-		background: var(--surface-1);
-	}
-
-	.number {
-		color: var(--muted-fg);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-	}
-
-	.row .title {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.expanded .title {
-		font-weight: 600;
-	}
-
-	.status,
-	.sub {
-		color: var(--tone);
-	}
-
-	.held {
-		overflow: hidden;
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.flagged {
-		color: var(--status-waiting);
-	}
-
-	.detail {
-		padding: var(--space-3) var(--space-4) var(--space-4) calc(2.5rem + var(--space-4) + var(--space-3));
-		border-left: 2px solid var(--color-fg);
-		background: var(--surface-1);
-	}
-
-	.phone .row {
-		display: flex;
-		align-items: center;
-		gap: var(--space-3);
-		min-height: calc(var(--target-min) + var(--space-2));
-		padding: var(--space-2) var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-	}
-
-	.phone .number {
-		flex: none;
-		width: 1.75em;
-	}
-
-	.text {
-		display: flex;
-		flex: 1;
-		flex-direction: column;
-		min-width: 0;
-	}
-
-	.sub {
-		font-size: var(--font-size-sm);
-	}
-
-	.fold,
-	.add {
-		min-height: var(--target-min);
-		border: none;
-		background: none;
-		color: var(--muted-fg);
-		font: inherit;
-		cursor: pointer;
-	}
-
-	.add {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		padding: var(--space-2) var(--space-4);
-		border-top: var(--border-width) solid var(--border);
-	}
-
-	.add:hover {
-		background: var(--hover);
-		color: var(--color-fg);
-	}
-
-	.phone .add {
-		justify-content: center;
-		border: var(--border-width) dashed var(--border);
-		border-radius: var(--radius-lg);
-	}
-
-	.add:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
-		outline-offset: calc(-1 * var(--border-width));
-	}
-
 	.picker {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-		max-width: 16rem;
+		max-width: 20rem;
 		min-height: var(--target-min);
 		padding: 0 var(--space-2);
 		border: var(--border-width) solid var(--border);
@@ -1191,6 +1008,7 @@
 		background: var(--surface-1);
 		color: var(--color-fg);
 		font: inherit;
+		font-size: var(--font-size-sm);
 		cursor: pointer;
 	}
 
@@ -1214,28 +1032,245 @@
 		outline: var(--border-width) solid var(--status-working);
 	}
 
-	.phone .picker {
+	.split {
+		display: grid;
 		flex: 1;
-		justify-content: space-between;
-		max-width: none;
+		grid-template-columns: clamp(17rem, 34%, 24rem) minmax(0, 1fr);
+		min-height: 0;
 	}
 
-	.review {
+	.list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-3);
-		padding: var(--space-4);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
+		gap: 1px;
+		min-height: 0;
+		overflow: auto;
+		padding: var(--space-3) var(--space-2);
+		border-right: var(--border-width) solid var(--border);
 	}
 
-	.phone .review {
+	.pane {
+		min-width: 0;
+		min-height: 0;
+		overflow: auto;
+		padding: var(--space-6) calc(2 * var(--space-6));
+		container-type: inline-size;
+	}
+
+	.pages,
+	.tickets {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+	}
+
+	.pages {
+		margin-bottom: var(--space-1);
+		padding-bottom: var(--space-3);
+		border-bottom: var(--border-width) solid var(--border);
+	}
+
+	.item {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		width: 100%;
+		min-height: calc(var(--target-min) + var(--space-2));
+		padding: 0 var(--space-3);
+		border: none;
+		border-radius: var(--radius-md);
+		background: none;
+		color: var(--color-fg);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.item:hover {
+		background: var(--hover);
+	}
+
+	.item[aria-current] {
+		background: var(--surface-2);
+	}
+
+	.item > :global(svg),
+	.mark {
+		display: flex;
+		flex: none;
+		color: var(--muted-fg);
+	}
+
+	.item .title {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.item.resolved {
+		color: var(--muted-fg);
+	}
+
+	.number {
+		color: var(--muted-fg);
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.meta {
+		color: var(--muted-fg);
+	}
+
+	.item .meta {
+		display: flex;
+		flex: none;
+		align-items: center;
+		gap: var(--space-2);
+		max-width: 45%;
+		overflow: hidden;
+		font-size: var(--font-size-sm);
+		white-space: nowrap;
+	}
+
+	.mono {
+		font-family: var(--font-mono);
+	}
+
+	.flagged {
+		color: var(--status-waiting);
+	}
+
+	.label {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+
+	.label.shown {
+		position: static;
+		width: auto;
+		height: auto;
+		clip-path: none;
+		font-size: var(--font-size-sm);
+	}
+
+	.dot {
+		flex: none;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+	}
+
+	.group {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		margin: 0;
+		padding: var(--space-4) var(--space-3) var(--space-1);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		font-weight: 600;
+	}
+
+	.count {
+		color: color-mix(in oklab, var(--muted-fg) 70%, var(--color-bg));
+		font-family: var(--font-mono);
+		font-weight: 400;
+	}
+
+	.fold {
+		border: none;
+		background: none;
+		font-family: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.fold :global(svg) {
+		transition: rotate var(--dur-fast);
+	}
+
+	.fold[aria-expanded='true'] :global(svg) {
+		rotate: 90deg;
+	}
+
+	.tickets > .unset {
 		padding: var(--space-3);
 	}
 
-	.review h2 {
+	.add,
+	.archive {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		min-height: calc(var(--target-min) + var(--space-2));
+		padding: 0 var(--space-3);
+		border: none;
+		border-radius: var(--radius-md);
+		background: none;
+		color: var(--muted-fg);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.add {
+		margin-top: var(--space-2);
+	}
+
+	.archive {
+		align-self: flex-start;
+		margin-top: auto;
+		padding-top: var(--space-6);
+		font-size: var(--font-size-sm);
+	}
+
+	.add:hover,
+	.archive:hover {
+		color: var(--color-fg);
+	}
+
+	.add:hover {
+		background: var(--hover);
+	}
+
+	.item:focus-visible,
+	.fold:focus-visible,
+	.add:focus-visible,
+	.archive:focus-visible,
+	.link:focus-visible {
+		outline: var(--border-width) solid var(--status-working);
+		outline-offset: calc(-1 * var(--border-width));
+	}
+
+	.page {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-3);
+		max-width: 72ch;
+	}
+
+	.heading {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-3);
+	}
+
+	.page h2 {
 		margin: 0;
-		font-size: var(--font-size-md);
+		font-size: var(--font-size-lg);
+	}
+
+	.review .heading {
+		justify-content: flex-start;
 	}
 
 	.crew {
@@ -1339,48 +1374,7 @@
 		margin: 0;
 	}
 
-	.archive {
-		display: flex;
-	}
-
-	.phone .archive {
-		margin-top: var(--space-6);
-	}
-
-	.phone .archive :global(button) {
-		flex: 1;
-	}
-
-	aside {
-		display: flex;
-		flex: 0 1 20rem;
-		flex-direction: column;
-		gap: var(--space-4);
-		min-width: 16rem;
-	}
-
-	aside section,
-	.phone .worktree {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-		padding: var(--space-4);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-	}
-
-	aside h2,
-	.worktree h2 {
-		margin: 0;
-		font-size: var(--font-size-md);
-	}
-
-	.phone .worktree {
-		flex: 1 1 100%;
-		min-width: 0;
-	}
-
-	.worktree .head {
+	.page .head {
 		font-family: var(--font-mono);
 	}
 
@@ -1419,8 +1413,124 @@
 		overflow-wrap: anywhere;
 	}
 
-	.meta {
+	.link {
+		padding: 0;
+		border: none;
+		background: none;
+		color: var(--status-working);
+		font: inherit;
+		font-size: var(--font-size-sm);
+		cursor: pointer;
+	}
+
+	code {
+		align-self: flex-start;
+		max-width: 100%;
+		padding: var(--space-2) var(--space-3);
+		border-radius: var(--radius-md);
+		background: var(--surface-2);
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		overflow-wrap: anywhere;
+	}
+
+	.phone code {
+		display: block;
+		font-size: var(--font-size-md);
+	}
+
+	.head .title {
+		margin: var(--space-1) 0 var(--space-3);
 		color: var(--muted-fg);
+	}
+
+	.phone h1 {
+		font-size: 1.25em;
+	}
+
+	.phone .meter {
+		flex: 1;
+		width: auto;
+	}
+
+	.strip {
+		align-items: stretch;
+		gap: var(--space-3);
+		margin: var(--space-3) 0;
+		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+		border-radius: var(--radius-lg);
+		background: var(--surface-1);
+	}
+
+	.strip:not(:has(> .controls)) {
+		padding: var(--space-3);
+	}
+
+	.summary {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.settings {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+
+	.strip .setting > :global(select),
+	.strip .picker {
+		flex: 2;
+		max-width: none;
+		justify-content: space-between;
+	}
+
+	.phone .pages {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+		gap: var(--space-2);
+		margin-bottom: var(--space-1);
+		padding-bottom: var(--space-3);
+	}
+
+	.phone .pages .item {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 2px;
+		padding: var(--space-2) var(--space-3);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-lg);
+	}
+
+	.phone .pages .title {
+		flex: none;
+		width: 100%;
+	}
+
+	.phone .pages .item .meta {
+		max-width: 100%;
+		font-size: calc(var(--font-size-sm) - 1px);
+	}
+
+	.phone .item {
+		padding: 0 var(--space-1);
+	}
+
+	.phone .group {
+		padding-left: var(--space-1);
+	}
+
+	.phone .archive {
+		align-self: stretch;
+		justify-content: center;
+	}
+
+	.phone .page {
+		max-width: none;
 	}
 
 	.land {
@@ -1453,45 +1563,16 @@
 		list-style: none;
 	}
 
+	.unresolved .mark {
+		display: inline;
+	}
+
+	.unresolved .mark :global(svg) {
+		margin-right: var(--space-1);
+		vertical-align: -0.125em;
+	}
+
 	.unresolved + .error {
 		margin-top: var(--space-3);
-	}
-
-	.heading {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-	}
-
-	.preview {
-		max-height: 10em;
-		overflow: hidden;
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-	}
-
-	.link {
-		align-self: flex-start;
-		padding: 0;
-		border: none;
-		background: none;
-		color: var(--status-working);
-		font: inherit;
-		font-size: var(--font-size-sm);
-		cursor: pointer;
-	}
-
-	code {
-		padding: var(--space-2) var(--space-3);
-		border-radius: var(--radius-md);
-		background: var(--surface-2);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-		overflow-wrap: anywhere;
-	}
-
-	.phone code {
-		display: block;
-		font-size: var(--font-size-md);
 	}
 </style>

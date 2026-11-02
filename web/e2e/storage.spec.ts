@@ -28,6 +28,7 @@ test('low storage pauses new Tickets and reports the reason', { tag: '@desktop' 
 	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
 	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
 	const run = panel.getByRole('region', { name: 'Run', exact: true });
+	await run.getByRole('button', { name: /^Run settings/ }).click();
 	await run.getByRole('combobox', { name: 'Rig' }).selectOption('Fake Claude');
 	await run.getByRole('button', { name: 'Start Run' }).click();
 	const status = run.getByRole('status').filter({ hasText: 'Low disk space' });

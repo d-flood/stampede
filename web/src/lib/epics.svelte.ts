@@ -8,7 +8,7 @@ import MinusCircle from '~icons/ph/minus-circle';
 
 export class OpenEpic {
 	ticket = $state<number>();
-	page = $state<'brief' | 'setup' | 'edit-brief' | 'edit-ticket' | 'new-ticket'>();
+	page = $state<'brief' | 'setup' | 'worktree' | 'review' | 'edit-brief' | 'edit-ticket' | 'new-ticket'>();
 	showResolved = $state(false);
 	rig = $state<string>();
 	parallel = $state(1);
