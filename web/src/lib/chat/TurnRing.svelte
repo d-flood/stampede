@@ -5,8 +5,8 @@
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { fade, fly } from 'svelte/transition';
 	import ShellMark from '#lib/ui/ShellMark.svelte';
+	import { WaitingMark } from '#lib/ui/spinners.ts';
 	import CheckBold from '~icons/ph/check-bold';
-	import HandPalmFill from '~icons/ph/hand-palm-fill';
 
 	let { status, activity, shell }: { status: Status; activity?: string | null; shell?: string } = $props();
 
@@ -82,7 +82,7 @@
 		<rect class="sweep" pathLength="100" out:sweep />
 	</svg>
 	<span class="legend" class:waiting={status === 'waiting'} class:background role="status" aria-label="Current activity" in:fly={rise} out:fade={{ duration: 150 }}>
-		{#if status === 'waiting'}<HandPalmFill />{:else if background}<ShellMark />{/if}
+		{#if status === 'waiting'}<WaitingMark />{:else if background}<ShellMark />{/if}
 		{#key label}
 			<span class="trace" aria-hidden="true" {@attach ride(1, 'background', (x) => ({ backgroundPosition: `${x}px 50%` }))}></span>
 			<span class="lit" in:fly={rise}>

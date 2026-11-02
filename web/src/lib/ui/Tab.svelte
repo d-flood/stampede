@@ -2,17 +2,16 @@
 	import type { Agent } from '#lib/config.svelte.ts';
 	import { logos } from '#lib/chat/sessions.ts';
 	import ShellMark from '#lib/ui/ShellMark.svelte';
+	import { WaitingMark, WorkingMark } from '#lib/ui/spinners.ts';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 	import { mergeProps } from 'bits-ui';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 	import Article from '~icons/ph/article';
 	import Browsers from '~icons/ph/browsers';
 	import CheckBold from '~icons/ph/check-bold';
-	import CircleNotchBold from '~icons/ph/circle-notch-bold';
 	import FileCode from '~icons/ph/file-code';
 	import Globe from '~icons/ph/globe';
 	import GitDiff from '~icons/ph/git-diff';
-	import HandPalmFill from '~icons/ph/hand-palm-fill';
 	import TerminalWindow from '~icons/ph/terminal-window';
 	import X from '~icons/ph/x';
 
@@ -48,7 +47,7 @@
 	}: Props = $props();
 
 	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe, canvas: Browsers, epic: Article };
-	const marks = { working: CircleNotchBold, waiting: HandPalmFill, background: ShellMark, done: CheckBold };
+	const marks = { working: WorkingMark, waiting: WaitingMark, background: ShellMark, done: CheckBold };
 	const Icon = $derived(variant === 'agent' ? logos[agent] : icons[variant]);
 	const Mark = $derived(status && marks[status]);
 
@@ -259,25 +258,5 @@
 	.mark {
 		display: inline-flex;
 		color: var(--mark);
-	}
-
-	.working .mark {
-		animation: spin 1s linear var(--pulse);
-	}
-
-	.waiting .mark {
-		animation: fade 1.6s ease-in-out var(--pulse);
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(1turn);
-		}
-	}
-
-	@keyframes fade {
-		50% {
-			opacity: 0.3;
-		}
 	}
 </style>

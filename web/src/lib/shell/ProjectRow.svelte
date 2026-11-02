@@ -5,10 +5,10 @@
 	import type { Trunk } from '#lib/git.ts';
 	import type { Tile } from '#lib/projects.ts';
 	import ShellMark from '#lib/ui/ShellMark.svelte';
+	import { WorkingMark } from '#lib/ui/spinners.ts';
 	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import ArrowDown from '~icons/ph/arrow-down-bold';
-	import CircleNotchBold from '~icons/ph/circle-notch-bold';
 
 	type Props = {
 		project: Project;
@@ -71,7 +71,7 @@
 					{#if needs}<span class="attention">{needs}</span>{/if}
 					{#if trunk}<span class="behind" title="{trunk.behind} new on origin/{trunk.branch}"><ArrowDown /></span>{/if}
 					{#if tiles.length}<span class="count" title="{tiles.length} {tiles.length === 1 ? 'worktree' : 'worktrees'}">{tiles.length}</span>{/if}
-					{#if working}<span class="spinner" title="working"><CircleNotchBold /></span>{:else if background}<span class="shell" title="background"><ShellMark /></span>{/if}
+					{#if working}<span class="spinner" title="working"><WorkingMark /></span>{:else if background}<span class="shell" title="background"><ShellMark /></span>{/if}
 				</span>
 				<span class="text">
 					<strong>{label}</strong>
@@ -345,10 +345,6 @@
 		color: var(--status-background);
 	}
 
-	.spinner :global(svg) {
-		animation: spin 1s linear var(--pulse);
-	}
-
 	.text {
 		display: flex;
 		flex: 1;
@@ -579,11 +575,5 @@
 	.card .name {
 		opacity: 1;
 		transition: opacity var(--dur-med) var(--dur-fast);
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(1turn);
-		}
 	}
 </style>

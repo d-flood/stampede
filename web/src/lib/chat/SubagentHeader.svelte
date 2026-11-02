@@ -4,15 +4,14 @@
 	import { icons } from '#lib/chat/icons.ts';
 	import type { Subagent } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { SubagentMark, WaitingMark } from '#lib/ui/spinners.ts';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CheckBold from '~icons/ph/check-bold';
-	import CircleNotchBold from '~icons/ph/circle-notch-bold';
-	import HandPalmFill from '~icons/ph/hand-palm-fill';
 	import XBold from '~icons/ph/x-bold';
 
 	let { subagent, trail, onopen }: { subagent: Subagent; trail: Placed[]; onopen(path: string[]): void } = $props();
 
-	const marks = { working: CircleNotchBold, waiting: HandPalmFill, done: CheckBold };
+	const marks = { working: SubagentMark, waiting: WaitingMark, done: CheckBold };
 	const ended = $derived(subagent.outcome === 'failed' || subagent.outcome === 'stopped' ? subagent.outcome : undefined);
 	const Mark = $derived(ended ? XBold : marks[subagent.status]);
 </script>
@@ -54,9 +53,8 @@
 	.chip { min-width: 0; padding: 0 var(--space-2); border: var(--border-width) solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--muted-fg); overflow-wrap: anywhere; }
 	.status { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-left: auto; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 	.mark { display: inline-flex; color: var(--status-done); }
-	.working .mark { color: var(--status-working); animation: spin 1s linear var(--pulse); }
+	.working .mark { color: var(--status-working); }
 	.waiting .mark { color: var(--status-waiting); }
 	.ended .mark, .outcome { color: var(--ansi-1); }
 	.phone { padding: var(--space-2) var(--space-4); font-size: var(--font-size-md); }
-	@keyframes spin { to { transform: rotate(1turn); } }
 </style>

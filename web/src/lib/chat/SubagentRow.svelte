@@ -2,14 +2,13 @@
 	import { clock, totals } from '#lib/chat/agents.ts';
 	import type { Subagent } from '#lib/device.svelte.ts';
 	import SubagentOrigin from '#lib/chat/SubagentOrigin.svelte';
+	import { SubagentMark, WaitingMark } from '#lib/ui/spinners.ts';
 	import CheckBold from '~icons/ph/check-bold';
-	import CircleNotchBold from '~icons/ph/circle-notch-bold';
-	import HandPalmFill from '~icons/ph/hand-palm-fill';
 	import XBold from '~icons/ph/x-bold';
 
 	let { subagent }: { subagent: Subagent } = $props();
 
-	const marks = { working: CircleNotchBold, waiting: HandPalmFill, done: CheckBold };
+	const marks = { working: SubagentMark, waiting: WaitingMark, done: CheckBold };
 	const ended = $derived(subagent.outcome === 'failed' || subagent.outcome === 'stopped' ? subagent.outcome : undefined);
 	const Mark = $derived(ended ? XBold : marks[subagent.status]);
 </script>
@@ -38,7 +37,7 @@
 <style>
 	.row { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; }
 	.mark { display: inline-flex; flex: none; color: var(--status-done); }
-	.working .mark { color: var(--status-working); animation: spin 1s linear var(--pulse); }
+	.working .mark { color: var(--status-working); }
 	.waiting .mark { color: var(--status-waiting); }
 	.ended .mark, .outcome { color: var(--ansi-1); }
 	.body { display: flex; flex: 1; flex-direction: column; min-width: 0; }
@@ -47,5 +46,4 @@
 	.type { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--surface-3); color: var(--muted-fg); font-size: var(--font-size-sm); }
 	.activity { color: var(--muted-fg); font-family: var(--font-mono); font-size: var(--font-size-sm); }
 	.meta { flex: none; color: var(--muted-fg); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; }
-	@keyframes spin { to { transform: rotate(1turn); } }
 </style>

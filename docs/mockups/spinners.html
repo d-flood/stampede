@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spinner Stampede</title>
+<style>
+:root {
+	--bg: #282c34; --fg: #e9ecf1;
+	--working: #81a2be; --waiting: #f0c674;
+	--spark: #eb6d25; --brand: #eb6d25;
+}
+:root[data-theme='light'] {
+	--bg: #fbfaf7; --fg: #24292f;
+	--working: #3d6ea8; --waiting: #a36a00;
+	--spark: #d4570f; --brand: #d4570f;
+}
+:root[data-working='brand'] { --working: var(--brand); }
+:root {
+	--surface-1: color-mix(in oklab, var(--bg) 96%, var(--fg));
+	--surface-2: color-mix(in oklab, var(--bg) 92%, var(--fg));
+	--surface-3: color-mix(in oklab, var(--bg) 86%, var(--fg));
+	--border: color-mix(in oklab, var(--bg) 86%, var(--fg));
+	--border-strong: color-mix(in oklab, var(--bg) 74%, var(--fg));
+	--muted: color-mix(in oklab, var(--fg) 60%, var(--bg));
+	--mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 15px/1.45 'Fira Sans', ui-sans-serif, system-ui, sans-serif; }
+main { max-width: 1260px; margin: 0 auto; padding: 28px 24px 72px; }
+@media (max-width: 600px) { main { padding: 20px 16px 56px; } }
+
+.top { display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: flex-end; justify-content: space-between; }
+h1 { margin: 0; font-size: 28px; letter-spacing: -0.01em; display: flex; align-items: center; gap: 0.35em; }
+h1 .sp { color: var(--brand); font-size: 1.1em; }
+.lede { margin: 6px 0 0; max-width: 62ch; color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface-1); }
+.seg button { min-height: 32px; padding: 0 11px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.seg button[aria-pressed='true'] { background: var(--surface-3); color: var(--fg); }
+
+.starter { margin-top: 24px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-1); }
+.starter h2 { margin: 0 0 10px; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+.starter ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px 24px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr)); }
+.starter li { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.starter .chips { display: inline-flex; gap: 6px; align-items: center; flex: none; }
+.starter .sp { font-size: 22px; }
+.starter b { font-weight: 600; }
+.starter span.d { color: var(--muted); }
+
+section { margin-top: 44px; }
+section > h2 { margin: 0; font-size: 19px; }
+section > p { margin: 4px 0 16px; color: var(--muted); font-size: 14px; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); }
+.card { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-1); overflow: hidden; }
+.card.today { border-style: dashed; }
+.hero { position: relative; display: grid; place-items: center; height: 136px; background: var(--surface-2); font-size: 64px; }
+.hero .num { position: absolute; top: 10px; left: 12px; font: 12px var(--mono); color: var(--muted); }
+.info { padding: 14px 16px 2px; }
+.info h3 { margin: 0; font-size: 16px; }
+.info p { margin: 3px 0 0; color: var(--muted); font-size: 14px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tag { padding: 1px 8px; border-radius: 999px; background: var(--surface-3); color: var(--muted); font-size: 11.5px; }
+.ctx { display: grid; gap: 12px; padding: 12px 16px 16px; }
+.label { margin-bottom: 6px; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.desk { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 14px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.phone { display: grid; gap: 10px; width: 100%; max-width: 330px; padding: 12px 14px 16px; border: 2px solid var(--border-strong); border-radius: 24px; background: var(--bg); }
+.phone::before { content: ''; justify-self: center; width: 54px; height: 5px; border-radius: 3px; background: var(--surface-3); }
+
+.t-working { color: var(--working); }
+.t-waiting { color: var(--waiting); }
+.t-loading { color: var(--muted); }
+
+.tab { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border-bottom: 2px solid var(--working); border-radius: 8px 8px 0 0; background: var(--surface-2); font-size: 13px; }
+.tab.waiting { border-color: var(--waiting); }
+.tab .mark { display: inline-flex; font-size: 15px; }
+.avatar { --hue: #b294bb; position: relative; display: grid; flex: none; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: color-mix(in oklab, var(--hue) 28%, var(--bg)); color: var(--hue); font-weight: 700; }
+.badge { position: absolute; right: -6px; bottom: -6px; display: grid; place-items: center; min-width: 1.45em; height: 1.45em; padding: 0 0.2em; border: 1px solid var(--surface-2); border-radius: 0.75em; background: var(--surface-1); font-size: 13px; }
+.act { display: flex; flex: 1 1 100%; align-items: center; gap: 8px; min-width: 0; min-height: 26px; font-size: 14px; }
+.act .sp { font-size: 1.2em; }
+.txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker { flex: 1 1 190px; min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); font-size: 13px; }
+.picker .ph { padding: 7px 10px; border-bottom: 1px solid var(--border); color: var(--muted); }
+.picker .pr { display: flex; align-items: center; gap: 8px; padding: 12px 10px; }
+.picker .sp { font-size: 18px; }
+.preview { display: grid; flex: 1 1 110px; place-items: center; height: 88px; border: 1px dashed var(--border-strong); border-radius: 10px; background: var(--surface-1); font-size: 32px; }
+.phone .avatar { width: 58px; height: 58px; border-radius: 16px; font-size: 22px; }
+.phone .badge { right: -7px; bottom: -7px; font-size: 17px; }
+.phone .act { min-height: 48px; font-size: 17px; }
+.phone .picker { font-size: 15px; }
+.phone .picker .pr { min-height: 48px; }
+.phone .preview { height: 132px; font-size: 44px; }
+
+.sp { display: inline-block; flex: none; width: 1em; height: 1em; line-height: 0; }
+.sp.w18 { width: 1.8em; }
+.sp-herd { mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); }
+.sp svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+.sp g[class] { transform-box: view-box; transform-origin: 0 0; }
+.sk { fill: var(--spark); }
+:root.still .sp * { animation: none !important; }
+
+@keyframes spin { to { transform: rotate(1turn); } }
+.sp-notch svg { animation: spin 1s linear infinite; }
+
+.d-body.sprint { animation: d-bob 0.15s ease-in-out infinite alternate; }
+.d-near.sprint { animation: d-near 0.6s ease-in-out infinite; }
+.d-far.sprint { animation: d-far 0.6s ease-in-out infinite; }
+.d-tail.sprint { animation: d-tail 0.3s ease-in-out infinite alternate; }
+@keyframes d-bob { from { transform: translateY(5px); } to { transform: translateY(-9px) rotate(-1.5deg); } }
+@keyframes d-near { 0%, 100% { transform: rotate(22deg); } 50% { transform: rotate(-42deg); } }
+@keyframes d-far { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(58deg); } }
+@keyframes d-tail { from { transform: rotate(-3deg); } to { transform: rotate(4deg); } }
+.puff { opacity: 0; animation: puff 0.6s ease-out infinite; }
+@keyframes puff { from { transform: scale(0.25); opacity: 0.55; } to { transform: translate(-70px, -12px) scale(1.1); opacity: 0; } }
+.lane { animation: lane linear infinite; }
+@keyframes lane { from { transform: translateX(-190px); } to { transform: translateX(560px); } }
+
+.d-near.stand { animation: toe 1.8s ease-in-out infinite; }
+@keyframes toe { 0%, 50%, 62%, 74%, 100% { transform: none; } 56%, 68% { transform: rotate(-28deg); } }
+.d-head.stand, .d-head.wag { animation: tilt 1.8s ease-in-out infinite; }
+.d-tail.wag { animation: wag 0.8s ease-in-out infinite alternate; }
+@keyframes wag { from { transform: rotate(-14deg); } to { transform: rotate(16deg); } }
+.sp-palm svg { animation: fade 1.6s ease-in-out infinite; }
+@keyframes fade { 50% { opacity: 0.3; } }
+.claw { animation: claw 1.8s ease-in-out infinite; }
+@keyframes claw { 0%, 55%, 100% { transform: none; } 10% { transform: rotate(-14deg); } 22% { transform: rotate(12deg); } 34% { transform: rotate(-9deg); } 45% { transform: rotate(5deg); } }
+.halt { animation: halt 1.8s ease-out infinite; }
+@keyframes halt { 0% { transform: scale(1.2); opacity: 0.35; } 12%, 65% { transform: none; opacity: 1; } 100% { opacity: 0.35; } }
+.bubble { animation: bubble 0.8s ease-in-out infinite alternate; }
+@keyframes bubble { from { transform: translateY(0.8px); } to { transform: translateY(-0.8px) rotate(-3deg); } }
+.qtilt { animation: qtilt 1.6s ease-in-out infinite alternate; }
+@keyframes qtilt { from { transform: rotate(-5deg); } to { transform: rotate(4deg); } }
+.plate { animation: plate 1.4s ease-in-out infinite; }
+@keyframes plate { 0%, 40%, 100% { transform: none; } 20% { transform: scale(1.35); } }
+.qegg { animation: wobble 1.6s ease-in-out infinite; }
+@keyframes tilt { 0%, 20%, 92%, 100% { transform: none; } 28%, 84% { transform: rotate(12deg); } }
+.tick { opacity: 0; animation: tick 1.8s linear infinite; }
+@keyframes tick { 0%, 61%, 66%, 73%, 78%, 100% { opacity: 0; } 62%, 74% { opacity: 1; } }
+
+.pulse { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 0%, 60%, 100% { opacity: 0.25; transform: none; } 20% { opacity: 1; transform: scale(1.15); } }
+.stomp { animation: 1.8s ease-out infinite; }
+.stomp-0 { animation-name: stomp-0; }
+.stomp-1 { animation-name: stomp-1; }
+.stomp-2 { animation-name: stomp-2; }
+@keyframes stomp-0 { 0% { opacity: 0; transform: scale(1.5); } 6%, 74% { opacity: 1; transform: none; } 88%, 100% { opacity: 0; } }
+@keyframes stomp-1 { 0%, 16% { opacity: 0; transform: scale(1.5); } 22%, 74% { opacity: 1; transform: none; } 88%, 100% { opacity: 0; } }
+@keyframes stomp-2 { 0%, 32% { opacity: 0; transform: scale(1.5); } 38%, 74% { opacity: 1; transform: none; } 88%, 100% { opacity: 0; } }
+.sp-trek { mask-image: linear-gradient(90deg, transparent, #000 45%); }
+.trek { animation: trek 1s ease-in-out infinite; }
+@keyframes trek { 50% { transform: translateX(-13.8px); } 100% { transform: translateX(-27.6px); } }
+.trek-2, .trek-3 { animation: 1s ease-out infinite; }
+.trek-2 { animation-name: trek-2; }
+.trek-3 { animation-name: trek-3; }
+@keyframes trek-2 { 0% { opacity: 0; transform: scale(1.5); } 12%, 100% { opacity: 1; transform: none; } }
+@keyframes trek-3 { 0%, 50% { opacity: 0; transform: scale(1.5); } 62%, 100% { opacity: 1; transform: none; } }
+
+.egg { animation: wobble 1.6s ease-in-out infinite; }
+@keyframes wobble { 0%, 40%, 72%, 100% { transform: none; } 46% { transform: rotate(-13deg); } 52% { transform: rotate(11deg); } 58% { transform: rotate(-7deg); } 64% { transform: rotate(4deg); } }
+.smoke { animation: smoke 1.5s ease-out infinite; }
+@keyframes smoke { from { transform: scale(0.3); opacity: 0.8; } to { transform: translate(4px, -9px) scale(1.5); opacity: 0; } }
+.lava { animation: lava 1.5s ease-in-out infinite alternate; }
+@keyframes lava { to { opacity: 0.45; } }
+</style>
+</head>
+<body>
+<main>
+	<div class="top">
+		<div>
+			<h1><span id="logo"></span>Spinner Stampede</h1>
+			<p class="lede">Sixteen replacements for the circle-notch, grouped by what's actually happening. Each card shows the hero, the real desktop spots, and the phone spots.</p>
+		</div>
+		<div class="controls">
+			<div class="seg" role="group" aria-label="Theme"><button data-set="theme:dark">Dark</button><button data-set="theme:light">Light</button></div>
+			<div class="seg" role="group" aria-label="Working color"><button data-set="working:theme">Theme blue</button><button data-set="working:brand">Logo orange</button></div>
+			<div class="seg" role="group" aria-label="Motion"><button data-set="motion:live">Live</button><button data-set="motion:still">Still</button></div>
+		</div>
+	</div>
+	<div class="starter">
+		<h2>Chosen</h2>
+		<ul id="starter"></ul>
+	</div>
+	<div id="sections"></div>
+</main>
+<script>
+const pivot = (x, y, cls, body, style = '') =>
+	`<g transform="translate(${x} ${y})"><g class="${cls}" style="${style}"><g transform="translate(${-x} ${-y})">${body}</g></g></g>`;
+const svg = (vb, body) => `<svg viewBox="${vb}" aria-hidden="true">${body}</svg>`;
+const sp = (cls, inner, wide) => `<span class="sp ${cls}${wide ? ' w18' : ''}">${inner}</span>`;
+
+const TAIL = `<path d="M100 78 C60 76 18 70 -18 56 C4 98 50 140 100 160 Z"/>`;
+const BODY = `<ellipse cx="135" cy="115" rx="78" ry="52" transform="rotate(-12 135 115)"/>`;
+const HEAD = `<path d="M176 92 C190 70 196 50 203 30 L246 38 C238 62 226 92 200 116 Z"/><path d="M203 30 C203 10 223 2 245 8 L284 22 C294 26 292 42 282 44 L245 52 C223 56 203 50 203 30 Z"/>`;
+const FAR = `<path d="M182 143 L217 208 L244 212 L244 230 L196 230 L158 157 Z" opacity=".55"/>`;
+const FAR_STAND = `<path d="M164 126 L196 126 L194 156 L168 222 L196 226 L196 244 L138 244 L140 222 L166 144 Z" opacity=".55"/>`;
+const NEAR = `<path d="M106 144 L134 156 L108 222 L136 226 L136 244 L78 244 L80 222 Z"/>`;
+const dino = (mode, delay = 0) => {
+	const st = `animation-delay:${delay}s`;
+	return pivot(137, 130, `d-body ${mode}`,
+		pivot(170, 150, `d-far ${mode}`, mode === 'sprint' ? FAR : FAR_STAND, st) + pivot(110, 115, `d-tail ${mode}`, TAIL, st) + BODY + pivot(195, 105, `d-head ${mode}`, HEAD, st) + pivot(120, 150, `d-near ${mode}`, NEAR, st), st);
+};
+const runner = (y, s, dur, delay, x0, op = 1) =>
+	`<g class="lane" style="animation-duration:${dur}s;animation-delay:${delay}s;transform:translateX(${x0}px)" opacity="${op}"><g transform="translate(0 ${y}) scale(${s})">${dino('sprint', delay)}</g></g>`;
+const TRACKS = [[7.8, 9.5, 80], [21.6, 14.5, 100], [35.4, 9.5, 80]];
+const track = (x, y, turn) => `<g transform="translate(${x} ${y}) rotate(${turn}) scale(.92)"><ellipse cy="2" rx="3.2" ry="2.7"/><path d="M0 0 L0 -6 M-1 .6 L-4.6 -4.2 M1 .6 L4.6 -4.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></g>`;
+const LOGO = [['67 74', 0.58, -0.2, 0.55], ['261 82', 0.6, -0.4, 0.55], ['123 186', 0.92, 0, 1]];
+
+const PALM = 'M216 104v48a88 88 0 0 1-176 0V64a16 16 0 0 1 32 0v56a8 8 0 0 0 16 0V32a16 16 0 0 1 32 0v80a8 8 0 0 0 16 0V48a16 16 0 0 1 32 0v80.67A48.08 48.08 0 0 0 128 176a8 8 0 0 0 16 0a32 32 0 0 1 32-32a8 8 0 0 0 8-8v-32a16 16 0 0 1 32 0';
+const talon = (x, y, angle, side, w, len, L, c) => {
+	const h = w / 2, b = -len + 0.3, t = -len - L;
+	return `<g transform="translate(${x} ${y}) rotate(${angle}) scale(${side} 1)"><rect x="${-h}" y="${-len}" width="${w}" height="${len + 2}" rx="${h * 0.8}"/><path d="M${-h} ${b} C${-h} ${t + L * 0.3} ${c * 0.4} ${t} ${c} ${t + 0.2} C${c * 0.4} ${t + L * 0.45} ${h} ${t + L * 0.6} ${h} ${b} Z"/></g>`;
+};
+const CLAW = '<path d="M5.4 14.2 H18.6 V16.4 C18.6 20.2 15.8 23 12 23 C8.2 23 5.4 20.2 5.4 16.4 Z"/>' + talon(7, 15, -20, 1, 3.2, 3, 7, 1.8) + talon(12, 14.4, 0, 1, 3.3, 3.6, 7.6, 1.6) + talon(17, 15, 20, -1, 3.2, 3, 7, 1.8);
+const QSEGS = [[[7.6, 8.2], [7.6, 4.4], [9.8, 2.4], [12.6, 2.4]], [[12.6, 2.4], [15.6, 2.4], [17.6, 4.4], [17.6, 7.2]], [[17.6, 7.2], [17.6, 10.4], [13.2, 11.4], [12.8, 15.2]]];
+const QD = 'M7.6 8.2 C7.6 4.4 9.8 2.4 12.6 2.4 C15.6 2.4 17.6 4.4 17.6 7.2 C17.6 10.4 13.2 11.4 12.8 15.2';
+const bez = ([a, b, c, d], t) => [0, 1].map((i) => (1 - t) ** 3 * a[i] + 3 * (1 - t) ** 2 * t * b[i] + 3 * (1 - t) * t ** 2 * c[i] + t ** 3 * d[i]);
+const QPTS = QSEGS.flatMap((seg) => Array.from({ length: 100 }, (_, i) => bez(seg, i / 100))).concat([QSEGS[2][3]]);
+const QLEN = QPTS.reduce((acc, p, i) => [...acc, i ? acc[i - 1] + Math.hypot(p[0] - QPTS[i - 1][0], p[1] - QPTS[i - 1][1]) : 0], []);
+const qAt = (f) => {
+	const i = Math.max(1, QLEN.findIndex((l) => l >= f * QLEN.at(-1)));
+	const [x, y] = QPTS[i], [px, py] = QPTS[i - 1];
+	return { x, y, a: Math.atan2(y - py, x - px) };
+};
+const PLATES = [[0.08, 1.5], [0.22, 2.1], [0.37, 2.6], [0.52, 2.5], [0.66, 2.1], [0.8, 1.6]];
+document.head.insertAdjacentHTML('beforeend', `<style>${Array.from({ length: 8 }, (_, k) => `.qt-${k} { animation: qt-${k} 2.2s ease-out infinite; } @keyframes qt-${k} { 0%, ${k * 6}% { opacity: 0; transform: scale(1.6); } ${k * 6 + 4}%, 86% { opacity: 1; transform: none; } 95%, 100% { opacity: 0; } }`).join('\n')}</style>`);
+let uid = 0;
+
+const SP = {
+	notch: () => sp('sp-notch', svg('0 0 24 24', `<circle cx="12" cy="12" r="8.5" pathLength="100" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="72 28"/>`)),
+	sprint: () => sp('sp-sprint', svg('-45 -53 340 340', [0, 1, 2].map((i) => pivot(70, 240, 'puff', '<circle cx="70" cy="240" r="18"/>', `animation-delay:${-i * 0.2}s`)).join('') + dino('sprint'))),
+	herd: () => sp('sp-herd', svg('0 0 540 300', runner(56, 0.36, 2.3, -0.3, 60, 0.5) + runner(40, 0.34, 2.3, -1.45, 330, 0.5) + runner(128, 0.55, 1.6, -0.8, 190)), true),
+	logo: () => sp('sp-logo', svg('57 51 392 392', LOGO.map(([t, s, d, op]) => `<g transform="translate(${t}) scale(${s}) rotate(7 140 140)" opacity="${op}">${dino('sprint', d)}</g>`).join(''))),
+	prints: () => sp('sp-prints w18', svg('0 0 43.2 24', TRACKS.map(([x, y, turn], k) => pivot(x + 1.2, y, 'pulse', track(x, y, turn), `animation-delay:${k * 0.2}s`)).join(''))),
+	stomp: () => sp('sp-stomp w18', svg('0 0 43.2 24', TRACKS.map(([x, y, turn], k) => pivot(x + 1.2, y, `stomp stomp-${k}`, track(x, y, turn))).join(''))),
+	trek: () => sp('sp-trek w18', svg('0 0 43.2 24', `<g class="trek">${[0, 1, 2, 3].map((k) => {
+		const [x, y, turn] = [7.8 + 13.8 * k, k % 2 ? 14.5 : 9.5, k % 2 ? 100 : 80];
+		return k < 2 ? track(x, y, turn) : pivot(x + 1.2, y, `trek-${k}`, track(x, y, turn));
+	}).join('')}</g>`)),
+	qdino: () => {
+		const id = `q${++uid}`;
+		return sp('sp-qdino', svg('0 0 24 24', `<mask id="${id}" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><rect width="24" height="24" fill="#fff"/><circle cx="9.4" cy="4.2" r=".75" fill="#000"/><path d="M3.4 7 L4.2 7.7 L5 7 L5.8 7.7 L6.6 7 L7.6 7.3" fill="none" stroke="#000" stroke-width=".6" stroke-linejoin="round" stroke-linecap="round"/></mask>` + pivot(12.8, 16, 'qtilt', `<g mask="url(#${id})"><path d="M13 2.6 C15.9 2.6 17.6 4.6 17.6 7.2 C17.6 10.4 13.2 11.2 12.8 15.2" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/><path d="M13.4 1.2 C10.6 0.8 7.6 1.6 5.8 3.4 L2.8 6.2 C2 7 2.2 8.4 3.4 8.6 L8.4 9 C10.4 9.1 11.4 8 11.6 6.6 L14.2 4.2 Z"/></g>`) + pivot(12.8, 22.9, 'qegg', '<ellipse cx="12.8" cy="20.6" rx="1.9" ry="2.3"/>')));
+	},
+	qplates: () => sp('sp-qplates', svg('0 0 24 24', `<g transform="translate(1.2 2.6) scale(.9)">${PLATES.map(([f, size], k) => {
+		const p = qAt(f), nx = Math.sin(p.a), ny = -Math.cos(p.a), tx = Math.cos(p.a) * 1.1, ty = Math.sin(p.a) * 1.1;
+		const bx = p.x + nx * 1.3, by = p.y + ny * 1.3;
+		return pivot(bx, by, 'plate', `<path d="M${bx - tx} ${by - ty} L${bx + nx * size} ${by + ny * size} L${bx + tx} ${by + ty} Z" stroke="currentColor" stroke-width=".5" stroke-linejoin="round"/>`, `animation-delay:${k * 0.12}s`);
+	}).join('')}<path d="${QD}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><ellipse cx="12.8" cy="20.6" rx="1.9" ry="2.3"/></g>`)),
+	qtracks: () => sp('sp-qtracks', svg('0 0 24 24', `<g transform="translate(1.2 1.4) scale(.9)">${[...Array.from({ length: 7 }, (_, k) => qAt(k / 6.2)), { x: 12.8, y: 20.6, a: Math.PI / 2, dot: true }].map((p, k) => {
+		const side = p.dot ? 0 : k % 2 ? 0.7 : -0.7, x = p.x + Math.sin(p.a) * side, y = p.y - Math.cos(p.a) * side;
+		return pivot(x, y, `qt qt-${k}`, `<g transform="translate(${x} ${y}) rotate(${(p.a * 180) / Math.PI + 90}) scale(${p.dot ? 0.46 : 0.34})"><ellipse cy="2" rx="3.2" ry="2.7"/><path d="M0 0 L0 -6 M-1 .6 L-4.6 -4.2 M1 .6 L4.6 -4.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></g>`);
+	}).join('')}</g>`)),
+	tilt: () => sp('sp-tilt', svg('-45 -53 340 340', dino('stand') + '<g class="tick" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round"><path d="M68 252 L50 240 M70 262 L48 262"/></g>')),
+	wag: () => sp('sp-wag', svg('-45 -53 340 340', dino('wag'))),
+	palm: () => sp('sp-palm', svg('0 0 256 256', `<path d="${PALM}"/>`)),
+	claw: () => sp('sp-claw', svg('0 0 24 24', pivot(12, 23, 'claw', CLAW))),
+	halt: () => sp('sp-halt', svg('0 0 24 24', pivot(12, 13, 'halt', '<g transform="translate(12 13.4) scale(1.75)"><ellipse cy="2" rx="3.2" ry="2.7"/><path d="M0 0 L0 -6 M-1 .6 L-4.6 -4.2 M1 .6 L4.6 -4.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></g>'))),
+	ask: () => {
+		const id = `ask${++uid}`;
+		return sp('sp-ask', svg('0 0 24 24', `<mask id="${id}" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><rect width="24" height="24" fill="#fff"/><path d="M14.3 5 C14.3 3.6 15.3 3 16.3 3 C17.4 3 18.3 3.8 18.3 4.9 C18.3 6.4 16.3 6.6 16.3 8.2" fill="none" stroke="#000" stroke-width="1.7" stroke-linecap="round"/><circle cx="16.3" cy="10.5" r="1.05" fill="#000"/></mask><mask id="${id}e" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><rect width="24" height="24" fill="#fff"/><circle cx="5.6" cy="14.6" r=".85" fill="#000"/></mask>` + pivot(11, 13, 'bubble', `<path mask="url(#${id})" d="M12 0.8 H20.6 Q23.2 0.8 23.2 3.4 V10.2 Q23.2 12.8 20.6 12.8 H15.6 L12.4 15 L13 12.8 H12 Q9.4 12.8 9.4 10.2 V3.4 Q9.4 0.8 12 0.8 Z"/>`) + `<g mask="url(#${id}e)"><g transform="translate(-18.2 12.2) scale(.1)">${HEAD}</g></g>`));
+	},
+	egg: () => sp('sp-egg', svg('0 0 24 24', '<ellipse cx="12" cy="21.6" rx="5" ry=".9" opacity=".25"/>' + pivot(12, 21, 'egg', '<path d="M12 3 C16.5 3 19 9.5 19 14 C19 18.5 16 21 12 21 C8 21 5 18.5 5 14 C5 9.5 7.5 3 12 3 Z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5.8 12.2 L8.6 13.8 L10.8 11.6 L13.4 13.8 L15.6 11.8 L18.2 13.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/><circle cx="9.5" cy="8.5" r=".9"/><circle cx="14.5" cy="17" r="1"/><circle cx="10" cy="17.6" r=".7"/>'))),
+	volcano: () => sp('sp-volcano', svg('0 0 24 24', [0, 1, 2].map((i) => pivot(12, 9, 'smoke', '<circle cx="12" cy="9" r="2.2" opacity=".7"/>', `animation-delay:${-i * 0.5}s;transform:translate(${i * 1.5}px, ${-i * 3}px) scale(${0.5 + i * 0.4})`)).join('') + '<path d="M2.5 21.5 L9.3 10.2 C10.5 11 13.5 11 14.7 10.2 L21.5 21.5 Z"/><path class="lava sk" d="M9.6 10.6 C10.8 11.4 13.2 11.4 14.4 10.6 L13.4 14 L12.4 12.6 L11.2 15 L10.6 12.4 Z"/>')),
+};
+
+const MAIN_TEXT = 'Reading crates/stampede/src/lib.rs';
+const tab = (s, tone) => `<div class="tab ${tone}"><span>lib.rs</span><span class="mark t-${tone}">${s}</span></div>`;
+const avatar = (s) => `<div class="avatar">S<span class="badge t-working">${s}</span></div>`;
+const act = (s, tone, text) => `<div class="act t-${tone}">${s}<span class="txt">${text}</span></div>`;
+const picker = (s) => `<div class="picker"><div class="ph">Search themes…</div><div class="pr t-loading">${s}<span>Loading themes…</span></div></div>`;
+const preview = (s) => `<div class="preview t-loading">${s}</div>`;
+
+const CTX = {
+	main: (s) => [tab(s(), 'working') + avatar(s()) + act(s(), 'working', MAIN_TEXT), avatar(s()) + act(s(), 'working', MAIN_TEXT)],
+	wait: (s) => [tab(s(), 'waiting') + act(s(), 'waiting', 'Waiting for your response'), act(s(), 'waiting', 'Waiting for your response')],
+	load: (s) => [picker(s()) + preview(s()), preview(s()) + picker(s())],
+};
+
+const SECTIONS = [
+	{
+		title: 'Main agent is working',
+		where: 'Chat activity line · tab mark · project badge',
+		ctx: 'main',
+		items: [
+			{ key: 'notch', name: 'Today: circle-notch', blurb: 'The current Phosphor notch. Dependable, but it’s every app’s spinner.', tags: ['baseline'], today: true },
+			{ key: 'sprint', name: 'Sprint', blurb: 'The dino from icon.svg sprinting in place: legs scissor, tail counterbalances, dust kicks up.', tags: ['icon geometry', 'reads at 13px'] },
+			{ key: 'herd', name: 'Stampede', blurb: 'Three icon dinos run through a little lane, back row smaller and slower for parallax.', tags: ['icon geometry', 'wide · 1.8em', 'best on activity line'] },
+			{ key: 'logo', name: 'Living logo', blurb: 'The app icon itself, each dino sprinting on its own beat. The still frame is the exact logo.', tags: ['still = logo', 'best ≥ 20px'] },
+			{ key: 'prints', name: 'Footprints', blurb: 'Three-dot loader, but the dots are three-toed tracks walking left to right. Each one pulses in turn.', tags: ['3-dot loader', 'wide · 1.8em', 'tiny-safe'] },
+			{ key: 'stomp', name: 'Stomp', blurb: 'Same tracks, but each stamps down one at a time, left to right, then all fade and the walk restarts.', tags: ['3-dot loader', 'wide · 1.8em', 'reads as walking'] },
+			{ key: 'trek', name: 'Trek', blurb: 'Stomp that never resets: each new track stamps down on the right while the view glides along after the walker.', tags: ['3-dot loader', 'wide · 1.8em', 'endless'] },
+		],
+	},
+	{
+		title: 'Waiting on you',
+		where: 'Replaces the hand-palm for main agents and subagents.',
+		items: [
+			{ key: 'palm', ctx: 'wait', name: 'Today: hand-palm', blurb: 'The current Phosphor palm, fading in the tab. Instantly reads as “your turn”.', tags: ['baseline'], today: true },
+			{ key: 'claw', ctx: 'wait', name: 'Claw up', blurb: 'The palm icon’s pose as a dinosaur claw: a broad hand facing you, three spread talons curling in. A little wave, then it holds.', tags: ['palm analog', 'reads at 13px'] },
+			{ key: 'halt', ctx: 'wait', name: 'Halt track', blurb: 'One big three-toed track held up like a palm. Stamps in, holds, softly fades, stamps again.', tags: ['palm analog', 'matches Footprints'] },
+			{ key: 'ask', ctx: 'wait', name: 'Dino asks', blurb: 'The icon dino’s head with a “?” bubble. Says “I have a question for you” outright.', tags: ['most literal', 'best ≥ 16px'] },
+			{ key: 'qdino', ctx: 'wait', name: 'Questionosaurus · head', blurb: 'The “?” is a dino in profile: head upright on top with its snout as the hook’s tip, an S-curved neck down the stem, and an egg for the dot.', tags: ['reads as ? first', 'most literal'] },
+			{ key: 'qplates', ctx: 'wait', name: 'Questionosaurus · plates', blurb: 'A plain “?” wearing stegosaurus plates down its back; they ripple in a wave. The dot is an egg.', tags: ['reads as ? first', 'no head'] },
+			{ key: 'qtracks', ctx: 'wait', name: 'Questionosaurus · tracks', blurb: 'A dino wandered in a question mark: three-toed tracks stamp in along the “?”, the last one is the dot.', tags: ['matches Footprints', 'no head'] },
+			{ key: 'tilt', ctx: 'wait', name: 'Head tilt', blurb: 'The dino stops, cocks its head at you, and taps a toe twice. Curious, not alarming.', tags: ['icon geometry', 'pairs with Sprint'] },
+			{ key: 'wag', ctx: 'wait', name: 'Tail wag', blurb: 'Same standing dino with its feet still: it cocks its head and swishes its tail while it waits.', tags: ['icon geometry', 'quieter'] },
+		],
+	},
+	{
+		title: 'Loading',
+		where: 'Theme/font/branch pickers, image and media previews, canvases.',
+		ctx: 'load',
+		items: [
+			{ key: 'egg', name: 'Hatching egg', blurb: 'Wobble, wobble, pause. Something in there is almost ready.', tags: ['playful'] },
+			{ key: 'volcano', name: 'Volcano', blurb: 'Puffs smoke while the lava glows. Calm enough for long loads.', tags: ['calm'] },
+		],
+	},
+];
+
+let n = 0;
+document.getElementById('sections').innerHTML = SECTIONS.map((section) => `
+	<section>
+		<h2>${section.title}</h2>
+		<p>${section.where}</p>
+		<div class="grid">${section.items.map((it) => {
+			const [desk, phone] = CTX[it.ctx ?? section.ctx](SP[it.key], it);
+			return `<article class="card${it.today ? ' today' : ''}">
+				<div class="hero t-${it.tone ?? (section.ctx === 'load' ? 'loading' : it.ctx === 'wait' ? 'waiting' : 'working')}"><span class="num">${it.today ? 'now' : String(++n).padStart(2, '0')}</span>${SP[it.key]()}</div>
+				<div class="info"><h3>${it.name}</h3><p>${it.blurb}</p><div class="tags">${it.tags.map((t) => `<span class="tag">${t}</span>`).join('')}</div></div>
+				<div class="ctx">
+					<div><div class="label">Desktop</div><div class="desk">${desk}</div></div>
+					<div><div class="label">Phone</div><div class="phone">${phone}</div></div>
+				</div>
+			</article>`;
+		}).join('')}</div>
+	</section>`).join('');
+
+const STARTER = [
+	[['sprint'], 'Main agent', 'Sprint', 't-working'],
+	[['trek'], 'Subagents', 'Trek', 't-working'],
+	[['claw'], 'Waiting', 'Claw up', 't-waiting'],
+	[['egg'], 'Loading', 'Hatching egg', 't-loading'],
+];
+document.getElementById('starter').innerHTML = STARTER.map(([keys, where, what, tone]) =>
+	`<li><span class="chips ${tone}">${keys.map((k) => SP[k]()).join('')}</span><span><b>${where}</b> <span class="d">→ ${what}</span></span></li>`).join('');
+document.getElementById('logo').innerHTML = SP.logo();
+
+const root = document.documentElement;
+const state = {
+	theme: matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark',
+	working: 'theme',
+	motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'still' : 'live',
+};
+function apply() {
+	root.dataset.theme = state.theme;
+	root.dataset.working = state.working;
+	root.classList.toggle('still', state.motion === 'still');
+	document.querySelectorAll('[data-set]').forEach((button) => {
+		const [key, value] = button.dataset.set.split(':');
+		button.setAttribute('aria-pressed', String(state[key] === value));
+	});
+}
+document.querySelectorAll('[data-set]').forEach((button) => button.addEventListener('click', () => {
+	const [key, value] = button.dataset.set.split(':');
+	state[key] = value;
+	apply();
+}));
+apply();
+</script>
+</body>
+</html>

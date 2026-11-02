@@ -5,8 +5,7 @@
 	import SubagentMenu from '#lib/chat/SubagentMenu.svelte';
 	import SubagentSheet from '#lib/chat/SubagentSheet.svelte';
 	import { form } from '#lib/form.ts';
-	import CircleNotchBold from '~icons/ph/circle-notch-bold';
-	import HandPalmFill from '~icons/ph/hand-palm-fill';
+	import { SubagentMark, WaitingMark } from '#lib/ui/spinners.ts';
 
 	const PILL = 10;
 	const MORE = 3.5;
@@ -65,7 +64,7 @@
 		<div class="pills" {@attach measure}>
 			{#each running.slice(0, fits) as { path, subagent } (path.join('/'))}
 				<button class="pill {subagent.status}" style:min-width="{PILL}em" title={subagent.task} onclick={() => (subagent.status === 'waiting' ? onattend(subagent.id) : onopen(path))}>
-					<span class="mark">{#if subagent.status === 'waiting'}<HandPalmFill />{:else}<CircleNotchBold />{/if}</span>
+					<span class="mark">{#if subagent.status === 'waiting'}<WaitingMark />{:else}<SubagentMark />{/if}</span>
 					<span class="task">{subagent.task}</span>
 					<SubagentOrigin origin={subagent.origin} />
 					{#if subagent.startedAt}<span class="clock">{clock(subagent.startedAt)}</span>{/if}
@@ -94,10 +93,8 @@
 	.asking { color: var(--status-waiting); }
 	.pill:hover, .chip:hover, .bar:hover { background: var(--hover); }
 	.mark { display: inline-flex; flex: none; color: var(--status-working); }
-	.working .mark { animation: spin 1s linear var(--pulse); }
 	.waiting { border-color: var(--status-waiting); background: color-mix(in oklab, var(--status-waiting) 16%, transparent); }
 	.waiting .mark { color: var(--status-waiting); }
 	.task { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: start; }
 	.clock { flex: none; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
-	@keyframes spin { to { transform: rotate(1turn); } }
 </style>

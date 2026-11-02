@@ -13,17 +13,16 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import { WaitingMark, WorkingMark } from '#lib/ui/spinners.ts';
 	import Article from '~icons/ph/article';
 	import Bell from '~icons/ph/bell';
 	import CheckBold from '~icons/ph/check-bold';
-	import CircleNotchBold from '~icons/ph/circle-notch-bold';
-	import HandPalmFill from '~icons/ph/hand-palm-fill';
 
 	type Props = { items: Attention[]; projects: Map<string, string>; chats: Chat[]; onselect(item: Attention): void };
 
 	let { items, projects, chats, onselect }: Props = $props();
 
-	const marks = { working: CircleNotchBold, waiting: HandPalmFill, done: CheckBold };
+	const marks = { working: WorkingMark, waiting: WaitingMark, done: CheckBold };
 
 	function icon(item: Attention) {
 		if (!('chatId' in item)) return Article;
