@@ -47,7 +47,7 @@ const ARGS: [&str; 7] = [
     "--permission-prompt-tool=stdio",
 ];
 
-const SDK_ENV: [(&str, &str); 2] = [("CLAUDE_CODE_ENTRYPOINT", "sdk-ts"), ("CLAUDE_CODE_SDK_READS_SESSION_STATE", "1")];
+const SDK_ENV: [(&str, &str); 2] = [("CLAUDE_CODE_ENTRYPOINT", "stampede"), ("CLAUDE_CODE_SDK_READS_SESSION_STATE", "1")];
 
 const WINDOWS: [(Window, &str); 2] = [(Window::FiveHour, "five_hour"), (Window::Weekly, "seven_day")];
 
