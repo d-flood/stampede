@@ -168,7 +168,8 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     });
-    assert_eq!(context.await.expect("the resumed chat never reported its context"), json!({ "used": 4436, "window": 1000000 }));
+    let cache = json!({ "expires": 1792186875163u64, "then": "cold" });
+    assert_eq!(context.await.expect("the resumed chat never reported its context"), json!({ "used": 4436, "window": 1000000, "cache": cache }), "cold an hour after its last response");
 
     let listed = list(&mut socket, &project_id).await;
     let ids: Vec<&Value> = listed.as_array().unwrap().iter().map(|session| &session["sessionId"]).collect();
