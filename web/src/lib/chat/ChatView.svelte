@@ -30,11 +30,11 @@
 	import GitBranch from '~icons/ph/git-branch';
 	import GitFork from '~icons/ph/git-fork';
 
-	let { device, chat, chats, onchat, items, opened, onopen, active, focused = false, ondiff, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void; oncanvas(canvas: string): void } =
+	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, ondiff, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void; oncanvas(canvas: string): void } =
 		$props();
 
 	const subagents = $derived(flatten(items));
-	const canvases = $derived(written(items));
+	const canvases = $derived([...new Set([...written(items), ...saved])]);
 	const shell = $derived(chat.background ? commands(items).findLast(({ item }) => item.status === 'running')?.item.command : undefined);
 	const selected = $derived(subagents.find(({ path }) => same(path, opened))?.subagent);
 	const trail = $derived(subagents.filter(({ path }) => path.length < opened.length && same(path, opened.slice(0, path.length))));

@@ -29,6 +29,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     attention::{Attention, Feed},
+    canvas::Canvases,
     chats::{self, Builtin, Chats},
     config::{Agent, Config},
     epics::Epics,
@@ -181,6 +182,7 @@ struct Device {
     connection: Uuid,
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
+    canvases: Arc<Canvases>,
     attached: HashMap<String, u64>,
     expanded: HashMap<(String, usize), u64>,
     attention: Arc<Feed>,
@@ -226,7 +228,7 @@ async fn connect(
     let mut attention_changes = attention.subscribe();
     let mut usage_changes = usage.subscribe();
     let mut disk = disk.subscribe();
-    let mut canvases = canvases.subscribe();
+    let mut canvas_changes = canvases.subscribe();
     let mut git = git.subscribe();
     let mut switches = languages.subscribe();
     let mut epic_changes = epics.subscribe();
@@ -236,6 +238,7 @@ async fn connect(
         connection: Uuid::new_v4(),
         terminals,
         chats,
+        canvases,
         attached: HashMap::new(),
         expanded: HashMap::new(),
         attention,
@@ -315,7 +318,7 @@ async fn connect(
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => break,
             },
-            changed = canvases.recv() => match changed {
+            changed = canvas_changes.recv() => match changed {
                 Ok(changed) => send(&device.outgoing, json!(changed)),
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => break,
@@ -442,6 +445,7 @@ impl Device {
                     "buildId": env!("STAMPEDE_BUILD_ID"),
                     "terminals": self.terminals.list(),
                     "chats": self.chats.list(),
+                    "canvases": self.canvases.list(),
                 });
                 send(&self.outgoing, hello);
                 self.attention_changed(&self.attention.items());

@@ -65,3 +65,31 @@ test('a chat canvas opens beside its chat, follows edits, and keeps versions', a
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await closeProject(page, name);
 });
+
+test('a canvas written without Write or Edit still reaches the tray', async ({ page }, { project, repeatEachIndex }) => {
+	let chatId = '';
+	await page.routeWebSocket('**/ws', (socket) => {
+		const server = socket.connectToServer();
+		server.onMessage((data) => {
+			if (typeof data === 'string') {
+				const message: ServerMessage = JSON.parse(data);
+				if (message.type === 'chat.created') chatId = message.chat.id;
+			}
+			socket.send(data);
+		});
+	});
+	const name = `scripted-canvas-${project.name}-${repeatEachIndex}`;
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await expect.poll(() => chatId).not.toBe('');
+	const directory = `${process.env.STAMPEDE_E2E_ROOT}/data/canvases/${chatId}`;
+	mkdirSync(directory, { recursive: true });
+	writeFileSync(`${directory}/sketch.html`, '<h1>Scripted</h1>');
+	const tray = page.getByRole('region', { name: 'Canvases' }).getByRole('button', { name: 'sketch' });
+	await expect(tray).toBeVisible();
+	await page.reload();
+	await expect(tray).toBeVisible();
+	await closeProject(page, name);
+});

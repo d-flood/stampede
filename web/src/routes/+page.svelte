@@ -90,6 +90,7 @@
 	let browsers = $state<Record<string, OpenBrowser[]>>(restored.browsers);
 	let canvases = $state<Record<string, OpenCanvas[]>>(restored.canvases);
 	const offered = new Set<string>();
+	const saved = new SvelteSet<string>();
 	let epicTabs = $state<Record<string, OpenEpic[]>>(restored.epics);
 	let epics = $state.raw<Record<string, Epic[]>>({});
 	const subscribed = new Set<string>();
@@ -240,6 +241,8 @@
 				const chatsOwned: Record<string, Chat[]> = {};
 				for (const chat of message.chats) (chatsOwned[chat.projectId] ??= []).push(chat);
 				chats = chatsOwned;
+				saved.clear();
+				for (const canvas of message.canvases) saved.add(canvas);
 				for (const project of projects) {
 					invalidate(project.id);
 					staleGit.add(project.id);
@@ -458,6 +461,7 @@
 				invalidate(message.projectId);
 				break;
 			case 'canvas.changed': {
+				saved.add(message.canvas);
 				for (const canvas of Object.values(canvases).flat()) {
 					if (canvas.canvas === message.canvas) canvas.changed(message.versions);
 				}
@@ -1247,6 +1251,7 @@
 								chats={allChats}
 								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); slide('tabs'); }}
 								items={chatItems[chat.id] ?? []}
+								saved={[...saved].filter((canvas) => canvas.startsWith(`${chat.id}/`))}
 								opened={openSubagents[chat.id] ?? []}
 								onopen={(path) => (openSubagents[chat.id] = path)}
 								active={showing(chat.id)}

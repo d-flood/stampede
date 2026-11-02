@@ -116,6 +116,12 @@ impl Canvases {
         self.changed.subscribe()
     }
 
+    pub fn list(&self) -> Vec<String> {
+        let mut canvases: Vec<_> = existing(&self.root).into_iter().collect();
+        canvases.sort();
+        canvases
+    }
+
     fn versions(&self, canvas: &str) -> (PathBuf, usize) {
         let directory = self.history.join(canvas);
         let count = fs::read_dir(&directory).map_or(0, |entries| {

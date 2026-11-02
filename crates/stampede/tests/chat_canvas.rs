@@ -33,7 +33,7 @@ async fn chat_canvases_stream_changes_and_keep_versions_across_restarts() {
     let canvas = server.root.path().join("data/canvases/0123abcd");
     let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
     control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
-    next_control(&mut socket, "hello").await;
+    assert_eq!(next_control(&mut socket, "hello").await["canvases"], json!([]));
     fs::create_dir_all(&canvas).unwrap();
     let client = reqwest::Client::new();
     let port = server.port;
@@ -56,6 +56,9 @@ async fn chat_canvases_stream_changes_and_keep_versions_across_restarts() {
     }
     fs::write(canvas.join("page.html"), "<h1>While stopped</h1>").unwrap();
     server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    assert_eq!(next_control(&mut socket, "hello").await["canvases"], json!(["0123abcd/page.html"]));
     let response = client.get(url("")).send().await.unwrap();
     assert_eq!(response.text().await.unwrap(), "<h1>While stopped</h1>");
     timeout(Duration::from_secs(10), async {

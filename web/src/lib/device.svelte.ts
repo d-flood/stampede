@@ -197,7 +197,7 @@ export type Search = {
 };
 
 export type ServerMessage =
-	| { type: 'hello'; version: string; buildId: string; terminals: Terminal[]; chats: Chat[] }
+	| { type: 'hello'; version: string; buildId: string; terminals: Terminal[]; chats: Chat[]; canvases: string[] }
 	| { type: 'terminal.created'; terminal: Terminal }
 	| { type: 'terminals.changed'; projectId?: string; drawer?: true; terminals: Terminal[] }
 	| { type: 'terminal.title'; terminalId: string; label: string }
