@@ -19,15 +19,15 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	const editor = page.getByRole('tabpanel');
 	const source = editor.locator('.cm-content');
 	const preview = editor.getByRole('region', { name: 'Markdown preview' });
-	const editButton = editor.getByRole('button', { name: 'Edit', exact: true });
-	const previewButton = editor.getByRole('button', { name: 'Preview', exact: true });
-	await expect(editButton).toHaveAttribute('aria-pressed', 'true');
+	const editButton = editor.getByRole('radio', { name: 'Edit', exact: true });
+	const previewButton = editor.getByRole('radio', { name: 'Preview', exact: true });
+	await expect(editButton).toBeChecked();
 	await expect(source).toBeVisible();
 	await source.focus();
 	await page.keyboard.press('ControlOrMeta+a');
 	await page.keyboard.insertText(edited);
 	await previewButton.click();
-	await expect(previewButton).toHaveAttribute('aria-pressed', 'true');
+	await expect(previewButton).toBeChecked();
 	await expect(source).toBeHidden();
 	await expect(preview.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible();
 	await expect(preview.locator('strong')).toHaveText('bold');
@@ -56,7 +56,7 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	await expect.poll(() => readFileSync(`${root}/notes.MD`, 'utf8')).toBe('# Saved from preview\n');
 	sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'prose.markdown', exact: true }).click();
-	await expect(editButton).toHaveAttribute('aria-pressed', 'true');
+	await expect(editButton).toBeChecked();
 	await previewButton.click();
 	await expect(preview.getByRole('heading', { name: 'Prose' })).toBeVisible();
 	sidebar = await showSidebar(page);
@@ -64,7 +64,7 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	await expect(previewButton).toHaveCount(0);
 	sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'notes.MD', exact: true }).click();
-	await expect(previewButton).toHaveAttribute('aria-pressed', 'true');
+	await expect(previewButton).toBeChecked();
 	await expect(preview.getByRole('heading', { name: 'Saved from preview' })).toBeVisible();
 });
 
@@ -79,11 +79,11 @@ test('HTML previews render edits and disk changes in a sandbox', async ({ page }
 	await sidebar.getByRole('button', { name: 'mockup.html', exact: true }).click();
 	const editor = page.getByRole('tabpanel');
 	const source = editor.locator('.cm-content');
-	const editButton = editor.getByRole('button', { name: 'Edit', exact: true });
-	const previewButton = editor.getByRole('button', { name: 'Preview', exact: true });
+	const editButton = editor.getByRole('radio', { name: 'Edit', exact: true });
+	const previewButton = editor.getByRole('radio', { name: 'Preview', exact: true });
 	const frame = editor.getByRole('region', { name: 'HTML preview' }).locator('iframe');
 	const content = frame.contentFrame();
-	await expect(editButton).toHaveAttribute('aria-pressed', 'true');
+	await expect(editButton).toBeChecked();
 	await previewButton.click();
 	await expect(source).toBeHidden();
 	await expect(frame).toHaveAttribute('sandbox', 'allow-scripts');

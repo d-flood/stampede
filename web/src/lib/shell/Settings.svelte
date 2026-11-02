@@ -13,6 +13,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import Segmented from '#lib/ui/Segmented.svelte';
 	import Select from '#lib/ui/Select.svelte';
 	import TextArea from '#lib/ui/TextArea.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
@@ -205,10 +206,8 @@
 								<p>Fetches each Project's origin every half hour and marks default branches a pull would fast-forward. Never pulls.</p>
 								{#if fetchRefusal}<p role="alert">{fetchRefusal}</p>{/if}
 							</div>
-							<div class="segments control" role="radiogroup" aria-labelledby="auto-fetch-label">
-								{#each [true, false] as on (on)}
-									<button role="radio" aria-checked={autoFetch() === on} onclick={() => chooseAutoFetch(on)}>{on ? 'On' : 'Off'}</button>
-								{/each}
+							<div class="control">
+								<Segmented aria-labelledby="auto-fetch-label" options={[{ value: true, label: 'On' }, { value: false, label: 'Off' }]} bind:value={autoFetch, chooseAutoFetch} />
 							</div>
 						</section>
 					</div>
@@ -220,10 +219,8 @@
 								<span class="label" id="scheme-label">Color scheme</span>{@render scope(false)}
 								<p>System follows this device's light or dark setting.</p>
 							</div>
-							<div class="segments control" role="radiogroup" aria-labelledby="scheme-label">
-								{#each schemes as { value, label } (value)}
-									<button role="radio" aria-checked={colorScheme.choice === value} onclick={() => selectScheme(value)}>{label}</button>
-								{/each}
+							<div class="control">
+								<Segmented aria-labelledby="scheme-label" options={schemes} bind:value={() => colorScheme.choice, selectScheme} />
 							</div>
 						</section>
 						<section class="row" aria-labelledby="theme-label">
@@ -367,8 +364,7 @@
 	}
 
 	nav button:focus-visible,
-	.back:focus-visible,
-	.segments button:focus-visible {
+	.back:focus-visible {
 		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
 		outline-offset: -2px;
 	}
@@ -543,38 +539,6 @@
 
 	.field > label {
 		font-size: var(--font-size-sm);
-		font-weight: 600;
-	}
-
-	.segments {
-		display: flex;
-		padding: 2px;
-		border-radius: calc(var(--radius-md) + 2px);
-		background: var(--surface-2);
-		box-shadow: inset 0 0 0 var(--border-width) var(--border);
-	}
-
-	.segments button {
-		flex: 1;
-		min-height: var(--target-min);
-		border: none;
-		border-radius: var(--radius-md);
-		background: none;
-		color: var(--muted-fg);
-		font: inherit;
-		cursor: pointer;
-	}
-
-	.segments button:hover {
-		color: var(--color-fg);
-	}
-
-	.segments [aria-checked='true'] {
-		background: var(--color-bg);
-		box-shadow:
-			var(--shadow-lift),
-			0 0 0 var(--border-width) var(--border);
-		color: var(--color-fg);
 		font-weight: 600;
 	}
 

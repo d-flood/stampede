@@ -18,11 +18,14 @@
 	import ImagePreview from '#lib/shell/ImagePreview.svelte';
 	import MarkdownPreview from '#lib/shell/MarkdownPreview.svelte';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
-	import Button from '#lib/ui/Button.svelte';
+	import IconButton from '#lib/ui/IconButton.svelte';
+	import Segmented from '#lib/ui/Segmented.svelte';
+	import Toggle from '#lib/ui/Toggle.svelte';
 	import { Compartment, EditorState } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
 	import { basicSetup } from 'codemirror';
 	import { onMount, untrack } from 'svelte';
+	import ArrowUDownLeft from '~icons/ph/arrow-u-down-left';
 	import FloppyDisk from '~icons/ph/floppy-disk';
 	import Warning from '~icons/ph/warning';
 
@@ -184,19 +187,17 @@
 		<span class="path" title={file.path}>{file.path}</span>
 		{#if file.deleted}<span class="deleted">deleted on disk</span>{/if}
 		{#if svg}
-			<Button aria-pressed={rendered} variant={rendered ? 'primary' : 'default'} onclick={() => rendered = true}>Rendered</Button>
-			<Button aria-pressed={!rendered} variant={rendered ? 'default' : 'primary'} onclick={() => rendered = false}>Source</Button>
+			<Segmented aria-label="View" options={[{ value: true, label: 'Rendered' }, { value: false, label: 'Source' }]} bind:value={rendered} />
 		{:else if markdown || html}
-			<Button aria-pressed={!rendered} variant={rendered ? 'default' : 'primary'} onclick={() => rendered = false}>Edit</Button>
-			<Button aria-pressed={rendered} variant={rendered ? 'primary' : 'default'} onclick={() => rendered = true}>Preview</Button>
+			<Segmented aria-label="View" options={[{ value: false, label: 'Edit' }, { value: true, label: 'Preview' }]} bind:value={rendered} />
 		{/if}
 		{#if !rendered}<ServerSwitch {servers} projectId={file.projectId} path={file.path} attached />{/if}
 		{#if view && !rendered}
-			<Button aria-label="Line wrapping" aria-pressed={wrap} variant={wrap ? 'primary' : 'default'} onclick={toggleWrap}>Wrap</Button>
-			{#if prose}<Button aria-label="Spell check" aria-pressed={spell} variant={spell ? 'primary' : 'default'} onclick={toggleSpell}>Spell</Button>{/if}
+			<Toggle label="Line wrapping" pressed={wrap} onclick={toggleWrap}><ArrowUDownLeft /></Toggle>
+			{#if prose}<Toggle label="Spell check" pressed={spell} onclick={toggleSpell}><span class="squiggle">abc</span></Toggle>{/if}
 		{/if}
 		{#if (form() === 'phone' || rendered) && view}
-			<Button onclick={() => sync.write()} disabled={!file.dirty}><FloppyDisk /> Save</Button>
+			<IconButton label="Save" title="Save" onclick={() => sync.write()} disabled={!file.dirty}><FloppyDisk /></IconButton>
 		{/if}
 	</div>
 	<Conflict {sync} onshowdiff={(disk) => view && onshowdiff(disk, view.state.doc.toString())} />
@@ -259,6 +260,11 @@
 
 	.toolbar.previewable .path {
 		flex-basis: 8rem;
+	}
+
+	.squiggle {
+		text-decoration: underline wavy var(--ansi-1);
+		text-underline-offset: 2px;
 	}
 
 	.deleted {

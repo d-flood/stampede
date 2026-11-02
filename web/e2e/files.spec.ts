@@ -287,7 +287,7 @@ test('open tabs follow renames with unsaved edits from F2, tab menus, and direct
 	await expect(dialog).toBeHidden();
 	await expect(tabs.getByRole('tab', { name: 'final.md' })).toHaveAttribute('aria-selected', 'true');
 	expect(readFileSync(`${root}/final.md`, 'utf8')).toBe('unsaved original\n');
-	await expect(editor.getByRole('button', { name: 'Preview', exact: true })).toBeVisible();
+	await expect(editor.getByRole('radio', { name: 'Preview', exact: true })).toBeVisible();
 	sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'Actions for folder', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();

@@ -106,6 +106,7 @@
 	--ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
 	--pulse: infinite;
 	--target-min: 26px;
+	--control-min: 20px;
 	--tile: calc(var(--target-min) + 10px);
 }
 
@@ -137,6 +138,7 @@
 @media (pointer: coarse) {
 	:root {
 		--target-min: 48px;
+		--control-min: 36px;
 	}
 }
 
