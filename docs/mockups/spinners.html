@@ -103,16 +103,18 @@ section > p { margin: 4px 0 16px; color: var(--muted); font-size: 14px; }
 @keyframes spin { to { transform: rotate(1turn); } }
 .sp-notch svg { animation: spin 1s linear infinite; }
 
-.d-body.sprint { animation: d-bob 0.15s ease-in-out infinite alternate; }
-.d-near.sprint { animation: d-near 0.6s ease-in-out infinite; }
-.d-far.sprint { animation: d-far 0.6s ease-in-out infinite; }
-.d-tail.sprint { animation: d-tail 0.3s ease-in-out infinite alternate; }
-@keyframes d-bob { from { transform: translateY(5px); } to { transform: translateY(-9px) rotate(-1.5deg); } }
-@keyframes d-near { 0%, 100% { transform: rotate(22deg); } 50% { transform: rotate(-42deg); } }
-@keyframes d-far { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(58deg); } }
-@keyframes d-tail { from { transform: rotate(-3deg); } to { transform: rotate(4deg); } }
-.puff { opacity: 0; animation: puff 0.6s ease-out infinite; }
-@keyframes puff { from { transform: scale(0.25); opacity: 0.55; } to { transform: translate(-70px, -12px) scale(1.1); opacity: 0; } }
+.d-body.sprint { animation: d-bob 0.5s ease-in-out infinite; }
+.d-near.sprint { animation: d-near 0.5s infinite; }
+.d-far.sprint { animation: d-far 0.5s infinite; }
+.d-tail.sprint { animation: d-tail 0.25s ease-in-out infinite alternate; }
+@keyframes d-bob { 0%, 50%, 100% { transform: translateY(-12px) rotate(-2deg); } 20%, 70% { transform: translateY(10px) rotate(1.5deg); } 45%, 95% { transform: translateY(-16px) rotate(-2.5deg); } }
+@keyframes d-near { 0% { transform: translateY(0) rotate(-43deg); animation-timing-function: linear; } 40% { transform: translateY(0) rotate(22deg); animation-timing-function: ease-in-out; } 70% { transform: translateY(-22px) rotate(-10deg); animation-timing-function: ease-in-out; } 100% { transform: translateY(0) rotate(-43deg); } }
+@keyframes d-far { 0% { transform: translateY(0) rotate(0deg); animation-timing-function: linear; } 40% { transform: translateY(0) rotate(65deg); animation-timing-function: ease-in-out; } 70% { transform: translateY(-22px) rotate(33deg); animation-timing-function: ease-in-out; } 100% { transform: translateY(0) rotate(0deg); } }
+@keyframes d-tail { from { transform: rotate(-5deg); } to { transform: rotate(6deg); } }
+.puff { opacity: 0; animation: puff 0.5s ease-out infinite; }
+@keyframes puff { from { transform: scale(0.3); opacity: 0.6; } to { transform: translate(-60px, -16px) scale(1.3); opacity: 0; } }
+.ground { fill: none; stroke: currentColor; stroke-width: 9; stroke-linecap: round; stroke-dasharray: 40 80; opacity: 0.4; animation: ground 0.24s linear infinite; }
+@keyframes ground { to { stroke-dashoffset: 120; } }
 .lane { animation: lane linear infinite; }
 @keyframes lane { from { transform: translateX(-190px); } to { transform: translateX(560px); } }
 
@@ -146,15 +148,15 @@ section > p { margin: 4px 0 16px; color: var(--muted); font-size: 14px; }
 .stomp-2 { animation-name: stomp-2; }
 @keyframes stomp-0 { 0% { opacity: 0; transform: scale(1.5); } 6%, 74% { opacity: 1; transform: none; } 88%, 100% { opacity: 0; } }
 @keyframes stomp-1 { 0%, 16% { opacity: 0; transform: scale(1.5); } 22%, 74% { opacity: 1; transform: none; } 88%, 100% { opacity: 0; } }
-@keyframes stomp-2 { 0%, 32% { opacity: 0; transform: scale(1.5); } 38%, 74% { opacity: 1; transform: none; } 88%, 100% { opacity: 0; } }
 .sp-trek { mask-image: linear-gradient(90deg, transparent, #000 45%); }
-.trek { animation: trek 1s ease-in-out infinite; }
-@keyframes trek { 50% { transform: translateX(-13.8px); } 100% { transform: translateX(-27.6px); } }
+.trek { animation: trek 1s linear infinite; }
+@keyframes trek { to { transform: translateX(-27.6px); } }
 .trek-2, .trek-3 { animation: 1s ease-out infinite; }
 .trek-2 { animation-name: trek-2; }
 .trek-3 { animation-name: trek-3; }
 @keyframes trek-2 { 0% { opacity: 0; transform: scale(1.5); } 12%, 100% { opacity: 1; transform: none; } }
 @keyframes trek-3 { 0%, 50% { opacity: 0; transform: scale(1.5); } 62%, 100% { opacity: 1; transform: none; } }
+@keyframes stomp-2 { 0%, 32% { opacity: 0; transform: scale(1.5); } 38%, 74% { opacity: 1; transform: none; } 88%, 100% { opacity: 0; } }
 
 .egg { animation: wobble 1.6s ease-in-out infinite; }
 @keyframes wobble { 0%, 40%, 72%, 100% { transform: none; } 46% { transform: rotate(-13deg); } 52% { transform: rotate(11deg); } 58% { transform: rotate(-7deg); } 64% { transform: rotate(4deg); } }
@@ -198,12 +200,12 @@ const NEAR = `<path d="M106 144 L134 156 L108 222 L136 226 L136 244 L78 244 L80 
 const dino = (mode, delay = 0) => {
 	const st = `animation-delay:${delay}s`;
 	return pivot(137, 130, `d-body ${mode}`,
-		pivot(170, 150, `d-far ${mode}`, mode === 'sprint' ? FAR : FAR_STAND, st) + pivot(110, 115, `d-tail ${mode}`, TAIL, st) + BODY + pivot(195, 105, `d-head ${mode}`, HEAD, st) + pivot(120, 150, `d-near ${mode}`, NEAR, st), st);
+		pivot(170, 150, `d-far ${mode}`, mode === 'sprint' ? FAR : FAR_STAND, `animation-delay:${delay - (mode === 'sprint' ? 0.25 : 0)}s`) + pivot(110, 115, `d-tail ${mode}`, TAIL, st) + BODY + pivot(195, 105, `d-head ${mode}`, HEAD, st) + pivot(120, 150, `d-near ${mode}`, NEAR, st), st);
 };
 const runner = (y, s, dur, delay, x0, op = 1) =>
 	`<g class="lane" style="animation-duration:${dur}s;animation-delay:${delay}s;transform:translateX(${x0}px)" opacity="${op}"><g transform="translate(0 ${y}) scale(${s})">${dino('sprint', delay)}</g></g>`;
 const TRACKS = [[7.8, 9.5, 80], [21.6, 14.5, 100], [35.4, 9.5, 80]];
-const track = (x, y, turn) => `<g transform="translate(${x} ${y}) rotate(${turn}) scale(.92)"><ellipse cy="2" rx="3.2" ry="2.7"/><path d="M0 0 L0 -6 M-1 .6 L-4.6 -4.2 M1 .6 L4.6 -4.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></g>`;
+const track = (x, y, turn) => `<g transform="translate(${x} ${y}) rotate(${turn}) scale(.6) translate(-12 -13.2)">${CLAW}</g>`;
 const LOGO = [['67 74', 0.58, -0.2, 0.55], ['261 82', 0.6, -0.4, 0.55], ['123 186', 0.92, 0, 1]];
 
 const PALM = 'M216 104v48a88 88 0 0 1-176 0V64a16 16 0 0 1 32 0v56a8 8 0 0 0 16 0V32a16 16 0 0 1 32 0v80a8 8 0 0 0 16 0V48a16 16 0 0 1 32 0v80.67A48.08 48.08 0 0 0 128 176a8 8 0 0 0 16 0a32 32 0 0 1 32-32a8 8 0 0 0 8-8v-32a16 16 0 0 1 32 0';
@@ -228,14 +230,14 @@ let uid = 0;
 
 const SP = {
 	notch: () => sp('sp-notch', svg('0 0 24 24', `<circle cx="12" cy="12" r="8.5" pathLength="100" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="72 28"/>`)),
-	sprint: () => sp('sp-sprint', svg('-45 -53 340 340', [0, 1, 2].map((i) => pivot(70, 240, 'puff', '<circle cx="70" cy="240" r="18"/>', `animation-delay:${-i * 0.2}s`)).join('') + dino('sprint'))),
+	sprint: () => sp('sp-sprint', svg('-45 -53 340 340', '<path class="ground" d="M-45 258 H295"/>' + [[78, 0.2], [122, 0.45]].map(([x, d]) => pivot(x, 244, 'puff', `<circle cx="${x}" cy="244" r="20"/>`, `animation-delay:${d}s`)).join('') + dino('sprint'))),
 	herd: () => sp('sp-herd', svg('0 0 540 300', runner(56, 0.36, 2.3, -0.3, 60, 0.5) + runner(40, 0.34, 2.3, -1.45, 330, 0.5) + runner(128, 0.55, 1.6, -0.8, 190)), true),
 	logo: () => sp('sp-logo', svg('57 51 392 392', LOGO.map(([t, s, d, op]) => `<g transform="translate(${t}) scale(${s}) rotate(7 140 140)" opacity="${op}">${dino('sprint', d)}</g>`).join(''))),
-	prints: () => sp('sp-prints w18', svg('0 0 43.2 24', TRACKS.map(([x, y, turn], k) => pivot(x + 1.2, y, 'pulse', track(x, y, turn), `animation-delay:${k * 0.2}s`)).join(''))),
-	stomp: () => sp('sp-stomp w18', svg('0 0 43.2 24', TRACKS.map(([x, y, turn], k) => pivot(x + 1.2, y, `stomp stomp-${k}`, track(x, y, turn))).join(''))),
+	prints: () => sp('sp-prints w18', svg('0 0 43.2 24', TRACKS.map(([x, y, turn], k) => pivot(x, y, 'pulse', track(x, y, turn), `animation-delay:${k * 0.2}s`)).join(''))),
+	stomp: () => sp('sp-stomp w18', svg('0 0 43.2 24', TRACKS.map(([x, y, turn], k) => pivot(x, y, `stomp stomp-${k}`, track(x, y, turn))).join(''))),
 	trek: () => sp('sp-trek w18', svg('0 0 43.2 24', `<g class="trek">${[0, 1, 2, 3].map((k) => {
 		const [x, y, turn] = [7.8 + 13.8 * k, k % 2 ? 14.5 : 9.5, k % 2 ? 100 : 80];
-		return k < 2 ? track(x, y, turn) : pivot(x + 1.2, y, `trek-${k}`, track(x, y, turn));
+		return k < 2 ? track(x, y, turn) : pivot(x, y, `trek-${k}`, track(x, y, turn));
 	}).join('')}</g>`)),
 	qdino: () => {
 		const id = `q${++uid}`;
@@ -248,13 +250,13 @@ const SP = {
 	}).join('')}<path d="${QD}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><ellipse cx="12.8" cy="20.6" rx="1.9" ry="2.3"/></g>`)),
 	qtracks: () => sp('sp-qtracks', svg('0 0 24 24', `<g transform="translate(1.2 1.4) scale(.9)">${[...Array.from({ length: 7 }, (_, k) => qAt(k / 6.2)), { x: 12.8, y: 20.6, a: Math.PI / 2, dot: true }].map((p, k) => {
 		const side = p.dot ? 0 : k % 2 ? 0.7 : -0.7, x = p.x + Math.sin(p.a) * side, y = p.y - Math.cos(p.a) * side;
-		return pivot(x, y, `qt qt-${k}`, `<g transform="translate(${x} ${y}) rotate(${(p.a * 180) / Math.PI + 90}) scale(${p.dot ? 0.46 : 0.34})"><ellipse cy="2" rx="3.2" ry="2.7"/><path d="M0 0 L0 -6 M-1 .6 L-4.6 -4.2 M1 .6 L4.6 -4.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></g>`);
+		return pivot(x, y, `qt qt-${k}`, `<g transform="translate(${x} ${y}) rotate(${(p.a * 180) / Math.PI + 90}) scale(${p.dot ? 0.29 : 0.215}) translate(-12 -13.2)">${CLAW}</g>`);
 	}).join('')}</g>`)),
 	tilt: () => sp('sp-tilt', svg('-45 -53 340 340', dino('stand') + '<g class="tick" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round"><path d="M68 252 L50 240 M70 262 L48 262"/></g>')),
 	wag: () => sp('sp-wag', svg('-45 -53 340 340', dino('wag'))),
 	palm: () => sp('sp-palm', svg('0 0 256 256', `<path d="${PALM}"/>`)),
 	claw: () => sp('sp-claw', svg('0 0 24 24', pivot(12, 23, 'claw', CLAW))),
-	halt: () => sp('sp-halt', svg('0 0 24 24', pivot(12, 13, 'halt', '<g transform="translate(12 13.4) scale(1.75)"><ellipse cy="2" rx="3.2" ry="2.7"/><path d="M0 0 L0 -6 M-1 .6 L-4.6 -4.2 M1 .6 L4.6 -4.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></g>'))),
+	halt: () => sp('sp-halt', svg('0 0 24 24', pivot(12, 13, 'halt', CLAW))),
 	ask: () => {
 		const id = `ask${++uid}`;
 		return sp('sp-ask', svg('0 0 24 24', `<mask id="${id}" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><rect width="24" height="24" fill="#fff"/><path d="M14.3 5 C14.3 3.6 15.3 3 16.3 3 C17.4 3 18.3 3.8 18.3 4.9 C18.3 6.4 16.3 6.6 16.3 8.2" fill="none" stroke="#000" stroke-width="1.7" stroke-linecap="round"/><circle cx="16.3" cy="10.5" r="1.05" fill="#000"/></mask><mask id="${id}e" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><rect width="24" height="24" fill="#fff"/><circle cx="5.6" cy="14.6" r=".85" fill="#000"/></mask>` + pivot(11, 13, 'bubble', `<path mask="url(#${id})" d="M12 0.8 H20.6 Q23.2 0.8 23.2 3.4 V10.2 Q23.2 12.8 20.6 12.8 H15.6 L12.4 15 L13 12.8 H12 Q9.4 12.8 9.4 10.2 V3.4 Q9.4 0.8 12 0.8 Z"/>`) + `<g mask="url(#${id}e)"><g transform="translate(-18.2 12.2) scale(.1)">${HEAD}</g></g>`));
@@ -283,12 +285,12 @@ const SECTIONS = [
 		ctx: 'main',
 		items: [
 			{ key: 'notch', name: 'Today: circle-notch', blurb: 'The current Phosphor notch. Dependable, but it’s every app’s spinner.', tags: ['baseline'], today: true },
-			{ key: 'sprint', name: 'Sprint', blurb: 'The dino from icon.svg sprinting in place: legs scissor, tail counterbalances, dust kicks up.', tags: ['icon geometry', 'reads at 13px'] },
+			{ key: 'sprint', name: 'Sprint', blurb: 'The dino from icon.svg running in place: each foot plants and pushes back, then lifts and swings forward, over a ground that scrolls past.', tags: ['icon geometry', 'reads at 13px'] },
 			{ key: 'herd', name: 'Stampede', blurb: 'Three icon dinos run through a little lane, back row smaller and slower for parallax.', tags: ['icon geometry', 'wide · 1.8em', 'best on activity line'] },
 			{ key: 'logo', name: 'Living logo', blurb: 'The app icon itself, each dino sprinting on its own beat. The still frame is the exact logo.', tags: ['still = logo', 'best ≥ 20px'] },
 			{ key: 'prints', name: 'Footprints', blurb: 'Three-dot loader, but the dots are three-toed tracks walking left to right. Each one pulses in turn.', tags: ['3-dot loader', 'wide · 1.8em', 'tiny-safe'] },
 			{ key: 'stomp', name: 'Stomp', blurb: 'Same tracks, but each stamps down one at a time, left to right, then all fade and the walk restarts.', tags: ['3-dot loader', 'wide · 1.8em', 'reads as walking'] },
-			{ key: 'trek', name: 'Trek', blurb: 'Stomp that never resets: each new track stamps down on the right while the view glides along after the walker.', tags: ['3-dot loader', 'wide · 1.8em', 'endless'] },
+			{ key: 'trek', name: 'Trek', blurb: 'Stomp that never resets: each new track stamps down on the right while the row glides smoothly left.', tags: ['3-dot loader', 'wide · 1.8em', 'endless'] },
 		],
 	},
 	{
@@ -297,7 +299,7 @@ const SECTIONS = [
 		items: [
 			{ key: 'palm', ctx: 'wait', name: 'Today: hand-palm', blurb: 'The current Phosphor palm, fading in the tab. Instantly reads as “your turn”.', tags: ['baseline'], today: true },
 			{ key: 'claw', ctx: 'wait', name: 'Claw up', blurb: 'The palm icon’s pose as a dinosaur claw: a broad hand facing you, three spread talons curling in. A little wave, then it holds.', tags: ['palm analog', 'reads at 13px'] },
-			{ key: 'halt', ctx: 'wait', name: 'Halt track', blurb: 'One big three-toed track held up like a palm. Stamps in, holds, softly fades, stamps again.', tags: ['palm analog', 'matches Footprints'] },
+			{ key: 'halt', ctx: 'wait', name: 'Halt track', blurb: 'The Claw up print held up like a palm. Stamps in, holds, softly fades, stamps again.', tags: ['palm analog', 'matches Footprints'] },
 			{ key: 'ask', ctx: 'wait', name: 'Dino asks', blurb: 'The icon dino’s head with a “?” bubble. Says “I have a question for you” outright.', tags: ['most literal', 'best ≥ 16px'] },
 			{ key: 'qdino', ctx: 'wait', name: 'Questionosaurus · head', blurb: 'The “?” is a dino in profile: head upright on top with its snout as the hook’s tip, an S-curved neck down the stem, and an egg for the dot.', tags: ['reads as ? first', 'most literal'] },
 			{ key: 'qplates', ctx: 'wait', name: 'Questionosaurus · plates', blurb: 'A plain “?” wearing stegosaurus plates down its back; they ripple in a wave. The dot is an egg.', tags: ['reads as ? first', 'no head'] },
