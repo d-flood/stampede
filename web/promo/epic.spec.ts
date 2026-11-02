@@ -38,17 +38,17 @@ function stage(root: string) {
 		.prompt()
 		.say('Reviewing the Epic branch against the Brief.')
 		.read('src/lib/notes.ts')
-		.sleep(1.6)
+		.sleep(1)
 		.epic({ action: 'finding', title: 'Queued edits are lost on reload', text: 'The outbox lives in memory until the first sync, so closing the tab while offline drops every queued edit.\n' })
 		.epic({ action: 'reviewed' })
 		.end('One Finding.');
 	const remediator = new Chat(seed)
 		.prompt()
 		.say('Judging the Findings.')
-		.sleep(1.2)
+		.sleep(0.8)
 		.epic({ action: 'accept', finding: 1, text: 'Real: the outbox has to persist before an edit applies.' })
 		.run('cp', '-R', `${payload}/fix/.`, '.')
-		.sleep(1)
+		.sleep(0.6)
 		.epic({ action: 'remediated', text: 'Persist the outbox in IndexedDB' })
 		.end('Fixed.');
 	const rigs = { Claude: ticket, 'Claude Review': reviewer, 'Claude Fix': remediator };
@@ -83,11 +83,16 @@ test('an Epic Run from Brief to Landing', async ({ browser, baseURL }) => {
 	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: /^offline/ }).click();
 	const panel = desktop.getByRole('tabpanel', { name: 'Epic offline' });
 	const run = panel.getByRole('region', { name: 'Run', exact: true });
-	await run.getByRole('combobox', { name: 'Rig' }).selectOption('Claude');
-	await run.getByRole('button', { name: 'Reviewers: none' }).click();
+	const trigger = run.getByRole('button', { name: /^Run settings/ });
+	const settings = run.getByRole('dialog', { name: 'Run settings' });
+	await trigger.click();
+	await settings.getByRole('combobox', { name: 'Rig' }).selectOption('Claude');
+	await settings.getByRole('button', { name: 'Reviewers: none' }).click();
 	await desktop.getByRole('menuitemcheckbox', { name: 'Claude Review' }).click();
 	await desktop.keyboard.press('Escape');
-	await run.getByRole('combobox', { name: 'Remediator' }).selectOption('Claude Fix');
+	await settings.getByRole('combobox', { name: 'Remediator' }).selectOption('Claude Fix');
+	await trigger.click();
+	await expect(settings).toBeHidden();
 	await sidebar.getByRole('button', { name: 'Sidebar' }).click();
 	await expect(sidebar).toBeHidden();
 	await desktop.mouse.move(700, 300);
@@ -96,36 +101,52 @@ test('an Epic Run from Brief to Landing', async ({ browser, baseURL }) => {
 	await director.record('desktop', desktop);
 	await director.hold(1);
 	director.mark('desktop', 'start');
-	await director.focus('desktop', 'run', run);
-	const limit = run.getByRole('group', { name: 'Parallel' });
+	await director.click('desktop', trigger);
+	await expect(settings).toBeVisible();
+	const [bar, popover] = [(await run.boundingBox())!, (await settings.boundingBox())!];
+	const x = Math.min(bar.x, popover.x), y = Math.min(bar.y, popover.y);
+	director.events.push({ t: Date.now() / 1000, device: 'desktop', type: 'focus', name: 'run', box: { x, y, width: Math.max(bar.x + bar.width, popover.x + popover.width) - x, height: Math.max(bar.y + bar.height, popover.y + popover.height) - y } });
+	const limit = settings.getByRole('group', { name: 'Parallel' });
 	await director.click('desktop', limit.getByRole('button', { name: 'More' }));
 	await director.click('desktop', limit.getByRole('button', { name: 'More' }), 0.35);
 	await expect(limit.locator('output')).toHaveText('3');
-	await director.click('desktop', run.getByRole('button', { name: 'Start Run' }), 0.6);
+	await director.click('desktop', trigger, 0.5);
+	await expect(settings).toBeHidden();
+	await director.click('desktop', run.getByRole('button', { name: 'Start Run' }), 0.5);
 	director.mark('desktop', 'started');
 	await director.rest('desktop', desktop, 1240, 420);
 	await expect(run).toContainText('Run live');
 	await director.focus('desktop', 'tickets', panel.getByRole('region', { name: 'Tickets' }));
-	const review = panel.getByRole('region', { name: 'Review' });
-	await expect(review).toBeVisible({ timeout: 60_000 });
+	const item = panel.getByRole('navigation', { name: 'Epic' }).getByRole('button', { name: /^Review\b/ });
+	await expect(item).toBeVisible({ timeout: 60_000 });
 	director.mark('desktop', 'review');
+	await director.click('desktop', item, 0.6);
+	const review = panel.getByRole('region', { name: 'Review' });
+	await expect(review).toBeVisible();
 	await director.focus('desktop', 'review', review);
+	await director.rest('desktop', desktop, 1240, 420);
+	director.mark('desktop', 'reviewing');
 	await expect(review).toContainText('Remediated at', { timeout: 60_000 });
+	director.mark('desktop', 'remediated');
 	const finding = review.locator('details', { hasText: 'Queued edits are lost on reload' });
 	await director.click('desktop', finding.locator('summary'), 0.6);
 	await expect(finding).toContainText('Accepted: Real');
-	await director.hold(1.6);
+	await director.hold(1.2);
 	const land = panel.getByRole('button', { name: /^Land( into .+)?$/ });
 	await expect(land).toBeEnabled({ timeout: 30_000 });
 	director.mark('desktop', 'land');
+	await director.click('desktop', panel.getByRole('navigation', { name: 'Epic' }).getByRole('button', { name: /^Integration Worktree/ }), 0.6);
+	const worktree = panel.getByRole('region', { name: 'Integration Worktree' });
+	await director.hold(0.2);
 	await director.click('desktop', land);
 	const confirm = desktop.getByRole('dialog', { name: 'Land offline into main?' });
 	await director.focus('desktop', 'confirm', confirm);
 	await director.hold(0.8);
 	await director.click('desktop', confirm.getByRole('button', { name: 'Land', exact: true }), 0.5);
-	await expect(panel.getByRole('region', { name: 'Integration Worktree' })).toContainText('Landed into main at');
+	await expect(worktree).toContainText('Landed into main at');
+	await director.focus('desktop', 'landed', worktree);
 	await director.rest('desktop', desktop, 1240, 420);
-	await director.hold(2);
+	await director.hold(1.6);
 	director.mark('desktop', 'end');
 	await director.finish();
 });

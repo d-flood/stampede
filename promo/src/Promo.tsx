@@ -170,6 +170,8 @@ const epics = { keys: epicKeys(epic), events: on(epic, 'desktop') };
 const started = mark(epic, 'desktop', 'started');
 const review = focus(epic, 'review');
 const land = mark(epic, 'desktop', 'land');
+const confirm = focus(epic, 'confirm');
+const landed = focus(epic, 'landed');
 const epicShots = [
 	zoom(mark(epic, 'desktop', 'start'), 1.4, focus(epic, 'run')),
 	zoom(started + 0.3, 1.4, focus(epic, 'run')),
@@ -177,9 +179,11 @@ const epicShots = [
 	zoom(review.t, 1),
 	zoom(review.t + 0.8, 1.3, review),
 	zoom(land - 0.2, 1.3, review),
-	zoom(land + 0.6, 1.3, focus(epic, 'confirm')),
-	zoom(mark(epic, 'desktop', 'end') - 1.2, 1.3, focus(epic, 'confirm')),
-	zoom(mark(epic, 'desktop', 'end') - 0.2, 1)
+	zoom(land + 0.4, 1),
+	zoom(confirm.t, 1),
+	zoom(confirm.t + 0.4, 1.3, confirm),
+	zoom(landed.t - 0.3, 1.3, confirm),
+	zoom(landed.t + 0.3, 1.3, landed)
 ];
 
 export const Running = () => {

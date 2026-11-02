@@ -57,8 +57,9 @@ export function epicKeys(timeline: Event[]) {
 	return retime([
 		{ t: mark(timeline, 'desktop', 'start'), fixed: true },
 		{ t: mark(timeline, 'desktop', 'started'), fixed: false },
-		{ t: mark(timeline, 'desktop', 'review'), fixed: false },
-		{ t: mark(timeline, 'desktop', 'land'), fixed: true },
+		{ t: mark(timeline, 'desktop', 'review'), fixed: true },
+		{ t: mark(timeline, 'desktop', 'reviewing'), fixed: false },
+		{ t: mark(timeline, 'desktop', 'remediated'), fixed: true },
 		{ t: mark(timeline, 'desktop', 'end'), fixed: true }
 	], length('epic'));
 }

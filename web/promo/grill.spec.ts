@@ -154,9 +154,9 @@ test('grill, spec and tickets build an Epic', async ({ browser, baseURL }) => {
 	const [x, y] = [divider.x + divider.width / 2, divider.y + divider.height / 2];
 	await desktop.mouse.move(x, y);
 	await desktop.mouse.down();
-	director.events.push({ t: Date.now() / 1000, device: 'desktop', type: 'click' }, { t: Date.now() / 1000 + 0.05, device: 'desktop', type: 'move', x: x - 150, y });
+	director.events.push({ t: Date.now() / 1000, device: 'desktop', type: 'click' }, { t: Date.now() / 1000 + 0.05, device: 'desktop', type: 'move', x: x - 240, y });
 	for (let step = 1; step <= 20; step++) {
-		await desktop.mouse.move(x - 150 * (1 - (1 - step / 20) ** 2), y);
+		await desktop.mouse.move(x - 240 * (1 - (1 - step / 20) ** 2), y);
 		await desktop.waitForTimeout(35);
 	}
 	await desktop.mouse.up();
