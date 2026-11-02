@@ -1,3 +1,5 @@
+import type { ServerMessage } from '#lib/device.svelte.ts';
+import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
 import { closeProject, openProject, openSettings, screen, showSidebar } from './shell.ts';
@@ -124,6 +126,44 @@ test('checking origin in the background is on until turned off in the config', a
 	await expect.poll(() => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toMatch(/^auto_fetch = false$/m);
 	await checking.getByRole('radio', { name: 'On', exact: true }).click();
 	await expect.poll(() => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).not.toContain('auto_fetch');
+});
+
+test('spinners switch between custom and standard in this browser', { tag: '@desktop' }, async ({ page }) => {
+	let route: WebSocketRoute;
+	let chatId: string;
+	await page.routeWebSocket('**/ws', (socket) => {
+		route = socket;
+		const server = socket.connectToServer();
+		server.onMessage((data) => {
+			if (typeof data === 'string') {
+				const message: ServerMessage = JSON.parse(data);
+				if (message.type === 'chat.created') chatId = message.chat.id;
+			}
+			socket.send(data);
+		});
+	});
+	const name = 'spinners';
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await page.locator('.panel[role="tabpanel"]:visible').getByRole('textbox', { name: 'Composer' }).waitFor();
+	route!.send(JSON.stringify({ type: 'chat.status', chatId: chatId!, status: 'working' }));
+	const working = page.getByRole('tab', { name: /^Fake Claude/ }).getByTitle('working').locator('svg');
+	await expect(working).toHaveAttribute('viewBox', '-45 -53 340 340');
+
+	const settings = await openSettings(page, 'Appearance');
+	const style = settings.getByRole('radiogroup', { name: 'Spinners' });
+	await expect(style.getByRole('radio', { name: 'Custom', exact: true })).toBeChecked();
+	await style.getByRole('radio', { name: 'Standard', exact: true }).click();
+	await settings.getByRole('button', { name: 'Done', exact: true }).click();
+	await expect(working).toHaveAttribute('viewBox', '0 0 256 256');
+
+	await page.reload();
+	await openSettings(page, 'Appearance');
+	await expect(style.getByRole('radio', { name: 'Standard', exact: true })).toBeChecked();
+	await style.getByRole('radio', { name: 'Custom', exact: true }).click();
+	await expect.poll(() => page.evaluate(() => localStorage.getItem('stampede.spinners'))).toBeNull();
 });
 
 test('available modes are chosen per Agent and limit a Chat\'s mode menu and Shift+Tab', { tag: '@desktop' }, async ({ page }) => {

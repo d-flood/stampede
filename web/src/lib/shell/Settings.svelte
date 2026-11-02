@@ -4,6 +4,7 @@
 	import { form } from '#lib/form.ts';
 	import { colorScheme, selectScheme, type Scheme } from '#lib/scheme.svelte.ts';
 	import { selectSidebarSide, sidebarPosition, type SidebarSide } from '#lib/sidebar.svelte.ts';
+	import { selectSpinners, spinners, type SpinnerStyle } from '#lib/spinners.svelte.ts';
 	import { themeBar, type ThemeChoice } from '#lib/themes.svelte.ts';
 	import ClipEditor from '#lib/shell/ClipEditor.svelte';
 	import RigEditor from '#lib/shell/RigEditor.svelte';
@@ -65,6 +66,10 @@
 		{ value: 'system', label: 'System' },
 		{ value: 'light', label: 'Light' },
 		{ value: 'dark', label: 'Dark' }
+	];
+	const spinnerStyles: { value: SpinnerStyle; label: string }[] = [
+		{ value: 'custom', label: 'Custom' },
+		{ value: 'standard', label: 'Standard' }
 	];
 
 	$effect(() => {
@@ -229,6 +234,15 @@
 								<p>One theme for light mode and one for dark.</p>
 							</div>
 							<div class="control"><ThemeSwitcher onpreview={(choice) => ((docking = choice), (open = false))} /></div>
+						</section>
+						<section class="row" aria-labelledby="spinners-label">
+							<div class="text">
+								<span class="label" id="spinners-label">Spinners</span>{@render scope(false)}
+								<p>Custom uses Stampede's dinosaurs. Standard uses the classic spinner, raised hand and dots.</p>
+							</div>
+							<div class="control">
+								<Segmented aria-labelledby="spinners-label" options={spinnerStyles} bind:value={() => spinners.style, selectSpinners} />
+							</div>
 						</section>
 					</div>
 					<h4 id="fonts-label">Fonts</h4>

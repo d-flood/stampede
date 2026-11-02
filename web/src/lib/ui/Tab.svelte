@@ -77,7 +77,7 @@
 		<Icon />
 		<span class="label">{label}</span>
 		{#if variant === 'diff'}<span class="vs">↔ {against}</span>{/if}
-		{#if Mark}<span class="mark" title={status}><Mark /></span>{/if}
+		{#if Mark}<span class="mark" title={status}>{#if status === 'waiting'}<WaitingMark pulse />{:else}<Mark />{/if}</span>{/if}
 		{#if dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
 	</button>
 {/snippet}
