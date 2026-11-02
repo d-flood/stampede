@@ -14,6 +14,7 @@
 	import { baseline, type Git } from '#lib/git.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
+	import HtmlPreview from '#lib/shell/HtmlPreview.svelte';
 	import ImagePreview from '#lib/shell/ImagePreview.svelte';
 	import MarkdownPreview from '#lib/shell/MarkdownPreview.svelte';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
@@ -45,6 +46,8 @@
 	let spell = $state(false);
 	const svg = $derived(/\.svg$/i.test(file.path) && !(file instanceof OpenConfig));
 	const markdown = $derived(/\.(md|markdown)$/i.test(file.path) && !(file instanceof OpenConfig));
+	const html = $derived(/\.html?$/i.test(file.path) && !(file instanceof OpenConfig));
+	const previewable = $derived(svg || markdown || html);
 	const prose = $derived(/\.(md|markdown|txt)$/i.test(file.path) && !(file instanceof OpenConfig));
 	const original = $derived(git?.isRepo ? (git.changes.find((change) => change.path === file.path)?.from ?? file.path) : undefined);
 	const head = $derived(git?.head);
@@ -70,7 +73,7 @@
 					note = 'binary file';
 					return;
 				}
-				if (svg || markdown) content = contents.content;
+				if (previewable) content = contents.content;
 				view = new EditorView({
 					parent: container,
 					state: EditorState.create({
@@ -86,7 +89,7 @@
 							syntax.of(highlighting),
 							theme,
 							sync.listener,
-							svg || markdown ? EditorView.updateListener.of((update) => {
+							previewable ? EditorView.updateListener.of((update) => {
 								if (update.docChanged) content = update.state.doc.toString();
 							}) : [],
 							server.of(languageServer(servers, file.projectId, loaded, true))
@@ -157,7 +160,7 @@
 	});
 
 	$effect(() => {
-		if (active && (note || (!rendered && view) || (markdown && rendered && content !== undefined))) painted(file.id);
+		if (active && (note || (!rendered && view) || ((markdown || html) && rendered && content !== undefined))) painted(file.id);
 	});
 
 	$effect(() => {
@@ -177,13 +180,13 @@
 </script>
 
 <div class="editor" role="tabpanel" hidden={!active}>
-	<div class="toolbar" class:previewable={svg || markdown}>
+	<div class="toolbar" class:previewable>
 		<span class="path" title={file.path}>{file.path}</span>
 		{#if file.deleted}<span class="deleted">deleted on disk</span>{/if}
 		{#if svg}
 			<Button aria-pressed={rendered} variant={rendered ? 'primary' : 'default'} onclick={() => rendered = true}>Rendered</Button>
 			<Button aria-pressed={!rendered} variant={rendered ? 'default' : 'primary'} onclick={() => rendered = false}>Source</Button>
-		{:else if markdown}
+		{:else if markdown || html}
 			<Button aria-pressed={!rendered} variant={rendered ? 'default' : 'primary'} onclick={() => rendered = false}>Edit</Button>
 			<Button aria-pressed={rendered} variant={rendered ? 'primary' : 'default'} onclick={() => rendered = true}>Preview</Button>
 		{/if}
@@ -212,6 +215,7 @@
 			{#if note}<p role="alert">{note}</p>
 			{:else if content !== undefined}
 				{#if markdown}<MarkdownPreview text={content} />
+				{:else if html}<HtmlPreview text={content} title={file.name} />
 				{:else}<ImagePreview {file} {device} {active} {content} />{/if}
 			{/if}
 		</div>

@@ -68,6 +68,41 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	await expect(preview.getByRole('heading', { name: 'Saved from preview' })).toBeVisible();
 });
 
+test('HTML previews render edits and disk changes in a sandbox', async ({ page }, { project }) => {
+	const name = `html-${project.name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+	mkdirSync(root);
+	const mockup = (heading: string) => `<!doctype html><html><head><title>Mockup</title></head><body><h1>${heading}</h1><div style="height:3000px"></div><script>document.body.dataset.ran = 'yes'; window.parent.document.body.dataset.escaped = 'yes'</script></body></html>`;
+	writeFileSync(`${root}/mockup.html`, mockup('First'));
+	await openProject(page, name);
+	const sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'mockup.html', exact: true }).click();
+	const editor = page.getByRole('tabpanel');
+	const source = editor.locator('.cm-content');
+	const editButton = editor.getByRole('button', { name: 'Edit', exact: true });
+	const previewButton = editor.getByRole('button', { name: 'Preview', exact: true });
+	const frame = editor.getByRole('region', { name: 'HTML preview' }).locator('iframe');
+	const content = frame.contentFrame();
+	await expect(editButton).toHaveAttribute('aria-pressed', 'true');
+	await previewButton.click();
+	await expect(source).toBeHidden();
+	await expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
+	await expect(content.getByRole('heading', { name: 'First' })).toBeVisible();
+	await expect(content.locator('body')).toHaveAttribute('data-ran', 'yes');
+	expect(await page.evaluate(() => document.body.dataset.escaped)).toBeUndefined();
+	await content.locator('html').evaluate(() => scrollTo(0, 1200));
+	writeFileSync(`${root}/mockup.html`, mockup('Second'));
+	await expect(content.getByRole('heading', { name: 'Second' })).toBeAttached();
+	await expect.poll(() => content.locator('html').evaluate(() => scrollY)).toBe(1200);
+	await editButton.click();
+	await source.focus();
+	await page.keyboard.press('ControlOrMeta+a');
+	await page.keyboard.insertText(mockup('Unsaved'));
+	await previewButton.click();
+	await expect(content.getByRole('heading', { name: 'Unsaved' })).toBeVisible();
+	expect(readFileSync(`${root}/mockup.html`, 'utf8')).toBe(mockup('Second'));
+});
+
 test('multiline selections keep editor text visible', { tag: '@desktop' }, async ({ page }) => {
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/selection`;
 	mkdirSync(root);
