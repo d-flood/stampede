@@ -187,6 +187,25 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
 }
 
 #[tokio::test]
+async fn chats_take_their_agents_title_and_otherwise_their_first_prompt() {
+    let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
+    let path = sessions(&server).join(format!("{COLOR}.jsonl"));
+    let session = fs::read_to_string(&path).unwrap() + &json!({ "type": "ai-title", "aiTitle": "Naming colors", "sessionId": COLOR }).to_string();
+    fs::write(&path, session + "\n").unwrap();
+    let resumed = resume(&mut socket, &project_id, "claude-code", COLOR).await;
+    let resumed = resumed["id"].as_str().unwrap();
+    titled(&server, resumed, "Naming colors").await;
+    close_chat(&mut socket, server.root.path(), resumed).await;
+
+    control(&mut socket, json!({ "type": "chat.create", "projectId": project_id, "rig": "other claude" })).await;
+    let chat = next_control(&mut socket, "chat.created").await["chat"].clone();
+    let chat_id = chat["id"].as_str().unwrap();
+    assert_eq!(turn(&mut socket, chat_id, "Say hi\n  in three words.").await, ["working", "done"]);
+    titled(&server, chat_id, "Say hi in three words.").await;
+    close_chat(&mut socket, server.root.path(), chat_id).await;
+}
+
+#[tokio::test]
 async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
     let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
     let chat = resume(&mut socket, &project_id, "codex", THREAD).await;
@@ -334,6 +353,16 @@ async fn turn(socket: &mut Socket, chat_id: &str, text: &str) -> Vec<Value> {
     .await
     .unwrap_or_else(|_| panic!("the turn never ended: {statuses:?}"));
     statuses
+}
+
+async fn titled(server: &Server, chat_id: &str, title: &str) {
+    let record = server.root.path().join(format!("data/chats/{chat_id}.json"));
+    let titled = timeout(Duration::from_secs(10), async {
+        while serde_json::from_slice::<Value>(&fs::read(&record).unwrap()).unwrap()["title"] != title {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    });
+    titled.await.unwrap_or_else(|_| panic!("the chat was never titled {title:?}"));
 }
 
 /// What the fake daemon was sent, in order.

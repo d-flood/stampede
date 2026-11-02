@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures.ts';
+import type { Locator } from '@playwright/test';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { openProject, showSidebar } from './shell.ts';
 
@@ -267,7 +268,7 @@ test('open tabs follow renames with unsaved edits from F2, tab menus, and direct
 	await input.fill('renamed.txt');
 	await input.press('Enter');
 	await expect(dialog).toBeHidden();
-	await expect(tabs.getByRole('tab', { name: 'renamed.txt' })).toHaveAttribute('title', 'renamed.txt');
+	await expectPath(tabs.getByRole('tab', { name: 'renamed.txt' }), 'renamed.txt');
 	await expect(tabs.getByRole('tab', { name: 'notes.txt' })).toHaveCount(0);
 	expect(existsSync(`${root}/notes.txt`)).toBe(false);
 	await expect(editor.locator('.path')).toHaveText('renamed.txt');
@@ -294,8 +295,13 @@ test('open tabs follow renames with unsaved edits from F2, tab menus, and direct
 	await directory.getByLabel('Name', { exact: true }).fill('moved');
 	await directory.getByRole('button', { name: 'Rename', exact: true }).click();
 	await expect(directory).toBeHidden();
-	await expect(tabs.getByRole('tab', { name: 'inner.txt' })).toHaveAttribute('title', 'moved/inner.txt');
+	await expectPath(tabs.getByRole('tab', { name: 'inner.txt' }), 'moved/inner.txt');
 	await page.reload();
-	await expect(tabs.getByRole('tab', { name: 'final.md' })).toHaveAttribute('title', 'final.md');
-	await expect(tabs.getByRole('tab', { name: 'inner.txt' })).toHaveAttribute('title', 'moved/inner.txt');
+	await expectPath(tabs.getByRole('tab', { name: 'final.md' }), 'final.md');
+	await expectPath(tabs.getByRole('tab', { name: 'inner.txt' }), 'moved/inner.txt');
 });
+
+async function expectPath(tab: Locator, path: string) {
+	await tab.hover();
+	await expect(tab.page().getByRole('tooltip', { name: path, exact: true })).toBeVisible();
+}

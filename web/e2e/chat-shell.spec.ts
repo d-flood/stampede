@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, openProject, pinned } from './shell.ts';
 
 test('a ! command runs at once, shows its output, and reaches Claude with the next message', async ({ page }, { project }) => {
 	const name = `shell-${project.name}`;
@@ -8,7 +8,7 @@ test('a ! command runs at once, shows its output, and reaches Claude with the ne
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	await expect(tab.getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });

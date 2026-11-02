@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { openProject, showSidebar } from './shell.ts';
+import { openProject, pinned, showSidebar } from './shell.ts';
 
 const alpha = () => `${process.env.STAMPEDE_E2E_ROOT}/projects/alpha`;
 const git = (...args: string[]) => execFileSync('git', ['-C', alpha(), ...args], { encoding: 'utf8' }).trim();
@@ -118,7 +118,7 @@ test('a working Chat in a worktree spins on its Project square', { tag: '@deskto
 
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	await expect(tab.getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });

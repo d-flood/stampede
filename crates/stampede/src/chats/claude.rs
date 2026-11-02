@@ -23,13 +23,13 @@ use tokio::{
 use uuid::Uuid;
 
 use super::{
-    AgentCommand, Answer, Builtin, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
+    AgentCommand, Answer, Builtin, Cache, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
     Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     html,
     protocol::{self, Message},
     shell,
-    Request, RequestKind, Image, Scope, AnsweredQuestions, Question, diff, seconds, unified, words,
+    Request, RequestKind, Image, Scope, AnsweredQuestions, Question, diff, seconds, unified, words, Lapse, HOUR, MINUTE,
 };
 use crate::{
     config::{Agent, AgentSettings},
@@ -218,6 +218,7 @@ async fn launch(
     if let Some(session) = session {
         transcript = transcript.replay(env, session, at, true).await?;
         transcript.stop_commands();
+        transcript.retitle();
     }
     transcript.settings.chosen = settings.clone();
     transcript.discover(&mut writer).await?;
@@ -274,6 +275,7 @@ pub async fn reattach(
         }
     }
     transcript.replaying = false;
+    transcript.retitle();
     transcript.restore_shell_context(&chat.shell_context);
     for request in std::mem::take(&mut transcript.pending) {
         let _ = transcript.events.send(Event::Request(request));
@@ -618,7 +620,7 @@ pub fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Se
         if path.extension() != Some("jsonl".as_ref()) {
             continue;
         }
-        let (Some(id), Some(title)) = (path.file_stem().and_then(|stem| stem.to_str()), session_title(&path)) else {
+        let (Some(id), Some(title)) = (path.file_stem().and_then(|stem| stem.to_str()), session_title(&path, &["customTitle", "aiTitle", "lastPrompt", "summary"])) else {
             continue;
         };
         let Some(updated) = entry.metadata().and_then(|metadata| metadata.modified()).ok() else { continue };
@@ -628,7 +630,7 @@ pub fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Se
     Ok(sessions)
 }
 
-fn session_title(path: &Path) -> Option<String> {
+fn session_title(path: &Path, fields: &[&str]) -> Option<String> {
     let mut file = File::open(path).ok()?;
     let size = file.metadata().ok()?.len();
     let mut head = Vec::new();
@@ -640,7 +642,7 @@ fn session_title(path: &Path) -> Option<String> {
     }
     let entries: Vec<Value> = tail.split(|byte| *byte == b'\n').rev().chain(head.split(|byte| *byte == b'\n').rev())
         .filter_map(|line| serde_json::from_slice(line).ok()).collect();
-    for field in ["customTitle", "aiTitle", "lastPrompt", "summary"] {
+    for field in fields {
         if let Some(title) = entries.iter().find_map(|entry| entry[field].as_str().filter(|title| !title.trim().is_empty())) {
             return Some(title.to_owned());
         }
@@ -973,6 +975,9 @@ struct Transcript {
     /// The model of the main loop's latest API call, and how many tokens it was sent.
     call: Option<(String, u64)>,
     window: Option<u64>,
+    cache: Option<Cache>,
+    /// The prompt-cache lifetime the latest call wrote.
+    ttl: Option<u64>,
     /// A compact left the meter stale. Claude does not push the new size, so the driver asks once the turn ends,
     /// unless another API call reports it first.
     stale: bool,
@@ -1033,6 +1038,8 @@ impl Transcript {
             inputs: HashMap::new(),
             call: None,
             window: None,
+            cache: None,
+            ttl: None,
             stale: false,
             steering: HashSet::new(),
             asked: HashMap::new(),
@@ -1186,7 +1193,18 @@ impl Transcript {
         self.status = status;
         if !self.replaying {
             let _ = self.events.send(Event::Status(status));
+            if status == Status::Done { self.retitle(); }
         }
+    }
+
+    fn retitle(&self) {
+        let (Some(location), Some(session)) = (&self.location, self.session.clone()) else { return };
+        let (env, events) = (location.env.clone(), self.events.clone());
+        tokio::task::spawn_blocking(move || {
+            if let Some(title) = session_file(&env, &session).and_then(|path| session_title(&path, &["customTitle", "aiTitle"])) {
+                let _ = events.send(Event::Title(title));
+            }
+        });
     }
 
     fn ask(&mut self, request: Request) {
@@ -1356,6 +1374,9 @@ impl Transcript {
                 }
             }
             Some("assistant") => {
+                if let Some(at) = entry["timestamp"].as_str().and_then(super::epoch_ms) {
+                    self.cached(&entry["message"]["usage"], at);
+                }
                 self.compact();
                 self.assistant(entry, &entry["thinkingDurationMs"], false);
             }
@@ -1496,7 +1517,13 @@ impl Transcript {
                     self.observe(mode);
                 }
             }
-            Some("stream_event") if top => self.stream(&message["event"]),
+            Some("stream_event") if top => {
+                if message["event"]["type"] == "message_start" {
+                    let started = super::now().saturating_sub(message["ttft_ms"].as_u64().unwrap_or(0));
+                    self.cached(&message["event"]["message"]["usage"], started);
+                }
+                self.stream(&message["event"])
+            }
             Some("assistant") if top => self.assistant(message, &message["thinking_duration_ms"], true),
             Some("user") if top => self.results(&message["message"]["content"], &message["tool_use_result"]),
             Some("assistant" | "user" | "stream_event") => {
@@ -1675,6 +1702,20 @@ impl Transcript {
         self.meter(None);
     }
 
+    fn cached(&mut self, usage: &Value, started: u64) {
+        let wrote = |field: &str| usage["cache_creation"][field].as_u64().is_some_and(|tokens| tokens > 0);
+        let ttl = if wrote("ephemeral_5m_input_tokens") { Some(5 * MINUTE) } else if wrote("ephemeral_1h_input_tokens") { Some(HOUR) } else { None };
+        self.ttl = ttl.or(self.ttl);
+        let fields = ["cache_creation_input_tokens", "cache_read_input_tokens"];
+        if !fields.iter().any(|field| usage[field].as_u64().is_some_and(|tokens| tokens > 0)) {
+            return;
+        }
+        self.cache = Some(match self.ttl {
+            Some(ttl) => Cache { expires: started + ttl, then: Lapse::Cold, settles: None },
+            None => Cache { expires: started + 5 * MINUTE, then: Lapse::ProbablyCold, settles: Some(started + HOUR) },
+        });
+    }
+
     fn total(&mut self, models: &Value) {
         let Some(models) = models.as_object().filter(|models| !models.is_empty()) else { return };
         let count = |fields: &[&str]| {
@@ -1691,7 +1732,7 @@ impl Transcript {
     }
 
     fn meter(&self, tokens: Option<Tokens>) {
-        let context = self.call.as_ref().zip(self.window).map(|((_, used), window)| Context { used: *used, window });
+        let context = self.call.as_ref().zip(self.window).map(|((_, used), window)| Context { used: *used, window, cache: self.cache });
         if context.is_some() || tokens.is_some() {
             let _ = self.events.send(Event::Meters(context, tokens));
         }
@@ -2151,6 +2192,58 @@ mod result_tests {
             let expected = if reason == "aborted_streaming" { vec![] } else { vec!["diagnostic"] };
             assert_eq!(errors, expected, "{reason}");
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    fn usage(five_minute: u64, hour: u64) -> Value {
+        json!({
+            "input_tokens": 2, "cache_read_input_tokens": 15481, "cache_creation_input_tokens": five_minute + hour,
+            "cache_creation": { "ephemeral_5m_input_tokens": five_minute, "ephemeral_1h_input_tokens": hour },
+        })
+    }
+
+    fn call(transcript: &mut Transcript, usage: Value) -> (u64, Cache) {
+        let before = super::super::now();
+        let message = json!({ "id": Uuid::new_v4().to_string(), "model": "claude-opus-5-5", "content": [], "usage": usage });
+        transcript.read(&json!({ "type": "stream_event", "ttft_ms": 1000, "event": { "type": "message_start", "message": message } }));
+        (before - 1000, transcript.cache.unwrap())
+    }
+
+    #[test]
+    fn a_call_keeps_the_cache_warm_for_the_lifetime_it_wrote() {
+        let mut transcript = Transcript::new(mpsc::unbounded_channel().0, Path::new("/project"));
+        let (started, cache) = call(&mut transcript, usage(0, 8933));
+        assert_eq!(cache.then, Lapse::Cold);
+        assert!((started + HOUR..started + HOUR + MINUTE).contains(&cache.expires), "{cache:?}");
+
+        let (started, cache) = call(&mut transcript, usage(0, 0));
+        assert!((started + HOUR..started + HOUR + MINUTE).contains(&cache.expires), "a read keeps the hour: {cache:?}");
+
+        let (started, cache) = call(&mut transcript, usage(120, 8933));
+        assert!((started + 5 * MINUTE..started + 6 * MINUTE).contains(&cache.expires), "the shorter lifetime wins: {cache:?}");
+    }
+
+    #[test]
+    fn a_read_of_unknown_lifetime_is_probably_cold_after_five_minutes_and_cold_after_an_hour() {
+        let mut transcript = Transcript::new(mpsc::unbounded_channel().0, Path::new("/project"));
+        let (started, cache) = call(&mut transcript, usage(0, 0));
+        assert_eq!(cache.then, Lapse::ProbablyCold);
+        assert!((started + 5 * MINUTE..started + 6 * MINUTE).contains(&cache.expires), "{cache:?}");
+        assert_eq!(cache.settles.map(|settles| settles - cache.expires), Some(HOUR - 5 * MINUTE));
+    }
+
+    #[test]
+    fn a_replayed_session_dates_its_cache_from_the_last_response() {
+        let mut transcript = Transcript::new(mpsc::unbounded_channel().0, Path::new("/project"));
+        transcript.recorded(&json!({
+            "type": "assistant", "timestamp": "2026-10-16T20:41:23.293Z",
+            "message": { "id": "msg_1", "role": "assistant", "content": [], "usage": usage(0, 8933) },
+        }));
+        assert_eq!(transcript.cache, Some(Cache { expires: 1792183283293 + HOUR, then: Lapse::Cold, settles: None }));
     }
 }
 

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { openProject, showSidebar } from './shell.ts';
+import { openProject, pinned, showSidebar } from './shell.ts';
 
 const alpha = () => `${process.env.STAMPEDE_E2E_ROOT}/projects/alpha`;
 const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trimEnd();
@@ -12,12 +12,13 @@ test('a Chat moves to a new worktree with the uncommitted changes and a note in 
 	await openProject(page, 'alpha');
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	await composer.fill('Say hello');
 	await panel.getByRole('button', { name: 'Send', exact: true }).click();
 	await expect(panel.getByText('Hello and', { exact: false })).toBeVisible();
-	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).getByTitle('done')).toBeVisible();
+	await expect(tab.getByTitle('done')).toBeVisible();
 	writeFileSync(`${alpha()}/${project.name}.txt`, 'moved\n');
 
 	await panel.getByRole('button', { name: 'More', exact: true }).click();
@@ -37,7 +38,7 @@ test('a Chat moves to a new worktree with the uncommitted changes and a note in 
 	await expect(dialog).toBeHidden();
 
 	const worktree = git(alpha(), 'worktree', 'list', '--porcelain').split('\n').find((line) => line.startsWith('worktree ') && line.endsWith('/moved'))!.slice('worktree '.length);
-	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveAttribute('aria-selected', 'true');
+	await expect(page.getByRole('tab', { name: 'Say hello' })).toHaveAttribute('aria-selected', 'true');
 	await expect(composer).toHaveValue(new RegExp(`^FYI: Stampede moved this Chat to a new git worktree\\. The working directory is now \`${worktree}\`, on the new branch \`moved\`, cut from \`main\` at \`\\w+\`, and the uncommitted changes moved with it\\.`));
 	expect(git(worktree, 'status', '--porcelain')).toBe(` M ${project.name}.txt`);
 	expect(git(alpha(), 'status', '--porcelain')).toBe('');

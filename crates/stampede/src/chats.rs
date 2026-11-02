@@ -397,7 +397,29 @@ impl Activity {
 pub struct Context {
     pub used: u64,
     pub window: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache: Option<Cache>,
 }
+
+/// The prompt cache is warm until `expires`, then `then`, and cold from `settles`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Cache {
+    pub expires: u64,
+    pub then: Lapse,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settles: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Lapse {
+    ProbablyWarm,
+    ProbablyCold,
+    Cold,
+}
+
+const MINUTE: u64 = 60_000;
+const HOUR: u64 = 60 * MINUTE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Tokens {
@@ -553,6 +575,7 @@ pub enum Event {
     QuestionsRecovered(AnsweredQuestions),
     Status(Status),
     Activity(Option<String>),
+    Title(String),
     /// Appends the Item when its index is the transcript's length, and replaces the one there otherwise.
     Item(usize, Item),
     /// Replaces whichever of the Chat's context fill and token counts it carries.
@@ -680,6 +703,8 @@ pub struct Chat {
     pub created: u128,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -939,6 +964,7 @@ impl Chats {
             cwd: cwd.to_owned(),
             created: SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_nanos(),
             agent_session: session.map(str::to_owned),
+            title: None,
             resume_at: None,
             plan_resolved: None,
             status: Status::Done,
@@ -1132,6 +1158,7 @@ impl Chats {
                         let _ = self.changed.send(Change::Activity(id.clone(), activity));
                     }
                 }
+                Event::Title(title) => self.retitle(&entry, &title, true),
                 Event::PlanResolved(id) => {
                     let mut chat = entry.chat.lock().unwrap();
                     chat.plan_resolved = Some(id);
@@ -1241,7 +1268,8 @@ impl Chats {
                 Event::Meters(context, tokens) => {
                     let mut chat = entry.chat.lock().unwrap();
                     let before = (chat.context, chat.tokens);
-                    chat.context = context.or(chat.context);
+                    let kept = chat.context.and_then(|context| context.cache);
+                    chat.context = context.map(|context| Context { cache: context.cache.or(kept), ..context }).or(chat.context);
                     chat.tokens = tokens.or(chat.tokens);
                     if (chat.context, chat.tokens) == before {
                         continue;
@@ -1267,6 +1295,7 @@ impl Chats {
                     {
                         (*template, *text) = (Some(name), typed);
                     }
+                    if let Item::User { text, .. } = &item { self.retitle(&entry, text, false); }
                     let mut transcript = entry.transcript.lock().unwrap();
                     if matches!(&item, Item::User { .. }) { transcript.recoverable = false; }
                     let shells = matches!(&item, Item::Command { .. } | Item::Subagent { .. });
@@ -1303,6 +1332,7 @@ impl Chats {
                     let mut chat = entry.chat.lock().unwrap();
                     chat.activity = None;
                     let _ = self.changed.send(Change::Activity(id.clone(), None));
+                    chat.title = None;
                     chat.context = None;
                     chat.tokens = None;
                     chat.queued.clear();
@@ -1377,6 +1407,16 @@ impl Chats {
         let (chat_id, seq, request_id) = (chat_id.to_owned(), transcript.seq, request_id.to_owned());
         let _ = self.changed.send(Change::Resolved { chat_id, seq, request_id });
         true
+    }
+
+    fn retitle(&self, entry: &Entry, text: &str, replace: bool) {
+        let title: String = text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(SESSION_TITLE).collect();
+        let mut chat = entry.chat.lock().unwrap();
+        if title.is_empty() || chat.title.as_ref().is_some_and(|old| !replace || *old == title) { return; }
+        chat.title = Some(title);
+        let project_id = chat.project_id.clone();
+        self.save(entry, chat);
+        let _ = self.changed.send(Change::Chats(project_id));
     }
 
     /// Writes the Chat's record once its lock is released, in the order its changes were made.

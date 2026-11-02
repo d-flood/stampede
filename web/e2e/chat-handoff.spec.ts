@@ -2,7 +2,7 @@ import type { ClientMessage } from '#lib/device.svelte.ts';
 import { appendFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from './fixtures.ts';
-import { openProject } from './shell.ts';
+import { openProject, pinned } from './shell.ts';
 
 const summary = 'Continue implementing authentication.\n\nKeep local-first behavior. Login is unfinished; next inspect src/auth.ts. Verification: no tests run.';
 
@@ -20,7 +20,7 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await openProject(page, 'alpha');
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		await page.getByRole('menuitem', { name: 'Handoff source', exact: true }).click();
-		const source = page.getByRole('tab', { name: /^Handoff source/ });
+		const source = await pinned(page.getByRole('tab', { name: /^Handoff source/ }));
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 		const handoff = async () => {
 			await panel.getByRole('button', { name: 'More', exact: true }).click();
@@ -56,7 +56,8 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await expect.poll(() => existsSync(`${root}/handoff/handoff`)).toBe(true);
 		unlinkSync(`${root}/handoff/handoff`);
 		await expect(dialog).toBeHidden();
-		await expect(page.getByRole('tab', { name: new RegExp(`^${target}`) })).toHaveAttribute('aria-selected', 'true');
+		const created = await pinned(page.getByRole('tab', { name: new RegExp(`^${target}`) }));
+		await expect(created).toHaveAttribute('aria-selected', 'true');
 		await expect(panel.getByRole('textbox', { name: 'Composer' })).toHaveValue(summary);
 		await expect(panel.locator('.user')).toHaveCount(0);
 		expect(sent.filter((message) => message.type === 'chat.send')).toHaveLength(1);
@@ -73,7 +74,7 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await expect.poll(() => sent.filter((message) => message.type === 'chat.send').length).toBe(2);
 		expect(sent.filter((message) => message.type === 'chat.send').at(-1)).toMatchObject({ text: edited });
 		await expect(panel.getByRole('textbox', { name: 'Composer' })).toHaveValue('');
-		await expect(page.getByRole('tab', { name: new RegExp(`^${target}`) }).getByTitle('done')).toBeVisible();
+		await expect(created.getByTitle('done')).toBeVisible();
 		await page.reload();
 		await expect(panel.getByRole('textbox', { name: 'Composer' })).toHaveValue('');
 	});

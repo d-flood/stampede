@@ -26,8 +26,8 @@ use uuid::Uuid;
 
 use super::{
     AgentCommand, Answer, Builtin, CLOSING, Capabilities, Chat, Choice, ChoiceDescription, CommandStatus,
-    Context, Driver, Event, Image, Item, Notice, Phase, Question, Request, RequestKind, Session,
-    Settings, Status, Tokens, ToolCall, ToolKind, html, relative, unified, words,
+    Cache, Context, Driver, Event, Image, Item, Lapse, Notice, Phase, Question, Request, RequestKind, Session,
+    Settings, Status, Tokens, ToolCall, ToolKind, html, relative, unified, words, HOUR,
 };
 use crate::{config::{Agent, AgentSettings}, usage::{Consumption, Reading, Unit, Window}};
 
@@ -515,11 +515,12 @@ struct Transcript {
     efforts: HashMap<String, Vec<String>>,
     status: Status,
     tokens: Tokens,
+    cache: Option<Cache>,
 }
 
 impl Transcript {
     fn new(cwd: &Path, events: UnboundedSender<Event>, settings: Settings) -> Self {
-        Self { data_dir: None, cwd: cwd.to_owned(), events, items: Vec::new(), seen: HashSet::new(), messages: HashMap::new(), user_events: HashMap::new(), last_input: None, tools: HashMap::new(), thinking: None, settings, capabilities: Capabilities::default(), efforts: HashMap::new(), status: Status::Done, tokens: Tokens { input: 0, output: 0 } }
+        Self { data_dir: None, cwd: cwd.to_owned(), events, items: Vec::new(), seen: HashSet::new(), messages: HashMap::new(), user_events: HashMap::new(), last_input: None, tools: HashMap::new(), thinking: None, settings, capabilities: Capabilities::default(), efforts: HashMap::new(), status: Status::Done, tokens: Tokens { input: 0, output: 0 }, cache: None }
     }
 
     fn push(&mut self, item: Item) -> usize {
@@ -663,6 +664,14 @@ impl Transcript {
             "assistant.usage" => {
                 self.tokens.input += data["inputTokens"].as_u64().unwrap_or(0);
                 self.tokens.output += data["outputTokens"].as_u64().unwrap_or(0);
+                if data["parentToolCallId"].is_null() && let Some(expires) = data["cacheExpiresAt"].as_str().and_then(super::epoch_ms) {
+                    self.cache = Some(if data["model"].as_str().is_some_and(|model| model.starts_with("claude")) {
+                        Cache { expires, then: Lapse::Cold, settles: None }
+                    } else {
+                        // OpenAI may keep a cache past its minimum lifetime, but never past a day.
+                        Cache { expires, then: Lapse::ProbablyCold, settles: Some(expires + 24 * HOUR) }
+                    });
+                }
                 let _ = self.events.send(Event::Meters(None, Some(self.tokens)));
             }
             "session.quota_observation" if !history => {
@@ -673,14 +682,17 @@ impl Transcript {
             }
             "session.usage_info" => {
                 if let (Some(used), Some(window)) = (data["currentTokens"].as_u64(), data["tokenLimit"].as_u64()) {
-                    let _ = self.events.send(Event::Meters(Some(Context { used, window }), None));
+                    let _ = self.events.send(Event::Meters(Some(Context { used, window, cache: self.cache }), None));
                 }
             }
             "session.compaction_complete" if data["success"] == true => {
                 self.push(Item::compacted());
                 if !history && let (Some(used), Some(window)) = (data["postCompactionTokens"].as_u64(), data["tokenLimit"].as_u64()) {
-                    let _ = self.events.send(Event::Meters(Some(Context { used, window }), None));
+                    let _ = self.events.send(Event::Meters(Some(Context { used, window, cache: self.cache }), None));
                 }
+            }
+            "session.title_changed" => {
+                if let Some(title) = data["title"].as_str() { let _ = self.events.send(Event::Title(title.to_owned())); }
             }
             "session.model_change" => {
                 if let Some(model) = data["newModel"].as_str() { self.settings.chosen.model = Some(model.to_owned()); self.report_settings(); }
@@ -749,6 +761,20 @@ fn tool(name: &str, args: &Value, kind: ToolKind) -> Item {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cache_lapses_at_copilots_expiry_for_certain_only_on_claude() {
+        let cache = |model: &str| {
+            let mut transcript = Transcript::new(Path::new("/project"), mpsc::unbounded_channel().0, Settings::default());
+            let data = json!({ "model": model, "cacheExpiresAt": "2026-01-01T00:00:00.000Z" });
+            let event = json!({ "id": "1", "timestamp": "", "parentId": null, "type": "assistant.usage", "data": data });
+            transcript.read(&serde_json::from_value::<SessionEvent>(event).unwrap(), true);
+            transcript.cache.unwrap()
+        };
+        let expires = 1767225600000;
+        assert_eq!(cache("claude-sonnet-4.6"), Cache { expires, then: Lapse::Cold, settles: None });
+        assert_eq!(cache("gpt-5.6"), Cache { expires, then: Lapse::ProbablyCold, settles: Some(expires + 24 * HOUR) });
+    }
 
     #[test]
     fn compact_delegation_results_restore_reports_without_duplicate_live_items() {

@@ -1,8 +1,13 @@
 import { expect, test } from './fixtures.ts';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 function phone() {
 	return test.info().project.name === 'pixel';
+}
+
+/** Follows a Tab by its id, since a Chat tab's name changes once its Chat has a title. */
+export async function pinned(tab: Locator) {
+	return tab.page().locator(`[data-tab="${await tab.getAttribute('data-tab')}"]`);
 }
 
 export async function openProject(page: Page, name: string) {

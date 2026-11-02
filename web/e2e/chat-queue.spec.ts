@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, openProject, pinned } from './shell.ts';
 
 test('canceling a queued message returns text and images alongside the current draft', async ({ page }, { project }) => {
 	const name = `unqueue-${project.name}`;
@@ -8,7 +8,7 @@ test('canceling a queued message returns text and images alongside the current d
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude (steer)', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude \(steer\)/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude \(steer\)/ }));
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	const queued = panel.getByRole('list', { name: 'Queued' }).getByRole('listitem');

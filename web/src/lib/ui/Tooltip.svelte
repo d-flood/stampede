@@ -1,12 +1,14 @@
 <script lang="ts">
+	import { grouped } from '#lib/ui/TooltipGroup.svelte';
 	import { Tooltip } from 'bits-ui';
-	import type { Snippet } from 'svelte';
+	import { hasContext, type Snippet } from 'svelte';
 
 	let { text, delayDuration = 400, disabled = false, ignoreNonKeyboardFocus = false, children }: { text: string; delayDuration?: number; disabled?: boolean; ignoreNonKeyboardFocus?: boolean; children: Snippet<[Record<string, unknown>]> } = $props();
+	const inGroup = hasContext(grouped);
 </script>
 
-<Tooltip.Provider {delayDuration}>
-	<Tooltip.Root {ignoreNonKeyboardFocus}>
+{#snippet root()}
+	<Tooltip.Root {delayDuration} {ignoreNonKeyboardFocus}>
 		<Tooltip.Trigger {disabled}>
 			{#snippet child({ props })}
 				{@render children(props)}
@@ -22,7 +24,13 @@
 			</Tooltip.Content>
 		</Tooltip.Portal>
 	</Tooltip.Root>
-</Tooltip.Provider>
+{/snippet}
+
+{#if inGroup}
+	{@render root()}
+{:else}
+	<Tooltip.Provider>{@render root()}</Tooltip.Provider>
+{/if}
 
 <style>
 	.tooltip {

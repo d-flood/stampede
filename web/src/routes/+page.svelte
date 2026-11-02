@@ -51,6 +51,7 @@
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import Tab from '#lib/ui/Tab.svelte';
+	import TooltipGroup from '#lib/ui/TooltipGroup.svelte';
 	import { onMount, untrack } from 'svelte';
 	import { on } from 'svelte/events';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
@@ -1009,133 +1010,142 @@
 		style:grid-template-columns={split &&
 			`minmax(0, ${split.ratio}fr) var(--border-width) minmax(0, ${1 - split.ratio}fr)`}
 	>
-		{#each groups as group, index (index)}
-			<div
-				class="strip"
-				role="presentation"
-				style:grid-column={index * 2 + 1}
-				onfocusin={() => focused && group.active && choose(focused.id, group.active)}
-				onpointerdown={grab}
-			>
-				{#if !phone && !sidebar && sidebarPosition.side === 'left' && index === 0}
-					{@render sidebarToggle(false)}
-				{/if}
-				<div role="tablist" aria-label={split ? `${index ? 'Right' : 'Left'} Tabs` : 'Tabs'}>
+		<TooltipGroup>
+			{#each groups as group, index (index)}
+				<div
+					class="strip"
+					role="presentation"
+					style:grid-column={index * 2 + 1}
+					onfocusin={() => focused && group.active && choose(focused.id, group.active)}
+					onpointerdown={grab}
+				>
+					{#if !phone && !sidebar && sidebarPosition.side === 'left' && index === 0}
+						{@render sidebarToggle(false)}
+					{/if}
+					<div
+						role="tablist"
+						aria-label={split ? `${index ? 'Right' : 'Left'} Tabs` : 'Tabs'}
+						onwheel={(event) => {
+							if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
+						}}
+					>
+						{#if focused}
+							{@const projectId = focused.id}
+							{#each group.tabs as id (id)}
+								{@const tab = tabs.find((tab) => tab.id === id)}
+								{@const chat = chatTabs.find((chat) => chat.id === id)}
+								{@const file = fileTabs.find((file) => file.id === id)}
+								{@const browser = browserTabs.find((browser) => browser.id === id)}
+								{@const canvas = canvasTabs.find((canvas) => canvas.id === id)}
+								{@const epic = openEpics.find((epic) => epic.id === id)}
+								{#if tab?.state === 'closing'}
+									<Tab variant="terminal" label={tab.label} closing />
+								{:else if chat?.closing}
+									<Tab variant="agent" agent={chat.agent} label={chat.title ?? chat.rig} closing />
+								{:else if tab}
+									<Menu context items={tabMenu(projectId, tab)}>
+										{#snippet trigger(props)}
+											<Tab
+												{...props}
+												data-tab={id}
+												variant="terminal"
+												ended={tab.state === 'ended'}
+												label={tab.label}
+												active={id === group.active}
+												onclose={() => closeTab(projectId, id)}
+												onclick={() => {
+													if (!dragged) choose(projectId, id);
+												}}
+											/>
+										{/snippet}
+									</Menu>
+								{:else if chat}
+									<Menu context items={[{ label: 'Close', onselect: () => closeChat(chat) }]}>
+										{#snippet trigger(props)}
+											<Tab
+												{...props}
+												data-tab={id}
+												variant="agent"
+												agent={chat.agent}
+												status={chatStatus(chat)}
+												label={chat.title ?? chat.rig}
+												tooltip={chat.title && `${chat.title}\n${chat.rig}`}
+												active={id === group.active}
+												onclose={() => closeChat(chat)}
+												onclick={() => {
+													if (!dragged) choose(projectId, id);
+												}}
+											/>
+										{/snippet}
+									</Menu>
+								{:else if browser}
+									<Menu context items={[{ label: 'Close', onselect: () => closeBrowser(browser) }]}>
+										{#snippet trigger(props)}
+											<Tab {...props} data-tab={id} variant="browser" label={browser.name} active={id === group.active}
+												onclose={() => closeBrowser(browser)} onclick={() => { if (!dragged) choose(projectId, id); }} />
+										{/snippet}
+									</Menu>
+								{:else if canvas}
+									<Menu context items={[{ label: 'Close', onselect: () => closeCanvas(canvas) }]}>
+										{#snippet trigger(props)}
+											<Tab {...props} data-tab={id} variant="canvas" label={canvas.name} active={id === group.active}
+												onclose={() => closeCanvas(canvas)} onclick={() => { if (!dragged) choose(projectId, id); }} />
+										{/snippet}
+									</Menu>
+								{:else if epic}
+									<Menu context items={[{ label: 'Close', onselect: () => closeEpic(epic) }]}>
+										{#snippet trigger(props)}
+											<Tab
+												{...props}
+												data-tab={id}
+												variant="epic"
+												label={epic.name}
+												active={id === group.active}
+												onclose={() => closeEpic(epic)}
+												onclick={() => {
+													if (!dragged) choose(projectId, id);
+												}}
+											/>
+										{/snippet}
+									</Menu>
+								{:else if file}
+									<Menu context items={fileMenu(file)}>
+										{#snippet trigger(props)}
+											<Tab
+												{...props}
+												data-tab={id}
+												variant={file instanceof OpenDiff ? 'diff' : 'editor'}
+												against={file instanceof OpenDiff ? file.versus : undefined}
+												label={file.name}
+												tooltip={file.deleted ? `${file.path} (deleted on disk)` : file.path}
+												dirty={file.dirty}
+												deleted={file.deleted}
+												active={id === group.active}
+												onclose={() => closeFile(file)}
+												onclick={() => {
+													if (!dragged) choose(projectId, id);
+												}}
+											/>
+										{/snippet}
+									</Menu>
+								{/if}
+							{/each}
+						{/if}
+					</div>
 					{#if focused}
 						{@const projectId = focused.id}
-						{#each group.tabs as id (id)}
-							{@const tab = tabs.find((tab) => tab.id === id)}
-							{@const chat = chatTabs.find((chat) => chat.id === id)}
-							{@const file = fileTabs.find((file) => file.id === id)}
-							{@const browser = browserTabs.find((browser) => browser.id === id)}
-							{@const canvas = canvasTabs.find((canvas) => canvas.id === id)}
-							{@const epic = openEpics.find((epic) => epic.id === id)}
-							{#if tab?.state === 'closing'}
-								<Tab variant="terminal" label={tab.label} closing />
-							{:else if chat?.closing}
-								<Tab variant="agent" agent={chat.agent} label={chat.rig} closing />
-							{:else if tab}
-								<Menu context items={tabMenu(projectId, tab)}>
-									{#snippet trigger(props)}
-										<Tab
-											{...props}
-											data-tab={id}
-											variant="terminal"
-											ended={tab.state === 'ended'}
-											label={tab.label}
-											active={id === group.active}
-											onclose={() => closeTab(projectId, id)}
-											onclick={() => {
-												if (!dragged) choose(projectId, id);
-											}}
-										/>
-									{/snippet}
-								</Menu>
-							{:else if chat}
-								<Menu context items={[{ label: 'Close', onselect: () => closeChat(chat) }]}>
-									{#snippet trigger(props)}
-										<Tab
-											{...props}
-											data-tab={id}
-											variant="agent"
-											agent={chat.agent}
-											status={chatStatus(chat)}
-											label={chat.rig}
-											active={id === group.active}
-											onclose={() => closeChat(chat)}
-											onclick={() => {
-												if (!dragged) choose(projectId, id);
-											}}
-										/>
-									{/snippet}
-								</Menu>
-							{:else if browser}
-								<Menu context items={[{ label: 'Close', onselect: () => closeBrowser(browser) }]}>
-									{#snippet trigger(props)}
-										<Tab {...props} data-tab={id} variant="browser" label={browser.name} active={id === group.active}
-											onclose={() => closeBrowser(browser)} onclick={() => { if (!dragged) choose(projectId, id); }} />
-									{/snippet}
-								</Menu>
-							{:else if canvas}
-								<Menu context items={[{ label: 'Close', onselect: () => closeCanvas(canvas) }]}>
-									{#snippet trigger(props)}
-										<Tab {...props} data-tab={id} variant="canvas" label={canvas.name} active={id === group.active}
-											onclose={() => closeCanvas(canvas)} onclick={() => { if (!dragged) choose(projectId, id); }} />
-									{/snippet}
-								</Menu>
-							{:else if epic}
-								<Menu context items={[{ label: 'Close', onselect: () => closeEpic(epic) }]}>
-									{#snippet trigger(props)}
-										<Tab
-											{...props}
-											data-tab={id}
-											variant="epic"
-											label={epic.name}
-											active={id === group.active}
-											onclose={() => closeEpic(epic)}
-											onclick={() => {
-												if (!dragged) choose(projectId, id);
-											}}
-										/>
-									{/snippet}
-								</Menu>
-							{:else if file}
-								<Menu context items={fileMenu(file)}>
-									{#snippet trigger(props)}
-										<Tab
-											{...props}
-											data-tab={id}
-											variant={file instanceof OpenDiff ? 'diff' : 'editor'}
-											against={file instanceof OpenDiff ? file.versus : undefined}
-											label={file.name}
-											title={file.deleted ? `${file.path} (deleted on disk)` : file.path}
-											dirty={file.dirty}
-											deleted={file.deleted}
-											active={id === group.active}
-											onclose={() => closeFile(file)}
-											onclick={() => {
-												if (!dragged) choose(projectId, id);
-											}}
-										/>
-									{/snippet}
-								</Menu>
-							{/if}
-						{/each}
+						<Menu items={newTab(projectId)} resize loading={readingSessions[projectId] ? 'Reading sessions…' : undefined} onopen={() => readSessions(projectId)}>
+							{#snippet trigger(props)}
+								<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
+							{/snippet}
+						</Menu>
+					{/if}
+					{#if !phone && !sidebar && sidebarPosition.side === 'right' && index === groups.length - 1}
+						{@render sidebarToggle(false)}
 					{/if}
 				</div>
-				{#if focused}
-					{@const projectId = focused.id}
-					<Menu items={newTab(projectId)} resize loading={readingSessions[projectId] ? 'Reading sessions…' : undefined} onopen={() => readSessions(projectId)}>
-						{#snippet trigger(props)}
-							<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
-						{/snippet}
-					</Menu>
-				{/if}
-				{#if !phone && !sidebar && sidebarPosition.side === 'right' && index === groups.length - 1}
-					{@render sidebarToggle(false)}
-				{/if}
-			</div>
-		{/each}
+			{/each}
+		</TooltipGroup>
 		{#if split}
 			<div
 				class="divider"
@@ -1661,12 +1671,47 @@
 		gap: 2px;
 		min-width: 0;
 		min-height: calc(var(--target-min) + var(--space-2));
+		/* Extend over the strip's border so the active Tab still covers it once scrolling clips overflow. */
+		margin-bottom: calc(-1 * var(--border-width));
 		padding-top: var(--space-2);
+		padding-bottom: var(--border-width);
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
 	}
 
-	.phone [role='tablist'] {
-		overflow-x: auto;
-		scrollbar-width: none;
+	@property --fade-start {
+		syntax: '<length>';
+		inherits: false;
+		initial-value: 0px;
+	}
+
+	@property --fade-end {
+		syntax: '<length>';
+		inherits: false;
+		initial-value: 0px;
+	}
+
+	@supports (animation-timeline: scroll()) {
+		[role='tablist'] {
+			mask-image: linear-gradient(to right, transparent, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent);
+			animation: edges linear both;
+			animation-timeline: scroll(self inline);
+		}
+	}
+
+	@keyframes edges {
+		from {
+			--fade-end: 1.5rem;
+		}
+		10%,
+		90% {
+			--fade-start: 1.5rem;
+			--fade-end: 1.5rem;
+		}
+		to {
+			--fade-start: 1.5rem;
+		}
 	}
 
 	.tabs {

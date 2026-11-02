@@ -2,7 +2,7 @@ import type { Item, ServerMessage } from '#lib/device.svelte.ts';
 import type { Page, WebSocketRoute } from '@playwright/test';
 import { existsSync, mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, openProject, pinned } from './shell.ts';
 
 test('chat composer submits with Enter on desktop and keeps mobile Enter as a newline', async ({ page, context }, { project }) => {
 	const errors: string[] = [];
@@ -64,7 +64,7 @@ async function launch(page: Page, name: string, rig = 'Fake Claude') {
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
 	await page.getByRole('menuitem', { name: rig, exact: true }).click();
-	const tab = page.getByRole('tab', { name: new RegExp(`^${rig}`) });
+	const tab = await pinned(page.getByRole('tab', { name: new RegExp(`^${rig}`) }));
 	await expect(tab.getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	return { tab, panel, composer: panel.getByRole('textbox', { name: 'Composer' }) };

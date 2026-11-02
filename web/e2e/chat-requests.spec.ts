@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, openProject, pinned } from './shell.ts';
 
 const prompt = 'Run the shell command `mkdir -p out && touch out/approved.txt` exactly as written, then reply with the single word Done.';
 
@@ -46,7 +46,7 @@ async function launch(page: Page, rig: string, name: string) {
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: rig, exact: true }).click();
-	const tab = page.getByRole('tab', { name: new RegExp(`^${rig}`) });
+	const tab = await pinned(page.getByRole('tab', { name: new RegExp(`^${rig}`) }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });

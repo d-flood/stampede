@@ -4,7 +4,7 @@ import type { Locator, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { closeProject, openProject, showSidebar, showScreen } from './shell.ts';
+import { closeProject, openProject, pinned, showSidebar, showScreen } from './shell.ts';
 
 test('a Claude Code Chat streams its reply, shows done, and asks before closing while working', async ({ page }, { project }) => {
 	const name = `chat-${project.name}`;
@@ -12,7 +12,7 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await expect(tab.getByTitle('done')).toBeVisible();
 	const square = page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name, exact: true });
@@ -56,7 +56,7 @@ test('a closed Chat stays disabled until its Agent exits', { tag: '@desktop' }, 
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await panel.getByRole('textbox', { name: 'Composer' }).fill('Greet the reader');
@@ -66,10 +66,11 @@ test('a closed Chat stays disabled until its Agent exits', { tag: '@desktop' }, 
 
 	const pressed = Date.now();
 	await page.keyboard.press('Control+W');
-	await expect(tab).toHaveAttribute('aria-disabled', 'true', { timeout: 200 });
+	const closing = page.getByRole('tab', { name: 'Greet the reader' });
+	await expect(closing).toHaveAttribute('aria-disabled', 'true', { timeout: 200 });
 	await page.waitForTimeout(pressed + 500 - Date.now());
-	await expect(tab).toHaveCount(1, { timeout: 0 });
-	await expect(tab).toHaveCount(0, { timeout: pressed + 3000 - Date.now() });
+	await expect(closing).toHaveCount(1, { timeout: 0 });
+	await expect(closing).toHaveCount(0, { timeout: pressed + 3000 - Date.now() });
 });
 
 test('a Codex Chat streams its reply, shows done, and closes', { tag: '@desktop' }, async ({ page }, { project }) => {
@@ -78,7 +79,7 @@ test('a Codex Chat streams its reply, shows done, and closes', { tag: '@desktop'
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Codex', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Codex/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Codex/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await expect(tab.getByTitle('done')).toBeVisible();
 
@@ -107,7 +108,7 @@ test('a Chat folds tools, thinking, commands and a long first prompt into lines 
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude Tools', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude Tools/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude Tools/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await expect(tab.getByTitle('done')).toBeVisible();
 
@@ -165,7 +166,7 @@ test('a working Chat steers, queues until its turn ends, and interrupts, with no
 	}
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude (steer)', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude \(steer\)/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude \(steer\)/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	await expect(tab.getByTitle('done')).toBeVisible();
 
@@ -300,7 +301,7 @@ test('/spec from the slash menu sends its Template before the typed text', { tag
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	await expect(tab.getByTitle('done')).toBeVisible();
 
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
@@ -350,7 +351,7 @@ for (const agent of ['Claude', 'Codex']) {
 		await openProject(page, name);
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		await page.getByRole('menuitem', { name: `Fake ${agent} Edits`, exact: true }).click();
-		const tab = page.getByRole('tab', { name: new RegExp(`^Fake ${agent} Edits`) });
+		const tab = await pinned(page.getByRole('tab', { name: new RegExp(`^Fake ${agent} Edits`) }));
 		await expect(tab).toHaveAttribute('aria-selected', 'true');
 		await expect(tab.getByTitle('done')).toBeVisible();
 
@@ -525,7 +526,7 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 
 	await newTab.click();
 	await listed.filter({ hasText: 'Palette study' }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	const tab = page.getByRole('tab', { name: 'Palette study' });
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await expect(panel.getByRole('region', { name: 'User message 1' }).getByText('Name a color in one word.')).toBeVisible();
@@ -573,7 +574,7 @@ test('a Chat pins todos and counts its completed subagent in the dock', async ({
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: `Fake Claude Subagent ${project.name}`, exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude Subagent/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude Subagent/ }));
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
 	await panel.getByRole('button', { name: 'Send' }).click();
@@ -641,7 +642,7 @@ for (const agent of ['claude', 'codex']) {
 		await openProject(page, name);
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		await page.getByRole('menuitem', { name: `Activity ${agent} ${project.name}`, exact: true }).click();
-		const tab = page.getByRole('tab', { name: new RegExp(`^Activity ${agent}`) });
+		const tab = await pinned(page.getByRole('tab', { name: new RegExp(`^Activity ${agent}`) }));
 		const panel = page.locator('.panel[role="tabpanel"]:visible');
 		const activity = panel.getByRole('status', { name: 'Current activity' });
 		await panel.getByRole('textbox', { name: 'Composer' }).fill('Run the tools');
@@ -689,7 +690,7 @@ test('a completed Codex subagent moves to the dock\'s finished chip', { tag: '@d
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: `Fake Codex Subagent ${project.name}`, exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Codex Subagent/ });
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Codex Subagent/ }));
 	const panel = page.locator('.panel[role="tabpanel"]:visible');
 	await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
 	await panel.getByRole('button', { name: 'Send' }).click();
@@ -707,11 +708,11 @@ for (const agent of ['Claude', 'Codex']) {
 		await openProject(page, name);
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		await page.getByRole('menuitem', { name: `${agent} Rewind`, exact: true }).click();
+		const tab = await pinned(page.getByRole('tab', { name: new RegExp(`^${agent} Rewind`) }));
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 		const composer = panel.getByRole('textbox', { name: 'Composer' });
 		await composer.fill('Change the file');
 		await panel.getByRole('button', { name: 'Send', exact: true }).click();
-		const tab = page.getByRole('tab', { name: new RegExp(`^${agent} Rewind`) });
 		await expect(tab.getByTitle('done')).toBeVisible();
 		await expect(panel.locator('.user')).toHaveCount(1);
 		await composer.fill('/rewind');

@@ -2,6 +2,8 @@
 	import type { Agent } from '#lib/config.svelte.ts';
 	import { logos } from '#lib/chat/sessions.ts';
 	import ShellMark from '#lib/ui/ShellMark.svelte';
+	import Tooltip from '#lib/ui/Tooltip.svelte';
+	import { mergeProps } from 'bits-ui';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 	import Article from '~icons/ph/article';
 	import Browsers from '~icons/ph/browsers';
@@ -17,6 +19,7 @@
 	type Props = HTMLButtonAttributes & {
 		variant: 'agent' | 'terminal' | 'editor' | 'diff' | 'browser' | 'canvas' | 'epic';
 		label: string;
+		tooltip?: string;
 		agent?: Agent;
 		against?: string;
 		status?: 'working' | 'waiting' | 'background' | 'done';
@@ -31,6 +34,7 @@
 	let {
 		variant,
 		label,
+		tooltip,
 		agent = 'claude-code',
 		against = 'HEAD',
 		status,
@@ -47,9 +51,18 @@
 	const marks = { working: CircleNotchBold, waiting: HandPalmFill, background: ShellMark, done: CheckBold };
 	const Icon = $derived(variant === 'agent' ? logos[agent] : icons[variant]);
 	const Mark = $derived(status && marks[status]);
+
+	function reveal(tab: HTMLElement) {
+		const list = tab.closest<HTMLElement>('[role="tablist"]');
+		if (!list) return;
+		const shown = list.getBoundingClientRect();
+		const { left, right } = tab.getBoundingClientRect();
+		if (left < shown.left) list.scrollLeft -= shown.left - left;
+		else if (right > shown.right) list.scrollLeft += right - shown.right;
+	}
 </script>
 
-<div class="tab {status ?? ''}" class:closable={active && !!onclose}>
+{#snippet select(props: HTMLButtonAttributes)}
 	<button
 		role="tab"
 		aria-selected={active}
@@ -60,7 +73,7 @@
 		class:deleted
 		class:ended
 		class:closing
-		{...rest}
+		{...props}
 	>
 		<Icon />
 		<span class="label">{label}</span>
@@ -68,6 +81,18 @@
 		{#if Mark}<span class="mark" title={status}><Mark /></span>{/if}
 		{#if dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
 	</button>
+{/snippet}
+
+<div class="tab {status ?? ''}" class:closable={active && !!onclose} {@attach active && reveal}>
+	{#if tooltip}
+		<Tooltip text={tooltip} delayDuration={300} ignoreNonKeyboardFocus>
+			{#snippet children(trigger)}
+				{@render select(mergeProps(trigger, rest))}
+			{/snippet}
+		</Tooltip>
+	{:else}
+		{@render select(rest)}
+	{/if}
 	{#if active && onclose}
 		<button
 			class="close"
@@ -87,10 +112,14 @@
 	.tab {
 		position: relative;
 		display: inline-flex;
-		flex: none;
-		min-width: 0;
+		flex: 0 1 auto;
+		min-width: 8rem;
 		max-width: 14rem;
 		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+	}
+
+	.tab.closable {
+		flex-shrink: 0;
 	}
 
 	.select {
@@ -124,6 +153,10 @@
 
 	.closable .select {
 		padding-right: calc(var(--target-min) + var(--space-3));
+	}
+
+	.select > :global(svg) {
+		flex: none;
 	}
 
 	.close {

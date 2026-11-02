@@ -20,9 +20,9 @@ use tokio_tungstenite::{
 };
 
 use super::{
-    AgentCommand, Answer, Builtin, CLOSING, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
+    AgentCommand, Answer, Builtin, CLOSING, Cache, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
     Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
-    html,
+    html, HOUR, Lapse,
 };
 use crate::{
     config::{Agent, AgentSettings, codex_policy},
@@ -150,6 +150,9 @@ async fn rejoin(
         transcript.settings.mark_pending(setting);
     }
     transcript.report_settings();
+    if let Some(name) = resumed["thread"]["name"].as_str() {
+        let _ = transcript.events.send(Event::Title(name.to_owned()));
+    }
     let status = transcript.resumed(&turns);
     transcript.status = status;
     for child in transcript.subagents.keys().cloned().collect::<Vec<_>>() {
@@ -1247,10 +1250,18 @@ impl Transcript {
             self.activity.finish(id, &self.events);
         }
         match message["method"].as_str() {
+            Some("thread/name/updated") => {
+                if let Some(name) = params["threadName"].as_str() {
+                    let _ = self.events.send(Event::Title(name.to_owned()));
+                }
+            }
             Some("thread/tokenUsage/updated") => {
                 let usage = &params["tokenUsage"];
                 let (used, window) = (usage["last"]["totalTokens"].as_u64(), usage["modelContextWindow"].as_u64());
-                let context = used.zip(window).map(|(used, window)| Context { used, window });
+                // Logged-in Codex reportedly keeps its cache indefinitely; claim certainty for an hour only.
+                let at = message["emittedAtMs"].as_u64().unwrap_or_else(super::now);
+                let cache = Some(Cache { expires: at + HOUR, then: Lapse::ProbablyWarm, settles: None });
+                let context = used.zip(window).map(|(used, window)| Context { used, window, cache });
                 let (input, output) = (usage["total"]["inputTokens"].as_u64(), usage["total"]["outputTokens"].as_u64());
                 let tokens = input.zip(output).map(|(input, output)| Tokens { input, output });
                 let _ = self.events.send(Event::Meters(context, tokens));

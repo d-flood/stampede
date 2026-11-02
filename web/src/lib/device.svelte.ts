@@ -95,6 +95,7 @@ export type Chat = {
 	status: Status;
 	closing?: true;
 	agentSession?: string;
+	title?: string;
 	activity?: string | null;
 	background?: boolean;
 	context: Context | null;
