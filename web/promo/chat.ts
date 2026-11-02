@@ -9,6 +9,8 @@ const commands = ['clear', 'compact', 'context', 'effort', 'init', 'model', 'rev
 
 type Entry = Record<string, unknown>;
 
+const absolute = (path: string) => (path.startsWith('/') ? path : `${cwd}/${path}`);
+
 function template(name: string, find: (message: any) => boolean) {
 	for (const line of readFileSync(join(recorded, name), 'utf8').split('\n').filter(Boolean)) {
 		const entry = JSON.parse(line);
@@ -115,8 +117,7 @@ export class Chat {
 		return this.sleep(0.3);
 	}
 
-	private use(name: string, input: Entry) {
-		const id = `toolu_promo_${++this.count}`;
+	private use(name: string, input: Entry, id = `toolu_promo_${++this.count}`) {
 		const json = JSON.stringify(input);
 		const deltas = json.match(/.{1,64}/gs)!.map((part) => ({ type: 'input_json_delta', partial_json: part }));
 		this.message({ type: 'tool_use', id, name, input }, deltas, 'tool_use', 0.03);
@@ -133,10 +134,10 @@ export class Chat {
 	}
 
 	read(path: string) {
-		const id = this.use('Read', { file_path: `${cwd}/${path}` });
+		const id = this.use('Read', { file_path: absolute(path) });
 		const text = this.file(path);
 		this.sleep(0.25);
-		this.result(id, text.split('\n').map((line, index) => `${index + 1}\t${line}`).join('\n'), { type: 'text', file: { filePath: `${cwd}/${path}`, content: text, numLines: text.split('\n').length, startLine: 1, totalLines: text.split('\n').length } });
+		this.result(id, text.split('\n').map((line, index) => `${index + 1}\t${line}`).join('\n'), { type: 'text', file: { filePath: absolute(path), content: text, numLines: text.split('\n').length, startLine: 1, totalLines: text.split('\n').length } });
 		return this.sleep(0.2);
 	}
 
@@ -158,7 +159,9 @@ export class Chat {
 	}
 
 	todos(items: [string, 'pending' | 'in_progress' | 'completed'][]) {
-		this.use('TodoWrite', { todos: items.map(([content, status]) => ({ content, status, activeForm: content })) });
+		const todos = items.map(([content, status]) => ({ content, status, activeForm: content }));
+		const id = this.use('TodoWrite', { todos });
+		this.result(id, 'Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable', { oldTodos: [], newTodos: todos });
 		return this.sleep(0.2);
 	}
 
@@ -168,13 +171,33 @@ export class Chat {
 		return this.sleep(0.4);
 	}
 
-	ask(question: Question, answer: string) {
-		const id = this.use('AskUserQuestion', { questions: [question] });
+	ask(...rounds: [Question, string][]) {
+		const questions = rounds.map(([question]) => question);
+		const id = this.use('AskUserQuestion', { questions });
 		this.out({ type: 'system', subtype: 'session_state_changed', state: 'requires_action', sdk_host_only: true });
-		this.entries.push({ stdout: { type: 'control_request', request_id: id, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [question] }, tool_use_id: id } } });
+		this.entries.push({ stdout: { type: 'control_request', request_id: id, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions }, tool_use_id: id } } });
 		this.entries.push({ stdin: { type: 'control_response', response: { request_id: id } } });
 		this.out({ type: 'system', subtype: 'session_state_changed', state: 'running', sdk_host_only: true });
-		this.result(id, `User has answered your questions: "${question.question}"="${answer}".`, { questions: [question], answers: { [question.question]: answer } });
+		this.result(id, `User has answered your questions: ${rounds.map(([question, answer]) => `"${question.question}"="${answer}"`).join(', ')}.`, { questions, answers: Object.fromEntries(rounds.map(([question, answer]) => [question.question, answer])) });
+		return this.sleep(0.4);
+	}
+
+	media(path: string, title: string, asset: string) {
+		const id = this.use('mcp__stampede_chat__render_media', { path, title });
+		this.result(id, [{ type: 'text', text: JSON.stringify({ title, asset }) }], null);
+		return this.sleep(0.4);
+	}
+
+	delegate(rig: string, task: string) {
+		this.use('mcp__stampede_chat__delegate_to_rig', { rig, task }, 'rig-review');
+		this.entries.push({ relay: { rig, task } });
+		return this.sleep(0.4);
+	}
+
+	stage(command: string, gate: string) {
+		const id = this.use('mcp__stampede_chat__stage_command', { command });
+		this.entries.push({ gate });
+		this.result(id, [{ type: 'text', text: JSON.stringify({ pending: true }) }], null);
 		return this.sleep(0.4);
 	}
 
@@ -182,20 +205,20 @@ export class Chat {
 		const original = this.file(path);
 		if (original.split(before).length !== 2) throw new Error(`${path} must contain one ${JSON.stringify(before)}`);
 		const updated = original.replace(before, after);
-		const id = this.use('Edit', { replace_all: false, file_path: `${cwd}/${path}`, old_string: before, new_string: after });
+		const id = this.use('Edit', { replace_all: false, file_path: absolute(path), old_string: before, new_string: after });
 		this.files.set(path, updated);
 		this.entries.push({ file: { path, text: updated } });
 		this.sleep(0.2);
-		this.result(id, `The file ${cwd}/${path} has been updated successfully.`, { filePath: `${cwd}/${path}`, oldString: before, newString: after, originalFile: original, structuredPatch: patch(original, before, after), userModified: false, replaceAll: false });
+		this.result(id, `The file ${absolute(path)} has been updated successfully.`, { filePath: absolute(path), oldString: before, newString: after, originalFile: original, structuredPatch: patch(original, before, after), userModified: false, replaceAll: false });
 		return this.sleep(0.3);
 	}
 
 	create(path: string, text: string) {
-		const id = this.use('Write', { file_path: `${cwd}/${path}`, content: text });
+		const id = this.use('Write', { file_path: absolute(path), content: text });
 		this.files.set(path, text);
 		this.entries.push({ file: { path, text } });
 		this.sleep(0.2);
-		this.result(id, `File created successfully at: ${cwd}/${path}`, { type: 'create', filePath: `${cwd}/${path}`, content: text, structuredPatch: [], originalFile: null });
+		this.result(id, `File created successfully at: ${absolute(path)}`, { type: 'create', filePath: absolute(path), content: text, structuredPatch: [], originalFile: null });
 		return this.sleep(0.3);
 	}
 

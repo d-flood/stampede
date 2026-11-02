@@ -1,11 +1,16 @@
 import type { ReactNode } from 'react';
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
-import { footageAt, fps, outputAt, type Event, type Key } from './edit.ts';
-import { Cursor, Footage, Ripples, camera, type Frames, type Shot } from './footage.tsx';
+import { find, footageAt, fps, outputAt, type Event, type Key } from './edit.ts';
+import { Cursor, Footage, Ripples, camera, centre, type Frames, type Shot } from './footage.tsx';
 import { Browser, Caption, colors, text } from './parts.tsx';
 
 export const frame = { left: 240, top: 28, width: 1440, height: 900 };
 export const url = 'https://studio.tailnet.ts.net:8443';
+
+export const seconds = (value: number) => Math.round(value * fps);
+export const on = (timeline: Event[], device: string) => timeline.filter((event) => event.device === device);
+export const focus = (timeline: Event[], name: string, device = 'desktop') => find(timeline, device, (event) => event.type === 'focus' && event.name === name);
+export const zoom = (t: number, z: number, event?: Event): Shot => ({ t, z, ...(event ? centre(event.box!) : { x: 640, y: 400 }) });
 
 export function useClock(keys: Key[]) {
 	const now = useCurrentFrame();

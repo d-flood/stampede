@@ -58,7 +58,7 @@ function conversation() {
 		.say('Here is what I have in mind for the editor:')
 		.html('Tag chips', mockup)
 		.sleep(1.2)
-		.ask(filter, 'Sidebar chips')
+		.ask([filter, 'Sidebar chips'])
 		.say('Sidebar chips it is. Adding the field, the chips, and the filter.')
 		.edit('src/lib/notes.ts', '\tpinned: boolean;\n\tupdated: number;', '\tpinned: boolean;\n\ttags: string[];\n\tupdated: number;')
 		.edit('src/lib/notes.ts', "pinned: false, updated: Date.now() };\n}", `pinned: false, tags: [], updated: Date.now() };

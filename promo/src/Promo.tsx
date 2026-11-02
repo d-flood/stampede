@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
 import { AbsoluteFill, Audio, Img, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
-import { bar, find, footageAt, fps, length, mark, outputAt, start, type Event, type Section } from './edit.ts';
-import { Footage, Ripples, centre, ease, type Frames, type Shot } from './footage.tsx';
+import { bar, cuts, find, footageAt, fps, length, mark, outputAt, start, type Cut, type Event, type Section } from './edit.ts';
+import { Footage, Ripples, centre, ease, type Frames } from './footage.tsx';
 import { Backdrop, Caption, LockScreen, Logo, Phone, colors, display, text, useFade } from './parts.tsx';
-import { Chip, Lower, Screen, Window, useClock } from './Screen.tsx';
+import { Chip, Lower, Screen, Window, focus, on, seconds, useClock, zoom } from './Screen.tsx';
 import { chatKeys, epicKeys, fleetKeys, lock, phoneKeys, reviewKeys, splitKeys } from './timing.ts';
 import chatTimeline from '../public/footage/chat/timeline.json';
 import chatDesktop from '../public/footage/chat/desktop/frames.json';
@@ -20,20 +20,16 @@ const chat = chatTimeline as Event[];
 const split = splitTimeline as Event[];
 const epic = epicTimeline as Event[];
 const fleet = fleetTimeline as Event[];
-const seconds = (value: number) => Math.round(value * fps);
-const on = (timeline: Event[], device: string) => timeline.filter((event) => event.device === device);
-const focus = (timeline: Event[], name: string, device = 'desktop') => find(timeline, device, (event) => event.type === 'focus' && event.name === name);
-const zoom = (t: number, z: number, event?: Event): Shot => ({ t, z, ...(event ? centre(event.box!) : { x: 640, y: 400 }) });
 
-const Part = ({ name, children }: { name: Section; children: ReactNode }) => (
-	<Sequence from={seconds(start(name))} durationInFrames={seconds(length(name))}>
+const Part = ({ cut, name, children }: { cut: Cut; name: Section; children: ReactNode }) => (
+	<Sequence from={seconds(start(cut, name))} durationInFrames={seconds(length(name))}>
 		<Faded duration={seconds(length(name))}>{children}</Faded>
 	</Sequence>
 );
 
 const Faded = ({ duration, children }: { duration: number; children: ReactNode }) => <AbsoluteFill style={{ opacity: useFade(duration) }}>{children}</AbsoluteFill>;
 
-const Title = ({ tagline, footer }: { tagline: string; footer?: string }) => {
+export const Title = ({ tagline, footer }: { tagline: string; footer?: string }) => {
 	const now = useCurrentFrame();
 	const { fps } = useVideoConfig();
 	const rise = spring({ frame: now, fps, config: { damping: 14, mass: 0.8 } });
@@ -78,7 +74,7 @@ const chatShots = [
 	zoom(approval.t + 0.8, 1.5, approval)
 ];
 
-const Chatting = () => {
+export const Chatting = () => {
 	const { t, at } = useClock(chatting.keys);
 	return (
 		<AbsoluteFill>
@@ -97,7 +93,7 @@ const phone = { width: 448, height: 998, keys: phoneKeys(chat), events: on(chat,
 const screen = { width: 390, height: 390 * phone.height / phone.width };
 const tapped = find(chat, 'phone', (event) => event.type === 'tap');
 
-const Handset = () => {
+export const Handset = () => {
 	const now = useCurrentFrame() / fps;
 	const t = footageAt(phone.keys, now - lock.length);
 	const tap = lock.length + outputAt(phone.keys, tapped.t);
@@ -145,7 +141,7 @@ const reviewShots = [
 	zoom(commit + 1.2, 1.3, { ...message, box: { x: 40, y: 80, width: 240, height: 400 } })
 ];
 
-const Reviewing = () => {
+export const Reviewing = () => {
 	const { t, at } = useClock(reviewing.keys);
 	return (
 		<AbsoluteFill>
@@ -160,7 +156,7 @@ const Reviewing = () => {
 const splitting = { keys: splitKeys(split), events: on(split, 'desktop') };
 const splitShots = [zoom(mark(split, 'desktop', 'start'), 1)];
 
-const Splitting = () => {
+export const Splitting = () => {
 	const { t } = useClock(splitting.keys);
 	return (
 		<AbsoluteFill>
@@ -186,7 +182,7 @@ const epicShots = [
 	zoom(mark(epic, 'desktop', 'end') - 0.2, 1)
 ];
 
-const Running = () => {
+export const Running = () => {
 	const { t, at } = useClock(epics.keys);
 	return (
 		<AbsoluteFill>
@@ -213,7 +209,7 @@ const fleetShots = [
 	zoom(drawer + 0.1, 1)
 ];
 
-const Fleet = () => {
+export const Fleet = () => {
 	const { t, at } = useClock(fleets.keys);
 	return (
 		<AbsoluteFill>
@@ -224,7 +220,7 @@ const Fleet = () => {
 	);
 };
 
-const Themes = () => {
+export const Themes = () => {
 	const now = useCurrentFrame() / fps;
 	const stills = (themeStills as Frames & { frames: { name: string }[] }).frames;
 	const still = stills[Math.min(stills.length - 1, Math.floor(now / (bar / 4)))];
@@ -241,18 +237,25 @@ const Themes = () => {
 	);
 };
 
-export const Promo = () => (
+export const Edit = ({ cut, parts, children }: { cut: Cut; parts: Partial<Record<Section, ReactNode>>; children?: ReactNode }) => (
 	<AbsoluteFill style={{ background: colors.ground }}>
 		<Backdrop />
-		<Part name="intro"><Title tagline="A self-hosted IDE for directing AI coding agents." /></Part>
-		<Part name="chat"><Chatting /></Part>
-		<Part name="phone"><Handset /></Part>
-		<Part name="review"><Reviewing /></Part>
-		<Part name="split"><Splitting /></Part>
-		<Part name="epic"><Running /></Part>
-		<Part name="fleet"><Fleet /></Part>
-		<Part name="themes"><Themes /></Part>
-		<Part name="outro"><Title tagline="Your machine. Your agents. Any browser." footer="github.com/d-flood/stampede" /></Part>
-		<Audio src={staticFile('music/promo.wav')} />
+		{cuts[cut].map((name) => <Part key={name} cut={cut} name={name}>{parts[name]}</Part>)}
+		{children}
+		<Audio src={staticFile(`music/${cut.toLowerCase()}.wav`)} />
 	</AbsoluteFill>
+);
+
+export const Promo = () => (
+	<Edit cut="Promo" parts={{
+		intro: <Title tagline="A self-hosted IDE for directing AI coding agents." />,
+		chat: <Chatting />,
+		phone: <Handset />,
+		review: <Reviewing />,
+		split: <Splitting />,
+		epic: <Running />,
+		fleet: <Fleet />,
+		themes: <Themes />,
+		outro: <Title tagline="Your machine. Your agents. Any browser." footer="github.com/d-flood/stampede" />
+	}} />
 );

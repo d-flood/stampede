@@ -213,8 +213,8 @@ for entry in entries[start:]:
     elif 'ask' in entry:
         result = ask(mcp, entry['ask'])
         print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'rich-questions', 'content': result['content'], 'is_error': result['isError']}]}}), flush=True)
-    elif 'delegate' in entry:
-        result = delegate(mcp, entry['delegate'])
+    elif 'delegate' in entry or 'relay' in entry:
+        result = delegate(mcp, entry['delegate']) if 'delegate' in entry else call(mcp, 'delegate_to_rig', entry['relay'], timeout=120)
         print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'rig-review', 'content': result['content'], 'is_error': result['isError']}]}}), flush=True)
     elif 'args' in entry:
         expected = entry['args']

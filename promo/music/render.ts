@@ -2,14 +2,16 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cues, scenes, type Timelines } from '../src/timing.ts';
-import { bar, bpm, sections, start, total } from '../src/edit.ts';
+import { bar, bpm, cuts, sections, start, total, type Cut } from '../src/edit.ts';
 
+const cut = (process.argv[2] ?? 'Promo') as Cut;
 const rate = 48_000;
 const beat = 60 / bpm;
 const root = fileURLToPath(new URL('..', import.meta.url));
 const timelines = Object.fromEntries(scenes.map((scene) => [scene, JSON.parse(readFileSync(join(root, `public/footage/${scene}/timeline.json`), 'utf8'))])) as Timelines;
-const output = join(root, 'public/music/promo.wav');
-const frames = Math.ceil(total * rate);
+const output = join(root, `public/music/${cut.toLowerCase()}.wav`);
+const end = total(cut);
+const frames = Math.ceil(end * rate);
 
 class Bus {
 	l = new Float32Array(frames);
@@ -26,6 +28,7 @@ const pad = new Bus();
 const pluck = new Bus();
 const bass = new Bus();
 const drums = new Bus();
+const synth = new Bus();
 const reverbSend = new Bus();
 const delaySend = new Bus();
 
@@ -104,7 +107,7 @@ function padNote(note: number, time: number, duration: number, level: number) {
 	}
 }
 
-function pluckNote(note: number, time: number, level: number, pan: number) {
+function pluckNote(note: number, time: number, level: number, pan: number, bright = 1) {
 	const filter = new Filter();
 	const length = at(0.6);
 	const begin = at(time);
@@ -112,7 +115,7 @@ function pluckNote(note: number, time: number, level: number, pan: number) {
 	const step = hz(note) / rate;
 	for (let i = 0; i < length; i++) {
 		const t = i / rate;
-		if (i % 16 === 0) filter.tune(500 + 4200 * Math.exp(-t / 0.07), 1.1);
+		if (i % 16 === 0) filter.tune(500 + 4200 * bright * Math.exp(-t / 0.07), 1.1);
 		phase = (phase + step) % 1;
 		const saw = 2 * phase - 1 - blep(phase, step);
 		const square = (phase < 0.5 ? 1 : -1) * 0.4;
@@ -123,7 +126,7 @@ function pluckNote(note: number, time: number, level: number, pan: number) {
 	}
 }
 
-function bassNote(note: number, time: number, duration: number, level: number) {
+function bassNote(note: number, time: number, duration: number, level: number, bite = 0) {
 	const filter = new Filter();
 	filter.tune(320, 0.9);
 	const length = at(duration + 0.05);
@@ -132,6 +135,7 @@ function bassNote(note: number, time: number, duration: number, level: number) {
 	const step = hz(note) / rate;
 	for (let i = 0; i < length; i++) {
 		const t = i / rate;
+		if (bite && i % 16 === 0) filter.tune(320 + bite * 2400 * Math.exp(-t / 0.05), 0.9);
 		phase = (phase + step) % 1;
 		const envelope = Math.min(1, t / 0.006) * (t > duration ? Math.exp(-(t - duration) / 0.012) : Math.exp(-t / 0.6) * 0.5 + 0.5);
 		const value = (Math.sin(2 * Math.PI * phase) + 0.5 * filter.run(2 * phase - 1 - blep(phase, step)).low) * envelope * level;
@@ -153,13 +157,13 @@ function kick(time: number, level: number) {
 	}
 }
 
-function hat(time: number, level: number, pan: number) {
+function hat(time: number, level: number, pan: number, decay = 0.022) {
 	const filter = new Filter();
 	filter.tune(8000, 0.8);
 	const begin = at(time);
-	for (let i = 0; i < at(0.08); i++) {
+	for (let i = 0; i < at(Math.max(0.08, decay * 4)); i++) {
 		const t = i / rate;
-		drums.add(begin + i, filter.run(noise()).high * Math.exp(-t / 0.022) * level, pan);
+		drums.add(begin + i, filter.run(noise()).high * Math.exp(-t / decay) * level, pan);
 	}
 }
 
@@ -215,6 +219,59 @@ function chime(note: number, time: number, level: number, pan: number) {
 	}
 }
 
+function snare(time: number, level: number) {
+	const filter = new Filter();
+	filter.tune(3800, 0.6);
+	const begin = at(time);
+	let phase = 0;
+	for (let i = 0; i < at(0.3); i++) {
+		const t = i / rate;
+		phase += (185 + 60 * Math.exp(-t / 0.015)) / rate;
+		const value = (Math.sin(2 * Math.PI * phase) * Math.exp(-t / 0.07) * 0.7 + filter.run(noise()).band * Math.exp(-t / 0.11) * 1.6) * Math.min(1, t / 0.001) * level;
+		drums.add(begin + i, value, 0.05);
+		reverbSend.add(begin + i, value * 0.4);
+	}
+}
+
+function roll(time: number, hits: number, spacing: number, from: number, to: number) {
+	for (let hit = 0; hit < hits; hit++) snare(time + hit * spacing, from + (to - from) * hit / (hits - 1));
+}
+
+function crash(time: number, level: number) {
+	const body = new Filter();
+	body.tune(5200, 0.6);
+	const shimmer = new Filter();
+	shimmer.tune(9000, 1.2);
+	const begin = at(time);
+	for (let i = 0; i < at(2.2); i++) {
+		const t = i / rate;
+		const sample = noise();
+		const value = (body.run(sample).high * 0.7 + shimmer.run(sample).band) * Math.exp(-t / 0.55) * Math.min(1, t / 0.002) * level;
+		drums.add(begin + i, value, Math.sin(t * 3) * 0.3);
+		reverbSend.add(begin + i, value * 0.4);
+	}
+}
+
+function supersaw(note: number, time: number, duration: number, level: number) {
+	const voices = [-0.21, -0.13, -0.05, 0, 0.06, 0.14, 0.22].map((detune) => ({ step: hz(note + detune) / rate, phase: noise() * 0.5 + 0.5 }));
+	const filter = [new Filter(), new Filter()];
+	const begin = at(time);
+	for (let i = 0; i < at(duration + 0.25); i++) {
+		const t = i / rate;
+		if (i % 32 === 0) for (const side of filter) side.tune(1600 + 3800 * Math.exp(-t / 0.18), 0.9);
+		const sides = [0, 0];
+		voices.forEach((voice, index) => {
+			voice.phase = (voice.phase + voice.step) % 1;
+			sides[index % 2] += 2 * voice.phase - 1 - blep(voice.phase, voice.step);
+		});
+		const envelope = Math.min(1, t / 0.006) * (t > duration ? Math.exp(-(t - duration) / 0.05) : 1 - 0.25 * Math.min(1, t / 0.4)) * level;
+		synth.add(begin + i, filter[0].run(sides[0]).low * envelope, -0.7);
+		synth.add(begin + i, filter[1].run(sides[1]).low * envelope, 0.7);
+		delaySend.add(begin + i, (sides[0] + sides[1]) * 0.12 * envelope);
+		reverbSend.add(begin + i, (sides[0] + sides[1]) * 0.15 * envelope);
+	}
+}
+
 const chords = {
 	G: { bass: 31, pad: [55, 59, 62, 66, 69], arp: [67, 71, 74, 78] },
 	A: { bass: 33, pad: [52, 57, 61, 64, 66], arp: [69, 73, 76, 78] },
@@ -234,27 +291,41 @@ function whoosh(time: number, duration: number, level: number) {
 }
 
 const loop: (keyof typeof chords)[] = ['D', 'Bm', 'G', 'A'];
+const anthem: (keyof typeof chords)[] = ['Bm', 'G', 'D', 'A'];
+const hook: Record<keyof typeof chords, [number, number][]> = {
+	Bm: [[0, 78], [3, 78], [6, 74], [8, 76], [11, 78], [14, 81]],
+	G: [[0, 83], [3, 81], [6, 79], [8, 78], [11, 76], [14, 74]],
+	D: [[0, 78], [3, 78], [6, 81], [8, 86], [11, 85], [14, 81]],
+	A: [[0, 81], [3, 76], [6, 78], [8, 76], [11, 73], [14, 76]]
+};
 const pattern = [0, 2, 1, 3, 2, 0, 3, 1];
-const plan = sections.flatMap((section, order) => Array.from({ length: section.bars }, (_, within) => ({ section, within, next: sections[order + 1] })));
-const main = sections[0].bars;
+const plan = cuts[cut].flatMap((name, order) => Array.from({ length: sections[name].bars }, (_, within) => ({ section: sections[name], within, next: cuts[cut][order + 1] && sections[cuts[cut][order + 1]] })));
+const drummed = (section?: { style: string }) => !!section && section.style !== 'break' && section.style !== 'outro';
 
 plan.forEach(({ section, within, next }, index) => {
 	const time = index * bar;
 	const style = section.style;
-	const name = style === 'intro' ? (['G', 'A'] as const)[within % 2] : style === 'outro' ? (['G', 'D'] as const)[within % 2] : loop[(index - main) % 4];
+	const name = style === 'intro' ? (['G', 'A'] as const)[within % 2] : style === 'outro' ? (['G', 'D'] as const)[within % 2] : (style === 'peak' ? anthem : loop)[within % 4];
 	const chord = chords[name];
 	const last = index === plan.length - 1;
 	const first = within === 0;
 	const ending = within === section.bars - 1;
-	for (const note of chord.pad) padNote(note, time, last ? bar * 0.6 : bar, style === 'outro' || style === 'break' ? 0.036 : 0.03);
+	const build = ending && (next?.style === 'lift' || next?.style === 'peak');
+	for (const note of chord.pad) padNote(note, time, last ? bar * 0.6 : bar, { outro: 0.036, break: 0.036, intro: 0.03, groove: 0.025, lift: 0.03, peak: 0.034 }[style]);
 
 	if (style === 'intro') {
-		for (let step = 0; step < 8; step++) pluckNote(chord.arp[pattern[step]] + 12, time + step * beat / 2, 0.025 + 0.015 * index, step % 2 ? 0.35 : -0.35);
-		if (ending) riser(time, bar, 0.06);
+		for (let step = 0; step < 16; step++) pluckNote(chord.arp[pattern[step % 8]] + 12, time + step * beat / 4, 0.02 + 0.012 * index, step % 2 ? 0.35 : -0.35, 0.4 + 0.3 * index + step * 0.02);
+		if (ending) {
+			riser(time, bar, 0.07);
+			roll(time + bar / 2, 8, beat / 4, 0.03, 0.12);
+		}
 		return;
 	}
 	if (style === 'outro') {
-		if (first) impact(time, 0.35);
+		if (first) {
+			impact(time, 0.35);
+			crash(time, 0.08);
+		}
 		for (let step = 0; step < 4; step++) pluckNote(chord.arp[pattern[step]] + 12, time + step * beat, 0.04, step % 2 ? 0.4 : -0.4);
 		if (last) [74, 81, 86].forEach((note, order) => chime(note, time + order * 0.09, 0.05, order - 1));
 		return;
@@ -263,39 +334,58 @@ plan.forEach(({ section, within, next }, index) => {
 		bassNote(chord.bass + 12, time, bar * 0.95, 0.09);
 		for (let step = 0; step < 8; step++) {
 			const t = time + step * beat / 2;
-			pluckNote(chord.arp[pattern[step]] + 12, t, 0.055, step % 2 ? 0.45 : -0.45);
+			pluckNote(chord.arp[pattern[step]] + 12, t, 0.055, step % 2 ? 0.45 : -0.45, 0.6 + 0.4 * within / section.bars);
 			if (step % 2 === 1) hat(t, 0.05, 0.2);
 		}
-		if (ending && next) riser(time, bar, 0.07);
+		if (ending && drummed(next)) {
+			riser(time, bar, 0.07);
+			roll(time + bar / 2, 8, beat / 4, 0.03, build ? 0.13 : 0.08);
+		}
 		return;
 	}
 
-	if (first) impact(time, 0.28);
+	if (first) {
+		impact(time, 0.28);
+		if (style !== 'groove') crash(time, 0.09);
+	}
 	const lift = style === 'lift' || style === 'peak';
+	const bright = style === 'peak' ? 1.1 : style === 'lift' ? 0.6 + 0.5 * (within + 1) / section.bars : 0.85;
 	for (let step = 0; step < 16; step++) {
 		const t = time + step * beat / 4;
-		if (step % 4 === 0) kick(t, 0.3);
-		if (step % 4 === 2) hat(t, 0.11, 0.2);
-		else if (lift && step % 2 === 1) hat(t, 0.05, -0.25);
-		else if (style === 'peak') hat(t, 0.035, 0.3);
-		if (lift && step % 8 === 4) clap(t, 0.15);
+		const filling = build && step >= 8;
+		if (step % 4 === 0) kick(t, { groove: 0.3, lift: 0.34, peak: 0.36 }[style]);
+		if (style === 'peak' && step === 14 && within % 2) kick(t, 0.2);
+		if (step % 8 === 4 && !filling) {
+			clap(t, lift ? 0.15 : 0.11);
+			snare(t, lift ? 0.1 : 0.07);
+		}
+		if (step % 4 === 2) hat(t, lift ? 0.08 : 0.11, 0.2, lift ? 0.12 : 0.022);
+		else hat(t, step % 2 ? 0.025 : 0.04, -0.25);
 		const octave = style === 'peak' || (lift && step >= 8) ? 12 : 0;
-		pluckNote(chord.arp[pattern[step % 8]] + octave, t, step % 4 === 0 ? 0.085 : 0.065, step % 2 ? 0.45 : -0.45);
-		if (step % 2 === 0) bassNote(chord.bass + 12, t, beat / 2 * 0.8, 0.13);
+		pluckNote(chord.arp[pattern[step % 8]] + octave, t, (step % 4 === 0 ? 0.085 : 0.065) * (style === 'groove' ? 0.85 : 1), step % 2 ? 0.45 : -0.45, bright);
+		if (lift && step % 4 !== 0) bassNote(chord.bass + 12, t, beat / 4 * 0.75, 0.13, 0.5);
+		if (!lift && step % 4 === 2) bassNote(chord.bass + (step % 8 === 6 ? 24 : 12), t, beat / 2 * 0.7, 0.15, 0.35);
 	}
-	if (style === 'peak') chime(chord.arp[3] + 12, time, 0.025, within % 2 ? 0.5 : -0.5);
-	if (ending && next && next.style !== 'break' && next.style !== 'outro') riser(time + bar / 2, bar / 2, 0.08);
+	if (style === 'peak') {
+		chime(chord.arp[3] + 12, time, 0.025, within % 2 ? 0.5 : -0.5);
+		hook[name].forEach(([step, note], order) => supersaw(note, time + step * beat / 4, ((hook[name][order + 1]?.[0] ?? 16) - step) * beat / 4 * 0.85, 0.032));
+	}
+	if (build && next?.style === 'peak') roll(time, 4, beat / 2, 0.03, 0.05);
+	if (build) roll(time + bar / 2, 8, beat / 4, 0.05, 0.14);
+	if (ending && drummed(next)) riser(time + (build ? 0 : bar / 2), build ? bar : bar / 2, 0.08);
 });
 
 for (const cue of cues(timelines)) {
+	if (!cuts[cut].includes(cue.section)) continue;
+	const t = start(cut, cue.section) + cue.t;
 	if (cue.sound === 'notify') {
-		chime(88, cue.t, 0.06, 0.2);
-		chime(93, cue.t + 0.12, 0.05, 0.2);
+		chime(88, t, 0.06, 0.2);
+		chime(93, t + 0.12, 0.05, 0.2);
 	}
-	if (cue.sound === 'tick') chime(86, cue.t, 0.025, 0.2);
-	if (cue.sound === 'tap') [81, 86, 90].forEach((note, order) => chime(note, cue.t + order * 0.07, 0.07, order * 0.5 - 0.5));
-	if (cue.sound === 'sparkle') [86, 93].forEach((note, order) => chime(note, cue.t + order * 0.05, 0.045, order - 0.5));
-	if (cue.sound === 'whoosh') whoosh(cue.t - 0.18, 0.4, 0.05);
+	if (cue.sound === 'tick') chime(86, t, 0.025, 0.2);
+	if (cue.sound === 'tap') [81, 86, 90].forEach((note, order) => chime(note, t + order * 0.07, 0.07, order * 0.5 - 0.5));
+	if (cue.sound === 'sparkle') [86, 93].forEach((note, order) => chime(note, t + order * 0.05, 0.045, order - 0.5));
+	if (cue.sound === 'whoosh') whoosh(t - 0.18, 0.4, 0.05);
 }
 chime(74, 0.15, 0.04, 0);
 
@@ -366,16 +456,16 @@ const space = reverb(reverbSend);
 const echo = delay(delaySend);
 const highpass = [new Filter(), new Filter()];
 highpass.forEach((side) => side.tune(28));
-const fade = start('outro') + bar * 1.4;
+const fade = start(cut, cuts[cut].at(-1)!) + bar * 1.4;
 const mix = [new Float32Array(frames), new Float32Array(frames)];
 let peak = 0;
 for (let i = 0; i < frames; i++) {
 	const time = i / rate;
 	const gain = duck(time);
-	const ending = time > fade ? Math.cos(Math.min(1, (time - fade) / (total - fade)) * Math.PI / 2) : 1;
+	const ending = time > fade ? Math.cos(Math.min(1, (time - fade) / (end - fade)) * Math.PI / 2) : 1;
 	for (const [channel, key] of [[0, 'l'], [1, 'r']] as const) {
-		const value = (pad[key][i] * gain + pluck[key][i] * (0.6 + 0.4 * gain) + bass[key][i] * gain + drums[key][i] + space[key][i] * 0.9 + echo[key][i] * 0.5) * ending;
-		mix[channel][i] = Math.tanh(highpass[channel].run(value).high * 1.3);
+		const value = (pad[key][i] * gain + pluck[key][i] * (0.6 + 0.4 * gain) + bass[key][i] * gain + synth[key][i] * (0.7 + 0.3 * gain) + drums[key][i] + space[key][i] * 0.9 + echo[key][i] * 0.5) * ending;
+		mix[channel][i] = Math.tanh(highpass[channel].run(value).high * 1.6);
 		peak = Math.max(peak, Math.abs(mix[channel][i]));
 	}
 }
@@ -402,4 +492,4 @@ for (let i = 0; i < frames; i++) {
 }
 mkdirSync(dirname(output), { recursive: true });
 writeFileSync(output, pcm);
-console.log(`${output}: ${total.toFixed(2)}s, peak before normalizing ${peak.toFixed(3)}`);
+console.log(`${output}: ${end.toFixed(2)}s, peak before normalizing ${peak.toFixed(3)}`);

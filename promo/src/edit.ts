@@ -6,34 +6,49 @@ export const fps = 30;
 export const bpm = 100;
 export const bar = 240 / bpm;
 
-export const sections = [
-	{ name: 'intro', bars: 2, style: 'intro' },
-	{ name: 'chat', bars: 10, style: 'groove' },
-	{ name: 'phone', bars: 4, style: 'lift' },
-	{ name: 'review', bars: 4, style: 'break' },
-	{ name: 'split', bars: 2, style: 'groove' },
-	{ name: 'epic', bars: 8, style: 'peak' },
-	{ name: 'fleet', bars: 4, style: 'lift' },
-	{ name: 'themes', bars: 2, style: 'peak' },
-	{ name: 'outro', bars: 2, style: 'outro' }
-] as const;
+export type Style = 'intro' | 'groove' | 'lift' | 'break' | 'peak' | 'outro';
 
-export type Section = (typeof sections)[number]['name'];
+export const sections = {
+	intro: { bars: 2, style: 'intro' },
+	chat: { bars: 10, style: 'groove' },
+	phone: { bars: 4, style: 'lift' },
+	review: { bars: 4, style: 'break' },
+	split: { bars: 2, style: 'groove' },
+	epic: { bars: 8, style: 'peak' },
+	fleet: { bars: 4, style: 'lift' },
+	themes: { bars: 2, style: 'peak' },
+	outro: { bars: 2, style: 'outro' },
+	rigs: { bars: 5, style: 'groove' },
+	delegate: { bars: 6, style: 'lift' },
+	media: { bars: 4, style: 'break' },
+	canvas: { bars: 7, style: 'groove' },
+	grill: { bars: 12, style: 'lift' },
+	worktrees: { bars: 4, style: 'groove' },
+	editor: { bars: 6, style: 'groove' },
+	git: { bars: 6, style: 'lift' },
+	terminals: { bars: 4, style: 'groove' },
+	light: { bars: 4, style: 'break' },
+	extras: { bars: 8, style: 'peak' }
+} satisfies Record<string, { bars: number; style: Style }>;
 
-export function start(name: Section) {
-	let bars = 0;
-	for (const section of sections) {
-		if (section.name === name) return bars * bar;
-		bars += section.bars;
-	}
-	throw new Error(name);
+export type Section = keyof typeof sections;
+
+export const cuts: Record<'Promo' | 'Tour', Section[]> = {
+	Promo: ['intro', 'chat', 'phone', 'review', 'split', 'epic', 'fleet', 'themes', 'outro'],
+	Tour: ['intro', 'rigs', 'chat', 'phone', 'split', 'delegate', 'media', 'canvas', 'grill', 'epic', 'worktrees', 'editor', 'review', 'git', 'terminals', 'fleet', 'light', 'extras', 'themes', 'outro']
+};
+
+export type Cut = keyof typeof cuts;
+
+export function start(cut: Cut, name: Section) {
+	const index = cuts[cut].indexOf(name);
+	if (index < 0) throw new Error(name);
+	return cuts[cut].slice(0, index).reduce((sum, section) => sum + sections[section].bars, 0) * bar;
 }
 
-export function length(name: Section) {
-	return sections.find((section) => section.name === name)!.bars * bar;
-}
+export const length = (name: Section) => sections[name].bars * bar;
 
-export const total = sections.reduce((sum, section) => sum + section.bars, 0) * bar;
+export const total = (cut: Cut) => cuts[cut].reduce((sum, name) => sum + sections[name].bars, 0) * bar;
 
 export function find(timeline: Event[], device: string, match: (event: Event) => boolean) {
 	const event = timeline.find((event) => event.device === device && match(event));

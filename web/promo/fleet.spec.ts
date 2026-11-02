@@ -72,7 +72,7 @@ test('every project and agent in one place', async ({ browser, baseURL }) => {
 		.bash('pnpm vitest bench', 'Benchmark note search', 'search 10k notes   1.9ms\nsearch 100k notes  21.4ms')
 		.sleep(30)
 		.end('Done.');
-	const asking = new Chat(seed).prompt().say('The tiles work offline already. One decision before I merge:').ask(release, 'This release').end('Done.');
+	const asking = new Chat(seed).prompt().say('The tiles work offline already. One decision before I merge:').ask([release, 'This release']).end('Done.');
 	const fixtures = { working: join(root, 'working.jsonl'), asking: join(root, 'asking.jsonl') };
 	working.write(fixtures.working);
 	asking.write(fixtures.asking);
@@ -99,12 +99,18 @@ test('every project and agent in one place', async ({ browser, baseURL }) => {
 	await desktop.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
 	await expect(drawer.locator('div.terminal')).toBeVisible();
 	await desktop.waitForTimeout(1500);
-	await desktop.keyboard.type(`exec env -i HOME=${root} PATH=/usr/bin:/bin TERM=xterm-256color GIT_PAGER=cat PS1='\\W $ ' bash --norc --noprofile\n`);
-	await desktop.keyboard.type(`cd ${join(root, 'projects', 'tidepool')} && printf '\\033]0;tidepool\\007' && clear\n`);
-	await desktop.waitForTimeout(500);
+	await desktop.keyboard.type(`exec env -i HOME=${root} PATH=/usr/bin:/bin TERM=xterm-256color GIT_PAGER=cat PS1='\\W $ ' PROMPT_COMMAND='printf "\\033]0;%s\\007" "\${PWD##*/}"' bash --norc --noprofile\n`);
+	await desktop.keyboard.type(`cd ${join(root, 'projects', 'tidepool')} && clear\n`);
+	await expect(drawer.getByRole('tablist', { name: 'Drawer Tabs' }).getByRole('tab').last()).toContainText('tidepool');
 	await desktop.keyboard.press('Control+Backquote');
 	await expect.poll(() => drawer.evaluate((element) => getComputedStyle(element).transform)).not.toBe('none');
 	await desktop.mouse.move(700, 420);
+	const tabs = drawer.getByRole('tablist', { name: 'Drawer Tabs' });
+	await tabs.evaluate((element) => {
+		const seen = new Set<string>();
+		new MutationObserver(() => seen.add(element.textContent ?? '')).observe(element, { subtree: true, childList: true, characterData: true });
+		Object.assign(window, { seen });
+	});
 
 	const director = new Director('fleet');
 	await director.record('desktop', desktop);
@@ -139,4 +145,5 @@ test('every project and agent in one place', async ({ browser, baseURL }) => {
 	await director.hold(2.2);
 	director.mark('desktop', 'end');
 	await director.finish();
+	expect(await desktop.evaluate(() => [...(window as unknown as { seen: Set<string> }).seen].filter((text) => text.includes('—')))).toEqual([]);
 });

@@ -1,6 +1,17 @@
-import { find, length, mark, outputAt, retime, start, type Event, type Key, type Section } from './edit.ts';
+import { find, length, mark, outputAt, retime, type Event, type Key, type Section } from './edit.ts';
+import { extrasCues } from './tour/extras.ts';
+import { grillCues } from './tour/grill.ts';
+import { worktreesCues } from './tour/worktrees.ts';
+import { delegateCues } from './tour/delegate.ts';
+import { terminalsCues } from './tour/terminals.ts';
+import { editorCues } from './tour/editor.ts';
+import { gitCues } from './tour/git.ts';
+import { mediaCues } from './tour/media.ts';
+import { canvasCues } from './tour/canvas.ts';
+import { rigsCues } from './tour/rigs.ts';
+import { lightCues } from './tour/light.ts';
 
-export const scenes = ['chat', 'split', 'epic', 'fleet'] as const;
+export const scenes = ['chat', 'split', 'epic', 'fleet', 'extras', 'grill', 'worktrees', 'delegate', 'terminals', 'editor', 'git', 'media', 'canvas', 'rigs', 'light'] as const;
 export type Timelines = Record<(typeof scenes)[number], Event[]>;
 
 export const lock = { notify: 0.5, open: 2.0, length: 2.5 };
@@ -61,10 +72,11 @@ export function fleetKeys(timeline: Event[]) {
 }
 
 export type Sound = 'notify' | 'tick' | 'tap' | 'sparkle' | 'whoosh';
+export type Cue = { section: Section; t: number; sound: Sound };
 
-export function cues(timelines: Timelines): { t: number; sound: Sound }[] {
-	const at = (section: Section, keys: Key[], foot: number, offset = 0) => start(section) + offset + outputAt(keys, foot);
-	const { chat, split, epic, fleet } = timelines;
+export function cues(timelines: Timelines): Cue[] {
+	const at = (section: Section, keys: Key[], foot: number, sound: Sound, offset = 0): Cue => ({ section, t: offset + outputAt(keys, foot), sound });
+	const { chat, split, epic, fleet, extras, grill, worktrees, delegate, terminals, editor, git, media, canvas, rigs, light } = timelines;
 	const clicks = (timeline: Event[], from: number, to: number) => timeline.filter((event) => event.type === 'click' && event.t >= from && event.t <= to).map((event) => event.t);
 	const chatting = chatKeys(chat);
 	const phone = phoneKeys(chat);
@@ -73,16 +85,27 @@ export function cues(timelines: Timelines): { t: number; sound: Sound }[] {
 	const fleets = fleetKeys(fleet);
 	const commit = clicks(chat, mark(chat, 'desktop', 'review'), mark(chat, 'desktop', 'reviewed')).at(-2)!;
 	return [
-		{ t: at('chat', chatting, focus(chat, 'desktop', 'mockup')), sound: 'sparkle' },
-		{ t: at('chat', chatting, mark(chat, 'desktop', 'answered')), sound: 'tick' },
-		{ t: start('phone') + lock.notify, sound: 'notify' },
-		{ t: start('phone') + lock.open, sound: 'tick' },
-		{ t: at('phone', phone, find(chat, 'phone', (event) => event.type === 'tap').t, lock.length), sound: 'tap' },
-		{ t: at('review', review, commit), sound: 'sparkle' },
-		{ t: at('split', splitKeys(split), mark(split, 'desktop', 'asked')), sound: 'notify' },
-		{ t: at('epic', epics, mark(epic, 'desktop', 'started')), sound: 'sparkle' },
-		{ t: at('epic', epics, clicks(epic, mark(epic, 'desktop', 'land'), Infinity).at(-1)!), sound: 'tap' },
-		{ t: at('fleet', fleets, find(fleet, 'desktop', (event) => event.type === 'keys').t), sound: 'whoosh' },
-		{ t: start('themes'), sound: 'whoosh' }
+		at('chat', chatting, focus(chat, 'desktop', 'mockup'), 'sparkle'),
+		at('chat', chatting, mark(chat, 'desktop', 'answered'), 'tick'),
+		{ section: 'phone', t: lock.notify, sound: 'notify' },
+		{ section: 'phone', t: lock.open, sound: 'tick' },
+		at('phone', phone, find(chat, 'phone', (event) => event.type === 'tap').t, 'tap', lock.length),
+		at('review', review, commit, 'sparkle'),
+		at('split', splitKeys(split), mark(split, 'desktop', 'asked'), 'notify'),
+		at('epic', epics, mark(epic, 'desktop', 'started'), 'sparkle'),
+		at('epic', epics, clicks(epic, mark(epic, 'desktop', 'land'), Infinity).at(-1)!, 'tap'),
+		at('fleet', fleets, find(fleet, 'desktop', (event) => event.type === 'keys').t, 'whoosh'),
+		{ section: 'themes', t: 0, sound: 'whoosh' },
+		...extrasCues(extras),
+		...grillCues(grill),
+		...worktreesCues(worktrees),
+		...delegateCues(delegate),
+		...terminalsCues(terminals),
+		...editorCues(editor),
+		...gitCues(git),
+		...mediaCues(media),
+		...canvasCues(canvas),
+		...rigsCues(rigs),
+		...lightCues(light)
 	];
 }
