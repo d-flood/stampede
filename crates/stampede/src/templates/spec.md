@@ -52,6 +52,6 @@ Prefer existing seams and the highest one that reaches the behaviour; one is the
 
 </brief-template>
 
-Once the Epic exists, tell the user its slug, then **STOP**. Write no Tickets until the user sends `/tickets`.
+Once the Epic exists, tell the user its slug and finish this turn. Stampede sends the Ticket-building instructions automatically in the next turn. Write no Tickets in this turn.
 
 What follows these instructions, if anything, is from the user, such as the testing posture.

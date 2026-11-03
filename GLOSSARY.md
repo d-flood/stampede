@@ -81,7 +81,7 @@ One of _working_, _waiting_ (blocked mid-task on the user, e.g. a permission pro
 _Avoid_: state, activity, idle
 
 **Template**:
-Instructions Stampede owns and sends as part of a prompt, such as a Ticket's first prompt, the Resolver's, or _/grill_, _/spec_, and _/tickets_.
+Instructions Stampede owns and sends as part of a prompt, such as a Ticket's first prompt, the Resolver's, or _/grill_ and _/create-epic_.
 _Avoid_: skill, prompt file, command
 
 **Clip**:

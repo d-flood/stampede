@@ -1,4 +1,4 @@
-Break an Epic's Brief into independently-grabbable **tracer bullet** Tickets, each naming the Tickets that **block** it, and publish them in Stampede. Then propose the Epic's Setup Command, verify it, and record it once the user confirms it.
+Break the Epic just created in this conversation into independently-grabbable **tracer bullet** Tickets, each naming the Tickets that **block** it, and publish them in Stampede. Then determine, verify, and record the Epic's Setup Command.
 
 ## 1. Gather context
 
@@ -37,7 +37,7 @@ Leave out `--blocked-by` when nothing blocks the Ticket, and `--tags` when none 
 
 Write each Ticket for an implementer less capable than you. The Chat that works it is given the Ticket's body and can read the Brief, and nothing else of this conversation. Assume it will not re-derive context, will follow instructions literally, and will creep in scope unless fenced. Carry every decision you have already made into the Ticket, as constraints and contracts, not prescriptive diffs.
 
-## 5. Propose the Setup Command
+## 5. Record the Setup Command
 
 Every Ticket is worked in a fresh worktree of the Epic's branch, which holds only committed files. The Epic's **Setup Command** restores what such a checkout lacks: dependencies, build output, anything ignored that the Tickets' commands need. It runs through a shell in the root of every new worktree before any Chat starts there, and a Run refuses to start until the Epic has one.
 
@@ -49,12 +49,13 @@ Every Ticket is worked in a fresh worktree of the Epic's branch, which holds onl
    ```
 
    It is verified when it exits 0 in that clone. Then delete the clone.
-3. **Ask the user to confirm it,** showing the command and what the verification showed. A Setup Command that fails costs a Ticket: the Ticket is left untaken and needing attention, with the output's tail in a Note.
-4. **Record it once the user confirms it,** and never before:
+3. **Record the verified command:**
 
    ```sh
    stampede epic set-setup <epic> "<command>"
    ```
+
+If verification fails, fix the command and retry. If blocked, report the failure instead of recording an unverified command. Once finished, report the Epic's slug, its Tickets, and the recorded Setup Command.
 
 ## Wide refactors
 

@@ -49,7 +49,7 @@ export type Item =
 	| { kind: 'canvas'; canvas: string; added: number; removed: number; write?: true }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string; elided?: true }
 	| { kind: 'shell'; command: string; status: 'running' | 'ok' | 'failed'; output: string; pending?: true; elided?: true }
-	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound'; text: string };
+	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound' | 'tickets'; text: string };
 
 export type Request = (
 	| { kind: 'command'; id: string; words: string[][]; suggestion: string[][]; sessionPrefixes: boolean; allowRules?: boolean }

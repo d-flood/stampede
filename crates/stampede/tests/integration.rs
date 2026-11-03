@@ -9,6 +9,7 @@ mod chat_codex;
 mod chat_codex_restart;
 mod chat_commands;
 mod chat_copilot;
+mod chat_create_epic;
 mod chat_delegation;
 mod chat_handoff;
 mod chat_html;

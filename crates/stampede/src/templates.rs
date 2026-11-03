@@ -12,9 +12,10 @@ pub struct Template {
 
 pub const TEMPLATES: &[Template] = &[
     Template { name: "grill", description: "interview me about a plan, keeping the glossary and ADRs", text: include_str!("templates/grill.md") },
-    Template { name: "spec", description: "write the Brief and create the Epic", text: include_str!("templates/spec.md") },
-    Template { name: "tickets", description: "write the Epic's Tickets and its Setup Command", text: include_str!("templates/tickets.md") },
+    Template { name: "create-epic", description: "create an Epic with its Brief and Tickets", text: include_str!("templates/spec.md") },
 ];
+
+pub const TICKETS: Template = Template { name: "tickets", description: "write the Epic's Tickets and its Setup Command", text: include_str!("templates/tickets.md") };
 
 /// The first prompt of every Ticket's Chat. The loop sends it, so the slash menu does not offer it.
 pub const TICKET: Template = Template { name: "ticket", description: "work one Ticket", text: include_str!("templates/ticket.md") };
@@ -70,7 +71,7 @@ pub fn expand<'a>(text: &'a str, data_dir: &Path) -> Cow<'a, str> {
 
 /// The Template a sent text was expanded from, and the text as it was typed.
 pub fn recognize(text: &str, data_dir: &Path) -> Option<(&'static str, String)> {
-    TEMPLATES.iter().chain([&TICKET, &RESOLVER, &REVIEWER, &REMEDIATOR, &HANDOFF]).find_map(|template| {
+    TEMPLATES.iter().chain([&TICKETS, &TICKET, &RESOLVER, &REVIEWER, &REMEDIATOR, &HANDOFF]).find_map(|template| {
         let typed = text.strip_prefix(&template.opening(data_dir))?;
         Some(match typed {
             "" => (template.name, format!("/{}", template.name)),

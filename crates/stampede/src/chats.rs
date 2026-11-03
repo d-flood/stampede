@@ -177,6 +177,7 @@ pub enum Notice {
     Limit,
     Interrupted,
     Rewound,
+    Tickets,
 }
 
 impl Item {
@@ -730,6 +731,8 @@ pub struct Chat {
     pub queue_revision: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queued_images: Vec<Vec<Image>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    create_epic: Option<usize>,
     #[serde(default)]
     pub todos: Vec<Todo>,
     #[serde(default)]
@@ -978,6 +981,7 @@ impl Chats {
             queued: Vec::new(),
             queue_revision: 0,
             queued_images: Vec::new(),
+            create_epic: None,
             todos: Vec::new(),
             answered_questions: Vec::new(),
             handoff_from,
@@ -1220,20 +1224,34 @@ impl Chats {
                     }
                 }
                 Event::Status(status) => {
+                    let mut transcript = entry.transcript.lock().unwrap();
+                    let mut chat = entry.chat.lock().unwrap();
+                    if status == Status::Done && let Some(after) = chat.create_epic.filter(|after| *after < transcript.items.len()) {
+                        chat.create_epic = None;
+                        let items = &transcript.items[after..];
+                        let failed = items.iter().any(|item| matches!(item, Item::Notice { notice: Notice::Error | Notice::Interrupted | Notice::Limit, .. }));
+                        let finished = items.iter().any(|item| matches!(item, Item::Text { text, streaming: false, phase: Phase::Final } if !text.trim().is_empty()));
+                        let advance = finished && !failed && !chat.closing;
+                        self.save(&entry, chat);
+                        if advance {
+                            transcript.reported = Status::Working;
+                            entry.driver.send(&templates::TICKETS.opening(&self.data_dir), &[]);
+                            continue;
+                        }
+                        chat = entry.chat.lock().unwrap();
+                    }
                     let cut_off = matches!(
-                        entry.transcript.lock().unwrap().items.last(),
+                        transcript.items.last(),
                         Some(Item::Notice { notice: Notice::Interrupted | Notice::Limit, .. })
                     );
-                    let mut chat = entry.chat.lock().unwrap();
                     if status == Status::Done && !chat.queued.is_empty() && !cut_off {
                         let text = chat.queued.remove(0);
                         let images = if chat.queued_images.is_empty() { Vec::new() } else { chat.queued_images.remove(0) };
                         self.queued(&entry, chat);
-                        entry.driver.send(&templates::expand(&text, &self.data_dir), &images);
+                        self.send_prompt(&entry, &mut transcript, &text, &images);
                         continue;
                     }
                     drop(chat);
-                    let mut transcript = entry.transcript.lock().unwrap();
                     if status == Status::Working {
                         transcript.recoverable = false;
                         transcript.turns += 1;
@@ -1306,6 +1324,9 @@ impl Chats {
                     {
                         (*template, *text) = (Some(name), typed);
                     }
+                    if matches!(&item, Item::User { template: Some("tickets"), .. }) {
+                        item = Item::Notice { notice: Notice::Tickets, text: "Building Tickets".to_owned() };
+                    }
                     if let Item::User { text, .. } = &item { self.retitle(&entry, text, false); }
                     let mut transcript = entry.transcript.lock().unwrap();
                     if matches!(&item, Item::User { .. }) { transcript.recoverable = false; }
@@ -1332,6 +1353,9 @@ impl Chats {
                 Event::Usage(readings) => self.usage.record(readings),
                 Event::Truncate(len) => {
                     let mut transcript = entry.transcript.lock().unwrap();
+                    let mut chat = entry.chat.lock().unwrap();
+                    chat.create_epic = None;
+                    self.save(&entry, chat);
                     transcript.recoverable = false;
                     transcript.items.truncate(len);
                     transcript.requests.clear();
@@ -1341,6 +1365,7 @@ impl Chats {
                 }
                 Event::Reset => {
                     let mut chat = entry.chat.lock().unwrap();
+                    chat.create_epic = None;
                     chat.activity = None;
                     let _ = self.changed.send(Change::Activity(id.clone(), None));
                     chat.title = None;
@@ -1546,11 +1571,19 @@ impl Chats {
             chat.queued_images.push(images.to_vec());
             self.queued(&entry, chat);
         } else {
-            transcript.reported = Status::Working;
-            transcript.recoverable = false;
             drop(chat);
-            entry.driver.send(&templates::expand(text, &self.data_dir), images);
+            self.send_prompt(&entry, &mut transcript, text, images);
         }
+    }
+
+    fn send_prompt(&self, entry: &Entry, transcript: &mut Transcript, text: &str, images: &[Image]) {
+        let mut chat = entry.chat.lock().unwrap();
+        chat.create_epic = text.strip_prefix("/create-epic")
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(transcript.items.len());
+        self.save(entry, chat);
+        transcript.reported = Status::Working;
+        transcript.recoverable = false;
+        entry.driver.send(&templates::expand(text, &self.data_dir), images);
     }
 
     pub fn shell(&self, id: &str, command: &str) {
@@ -1572,8 +1605,9 @@ impl Chats {
         let pending: Vec<_> = transcript.questions.keys().cloned().collect();
         for request in pending { self.resolve(&mut transcript, id, &request); }
         let mut chat = entry.chat.lock().unwrap();
+        chat.create_epic = None;
         if chat.queued.is_empty() {
-            drop(chat);
+            self.save(&entry, chat);
         } else {
             chat.queued.clear();
             chat.queued_images.clear();

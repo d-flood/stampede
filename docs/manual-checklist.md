@@ -86,10 +86,8 @@ Run results and unavailable checks: `epic/chats/22-manual-checklist.md`.
 Use a throwaway Project and repeat with each available real Agent, Claude Code and Codex. Check desktop and the installed Pixel PWA. For restart and simulated Host-reboot checks, use a separate test server, data directory and Agent state; leave the installed service and other sessions running. Record unavailable Agents or Devices separately from passes.
 
 - [ ] `/grill` reaches an agreed plan for a small Epic.
-- [ ] `/spec` creates that Epic with the agreed Brief.
-- [ ] `/tickets` publishes its Tickets with the intended Blockers.
-- [ ] The proposed Setup Command succeeds in a fresh clone.
-- [ ] Confirming the Setup Command records it on the Epic.
+- [ ] `/create-epic` creates that Epic with the agreed Brief, then publishes its Tickets with the intended Blockers in a second turn automatically.
+- [ ] The Setup Command succeeds in a fresh clone and is recorded on the Epic without asking for confirmation.
 - [ ] Starting a Run at parallel 2 works two unblocked Tickets concurrently.
 - [ ] Each worker is a Chat using its Rig's model, effort and permission mode.
 - [ ] Desktop shows the Integration and Ticket worktree Projects under their parent.

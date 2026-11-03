@@ -294,7 +294,7 @@ for (const { agent, rig, command, before, after } of slashed) {
 	});
 }
 
-test('/spec from the slash menu sends its Template before the typed text', { tag: '@desktop' }, async ({ page }, { project }) => {
+test('/create-epic sends two turns while showing one user command', async ({ page }, { project }) => {
 	const root = process.env.STAMPEDE_E2E_ROOT;
 	const name = `template-${project.name}`;
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
@@ -308,16 +308,15 @@ test('/spec from the slash menu sends its Template before the typed text', { tag
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	await composer.fill('/');
 	const menu = panel.getByRole('region', { name: 'Commands' });
-	await menu.getByRole('button', { name: /^\/spec write the Brief/ }).click();
-	await expect(composer).toHaveValue('/spec ');
+	await expect(menu.getByRole('button', { name: /^\/(spec|tickets)\b/ })).toHaveCount(0);
+	await menu.getByRole('button', { name: /^\/create-epic create an Epic/ }).click();
+	await expect(composer).toHaveValue('/create-epic ');
 	await expect(menu).toHaveCount(0);
 	await composer.press('End');
 	await composer.pressSequentially('go');
 	await panel.getByRole('button', { name: 'Send' }).click();
 
-	await expect(panel.locator('.user')).toHaveText('/spec go');
-	await expect(panel.getByText('Problem Statement')).toHaveCount(0);
-	const spec = readFileSync(fileURLToPath(new URL('../../crates/stampede/src/templates/spec.md', import.meta.url)), 'utf8').trimEnd();
+	await expect(panel.locator('.user')).toHaveText('/create-epic go');
 	const data = `${root}/data`;
 	const sent = () =>
 		readFileSync(`${root}/claude/fake-received.jsonl`, 'utf8')
@@ -327,11 +326,18 @@ test('/spec from the slash menu sends its Template before the typed text', { tag
 			.filter((message) => message.type === 'user')
 			.map((message) => message.message.content);
 	const note = `This Stampede server keeps its data in ${data}, so pass \`--data-dir ${data}\` to every \`stampede\` command.`;
-	await expect.poll(sent).toContain(`${spec}\n\n${note}\n\ngo`);
-	await expect(tab.getByTitle('done')).toBeVisible();
+	await expect.poll(() => sent().length).toBe(2);
+	const prompts: string[] = sent();
+	expect(prompts[0].endsWith(`${note}\n\ngo`)).toBe(true);
+	expect(prompts[1].endsWith(note)).toBe(true);
+	expect(prompts[0]).not.toBe(prompts[1]);
+	await expect(panel.getByText('Building Tickets', { exact: true })).toBeVisible();
+	await expect(panel.locator('.user')).toHaveText('/create-epic go');
+	await expect(panel.getByRole('region', { name: 'User message 2' })).toHaveCount(0);
 
 	await tab.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(tab).toHaveCount(0);
 });
 

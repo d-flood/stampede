@@ -14,7 +14,7 @@ Finding *facts* is your job, never the user's. When a frontier question needs a 
 
 The session is done when the frontier is empty: every branch of the design tree visited, nothing left silently assumed. Do not act on the plan until the user confirms you have reached a shared understanding.
 
-**Do not write a spec or tickets** when the grilling is complete. The user sends `/spec` when they want the Brief, and `/tickets` when they want the Tickets.
+**Do not write a spec or tickets** when the grilling is complete. The user sends `/create-epic` when they want the Epic's Brief and Tickets.
 
 ## The domain model
 
