@@ -18,6 +18,22 @@ _Avoid_: hostname, server name, alias, label
 A single browser window connected to Stampede, with its own layout and Focused Project; two windows on one computer are two Devices.
 _Avoid_: client, session, browser
 
+**Desktop**:
+A remembered graphical environment for one OS-user login on the Host or a paired computer, independent of the Device showing Stampede. Its identity survives logout and reboot; separate OS-user logins have separate Desktops.
+_Avoid_: Device, Computer, control target
+
+**Desktop pairing**:
+A remembered trust relationship between a Desktop and a Host, separate from any Chat's Desktop access. A Desktop can have pairings with several Hosts, each independently revocable.
+_Avoid_: Device pairing, Chat pairing
+
+**Desktop access**:
+The user's authorization for one Chat to use its selected Desktop, covering all applications until revoked or the Chat closes. Access does not override the Agent's approval rules or reserve the Desktop for that Chat.
+_Avoid_: Rig permission, desktop ownership
+
+**Desktop control**:
+Exclusive use of a Desktop held by one authorized Chat for its current turn, including mid-turn waits. Control ends on completion or interruption without ending Desktop access.
+_Avoid_: lease, lock, desktop access
+
 **Project**:
 A directory on the Host, usually a git repository root, that owns its Terminals, open files, git view, and language servers. A git worktree is opened as its own Project.
 _Avoid_: workspace, repo, folder
