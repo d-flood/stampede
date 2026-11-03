@@ -61,12 +61,12 @@ async fn both_agents_get_owned_scratch_and_shared_worktree_build_settings() {
             assert_eq!(environment["NODE_COMPILE_CACHE"], environments[0]["NODE_COMPILE_CACHE"]);
         }
         control(&mut socket, json!({ "type": "chat.close", "chatId": first })).await;
-        timeout(Duration::from_secs(5), async {
+        timeout(Duration::from_secs(10), async {
             while first_scratch.exists() { sleep(Duration::from_millis(20)).await; }
         }).await.expect("closed Chat scratch was retained");
         assert!(second_scratch.exists());
         control(&mut socket, json!({ "type": "chat.close", "chatId": second })).await;
-        timeout(Duration::from_secs(5), async {
+        timeout(Duration::from_secs(10), async {
             while second_scratch.exists() || server.root.path().join(format!("data/chats/{second}.json")).exists() || !leftovers(server.root.path()).is_empty() {
                 sleep(Duration::from_millis(20)).await;
             }

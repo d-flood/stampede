@@ -11,6 +11,7 @@ const repository = fileURLToPath(new URL('../../', import.meta.url));
 const fixtures = join(repository, 'scripts/check_fixtures.sh');
 const cleanup = join(repository, 'scripts/check_cleanup.py');
 const fakes = join(repository, 'crates/stampede/tests/fake');
+const shell = join(repository, 'web/e2e/bash');
 
 export const test = base.extend<{ hardwareGpu: void; starterRigs: boolean }>({
 	starterRigs: [false, { option: true }],
@@ -29,6 +30,7 @@ export const test = base.extend<{ hardwareGpu: void; starterRigs: boolean }>({
 			], { env: {
 				...process.env,
 				CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: undefined,
+				SHELL: shell,
 				PATH: `${fakes}:${process.env.PATH}`,
 				...(starterRigs ? { STAMPEDE_FAKE_FIXTURE: 'simple-turn', CLAUDE_CONFIG_DIR: join(root, 'claude'), CODEX_HOME: join(root, 'codex') } : {})
 			}, stdio: ['ignore', output, output] });

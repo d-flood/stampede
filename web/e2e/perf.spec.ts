@@ -68,7 +68,7 @@ function check(name: string, times: number[], budget: number) {
 }
 
 test('switching Tab or Project paints within 50 ms, and opening a file within 100 ms', async ({ page }, { project }) => {
-	const phone = project.name === 'pixel';
+	const phone = !!project.use.isMobile;
 	const [one, two] = [fixture(`perf-${project.name}-one`), fixture(`perf-${project.name}-two`)];
 	await openProject(page, two);
 	const other = await newTerminal(page);

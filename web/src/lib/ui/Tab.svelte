@@ -51,13 +51,17 @@
 	const Icon = $derived(variant === 'agent' ? logos[agent] : icons[variant]);
 	const Mark = $derived(status && marks[status]);
 
+	// Measuring waits for the frame, so it reuses that frame's layout instead of forcing one mid-update.
 	function reveal(tab: HTMLElement) {
-		const list = tab.closest<HTMLElement>('[role="tablist"]');
-		if (!list) return;
-		const shown = list.getBoundingClientRect();
-		const { left, right } = tab.getBoundingClientRect();
-		if (left < shown.left) list.scrollLeft -= shown.left - left;
-		else if (right > shown.right) list.scrollLeft += right - shown.right;
+		const frame = requestAnimationFrame(() => {
+			const list = tab.closest<HTMLElement>('[role="tablist"]');
+			if (!list) return;
+			const shown = list.getBoundingClientRect();
+			const { left, right } = tab.getBoundingClientRect();
+			if (left < shown.left) list.scrollLeft -= shown.left - left;
+			else if (right > shown.right) list.scrollLeft += right - shown.right;
+		});
+		return () => cancelAnimationFrame(frame);
 	}
 </script>
 

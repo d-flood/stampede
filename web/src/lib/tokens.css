@@ -29,6 +29,7 @@
 @font-face {
 	font-family: 'Symbols Nerd Font Mono';
 	src: url('/fonts/SymbolsNerdFontMono-Regular.woff2') format('woff2');
+	unicode-range: U+23FB-23FE, U+2630-26A1, U+276C-2771, U+2B58, U+E000-E00A, U+E0A0-E0D7, U+E200-E2A9, U+E300-E3E3, U+E5FA-E6BB, U+E700-E958, U+EA60-EC84, U+ED00-F385, U+F400-F533, U+F0001-F1AF0;
 }
 
 /* --light-* and --dark-* are set from /api/theme by config.svelte.ts. */

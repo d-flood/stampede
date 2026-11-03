@@ -94,6 +94,7 @@ async fn a_codex_chat_starts_its_thread_with_its_rigs_model_effort_and_mode() {
             "config": {
                 "model_reasoning_effort": "low",
                 "tools.update_plan": { "enabled": true },
+                "tools.experimental_request_user_input": { "enabled": false },
                 "mcp_servers.stampede_chat": {
                     "command": env!("CARGO_BIN_EXE_stampede"),
                     "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat["id"]],

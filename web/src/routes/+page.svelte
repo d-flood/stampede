@@ -532,7 +532,8 @@
 
 	function swipeable(element: HTMLElement, sequence: Screen[]) {
 		screens = element;
-		element.scrollTo({ left: sequence.indexOf(untrack(() => screen)) * element.clientWidth, behavior: 'instant' });
+		// Positioning waits for the frame, so it reuses that frame's layout instead of forcing one mid-render.
+		const positioned = requestAnimationFrame(() => element.scrollTo({ left: sequence.indexOf(untrack(() => screen)) * element.clientWidth, behavior: 'instant' }));
 		let gesture: { x: number; y: number; left: number; time: number; horizontal: boolean } | undefined;
 		const start = (event: TouchEvent) => {
 			if (gesture?.horizontal) slide(screen);
@@ -578,6 +579,7 @@
 			on(element, 'touchcancel', release)
 		];
 		return () => {
+			cancelAnimationFrame(positioned);
 			stopSlide();
 			off.forEach((listener) => listener());
 			screens = undefined;
@@ -1334,7 +1336,7 @@
 		<div class="screens" class:held {@attach (element) => swipeable(element, order)} onscrollend={landed}>
 			{#each order as name (name)}
 				<div class="screen" data-screen={name} inert={screen !== name}>
-					{#if name === 'projects'}
+					{#if name === 'projects' && (name === screen || warm())}
 						<Usage readings={usage} {codexResets} />
 						<Projects
 							projects={ownProjects}
@@ -1357,7 +1359,7 @@
 						/>
 					{:else if name === 'tabs'}
 						{@render workspace()}
-					{:else}
+					{:else if name === 'sidebar' && (name === screen || warm())}
 						{@render sidebarPanel()}
 					{/if}
 				</div>

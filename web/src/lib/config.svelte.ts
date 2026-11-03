@@ -60,10 +60,8 @@ async function get<T>(path: string): Promise<T> {
 	return response.json();
 }
 
-export async function loadConfig() {
-	loadTextSizes();
-	loadSidebarSide();
-	const [name, theme, font, ui, chat, code, rigs, settings, leaderKey, keys, lines, listed, commitRigName, commitText, agentModes, saved, autoFetching] = await Promise.all([
+function fetchConfig() {
+	return Promise.all([
 		get<string | null>('/api/host-name'),
 		get<ThemeResponse>('/api/theme'),
 		get<Font>('/api/font'),
@@ -82,6 +80,17 @@ export async function loadConfig() {
 		get<Clip[]>('/api/clips'),
 		get<boolean>('/api/auto-fetch')
 	]);
+}
+
+// The first load starts with this module, so its requests overlap the download of the page code.
+let startup: ReturnType<typeof fetchConfig> | undefined = fetchConfig();
+
+export async function loadConfig() {
+	loadTextSizes();
+	loadSidebarSide();
+	const responses = startup ?? fetchConfig();
+	startup = undefined;
+	const [name, theme, font, ui, chat, code, rigs, settings, leaderKey, keys, lines, listed, commitRigName, commitText, agentModes, saved, autoFetching] = await responses;
 	named = name;
 	fetching = autoFetching;
 	committer = commitRigName;

@@ -81,9 +81,11 @@
 		container.addEventListener('pointerdown', lead);
 		container.addEventListener('keydown', keydown, true);
 		container.addEventListener('paste', paste, true);
+		document.fonts.addEventListener('loadingdone', redraw);
 		return () => {
 			container.removeEventListener('keydown', keydown, true);
 			container.removeEventListener('paste', paste, true);
+			document.fonts.removeEventListener('loadingdone', redraw);
 			observer.disconnect();
 			cancelAnimationFrame(settling);
 			clearTimeout(fallback);
@@ -124,6 +126,11 @@
 		// ghostty-web's focus() retries on a timer, which can steal focus from a Drawer opened in between.
 		else view.element?.focus();
 	});
+
+	// ghostty-web draws glyphs with whatever fonts are loaded and doesn't redraw when fallbacks such as Nerd symbols arrive.
+	function redraw() {
+		view?.renderNow(true);
+	}
 
 	// ghostty-web can't change its theme after open(), so a new look gets a
 	// new view, re-attached for a fresh snapshot.

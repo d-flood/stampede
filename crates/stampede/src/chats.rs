@@ -36,7 +36,7 @@ use crate::{
 };
 pub use holder::{HoldChatArgs, hold_chat};
 pub use html::{ChatToolsArgs, serve as chat_tools};
-pub use delegation::listen as listen_delegations;
+pub use delegation::{bind as bind_delegations, listen as listen_delegations};
 
 const CLOSING: Duration = Duration::from_secs(5);
 /// How long an Agent may take to resume after its last shell finishes before its Chat counts as done.
@@ -1006,7 +1006,7 @@ impl Chats {
         let (driver, events) = started.inspect_err(|_| {
             let _ = fs::remove_file(record_path(&self.data_dir, &chat.id));
         })?;
-        self.adopt(chat.clone(), driver, events, storage);
+        let _ = self.adopt(chat.clone(), driver, events, storage).await;
         let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
         Ok(chat)
     }
@@ -1050,7 +1050,7 @@ impl Chats {
                 Ok((driver, events)) => {
                     let closing = chat.closing || chat.parent.is_some();
                     let id = chat.id.clone();
-                    self.adopt(chat, driver, events, storage);
+                    let _ = self.adopt(chat, driver, events, storage);
                     if closing { self.close(&id); }
                 },
                 Err(error) => eprintln!("cannot restore chat {}: {error}", chat.id),
@@ -1126,12 +1126,12 @@ impl Chats {
         let (driver, events) = self.resume(&chat, &storage.env).await.inspect_err(|_| {
             let _ = fs::remove_file(record_path(&self.data_dir, &chat.id));
         })?;
-        self.adopt(chat.clone(), driver, events, storage);
+        let _ = self.adopt(chat.clone(), driver, events, storage).await;
         let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
         Ok(chat)
     }
 
-    fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>, storage: crate::storage::Session) {
+    fn adopt(self: &Arc<Self>, chat: Chat, driver: Box<dyn Driver>, events: UnboundedReceiver<Event>, storage: crate::storage::Session) -> oneshot::Receiver<()> {
         let transcript = Transcript { recoverable: false, seq: 0, items: Vec::new(), requests: Vec::new(), reported: chat.status, turns: 0, handoff: None, questions: HashMap::new() };
         let entry = Arc::new(Entry {
             _storage: storage,
@@ -1143,12 +1143,23 @@ impl Chats {
         });
         let _ = fs::create_dir_all(crate::canvas::dir(&self.data_dir, &entry.chat.lock().unwrap().id));
         self.chats.lock().unwrap().push(Arc::clone(&entry));
-        tokio::spawn(Arc::clone(self).follow(entry, events));
+        let (caught_up, applied) = oneshot::channel();
+        tokio::spawn(Arc::clone(self).follow(entry, events, caught_up));
+        applied
     }
 
-    async fn follow(self: Arc<Self>, entry: Arc<Entry>, mut events: UnboundedReceiver<Event>) {
+    async fn follow(self: Arc<Self>, entry: Arc<Entry>, mut events: UnboundedReceiver<Event>, caught_up: oneshot::Sender<()>) {
         let (id, cwd) = { let chat = entry.chat.lock().unwrap(); (chat.id.clone(), chat.cwd.clone()) };
-        while let Some(event) = events.recv().await {
+        let mut caught_up = Some(caught_up);
+        loop {
+            let event = match events.try_recv() {
+                Ok(event) => event,
+                Err(_) => {
+                    if let Some(caught_up) = caught_up.take() { let _ = caught_up.send(()); }
+                    let Some(event) = events.recv().await else { break };
+                    event
+                }
+            };
             match event {
                 Event::Recoverable => entry.transcript.lock().unwrap().recoverable = true,
                 Event::Activity(activity) => {

@@ -236,6 +236,7 @@ async fn codex_built_ins_ride_the_next_turn_or_reach_the_daemon_as_requests() {
     assert_eq!(params[7], &json!({ "threadId": first }));
     assert_eq!(common::without_storage(params[8]), json!({ "cwd": cwd, "config": {
         "tools.update_plan": { "enabled": true },
+        "tools.experimental_request_user_input": { "enabled": false },
         "mcp_servers.stampede_chat": { "command": env!("CARGO_BIN_EXE_stampede"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id], "tool_timeout_sec": 86400 },
     } }));
     assert_eq!(params[9], &json!({ "threadId": first }));

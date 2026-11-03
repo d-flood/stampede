@@ -345,7 +345,30 @@ export function browserId(): string {
 	return id;
 }
 
+let early: Device | undefined;
+let layout: Promise<Response> | undefined;
+
+/** Opens the connection and requests the saved layout while the page code is still loading; connect() and earlyLayout() then adopt them. */
+export function preconnect() {
+	claimDeviceId().then(() => {
+		early ??= establish();
+		layout ??= fetch(`/api/devices/${deviceId()}/layout`);
+	});
+}
+
+export function earlyLayout() {
+	const response = layout;
+	layout = undefined;
+	return response;
+}
+
 export function connect(): Device {
+	const device = early ?? establish();
+	early = undefined;
+	return device;
+}
+
+function establish(): Device {
 	const id = deviceId();
 	const listeners = new Set<Listener>();
 	let socket: WebSocket;
@@ -354,6 +377,8 @@ export function connect(): Device {
 	let patience = FIRST_PATIENCE;
 	let retry: ReturnType<typeof setTimeout> | undefined;
 	let deadline: ReturnType<typeof setTimeout> | undefined;
+	let backlog: (string | ArrayBuffer)[] | undefined = [];
+	let flushing: ReturnType<typeof setTimeout> | undefined;
 
 	function open() {
 		clearTimeout(retry);
@@ -364,22 +389,27 @@ export function connect(): Device {
 		socket.onmessage = ({ data }) => {
 			clearTimeout(deadline);
 			patience = FIRST_PATIENCE;
-			if (typeof data === 'string') {
-				const message: ServerMessage = JSON.parse(data);
-				if (message.type === 'hello') {
-					connection = 'connected';
-					delay = FIRST_RETRY;
-				}
-				if (message.type === 'config.changed') loadConfig();
-				for (const listener of listeners) listener.message?.(message);
-				return;
-			}
-			const view = new DataView(data);
-			if (view.getUint8(0) !== OUTPUT) return;
-			const bytes = new Uint8Array(data, 5);
-			for (const listener of listeners) listener.output?.(view.getUint32(1), bytes);
+			if (backlog) backlog.push(data);
+			else deliver(data);
 		};
 		socket.onclose = drop;
+	}
+
+	function deliver(data: string | ArrayBuffer) {
+		if (typeof data === 'string') {
+			const message: ServerMessage = JSON.parse(data);
+			if (message.type === 'hello') {
+				connection = 'connected';
+				delay = FIRST_RETRY;
+			}
+			if (message.type === 'config.changed') loadConfig();
+			for (const listener of listeners) listener.message?.(message);
+			return;
+		}
+		const view = new DataView(data);
+		if (view.getUint8(0) !== OUTPUT) return;
+		const bytes = new Uint8Array(data, 5);
+		for (const listener of listeners) listener.output?.(view.getUint32(1), bytes);
 	}
 
 	// A mobile socket can hang while connecting or die without closing, so one the server leaves unanswered is replaced.
@@ -429,8 +459,14 @@ export function connect(): Device {
 		if (socket.readyState === WebSocket.OPEN) socket.send(frame);
 	}
 
+	// Messages that arrive before anyone listens wait until the listeners registered in the same mount have all subscribed.
 	function listen(listener: Listener) {
 		listeners.add(listener);
+		flushing ??= setTimeout(() => {
+			const queued = backlog ?? [];
+			backlog = undefined;
+			queued.forEach(deliver);
+		});
 		return () => listeners.delete(listener);
 	}
 

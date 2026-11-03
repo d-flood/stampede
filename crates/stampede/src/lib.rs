@@ -199,6 +199,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
     let epics = Arc::new(Epics::load(&args.data_dir)?);
     let requests = cli::bind(&args.data_dir)?;
+    let delegations = chats::bind_delegations(&args.data_dir)?;
     let projects = Arc::new(Projects::load(&args.data_dir)?);
     let push = Arc::new(Push::load(&args.data_dir)?);
     let languages = Arc::new(LanguageServers::load(&args.data_dir)?);
@@ -211,8 +212,8 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let rigs = config.borrow().rigs.clone();
     let terminals = Arc::new(Terminals::new(args.data_dir.clone()));
     terminals.restore().await?;
-    chats::listen_delegations(&args.data_dir, Arc::clone(&chats), Arc::clone(&terminals), config.clone())?;
     chats.restore(&rigs).await?;
+    chats::listen_delegations(delegations, Arc::clone(&chats), Arc::clone(&terminals), config.clone());
     memory::trim_periodically();
     let runs = Runs::new(
         &args.data_dir,
@@ -548,16 +549,26 @@ async fn spa(uri: Uri, headers: HeaderMap) -> Response {
     if path == "api" || path.starts_with("api/") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let found = Spa::get(path).map(|file| (file, if path.starts_with("_app/immutable/") { "max-age=31536000, immutable" } else { "no-cache" }));
-    let Some((file, cache)) = found.or_else(|| Spa::get("index.html").map(|file| (file, "no-cache"))) else {
+    let found = Spa::get(path).map(|file| (path, file, if path.starts_with("_app/immutable/") { "max-age=31536000, immutable" } else { "no-cache" }));
+    let Some((name, file, cache)) = found.or_else(|| Spa::get("index.html").map(|file| ("index.html", file, "no-cache"))) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let etag = format!("W/\"{}\"", Base64::encode_string(&file.metadata.sha256_hash()));
+    let accepted = headers.get(header::ACCEPT_ENCODING).and_then(|value| value.to_str().ok()).unwrap_or_default();
+    let encoded = [("br", "br"), ("gzip", "gz")].into_iter()
+        .filter(|(coding, _)| accepted.split(',').any(|offered| offered.split(';').next().is_some_and(|offered| offered.trim() == *coding)))
+        .find_map(|(coding, extension)| Spa::get(&format!("{name}.{extension}")).map(|variant| (coding, variant)));
+    let suffix = encoded.as_ref().map_or(String::new(), |(coding, _)| format!("-{coding}"));
+    let etag = format!("W/\"{}{suffix}\"", Base64::encode_string(&file.metadata.sha256_hash()));
+    let vary = (header::VARY, "accept-encoding".to_owned());
     if unchanged(&headers, &etag) {
-        return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag), (header::CACHE_CONTROL, cache.to_owned())]).into_response();
+        return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag), (header::CACHE_CONTROL, cache.to_owned()), vary]).into_response();
     }
     let mime = file.metadata.mimetype().to_owned();
-    ([(header::CONTENT_TYPE, mime), (header::ETAG, etag), (header::CACHE_CONTROL, cache.to_owned())], file.data).into_response()
+    let common = [(header::CONTENT_TYPE, mime), (header::ETAG, etag), (header::CACHE_CONTROL, cache.to_owned()), vary];
+    match encoded {
+        Some((coding, variant)) => (common, [(header::CONTENT_ENCODING, coding)], variant.data).into_response(),
+        None => (common, file.data).into_response(),
+    }
 }
 
 fn unchanged(headers: &HeaderMap, etag: &str) -> bool {

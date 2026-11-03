@@ -215,7 +215,7 @@ async fn a_review_without_findings_finishes_the_run_without_a_remediator() {
     lp.until("the Run to finish", |lp| !lp.entries("run.finished").is_empty()).await;
     assert_eq!(lp.entries("reviewer.reported").len(), 2);
     assert!(lp.entries("remediation.started").is_empty());
-    assert!(!lp.worktree("review-1").exists() && !lp.worktree("review-2").exists());
+    lp.until("the Reviewers' worktrees to be discarded", |lp| !lp.worktree("review-1").exists() && !lp.worktree("review-2").exists()).await;
 }
 
 #[tokio::test]

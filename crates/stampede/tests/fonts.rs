@@ -105,6 +105,9 @@ async fn hashed_assets_are_immutable_and_gzipped_while_the_rest_revalidates() {
     assert_eq!(bundle.status(), 200);
     assert_eq!(bundle.headers()["cache-control"], "max-age=31536000, immutable");
     assert_eq!(bundle.headers()["content-encoding"], "gzip");
+    let brotli = client.get(bundle.url().clone()).header("Accept-Encoding", "gzip, br").send().await.unwrap();
+    assert_eq!(brotli.headers()["content-encoding"], "br");
+    assert_ne!(brotli.headers()["etag"], bundle.headers()["etag"]);
 
     let font = gzipped("/fonts/SymbolsNerdFontMono-Regular.woff2").await.unwrap();
     assert_eq!(font.status(), 200);

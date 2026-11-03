@@ -562,7 +562,7 @@ fn tool_config(data_dir: &Path, chat_id: &str, env: &BTreeMap<String, String>) -
     let mut config = html::config(data_dir, chat_id);
     config["tool_timeout_sec"] = json!(86400);
     let environment: BTreeMap<_, _> = crate::storage::ENVIRONMENT.into_iter().filter_map(|name| env.get(name).map(|value| (name, value))).collect();
-    let mut config = json!({ "tools.update_plan": { "enabled": true }, "mcp_servers.stampede_chat": config });
+    let mut config = json!({ "tools.update_plan": { "enabled": true }, "tools.experimental_request_user_input": { "enabled": false }, "mcp_servers.stampede_chat": config });
     if !environment.is_empty() {
         config["shell_environment_policy.set"] = json!(environment);
         config["sandbox_workspace_write.writable_roots"] = json!(writable_roots(data_dir, env));

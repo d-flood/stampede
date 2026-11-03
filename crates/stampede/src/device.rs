@@ -748,10 +748,11 @@ impl Device {
         self.channels.insert(channel, (terminal, attachment));
     }
 
-    /// Attaching afresh redraws the Terminal from the holder's screen.
+    /// Attaching afresh redraws the Terminal from the holder's screen. The old channel keeps taking input until the
+    /// client detaches it, so keys typed before the client sees the new channel still arrive.
     async fn resync(&mut self, channel: u32) {
-        if let Some((terminal_id, _)) = self.channels.remove(&channel) {
-            self.attach(terminal_id).await;
+        if let Some((terminal_id, _)) = self.channels.get(&channel) {
+            self.attach(terminal_id.clone()).await;
         }
     }
 

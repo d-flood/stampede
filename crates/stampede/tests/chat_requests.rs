@@ -273,8 +273,9 @@ async fn both_agents_map_multiple_answers_and_plan_approval() {
         device.follow(|device| device.requests.iter().any(|request| request["kind"] == "plan")).await;
         let plan = device.requests[0].clone();
         assert!(!plan["plan"].as_str().unwrap().is_empty());
+        let answered = device.statuses.len();
         device.answer(&plan, json!({ "allow": true })).await;
-        device.follow(|device| device.status == "done" && device.requests.is_empty()).await;
+        device.follow(|device| device.statuses[answered..].contains(&json!("working")) && device.status == "done" && device.requests.is_empty()).await;
         let path = launched.server.root.path().join("data/chats").join(format!("{}.json", launched.chat_id));
         let saved: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(saved["answeredQuestions"][0]["questions"], request["questions"]);

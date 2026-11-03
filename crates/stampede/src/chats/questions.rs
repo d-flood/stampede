@@ -84,7 +84,7 @@ pub fn tool() -> Value {
     });
     json!({
         "name": TOOL,
-        "description": "Prefer this tool for questions in Stampede. Ask independent questions together and wait for answers. Use stable question and option IDs; ask dependent questions later. Types: single, multiple, text. Choices also accept free text. Question/option descriptions accept Markdown; preview is literal text; image uses a local path. Results map IDs to selected options, text and skipped status. Cancellation may include a replacement instruction. Skipping or cancelling is not consent. Total arguments: 256 KiB maximum.",
+        "description": "Ask the user questions and wait for answers. Use this for every question to the user. Batch independent questions. Choices also accept free text. Returns answers by question ID. Skipped or cancelled is not consent; cancellation may carry a replacement instruction.",
         "inputSchema": {
             "type": "object", "properties": { "questions": {
                 "type": "array", "minItems": 1, "items": {

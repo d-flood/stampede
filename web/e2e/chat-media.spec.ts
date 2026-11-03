@@ -30,10 +30,12 @@ test('chat media survives source removal and reload, plays recordings, and fits 
 		const chunks: Blob[] = [];
 		recorder.ondataavailable = (event) => chunks.push(event.data);
 		const stopped = new Promise<void>((resolve) => recorder.onstop = () => resolve());
+		const started = new Promise<void>((resolve) => recorder.onstart = () => resolve());
 		recorder.start();
 		for (let frame = 0; frame < 5; frame++) {
 			context.fillStyle = frame % 2 ? '#312e81' : '#4338ca';
 			context.fillRect(0, 0, canvas.width, canvas.height);
+			if (frame === 0) await started;
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 		recorder.stop();

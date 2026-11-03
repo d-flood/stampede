@@ -1,4 +1,4 @@
-import { claimDeviceId, deviceId, type Chat, type Terminal } from '#lib/device.svelte.ts';
+import { claimDeviceId, deviceId, earlyLayout, type Chat, type Terminal } from '#lib/device.svelte.ts';
 import { OpenBrowser } from '#lib/browser.svelte.ts';
 import { OpenCanvas } from '#lib/canvas.svelte.ts';
 import { OpenEpic } from '#lib/epics.svelte.ts';
@@ -52,7 +52,7 @@ function url(path: string) {
 
 export async function loadLayout() {
 	await claimDeviceId();
-	const response = await fetch(url('layout'));
+	const response = await (earlyLayout() ?? fetch(url('layout')));
 	saved = response.ok ? await response.json() : null;
 }
 

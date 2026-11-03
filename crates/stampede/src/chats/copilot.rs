@@ -287,14 +287,14 @@ async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: A
     let servers = serde_json::from_value(json!({ html::SERVER: server }))?;
     if let Some(id) = &chat.agent_session {
         let mut config = ResumeSessionConfig::new(SessionId::new(id))
-            .with_working_directory(&chat.cwd).with_streaming(true).with_mcp_servers(servers)
+            .with_working_directory(&chat.cwd).with_streaming(true).with_mcp_servers(servers).with_excluded_tools(["ask_user"])
             .with_permission_handler(handlers.clone()).with_user_input_handler(handlers);
         if let Some(model) = &chat.settings.chosen.model { config = config.with_model(model); }
         if let Some(effort) = &chat.settings.chosen.effort { config = config.with_reasoning_effort(effort); }
         rpc(client.resume_session(config)).await
     } else {
         let mut config = SessionConfig::default()
-            .with_working_directory(&chat.cwd).with_streaming(true).with_mcp_servers(servers)
+            .with_working_directory(&chat.cwd).with_streaming(true).with_mcp_servers(servers).with_excluded_tools(["ask_user"])
             .with_permission_handler(handlers.clone()).with_user_input_handler(handlers);
         if let Some(model) = &chat.settings.chosen.model { config = config.with_model(model); }
         if let Some(effort) = &chat.settings.chosen.effort { config = config.with_reasoning_effort(effort); }

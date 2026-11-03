@@ -133,14 +133,16 @@ pub fn call(args: &ChatToolsArgs, params: Value) -> Value {
     exchange().unwrap_or_else(|cause| error(format!("Could not reach Stampede chat tools: {cause}")))
 }
 
-pub fn listen(data_dir: &Path, chats: Arc<Chats>, terminals: Arc<crate::terminals::Terminals>, config: watch::Receiver<Arc<Config>>) -> io::Result<()> {
+pub fn bind(data_dir: &Path) -> io::Result<UnixListener> {
     let path = socket_path(data_dir);
     match fs::remove_file(&path) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
         _ => {}
     }
-    let address = crate::unix::path(&path)?;
-    let listener = UnixListener::bind(&address)?;
+    UnixListener::bind(&crate::unix::path(&path)?)
+}
+
+pub fn listen(listener: UnixListener, chats: Arc<Chats>, terminals: Arc<crate::terminals::Terminals>, config: watch::Receiver<Arc<Config>>) {
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
@@ -190,7 +192,6 @@ pub fn listen(data_dir: &Path, chats: Arc<Chats>, terminals: Arc<crate::terminal
             }
         }
     });
-    Ok(())
 }
 
 impl Chats {

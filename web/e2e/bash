@@ -1,0 +1,3 @@
+#!/bin/bash
+# Terminals start a login shell; skipping the startup files of whoever runs the tests keeps them fast and reproducible.
+exec /bin/bash --noprofile --norc "$@"

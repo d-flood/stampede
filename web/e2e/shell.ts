@@ -2,7 +2,7 @@ import { expect, test } from './fixtures.ts';
 import type { Locator, Page } from '@playwright/test';
 
 function phone() {
-	return test.info().project.name === 'pixel';
+	return !!test.info().project.use.isMobile;
 }
 
 /** Follows a Tab by its id, since a Chat tab's name changes once its Chat has a title. */

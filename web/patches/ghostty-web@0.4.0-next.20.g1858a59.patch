@@ -1,7 +1,16 @@
 diff --git a/dist/ghostty-web.js b/dist/ghostty-web.js
-index bb02e76ebacbb954d2a4f006caece5c15dad95ac..e9e854116dbfd3c1df6bb6bb2d352fc8b64ad9c8 100644
+index bb02e76ebacbb954d2a4f006caece5c15dad95ac..e985afc2ba67c17d8fb6913bba169babb56900fa 100644
 --- a/dist/ghostty-web.js
 +++ b/dist/ghostty-web.js
+@@ -1829,7 +1829,7 @@ class BA {
+   renderCellText(A, Q, g, E) {
+     var k;
+     const C = Q * this.metrics.width, I = g * this.metrics.height, D = this.metrics.width * A.width;
+-    if (A.flags & G.INVISIBLE)
++    if (A.flags & G.INVISIBLE || (A.codepoint === 0 || A.codepoint === 32) && A.grapheme_len === 0 && !(A.flags & (G.UNDERLINE | G.STRIKETHROUGH)) && A.hyperlink_id === 0 && !this.hoveredLinkRange)
+       return;
+     const o = this.isInSelection(Q, g);
+     let w = "";
 @@ -1898,7 +1898,8 @@ class BA {
    // ==========================================================================
    startCursorBlink() {
@@ -104,7 +113,7 @@ index bb02e76ebacbb954d2a4f006caece5c15dad95ac..e9e854116dbfd3c1df6bb6bb2d352fc8
        ), this.renderer.setSelectionManager(this.selectionManager), this.selectionManager.onSelectionChange(() => {
          this.selectionChangeEmitter.fire();
 -      }), this.linkDetector = new $(this), this.linkDetector.registerProvider(new AA(this)), this.linkDetector.registerProvider(new QA(this)), A.addEventListener("mousedown", this.handleMouseDown, { capture: !0 }), A.addEventListener("mousemove", this.handleMouseMove), A.addEventListener("mouseleave", this.handleMouseLeave), A.addEventListener("click", this.handleClick), document.addEventListener("mouseup", this.handleMouseUp), A.addEventListener("wheel", this.handleWheel, { passive: !1, capture: !0 }), this.renderer.render(this.wasmTerm, !0, this.viewportY, this, this.scrollbarOpacity), this.startRenderLoop(), this.focus();
-+      }), this.linkDetector = new $(this), this.linkDetector.registerProvider(new AA(this)), this.linkDetector.registerProvider(new QA(this)), A.addEventListener("mousedown", this.handleMouseDown, { capture: !0 }), A.addEventListener("mousemove", this.handleMouseMove), A.addEventListener("mouseleave", this.handleMouseLeave), A.addEventListener("click", this.handleClick), document.addEventListener("mouseup", this.handleMouseUp), A.addEventListener("wheel", this.handleWheel, { passive: !1, capture: !0 }), this.renderNow(!0), this.focus();
++      }), this.linkDetector = new $(this), this.linkDetector.registerProvider(new AA(this)), this.linkDetector.registerProvider(new QA(this)), A.addEventListener("mousedown", this.handleMouseDown, { capture: !0 }), A.addEventListener("mousemove", this.handleMouseMove), A.addEventListener("mouseleave", this.handleMouseLeave), A.addEventListener("click", this.handleClick), document.addEventListener("mouseup", this.handleMouseUp), A.addEventListener("wheel", this.handleWheel, { passive: !1, capture: !0 }), this.requestRender(), this.focus();
      } catch (Q) {
        throw this.isOpen = !1, this.cleanupComponents(), new Error(`Failed to open terminal: ${Q}`);
      }
@@ -212,16 +221,16 @@ index bb02e76ebacbb954d2a4f006caece5c15dad95ac..e9e854116dbfd3c1df6bb6bb2d352fc8
 +    this.paused = !0, this.cancelRenderLoop();
 +  }
 +  /**
-+   * Redraw everything once, then render on demand again
++   * Redraw what changed while paused, then render on demand again
 +   */
 +  resume() {
-+    this.paused && (this.paused = !1, this.renderNow(!0));
++    this.paused && (this.paused = !1, this.renderNow(this.redrawOnResume), this.redrawOnResume = !1);
 +  }
 +  /**
 +   * Render immediately unless paused
 +   */
 +  renderNow(A = !1) {
-+    if (this.paused || this.isDisposed || !this.isOpen || !this.renderer || !this.wasmTerm)
++    if (this.paused && A && (this.redrawOnResume = !0), this.paused || this.isDisposed || !this.isOpen || !this.renderer || !this.wasmTerm)
        return;
 -    const A = () => {
 -      if (!this.isDisposed && this.isOpen) {
@@ -273,7 +282,7 @@ index bb02e76ebacbb954d2a4f006caece5c15dad95ac..e9e854116dbfd3c1df6bb6bb2d352fc8
      g();
    }
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 4d5e7c488e102c2e23d424df242879060c17f5e4..11d3a476e6f7d28566b321f2cf02f343624b6725 100644
+index 4d5e7c488e102c2e23d424df242879060c17f5e4..9e3c2ac7899a0b34128c154de821e0cfe2a74c63 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
 @@ -11,6 +11,7 @@ export declare class CanvasRenderer {
@@ -312,7 +321,7 @@ index 4d5e7c488e102c2e23d424df242879060c17f5e4..11d3a476e6f7d28566b321f2cf02f343
 +    /**
 +     * Render immediately unless paused
 +     */
-+    private renderNow;
++    renderNow(force?: boolean): void;
      /**
       * Get a line from native WASM scrollback buffer
       * Implements IScrollbackProvider
