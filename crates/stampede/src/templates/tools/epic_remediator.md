@@ -1,0 +1,1 @@
+The Epic you remediate. brief: the Epic's Brief. ticket: Ticket `ticket` with its Notes. findings: every Finding with its judgment. accept, reject: judge Finding `finding`, with `text` as the reason. remediated: commit what is left uncommitted with the message `text`, and record the Verdict.

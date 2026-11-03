@@ -1,0 +1,1 @@
+Your Ticket and its Epic. brief: the Epic's Brief. ticket: a Ticket with its Notes and Blockers, yours unless `ticket` names another. note: add `text` as a Note on your Ticket. complete: commit what is left uncommitted in your worktree with the message `text`, and record the Verdict. skip: retire your Ticket as moot, with `text` as the reason.

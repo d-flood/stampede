@@ -47,6 +47,14 @@ fn record(args: &ChatToolsArgs) -> Option<super::Chat> {
     args.chat_id.as_deref().and_then(|id| super::read_record(&super::record_path(&args.data_dir, id)).ok())
 }
 
+pub fn instructions(data_dir: &Path, chat_id: Option<&str>) -> String {
+    let text = crate::templates::STAMPEDE.lines().filter(|line| chat_id.is_some() || !line.contains("{canvas}")).collect::<Vec<_>>().join("\n");
+    match chat_id {
+        Some(chat_id) => text.replace("{canvas}", &crate::canvas::dir(data_dir, chat_id).display().to_string()),
+        None => text,
+    }
+}
+
 fn can_delegate(args: &ChatToolsArgs) -> bool {
     record(args).is_none_or(|chat| chat.parent.is_none())
 }
@@ -54,23 +62,19 @@ fn can_delegate(args: &ChatToolsArgs) -> bool {
 fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
     let data_dir = &args.data_dir;
     let id = request.get("id")?;
-    let canvas = args.chat_id.as_deref().map(|chat_id| format!(
-        " For editable pages or substantial HTML, write .html files in {}; Stampede renders them live.",
-        crate::canvas::dir(data_dir, chat_id).display(),
-    )).unwrap_or_default();
     let result = match request["method"].as_str() {
         Some("initialize") => json!({
             "protocolVersion": "2025-11-25",
             "capabilities": { "tools": {} },
             "serverInfo": { "name": SERVER, "version": env!("CARGO_PKG_VERSION") },
-            "instructions": format!("You are running in Stampede, a browser IDE that shows visual work inline: use render_html for mockups, diagrams and other visuals.{canvas}"),
+            "instructions": instructions(data_dir, args.chat_id.as_deref()),
         }),
         Some("ping") => json!({}),
         Some("tools/list") => {
             let chat = record(args);
             let mut catalog = json!({ "tools": [super::questions::tool(), super::terminal_tools::stage_tool(), super::terminal_tools::read_tool(), {
                 "name": TOOL,
-                "description": format!("Render a small self-contained HTML snippet inline for visual explanations. Inline CSS/SVG/JS supported; no network, external assets, parent access, forms or popups. Make it mobile-responsive; do not repeat HTML in chat.{canvas}"),
+                "description": crate::templates::tools::RENDER_HTML,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -83,7 +87,7 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
                 "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false },
             }, {
                 "name": crate::media::TOOL,
-                "description": "Display a local image or recording inline. Pass an absolute path and accessible title. Supports PNG/JPEG/GIF/WebP/MP4/WebM up to 100 MiB; use browser-compatible codecs. Stampede copies the file to durable storage. Do not embed base64 or repeat media in code blocks.",
+                "description": crate::templates::tools::RENDER_MEDIA,
                 "inputSchema": {
                     "type": "object",
                     "properties": {

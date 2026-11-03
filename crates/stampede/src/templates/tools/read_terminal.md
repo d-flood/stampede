@@ -1,0 +1,1 @@
+Read recent scrollback from a terminal staged in this chat. Returns output, pending status and truncation status; this snapshot does not prove command completion or exit status. Read after the user runs the command; do not busy-poll. Maximum output: 64 KiB. Defaults: 50 lines, 8 KiB; increase lines and max_bytes explicitly for more.

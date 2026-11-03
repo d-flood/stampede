@@ -1,0 +1,1 @@
+Stage a command in an editable Stampede terminal for the user to inspect and run. Returns terminal_id for read_terminal. Explain why user action is needed and wait. Staging never executes the command. Never request passwords or claim it has run.

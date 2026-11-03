@@ -7,24 +7,24 @@ use serde_json::{Value, json};
 use tokio::time::timeout;
 use tokio_tungstenite::connect_async;
 
-fn description(data_dir: &Path, chat_id: Option<&str>) -> String {
+fn instructions(data_dir: &Path, chat_id: Option<&str>) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_stampede"));
     command.arg("chat-tools").arg("--data-dir").arg(data_dir);
     if let Some(chat_id) = chat_id { command.args(["--chat-id", chat_id]); }
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-    writeln!(child.stdin.take().unwrap(), "{}", json!({ "id": 1, "method": "tools/list" })).unwrap();
+    writeln!(child.stdin.take().unwrap(), "{}", json!({ "id": 1, "method": "initialize" })).unwrap();
     let output = child.wait_with_output().unwrap();
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
-    let tools = response["result"]["tools"].as_array().unwrap();
-    tools.iter().find(|tool| tool["name"] == "render_html").unwrap()["description"].as_str().unwrap().to_owned()
+    response["result"]["instructions"].as_str().unwrap().to_owned()
 }
 
 #[test]
-fn chat_html_description_points_each_chat_at_its_canvas_directory() {
+fn chat_instructions_point_each_chat_at_its_canvas_directory() {
     let root = tempfile::tempdir().unwrap();
-    let described = description(root.path(), Some("0123abcd"));
+    let described = instructions(root.path(), Some("0123abcd"));
     assert!(described.contains(&format!(" in {}; ", root.path().join("canvases/0123abcd").display())), "{described}");
-    assert!(!description(root.path(), None).contains("canvases"));
+    let general = instructions(root.path(), None);
+    assert!(!general.contains("canvases") && !general.contains("{canvas}"), "{general}");
 }
 
 #[tokio::test]

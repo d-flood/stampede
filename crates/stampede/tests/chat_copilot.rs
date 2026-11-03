@@ -220,6 +220,7 @@ async fn copilot_streams_using_existing_cli_auth_and_closes_its_process() {
     assert_eq!(create["params"]["requestPermission"], true);
     assert_eq!(create["params"]["workingDirectory"], server.root.path().join("home").display().to_string());
     assert!(create["params"]["mcpServers"].is_object());
+    assert!(create["params"]["systemMessage"]["content"].as_str().unwrap().contains(&format!("canvases/{id}")));
     assert_eq!(create["params"]["excludedTools"], json!(["ask_user"]));
     assert!(received.iter().any(|message| message["method"] == "session.detach"));
 }

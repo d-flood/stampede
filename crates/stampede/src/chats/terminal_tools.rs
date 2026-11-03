@@ -34,7 +34,7 @@ fn default_bytes() -> usize { DEFAULT_OUTPUT }
 pub fn stage_tool() -> Value {
     json!({
         "name": STAGE,
-        "description": "Stage a command in an editable Stampede terminal for the user to inspect and run, typically for sudo or unavailable permissions. Returns terminal_id for read_terminal. Explain why user action is needed and wait. Staging never executes the command. Never request passwords or claim it has run.",
+        "description": crate::templates::tools::STAGE_COMMAND,
         "inputSchema": {
             "type": "object", "properties": {
                 "command": { "type": "string", "minLength": 1, "maxLength": MAX_COMMAND, "description": "Literal shell command, including any needed sudo. Multiline commands are supported." },
@@ -47,7 +47,7 @@ pub fn stage_tool() -> Value {
 pub fn read_tool() -> Value {
     json!({
         "name": READ,
-        "description": "Read recent scrollback from a terminal staged in this chat. Returns output, pending status and truncation status; this snapshot does not prove command completion or exit status. Read after the user runs the command; do not busy-poll. Maximum output: 64 KiB. Defaults: 50 lines, 8 KiB; increase lines and max_bytes explicitly for more.",
+        "description": crate::templates::tools::READ_TERMINAL,
         "inputSchema": {
             "type": "object", "properties": {
                 "terminal_id": { "type": "string", "minLength": 1 },

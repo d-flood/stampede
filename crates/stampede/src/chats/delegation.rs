@@ -92,7 +92,7 @@ pub fn item(result: &Value, data_dir: Option<&Path>) -> Option<Item> {
 pub fn list_tool() -> Value {
     json!({
         "name": LIST,
-        "description": "List configured Stampede rigs and their harness/model settings. Use the returned names for delegate_to_rig.",
+        "description": crate::templates::tools::LIST_RIGS,
         "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
         "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false },
     })
@@ -101,7 +101,7 @@ pub fn list_tool() -> Value {
 pub fn tool() -> Value {
     json!({
         "name": TOOL,
-        "description": "Delegate to another rig when the user requests it, and wait for its result. Use list_rigs for names. The child shares this working directory and files but starts a fresh conversation with its own model and permissions. Supply a self-contained task, relevant paths and expected output. For review-and-fix requests, request review only, then assess and apply fixes yourself. Treat failed or stopped outcomes as incomplete. Oversized reports return an excerpt and a path to the full report.",
+        "description": crate::templates::tools::DELEGATE_TO_RIG,
         "inputSchema": {
             "type": "object", "properties": {
                 "rig": { "type": "string", "minLength": 1, "description": "Exact configured rig name from list_rigs." },

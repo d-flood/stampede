@@ -385,22 +385,22 @@ pub fn tool(duty: Duty) -> Value {
     let number = json!({ "type": "integer", "minimum": 1 });
     let (description, actions, mut properties) = match duty {
         Duty::Ticket => (
-            "Your Ticket and its Epic. brief: the Epic's Brief. ticket: a Ticket with its Notes and Blockers, yours unless `ticket` names another. note: add `text` as a Note on your Ticket. complete: commit what is left uncommitted in your worktree with the message `text`, and record the Verdict. skip: retire your Ticket as moot, with `text` as the reason.",
+            crate::templates::tools::EPIC_TICKET,
             json!(["brief", "ticket", "note", "complete", "skip"]),
             json!({ "ticket": number, "text": text }),
         ),
         Duty::Resolver => (
-            "The Epic whose merge you resolve. brief: the Epic's Brief. ticket: a Ticket with its Notes, the one you merge unless `ticket` names another. note: add `text` as a Note on the Ticket you merge.",
+            crate::templates::tools::EPIC_RESOLVER,
             json!(["brief", "ticket", "note"]),
             json!({ "ticket": number, "text": text }),
         ),
         Duty::Reviewer => (
-            "The Epic you review. brief: the Epic's Brief. ticket: Ticket `ticket` with its Notes. finding: record a verified defect, `title` on one line and `text` its Markdown body. reviewed: report that your Review is done.",
+            crate::templates::tools::EPIC_REVIEWER,
             json!(["brief", "ticket", "finding", "reviewed"]),
             json!({ "ticket": number, "title": text, "text": text }),
         ),
         Duty::Remediator => (
-            "The Epic you remediate. brief: the Epic's Brief. ticket: Ticket `ticket` with its Notes. findings: every Finding with its judgment. accept, reject: judge Finding `finding`, with `text` as the reason. remediated: commit what is left uncommitted with the message `text`, and record the Verdict.",
+            crate::templates::tools::EPIC_REMEDIATOR,
             json!(["brief", "ticket", "findings", "accept", "reject", "remediated"]),
             json!({ "ticket": number, "finding": number, "text": text }),
         ),

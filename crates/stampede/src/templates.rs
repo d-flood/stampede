@@ -41,6 +41,22 @@ pub const COMMIT: &str = include_str!("templates/commit.md");
 pub const HANDOFF: Template =
     Template { name: "handoff", description: "prepare context for a new Chat", text: include_str!("templates/handoff.md") };
 
+pub const STAMPEDE: &str = include_str!("templates/stampede.md").trim_ascii_end();
+
+pub mod tools {
+    pub const RENDER_HTML: &str = include_str!("templates/tools/render_html.md").trim_ascii_end();
+    pub const RENDER_MEDIA: &str = include_str!("templates/tools/render_media.md").trim_ascii_end();
+    pub const ASK_QUESTIONS: &str = include_str!("templates/tools/ask_questions.md").trim_ascii_end();
+    pub const STAGE_COMMAND: &str = include_str!("templates/tools/stage_command.md").trim_ascii_end();
+    pub const READ_TERMINAL: &str = include_str!("templates/tools/read_terminal.md").trim_ascii_end();
+    pub const LIST_RIGS: &str = include_str!("templates/tools/list_rigs.md").trim_ascii_end();
+    pub const DELEGATE_TO_RIG: &str = include_str!("templates/tools/delegate_to_rig.md").trim_ascii_end();
+    pub const EPIC_TICKET: &str = include_str!("templates/tools/epic_ticket.md").trim_ascii_end();
+    pub const EPIC_RESOLVER: &str = include_str!("templates/tools/epic_resolver.md").trim_ascii_end();
+    pub const EPIC_REVIEWER: &str = include_str!("templates/tools/epic_reviewer.md").trim_ascii_end();
+    pub const EPIC_REMEDIATOR: &str = include_str!("templates/tools/epic_remediator.md").trim_ascii_end();
+}
+
 impl Template {
     pub fn opening(&self, data_dir: &Path) -> String {
         let text = self.text.trim_end();

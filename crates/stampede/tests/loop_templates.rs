@@ -32,8 +32,9 @@ fn command(mention: &str) -> Vec<&str> {
 fn every_template_names_only_stampede_subcommands_that_exist() {
     let templates = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/templates");
     let mut checked = 0;
-    for entry in fs::read_dir(&templates).unwrap() {
+    for entry in fs::read_dir(&templates).unwrap().chain(fs::read_dir(templates.join("tools")).unwrap()) {
         let path = entry.unwrap().path();
+        if path.is_dir() { continue; }
         let text = fs::read_to_string(&path).unwrap();
         for mention in text.split("stampede ").skip(1) {
             let words = command(mention);

@@ -1,0 +1,1 @@
+Display a local image or recording inline. Pass an absolute path and accessible title. Supports PNG/JPEG/GIF/WebP/MP4/WebM up to 100 MiB; use browser-compatible codecs. Stampede copies the file to durable storage. Do not embed base64 or repeat media in code blocks.

@@ -84,7 +84,7 @@ pub fn tool() -> Value {
     });
     json!({
         "name": TOOL,
-        "description": "Ask the user questions and wait for answers. Use this for every question to the user. Batch independent questions. Choices also accept free text. Returns answers by question ID. Skipped or cancelled is not consent; cancellation may carry a replacement instruction.",
+        "description": crate::templates::tools::ASK_QUESTIONS,
         "inputSchema": {
             "type": "object", "properties": { "questions": {
                 "type": "array", "minItems": 1, "items": {

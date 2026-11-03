@@ -1,0 +1,1 @@
+The Epic you review. brief: the Epic's Brief. ticket: Ticket `ticket` with its Notes. finding: record a verified defect, `title` on one line and `text` its Markdown body. reviewed: report that your Review is done.
