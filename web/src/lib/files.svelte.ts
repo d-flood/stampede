@@ -87,8 +87,18 @@ export class OpenConfig extends OpenFile {
 
 export type Layout = 'split' | 'unified';
 
-/** What a Diff compares: HEAD, the index or the disk with the file on disk; the index with HEAD; or a commit with its parent. */
-export type Against = 'HEAD' | 'index' | 'staged' | 'disk' | Commit;
+/** Which branches a Comparison compares, by name, so its Diff tab follows them as they move. */
+export type Selection = { target: string; source: string };
+
+/**
+ * What a Diff compares: HEAD, the index or the disk with the file on disk; the index with HEAD; a commit with its
+ * parent; or a Comparison's Source with where it split off its Target.
+ */
+export type Against = 'HEAD' | 'index' | 'staged' | 'disk' | Commit | Selection;
+
+export function comparing(against: Against): against is Selection {
+	return typeof against === 'object' && 'target' in against;
+}
 
 export class OpenDiff extends OpenFile {
 	against: Against;
@@ -103,11 +113,15 @@ export class OpenDiff extends OpenFile {
 	}
 
 	get id() {
-		return `diff:${typeof this.against === 'string' ? this.against : this.against.sha}:${this.projectId}:${this.path}`;
+		const { against } = this;
+		if (comparing(against)) return `diff:compare:${against.target}...${against.source}:${this.projectId}`;
+		return `diff:${typeof against === 'string' ? against : against.sha}:${this.projectId}:${this.path}`;
 	}
 
 	get versus() {
-		return typeof this.against === 'string' ? this.against : this.against.short;
+		const { against } = this;
+		if (comparing(against)) return against.target;
+		return typeof against === 'string' ? against : against.short;
 	}
 }
 

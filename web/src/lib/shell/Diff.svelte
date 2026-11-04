@@ -6,19 +6,23 @@
 	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
-	import { read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
+	import { comparison } from '#lib/compare.svelte.ts';
+	import { comparing, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import { baseline, index, show, type Git } from '#lib/git.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
+	import { ordered } from '#lib/shell/tree.ts';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import { getOriginalDoc, MergeView, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
-	import { ChangeSet, EditorState, type Extension, type Text } from '@codemirror/state';
+	import { ChangeSet, EditorState, Prec, type Extension, type Text } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
 	import { basicSetup } from 'codemirror';
 	import { onMount, untrack } from 'svelte';
+	import ArrowDown from '~icons/ph/arrow-down';
+	import ArrowUp from '~icons/ph/arrow-up';
 	import Columns from '~icons/ph/columns';
 	import FloppyDisk from '~icons/ph/floppy-disk';
 	import Rows from '~icons/ph/rows';
@@ -51,9 +55,25 @@
 	const loaded = $derived(!!git);
 	const from = $derived(git?.changes.find((change) => change.path === diff.path)?.from);
 	const head = $derived(git?.head);
+	const compared = $derived(comparing(diff.against) ? comparison(diff.projectId, diff.against) : undefined);
+	const walk = $derived(compared?.result ? ordered(compared.result.files) : []);
+	const at = $derived(walk.findIndex((change) => change.path === diff.path));
 
 	onMount(() => {
 		let disposed = false;
+		const following = compared;
+		if (following) {
+			following.load();
+			const unlisten = device.listen({
+				message(message) {
+					if (message.type === 'hello' || (message.type === 'git.changed' && message.projectId === diff.projectId)) following.load();
+				}
+			});
+			return () => {
+				unlisten();
+				shown?.destroy();
+			};
+		}
 		Promise.all([language(diff.path), sides()]).then(
 			([extension, sides]) => {
 				if (disposed) return;
@@ -96,6 +116,30 @@
 	});
 
 	$effect(() => {
+		const result = compared?.result;
+		if (!result) return;
+		const [path, from] = [diff.path, diff.from];
+		let stale = false;
+		Promise.all([language(path), show(diff.projectId, result.mergeBase, from ?? path), show(diff.projectId, result.source, path)]).then(
+			([extension, a, b]) => {
+				if (stale) return;
+				syntax = extension;
+				shown?.destroy();
+				shown = undefined;
+				note = undefined;
+				if (a.includes('\0') || b.includes('\0')) note = 'binary file';
+				else build(a, b);
+			},
+			(error: Error) => {
+				if (!stale) note = error.message;
+			}
+		);
+		return () => {
+			stale = true;
+		};
+	});
+
+	$effect(() => {
 		const snapshot = diff.snapshot;
 		if (snapshot && syntax) untrack(() => build(snapshot.disk, snapshot.buffer));
 	});
@@ -125,7 +169,7 @@
 		if (diff.against === 'HEAD') return Promise.all([undefined, current()]);
 		if (diff.against === 'index') return Promise.all([index(diff.projectId, diff.path), current()]);
 		if (diff.against === 'staged') return Promise.all([undefined, staged()]);
-		if (diff.against !== 'disk') return committed(diff.against.sha);
+		if (diff.against !== 'disk' && !comparing(diff.against)) return committed(diff.against.sha);
 	}
 
 	function start() {
@@ -190,6 +234,21 @@
 		else if (content !== shown.original.toString()) shown.setOriginal(content);
 	}
 
+	/** Shows the Comparison's file `by` places along its tree, stopping at either end. */
+	function step(by: number) {
+		const next = walk[at + by];
+		if (!next) return;
+		diff.path = next.path;
+		diff.from = next.from;
+	}
+
+	function stepKey(event: KeyboardEvent) {
+		if (!compared || event.defaultPrevented || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+		if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+		event.preventDefault();
+		step(event.key === 'ArrowUp' ? -1 : 1);
+	}
+
 	function toggle() {
 		diff.layout = diff.layout === 'split' ? 'unified' : 'split';
 		if (shown) build(shown.original, shown.b.state.doc);
@@ -198,7 +257,15 @@
 	function build(a: string | Text, b: string | Text): Shown {
 		shown?.destroy();
 		const whole = !a.length !== !b.length;
-		const shared = [basicSetup, find, syntax ?? [], theme, diffTheme(whole)];
+		const walking = compared
+			? Prec.highest(
+					keymap.of([
+						{ key: 'Alt-ArrowUp', run: () => (step(-1), true) },
+						{ key: 'Alt-ArrowDown', run: () => (step(1), true) }
+					])
+				)
+			: [];
+		const shared = [walking, basicSetup, find, syntax ?? [], theme, diffTheme(whole)];
 		const working = [
 			keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 			shared,
@@ -258,7 +325,8 @@
 
 <svelte:document onvisibilitychange={catchUp} />
 
-<div class="diff" role="tabpanel" hidden={!active}>
+<!-- svelte-ignore a11y_interactive_supports_focus (Alt-arrows walk a Comparison from anywhere in its tab.) -->
+<div class="diff" role="tabpanel" hidden={!active} onkeydown={stepKey}>
 	<div class="toolbar">
 		<span class="path" title={diff.path}>{diff.from ? `${diff.from} → ${diff.path}` : diff.path}</span>
 		{#if diff.against === 'disk'}
@@ -267,10 +335,17 @@
 			<span class="sides">index ↔ disk</span>
 		{:else if diff.against === 'staged'}
 			<span class="sides">HEAD ↔ index</span>
+		{:else if comparing(diff.against)}
+			{#if form() === 'desktop'}<span class="sides comparison" title="{diff.against.target}...{diff.against.source}">{diff.against.target} ↔ {diff.against.source}</span>{/if}
 		{:else if diff.against !== 'HEAD'}
 			<span class="sides" title={diff.against.subject}>{diff.against.short}^ ↔ {diff.against.short}</span>
 		{/if}
 		{#if diff.deleted}<span class="deleted">deleted on disk</span>{/if}
+		{#if compared?.error}<span class="deleted">{compared.error.message}</span>{/if}
+		{#if compared}
+			<IconButton label="Previous file" title="Previous file (Alt+↑)" disabled={at <= 0} onclick={() => step(-1)}><ArrowUp /></IconButton>
+			<IconButton label="Next file" title="Next file (Alt+↓)" disabled={at >= walk.length - 1} onclick={() => step(1)}><ArrowDown /></IconButton>
+		{/if}
 		<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} attached={editable} />
 		{#if shown}
 			{#if diff.layout === 'split'}
@@ -324,6 +399,14 @@
 		flex: none;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
+	}
+
+	.comparison {
+		flex: 0 1 auto;
+		max-width: 40%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.deleted {

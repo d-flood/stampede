@@ -28,6 +28,7 @@
 		type Stash,
 		type Trunk
 	} from '#lib/git.ts';
+	import { treeRows } from '#lib/shell/tree.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -54,10 +55,6 @@
 	import TrayArrowUp from '~icons/ph/tray-arrow-up';
 
 	type Section = 'conflicted' | 'staged' | 'unstaged';
-	type Folder = { name: string; path: string; folders: Folder[]; files: Change[] };
-	type Row =
-		| { kind: 'folder'; key: string; folder: Folder; depth: number; changes: Change[]; open: boolean }
-		| { kind: 'file'; key: string; change: Change; depth: number };
 	type Target = { section: Section; changes: Change[]; label: string; change?: Change };
 	type Props = {
 		projectId: string;
@@ -93,7 +90,7 @@
 			] as const
 		)
 			.filter(({ changes }) => changes.length)
-			.map((group) => ({ ...group, rows: flatten(tree(group.changes), group.section, 0) }))
+			.map((group) => ({ ...group, rows: treeRows(group.changes, group.section, shown) }))
 	);
 	const targets = $derived(
 		new Map<string, Target>(
@@ -142,46 +139,8 @@
 		if (listed && generation === loads) saved = listed;
 	}
 
-	function tree(changes: Change[]): Folder {
-		const root: Folder = { name: '', path: '', folders: [], files: [] };
-		for (const change of changes) {
-			let folder = root;
-			for (const name of change.path.split('/').slice(0, -1)) {
-				const path = folder.path ? `${folder.path}/${name}` : name;
-				let child = folder.folders.find((candidate) => candidate.path === path);
-				if (!child) folder.folders.push((child = { name, path, folders: [], files: [] }));
-				folder = child;
-			}
-			folder.files.push(change);
-		}
-		return root;
-	}
-
-	function compact(folder: Folder): Folder {
-		while (!folder.files.length && folder.folders.length === 1) {
-			const [only] = folder.folders;
-			folder = { ...only, name: `${folder.name}/${only.name}` };
-		}
-		return folder;
-	}
-
-	function under(folder: Folder): Change[] {
-		return [...folder.files, ...folder.folders.flatMap(under)];
-	}
-
-	function flatten(folder: Folder, section: Section, depth: number): Row[] {
-		const folders = folder.folders.map(compact).sort((a, b) => a.name.localeCompare(b.name));
-		const files = folder.files.toSorted((a, b) => split(a.path).name.localeCompare(split(b.path).name));
-		return [
-			...folders.flatMap((child): Row[] => {
-				const key = `${section}:${child.path}/`;
-				const changes = under(child);
-				const open = changes.length > LARGE ? opened.has(key) : !collapsed.has(key);
-				const row: Row = { kind: 'folder', key, folder: child, depth, changes, open };
-				return open ? [row, ...flatten(child, section, depth + 1)] : [row];
-			}),
-			...files.map((change): Row => ({ kind: 'file', key: `${section}:${change.path}`, change, depth }))
-		];
+	function shown(key: string, changes: Change[]) {
+		return changes.length > LARGE ? opened.has(key) : !collapsed.has(key);
 	}
 
 	function toggle(key: string, toggled = collapsed) {

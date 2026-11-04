@@ -4,12 +4,13 @@
 
 	const picker = lazy(() => import('#lib/shell/BranchPicker.svelte'));
 
-	export type Section = 'files' | 'changes' | 'history' | 'search' | 'epics';
+	export type Section = 'files' | 'changes' | 'history' | 'compare' | 'search' | 'epics';
 
 	const sections: { id: Section; label: string }[] = [
 		{ id: 'files', label: 'Files' },
 		{ id: 'changes', label: 'Changes' },
 		{ id: 'history', label: 'History' },
+		{ id: 'compare', label: 'Compare' },
 		{ id: 'search', label: 'Search' },
 		{ id: 'epics', label: 'Epics' }
 	];
@@ -25,12 +26,13 @@
 
 <script lang="ts">
 	import type { Device, Epic, Project, Reading, ResetCredits } from '#lib/device.svelte.ts';
-	import type { Cursor } from '#lib/files.svelte.ts';
+	import type { Cursor, Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
 	import type { Against } from '#lib/files.svelte.ts';
 	import type { Change } from '#lib/git.ts';
 	import Changes from '#lib/shell/Changes.svelte';
+	import Compare from '#lib/shell/Compare.svelte';
 	import Epics from '#lib/shell/Epics.svelte';
 	import Files from '#lib/shell/Files.svelte';
 	import History from '#lib/shell/History.svelte';
@@ -52,6 +54,8 @@
 		usage: Reading[];
 		codexResets?: ResetCredits | null;
 		epics?: Epic[];
+		comparison?: Selection;
+		oncompare(selection: Selection): void;
 		onopen(path: string, cursor?: Cursor): void;
 		onrename(from: string, to: string): void;
 		ondiff(change: Change, against: Against): void;
@@ -59,7 +63,25 @@
 		toggle?: Snippet;
 	};
 
-	let { open, project, label, git, trunk, device, section = $bindable(), usage, codexResets, epics, onopen, onrename, ondiff, onepic, toggle }: Props = $props();
+	let {
+		open,
+		project,
+		label,
+		git,
+		trunk,
+		device,
+		section = $bindable(),
+		usage,
+		codexResets,
+		epics,
+		comparison,
+		oncompare,
+		onopen,
+		onrename,
+		ondiff,
+		onepic,
+		toggle
+	}: Props = $props();
 
 	let switching = $state(false);
 	const Picker = $derived(picker());
@@ -134,6 +156,10 @@
 				{:else if current === 'history'}
 					{#key project.id}
 						<History projectId={project.id} {device} onopen={ondiff} />
+					{/key}
+				{:else if current === 'compare'}
+					{#key project.id}
+						{#if git}<Compare projectId={project.id} {git} {device} selection={comparison} onselect={oncompare} onopen={ondiff} />{/if}
 					{/key}
 				{:else if current === 'epics'}
 					<Epics epics={epics ?? []} onopen={onepic} />

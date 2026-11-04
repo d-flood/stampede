@@ -9,9 +9,9 @@
 	import Check from '~icons/ph/check';
 	import Plus from '~icons/ph/plus';
 
-	type Props = { projectId: string; current?: string; origin: boolean; onswitch(): void };
+	type Props = { projectId: string; current?: string; origin: boolean; onswitch?(): void; onpick?(name: string): void };
 
-	let { projectId, current, origin, onswitch }: Props = $props();
+	let { projectId, current, origin, onswitch, onpick }: Props = $props();
 
 	let listed = $state<Refs>();
 	let query = $state('');
@@ -23,7 +23,7 @@
 		{ heading: 'Remote branches', names: find(listed?.remote ?? []) }
 	]);
 	const name = $derived(query.trim());
-	const creatable = $derived(!!listed && !!name && !listed.local.includes(name) && !listed.remote.includes(name));
+	const creatable = $derived(!onpick && !!listed && !!name && !listed.local.includes(name) && !listed.remote.includes(name));
 
 	onMount(() => run(load));
 
@@ -54,23 +54,24 @@
 	}
 
 	function choose(name: string) {
+		if (onpick) return onpick(name);
 		run(async () => {
 			if (name !== current) await switchBranch(projectId, name);
-			onswitch();
+			onswitch?.();
 		});
 	}
 
 	function create() {
 		run(async () => {
 			await createBranch(projectId, name);
-			onswitch();
+			onswitch?.();
 		});
 	}
 </script>
 
 <Command.Root label="Branches" shouldFilter={false} loop>
 	<div class="search">
-		<Command.Input placeholder="Find or create a branch" autocomplete="off" spellcheck={false}>
+		<Command.Input placeholder={onpick ? 'Find a branch' : 'Find or create a branch'} autocomplete="off" spellcheck={false}>
 			{#snippet child({ props })}
 				<TextField {...props} mono bind:value={query} {@attach (element) => element.focus()} />
 			{/snippet}
@@ -101,7 +102,7 @@
 											{#snippet child({ props })}
 												<div {...props} class="item">
 													<span class="name">{name}</span>
-													{#if name === current}<Check role="img" aria-label="Current branch" />{/if}
+													{#if name === current}<Check role="img" aria-label={onpick ? 'Chosen branch' : 'Current branch'} />{/if}
 												</div>
 											{/snippet}
 										</Command.Item>

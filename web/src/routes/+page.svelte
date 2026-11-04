@@ -25,7 +25,7 @@
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
-	import { image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Against, type Cursor } from '#lib/files.svelte.ts';
+	import { comparing, image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Against, type Cursor, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { deleteWorktree, status, type Change, type Git, type Trunk, type Update } from '#lib/git.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
@@ -107,6 +107,7 @@
 	let section = $state<Section>(restored.sidebar?.section ?? 'files');
 	let rail = $state(restored.rail?.open ?? false);
 	let markdownMode = $state(restored.markdownMode);
+	let comparisons = $state<Record<string, Selection>>(restored.compare);
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
 	let closingChat = $state<Chat>();
@@ -204,7 +205,21 @@
 		sidebar: { title: sectionShowing(section, focused && git.get(focused.id)).label, sub: label }
 	});
 	const deviceLayout = $derived(
-		capture({ chosen, terminals, chats, files, browsers, canvases, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section }, rail: { open: rail }, markdownMode })
+		capture({
+			chosen,
+			terminals,
+			chats,
+			files,
+			browsers,
+			canvases,
+			epics: epicTabs,
+			chosenTabs,
+			splits,
+			sidebar: { open: sidebar, section },
+			rail: { open: rail },
+			markdownMode,
+			compare: comparisons
+		})
 	);
 
 	$effect(() => device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics }));
@@ -921,7 +936,17 @@
 	}
 
 	function openDiff(projectId: string, { path, from }: Change, against: Against) {
-		openTab(new OpenDiff(projectId, path, against, from));
+		const diff = openTab(new OpenDiff(projectId, path, against, from));
+		if (!comparing(against)) return;
+		diff.path = path;
+		diff.from = from;
+	}
+
+	function showComparison(projectId: string, selection: Selection) {
+		comparisons[projectId] = selection;
+		section = 'compare';
+		sidebar = true;
+		slide('sidebar');
 	}
 
 	function showDiff(file: OpenFile, disk: string, buffer: string) {
@@ -986,6 +1011,8 @@
 		{usage}
 		{codexResets}
 		epics={focused && epics[focused.id]}
+		comparison={focused && comparisons[focused.id]}
+		oncompare={(selection) => focused && (comparisons[focused.id] = selection)}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		onrename={(from, to) => focused && retarget(focused.id, from, to)}
 		ondiff={(change, against) => focused && openDiff(focused.id, change, against)}
@@ -1194,6 +1221,7 @@
 								active={showing(epic.id)}
 								{device}
 								chats={allChats}
+								oncompare={(selection) => showComparison(epic.projectId, selection)}
 								onchat={(chatId) => {
 									const chat = allChats.find(({ id }) => id === chatId);
 									if (chat) attend(chat.projectId, chatId);

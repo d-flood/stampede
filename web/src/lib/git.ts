@@ -29,7 +29,9 @@ export type Update = { behind: number; subjects: string[]; pulled: boolean; head
 
 export type Stash = { message: string; date: string };
 
-export type Refs = { local: string[]; remote: string[] };
+export type Refs = { local: string[]; remote: string[]; default?: string };
+
+export type Comparison = { target: string; source: string; mergeBase: string; files: Change[] };
 
 export type Commit = { sha: string; short: string; subject: string; author: string; date: string };
 
@@ -132,6 +134,10 @@ export async function commitFiles(projectId: string, sha: string): Promise<Chang
 
 export async function show(projectId: string, sha: string, path: string): Promise<string> {
 	return text(await fetch(`/api/projects/${projectId}/git/show?${new URLSearchParams({ sha, path })}`));
+}
+
+export async function compare(projectId: string, target: string, source: string): Promise<Comparison> {
+	return json(await fetch(`/api/projects/${projectId}/git/compare?${new URLSearchParams({ target, source })}`));
 }
 
 export async function refs(projectId: string): Promise<Refs> {

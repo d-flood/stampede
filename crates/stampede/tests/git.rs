@@ -600,6 +600,53 @@ async fn a_commit_is_diffed_against_its_first_parent() {
     assert_eq!(sides(port, &id, &root, "a.txt", "a.txt").await, ["", "one\n"]);
 }
 
+#[tokio::test]
+async fn a_comparison_shows_only_what_the_source_changed_since_it_split_off() {
+    let server = Server::start("git-compare").await;
+    let repo = repository(&server, "compare");
+    fs::write(repo.join("moved.txt"), "moved\n").unwrap();
+    fs::write(repo.join("edited.txt"), "one\n").unwrap();
+    fs::write(repo.join("other.txt"), "other\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "Root"]);
+    git(&repo, &["branch", "feature"]);
+    fs::write(repo.join("other.txt"), "changed on main\n").unwrap();
+    fs::write(repo.join("main.txt"), "main\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "Main moves on"]);
+    git(&repo, &["switch", "-q", "feature"]);
+    git(&repo, &["mv", "moved.txt", "renamed.txt"]);
+    fs::write(repo.join("edited.txt"), "two\n").unwrap();
+    git(&repo, &["commit", "-qam", "Feature"]);
+    git(&repo, &["switch", "-q", "--orphan", "unrelated"]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "Unrelated"]);
+    git(&repo, &["switch", "-q", "feature"]);
+
+    let id = open(server.port, &repo).await;
+    let compare = |target: &str, source: &str| format!("/api/projects/{id}/git/compare?target={target}&source={source}");
+    let comparison = get(server.port, &compare("main", "feature")).await;
+    let expected = json!([
+        { "path": "edited.txt", "kind": "modified" },
+        { "path": "renamed.txt", "kind": "renamed", "from": "moved.txt" },
+    ]);
+    assert_eq!(comparison["files"], expected);
+    assert_eq!(comparison["mergeBase"], rev_parse(&repo, "main^"));
+    assert_eq!((&comparison["target"], &comparison["source"]), (&json!(rev_parse(&repo, "main")), &json!(rev_parse(&repo, "feature"))));
+    assert_eq!(get(server.port, &compare("feature", "feature")).await["files"], json!([]));
+
+    let (code, body) = request(server.port, &compare("main", "origin/feature")).await;
+    assert_eq!((code, body.as_str()), (404, "origin/feature does not exist"));
+    let sha = rev_parse(&repo, "main");
+    assert_eq!(request(server.port, &compare(&sha, "feature")).await.0, 400);
+    assert_eq!(request(server.port, &compare("main", "feature~1")).await.0, 400);
+    assert_eq!(request(server.port, &compare("main", "unrelated")).await.0, 409);
+}
+
+async fn request(port: u16, path: &str) -> (u16, String) {
+    let response = reqwest::get(format!("http://127.0.0.1:{port}{path}")).await.unwrap();
+    (response.status().as_u16(), response.text().await.unwrap())
+}
+
 fn repository(server: &Server, name: &str) -> std::path::PathBuf {
     let repo = server.root.path().join(name);
     fs::create_dir(&repo).unwrap();
