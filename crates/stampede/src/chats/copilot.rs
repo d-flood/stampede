@@ -105,6 +105,7 @@ pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &Agen
                 model: current.model_id.or_else(|| settings.model.clone()),
                 effort: current.reasoning_effort.or_else(|| settings.effort.clone()),
                 mode: settings.mode.clone(),
+                ..AgentSettings::default()
             };
             Ok((models, chosen))
         }.await;

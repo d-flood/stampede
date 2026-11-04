@@ -132,6 +132,10 @@ pub struct Rig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ultracode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
 }
 
@@ -149,6 +153,8 @@ impl Rig {
             shortcut: None,
             model: None,
             effort: None,
+            speed: None,
+            ultracode: None,
             mode: Some(mode.to_owned()),
         }
     }
@@ -159,7 +165,7 @@ impl Rig {
             Agent::Codex => "approve-for-me",
             Agent::Copilot => "default",
         }.to_owned()));
-        AgentSettings { model: self.model.clone(), effort: self.effort.clone(), mode }
+        AgentSettings { model: self.model.clone(), effort: self.effort.clone(), speed: self.speed.clone(), ultracode: self.ultracode.clone(), mode }
     }
 }
 
@@ -184,13 +190,17 @@ impl Clip {
     }
 }
 
-/// The model, effort and mode an Agent starts with.
+/// The model, effort, speed, Ultracode and mode an Agent starts with.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AgentSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ultracode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
 }
@@ -202,6 +212,16 @@ impl AgentSettings {
             if let Some(value) = value {
                 flags.extend([flag.to_owned(), value.clone()]);
             }
+        }
+        let mut settings = serde_json::Map::new();
+        if self.speed.as_deref() == Some("fast") {
+            settings.insert("fastMode".to_owned(), true.into());
+        }
+        if let Some(ultracode) = &self.ultracode {
+            settings.insert("ultracode".to_owned(), (ultracode == "on").into());
+        }
+        if !settings.is_empty() {
+            flags.extend(["--settings".to_owned(), serde_json::Value::Object(settings).to_string()]);
         }
         flags
     }
@@ -1170,6 +1190,17 @@ mod tests {
     }
 
     #[test]
+    fn claude_flags_carry_speed_and_ultracode_as_one_settings_overlay() {
+        let flags = |speed: Option<&str>, ultracode: Option<&str>| {
+            AgentSettings { speed: speed.map(str::to_owned), ultracode: ultracode.map(str::to_owned), ..AgentSettings::default() }.claude_flags()
+        };
+        assert!(flags(None, None).is_empty());
+        assert!(flags(Some("standard"), None).is_empty());
+        assert_eq!(flags(Some("fast"), Some("on")), ["--settings", r#"{"fastMode":true,"ultracode":true}"#]);
+        assert_eq!(flags(None, Some("off")), ["--settings", r#"{"ultracode":false}"#]);
+    }
+
+    #[test]
     fn rigs_carry_model_effort_and_mode() {
         let config = Config::parse(
             r#"
@@ -1200,7 +1231,7 @@ command = "codex"
         assert_eq!(
             settings,
             [
-                AgentSettings { model: text("opus"), effort: text("xhigh"), mode: text("acceptEdits") },
+                AgentSettings { model: text("opus"), effort: text("xhigh"), mode: text("acceptEdits"), ..AgentSettings::default() },
                 AgentSettings { mode: text("full-access"), ..AgentSettings::default() },
                 AgentSettings { mode: text("approve-for-me"), ..AgentSettings::default() },
             ]

@@ -6,7 +6,7 @@
 	import Select from '#lib/ui/Select.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 
-	type Model = { value: string; label: string; efforts: string[] };
+	type Model = { value: string; label: string; efforts: string[]; speeds: { value: string; label: string; detail?: string }[]; ultracode: boolean };
 	type Options = { models: Model[]; modes: { value: string; label: string }[]; settings?: { model?: string; effort?: string } };
 
 	let selected = $state('');
@@ -14,6 +14,8 @@
 	let agent = $state<Agent>('claude-code');
 	let model = $state('');
 	let effort = $state('');
+	let speed = $state('');
+	let ultracode = $state('');
 	let mode = $state('auto');
 	let options = $state<Options>({ models: [], modes: [] });
 	let loading = $state(false);
@@ -26,7 +28,9 @@
 	const busy = $derived(saving || deleting);
 	const position = $derived(rigs().findIndex((rig) => rig.name === selected));
 	let request = 0;
-	const efforts = $derived(options.models.find((choice) => choice.value === model)?.efforts ?? []);
+	const listed = $derived(options.models.find((choice) => choice.value === model));
+	const efforts = $derived(listed?.efforts ?? []);
+	const speeds = $derived(listed?.speeds ?? []);
 
 	onMount(() => { void load(); });
 
@@ -63,6 +67,8 @@
 		agent = rig?.agent ?? 'claude-code';
 		model = rig?.model ?? '';
 		effort = rig?.effort ?? '';
+		speed = rig?.speed ?? '';
+		ultracode = rig?.ultracode ?? '';
 		mode = rig?.mode ?? defaultMode(agent);
 		saved = '';
 		void load();
@@ -72,6 +78,8 @@
 		agent = value;
 		model = '';
 		effort = '';
+		speed = '';
+		ultracode = '';
 		mode = defaultMode(agent);
 		saved = '';
 		void load();
@@ -86,7 +94,7 @@
 		error = '';
 		saved = '';
 		try {
-			await saveRig({ original: selected || undefined, name, agent, model: model || undefined, effort: effort || undefined, mode });
+			await saveRig({ original: selected || undefined, name, agent, model: model || undefined, effort: effort || undefined, speed: speed || undefined, ultracode: ultracode || undefined, mode });
 			name = name.trim();
 			selected = name;
 			saved = 'Rig saved.';
@@ -153,7 +161,7 @@
 			{#each Object.entries(agentNames) as [value, label]}<option {value}>{label}</option>{/each}
 		</Select>
 		<label for="rig-model">Model</label>
-		<Select id="rig-model" bind:value={model} disabled={loading || !options.models.length} onchange={() => { effort = ''; saved = ''; }}>
+		<Select id="rig-model" bind:value={model} disabled={loading || !options.models.length} onchange={() => { effort = ''; speed = ''; ultracode = ''; saved = ''; }}>
 			<option value="">Provider default</option>
 			{#if model && !options.models.some((choice) => choice.value === model)}<option value={model}>{model} (configured)</option>{/if}
 			{#each options.models as choice (choice.value)}<option value={choice.value}>{choice.label}</option>{/each}
@@ -164,6 +172,22 @@
 			{#if effort && !efforts.includes(effort)}<option value={effort}>{effort} (configured)</option>{/if}
 			{#each efforts as value}<option {value}>{value}</option>{/each}
 		</Select>
+		{#if speeds.length || speed}
+			<label for="rig-speed">Speed</label>
+			<Select id="rig-speed" bind:value={speed} disabled={loading} onchange={() => (saved = '')}>
+				<option value="">Provider default</option>
+				{#if speed && !speeds.some((choice) => choice.value === speed)}<option value={speed}>{speed} (configured)</option>{/if}
+				{#each speeds as choice (choice.value)}<option value={choice.value}>{choice.label}{choice.detail ? ` (${choice.detail})` : ''}</option>{/each}
+			</Select>
+		{/if}
+		{#if listed?.ultracode || ultracode}
+			<label for="rig-ultracode">Ultracode</label>
+			<Select id="rig-ultracode" bind:value={ultracode} disabled={loading} onchange={() => (saved = '')}>
+				<option value="">Provider default</option>
+				<option value="off">off</option>
+				<option value="on">on</option>
+			</Select>
+		{/if}
 		<label for="rig-mode">Permission mode</label>
 		<Select id="rig-mode" bind:value={mode} disabled={loading || !options.modes.length} onchange={() => (saved = '')}>
 			{#if !options.modes.some((choice) => choice.value === mode)}<option value={mode}>{mode}</option>{/if}

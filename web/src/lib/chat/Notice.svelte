@@ -30,7 +30,8 @@
 	}
 
 	.error,
-	.limit {
+	.limit,
+	.speed {
 		padding: var(--space-2) var(--space-3);
 		border-left: 2px solid;
 		border-radius: var(--radius-md);
@@ -41,7 +42,8 @@
 		border-left-color: var(--ansi-1);
 	}
 
-	.limit {
+	.limit,
+	.speed {
 		border-left-color: var(--status-waiting);
 	}
 </style>

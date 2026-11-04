@@ -47,6 +47,11 @@ agent = "claude-code"
 env = { STAMPEDE_FAKE_FIXTURE = "tools", CLAUDE_CONFIG_DIR = "$STAMPEDE_E2E_ROOT/claude" }
 
 [[rig]]
+name = "Fake Claude Workflow"
+agent = "claude-code"
+env = { STAMPEDE_FAKE_FIXTURE = "workflow", CLAUDE_CONFIG_DIR = "$STAMPEDE_E2E_ROOT/claude" }
+
+[[rig]]
 name = "Fake Claude Edits"
 agent = "claude-code"
 env = { STAMPEDE_FAKE_FIXTURE = "edits", CLAUDE_CONFIG_DIR = "$STAMPEDE_E2E_ROOT/claude" }

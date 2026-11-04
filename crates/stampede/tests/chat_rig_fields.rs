@@ -108,6 +108,43 @@ async fn a_codex_chat_starts_its_thread_with_its_rigs_model_effort_and_mode() {
     );
 }
 
+#[tokio::test]
+async fn a_claude_rig_launches_with_its_speed_and_ultracode() {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = directory.path().join("speed.synthetic.jsonl");
+    let recorded = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/chats/claude-code/rig-fields.recorded.jsonl")).unwrap();
+    let recorded = recorded
+        .replace(r#""--permission-mode", "plan"]"#, r#""--permission-mode", "plan", "--settings", "{\"fastMode\":true,\"ultracode\":true}"]"#)
+        .replace(r#""fast_mode_state": "off", "fast_mode_disabled_reason": "sdk_opt_in_required""#, r#""fast_mode_state": "on""#)
+        .replace(r#""ultracode": false, "ultracodeRequested": false"#, r#""ultracode": true, "ultracodeRequested": true"#);
+    fs::write(&fixture, recorded).unwrap();
+    let config = CONFIG
+        .replacen("mode = \"plan\"\n", "speed = \"fast\"\nultracode = \"on\"\nmode = \"plan\"\n", 1)
+        .replace("\"rig-fields\"", &format!("{:?}", fixture));
+    let (server, mut socket, project_id) = open_with_config(&config).await;
+    let chat = create(&mut socket, &project_id, "claude").await;
+    let settings = json!({ "model": "sonnet", "effort": "low", "speed": "fast", "ultracode": "on", "mode": "plan" });
+    assert_eq!(chat["settings"], settings);
+
+    let chat_id = chat["id"].as_str().unwrap();
+    let (_, items) = chat_turn(&mut socket, chat_id, &chat["status"], "Reply with the single word: ready").await;
+    assert_eq!(items.last().unwrap()["text"], "ready");
+    let record: Value = serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{chat_id}.json"))).unwrap()).unwrap();
+    assert_eq!(record["settings"], settings);
+    close_chat(&mut socket, server.root.path(), chat_id).await;
+}
+
+#[tokio::test]
+async fn a_codex_rig_starts_its_thread_with_its_speed() {
+    let config = CONFIG.replace("mode = \"read-only\"\n", "speed = \"priority\"\nmode = \"read-only\"\n");
+    let (server, mut socket, project_id) = open_with_config(&config).await;
+    let chat = create(&mut socket, &project_id, "codex").await;
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
+    let log = fs::read_to_string(server.root.path().join("home/.codex/fake-daemon/received.jsonl")).unwrap();
+    let start = log.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).find(|message| message["method"] == "thread/start").unwrap();
+    assert_eq!(start["params"]["serviceTier"], "priority");
+}
+
 async fn open() -> (Server, Socket, Value) {
     open_with_config(CONFIG).await
 }

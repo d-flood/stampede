@@ -30,21 +30,25 @@ pub async fn options(State(state): State<AppState>, Query(selection): Query<Sele
     }).await.map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Provider took too long to list models. Try again.".to_owned()))?
         .map_err(|error| (StatusCode::BAD_GATEWAY, error.to_string()))?;
     let models: Vec<Value> = listed.iter().filter_map(|model| {
-        let (value, label, efforts) = match selection.agent {
+        let (value, label, efforts, speeds) = match selection.agent {
             Agent::ClaudeCode => (
                 model["value"].as_str()?, model["displayName"].as_str().or(model["value"].as_str())?,
                 model["supportedEffortLevels"].as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>(),
+                claude::speeds(model),
             ),
             Agent::Codex => (
                 model["model"].as_str()?, model["displayName"].as_str().or(model["model"].as_str())?,
                 model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(|effort| effort["reasoningEffort"].as_str()).collect(),
+                codex::speeds(model),
             ),
             Agent::Copilot => (
                 model["id"].as_str()?, model["name"].as_str().or(model["id"].as_str())?,
                 model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect(),
+                Vec::new(),
             ),
         };
-        Some(json!({ "value": value, "label": label, "efforts": efforts }))
+        let ultracode = selection.agent == Agent::ClaudeCode && efforts.contains(&"xhigh");
+        Some(json!({ "value": value, "label": label, "efforts": efforts, "speeds": speeds, "ultracode": ultracode }))
     }).collect();
     let available = state.config.borrow().available_modes(selection.agent);
     let modes: Vec<Choice> = selection.agent.modes().iter().filter(|mode| available.contains(mode)).map(|mode| Choice::mode(mode)).collect();
@@ -59,6 +63,8 @@ pub struct Save {
     agent: Agent,
     model: Option<String>,
     effort: Option<String>,
+    speed: Option<String>,
+    ultracode: Option<String>,
     mode: String,
 }
 
@@ -68,7 +74,7 @@ pub async fn save(State(state): State<AppState>, Json(mut save): Json<Save>) -> 
     let original = save.original.clone();
     let name = save.name.clone();
     let rigs = tokio::task::spawn_blocking(move || {
-        let rig = Rig { name: save.name, agent: save.agent, env: Default::default(), shortcut: None, model: save.model, effort: save.effort, mode: Some(save.mode) };
+        let rig = Rig { name: save.name, agent: save.agent, env: Default::default(), shortcut: None, model: save.model, effort: save.effort, speed: save.speed, ultracode: save.ultracode, mode: Some(save.mode) };
         config::write_rig(&state.config_path, save.original.as_deref(), rig)
     }).await.map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;

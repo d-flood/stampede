@@ -89,8 +89,16 @@ Text David saves and reuses, inserted at the caret in any Composer by typing `;`
 _Avoid_: snippet, macro, canned prompt, saved prompt, skill
 
 **Rig**:
-A named configuration for a Chat — its Agent, model, effort, permission mode and environment — started in a Project with one click or shortcut. Rigs also configure the Chats used by Runs.
+A named configuration for a Chat — its Agent, model, effort, speed, Ultracode, permission mode and environment — started in a Project with one click or shortcut. Rigs also configure the Chats used by Runs.
 _Avoid_: preset, profile, launcher
+
+**Speed**:
+How fast a provider serves a Chat's requests, usually at a higher cost. Each model lists its own choices; "standard" is the provider's normal speed.
+_Avoid_: service tier, priority, fast mode
+
+**Ultracode**:
+A Claude Code setting, separate from effort, that lets Claude run Workflows on its own for substantive tasks.
+_Avoid_: ultra effort
 
 ### Tickets
 

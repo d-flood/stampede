@@ -178,6 +178,7 @@ pub enum Notice {
     Interrupted,
     Rewound,
     Tickets,
+    Speed,
 }
 
 impl Item {
@@ -611,6 +612,8 @@ pub struct Capabilities {
     pub rewinds_files: bool,
     pub models: Vec<String>,
     pub efforts: Vec<String>,
+    pub speeds: Vec<Choice>,
+    pub ultracode: bool,
     pub modes: Vec<Choice>,
     pub commands: Vec<AgentCommand>,
 }
@@ -619,6 +622,8 @@ pub struct Capabilities {
 pub struct Choice {
     pub value: String,
     pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 impl Choice {
@@ -631,7 +636,11 @@ impl Choice {
                 other => label.push(other),
             }
         }
-        Self { value: value.to_owned(), label }
+        Self { value: value.to_owned(), label, detail: None }
+    }
+
+    pub fn speed(value: &str, label: &str, detail: Option<&str>) -> Self {
+        Self { value: value.to_owned(), label: label.to_lowercase(), detail: detail.map(str::to_owned) }
     }
 }
 
@@ -655,6 +664,8 @@ impl Settings {
         match setting {
             Setting::Model => &self.chosen.model,
             Setting::Effort => &self.chosen.effort,
+            Setting::Speed => &self.chosen.speed,
+            Setting::Ultracode => &self.chosen.ultracode,
             Setting::Mode => &self.chosen.mode,
         }
     }
@@ -663,6 +674,8 @@ impl Settings {
         match setting {
             Setting::Model => &mut self.chosen.model,
             Setting::Effort => &mut self.chosen.effort,
+            Setting::Speed => &mut self.chosen.speed,
+            Setting::Ultracode => &mut self.chosen.ultracode,
             Setting::Mode => &mut self.chosen.mode,
         }
     }
@@ -679,6 +692,8 @@ impl Settings {
 pub enum Setting {
     Model,
     Effort,
+    Speed,
+    Ultracode,
     Mode,
 }
 
@@ -687,6 +702,8 @@ pub enum Setting {
 pub enum Builtin {
     Model(String),
     Effort(String),
+    Speed(String),
+    Ultracode(String),
     Mode(String),
     Compact,
     Clear,

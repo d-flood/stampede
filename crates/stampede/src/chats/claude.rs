@@ -56,8 +56,15 @@ const DENIED: &str = "The user denied this request.";
 
 const MANAGEMENT: &[&str] = &[
     "mcp", "hooks", "memory", "permissions", "plugin", "plugins", "statusline", "theme", "export", "add-dir",
-    "agents", "login", "logout", "config", "heapdump",
+    "agents", "login", "logout", "config", "heapdump", "fast",
 ];
+
+pub fn speeds(model: &Value) -> Vec<Choice> {
+    if model["supportsFastMode"] != true {
+        return Vec::new();
+    }
+    vec![Choice::speed("standard", "standard", None), Choice::speed("fast", "fast", Some("Costs more; plans use usage credits"))]
+}
 
 pub struct Claude {
     commands: UnboundedSender<Command>,
@@ -138,6 +145,7 @@ pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &Agen
                         model: applied["model"].as_str().map(|model| model_alias(&models, model)),
                         effort: applied["effort"].as_str().map(str::to_owned),
                         mode: settings.mode.clone(),
+                        ..settings.clone()
                     };
                     return Ok((models, settings));
                 }
@@ -407,6 +415,18 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                             break;
                         }
                     }
+                    if std::mem::take(&mut transcript.recheck_ultracode) {
+                        let request = transcript.request(json!({ "subtype": "get_settings" }), Asked::Ultracode);
+                        if writer.write_all(&request).await.is_err() {
+                            break;
+                        }
+                    }
+                    if std::mem::take(&mut transcript.fast_refused) {
+                        let request = transcript.standard_speed();
+                        if writer.write_all(&request).await.is_err() {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -583,10 +603,29 @@ async fn run(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, builtin: 
             return send(writer, transcript, "/clear", &[]).await;
         }
         Builtin::Rewind(_) => return Ok(()),
-        Builtin::Model(model) => (Setting::Model, json!({ "subtype": "set_model", "model": model }), model),
+        Builtin::Model(model) => {
+            if transcript.settings.chosen.speed.as_deref() == Some("fast") && !transcript.supports_fast(&model) {
+                transcript.settings.chosen.speed = None;
+                let request = transcript.standard_speed();
+                writer.write_all(&request).await?;
+            }
+            (Setting::Model, json!({ "subtype": "set_model", "model": model }), model)
+        }
         Builtin::Effort(effort) => {
-            let request = json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": effort } });
-            (Setting::Effort, request, effort)
+            // Moving the effort level without naming Ultracode turns Ultracode off.
+            let settings = match transcript.settings.chosen.ultracode.as_deref() {
+                Some("on") => json!({ "effortLevel": effort, "ultracode": true }),
+                _ => json!({ "effortLevel": effort }),
+            };
+            (Setting::Effort, json!({ "subtype": "apply_flag_settings", "settings": settings }), effort)
+        }
+        Builtin::Speed(speed) => {
+            let request = json!({ "subtype": "apply_flag_settings", "settings": { "fastMode": speed == "fast" } });
+            (Setting::Speed, request, speed)
+        }
+        Builtin::Ultracode(ultracode) => {
+            let request = json!({ "subtype": "apply_flag_settings", "settings": { "ultracode": ultracode == "on" } });
+            (Setting::Ultracode, request, ultracode)
         }
         Builtin::Mode(mode) => (Setting::Mode, json!({ "subtype": "set_permission_mode", "mode": mode }), mode),
     };
@@ -885,6 +924,10 @@ fn request(id: &str, request: &Value) -> RequestKind {
             RequestKind::Edit { id, path: text("file_path"), diff }
         }
         Some("Write") => RequestKind::Edit { id, path: text("file_path"), diff: diff("", &text("content")) },
+        Some("Workflow") if input["script"].is_string() => {
+            let title = request["description"].as_str().map_or_else(|| "Claude wants to run a workflow".to_owned(), |description| format!("Claude wants to run a workflow: {description}"));
+            RequestKind::Other { id, title, detail: text("script") }
+        }
         tool => {
             let name = request["display_name"].as_str().or(tool).unwrap_or("a tool");
             let title = request["title"].as_str().map_or_else(|| format!("Claude wants to use {name}"), str::to_owned);
@@ -988,12 +1031,17 @@ struct Transcript {
     slash_commands: Vec<AgentCommand>,
     settings: Settings,
     applied: AgentSettings,
+    ultracode: bool,
+    recheck_ultracode: bool,
+    fast_refused: bool,
+    workflows: HashSet<String>,
 }
 
 enum Asked {
     Initialize,
     Settings,
     Set(Setting, String),
+    Ultracode,
     Context,
 }
 
@@ -1048,6 +1096,10 @@ impl Transcript {
             slash_commands: Vec::new(),
             settings: Settings::default(),
             applied: AgentSettings::default(),
+            ultracode: false,
+            recheck_ultracode: false,
+            fast_refused: false,
+            workflows: HashSet::new(),
         }
     }
 
@@ -1087,6 +1139,7 @@ impl Transcript {
                 if let Some(mode) = body["current_permission_mode"].as_str() {
                     self.settings.chosen.mode = Some(mode.to_owned());
                 }
+                self.fast_state(body);
                 self.declare();
                 self.report_settings();
             }
@@ -1094,15 +1147,19 @@ impl Transcript {
                 let applied = &body["applied"];
                 self.settings.chosen.model = applied["model"].as_str().map(|model| self.alias(model));
                 self.settings.chosen.effort = applied["effort"].as_str().map(str::to_owned);
+                self.read_ultracode(applied);
                 self.applied = self.settings.chosen.clone();
                 self.declare();
                 self.report_settings();
             }
             Asked::Set(setting, value) => {
                 if success {
+                    self.recheck_ultracode = setting == Setting::Model;
                     let applied = match setting {
                         Setting::Model => &mut self.applied.model,
                         Setting::Effort => &mut self.applied.effort,
+                        Setting::Speed => &mut self.applied.speed,
+                        Setting::Ultracode => &mut self.applied.ultracode,
                         Setting::Mode => &mut self.applied.mode,
                     };
                     *applied = Some(value.clone());
@@ -1114,11 +1171,22 @@ impl Transcript {
                         let applied = match setting {
                             Setting::Model => &self.applied.model,
                             Setting::Effort => &self.applied.effort,
+                            Setting::Speed => &self.applied.speed,
+                            Setting::Ultracode => &self.applied.ultracode,
                             Setting::Mode => &self.applied.mode,
                         };
                         *self.settings.get_mut(setting) = applied.clone();
                     }
                     self.changed(setting);
+                }
+            }
+            Asked::Ultracode if success => {
+                let before = (self.ultracode, self.settings.chosen.ultracode.clone());
+                self.read_ultracode(&body["applied"]);
+                self.applied.ultracode = self.settings.chosen.ultracode.clone();
+                if before != (self.ultracode, self.settings.chosen.ultracode.clone()) {
+                    self.declare();
+                    self.report_settings();
                 }
             }
             Asked::Context if success => {
@@ -1137,6 +1205,42 @@ impl Transcript {
         model_alias(&self.models, model)
     }
 
+    fn supports_fast(&self, model: &str) -> bool {
+        self.models.iter().find(|listed| listed["value"] == model).is_some_and(|listed| listed["supportsFastMode"] == true)
+    }
+
+    fn standard_speed(&mut self) -> Vec<u8> {
+        let request = json!({ "subtype": "apply_flag_settings", "settings": { "fastMode": false } });
+        self.request(request, Asked::Set(Setting::Speed, "standard".to_owned()))
+    }
+
+    fn read_ultracode(&mut self, applied: &Value) {
+        self.ultracode = applied["ultracodeAvailable"] == true;
+        if !self.settings.pending.contains(&Setting::Ultracode) {
+            self.settings.chosen.ultracode = (applied["ultracode"] == true).then(|| "on".to_owned());
+        }
+    }
+
+    fn fast_state(&mut self, state: &Value) {
+        if self.settings.pending.contains(&Setting::Speed) || state["fast_mode_disabled_reason"] == "pending" {
+            return;
+        }
+        let fast = matches!(state["fast_mode_state"].as_str(), Some("on" | "cooldown"));
+        if self.settings.chosen.speed.as_deref() == Some("fast") && !fast {
+            let text = match state["fast_mode_disabled_reason"].as_str() {
+                Some("extra_usage_disabled") => "Fast mode requires usage credits",
+                Some("free") => "Fast mode requires a paid subscription",
+                Some("preference") => "Fast mode has been disabled by your organization",
+                Some("model_not_allowed") => "Fast mode is not available on this model",
+                Some("not_first_party") => "Fast mode is only available through the Anthropic API",
+                _ => "Fast mode is not available",
+            };
+            self.push(Item::Notice { notice: Notice::Speed, text: text.to_owned() });
+        }
+        self.settings.chosen.speed = fast.then(|| "fast".to_owned());
+        self.applied.speed = self.settings.chosen.speed.clone();
+    }
+
     fn changed(&self, setting: Setting) {
         if setting == Setting::Model {
             self.declare();
@@ -1152,6 +1256,8 @@ impl Transcript {
             rewinds_files: true,
             models: self.models.iter().filter_map(|model| model["value"].as_str()).map(str::to_owned).collect(),
             efforts: efforts.filter_map(Value::as_str).map(str::to_owned).collect(),
+            speeds: listed.map(speeds).unwrap_or_default(),
+            ultracode: self.ultracode,
             modes: Agent::ClaudeCode.modes().iter().map(|mode| Choice::mode(mode)).collect(),
             commands: self.slash_commands.clone(),
         };
@@ -1496,6 +1602,31 @@ impl Transcript {
             Some("system") if message["subtype"] == "task_started" => {
                 if let (Some(task), Some(tool)) = (message["task_id"].as_str(), message["tool_use_id"].as_str()) {
                     self.tasks.insert(task.to_owned(), tool.to_owned());
+                    if message["task_type"] == "local_workflow"
+                        && let Some((subagent, _)) = self.subagents.get_mut(tool)
+                    {
+                        self.workflows.insert(tool.to_owned());
+                        subagent.name = message["workflow_name"].as_str().map(str::to_owned);
+                        if let Some(description) = message["description"].as_str() { subagent.task = description.to_owned(); }
+                        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                    }
+                }
+            }
+            Some("system") if message["subtype"] == "task_progress" => {
+                if let Some(tool) = message["tool_use_id"].as_str().filter(|tool| self.workflows.contains(*tool))
+                    && let Some((subagent, _)) = self.subagents.get_mut(tool)
+                {
+                    subagent.activity = message["description"].as_str().map(str::to_owned);
+                    let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                }
+            }
+            Some("system") if message["subtype"] == "notification" && message["key"] == "fast-mode-overage-rejected" => {
+                let text = message["text"].as_str().unwrap_or("Fast mode disabled").to_owned();
+                self.push(Item::Notice { notice: Notice::Speed, text });
+                if !self.replaying {
+                    self.settings.chosen.speed = None;
+                    self.fast_refused = true;
+                    self.report_settings();
                 }
             }
             Some("system") if message["subtype"] == "session_state_changed" => {
@@ -1513,6 +1644,13 @@ impl Transcript {
                 {
                     self.session = Some(session.to_owned());
                     let _ = self.events.send(Event::Session(session.to_owned()));
+                }
+                if message["subtype"] == "init" && !self.replaying {
+                    // A finished background Workflow wakes Claude for a turn nobody sent.
+                    if self.status == Status::Done { self.report(Status::Working); }
+                    let speed = self.settings.chosen.speed.clone();
+                    self.fast_state(message);
+                    if speed != self.settings.chosen.speed { self.report_settings(); }
                 }
                 if let Some(mode) = message["permissionMode"].as_str() {
                     self.observe(mode);
@@ -1804,6 +1942,7 @@ impl Transcript {
                 "WebSearch" => format!("Searching the web for {}", text("query")),
                 "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => format!("Editing {}", self.relative(&text("file_path"))),
                 "Agent" | "Task" => format!("Starting agent: {}", text("description")),
+                "Workflow" => "Starting workflow".to_owned(),
                 _ => format!("Using {name}"),
             };
             self.activity.start(id, label, &self.events);
@@ -1831,12 +1970,13 @@ impl Transcript {
             "Grep" | "Glob" => self.call(ToolKind::Search, name, text("pattern")),
             "WebFetch" => self.call(ToolKind::Fetch, name, text("url")),
             "WebSearch" => self.call(ToolKind::Web, name, text("query")),
-            "Agent" | "Task" => {
+            "Agent" | "Task" | "Workflow" => {
                 let replaying = self.replaying || self.history.is_some();
                 let started_at = timestamp.as_str().filter(|_| replaying).and_then(super::epoch_ms).unwrap_or_else(super::now);
-                let (mut subagent, events) = Subagent::new(id, text("description"), started_at);
+                let task = if name == "Workflow" { "Workflow".to_owned() } else { text("description") };
+                let (mut subagent, events) = Subagent::new(id, task, started_at);
                 subagent.name = input["subagent_type"].as_str().map(str::to_owned);
-                subagent.prompt = input["prompt"].as_str().map(str::to_owned);
+                subagent.prompt = input["prompt"].as_str().or(input["script"].as_str()).map(str::to_owned);
                 subagent.model = input["model"].as_str().map(str::to_owned);
                 subagent.index = self.push(subagent.item());
                 self.subagents.insert(id.to_owned(), (subagent, Transcript::new(events, &self.cwd)));
@@ -1946,7 +2086,7 @@ impl Transcript {
                 if let Some(model) = result["resolvedModel"].as_str() {
                     subagent.model = Some(model.to_owned());
                 }
-                if result["isAsync"] != true {
+                if result["isAsync"] != true && result["status"] != "async_launched" {
                     let texts: Vec<&str> = result["content"].as_array().into_iter().flatten().filter_map(|block| block["text"].as_str()).collect();
                     let report = Some(texts.join("\n")).filter(|report| !report.is_empty());
                     let fallback = if block["is_error"] == true { Outcome::Failed } else { Outcome::Completed };
@@ -2251,6 +2391,68 @@ mod cache_tests {
 #[cfg(test)]
 mod subagent_tests {
     use super::*;
+
+    #[test]
+    fn a_workflow_keeps_working_past_its_launch_until_its_task_finishes() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        let mut latest = move || std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+            Event::Item(_, item @ Item::Subagent { .. }) => Some(item),
+            _ => None,
+        }).last().unwrap();
+        transcript.read(&json!({ "type": "assistant", "message": { "content": [{
+            "type": "tool_use", "id": "run", "name": "Workflow", "input": { "script": "phase('Reply')" },
+        }] } }));
+        transcript.read(&json!({ "type": "system", "subtype": "task_started", "task_id": "task", "tool_use_id": "run",
+            "task_type": "local_workflow", "workflow_name": "pair", "description": "Two agents" }));
+        transcript.read(&json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "run", "content": "Workflow launched" }] },
+            "tool_use_result": { "status": "async_launched" } }));
+        transcript.read(&json!({ "type": "system", "subtype": "task_progress", "task_id": "task", "tool_use_id": "run", "description": "Reply: alpha" }));
+        let Item::Subagent { name, task, status, activity, prompt, .. } = latest() else { unreachable!() };
+        assert_eq!((name.as_deref(), task.as_str(), status), (Some("pair"), "Two agents", Status::Working));
+        assert_eq!((activity.as_deref(), prompt.as_deref()), (Some("Reply: alpha"), Some("phase('Reply')")));
+
+        transcript.read(&json!({ "type": "system", "subtype": "task_notification", "task_id": "task", "tool_use_id": "run", "status": "failed", "summary": "It broke" }));
+        let Item::Subagent { status, outcome, report, .. } = latest() else { unreachable!() };
+        assert_eq!((status, outcome, report.as_deref()), (Status::Done, Some(Outcome::Failed), Some("It broke")));
+    }
+
+    #[test]
+    fn a_refused_fast_request_drops_to_standard_and_says_so() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        transcript.settings.chosen.speed = Some("fast".to_owned());
+        transcript.read(&json!({ "type": "system", "subtype": "notification", "key": "fast-mode-overage-rejected", "text": "Fast mode disabled · Out of usage credits" }));
+        assert_eq!(transcript.settings.chosen.speed, None);
+        assert!(transcript.fast_refused, "the driver stops Claude asking for Fast");
+        assert!(std::iter::from_fn(|| received.try_recv().ok()).any(|event| matches!(event,
+            Event::Item(_, Item::Notice { notice: Notice::Speed, text }) if text == "Fast mode disabled · Out of usage credits")));
+    }
+
+    #[test]
+    fn a_fast_choice_claude_cannot_serve_drops_to_standard_and_says_why() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        transcript.settings.chosen.speed = Some("fast".to_owned());
+
+        transcript.fast_state(&json!({ "fast_mode_state": "off", "fast_mode_disabled_reason": "pending" }));
+        assert_eq!(transcript.settings.chosen.speed.as_deref(), Some("fast"), "the organization's status is still loading");
+        transcript.fast_state(&json!({ "fast_mode_state": "cooldown" }));
+        assert_eq!(transcript.settings.chosen.speed.as_deref(), Some("fast"), "a rate-limit pause ends by itself");
+
+        transcript.fast_state(&json!({ "fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled" }));
+        assert_eq!(transcript.settings.chosen.speed, None);
+        assert!(std::iter::from_fn(|| received.try_recv().ok()).any(|event| matches!(event,
+            Event::Item(_, Item::Notice { notice: Notice::Speed, text }) if text == "Fast mode requires usage credits")));
+    }
+
+    #[test]
+    fn a_turn_nobody_sent_reports_the_chat_as_working() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        transcript.read(&json!({ "type": "system", "subtype": "init", "session_id": "session" }));
+        assert!(std::iter::from_fn(|| received.try_recv().ok()).any(|event| matches!(event, Event::Status(Status::Working))));
+    }
 
     #[test]
     fn subagents_stream_partial_text_and_thinking_without_duplicates() {

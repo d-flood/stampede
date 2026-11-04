@@ -115,9 +115,10 @@
 			onrun(command);
 			return true;
 		}
-		if (!images.length && (command === 'model' || command === 'effort' || command === 'mode')) {
-			if (!choices[command].some((choice) => choice.value === value)) return false;
-			onrun(command, value);
+		if (!images.length && (command === 'model' || command === 'effort' || command === 'speed' || command === 'ultracode' || command === 'mode')) {
+			const choice = choices[command].find((choice) => choice.value === value || choice.label === value);
+			if (!choice) return false;
+			onrun(command, choice.value);
 			return true;
 		}
 		const lapse = chat.context?.cache && warmth(chat.context.cache);

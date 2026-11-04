@@ -27,7 +27,7 @@ const CODEX_MODES: &[[&str; 2]] = &[
 
 const MANAGEMENT: &[&str] = &[
     "mcp", "hooks", "memory", "permissions", "plugin", "plugins", "statusline", "theme", "export", "add-dir",
-    "agents", "login", "logout", "config", "heapdump",
+    "agents", "login", "logout", "config", "heapdump", "fast",
 ];
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -38,6 +38,7 @@ struct View {
     capabilities: Value,
     statuses: Vec<Value>,
     items: Vec<Value>,
+    requests: Vec<Value>,
 }
 
 #[tokio::test]
@@ -118,6 +119,7 @@ async fn claude_built_ins_reach_the_agent_as_control_requests_and_user_text() {
             json!({ "subtype": "initialize" }),
             json!({ "subtype": "get_settings" }),
             json!({ "subtype": "set_model", "model": "sonnet" }),
+            json!({ "subtype": "get_settings" }),
             json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": "low" } }),
             json!({ "subtype": "set_permission_mode", "mode": "plan" }),
             json!(OK),
@@ -126,6 +128,94 @@ async fn claude_built_ins_reach_the_agent_as_control_requests_and_user_text() {
             json!("/clear"),
         ]
     );
+    close_chat(&mut socket, server.root.path(), &chat_id).await;
+}
+
+#[tokio::test]
+async fn claude_speed_and_ultracode_reach_the_agent_as_flag_settings() {
+    let config = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = write_fixture(directory.path(), &[]);
+    let env = vec![("CLAUDE_CONFIG_DIR", config.path().into())];
+    let (server, mut socket, chat_id, mut view) = launch_fixture("claude-code", env, &fixture).await;
+    view.follow(&mut socket, &chat_id, |view| view.setting("effort").is_some() && view.capabilities["ultracode"] == true).await;
+    assert_eq!(view.capabilities["speeds"], json!([
+        { "value": "standard", "label": "standard" },
+        { "value": "fast", "label": "fast", "detail": "Costs more; plans use usage credits" },
+    ]));
+
+    for (command, value) in [("speed", "fast"), ("ultracode", "on"), ("effort", "low")] {
+        run(&mut socket, &chat_id, json!({ "command": command, "value": value })).await;
+        view.follow(&mut socket, &chat_id, |view| view.setting(command) == Some(value) && view.last()["pending"] == json!([])).await;
+    }
+    assert_eq!(view.last(), json!({ "model": "opus", "effort": "low", "speed": "fast", "ultracode": "on", "mode": "default", "pending": [] }));
+
+    run(&mut socket, &chat_id, json!({ "command": "model", "value": "sonnet" })).await;
+    view.follow(&mut socket, &chat_id, |view| view.setting("model") == Some("sonnet") && view.last()["pending"] == json!([])).await;
+    assert_eq!(view.capabilities["speeds"], json!([]));
+    assert_eq!(view.setting("speed"), None, "a model without Fast stops asking for it");
+
+    let log = fs::read_to_string(config.path().join("fake-received.jsonl")).unwrap();
+    let requests: Vec<Value> = log.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()["request"].clone()).collect();
+    assert_eq!(
+        requests,
+        [
+            json!({ "subtype": "initialize" }),
+            json!({ "subtype": "get_settings" }),
+            json!({ "subtype": "apply_flag_settings", "settings": { "fastMode": true } }),
+            json!({ "subtype": "apply_flag_settings", "settings": { "ultracode": true } }),
+            json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": "low", "ultracode": true } }),
+            json!({ "subtype": "apply_flag_settings", "settings": { "fastMode": false } }),
+            json!({ "subtype": "set_model", "model": "sonnet" }),
+            json!({ "subtype": "get_settings" }),
+        ]
+    );
+    close_chat(&mut socket, server.root.path(), &chat_id).await;
+}
+
+#[tokio::test]
+async fn a_finished_workflow_wakes_claude_for_a_turn_nobody_sent() {
+    let config = tempfile::tempdir().unwrap();
+    let env = vec![("CLAUDE_CONFIG_DIR", config.path().into())];
+    let (server, mut socket, chat_id, mut view) = launch_fixture("claude-code", env, "workflow").await;
+    view.follow(&mut socket, &chat_id, |view| view.setting("model").is_some()).await;
+
+    control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Run the workflow" })).await;
+    view.follow(&mut socket, &chat_id, |view| !view.requests.is_empty()).await;
+    assert!(view.requests[0]["title"].as_str().unwrap().starts_with("Claude wants to run a workflow: Two agents"));
+    assert!(view.requests[0]["detail"].as_str().unwrap().contains("await parallel(["), "the approval shows the script itself");
+    let answer = json!({ "type": "chat.answer", "chatId": chat_id, "requestId": view.requests[0]["id"], "answer": { "allow": true } });
+    control(&mut socket, answer).await;
+
+    let answered = |view: &View| view.items.last().is_some_and(|item| item["text"].as_str().is_some_and(|text| text.contains("**alpha** and **beta**") && item["streaming"] == false));
+    view.follow(&mut socket, &chat_id, |view| answered(view) && view.statuses.last().is_some_and(|status| status == "done")).await;
+    assert!(view.statuses.ends_with(&[json!("working"), json!("done"), json!("working"), json!("done")]), "{:?}", view.statuses);
+    let workflow = view.items.iter().find(|item| item["kind"] == "subagent").unwrap();
+    assert_eq!(workflow["name"], "alpha-beta-pair");
+    assert_eq!(workflow["task"], "Two agents, no tools: one replies alpha, the other replies beta");
+    assert_eq!(workflow["status"], "done");
+    assert_eq!(workflow["outcome"], "completed");
+    assert_eq!(workflow["totals"]["tokens"], 45313);
+    close_chat(&mut socket, server.root.path(), &chat_id).await;
+}
+
+#[tokio::test]
+async fn a_codex_speed_rides_the_next_turn() {
+    let (server, mut socket, chat_id, mut view) = launch_fixture("codex", Vec::new(), "simple-turn").await;
+    view.follow(&mut socket, &chat_id, |view| view.capabilities["speeds"][1]["value"] == "priority").await;
+    assert_eq!(view.capabilities["speeds"][0], json!({ "value": "default", "label": "standard" }));
+    assert_eq!(view.capabilities["speeds"][1]["label"], "fast");
+    assert_eq!(view.capabilities["ultracode"], false);
+
+    run(&mut socket, &chat_id, json!({ "command": "speed", "value": "priority" })).await;
+    view.follow(&mut socket, &chat_id, |view| view.setting("speed") == Some("priority")).await;
+    assert_eq!(view.last()["pending"], json!(["speed"]));
+    view.turn(&mut socket, &chat_id, json!({ "type": "chat.send", "chatId": chat_id, "text": OK })).await;
+    assert_eq!(view.last()["pending"], json!([]));
+
+    let log = received(&server);
+    let turn = log.iter().find(|message| message["method"] == "turn/start").unwrap();
+    assert_eq!(turn["params"]["serviceTier"], "priority");
     close_chat(&mut socket, server.root.path(), &chat_id).await;
 }
 
@@ -434,6 +524,7 @@ impl View {
             }
             "chat.capabilities" => self.capabilities = message["capabilities"].clone(),
             "chat.status" => self.statuses.push(message["status"].clone()),
+            "chat.request" => self.requests.push(message["request"].clone()),
             "chat.items" => self.items = message["items"].as_array().unwrap().clone(),
             "chat.item" => {
                 let index = message["index"].as_u64().unwrap() as usize;

@@ -35,6 +35,7 @@ const RECONNECTING: Duration = Duration::from_secs(30);
 const REPLAY: Duration = Duration::from_secs(5);
 
 const SOURCES: [&str; 5] = ["cli", "vscode", "exec", "appServer", "unknown"];
+const STANDARD: &str = "default";
 
 pub struct Codex {
     requests: UnboundedSender<Request>,
@@ -265,7 +266,7 @@ pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &Agen
         let listed = models.iter().find(|listed| listed["model"].as_str() == model);
         let effort = settings.effort.as_deref().or(config["config"]["model_reasoning_effort"].as_str())
             .or_else(|| listed.and_then(|model| model["defaultReasoningEffort"].as_str()));
-        let settings = AgentSettings { model: model.map(str::to_owned), effort: effort.map(str::to_owned), mode: settings.mode.clone() };
+        let settings = AgentSettings { model: model.map(str::to_owned), effort: effort.map(str::to_owned), ..settings.clone() };
         Ok((models, settings))
     }.await;
     let _ = proxy.kill().await;
@@ -444,6 +445,7 @@ fn run(
                     }
                     Some(Request::Run(Builtin::Model(model))) => transcript.choose(Setting::Model, model),
                     Some(Request::Run(Builtin::Effort(effort))) => transcript.choose(Setting::Effort, effort),
+                    Some(Request::Run(Builtin::Speed(speed))) => transcript.choose(Setting::Speed, speed),
                     Some(Request::Run(Builtin::Mode(mode))) => transcript.choose(Setting::Mode, mode),
                     Some(Request::Run(_)) => {}
                     Some(Request::Close) | None => {
@@ -549,6 +551,9 @@ fn thread(data_dir: &Path, chat_id: &str, cwd: &Path, settings: &AgentSettings, 
     }
     if let Some(effort) = &settings.effort {
         params["config"]["model_reasoning_effort"] = json!(effort);
+    }
+    if let Some(speed) = &settings.speed {
+        params["serviceTier"] = json!(speed);
     }
     if let Some((approval, sandbox, reviewer)) = settings.mode.as_deref().and_then(codex_policy) {
         params["approvalPolicy"] = json!(approval);
@@ -786,6 +791,17 @@ fn enabled(skills: &Value) -> Vec<Value> {
     skills.filter(|skill| skill["enabled"] != false).cloned().collect()
 }
 
+pub fn speeds(model: &Value) -> Vec<Choice> {
+    let tiers = model["serviceTiers"].as_array().into_iter().flatten().filter_map(|tier| {
+        Some(Choice::speed(tier["id"].as_str()?, tier["name"].as_str()?, tier["description"].as_str()))
+    });
+    let tiers: Vec<Choice> = tiers.collect();
+    if tiers.is_empty() {
+        return tiers;
+    }
+    std::iter::once(Choice::speed(STANDARD, "standard", None)).chain(tiers).collect()
+}
+
 fn current(thread: &Value) -> Settings {
     let policy = |mode: &&str| {
         let (approval, sandbox, reviewer) = codex_policy(mode).unwrap();
@@ -799,7 +815,9 @@ fn current(thread: &Value) -> Settings {
     let chosen = AgentSettings {
         model: thread["model"].as_str().map(str::to_owned),
         effort: thread["reasoningEffort"].as_str().map(str::to_owned),
+        speed: thread["serviceTier"].as_str().filter(|tier| *tier != STANDARD).map(str::to_owned),
         mode: mode.map(str::to_owned),
+        ..AgentSettings::default()
     };
     Settings { chosen, pending: Vec::new() }
 }
@@ -901,6 +919,8 @@ impl Transcript {
             rewinds_files: false,
             models: self.models.iter().filter_map(|model| model["model"].as_str()).map(str::to_owned).collect(),
             efforts: self.efforts(),
+            speeds: self.listed().map(speeds).unwrap_or_default(),
+            ultracode: false,
             modes: Agent::Codex.chat_modes().into_iter().map(Choice::mode).collect(),
             commands: commands.collect(),
         };
@@ -921,6 +941,11 @@ impl Transcript {
                 self.settings.chosen.effort = fallback.map(str::to_owned);
                 self.settings.mark_pending(Setting::Effort);
             }
+            let tiers = self.listed().map(speeds).unwrap_or_default();
+            if self.settings.chosen.speed.as_ref().is_some_and(|speed| !tiers.iter().any(|tier| tier.value == *speed)) {
+                self.settings.chosen.speed = Some(STANDARD.to_owned());
+                self.settings.mark_pending(Setting::Speed);
+            }
             self.declare();
         }
         self.report_settings();
@@ -930,9 +955,12 @@ impl Transcript {
         if self.settings.pending.is_empty() {
             return;
         }
-        let Settings { chosen: AgentSettings { model, effort, mode }, pending } = &self.settings;
+        let Settings { chosen: AgentSettings { model, effort, speed, mode, .. }, pending } = &self.settings;
         turn["model"] = json!(model);
         turn["effort"] = json!(effort);
+        if pending.contains(&Setting::Speed) {
+            turn["serviceTier"] = json!(speed.as_deref().unwrap_or(STANDARD));
+        }
         let collaboration = if mode.as_deref() == Some("plan") { "plan" } else { "default" };
         let settings = json!({ "model": model, "reasoning_effort": effort, "developer_instructions": null });
         turn["collaborationMode"] = json!({ "mode": collaboration, "settings": settings });
@@ -978,7 +1006,7 @@ impl Transcript {
         let _ = self.events.send(Event::Reset);
         let _ = self.events.send(Event::Truncate(0));
         let fresh = current(started);
-        for setting in [Setting::Model, Setting::Effort, Setting::Mode] {
+        for setting in [Setting::Model, Setting::Effort, Setting::Speed, Setting::Mode] {
             match self.settings.get(setting) {
                 None => *self.settings.get_mut(setting) = fresh.get(setting).clone(),
                 chosen if chosen != fresh.get(setting) => self.settings.mark_pending(setting),
@@ -1846,6 +1874,40 @@ mod tests {
             });
             assert_eq!(current(&response).chosen.mode.as_deref(), Some(expected));
         }
+    }
+
+    #[test]
+    fn speeds_come_from_the_model_with_standard_first() {
+        assert_eq!(speeds(&json!({ "serviceTiers": [] })), []);
+        let tiers = json!({ "serviceTiers": [{ "id": "priority", "name": "Fast", "description": "2x speed" }, { "id": "ultrafast", "name": "Ultrafast", "description": "8x speed" }] });
+        assert_eq!(speeds(&tiers), [
+            Choice { value: "default".to_owned(), label: "standard".to_owned(), detail: None },
+            Choice { value: "priority".to_owned(), label: "fast".to_owned(), detail: Some("2x speed".to_owned()) },
+            Choice { value: "ultrafast".to_owned(), label: "ultrafast".to_owned(), detail: Some("8x speed".to_owned()) },
+        ]);
+    }
+
+    #[test]
+    fn the_speed_codex_reports_replaces_the_one_asked_for() {
+        for (reported, expected) in [(json!("priority"), Some("priority")), (json!("default"), None), (Value::Null, None)] {
+            assert_eq!(current(&json!({ "serviceTier": reported })).chosen.speed.as_deref(), expected);
+        }
+    }
+
+    #[test]
+    fn a_model_without_the_chosen_speed_returns_to_standard_on_the_next_turn() {
+        let (events, _received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new("thread", Path::new("/project"), events);
+        let tiers = json!([{ "id": "priority", "name": "Fast", "description": "2x speed" }]);
+        transcript.models = vec![json!({ "model": "tiered", "serviceTiers": tiers }), json!({ "model": "plain" })];
+        transcript.settings.chosen.model = Some("tiered".to_owned());
+        transcript.choose(Setting::Speed, "priority".to_owned());
+        transcript.settings.pending.clear();
+
+        transcript.choose(Setting::Model, "plain".to_owned());
+        let mut turn = json!({});
+        transcript.overrides(&mut turn);
+        assert_eq!(turn["serviceTier"], "default");
     }
 
     #[test]

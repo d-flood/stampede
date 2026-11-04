@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { agentNames, templates, type Agent } from '#lib/config.svelte.ts';
-	import type { Builtin, Capabilities, Choice, Setting, Settings } from '#lib/device.svelte.ts';
+	import { chosen, type Builtin, type Capabilities, type Choice, type Setting, type Settings } from '#lib/device.svelte.ts';
 
 	type Props = {
 		text: string;
@@ -31,7 +31,7 @@
 		replaceText(next);
 	}
 
-	const builtins = ['effort', 'model', 'mode', 'compact', 'clear', 'rewind'];
+	const builtins = ['effort', 'model', 'speed', 'ultracode', 'mode', 'compact', 'clear', 'rewind'];
 
 	function run(command: Builtin, value?: string | number) {
 		onrun(command, value);
@@ -44,14 +44,14 @@
 	}
 
 	const groups = $derived.by((): { heading: string; rows: Row[] }[] => {
-		const picking = query.match(/^\/(model|effort|mode) (\S*)$/);
+		const picking = query.match(/^\/(model|effort|speed|ultracode|mode) (\S*)$/);
 		if (picking) {
 			const setting = picking[1] as Setting;
-			const current = settings[setting];
+			const current = chosen(setting, settings, choices);
 			const matching = choices[setting].filter((choice) => choice.label.startsWith(picking[2]));
 			const rows = matching.map((choice) => ({
 				label: choice.label,
-				detail: choice.value !== current ? '' : settings.pending?.includes(setting) ? 'next turn' : 'current',
+				detail: choice.value !== current ? (choice.detail ?? '') : settings.pending?.includes(setting) ? 'next turn' : 'current',
 				choose: () => run(setting, choice.value)
 			}));
 			return [{ heading: `/${setting}`, rows }];
@@ -62,6 +62,12 @@
 		const stampede: Row[] = [
 			{ label: '/effort', choices: choices.effort, current: settings.effort, choose: () => replace('/effort ') },
 			{ label: '/model', detail: model?.label ?? settings.model ?? '', choose: () => replace('/model ') },
+			...(['speed', 'ultracode'] as const).filter((setting) => choices[setting].length).map((setting) => ({
+				label: `/${setting}`,
+				choices: choices[setting],
+				current: chosen(setting, settings, choices),
+				choose: () => replace(`/${setting} `)
+			})),
 			{ label: '/mode', choices: choices.mode, current: settings.mode, choose: () => replace('/mode ') },
 			now('compact', 'free up context'),
 			now('clear', 'new session'),

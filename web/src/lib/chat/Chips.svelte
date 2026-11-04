@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { logos } from '#lib/chat/sessions.ts';
 	import { agentNames, type Agent } from '#lib/config.svelte.ts';
-	import type { Choice, Setting, Settings } from '#lib/device.svelte.ts';
+	import { chosen, type Choice, type Setting, type Settings } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Menu from '#lib/ui/Menu.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
@@ -18,10 +18,11 @@
 
 	let { agent, settings, choices, docked = false, children, onrun }: Props = $props();
 
-	const names: Record<Setting, string> = { model: 'Model', effort: 'Effort', mode: 'Mode' };
+	const names: Record<Setting, string> = { model: 'Model', effort: 'Effort', speed: 'Speed', ultracode: 'Ultracode', mode: 'Mode' };
 	const phone = $derived(form() === 'phone');
 	const Logo = $derived(logos[agent]);
-	const shown = $derived((['model', 'effort', 'mode'] as const).filter((setting) => settings[setting]));
+	const optional = (setting: Setting) => setting === 'speed' || setting === 'ultracode';
+	const shown = $derived((['model', 'effort', 'speed', 'ultracode', 'mode'] as const).filter((setting) => (optional(setting) ? choices[setting].length : settings[setting])));
 </script>
 
 <div class="chips" class:phone class:docked>
@@ -35,13 +36,15 @@
 		<span class="agent"><Logo /> {agentNames[agent]}</span>
 	{/if}
 	{#each shown as setting, index (setting)}
-		{@const value = settings[setting]}
+		{@const value = chosen(setting, settings, choices)}
 		{@const pending = !!settings.pending?.includes(setting)}
+		{@const quiet = optional(setting) && value === choices[setting][0].value}
 		{@const label = choices[setting].find((choice) => choice.value === value)?.label ?? value}
-		{#if index}<span class="dot" aria-hidden="true">·</span>{/if}
+		{#if index}<span class="dot" class:quiet aria-hidden="true">·</span>{/if}
 		<Menu
 			items={choices[setting].map((choice) => ({
 				label: choice.label,
+				hint: choice.detail,
 				checked: choice.value === value,
 				onselect: () => onrun(setting, choice.value)
 			}))}
@@ -51,10 +54,11 @@
 					{...props}
 					class="chip"
 					class:pending
+					class:quiet
 					aria-label="{names[setting]}: {label}{pending ? ', next turn' : ''}"
 					title={pending ? 'Takes effect on the next turn' : undefined}
 				>
-					{label}{setting === 'mode' && !phone ? ' mode' : ''}
+					{setting === 'ultracode' ? 'ultracode ' : ''}{label}{setting === 'mode' && !phone ? ' mode' : ''}
 				</button>
 			{/snippet}
 		</Menu>
@@ -122,11 +126,22 @@
 		font-size: var(--font-size-sm);
 	}
 
+	.phone .quiet {
+		display: none;
+	}
+
 	.docked {
 		flex: 1;
 		min-width: 0;
 		padding: 0 0 0 var(--space-2);
 		border: none;
+		container-type: inline-size;
+	}
+
+	@container (max-width: 30rem) {
+		.quiet {
+			display: none;
+		}
 	}
 
 	.docked .agent {

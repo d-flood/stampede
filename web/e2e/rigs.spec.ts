@@ -134,11 +134,15 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 	await name.fill('  Reviewer  ');
 	await model.selectOption('opus');
 	await effort.selectOption('high');
+	await dialog.getByRole('combobox', { name: 'Speed', exact: true }).selectOption('fast');
+	await dialog.getByRole('combobox', { name: 'Ultracode', exact: true }).selectOption('on');
 	await mode.selectOption('plan');
 	await dialog.getByRole('button', { name: 'Save rig', exact: true }).click();
 	await expect(dialog.getByRole('status')).toHaveText('Rig saved.');
 	const created = await rig.inputValue();
 	expect(created).toBe('Reviewer');
+	const reviewer = (await (await page.request.get('/api/rigs')).json()).find((rig: { name: string }) => rig.name === created);
+	expect(reviewer).toMatchObject({ speed: 'fast', ultracode: 'on' });
 	await expect(name).toHaveValue(created);
 	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
 	await page.getByRole('button', { name: 'New Tab' }).click();
@@ -191,8 +195,12 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 	await expect(mode.locator('option[value="read-only"]')).toHaveCount(0);
 	await model.selectOption('opus');
 	await effort.selectOption('high');
+	const speed = dialog.getByRole('combobox', { name: 'Speed', exact: true });
+	await speed.selectOption('fast');
+	await expect(speed.locator('option[value="fast"]')).toHaveText('fast (Costs more; plans use usage credits)');
 	await model.selectOption('haiku');
 	await expect(effort).toHaveValue('');
+	await expect(speed).toHaveCount(0);
 	await expect.poll(() => dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 

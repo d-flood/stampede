@@ -294,6 +294,79 @@ for (const { agent, rig, command, before, after } of slashed) {
 	});
 }
 
+test('speed and Ultracode change from the slash menu, and phones show them only once chosen', async ({ page }, { project }) => {
+	const name = `speed-${project.name}`;
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	const menu = panel.getByRole('region', { name: 'Commands' });
+	await expect(panel.getByRole('button', { name: 'Effort: xhigh', exact: true })).toBeVisible();
+	const phone = project.name === 'pixel';
+	await expect(panel.getByRole('button', { name: 'Speed: standard', exact: true })).toHaveCount(phone ? 0 : 1);
+	await expect(panel.getByRole('button', { name: 'Ultracode: off', exact: true })).toHaveCount(phone ? 0 : 1);
+	if (!phone) {
+		const size = page.viewportSize()!;
+		await page.setViewportSize({ width: 900, height: size.height });
+		await expect(panel.getByRole('button', { name: 'Speed: standard', exact: true })).toHaveCount(0);
+		await expect(panel.getByRole('button', { name: 'Ultracode: off', exact: true })).toHaveCount(0);
+		await expect(panel.getByRole('button', { name: 'Model: opus', exact: true })).toHaveText('opus');
+		await expect.poll(() => panel.getByRole('button', { name: 'Model: opus', exact: true }).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+		await page.setViewportSize(size);
+	}
+
+	await composer.fill('/speed ');
+	await menu.getByRole('button', { name: /^fast/ }).click();
+	await expect(panel.getByRole('button', { name: 'Speed: fast', exact: true })).toBeVisible();
+	await composer.fill('/ultracode ');
+	await menu.getByRole('button', { name: /^on/ }).click();
+	const ultracode = panel.getByRole('button', { name: 'Ultracode: on', exact: true });
+	await expect(ultracode).toHaveText('ultracode on');
+	await expect.poll(() => panel.locator('.chips').first().evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+
+	await panel.getByRole('button', { name: 'Speed: fast', exact: true }).click();
+	await expect(page.getByRole('menuitemcheckbox', { name: 'standard' })).toHaveAttribute('aria-checked', 'false');
+	await expect(page.getByRole('menuitemcheckbox', { name: 'fast' })).toContainText('Costs more; plans use usage credits');
+	await page.getByRole('menuitemcheckbox', { name: 'standard' }).click();
+	await expect(panel.getByRole('button', { name: 'Speed: standard', exact: true })).toHaveCount(phone ? 0 : 1);
+});
+
+test('/speed takes the name Codex shows for a tier and applies on the next turn', { tag: '@desktop' }, async ({ page }, { project }) => {
+	const name = `speed-codex-${project.name}`;
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Codex', exact: true }).click();
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await expect(panel.getByRole('button', { name: 'Speed: standard', exact: true })).toBeVisible();
+	await expect(panel.getByRole('button', { name: /^Ultracode/ })).toHaveCount(0);
+	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	await composer.fill('/speed fast');
+	await composer.press('Enter');
+	await expect(panel.getByRole('button', { name: 'Speed: fast, next turn', exact: true })).toBeVisible();
+	await expect(composer).toHaveValue('');
+});
+
+test('an Ultracode Workflow asks with its script, runs as a subagent, and wakes Claude when it finishes', async ({ page }, { project }) => {
+	const name = `workflow-${project.name}`;
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude Workflow', exact: true }).click();
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await panel.getByRole('textbox', { name: 'Composer' }).fill('Run the workflow');
+	await panel.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect(panel.getByText('Claude wants to run a workflow: Two agents')).toBeVisible();
+	await expect(panel.getByText('await parallel([').first()).toBeVisible();
+	await panel.getByRole('button', { name: 'Allow', exact: true }).click();
+	await expect(panel.getByText('The two words are')).toBeVisible();
+	await panel.getByRole('region', { name: 'Subagents' }).getByRole('button', { name: '1 finished' }).click();
+	await expect(page.getByText('Two agents, no tools: one replies alpha, the other replies beta').first()).toBeVisible();
+	await expect(page.getByText('alpha-beta-pair').first()).toBeVisible();
+});
+
 test('/create-epic sends two turns while showing one user command', async ({ page }, { project }) => {
 	const root = process.env.STAMPEDE_E2E_ROOT;
 	const name = `template-${project.name}`;

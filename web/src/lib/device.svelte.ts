@@ -49,7 +49,7 @@ export type Item =
 	| { kind: 'canvas'; canvas: string; added: number; removed: number; write?: true }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string; elided?: true }
 	| { kind: 'shell'; command: string; status: 'running' | 'ok' | 'failed'; output: string; pending?: true; elided?: true }
-	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound' | 'tickets'; text: string };
+	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound' | 'tickets' | 'speed'; text: string };
 
 export type Request = (
 	| { kind: 'command'; id: string; words: string[][]; suggestion: string[][]; sessionPrefixes: boolean; allowRules?: boolean }
@@ -73,16 +73,22 @@ export type Context = { used: number; window: number; cache?: Cache };
 
 export type Tokens = { input: number; output: number };
 
-export type Setting = 'model' | 'effort' | 'mode';
+export type Setting = 'model' | 'effort' | 'speed' | 'ultracode' | 'mode';
 
 export type Settings = Partial<Record<Setting, string>> & { pending?: Setting[] };
 
-export type Choice = { value: string; label: string };
+export type Choice = { value: string; label: string; detail?: string };
+
+export function chosen(setting: Setting, settings: Settings, choices: Record<Setting, Choice[]>) {
+	return settings[setting] ?? (setting === 'speed' || setting === 'ultracode' ? choices[setting][0]?.value : undefined);
+}
 
 export type Capabilities = {
 	rewindsFiles: boolean;
 	models: string[];
 	efforts: string[];
+	speeds: Choice[];
+	ultracode: boolean;
 	modes: Choice[];
 	commands: { name: string; description: string; hint: string }[];
 };
