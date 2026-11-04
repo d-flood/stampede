@@ -58,8 +58,26 @@
 	}
 
 	.text :global(:is(h1, h2, h3, h4, h5, h6)) {
-		margin: var(--space-4) 0 var(--space-2);
+		margin: var(--space-6) 0 var(--space-2);
 		font-size: 1em;
+		font-weight: 600;
+		line-height: 1.25;
+	}
+
+	.text :global(h1) {
+		font-size: 1.5em;
+	}
+
+	.text :global(h2) {
+		font-size: 1.3em;
+	}
+
+	.text :global(h3) {
+		font-size: 1.12em;
+	}
+
+	.text :global(:is(h5, h6)) {
+		color: var(--muted-fg);
 	}
 
 	.text :global(:is(ul, ol)) {
@@ -152,13 +170,30 @@
 
 	.text :global(table) {
 		display: block;
+		width: fit-content;
+		max-width: 100%;
 		overflow-x: auto;
+		overflow-wrap: normal;
 		border-collapse: collapse;
+		border-radius: var(--radius-lg);
+		background: var(--surface-1);
+		box-shadow: var(--shadow-lift);
 	}
 
 	.text :global(:is(th, td)) {
-		padding: var(--space-1) var(--space-2);
-		border: var(--border-width) solid var(--border);
+		padding: var(--space-2) var(--space-3);
+		border-bottom: var(--border-width) solid var(--border);
+		vertical-align: top;
+	}
+
+	.text :global(th) {
+		background: var(--surface-2);
+		font-weight: 600;
+		text-align: start;
+	}
+
+	.text :global(tbody tr:last-child td) {
+		border-bottom: none;
 	}
 
 	.text :global(a) {

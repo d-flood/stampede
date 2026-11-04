@@ -27,6 +27,31 @@ rules.code_inline = (tokens, index, options, env, self) => {
 	return env.copy && tokens[index].content.length >= 20 ? `<span class="code-inline">${html}${copy}</span>` : html;
 };
 
+// CSS can't size a column by its text length, and without a floor long text shrinks to its longest word.
+markdown.core.ruler.push('column_widths', ({ tokens }) => {
+	const longest: number[] = [];
+	let table = 0;
+	let column = 0;
+	tokens.forEach((token, index) => {
+		if (token.type === 'table_open') {
+			table = index;
+			longest.length = 0;
+		}
+		if (token.type === 'tr_open') column = 0;
+		if (token.type === 'th_open' || token.type === 'td_open') {
+			const length = tokens[index + 1].children!.reduce((sum, child) => sum + child.content.length, 0);
+			longest[column] = Math.max(longest[column] ?? 0, length);
+			column++;
+		}
+		if (token.type === 'table_close') {
+			tokens.slice(table, index).filter(({ type }) => type === 'th_open').forEach((header, position) => {
+				const width = Math.round(Math.min(longest[position] / 5, 24));
+				header.attrSet('style', `${header.attrGet('style') ?? ''};min-width:${width}ch`);
+			});
+		}
+	});
+});
+
 function cached(render: (text: string) => string) {
 	const rendered = new Map<string, string>();
 	let bytes = 0;

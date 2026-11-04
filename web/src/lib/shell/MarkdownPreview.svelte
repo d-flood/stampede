@@ -67,13 +67,30 @@
 
 	article :global(table) {
 		display: block;
+		width: fit-content;
+		max-width: 100%;
 		overflow-x: auto;
+		overflow-wrap: normal;
 		border-collapse: collapse;
+		border-radius: var(--radius-lg);
+		background: var(--surface-1);
+		box-shadow: var(--shadow-lift);
 	}
 
 	article :global(:is(th, td)) {
-		padding: var(--space-1) var(--space-2);
-		border: var(--border-width) solid var(--border);
+		padding: var(--space-2) var(--space-3);
+		border-bottom: var(--border-width) solid var(--border);
+		vertical-align: top;
+	}
+
+	article :global(th) {
+		background: var(--surface-2);
+		font-weight: 600;
+		text-align: start;
+	}
+
+	article :global(tbody tr:last-child td) {
+		border-bottom: none;
 	}
 
 	article :global(a) {
