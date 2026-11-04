@@ -16,6 +16,8 @@ export type TabRef =
 	| { kind: 'config' }
 	| { kind: 'diff'; path: string; against: Exclude<Against, 'disk'>; from?: string };
 
+export type MarkdownMode = 'source' | 'live' | 'preview';
+
 type Half = { tabs: TabRef[]; active: TabRef | null };
 
 export type SplitState = { left: Half; right: Half; ratio: number };
@@ -26,6 +28,7 @@ export type Layout = {
 	sidebar: { open: boolean; section: Section };
 	rail?: { open: boolean };
 	diffModes: Record<string, DiffMode>;
+	markdownMode: MarkdownMode;
 };
 
 export type Workspace = {
@@ -40,6 +43,7 @@ export type Workspace = {
 	splits: Record<string, Split>;
 	sidebar: Layout['sidebar'];
 	rail?: Layout['rail'];
+	markdownMode: MarkdownMode;
 };
 
 let saved: Layout | null = null;
@@ -143,7 +147,7 @@ export function capture(workspace: Workspace): Layout {
 		};
 		for (const file of files) if (file instanceof OpenDiff) diffModes[file.id] = file.layout;
 	}
-	return { focusedProject: workspace.chosen ?? null, projects, sidebar: workspace.sidebar, rail: workspace.rail, diffModes };
+	return { focusedProject: workspace.chosen ?? null, projects, sidebar: workspace.sidebar, rail: workspace.rail, diffModes, markdownMode: workspace.markdownMode };
 }
 
 export function restore() {
@@ -179,5 +183,5 @@ export function restore() {
 			splits[projectId] = { left: half(left), right: half(right), ratio };
 		}
 	}
-	return { chosen: saved?.focusedProject ?? undefined, files, browsers, canvases, epics, chosenTabs, splits, sidebar: saved?.sidebar, rail: saved?.rail };
+	return { chosen: saved?.focusedProject ?? undefined, files, browsers, canvases, epics, chosenTabs, splits, sidebar: saved?.sidebar, rail: saved?.rail, markdownMode: saved?.markdownMode ?? 'live' };
 }

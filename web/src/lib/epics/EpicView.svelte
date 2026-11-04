@@ -269,8 +269,8 @@
 {/snippet}
 
 {#snippet markdown(label: string, autofocus = true)}
-	{#await import('#lib/epics/Markdown.svelte') then { default: Markdown }}
-		<Markdown bind:text={draft} {label} {autofocus} onsave={saveDraft} />
+	{#await import('#lib/editor/MarkdownEditor.svelte') then { default: MarkdownEditor }}
+		<MarkdownEditor bind:text={draft} {label} {autofocus} onsave={saveDraft} />
 	{/await}
 {/snippet}
 
