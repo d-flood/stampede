@@ -20,6 +20,15 @@ class Check(unittest.TestCase):
         if (ROOT / "scripts").exists():
             shutil.copytree(ROOT / "scripts", self.root / "scripts")
         (self.root / "bin").mkdir()
+        (self.root / "tests").mkdir()
+        (self.root / "tests/runner_test.py").write_text('''from pathlib import Path
+import unittest
+
+class RunnerFixture(unittest.TestCase):
+    def test_runs(self):
+        Path("runner-executed").touch()
+        self.assertFalse(Path("fail-runner").exists())
+''')
         (self.root / "web/src").mkdir(parents=True)
         (self.root / "crates/stampede").mkdir(parents=True)
         for name in ["web/package.json", "web/pnpm-lock.yaml", "web/src/app.svelte", "crates/stampede/Cargo.toml"]:
@@ -36,6 +45,10 @@ import time
 root = Path(os.environ["CHECK_TEST_ROOT"])
 with (root / "calls").open("a") as log:
     log.write(Path(sys.argv[0]).name + " " + " ".join(sys.argv[1:]) + "\\n")
+if "playwright" in sys.argv:
+    import json
+    with (root / "browser-runs.jsonl").open("a") as log:
+        log.write(json.dumps(dict(suite=os.environ.get("STAMPEDE_CHECK_PERF"), root=os.environ.get("STAMPEDE_E2E_ROOT"))) + "\\n")
 if Path(sys.argv[0]).name == "cargo":
     import json
     target = Path(os.environ.get("CARGO_TARGET_DIR", Path.cwd() / "target"))
@@ -43,7 +56,7 @@ if Path(sys.argv[0]).name == "cargo":
     artifact = target / "fixture-artifact"
     scratch_repository = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=os.environ["TMPDIR"], capture_output=True).returncode == 0
     with (root / "builds.jsonl").open("a") as log:
-        log.write(json.dumps(dict(target=str(target), reused=artifact.exists(), temporary=os.environ.get("TMPDIR", "/tmp"), node_cache=os.environ.get("NODE_COMPILE_CACHE"), binary=os.environ.get("STAMPEDE_E2E_BINARY"), scratch_repository=scratch_repository)) + "\\n")
+        log.write(json.dumps(dict(target=str(target), source=os.environ.get("STAMPEDE_BUILD_ROOT"), reused=artifact.exists(), temporary=os.environ.get("TMPDIR", "/tmp"), node_cache=os.environ.get("NODE_COMPILE_CACHE"), binary=os.environ.get("STAMPEDE_E2E_BINARY"), scratch_repository=scratch_repository)) + "\\n")
     artifact.touch()
     scratch = Path(os.environ["TMPDIR"])
     (scratch / "compiler-temporary").write_text("temporary build output")
@@ -55,6 +68,9 @@ if Path(sys.argv[0]).name == "cargo":
     (root / "started").touch()
     while (root / "hold").exists():
         time.sleep(0.02)
+    if "test" in sys.argv and "--no-run" not in sys.argv:
+        passed = 0 if "--ignored" in sys.argv and (root / "empty-perf").exists() else 1
+        print(f"test result: ok. {passed} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s")
 if "install" in sys.argv:
     (root / "web/node_modules").mkdir(exist_ok=True)
 if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
@@ -78,6 +94,91 @@ if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
 
     def calls(self, command):
         return [line for line in self.log.read_text().splitlines() if command in line]
+
+    def test_default_checks_keep_performance_work_explicit(self):
+        result = self.run_check()
+        self.assertTrue(self.calls("pnpm -C web check"))
+        self.assertTrue(self.calls("cargo test --workspace --no-run"))
+        self.assertFalse(self.calls("cargo build"))
+        self.assertFalse(self.calls("--ignored"))
+        self.assertFalse(self.calls("--release"))
+        browser = json.loads((self.root / "browser-runs.jsonl").read_text())
+        self.assertEqual(browser["suite"], "0")
+        self.assertTrue(browser["root"])
+        self.assertIn("Rust test compilation passed in", result.stdout)
+        self.assertIn("Browser tests passed in", result.stdout)
+
+    def test_performance_checks_run_stress_and_browser_budgets(self):
+        self.run_check("perf")
+        self.assertTrue(self.calls("memory:: -- --ignored --test-threads=1"))
+        self.assertFalse(self.calls("pnpm -C web check"))
+        browser = json.loads((self.root / "browser-runs.jsonl").read_text())
+        self.assertEqual(browser["suite"], "1")
+
+    def test_empty_performance_suite_is_a_failure(self):
+        (self.root / "empty-perf").touch()
+        result = self.run_check("perf", success=False)
+        self.assertIn("ran no tests", result.stderr)
+        self.assertFalse(self.calls("playwright"))
+
+    def test_all_checks_include_functional_and_performance_suites(self):
+        self.run_check("all")
+        browsers = [json.loads(line) for line in (self.root / "browser-runs.jsonl").read_text().splitlines()]
+        self.assertEqual([browser["suite"] for browser in browsers], ["0", "1"])
+        self.assertTrue(self.calls("--ignored"))
+
+    def test_component_checks_need_neither_rust_nor_a_production_frontend(self):
+        self.run_check("components", "text.test.ts")
+        self.assertFalse(self.calls("cargo"))
+        self.assertFalse(self.calls("pnpm -C web build"))
+        self.assertTrue(self.calls("vitest run text.test.ts"))
+        self.assertFalse(self.calls("playwright"))
+
+    def test_runner_checks_need_neither_rust_nor_frontend_dependencies(self):
+        self.run_check("runner")
+        self.assertFalse(self.log.exists())
+        self.assertTrue((self.root / "runner-executed").exists())
+
+    def test_failed_runner_check_preserves_failure(self):
+        (self.root / "fail-runner").touch()
+        result = self.run_check("runner", success=False)
+        self.assertEqual(result.returncode, 1)
+
+    def test_failed_rust_build_does_not_start_browser_tests(self):
+        (self.root / "fail-cargo").touch()
+        result = self.run_check("e2e", success=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(self.calls("playwright"))
+
+    def test_pruning_is_explicit_and_does_not_build(self):
+        artifact = self.root / "target/debug/deps/libold-aaaaaaaaaaaaaaaa.rlib"
+        artifact.parent.mkdir(parents=True)
+        artifact.touch()
+        os.utime(artifact, (1, 1))
+        (self.root / "target/debug/.fingerprint").mkdir()
+        self.run_check("prune")
+        self.assertFalse(artifact.exists())
+        self.assertFalse(self.log.exists())
+
+    def test_development_serve_reuses_frontend_and_builds_debug(self):
+        shutil.copy(ROOT / "serve", self.root / "serve")
+        binary = self.root / "target/debug/stampede"
+        binary.parent.mkdir(parents=True)
+        binary.write_text('''#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+Path(os.environ["CHECK_TEST_ROOT"]).joinpath("served.json").write_text(json.dumps(sys.argv[1:]))
+''')
+        binary.chmod(0o755)
+        for _ in range(2):
+            result = subprocess.run([str(self.root / "serve"), "--dev", "--port", "5678"], env=self.env, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads((self.root / "served.json").read_text()), ["serve", "--port", "5678"])
+        self.assertEqual(len(self.calls("pnpm -C web build")), 1)
+        self.assertEqual(len(self.calls("cargo build")), 2)
+        self.assertFalse(self.calls("--release"))
 
     def test_unchanged_e2e_reuses_frontend_and_development_binary(self):
         self.run_check("e2e", "--list")
@@ -172,6 +273,7 @@ if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
         builds = [json.loads(line) for line in (self.root / "builds.jsonl").read_text().splitlines()]
         self.assertEqual([build["reused"] for build in builds], [False, True])
         self.assertEqual(builds[0]["target"], builds[1]["target"])
+        self.assertEqual([build["source"] for build in builds], [str(self.root), str(other)])
         self.assertEqual(builds[1]["binary"], str(Path(builds[1]["target"]) / "debug/stampede"))
         self.assertFalse((other / "target/fixture-artifact").exists())
         self.assertFalse(any(build["scratch_repository"] for build in builds))

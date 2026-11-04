@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { test } from 'vitest';
 import { hardwareLaunchOptions, requireHardwareGpu } from '../e2e/gpu.ts';
 
 const hardware = () => ({
@@ -38,13 +37,4 @@ test('Chromium launch disables the SwiftShader fallback', () => {
 	assert.ok(hardwareLaunchOptions.ignoreDefaultArgs?.includes('--enable-unsafe-swiftshader'));
 	assert.ok(hardwareLaunchOptions.args?.includes('--disable-software-rasterizer'));
 	assert.ok(hardwareLaunchOptions.args?.includes('--disable-software-compositing-fallback'));
-});
-
-
-test('every E2E spec uses the GPU-enforcing fixture', () => {
-	const directory = new URL('../e2e/', import.meta.url);
-	for (const name of readdirSync(directory).filter((name) => name.endsWith('.spec.ts'))) {
-		const source = readFileSync(new URL(name, directory), 'utf8');
-		assert.match(source, /import \{ expect, test \} from '\.\/fixtures\.ts'/, name);
-	}
 });

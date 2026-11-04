@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
+export STAMPEDE_BUILD_ROOT="$PWD"
+
+if [[ ${1:-} == --dev ]]; then
+    shift
+    exec python3 scripts/serve_dev.py "$@"
+fi
 
 pnpm -C web install --frozen-lockfile
 pnpm -C web build

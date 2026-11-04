@@ -29,14 +29,13 @@ def target_directory(root):
 def build_environment(target, prefix):
     temporary = target / "tmp"
     temporary.mkdir(parents=True, exist_ok=True)
-    prune_temporary(target)
-    prune_build(target)
     with tempfile.TemporaryDirectory(prefix=prefix, dir=temporary) as scratch:
         with (Path(scratch) / ".lease").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_SH)
             ceilings = os.pathsep.join(filter(None, [os.environ.get("GIT_CEILING_DIRECTORIES"), str(temporary)]))
             yield os.environ | {
                 "CARGO_TARGET_DIR": str(target),
+                "STAMPEDE_BUILD_ROOT": str(Path(__file__).resolve().parents[1]),
                 "TMPDIR": scratch,
                 "TMP": scratch,
                 "TEMP": scratch,
@@ -121,3 +120,9 @@ def remove(path):
         shutil.rmtree(path) if path.is_dir() else path.unlink()
     except FileNotFoundError:
         pass
+
+
+if __name__ == "__main__":
+    target = target_directory(Path(__file__).resolve().parents[1])
+    prune_temporary(target)
+    prune_build(target)

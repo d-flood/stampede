@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import json
 import os
@@ -22,15 +23,17 @@ def fingerprint(paths):
     return digest.hexdigest()
 
 
-def prepare():
+def prepare(dependencies_only=False):
     CACHE.mkdir(parents=True, exist_ok=True)
     dependencies = fingerprint([WEB / name for name in ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc"]])
     installed = WEB / "node_modules/.check-inputs"
     if not installed.exists() or installed.read_text() != dependencies:
         subprocess.run(["pnpm", "-C", "web", "install", "--frozen-lockfile"], cwd=ROOT, check=True)
         installed.write_text(dependencies)
+    if dependencies_only:
+        return
     inputs = fingerprint([
-        *(path for path in WEB.iterdir() if path.name != "playwright.config.ts"),
+        *(path for path in WEB.iterdir() if path.name not in {"playwright.config.ts", "vitest.config.ts"}),
         *(WEB / "src").rglob("*"),
         *(WEB / "static").rglob("*"),
         ROOT / "crates/stampede/Cargo.toml",
@@ -59,4 +62,6 @@ def prepare():
 
 
 if __name__ == "__main__":
-    prepare()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dependencies-only", action="store_true")
+    prepare(**vars(parser.parse_args()))

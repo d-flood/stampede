@@ -130,6 +130,7 @@ fn holder(root: &Path, terminal_id: &str) -> u32 {
 }
 
 #[tokio::test]
+#[ignore = "performance"]
 async fn a_fresh_server_uses_less_than_64_mib() {
     let server = Server::with_config("idle-memory", "rig = []\nroots = []\n").await;
     let client = reqwest::Client::new();
@@ -142,6 +143,7 @@ async fn a_fresh_server_uses_less_than_64_mib() {
 }
 
 #[tokio::test]
+#[ignore = "performance"]
 async fn a_device_that_stops_reading_is_cut_off() {
     let block = "x".repeat(256 << 10);
     let fixture = turn((0..160).flat_map(|_| [
@@ -202,6 +204,7 @@ async fn streamed_text_reaches_a_device_as_appends() {
 }
 
 #[tokio::test]
+#[ignore = "performance"]
 async fn a_terminal_flood_stays_bounded_while_a_device_stops_reading() {
     let server = Server::start("resync").await;
     let mut view = View::open(server.port, "slow", None).await;
@@ -224,6 +227,7 @@ async fn a_terminal_flood_stays_bounded_while_a_device_stops_reading() {
 }
 
 #[tokio::test]
+#[ignore = "performance"]
 async fn replaying_a_long_session_leaves_the_server_near_its_idle_size() {
     let mut server = launch("tools").await;
     let mut socket = device(server.port, "device").await;
@@ -269,6 +273,7 @@ async fn a_long_command_output_reaches_a_device_once_it_expands_the_command() {
 }
 
 #[tokio::test]
+#[ignore = "performance"]
 async fn watching_a_project_of_many_directories_stays_small() {
     let server = Server::with_config("tree-memory", "rig = []\nroots = []\n").await;
     let tree = server.root.path().join("home/tree");

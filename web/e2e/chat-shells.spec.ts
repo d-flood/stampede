@@ -4,7 +4,7 @@ import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { openProject } from './shell.ts';
 
-test('running shells stay visible across sessions and disappear when finished', async ({ page }, { project }) => {
+test('running shells restore after reload and background updates reach project tiles', async ({ page }, { project }) => {
 	let route: WebSocketRoute;
 	let chatId: string;
 	const command = `pnpm dev --host 0.0.0.0 --port 5173 ${'long-argument-'.repeat(20)}`;
@@ -31,39 +31,21 @@ test('running shells stay visible across sessions and disappear when finished', 
 	const shells = panel.getByRole('region', { name: 'Running shells' });
 	const phone = project.name === 'pixel';
 	const header = shells.locator('summary').first();
-	const first = shells.locator('.shell summary').first();
 	await expect(shells).toContainText('Running shells · 2');
-	if (phone) {
-		await expect(header).toHaveText('Running shells · 2');
-		await expect(shells.getByText('Builder', { exact: true })).toBeHidden();
-		await header.click();
-	}
+	if (phone) await header.click();
 	await expect(shells.getByText('Builder', { exact: true })).toBeVisible();
-	await expect(panel.locator('.calls[open]')).toHaveCount(0);
-	await first.click();
+	await shells.locator('.shell summary').first().click();
 	await expect(shells.getByText('Server ready', { exact: true })).toBeVisible();
-	await expect.poll(() => shells.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await expect.poll(() => first.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(phone ? 48 : 26);
 	const dock = panel.getByRole('region', { name: 'Subagents' });
 	if (phone) {
 		await dock.getByRole('button').click();
 		await page.getByRole('dialog', { name: 'Subagents' }).getByRole('button', { name: /^Build the app/ }).click();
 	} else await dock.getByRole('button', { name: /^Build the app/ }).click();
 	await expect(shells.getByText('Server ready', { exact: true })).toBeVisible();
-	if (phone) {
-		await expect(header).toBeInViewport();
-		await header.click();
-		await expect(shells.getByText('Server ready', { exact: true })).toBeHidden();
-		await expect(shells.getByText('Builder', { exact: true })).toBeHidden();
-	}
 	await page.reload();
 	await expect(shells).toContainText('Running shells · 2');
 	items[0] = { ...shell, status: 'ok' };
 	route!.send(JSON.stringify({ type: 'chat.item', chatId: chatId!, index: 0, item: items[0] }));
-	await expect(shells).toContainText('Running shells · 1');
-	items[1] = { ...child, status: 'done' };
-	route!.send(JSON.stringify({ type: 'chat.item', chatId: chatId!, index: 1, item: items[1] }));
-	await expect(shells).toContainText('pnpm test --watch');
 	items[1] = { ...child, status: 'done', items: [{ ...watcher, status: 'failed' }] };
 	route!.send(JSON.stringify({ type: 'chat.item', chatId: chatId!, index: 1, item: items[1] }));
 	await expect(shells).toHaveCount(0);

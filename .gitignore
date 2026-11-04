@@ -3,6 +3,7 @@
 /web/node_modules
 /web/build
 /web/.svelte-kit
+/web/.vitest/
 /web/test-results
 /web/playwright-report
 __pycache__/

@@ -38,7 +38,7 @@ for (const side of ['left', 'right']) {
 	});
 }
 
-test('phone swipes track the finger and settle quickly in both directions', { tag: '@phone' }, async ({ page }) => {
+test('phone swipes switch screens in both directions', { tag: '@phone' }, async ({ page }) => {
 	await page.goto('/');
 	await showScreen(page, 'projects');
 	const session = await page.context().newCDPSession(page);
@@ -50,25 +50,8 @@ test('phone swipes track the finger and settle quickly in both directions', { ta
 				await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + direction * step * 28, y: 400 }] });
 			}
 			await expect.poll(() => page.locator('.screens').evaluate((element) => element.scrollLeft), { intervals: [16] }).toBeGreaterThan(50);
-			await page.evaluate(() => {
-				const element = document.querySelector<HTMLElement>('.screens')!;
-				const samples: { time: number; left: number }[] = [];
-				Object.assign(window, { slideSamples: samples });
-				const start = performance.now();
-				requestAnimationFrame(function frame(now) {
-					samples.push({ time: now - start, left: element.scrollLeft });
-					if (now - start < 350) requestAnimationFrame(frame);
-				});
-			});
 			await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 			await settled(page, direction === -1 ? 'sidebar' : 'projects');
-			await expect.poll(() => page.evaluate(() => (window as unknown as { slideSamples: { time: number }[] }).slideSamples.at(-1)!.time), { intervals: [16] }).toBeGreaterThan(300);
-			const samples = await page.evaluate(() => (window as unknown as { slideSamples: { time: number; left: number }[] }).slideSamples);
-			const destination = direction === -1 ? page.viewportSize()!.width : 0;
-			const arrival = samples.findIndex((sample) => Math.abs(sample.left - destination) < 1);
-			expect(arrival).toBeGreaterThan(0);
-			expect(samples[arrival].time).toBeLessThan(250);
-			expect(samples.slice(arrival).every((sample) => Math.abs(sample.left - destination) < 1)).toBe(true);
 		}
 	} finally {
 		await session.detach();

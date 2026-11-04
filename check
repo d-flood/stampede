@@ -3,8 +3,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 case ${1:-} in
-    ""|rust|e2e) ;;
-    *) echo "usage: ./check [rust|e2e] [args…]" >&2; exit 2 ;;
+    ""|all|rust|e2e|components|runner|perf|prune) ;;
+    *) echo "usage: ./check [all|rust|e2e|components|runner|perf|prune] [args…]" >&2; exit 2 ;;
 esac
 
 mkdir -p target/check
@@ -26,22 +26,60 @@ run_logged() {
     echo "$label passed in $((SECONDS - started))s; log: $log"
 }
 
+prepare_e2e() {
+    python3 scripts/check_web.py
+    run_logged "Rust build" target/check/rust-build.log cargo build --quiet
+}
+
+runner() {
+    run_logged "Runner and deployment tests" target/check/runner-tests.log python3 -m unittest discover -s tests -p '*_test.py'
+}
+
+components() {
+    python3 scripts/check_web.py --dependencies-only
+    run_logged "Vitest tests" target/check/component-tests.log pnpm -C web exec vitest run "$@"
+}
+
+functional() {
+    python3 scripts/check_web.py
+    run_logged "Frontend types" target/check/web-types.log pnpm -C web check
+    components
+    run_logged "Rust test compilation" target/check/rust-compile.log cargo test --workspace --no-run --quiet
+    run_logged "Rust tests" target/check/rust-tests.log cargo test --workspace --quiet
+    runner
+    STAMPEDE_CHECK_PERF=0 run_logged "Browser tests" target/check/e2e-tests.log pnpm -C web exec playwright test
+}
+
+performance() {
+    prepare_e2e
+    run_logged "Rust performance tests" target/check/rust-perf.log cargo test --test integration memory:: -- --ignored --test-threads=1 --color never
+    local results_pattern='test result: ok\. [1-9][0-9]* passed;'
+    if [[ ! $(<target/check/rust-perf.log) =~ $results_pattern ]]; then
+        echo "Rust performance suite ran no tests." >&2
+        return 1
+    fi
+    STAMPEDE_CHECK_PERF=1 run_logged "Browser performance tests" target/check/e2e-perf.log pnpm -C web exec playwright test "$@"
+}
+
 case ${1:-} in
-    "")
-        python3 scripts/check_web.py
-        pnpm -C web check
-        pnpm -C web exec node tests/gpu.test.ts
-        run_logged "Rust tests" target/check/rust-tests.log cargo test --workspace --quiet
-        run_logged "Runner and deployment tests" target/check/runner-tests.log python3 -m unittest discover -s tests -p '*_test.py'
-        cargo build --quiet
-        pnpm -C web exec playwright test
+    "") functional ;;
+    all)
+        functional
+        performance
         ;;
     rust)
         cargo test --workspace --quiet "${@:2}"
         ;;
     e2e)
-        python3 scripts/check_web.py
-        cargo build --quiet
-        pnpm -C web exec playwright test "${@:2}"
+        prepare_e2e
+        STAMPEDE_CHECK_PERF=0 run_logged "Browser tests" target/check/e2e-tests.log pnpm -C web exec playwright test "${@:2}"
+        ;;
+    components)
+        components "${@:2}"
+        ;;
+    runner) runner ;;
+    perf) performance "${@:2}" ;;
+    prune)
+        run_logged "Build cache pruning" target/check/prune.log python3 scripts/build_environment.py
         ;;
 esac

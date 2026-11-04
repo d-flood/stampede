@@ -1,5 +1,27 @@
 import { expect, test } from './fixtures.ts';
 import { openProject, screen } from './shell.ts';
+import { existsSync, writeFileSync } from 'node:fs';
+
+test('a hidden Terminal displays output received while another Tab was active', { tag: '@desktop' }, async ({ page }) => {
+	await openProject(page, 'alpha');
+	const tabs = page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab');
+	for (let index = 0; index < 2; index++) {
+		await page.getByRole('button', { name: 'New Tab' }).click();
+		await page.getByRole('menuitem', { name: 'Terminal' }).click();
+		await expect(tabs).toHaveCount(index + 1);
+		await expect.poll(() => screen(page)).toMatch(/\S/);
+		if (index === 0) {
+			await page.keyboard.type('while test ! -f release-output; do sleep 0.02; done; seq 1 40; touch output-done');
+			await page.keyboard.press('Enter');
+		}
+	}
+	await expect(tabs.first()).toHaveAttribute('aria-selected', 'false');
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/alpha`;
+	writeFileSync(`${root}/release-output`, '');
+	await expect.poll(() => existsSync(`${root}/output-done`)).toBe(true);
+	await tabs.first().click();
+	await expect.poll(() => screen(page)).toMatch(/^40$/m);
+});
 
 test('a Terminal runs echo hi and a deep link reveals its Tab', async ({ page }, { project }) => {
 	let target: { id: string; owner: { project: string } } | undefined;

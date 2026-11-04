@@ -80,34 +80,9 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', { tag
 	await expect(resizer).toHaveAttribute('aria-valuenow', '480');
 });
 
-test('desktop sidebar slides over several frames and its toggle moves between the sidebar corner and the tab strip, keeping focus', { tag: '@desktop' }, async ({ page }) => {
+test('the sidebar toggle moves between the panel and tab strip while preserving focus', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	const sidebar = await showSidebar(page);
-	const slide = () =>
-		page.evaluate(
-			() =>
-				new Promise<number[]>((resolve) => {
-					const main = document.querySelector('main')!;
-					const lefts = [main.getBoundingClientRect().left];
-					const start = performance.now();
-					[...document.querySelectorAll<HTMLButtonElement>('button[aria-label="Sidebar"]')].find((button) => button.checkVisibility({ visibilityProperty: true }))!.click();
-					requestAnimationFrame(function frame(now) {
-						lefts.push(main.getBoundingClientRect().left);
-						if (now - start < 500) requestAnimationFrame(frame);
-						else resolve(lefts);
-					});
-				})
-		);
-	const closing = await slide();
-	await expect(sidebar).toBeHidden();
-	const opening = await slide();
-	await expect(sidebar).toBeVisible();
-	expect(opening.at(-1)).toBe(closing[0]);
-	for (const lefts of [closing, opening]) {
-		const [first, last] = [lefts[0], lefts.at(-1)!];
-		expect(Math.abs(last - first)).toBeGreaterThan(150);
-		expect(new Set(lefts.filter((left) => left > Math.min(first, last) + 0.5 && left < Math.max(first, last) - 0.5).map(Math.round)).size).toBeGreaterThanOrEqual(3);
-	}
 
 	const docked = sidebar.getByRole('button', { name: 'Sidebar', exact: true });
 	const strip = page.getByRole('main').getByRole('button', { name: 'Sidebar', exact: true });

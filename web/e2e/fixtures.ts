@@ -1,9 +1,9 @@
-import { expect, test as base } from '@playwright/test';
+import { expect, test as base } from '../tests/browser.ts';
 import { execFileSync, spawn } from 'node:child_process';
-import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkHardwareGpu } from './gpu.ts';
 
 export { expect } from '@playwright/test';
 
@@ -13,13 +13,36 @@ const cleanup = join(repository, 'scripts/check_cleanup.py');
 const fakes = join(repository, 'crates/stampede/tests/fake');
 const shell = join(repository, 'web/e2e/bash');
 
-export const test = base.extend<{ hardwareGpu: void; starterRigs: boolean }>({
+async function unusedPort() {
+	const server = createServer();
+	await new Promise<void>((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const address = server.address();
+	await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+	if (!address || typeof address === 'string') throw new Error('Could not allocate a test port');
+	return address.port;
+}
+
+export const test = base.extend<{ starterRigs: boolean }, { projectTemplate: string }>({
 	starterRigs: [false, { option: true }],
-	baseURL: async ({ starterRigs }, use, testInfo) => {
+	projectTemplate: [async ({}, use) => {
+		const template = mkdtempSync(join(process.env.STAMPEDE_E2E_ROOT!, 'template-'));
+		try {
+			execFileSync('bash', [fixtures, template]);
+			await use(template);
+		} finally {
+			rmSync(template, { recursive: true, force: true });
+		}
+	}, { scope: 'worker' }],
+	baseURL: async ({ starterRigs, projectTemplate }, use, testInfo) => {
 		const parent = process.env.STAMPEDE_E2E_ROOT!;
 		const root = mkdtempSync(join(parent, 'test-'));
 		try {
-			const port = execFileSync('bash', [fixtures, root], { encoding: 'utf8' }).trim();
+			cpSync(projectTemplate, root, { recursive: true });
+			writeFileSync(join(root, 'config.toml'), readFileSync(join(root, 'config.toml'), 'utf8').replaceAll(projectTemplate, root));
+			const port = String(await unusedPort());
 			if (starterRigs) writeFileSync(join(root, 'config.toml'), `roots = [${JSON.stringify(join(root, 'projects'))}]\n`);
 			process.env.STAMPEDE_E2E_ROOT = root;
 			const log = testInfo.outputPath('server.log');
@@ -47,10 +70,5 @@ export const test = base.extend<{ hardwareGpu: void; starterRigs: boolean }>({
 			execFileSync('python3', [cleanup, root]);
 			rmSync(root, { recursive: true, force: true });
 		}
-	},
-	hardwareGpu: [async ({ browser }, use) => {
-		await checkHardwareGpu(browser);
-		await use();
-		await checkHardwareGpu(browser);
-	}, { auto: true }]
+	}
 });

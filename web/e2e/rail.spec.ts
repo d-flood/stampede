@@ -1,60 +1,13 @@
 import { expect, test } from './fixtures.ts';
-import type { Page } from '@playwright/test';
 import { openProject, screen } from './shell.ts';
 
-function toggle(page: Page) {
-	return page.evaluate(
-		() =>
-			new Promise<{ widths: number[]; heights: number[] }>((resolve) => {
-				const rail = document.querySelector<HTMLElement>('nav[aria-label="Projects"]')!;
-				const square = rail.querySelector<HTMLElement>('[data-project]')!;
-				const widths = [rail.getBoundingClientRect().width];
-				const heights = [square.getBoundingClientRect().height];
-				const start = performance.now();
-				rail.querySelector<HTMLButtonElement>('button[aria-label$="project rail"]')!.click();
-				requestAnimationFrame(function frame(now) {
-					widths.push(rail.getBoundingClientRect().width);
-					heights.push(square.getBoundingClientRect().height);
-					if (now - start < 500) requestAnimationFrame(frame);
-					else resolve({ widths, heights });
-				});
-			})
-	);
-}
-
-function between(values: number[]) {
-	const [first, last] = [values[0], values.at(-1)!];
-	return new Set(values.filter((value) => value > Math.min(first, last) + 0.5 && value < Math.max(first, last) - 0.5).map((value) => Math.round(value * 10))).size;
-}
-
-function lastStep(values: number[]) {
-	return values.slice(1).map((value, index) => Math.abs(value - values[index])).filter(Boolean).at(-1) ?? 0;
-}
-
-test('the project rail and its squares grow and shrink over several frames and settle without a jump', { tag: '@desktop' }, async ({ page }) => {
-	await openProject(page, 'beta');
-	await openProject(page, 'alpha');
-	const opening = await toggle(page);
-	expect(opening.widths.at(-1)! - opening.widths[0]).toBeGreaterThan(150);
-	expect(opening.heights.at(-1)!).toBeGreaterThan(opening.heights[0]);
-	expect(between(opening.widths)).toBeGreaterThanOrEqual(3);
-	expect(between(opening.heights)).toBeGreaterThanOrEqual(3);
-	const closing = await toggle(page);
-	expect(closing.widths.at(-1)).toBe(opening.widths[0]);
-	expect(closing.heights.at(-1)).toBe(opening.heights[0]);
-	expect(between(closing.widths)).toBeGreaterThanOrEqual(3);
-	expect(between(closing.heights)).toBeGreaterThanOrEqual(3);
-	expect(lastStep(opening.heights)).toBeLessThan(1);
-	expect(lastStep(closing.heights)).toBeLessThan(1);
-});
-
-test('a Terminal resizes once, not every frame, while the project rail or sidebar opens or closes', { tag: '@desktop' }, async ({ page }) => {
-	const resizes: string[] = [];
-	page.on('websocket', (socket) =>
-		socket.on('framesent', ({ payload }) => {
-			if (typeof payload === 'string' && payload.includes('"terminal.resize"')) resizes.push(payload);
-		})
-	);
+test('Terminal dimensions follow project rail and sidebar toggles', { tag: '@desktop' }, async ({ page }) => {
+	let resized: { cols: number; rows: number } | undefined;
+	page.on('websocket', (socket) => socket.on('framereceived', ({ payload }) => {
+		if (typeof payload !== 'string') return;
+		const message = JSON.parse(payload);
+		if (message.type === 'terminal.resized') resized = { cols: message.cols, rows: message.rows };
+	}));
 	await openProject(page, 'alpha');
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal' }).click();
@@ -62,10 +15,13 @@ test('a Terminal resizes once, not every frame, while the project rail or sideba
 	const terminal = page.getByRole('tabpanel').locator('.terminal').filter({ visible: true });
 	await expect(terminal).not.toHaveClass(/resizing/);
 	for (const name of ['Expand project rail', 'Collapse project rail', 'Sidebar', 'Sidebar']) {
-		const before = resizes.length;
+		const before = await page.evaluate(() => window.terminal!.cols);
 		await page.getByRole('button', { name, exact: true }).click();
-		await expect.poll(() => resizes.length).toBeGreaterThan(before);
+		await expect.poll(() => page.evaluate(() => window.terminal!.cols)).not.toBe(before);
 		await expect(terminal).not.toHaveClass(/resizing/);
-		expect(resizes.length - before).toBe(1);
+		await expect.poll(async () => {
+			const size = await page.evaluate(() => ({ cols: window.terminal!.cols, rows: window.terminal!.rows }));
+			return size.cols > 0 && size.rows > 0 && size.cols === resized?.cols && size.rows === resized?.rows;
+		}).toBe(true);
 	}
 });

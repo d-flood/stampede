@@ -20,6 +20,7 @@ class TemporaryStorage(unittest.TestCase):
             source.mkdir()
             os.utime(stale, (1, 1))
             os.utime(source, (1, 1))
+            prune_temporary(target)
             with build_environment(target, 'stampede-rebuild-') as environment:
                 active = Path(environment['TMPDIR'])
                 os.utime(active, (1, 1))
@@ -68,6 +69,22 @@ def make(path, old=False):
 
 
 class BuildStorage(unittest.TestCase):
+    def test_builds_leave_cache_pruning_to_explicit_maintenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            artifact = make(target / 'debug/deps/libold-aaaaaaaaaaaaaaaa.rlib', old=True)
+            (target / 'debug/.fingerprint').mkdir()
+            stale = target / 'tmp/stampede-e2e-abandoned'
+            stale.mkdir(parents=True)
+            os.utime(stale, (1, 1))
+            with build_environment(target, 'stampede-e2e-'):
+                self.assertTrue(artifact.exists())
+                self.assertTrue(stale.exists())
+            prune_temporary(target)
+            prune_build(target)
+            self.assertFalse(artifact.exists())
+            self.assertFalse(stale.exists())
+
     def test_units_unused_for_a_week_are_removed_whole_while_used_ones_survive(self):
         with tempfile.TemporaryDirectory() as directory:
             profile = Path(directory) / 'debug'

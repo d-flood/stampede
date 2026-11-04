@@ -1,0 +1,27 @@
+:root {
+	--light-bg: #ffffff;
+	--light-fg: #202020;
+	--light-ansi-0: #202020;
+	--light-ansi-1: #b03030;
+	--light-ansi-2: #267326;
+	--light-ansi-3: #956000;
+	--light-ansi-4: #235eb0;
+	--light-ansi-5: #824bb0;
+	--light-ansi-6: #007c80;
+	--light-ansi-7: #eeeeee;
+}
+
+body {
+	box-sizing: border-box;
+	max-width: 796px;
+	margin: 0 auto;
+	padding: var(--space-6);
+	background: var(--color-bg);
+	color: var(--color-fg);
+	font-family: var(--font-ui);
+	line-height: 1.55;
+}
+
+@media (pointer: coarse) and (max-width: 767px) {
+	body { padding: var(--space-4); line-height: 1.5; }
+}

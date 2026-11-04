@@ -13,7 +13,7 @@ from rig_tools import ask, call, delegate
 
 FLAGS = {'--input-format': 'stream-json', '--output-format': 'stream-json'}
 SWITCHES = ['--verbose', '--include-partial-messages', '--permission-prompt-tool=stdio']
-ENV = {'CLAUDE_CODE_ENTRYPOINT': 'stampede', 'CLAUDE_CODE_SDK_READS_SESSION_STATE': '1', 'CLAUDE_CODE_ARTIFACT': '1'}
+ENV = {'CLAUDE_CODE_ENTRYPOINT': 'stampede', 'CLAUDE_CODE_SDK_READS_SESSION_STATE': '1'}
 RECORDED_CWD = '/tmp/stampede-chat'
 
 
@@ -176,6 +176,8 @@ for name, value in ENV.items():
         fail(f'{name} is not {value}')
 
 if os.environ.get('CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING') == 'true':
+    if os.environ.get('CLAUDE_CODE_ARTIFACT') != '1':
+        fail('CLAUDE_CODE_ARTIFACT is not 1')
     if '--mcp-config' not in args or '--allowedTools' not in args:
         fail('chat HTML tool is missing')
     mcp = json.loads(args[args.index('--mcp-config') + 1])['mcpServers']['stampede_chat']

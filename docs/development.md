@@ -10,7 +10,15 @@ Needs Linux with a systemd user session. It installs missing toolchains without 
 
 ## Rebuilding
 
-Run `./rebuild` instead of `./serve`. It needs Linux with a systemd user manager, Python 3.9+, Rust, and pnpm. Stop any manually launched `./serve` once before switching.
+Use a debug binary for the local development loop:
+
+```sh
+./serve --dev --port 4581
+```
+
+This reuses frontend dependencies and output while unchanged, builds Rust in debug mode, and runs in the foreground. It shares Cargo dependency artifacts across the repository's worktrees; switching checkouts invalidates Stampede's own compilation so binaries and tests use the correct sources and asset directory. Debug builds read frontend assets from disk, so rebuilding the frontend does not recompile Rust. Restart the development Host after Rust changes.
+
+Use `./rebuild` to deploy the release binary to the systemd service. It needs Linux with a systemd user manager, Python 3.9+, Rust, and pnpm. Stop any manually launched `./serve` on the service's port once before switching.
 
 ```sh
 ./rebuild
@@ -35,7 +43,7 @@ journalctl --user -u stampede -f
 
 The last binary is retained at `~/.local/lib/stampede/stampede.previous`. To recover manually, copy it to a temporary sibling, rename that over `stampede`, then run `systemctl --user restart stampede`.
 
-Deployment checks: `python3 -m unittest discover -s tests -p rebuild_test.py`. Browser and agent recovery checks: `./check e2e rebuild.spec.ts` and `cargo test --test integration -- terminal_survives_restart:: chat_claude_restart:: chat_codex_restart::`.
+Deployment checks: `./check runner`. Browser and agent recovery checks: `./check e2e rebuild.spec.ts` and `./check rust --test integration terminal_survives_restart::` (also `chat_claude_restart::` and `chat_codex_restart::`).
 
 
 ## Checks
@@ -44,12 +52,25 @@ Deployment checks: `python3 -m unittest discover -s tests -p rebuild_test.py`. B
 ./check
 ./check rust --test integration files::
 ./check e2e editor.spec.ts
+./check components text.test.ts
+./check runner
+./check perf
+./check all
+./check prune
 ```
 
-`./check` runs frontend type checks, runner/GPU guard tests, Rust tests, deployment tests, and desktop/phone E2E tests. An overlapping check in the same repository, including another worktree, exits immediately. Interrupting a check stops its children and detached test processes; each E2E test has its own server, temporary data, and port, cleaned up immediately after the test. E2E tests run on both the desktop and phone projects unless tagged `@desktop` or `@phone`; tag tests whose behaviour doesn't depend on the form factor so they run once.
+`./check` runs frontend type checks, Vitest unit/component tests, functional Rust tests, deployment tests, and desktop/phone browser tests. `./check perf` runs Rust stress/memory checks and browser timing budgets, serially, on an otherwise idle machine. `./check all` runs both suites. Rust performance cases are marked ignored in the functional suite; they remain part of the complete check.
 
-Frontend dependencies and builds are reused while their content is unchanged. Additions, deletions, configuration/version changes, and missing or modified build output invalidate the build. Frontend build, Rust test, and runner test logs are replaced on each run in `target/check/`; failures print the log tail. Rust integration tests compile into one `integration` test binary; filter by file with its module path, such as `files::`. E2E uses the same development binary as Rust tests, with line tables for Stampede and no debug information for dependencies. Release builds remain part of `./rebuild`. Each `./check` and `./rebuild` deletes build artifacts in `target/` that no build has read for a week, skipping a profile while Cargo is building it.
+`./check components` runs browser component tests without a Rust build or a production frontend build. It uses Vitest Browser Mode to mount production Svelte components with their styles and fonts, alongside ordinary Node unit tests. These tests also run with the default check. Filter by filename or use `--project unit`, `--project desktop-components`, or `--project pixel-components`. Keep rendering, formatting, and isolated interaction cases here; reserve Playwright E2E for Host/provider wiring, persistence, and navigation. Browser suites request reduced motion and assert settled behaviour rather than animation timing or frame counts.
 
-Defaults leave room for the desktop: four Cargo jobs, four Rust test threads, two Tokio workers per runtime, and three Playwright workers, balancing individual isolated tests across files. Override with `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS`, `TOKIO_WORKER_THREADS`, or Playwright's `--workers` argument.
+`./check runner` runs the Python check-runner, build-storage, and deployment tests without frontend dependencies or Rust compilation.
 
-E2E requires a real GPU. Install full Chromium with `pnpm -C web exec playwright install chromium --no-shell`, and run checks with GPU access outside the agent sandbox. The [Chromium channel](https://playwright.dev/docs/browsers#chromium-new-headless-mode) uses full headless Chrome; Linux uses the [Vulkan ANGLE backend](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/gpu/using-gpu-hardware-in-headless-chrome.md) without requiring `DISPLAY`. SwiftShader fallback is disabled, and each test checks hardware compositing, rasterization, and WebGL before and after running. Software rendering fails the test.
+An overlapping check in the same repository, including another worktree, exits immediately. Interrupting a check stops its children and detached test processes. Each E2E test has its own Host, temporary data, and port, cleaned up immediately after the test; its fixture repositories are copied from a template prepared once per worker. Vitest allocates its own free local ports. Browser tests run on both the desktop and phone projects unless tagged `@desktop` or `@phone`; tag tests whose behaviour doesn't depend on the form factor so they run once.
+
+Frontend dependencies and builds are reused while their content is unchanged. Additions, deletions, configuration/version changes, and missing or modified build output invalidate the frontend build. Each stage reports elapsed time separately, including Rust compilation and test execution. Logs are replaced on each run in `target/check/`; failures print the log tail. Rust integration tests compile into one `integration` test binary; filter by file with its module path, such as `files::`. E2E uses the same development binary as Rust tests, with line tables for Stampede and no debug information for dependencies. Release builds remain part of `./rebuild` and continue to embed frontend assets.
+
+Run `./check prune` for cache maintenance. It removes abandoned temporary build directories and build artifacts that no build has read for a week, skipping a profile while Cargo is building it. Builds and ordinary checks do not scan or prune the build cache at startup.
+
+Defaults leave room for the desktop: four Cargo jobs, four Rust test threads, two Tokio workers per runtime, and three Playwright workers, balancing individual isolated tests across files. Override with `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS`, `TOKIO_WORKER_THREADS`, or Playwright's `--workers` argument. Vitest also defaults to three workers.
+
+Browser tests require a real GPU. Install full Chromium with `pnpm -C web exec playwright install chromium --no-shell`, and run checks with GPU access outside the agent sandbox. The [Chromium channel](https://playwright.dev/docs/browsers#chromium-new-headless-mode) uses full headless Chrome; Linux uses the [Vulkan ANGLE backend](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/gpu/using-gpu-hardware-in-headless-chrome.md) without requiring `DISPLAY`. SwiftShader fallback is disabled, and hardware compositing, rasterization, and WebGL are checked before and after each Playwright worker or Vitest browser test file. Software rendering fails the check.
