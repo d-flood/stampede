@@ -15,6 +15,7 @@ export function labels(projects: Project[]): Map<string, string> {
 	return new Map(
 		projects.map(({ id, path, worktree }) => {
 			if (worktree && 'branch' in worktree) return [id, worktree.branch];
+			if (worktree && 'commit' in worktree) return [id, basename(path)];
 			if (worktree) return [id, worktree.role === 'integration' ? `Integration ${worktree.epic}` : `${worktree.epic}/${worktree.role.ticket}`];
 			const name = basename(path);
 			const collides = own.some((other) => other.id !== id && basename(other.path) === name);
@@ -31,15 +32,16 @@ export function monogram(path: string): string {
 }
 
 export function worktrees(projects: Project[], epics: Record<string, Epic[]>, chats: Chat[], statusOf: (chat: Chat) => Status | 'background', needs: Map<string, number>): Map<string, Tile[]> {
-	const rank = (worktree: Worktree) => ('branch' in worktree ? Number.MAX_SAFE_INTEGER : worktree.role === 'integration' ? 0 : worktree.role.ticket);
-	const nested = projects.flatMap(({ id, worktree }) => (worktree ? [{ id, worktree }] : []));
+	const rank = (worktree: Worktree) => (!('epic' in worktree) ? Number.MAX_SAFE_INTEGER : worktree.role === 'integration' ? 0 : worktree.role.ticket);
+	const nested = projects.flatMap(({ id, path, worktree }) => (worktree ? [{ id, path, worktree }] : []));
 	const tiles = new Map<string, Tile[]>();
-	for (const { id, worktree } of nested.sort((a, b) => rank(a.worktree) - rank(b.worktree))) {
+	for (const { id, path, worktree } of nested.sort((a, b) => rank(a.worktree) - rank(b.worktree))) {
 		const statuses = chats.filter(({ projectId }) => projectId === id).map(statusOf);
 		// Waiting shows through the attention count, so it yields to the activity marks.
 		const active = (['working', 'background', 'waiting'] as const).find((status) => statuses.includes(status));
-		if ('branch' in worktree) {
-			tiles.set(worktree.parent, [...(tiles.get(worktree.parent) ?? []), { id, mark: monogram(worktree.branch), status: active, needs: needs.get(id) }]);
+		if (!('epic' in worktree)) {
+			const mark = monogram('branch' in worktree ? worktree.branch : path);
+			tiles.set(worktree.parent, [...(tiles.get(worktree.parent) ?? []), { id, mark, status: active, needs: needs.get(id) }]);
 			continue;
 		}
 		const { parent, epic: slug, role } = worktree;

@@ -1,11 +1,12 @@
 import { loadConfig, type Agent } from '#lib/config.svelte.ts';
 import type { State } from '#lib/editor/lsp.svelte.ts';
 import type { Trunk, Update } from '#lib/git.ts';
+import type { PrReview } from '#lib/pr-reviews.ts';
 import { on } from 'svelte/events';
 
 export type Project = { id: string; path: string; icon?: string; worktree?: Worktree };
 
-export type Worktree = { parent: string } & ({ epic: string; role: 'integration' | { ticket: number } } | { branch: string });
+export type Worktree = { parent: string } & ({ epic: string; role: 'integration' | { ticket: number } } | { branch: string } | { commit: string });
 
 export type Status = 'working' | 'waiting' | 'done';
 
@@ -242,6 +243,7 @@ export type ServerMessage =
 	| { type: 'git.changed'; projectId: string }
 	| { type: 'origin.changed'; trunks: Record<string, Trunk>; update?: Update }
 	| { type: 'epics.changed'; projectId: string; epics: Epic[] }
+	| { type: 'pr-reviews.changed'; projectId: string; reviews: PrReview[] }
 	| { type: 'epic.changed'; projectId: string; epic: Epic }
 	| { type: 'ticket.started'; projectId: string; epic: string; ticket: number; chatId: string }
 	| { type: 'ticket.error'; projectId: string; epic: string; ticket: number; error: string }
@@ -283,6 +285,7 @@ export type ClientMessage =
 	| { type: 'device.view'; chatIds: string[]; epics: string[] }
 	| ({ type: 'search.start' } & Search)
 	| { type: 'epics.subscribe'; projectId: string }
+	| { type: 'pr-reviews.subscribe'; projectId: string }
 	| { type: 'ticket.start'; projectId: string; epic: string; ticket: number; rig: string }
 	| { type: 'lsp.switch'; projectId: string; on: boolean }
 	| { type: 'lsp.open' | 'lsp.close'; channel: string }

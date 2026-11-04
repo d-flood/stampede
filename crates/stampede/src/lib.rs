@@ -10,6 +10,7 @@ mod epics;
 mod files;
 mod fonts;
 mod git;
+mod github;
 mod holder;
 mod install;
 mod language_servers;
@@ -17,6 +18,7 @@ mod layouts;
 mod media;
 mod memory;
 mod origin;
+mod pr_reviews;
 mod projects;
 mod project_icons;
 mod protocol;
@@ -109,6 +111,7 @@ struct AppState {
     layouts: Arc<Layouts>,
     browsers: Arc<browser::Browsers>,
     epics: Arc<Epics>,
+    pr_reviews: Arc<pr_reviews::PrReviews>,
     runs: Arc<Runs>,
     devices: device::Devices,
     origin: watch::Receiver<origin::Origin>,
@@ -165,6 +168,17 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/git", get(git::status))
         .route("/api/projects/{id}/git/refs", get(git::refs))
         .route("/api/projects/{id}/git/log", get(git::history))
+        .route("/api/projects/{id}/git/compare", get(git::compare))
+        .route("/api/projects/{id}/prs", get(pr_reviews::prs))
+        .route("/api/projects/{id}/pr-reviews", get(pr_reviews::list).post(pr_reviews::open))
+        .route("/api/projects/{id}/pr-reviews/{number}", delete(pr_reviews::discard))
+        .route("/api/projects/{id}/pr-reviews/{number}/refresh", post(pr_reviews::refresh))
+        .route("/api/projects/{id}/pr-reviews/{number}/viewed", put(pr_reviews::view))
+        .route("/api/projects/{id}/pr-reviews/{number}/worktree", post(pr_reviews::worktree))
+        .route("/api/projects/{id}/pr-reviews/{number}/hunks", get(pr_reviews::commentable))
+        .route("/api/projects/{id}/pr-reviews/{number}/send", post(pr_reviews::send))
+        .route("/api/projects/{id}/pr-reviews/{number}/drafts", post(pr_reviews::create_draft))
+        .route("/api/projects/{id}/pr-reviews/{number}/drafts/{draft}", put(pr_reviews::edit_draft).delete(pr_reviews::delete_draft))
         .route("/api/projects/{id}/git/commit/{sha}", get(git::commit))
         .route("/api/projects/{id}/git/show", get(git::show))
         .route("/api/projects/{id}/git/index", get(git::index))
@@ -198,6 +212,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let config = config::watch(&args.config)?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
     let epics = Arc::new(Epics::load(&args.data_dir)?);
+    let pr_reviews = Arc::new(pr_reviews::PrReviews::load(&args.data_dir)?);
     let requests = cli::bind(&args.data_dir)?;
     let delegations = chats::bind_delegations(&args.data_dir)?;
     let projects = Arc::new(Projects::load(&args.data_dir)?);
@@ -241,7 +256,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let origin = origin::spawn(projects.subscribe(), config.clone(), devices.subscribe(), git.clone());
     eprintln!("stampede listening on http://{}", listener.local_addr()?);
     let canvases = canvas::Canvases::watch(&args.data_dir)?;
-    let state = AppState { media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, runs, devices, origin };
+    let state = AppState { media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, pr_reviews, runs, devices, origin };
     let listener = listener.tap_io(|stream| {
         let _ = stream.set_nodelay(true);
     });

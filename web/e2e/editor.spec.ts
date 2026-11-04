@@ -4,7 +4,7 @@ import { openProject, showSidebar } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
-test('Markdown previews preserve edits and undo, save, and refresh from disk', async ({ page }, { project }) => {
+test('Markdown opens in Live, keeps edits across modes and refreshes, saves, and remembers the mode', async ({ page }, { project }) => {
 	const name = `markdown-${project.name}`;
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root);
@@ -19,11 +19,18 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	const editor = page.getByRole('tabpanel');
 	const source = editor.locator('.cm-content');
 	const preview = editor.getByRole('region', { name: 'Markdown preview' });
-	const editButton = editor.getByRole('radio', { name: 'Edit', exact: true });
+	const sourceButton = editor.getByRole('radio', { name: 'Source', exact: true });
+	const liveButton = editor.getByRole('radio', { name: 'Live', exact: true });
 	const previewButton = editor.getByRole('radio', { name: 'Preview', exact: true });
-	await expect(editButton).toBeChecked();
+	await expect(editor.getByRole('radiogroup', { name: 'View' }).getByRole('radio')).toHaveText(['Source', 'Live', 'Preview']);
+	await expect(liveButton).toBeChecked();
 	await expect(source).toBeVisible();
-	await source.focus();
+	const paragraph = source.locator('.cm-line').nth(2);
+	await expect(paragraph).toHaveText('A bold paragraph.');
+	await expect(source.locator('.cm-line').nth(4)).toHaveText('•First');
+	await paragraph.getByText('paragraph').click();
+	await expect(paragraph).toHaveText('A **bold** paragraph.');
+	await expect(source.locator('.cm-line').first()).toHaveText('Notes');
 	await page.keyboard.press('ControlOrMeta+a');
 	await page.keyboard.insertText(edited);
 	await previewButton.click();
@@ -38,8 +45,12 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	expect(readFileSync(`${root}/notes.MD`, 'utf8')).toBe(original);
 	expect(await page.evaluate(() => 'markdownExecuted' in window)).toBe(false);
 	await expect.poll(() => editor.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await editButton.click();
+	await sourceButton.click();
 	await expect(source).toContainText('## Unsaved');
+	await liveButton.click();
+	await expect(editor.locator('.cm-lp-table')).toContainText('42');
+	await expect(source).not.toContainText('## Unsaved');
+	await expect(source).toContainText('Unsaved');
 	await source.focus();
 	await page.keyboard.press('ControlOrMeta+z');
 	await expect(source).not.toContainText('Unsaved');
@@ -47,7 +58,7 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	await expect(preview.getByRole('heading', { name: 'Unsaved' })).toHaveCount(0);
 	writeFileSync(`${root}/notes.MD`, '# Updated on disk\n');
 	await expect(preview.getByRole('heading', { name: 'Updated on disk' })).toBeVisible();
-	await editButton.click();
+	await sourceButton.click();
 	await source.focus();
 	await page.keyboard.press('ControlOrMeta+a');
 	await page.keyboard.insertText('# Saved from preview\n');
@@ -56,8 +67,7 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	await expect.poll(() => readFileSync(`${root}/notes.MD`, 'utf8')).toBe('# Saved from preview\n');
 	sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'prose.markdown', exact: true }).click();
-	await expect(editButton).toBeChecked();
-	await previewButton.click();
+	await expect(previewButton).toBeChecked();
 	await expect(preview.getByRole('heading', { name: 'Prose' })).toBeVisible();
 	sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'plain.txt', exact: true }).click();
@@ -66,6 +76,15 @@ test('Markdown previews preserve edits and undo, save, and refresh from disk', a
 	await sidebar.getByRole('button', { name: 'notes.MD', exact: true }).click();
 	await expect(previewButton).toBeChecked();
 	await expect(preview.getByRole('heading', { name: 'Saved from preview' })).toBeVisible();
+	await sourceButton.click();
+	await expect(source).toContainText('# Saved from preview');
+	await page.reload();
+	await expect(sourceButton).toBeChecked();
+	await expect(source).toContainText('# Saved from preview');
+	sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'prose.markdown', exact: true }).click();
+	await expect(sourceButton).toBeChecked();
+	await expect(source).toContainText('# Prose');
 });
 
 test('HTML previews render edits and disk changes in a sandbox', async ({ page }, { project }) => {

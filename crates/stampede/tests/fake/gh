@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+def fixture():
+    for name in ('STAMPEDE_E2E_ROOT', 'STAMPEDE_TEST_ROOT'):
+        root = os.environ.get(name)
+        if root and (Path(root) / 'gh.json').exists():
+            return Path(root), json.loads((Path(root) / 'gh.json').read_text())
+    fail('You are not logged into any GitHub hosts. To log in, run: gh auth login')
+
+
+def option(args, name):
+    return args[args.index(name) + 1] if name in args else None
+
+
+def fields(record, names):
+    return {name: record[name] for name in names.split(',') if name in record}
+
+
+def main(args):
+    root, data = fixture()
+    match args[:2]:
+        case ['auth', 'status']:
+            print(f"github.com\n  ✓ Logged in to github.com account {data['user']}")
+        case ['repo', 'view']:
+            print(json.dumps(fields(data['repo'], option(args, '--json'))))
+        case ['pr', 'list']:
+            prs = [pr for pr in data['prs'] if pr.get('state', 'OPEN') == 'OPEN']
+            if option(args, '--search') == 'review-requested:@me':
+                prs = [pr for pr in prs if pr.get('requested')]
+            prs = prs[:int(option(args, '--limit') or 30)]
+            print(json.dumps([fields(pr, option(args, '--json')) for pr in prs]))
+        case ['pr', 'view']:
+            number = int(args[2])
+            pr = next((pr for pr in data['prs'] if pr['number'] == number), None)
+            if pr is None:
+                fail(f'GraphQL: Could not resolve to a PullRequest with the number of {number}. (repository.pullRequest)')
+            print(json.dumps(fields(pr, option(args, '--json'))))
+        case ['api', *_] if option(args, '--method') == 'POST' and option(args, '--input') == '-':
+            with open(root / 'gh.log', 'a') as log:
+                log.write(json.dumps({'args': args, 'stdin': json.load(sys.stdin)}) + '\n')
+            if 'fail' in data:
+                fail(data['fail'])
+            print('{}')
+        case ['api', *_] if args[-1] == 'user':
+            print(json.dumps({'login': data['user']}))
+        case _:
+            fail(f'fake gh: unsupported command {args}')
+
+
+main(sys.argv[1:])

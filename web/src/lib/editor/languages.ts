@@ -8,7 +8,14 @@ const stream = <T>(parser: StreamParser<T>) => new LanguageSupport(StreamLanguag
 const typescript: Load = async () => (await import('@codemirror/lang-javascript')).javascript({ typescript: true });
 const javascript: Load = async () => (await import('@codemirror/lang-javascript')).javascript();
 const python: Load = async () => (await import('@codemirror/lang-python')).python();
-const markdown: Load = async () => (await import('@codemirror/lang-markdown')).markdown({ codeLanguages });
+const markdown: Load = async () => {
+	const [{ markdown, markdownLanguage }, { yamlFrontmatter }, { footnotes }] = await Promise.all([
+		import('@codemirror/lang-markdown'),
+		import('@codemirror/lang-yaml'),
+		import('./live-preview.ts')
+	]);
+	return yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages, extensions: [footnotes] }) });
+};
 const yaml: Load = async () => (await import('@codemirror/lang-yaml')).yaml();
 const json: Load = async () => (await import('@codemirror/lang-json')).json();
 const xml: Load = async () => stream((await import('@codemirror/legacy-modes/mode/xml')).xml);

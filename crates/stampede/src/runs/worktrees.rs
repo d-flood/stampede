@@ -7,7 +7,7 @@ use crate::{
     chats::Chat,
     epics::{Event, Status},
     git,
-    projects::{Kind, Role, Worktree},
+    projects::{Kind, Project, Role, Worktree},
 };
 
 pub enum Refusal {
@@ -16,14 +16,18 @@ pub enum Refusal {
 }
 
 impl Runs {
-    pub async fn create_worktree(&self, project_id: &str, branch: Option<&str>, from: &str) -> Result<String, String> {
+    async fn repository_root(&self, project_id: &str) -> Result<Project, String> {
         let projects = self.projects.list();
         let project = projects.iter().find(|project| project.id == project_id).ok_or_else(|| format!("Project {project_id} is not open"))?;
-        let checkout = Path::new(&project.path);
-        match git::run(checkout, &["rev-parse", "--show-toplevel"]).await {
-            Ok(toplevel) if Path::new(&toplevel) == checkout => {}
-            _ => return Err(format!("{} is not the root of a git repository", project.path)),
+        match git::run(Path::new(&project.path), &["rev-parse", "--show-toplevel"]).await {
+            Ok(toplevel) if Path::new(&toplevel) == Path::new(&project.path) => Ok(project.clone()),
+            _ => Err(format!("{} is not the root of a git repository", project.path)),
         }
+    }
+
+    pub async fn create_worktree(&self, project_id: &str, branch: Option<&str>, from: &str) -> Result<String, String> {
+        let project = self.repository_root(project_id).await?;
+        let checkout = Path::new(&project.path);
         if from.starts_with('-') || git::run(checkout, &["rev-parse", "-q", "--verify", &format!("{from}^{{commit}}")]).await.is_err() {
             return Err(format!("{from} is not a branch or commit"));
         }
@@ -56,6 +60,24 @@ impl Runs {
             return Err(format!("Stampede could not check out the submodules of the new worktree: {error}"));
         }
         let worktree = Worktree { parent: parent.clone(), kind: Kind::Branch { branch: branch.to_owned(), existing } };
+        Ok(self.projects.nest(&path, worktree).id)
+    }
+
+    /// A worktree beside the Project with HEAD detached at `commit`, named `name` or, when taken, `name-2`, `name-3`…
+    pub async fn detach_worktree(&self, project_id: &str, name: &str, commit: &str) -> Result<String, String> {
+        let project = self.repository_root(project_id).await?;
+        let checkout = Path::new(&project.path);
+        let parent = project.worktree.as_ref().map_or(&project.id, |worktree| &worktree.parent);
+        let base = format!("{}/_branches/{parent}/{name}", self.worktrees);
+        let path = (1..).map(|count| if count == 1 { base.clone() } else { format!("{base}-{count}") }).find(|path| !Path::new(path).exists()).unwrap();
+        git::run(checkout, &["worktree", "add", "-q", "--detach", &path, commit]).await?;
+        if let Err(error) = submodules::init(Path::new(&path), checkout).await {
+            if let Err(removal) = git::run(checkout, &["worktree", "remove", "--force", &path]).await {
+                eprintln!("cannot discard {path}: {removal}");
+            }
+            return Err(format!("Stampede could not check out the submodules of the new worktree: {error}"));
+        }
+        let worktree = Worktree { parent: parent.clone(), kind: Kind::Detached { commit: commit.to_owned() } };
         Ok(self.projects.nest(&path, worktree).id)
     }
 
@@ -117,20 +139,25 @@ impl Runs {
         let checkout = projects.iter().find(|other| other.id == worktree.parent).map(|parent| parent.path.clone());
         let checkout = checkout.ok_or_else(|| Refusal::Refused(format!("The Project {} belongs to is not open.", project.path)))?;
         let path = Path::new(&project.path);
-        let existing = matches!(worktree.kind, Kind::Branch { existing: true, .. });
         let _cutting = self.cutting.lock().await;
-        let (event, branch, _starting) = match &worktree.kind {
-            Kind::Branch { branch, .. } => (None, branch.clone(), None),
-            Kind::Epic { epic, role } => self.hold(epic, *role, path)?,
+        let (event, branch, since, _starting) = match &worktree.kind {
+            Kind::Branch { branch, existing } => (None, (!existing).then(|| branch.clone()), None, None),
+            Kind::Epic { epic, role } => {
+                let (event, branch, starting) = self.hold(epic, *role, path)?;
+                (event, Some(branch), None, starting)
+            }
+            Kind::Detached { commit } => (None, None, Some(commit.as_str()), None),
         };
-        if !force && let Some(work) = unmerged(path, &branch, existing).await {
+        if !force && let Some(work) = unmerged(path, branch.as_deref(), since).await {
             return Err(Refusal::Unmerged(work));
         }
         git::run(Path::new(&checkout), &["worktree", "remove", "--force", &project.path])
             .await
             .map_err(|error| Refusal::Refused(format!("git could not remove {}: {error}", project.path)))?;
         self.close_project(project_id);
-        if !existing && let Err(error) = git::run(Path::new(&checkout), &["branch", "-D", &branch]).await {
+        if let Some(branch) = &branch
+            && let Err(error) = git::run(Path::new(&checkout), &["branch", "-D", branch]).await
+        {
             eprintln!("cannot delete {branch}: {error}");
         }
         if let (Some(event), Kind::Epic { epic, .. }) = (event, &worktree.kind)
@@ -180,12 +207,20 @@ impl Runs {
     }
 }
 
-async fn unmerged(path: &Path, branch: &str, existing: bool) -> Option<String> {
-    let exclude = format!("--exclude={branch}");
-    let args = ["rev-list", "--count", "HEAD", branch, "--not", &exclude, "--branches", "--remotes"];
-    let ahead = async || match existing {
-        true => Ok(0),
-        false => git::run(path, &args).await.map(|ahead| ahead.parse::<usize>().unwrap_or_default()),
+/// Work that deleting the worktree, and `branch` with it, would lose. A detached worktree's work is what HEAD gained
+/// `since` the commit it was opened at.
+async fn unmerged(path: &Path, branch: Option<&str>, since: Option<&str>) -> Option<String> {
+    let args = match (branch, since) {
+        (Some(branch), _) => Some(vec!["HEAD".to_owned(), branch.to_owned(), "--not".to_owned(), format!("--exclude={branch}")]),
+        (None, Some(commit)) => Some(vec!["HEAD".to_owned(), "--not".to_owned(), commit.to_owned()]),
+        (None, None) => None,
+    };
+    let ahead = async || match args {
+        None => Ok(0),
+        Some(args) => {
+            let args: Vec<&str> = ["rev-list", "--count"].into_iter().chain(args.iter().map(String::as_str)).chain(["--branches", "--remotes"]).collect();
+            git::run(path, &args).await.map(|ahead| ahead.parse::<usize>().unwrap_or_default())
+        }
     };
     let (status, ahead) = match (submodules::status(path).await, ahead().await) {
         (Ok(status), Ok(ahead)) => (status, ahead),
@@ -204,7 +239,7 @@ async fn unmerged(path: &Path, branch: &str, existing: bool) -> Option<String> {
         (true, Some(commits)) => commits,
         (false, Some(commits)) => format!("uncommitted changes and {commits}"),
     };
-    let doomed = if existing { String::new() } else { format!(" and {branch}") };
+    let doomed = branch.map(|branch| format!(" and {branch}")).unwrap_or_default();
     Some(format!("It has {work}. Deleting it{doomed} discards them."))
 }
 

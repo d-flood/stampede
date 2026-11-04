@@ -5,13 +5,15 @@
 	import { find } from '#lib/editor/find.ts';
 	import { keybindings } from '#lib/editor/keymap.ts';
 	import { language } from '#lib/editor/languages.ts';
+	import { livePreview } from '#lib/editor/live-preview.ts';
 	import { languageServer } from '#lib/editor/lsp-editor.ts';
 	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { theme } from '#lib/editor/theme.ts';
-	import { OpenConfig, type OpenFile } from '#lib/files.svelte.ts';
+	import { imageSource, OpenConfig, type OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { baseline, type Git } from '#lib/git.ts';
+	import type { MarkdownMode } from '#lib/layout.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import HtmlPreview from '#lib/shell/HtmlPreview.svelte';
@@ -37,10 +39,11 @@
 		active: boolean;
 		displayed: boolean;
 		focused: boolean;
+		markdownMode: MarkdownMode;
 		onshowdiff(disk: string, buffer: string): void;
 	};
 
-	let { file, device, servers, git, active, displayed, focused, onshowdiff }: Props = $props();
+	let { file, device, servers, git, active, displayed, focused, markdownMode = $bindable(), onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<EditorView>();
@@ -55,6 +58,7 @@
 	const original = $derived(git?.isRepo ? (git.changes.find((change) => change.path === file.path)?.from ?? file.path) : undefined);
 	const head = $derived(git?.head);
 	let rendered = $state(false);
+	let mode = $state<MarkdownMode>('source');
 	let content = $state<string>();
 	const sync = new Sync(() => file, () => view);
 	const keys = new Compartment();
@@ -62,11 +66,13 @@
 	const spelling = new Compartment();
 	const syntax = new Compartment();
 	const server = new Compartment();
+	const live = new Compartment();
 	let loaded: string;
 
 	onMount(() => {
 		let disposed = false;
 		rendered = svg && !file.cursor;
+		if (markdown) show(file.cursor && markdownMode === 'preview' ? 'live' : markdownMode);
 		wrap = markdown;
 		loaded = file.path;
 		Promise.all([file.read(), language(loaded)]).then(
@@ -95,7 +101,8 @@
 							previewable ? EditorView.updateListener.of((update) => {
 								if (update.docChanged) content = update.state.doc.toString();
 							}) : [],
-							server.of(languageServer(servers, file.projectId, loaded, true))
+							server.of(languageServer(servers, file.projectId, loaded, true)),
+							live.of(liveExtension())
 						]
 					})
 				});
@@ -110,6 +117,21 @@
 			view?.destroy();
 		};
 	});
+
+	function liveExtension() {
+		return mode === 'live' && markdown ? livePreview({ image: (src) => imageSource(file.projectId, file.path, src) }) : [];
+	}
+
+	function show(next: MarkdownMode) {
+		mode = next;
+		rendered = next === 'preview';
+		if (next !== 'preview') view?.dispatch({ effects: live.reconfigure(liveExtension()) });
+	}
+
+	function choose(next: MarkdownMode) {
+		markdownMode = next;
+		show(next);
+	}
 
 	function toggleWrap() {
 		if (!view) return;
@@ -173,7 +195,8 @@
 	$effect(() => {
 		const cursor = file.cursor;
 		if (!view || !cursor) return;
-		rendered = false;
+		if (markdown && mode === 'preview') show('live');
+		else rendered = false;
 		const { doc } = view.state;
 		const line = doc.line(Math.min(Math.max(cursor.line, 1), doc.lines));
 		const anchor = Math.min(line.from + cursor.column - 1, line.to);
@@ -188,7 +211,9 @@
 		{#if file.deleted}<span class="deleted">deleted on disk</span>{/if}
 		{#if svg}
 			<Segmented aria-label="View" options={[{ value: true, label: 'Rendered' }, { value: false, label: 'Source' }]} bind:value={rendered} />
-		{:else if markdown || html}
+		{:else if markdown}
+			<Segmented aria-label="View" options={[{ value: 'source', label: 'Source' }, { value: 'live', label: 'Live' }, { value: 'preview', label: 'Preview' }]} bind:value={() => mode, choose} />
+		{:else if html}
 			<Segmented aria-label="View" options={[{ value: false, label: 'Edit' }, { value: true, label: 'Preview' }]} bind:value={rendered} />
 		{/if}
 		{#if !rendered}<ServerSwitch {servers} projectId={file.projectId} path={file.path} attached />{/if}

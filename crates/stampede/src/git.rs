@@ -38,6 +38,8 @@ pub struct Change {
     pub kind: Kind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blob: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -96,6 +98,23 @@ pub struct Status {
 pub struct Refs {
     local: Vec<String>,
     remote: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Comparison {
+    target: String,
+    source: String,
+    merge_base: String,
+    files: Vec<Change>,
+}
+
+#[derive(Deserialize)]
+pub struct CompareQuery {
+    target: String,
+    source: String,
 }
 
 #[derive(Serialize)]
@@ -136,8 +155,9 @@ pub async fn status(State(state): State<AppState>, Param(id): Param<String>) -> 
 }
 
 pub async fn refs(State(state): State<AppState>, Param(id): Param<String>) -> Result<Json<Refs>, Failure> {
-    let output = git(&root(&state, &id)?, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", "refs/heads", "refs/remotes"]).await.unwrap_or_default();
-    let mut refs = Refs { local: Vec::new(), remote: Vec::new() };
+    let dir = root(&state, &id)?;
+    let output = git(&dir, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", "refs/heads", "refs/remotes"]).await.unwrap_or_default();
+    let mut refs = Refs { local: Vec::new(), remote: Vec::new(), default: None };
     for name in String::from_utf8_lossy(&output).lines() {
         if let Some(local) = name.strip_prefix("refs/heads/") {
             refs.local.push(local.to_owned());
@@ -145,7 +165,55 @@ pub async fn refs(State(state): State<AppState>, Param(id): Param<String>) -> Re
             refs.remote.push(remote.to_owned());
         }
     }
+    refs.default = match crate::origin::default_branch(&dir).await.map(|branch| format!("origin/{branch}")) {
+        Some(remote) if refs.remote.contains(&remote) => Some(remote),
+        _ => ["main", "master"].into_iter().find(|name| refs.local.iter().any(|local| local == name)).map(str::to_owned),
+    };
     Ok(Json(refs))
+}
+
+/// What `source` changed since it split off `target`, both named as branches rather than revisions.
+pub async fn compare(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Query(query): Query<CompareQuery>,
+) -> Result<Json<Comparison>, Failure> {
+    let dir = root(&state, &id)?;
+    let (target, source) = tokio::try_join!(branch(&dir, &query.target), branch(&dir, &query.source))?;
+    let merge_base = git(&dir, &["merge-base", &target, &source])
+        .await
+        .map(|output| String::from_utf8_lossy(&output).trim_end().to_owned())
+        .ok_or_else(|| (StatusCode::CONFLICT, format!("{} and {} share no history", query.target, query.source)))?;
+    let args = ["diff", "-z", "--raw", "--no-abbrev", "--find-renames", "--relative", &merge_base, &source, "--"];
+    let output = git(&dir, &args).await.ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "git diff failed".to_owned()))?;
+    let files = name_status(&output).unwrap_or_default();
+    Ok(Json(Comparison { target, source, merge_base, files }))
+}
+
+/// The commit a local branch, remote branch or PR review's hidden ref names; anything else git could resolve is refused.
+async fn branch(dir: &Path, name: &str) -> Result<String, Failure> {
+    let refused = || (StatusCode::BAD_REQUEST, format!("{name} is not a branch"));
+    let hidden = name
+        .strip_prefix("refs/stampede/pr/")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(number, side)| !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()) && matches!(side, "source" | "target"));
+    let candidates = if hidden {
+        vec![name.to_owned()]
+    } else {
+        if name.starts_with('-') || name.starts_with("refs/") || run(dir, &["check-ref-format", &format!("refs/heads/{name}")]).await.is_err() {
+            return Err(refused());
+        }
+        vec![format!("refs/heads/{name}"), format!("refs/remotes/{name}")]
+    };
+    for full in candidates.iter().filter(|full| !(full.starts_with("refs/remotes/") && full.ends_with("/HEAD"))) {
+        if let Some(output) = git(dir, &["rev-parse", "--verify", "--quiet", &format!("{full}^{{commit}}")]).await {
+            return Ok(String::from_utf8_lossy(&output).trim_end().to_owned());
+        }
+    }
+    if !hidden && git(dir, &["rev-parse", "--verify", "--quiet", &format!("{name}^{{commit}}")]).await.is_some() {
+        return Err(refused());
+    }
+    Err((StatusCode::NOT_FOUND, format!("{name} does not exist")))
 }
 
 pub async fn history(
@@ -289,18 +357,32 @@ pub async fn commit_files(dir: &Path, sha: &str) -> Option<Vec<Change>> {
         sha,
         "--",
     ];
-    let output = git(dir, &args).await?;
+    name_status(&git(dir, &args).await?)
+}
+
+/// Parses `--name-status -z` output, or `--raw -z --no-abbrev` output, which also gives each file's new blob.
+pub(crate) fn name_status(output: &[u8]) -> Option<Vec<Change>> {
     let mut fields = output.split(|&byte| byte == 0).map(|field| String::from_utf8_lossy(field).into_owned());
     let mut files = Vec::new();
-    while let Some(status) = fields.next() {
+    while let Some(header) = fields.next() {
         let Some(path) = fields.next() else { break };
-        files.push(match status.chars().next() {
-            Some('A') => Change { path, kind: Kind::Added, from: None },
-            Some('D') => Change { path, kind: Kind::Deleted, from: None },
-            Some('R') => Change { path: fields.next()?, kind: Kind::Renamed, from: Some(path) },
-            Some('C') => Change { path: fields.next()?, kind: Kind::Added, from: None },
-            _ => Change { path, kind: Kind::Modified, from: None },
-        });
+        let (status, blob) = match header.strip_prefix(':') {
+            Some(raw) => {
+                let parts: Vec<&str> = raw.split(' ').collect();
+                let blob = parts.get(3).filter(|blob| blob.bytes().any(|byte| byte != b'0')).map(|blob| (*blob).to_owned());
+                (parts.get(4).copied().unwrap_or_default().to_owned(), blob)
+            }
+            None => (header, None),
+        };
+        let mut change = match status.chars().next() {
+            Some('A') => Change { path, kind: Kind::Added, from: None, blob: None },
+            Some('D') => Change { path, kind: Kind::Deleted, from: None, blob: None },
+            Some('R') => Change { path: fields.next()?, kind: Kind::Renamed, from: Some(path), blob: None },
+            Some('C') => Change { path: fields.next()?, kind: Kind::Added, from: None, blob: None },
+            _ => Change { path, kind: Kind::Modified, from: None, blob: None },
+        };
+        change.blob = blob;
+        files.push(change);
     }
     Some(files)
 }
@@ -309,7 +391,7 @@ pub async fn content_at(dir: &Path, rev: &str, path: &str) -> Vec<u8> {
     git(dir, &["show", &format!("{rev}:./{path}")]).await.unwrap_or_default()
 }
 
-fn inside(path: &str) -> Result<(), Failure> {
+pub fn inside(path: &str) -> Result<(), Failure> {
     if Path::new(path).components().all(|component| matches!(component, Component::Normal(_))) {
         Ok(())
     } else {
@@ -423,19 +505,19 @@ fn parse(output: &[u8], prefix: &Path) -> Status {
             Some(("u", _)) => {
                 let [.., path] = fields(11)[..] else { continue };
                 let Some(path) = relative(path) else { continue };
-                status.conflicted.push(Change { path: path.clone(), kind: Kind::Conflicted, from: None });
+                status.conflicted.push(Change { path: path.clone(), kind: Kind::Conflicted, from: None, blob: None });
                 (Kind::Modified, path, None)
             }
             Some(("?", path)) => {
                 let Some(path) = relative(path) else { continue };
-                status.unstaged.push(Change { path: path.clone(), kind: Kind::Untracked, from: None });
+                status.unstaged.push(Change { path: path.clone(), kind: Kind::Untracked, from: None, blob: None });
                 (Kind::Untracked, path, None)
             }
             _ => continue,
         };
         match changes.entry(path.clone()) {
             Entry::Vacant(entry) => {
-                entry.insert(Change { path, kind, from });
+                entry.insert(Change { path, kind, from, blob: None });
             }
             // Removed from the index yet still on disk, the path is listed both deleted and untracked.
             Entry::Occupied(mut entry) => entry.get_mut().kind = Kind::Modified,
@@ -454,7 +536,7 @@ fn parse(output: &[u8], prefix: &Path) -> Status {
 fn sides(status: &mut Status, xy: &str, path: &str, from: Option<String>) {
     let mut codes = xy.chars();
     let (staged, unstaged) = (codes.next().unwrap_or('.'), codes.next().unwrap_or('.'));
-    let change = |kind, from| Change { path: path.to_owned(), kind, from };
+    let change = |kind, from| Change { path: path.to_owned(), kind, from, blob: None };
     match staged {
         '.' => {}
         'A' | 'C' => status.staged.push(change(Kind::Added, None)),

@@ -16,6 +16,22 @@ export function image(path: string): boolean {
 	return /\.(avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i.test(path);
 }
 
+export function imageSource(projectId: string, path: string, src: string): string | null {
+	if (/^(https?|data):/i.test(src)) return src;
+	if (/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(src)) return null;
+	const parts = path.split('/').slice(0, -1);
+	for (const segment of src.split(/[?#]/, 1)[0].split('/')) {
+		let name = segment;
+		try {
+			name = decodeURIComponent(segment);
+		} catch {}
+		if (!name || name === '.') continue;
+		if (name !== '..') parts.push(name);
+		else if (!parts.pop()) return null;
+	}
+	return `/api/projects/${projectId}/image?${new URLSearchParams({ path: parts.join('/') })}`;
+}
+
 export class OpenFile {
 	projectId: string;
 	path = $state('');
@@ -71,14 +87,37 @@ export class OpenConfig extends OpenFile {
 
 export type Layout = 'split' | 'unified';
 
-/** What a Diff compares: HEAD, the index or the disk with the file on disk; the index with HEAD; or a commit with its parent. */
-export type Against = 'HEAD' | 'index' | 'staged' | 'disk' | Commit;
+/** Which branches a Comparison compares, by name, so its Diff tab follows them as they move. */
+export type Selection = { target: string; source: string };
+
+/** A PR review's Comparison, by pull request number. */
+export type Reviewing = { pr: number };
+
+/**
+ * What a Diff compares: HEAD, the index or the disk with the file on disk; the index with HEAD; a commit with its
+ * parent; or a Comparison's Source with where it split off its Target.
+ */
+export type Against = 'HEAD' | 'index' | 'staged' | 'disk' | Commit | Selection | Reviewing;
+
+export function comparing(against: Against): against is Selection | Reviewing {
+	return typeof against === 'object' && ('target' in against || 'pr' in against);
+}
+
+/** The refs a Comparison names, a PR review's being its hidden fetched refs. */
+export function branches(compared: Selection | Reviewing): Selection {
+	if (!('pr' in compared)) return compared;
+	return { target: `refs/stampede/pr/${compared.pr}/target`, source: `refs/stampede/pr/${compared.pr}/source` };
+}
 
 export class OpenDiff extends OpenFile {
 	against: Against;
 	from = $state<string>();
 	snapshot = $state.raw<{ disk: string; buffer: string }>();
 	layout = $state<Layout>(form() === 'phone' ? 'unified' : 'split');
+	/** The Draft comment to scroll to once its file shows. */
+	draft = $state<string>();
+	/** The Displaced Draft comment the next chosen line re-places. */
+	replacing = $state<string>();
 
 	constructor(projectId: string, path: string, against: Against, from?: string) {
 		super(projectId, path);
@@ -87,11 +126,16 @@ export class OpenDiff extends OpenFile {
 	}
 
 	get id() {
-		return `diff:${typeof this.against === 'string' ? this.against : this.against.sha}:${this.projectId}:${this.path}`;
+		const { against } = this;
+		if (comparing(against) && 'pr' in against) return `diff:pr:${against.pr}:${this.projectId}`;
+		if (comparing(against)) return `diff:compare:${against.target}...${against.source}:${this.projectId}`;
+		return `diff:${typeof against === 'string' ? against : against.sha}:${this.projectId}:${this.path}`;
 	}
 
 	get versus() {
-		return typeof this.against === 'string' ? this.against : this.against.short;
+		const { against } = this;
+		if (comparing(against)) return 'pr' in against ? `#${against.pr}` : against.target;
+		return typeof against === 'string' ? against : against.short;
 	}
 }
 

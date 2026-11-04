@@ -23,7 +23,7 @@ async fn an_adhoc_worktree_branches_from_any_ref_beside_its_project_until_delete
     let http = Http(server.port);
 
     assert_eq!(http.get(&format!("/api/projects/{project_id}/git")).await["isRoot"], true);
-    assert_eq!(http.get(&format!("/api/projects/{project_id}/git/refs")).await, json!({ "local": ["master"], "remote": ["origin/main"] }));
+    assert_eq!(http.get(&format!("/api/projects/{project_id}/git/refs")).await, json!({ "local": ["master"], "remote": ["origin/main"], "default": "origin/main" }));
     let (status, created) = http.create(&project_id, "feat/x", "origin/main").await;
     assert_eq!(status, 200, "{created}");
     let id = created["projectId"].as_str().unwrap().to_owned();

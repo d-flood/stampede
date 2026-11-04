@@ -25,9 +25,10 @@
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
-	import { image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Against, type Cursor } from '#lib/files.svelte.ts';
+	import { comparing, image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Against, type Cursor, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { deleteWorktree, status, type Change, type Git, type Trunk, type Update } from '#lib/git.ts';
+	import type { PrReview } from '#lib/pr-reviews.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
@@ -106,6 +107,11 @@
 	let handoff = false;
 	let section = $state<Section>(restored.sidebar?.section ?? 'files');
 	let rail = $state(restored.rail?.open ?? false);
+	let markdownMode = $state(restored.markdownMode);
+	let comparisons = $state<Record<string, Selection | Reviewing>>(restored.compare);
+	const plainComparisons: Record<string, Selection> = {};
+	for (const [projectId, chosen] of Object.entries(restored.compare)) if ('target' in chosen) plainComparisons[projectId] = chosen;
+	let prReviews = $state.raw<Record<string, PrReview[]>>({});
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
 	let closingChat = $state<Chat>();
@@ -203,7 +209,21 @@
 		sidebar: { title: sectionShowing(section, focused && git.get(focused.id)).label, sub: label }
 	});
 	const deviceLayout = $derived(
-		capture({ chosen, terminals, chats, files, browsers, canvases, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section }, rail: { open: rail } })
+		capture({
+			chosen,
+			terminals,
+			chats,
+			files,
+			browsers,
+			canvases,
+			epics: epicTabs,
+			chosenTabs,
+			splits,
+			sidebar: { open: sidebar, section },
+			rail: { open: rail },
+			markdownMode,
+			compare: comparisons
+		})
 	);
 
 	$effect(() => device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics }));
@@ -420,6 +440,8 @@
 				}
 				const kept = Object.entries(epics).filter(([projectId]) => projects.some((project) => project.id === projectId));
 				if (kept.length < Object.keys(epics).length) epics = Object.fromEntries(kept);
+				const reviewed = Object.entries(prReviews).filter(([projectId]) => projects.some((project) => project.id === projectId));
+				if (reviewed.length < Object.keys(prReviews).length) prReviews = Object.fromEntries(reviewed);
 				for (const projectId of subscribed) {
 					if (!projects.some((project) => project.id === projectId)) subscribed.delete(projectId);
 				}
@@ -427,6 +449,7 @@
 					if (subscribed.has(id)) continue;
 					subscribed.add(id);
 					device.send({ type: 'epics.subscribe', projectId: id });
+					device.send({ type: 'pr-reviews.subscribe', projectId: id });
 				}
 				if (!activeTab) warmUp();
 				break;
@@ -437,6 +460,9 @@
 			case 'origin.changed':
 				trunks = message.trunks;
 				update = message.update;
+				break;
+			case 'pr-reviews.changed':
+				prReviews = { ...prReviews, [message.projectId]: message.reviews };
 				break;
 			case 'epics.changed':
 				closeArchived(message.projectId, message.epics);
@@ -919,8 +945,28 @@
 		else unfocused = true;
 	}
 
-	function openDiff(projectId: string, { path, from }: Change, against: Against) {
-		openTab(new OpenDiff(projectId, path, against, from));
+	function openDiff(projectId: string, { path, from }: Change, against: Against, draft?: string, replace = false) {
+		const diff = openTab(new OpenDiff(projectId, path, against, from));
+		if (!comparing(against)) return;
+		diff.path = path;
+		diff.from = from;
+		diff.draft = replace ? undefined : draft;
+		diff.replacing = replace ? draft : undefined;
+	}
+
+	/** Shows a Comparison, or without one returns to the last plain Comparison this Device chose. */
+	function compare(projectId: string, selection?: Selection | Reviewing) {
+		if (selection && 'target' in selection) plainComparisons[projectId] = selection;
+		const next = selection ?? plainComparisons[projectId];
+		if (next) comparisons[projectId] = next;
+		else delete comparisons[projectId];
+	}
+
+	function showComparison(projectId: string, selection: Selection) {
+		compare(projectId, selection);
+		section = 'compare';
+		sidebar = true;
+		slide('sidebar');
 	}
 
 	function showDiff(file: OpenFile, disk: string, buffer: string) {
@@ -985,10 +1031,14 @@
 		{usage}
 		{codexResets}
 		epics={focused && epics[focused.id]}
+		comparison={focused && comparisons[focused.id]}
+		reviews={focused && prReviews[focused.id]}
+		oncompare={(selection) => focused && compare(focused.id, selection)}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		onrename={(from, to) => focused && retarget(focused.id, from, to)}
-		ondiff={(change, against) => focused && openDiff(focused.id, change, against)}
+		ondiff={(change, against, draft, replace) => focused && openDiff(focused.id, change, against, draft, replace)}
 		onepic={(slug) => focused && openEpic(focused.id, slug)}
+		onfocus={focus}
 	>
 		{#snippet toggle()}{@render sidebarToggle(true)}{/snippet}
 	</Sidebar>
@@ -1193,6 +1243,7 @@
 								active={showing(epic.id)}
 								{device}
 								chats={allChats}
+								oncompare={(selection) => showComparison(epic.projectId, selection)}
 								onchat={(chatId) => {
 									const chat = allChats.find(({ id }) => id === chatId);
 									if (chat) attend(chat.projectId, chatId);
@@ -1278,7 +1329,7 @@
 						{#if active || warm()}
 							{#if file instanceof OpenDiff}
 								{#await import('#lib/shell/Diff.svelte') then { default: Diff }}
-									<Diff diff={file} git={git.get(file.projectId)} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
+									<Diff diff={file} git={git.get(file.projectId)} reviews={prReviews[file.projectId]} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
 								{/await}
 							{:else if image(file.path) && !/\.svg$/i.test(file.path)}
 								{#await import('#lib/shell/ImageView.svelte') then { default: ImageView }}
@@ -1294,6 +1345,7 @@
 										{active}
 										displayed={active && foreground}
 										focused={file.id === activeTab}
+										bind:markdownMode
 										{onshowdiff}
 									/>
 								{/await}
