@@ -101,7 +101,11 @@
 							title={tile.status ? `${name} ${tile.status}` : name}
 							onclick={(event) => select(event, tile.id)}
 						>
-							<span class="tile squircle {tile.status ?? ''}">{tile.mark}{#if tile.status === 'background'}<span class="badge"><ShellMark /></span>{/if}</span>
+							<span class="tile squircle {tile.status ?? ''}">
+								{tile.mark}
+								{#if tile.needs}<span class="attention">{tile.needs}</span>{/if}
+								{#if tile.status === 'working'}<span class="spinner" title="working"><WorkingMark /></span>{:else if tile.status === 'background'}<span class="shell" title="background"><ShellMark /></span>{/if}
+							</span>
 							<span class="name">{name}</span>
 						</button>
 					{/snippet}
@@ -394,7 +398,7 @@
 		gap: var(--space-1);
 		min-height: 0;
 		padding-left: calc(var(--square) - var(--target-min));
-		clip-path: inset(calc(-1 * var(--space-1)) -100vmax);
+		clip-path: inset(calc(-1 * var(--space-1) - var(--border-width)) -100vmax);
 		transition:
 			height var(--dur-med) var(--ease-out),
 			margin var(--dur-med) var(--ease-out),
@@ -545,15 +549,9 @@
 		color: var(--status-done);
 	}
 
-	.badge {
-		position: absolute;
-		right: -5px;
-		bottom: -5px;
-		display: grid;
-		place-items: center;
-		border: var(--border-width) solid currentColor;
-		border-radius: var(--radius-sm);
-		background: var(--color-bg);
+	.tile .attention,
+	.tile .spinner,
+	.tile .shell {
 		font-size: 8px;
 	}
 

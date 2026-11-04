@@ -144,7 +144,6 @@
 	const ownProjects = $derived(projects.filter((project) => !project.worktree));
 	const roots = $derived(new Set(projects.filter((project) => git.get(project.id)?.isRoot).map((project) => project.id)));
 	const allChats = $derived(Object.values(chats).flat());
-	const nested = $derived(worktrees(projects, epics, allChats));
 	const working = $derived(
 		new Set(projects.filter((project) => chats[project.id]?.some((chat) => chatStatus(chat) === 'working')).map((project) => project.worktree?.parent ?? project.id))
 	);
@@ -152,6 +151,7 @@
 		new Set(projects.filter((project) => chats[project.id]?.some((chat) => chatStatus(chat) === 'background')).map((project) => project.worktree?.parent ?? project.id))
 	);
 	const needs = $derived(attentionList.reduce((map, item) => map.set(item.projectId, (map.get(item.projectId) ?? 0) + 1), new Map<string, number>()));
+	const nested = $derived(worktrees(projects, epics, allChats, chatStatus, needs));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
 	const tabs = $derived((focused && terminals[focused.id]) || []);
 	const chatTabs = $derived((focused && chats[focused.id]) || []);

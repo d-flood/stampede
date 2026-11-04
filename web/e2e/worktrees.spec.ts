@@ -1,5 +1,6 @@
+import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
-import type { Page } from '@playwright/test';
+import type { Page, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { openProject, pinned, showSidebar } from './shell.ts';
 
@@ -109,12 +110,13 @@ test('worktrees are counted on their Project and listed under it, grouped in the
 	await expect(row).toContainText(alpha());
 });
 
-test('a working Chat in a worktree spins on its Project square', { tag: '@desktop' }, async ({ page }) => {
+test('a working Chat in a worktree spins on its Project square and tile', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	await mint(page, 'spin');
 	const rail = page.getByRole('navigation', { name: 'Projects' });
 	const square = rail.getByRole('button', { name: 'alpha', exact: true });
-	await rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: 'spin', exact: true }).click();
+	const tile = rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: /^spin/ });
+	await tile.click();
 
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
@@ -126,8 +128,44 @@ test('a working Chat in a worktree spins on its Project square', { tag: '@deskto
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(panel.getByText(/^Hello and welcome!/)).toBeVisible();
 	await expect(square.getByTitle('working')).toHaveCount(0);
+	await expect(tile.getByTitle('working')).toHaveCount(0);
 	await composer.fill('Anything else?');
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(tab.getByTitle('working')).toBeVisible();
 	await expect(square.getByTitle('working')).toBeVisible();
+	await expect(tile.getByTitle('working')).toBeVisible();
+	await expect(tile).toHaveAccessibleName('spin, working');
+});
+
+test('a worktree tile carries the shell and attention marks of its Chats', { tag: '@desktop' }, async ({ page }) => {
+	let route: WebSocketRoute;
+	let chat: { id: string; projectId: string };
+	await page.routeWebSocket('**/ws', (socket) => {
+		route = socket;
+		const server = socket.connectToServer();
+		server.onMessage((data) => {
+			if (typeof data === 'string') {
+				const message: ServerMessage = JSON.parse(data);
+				if (message.type === 'chat.created') chat = message.chat;
+			}
+			socket.send(data);
+		});
+	});
+	await openProject(page, 'alpha');
+	await mint(page, 'marks');
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await expect((await pinned(page.getByRole('tab', { name: /^Fake Claude/ }))).getByTitle('done')).toBeVisible();
+
+	const rail = page.getByRole('navigation', { name: 'Projects' });
+	const tile = rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: /^marks/ });
+	await expect(tile).toHaveAccessibleName('marks');
+	route!.send(JSON.stringify({ type: 'chat.background', chatId: chat!.id, background: true }));
+	await expect(tile.getByTitle('background')).toBeVisible();
+	await expect(tile).toHaveAccessibleName('marks, background');
+	route!.send(JSON.stringify({ type: 'chat.background', chatId: chat!.id, background: false }));
+	await expect(tile.getByTitle('background')).toHaveCount(0);
+
+	route!.send(JSON.stringify({ type: 'attention.changed', items: [{ projectId: chat!.projectId, chatId: chat!.id, label: 'Fake Claude', status: 'waiting' }] }));
+	await expect(tile.locator('.attention')).toHaveText('1');
 });
