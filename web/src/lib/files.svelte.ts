@@ -116,6 +116,8 @@ export class OpenDiff extends OpenFile {
 	layout = $state<Layout>(form() === 'phone' ? 'unified' : 'split');
 	/** The Draft comment to scroll to once its file shows. */
 	draft = $state<string>();
+	/** The Displaced Draft comment the next chosen line re-places. */
+	replacing = $state<string>();
 
 	constructor(projectId: string, path: string, against: Against, from?: string) {
 		super(projectId, path);

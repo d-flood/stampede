@@ -6,22 +6,27 @@ import { BlockType, Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType
 /** Fills a draft widget's DOM, giving back what tears it down. */
 export type Render = (dom: HTMLElement, shown: { placement: Placement; draft?: DraftComment; lines?: string; close(): void }) => () => void;
 
-/** One side of a PR review's Diff tab. A unified view shows the Source, with the Target's deleted lines in widgets. */
-type Config = { side: Side; unified: boolean; render: Render };
+/**
+ * One side of a PR review's Diff tab. A unified view shows the Source, with the Target's deleted lines in widgets.
+ * While re-placing, a chosen line goes to `replace` instead of opening a draft.
+ */
+type Config = { side: Side; unified: boolean; render: Render; replace(placement: Placement): void };
 
-type Drafting = { hunks: Hunks; drafts: DraftComment[]; pending: Placement | null };
+type Drafting = { hunks: Hunks; drafts: DraftComment[]; pending: Placement | null; replacing: boolean };
 
 const config = Facet.define<Config, Config>({ combine: (values) => values[0] });
 
 export const setDrafts = StateEffect.define<DraftComment[]>();
 export const openDraft = StateEffect.define<Placement | null>();
+export const setReplacing = StateEffect.define<boolean>();
 
 const drafting = StateField.define<Drafting>({
-	create: () => ({ hunks: { source: [], target: [] }, drafts: [], pending: null }),
+	create: () => ({ hunks: { source: [], target: [] }, drafts: [], pending: null, replacing: false }),
 	update(value, tr) {
 		for (const effect of tr.effects) {
 			if (effect.is(setDrafts)) value = { ...value, drafts: effect.value };
 			if (effect.is(openDraft)) value = { ...value, pending: effect.value };
+			if (effect.is(setReplacing)) value = { ...value, replacing: effect.value, pending: effect.value ? null : value.pending };
 		}
 		return value;
 	}
@@ -104,13 +109,30 @@ const widgets = EditorView.decorations.compute([drafting], (state) => {
 	return Decoration.set(ranges.filter((range) => !!range), true);
 });
 
-/** Opens a draft on `line`, or on the range from `anchor` to it, kept within `line`'s hunk. */
+const commentableLine = Decoration.line({ class: 'cm-draftCommentable' });
+
+/** Marks the lines a re-placed draft can land on. */
+const commentableLines = EditorView.decorations.compute([drafting], (state) => {
+	const { hunks, replacing } = state.field(drafting);
+	if (!replacing) return Decoration.none;
+	const ranges = hunks[state.facet(config).side].flatMap(([from, to]) =>
+		Array.from({ length: Math.max(0, Math.min(to, state.doc.lines) - from + 1) }, (_, index) => commentableLine.range(state.doc.line(from + index).from))
+	);
+	return Decoration.set(ranges, true);
+});
+
+const replacingClass = EditorView.editorAttributes.compute([drafting], (state) => ({ class: state.field(drafting).replacing ? 'cm-draftReplacing' : '' }));
+
+/** Opens or re-places a draft on `line`, or on the range from `anchor` to it, kept within `line`'s hunk. */
 function choose(view: EditorView, side: Side, line: number, anchor = line) {
-	const range = hunk(view.state.field(drafting).hunks, side, line);
+	const { hunks, replacing } = view.state.field(drafting);
+	const range = hunk(hunks, side, line);
 	if (!range) return;
 	const start = Math.max(range[0], Math.min(anchor, line));
 	const end = Math.min(range[1], Math.max(anchor, line));
-	view.dispatch({ effects: openDraft.of({ side, line: end, startLine: start < end ? start : undefined }) });
+	const placement = { side, line: end, startLine: start < end ? start : undefined };
+	if (replacing) view.state.facet(config).replace(placement);
+	else view.dispatch({ effects: openDraft.of(placement) });
 }
 
 /** The line a shift-click extends from: the open draft's first line when it is on that side. */
@@ -229,6 +251,8 @@ const style = EditorView.theme({
 	},
 	'.cm-draftAdd:hover': { background: 'var(--status-working)', color: 'var(--color-bg)', opacity: 1 },
 	'.cm-lineNumbers .cm-gutterElement': { cursor: 'pointer' },
+	'.cm-draftCommentable': { boxShadow: 'inset 3px 0 var(--status-working)' },
+	'&.cm-draftReplacing .cm-draftAdd': { color: 'var(--status-working)', opacity: 1 },
 	'.cm-draftComment': {
 		padding: 'var(--space-2) var(--space-2) var(--space-2) var(--space-3)',
 		borderBlock: 'var(--border-width) solid var(--border)',
@@ -239,11 +263,13 @@ const style = EditorView.theme({
 });
 
 /** Draft comments on one side of a PR review's Diff tab, with "+" on the lines GitHub accepts comments on. */
-export function draftComments(side: Side, unified: boolean, hunks: Hunks, drafts: DraftComment[], render: Render): Extension {
+export function draftComments(side: Side, unified: boolean, hunks: Hunks, drafts: DraftComment[], render: Render, replace: Config['replace']): Extension {
 	return [
-		config.of({ side, unified, render }),
-		drafting.init(() => ({ hunks, drafts, pending: null })),
+		config.of({ side, unified, render, replace }),
+		drafting.init(() => ({ hunks, drafts, pending: null, replacing: false })),
 		widgets,
+		commentableLines,
+		replacingClass,
 		adds,
 		lineNumbers,
 		style
