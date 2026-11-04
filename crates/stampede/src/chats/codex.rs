@@ -1260,6 +1260,7 @@ impl Transcript {
                     Some(format!("Running {command}"))
                 }
                 Some("webSearch") => Some("Searching the web…".to_owned()),
+                Some("mcpToolCall") if item["server"] == html::SERVER && item["tool"] == super::questions::TOOL => None,
                 Some("mcpToolCall") => Some(format!("Using {}.{}", item["server"].as_str().unwrap_or_default(), item["tool"].as_str().unwrap_or_default())),
                 Some("dynamicToolCall") => Some(format!("Using {}", item["tool"].as_str().unwrap_or_default())),
                 Some("fileChange") => Some("Editing files…".to_owned()),
@@ -1495,6 +1496,7 @@ impl Transcript {
                 }
             }
             Some("mcpToolCall") => {
+                if item["server"] == html::SERVER && item["tool"] == super::questions::TOOL { return; }
                 if item["server"] == html::SERVER && item["tool"] == super::delegation::TOOL {
                     if let Some(delegated) = super::delegation::item(&item["result"], self.data_dir.as_deref()) {
                         if let Item::Subagent { id, .. } = &delegated

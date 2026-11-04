@@ -50,11 +50,12 @@ Use a throwaway Project and repeat each applicable item with Claude Code and Cod
 - [ ] Choose Always scope with a shorter prefix; a new session reuses it.
 - [ ] Approve a compound command with a separate rule for each part. For Codex, restart Codex before checking the additional persistent rules.
 - [ ] Answer a question by tapping an option.
-- [ ] Answer a question with Other.
+- [ ] Answer a question by typing your own answer in the note field, without picking an option.
 - [ ] Select several answers on a multiple-choice question.
-- [ ] Step through a multi-question card and submit; the Agent receives every answer.
-- [ ] Skip a question.
-- [ ] Type in the Composer during a question; the Agent receives the free-text answer.
+- [ ] Work through a multi-question card; each answered question collapses to a row showing the answer, and the Agent receives every answer.
+- [ ] Send with a question unanswered; the Agent receives it as skipped.
+- [ ] Reload the page partway through a question card; the answers given so far are still there.
+- [ ] Type in the Composer during a question; the Agent receives the instruction with the answers given so far, and the transcript shows both.
 - [ ] Approve a proposed plan; the Agent leaves plan mode and starts implementing.
 - [ ] Choose Keep planning; the Agent remains in plan mode.
 - [ ] Answer a pending request from one Device; the card clears on the other Device.
@@ -71,7 +72,8 @@ Use a throwaway Project and repeat each applicable item with Claude Code and Cod
 - [ ] Claude `/rewind` restores an Edit/Write change and removes the chosen prompt and later transcript; Bash and subagent changes remain.
 - [ ] Codex `/rewind` removes the selected turn and later transcript, leaves files unchanged, and says so.
 - [ ] Restart Stampede mid-turn; the Chat continues without missing transcript.
-- [ ] Restart Stampede at a question or approval; the request can still be answered.
+- [ ] Restart Stampede at an approval; the request can still be answered.
+- [ ] Restart Stampede at a question; the Agent is told it went unanswered and asks again.
 - [ ] Reboot the Host mid-turn; the session returns without re-running the prompt, marked interrupted and in Attention.
 - [ ] Compare Claude five-hour and weekly meters with its TUI usage display.
 - [ ] Compare Codex five-hour and weekly meters with its TUI usage display.

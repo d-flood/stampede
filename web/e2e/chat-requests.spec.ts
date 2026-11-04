@@ -27,17 +27,18 @@ test('past Claude questions reopen with their full options, previews and answers
 	await page.getByRole('group', { name: 'Sessions' }).getByRole('menuitem').filter({ hasText: 'Review previous choices' }).click();
 	const history = page.getByRole('group', { name: 'Answered questions', exact: true });
 	await expect(history).toHaveCount(1);
+	await expect(history.locator('summary')).toContainText('Distinct icons');
 	await history.locator('summary').click();
 	await expect(history.getByText('Which icon mapping?', { exact: true })).toBeVisible();
 	await expect(history.getByText('Use the same icon for every tool.', { exact: true })).toBeVisible();
 	await expect(history.locator('.preview')).toHaveText('Read   file-text\nEdit   pencil-simple');
 	await expect(history.locator('.preview')).toHaveCSS('white-space', 'pre');
-	await expect(history.getByText('Answer: Distinct icons', { exact: true })).toBeVisible();
+	await expect(history.locator('.option.selected')).toContainText('Distinct icons');
 	await expect.poll(() => history.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
 	await page.reload();
 	await expect(history).toHaveCount(1);
 	await history.locator('summary').click();
-	await expect(history.getByText('Answer: Distinct icons', { exact: true })).toBeVisible();
+	await expect(history.locator('.option.selected')).toContainText('Distinct icons');
 	await closeProject(page, name);
 });
 
@@ -106,7 +107,7 @@ for (const agent of ['Claude', 'Codex']) {
 	test(`${agent} questions step through choices and dock a plan`, { tag: agent === 'Codex' ? '@desktop' : [] }, async ({ page }, { project }) => {
 		const { panel } = await launch(page, `${agent} Questions`, `questions-${agent}-${project.name}`);
 		const question = panel.getByRole('region', { name: 'Question', exact: true });
-		await expect(question).toContainText('Question 1 of 2');
+		await expect(question).toContainText('2 questions');
 		await expect(question.getByText(agent === 'Claude' ? 'Choose a color' : 'Which color should the text file contain?', { exact: true })).toBeVisible();
 		await expect(question.getByText(agent === 'Claude' ? 'Warm' : 'Choose Red for the file content.', { exact: true })).toBeVisible();
 		if (agent === 'Claude') {
@@ -117,23 +118,26 @@ for (const agent of ['Claude', 'Codex']) {
 		}
 		if (agent === 'Codex') await expect(panel.getByText('I’ll collect both choices first, then write the short plan without creating the file.', { exact: true })).toBeVisible();
 		await expect.poll(() => question.evaluate((node) => node.scrollWidth <= node.clientWidth && node.getBoundingClientRect().bottom <= window.innerHeight)).toBe(true);
-		await question.getByRole('button', { name: /^Red/ }).click();
+		const opened = question.locator('li.open');
+		await opened.getByRole('radio', { name: /^Red/ }).click();
+		await expect(question.locator('.row').first()).toContainText('Red');
+		await expect(question.locator('.row').nth(1)).toHaveAttribute('aria-expanded', 'true');
+		const other = opened.getByRole('textbox', { name: 'Add a note or your own answer' });
 		const transcript = panel.locator('.transcript:visible');
+		await expect(other).toBeVisible();
 		const expandedHeight = await transcript.evaluate((node) => node.clientHeight);
-		await question.locator('summary').click();
-		await expect(question.getByRole('textbox', { name: 'Other answer' })).toBeHidden();
-		await expect(question.locator('summary')).toContainText('Question 1 of 2');
+		await question.getByRole('button', { name: 'Hide questions', exact: true }).click();
+		await expect(other).toBeHidden();
+		await expect(question).toContainText('2 questions');
 		await expect.poll(() => transcript.evaluate((node) => node.clientHeight)).toBeGreaterThan(expandedHeight);
-		await question.locator('summary').click();
-		await expect(question.getByRole('button', { name: /^Red/ })).toHaveAttribute('aria-pressed', 'true');
-		await question.getByRole('button', { name: 'Next', exact: true }).click();
-		await expect(question).toContainText('Question 2 of 2');
-		await question.getByRole('textbox', { name: 'Other answer' }).fill('Triangle');
-		await question.locator('summary').click();
-		await expect(question.getByRole('textbox', { name: 'Other answer' })).toBeHidden();
-		await question.locator('summary').click();
-		await expect(question.getByRole('textbox', { name: 'Other answer' })).toHaveValue('Triangle');
-		await question.getByRole('button', { name: 'Submit', exact: true }).click();
+		await question.getByRole('button', { name: 'Show questions', exact: true }).click();
+		await expect(question.locator('.row').first()).toContainText('Red');
+		await other.fill('Triangle');
+		await question.getByRole('button', { name: 'Hide questions', exact: true }).click();
+		await expect(other).toBeHidden();
+		await question.getByRole('button', { name: 'Show questions', exact: true }).click();
+		await expect(other).toHaveValue('Triangle');
+		await question.getByRole('button', { name: 'Send answers', exact: true }).click();
 		const plan = panel.getByRole('region', { name: 'Plan', exact: true });
 		await expect(plan).toBeVisible();
 		await plan.getByRole('button', { name: 'Approve', exact: true }).click();
@@ -141,15 +145,15 @@ for (const agent of ['Claude', 'Codex']) {
 		const history = panel.getByRole('group', { name: 'Answered questions', exact: true });
 		await expect(history).not.toHaveAttribute('open');
 		await history.locator('summary').click();
-		await expect(history.getByText('Answer: Red', { exact: true })).toBeVisible();
-		await expect(history.getByText('Answer: Triangle', { exact: true })).toBeVisible();
+		await expect(history.locator('.option.selected')).toContainText('Red');
+		await expect(history.locator('.answer')).toHaveText('Triangle');
 		await expect(history.getByText(agent === 'Claude' ? 'Warm' : 'Choose Red for the file content.', { exact: true })).toBeVisible();
 		if (agent === 'Claude') await expect(history.locator('.preview')).toBeVisible();
 		await expect.poll(() => history.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
 		await page.reload();
 		await expect(history).not.toHaveAttribute('open');
 		await history.locator('summary').click();
-		await expect(history.getByText('Answer: Triangle', { exact: true })).toBeVisible();
+		await expect(history.locator('.answer')).toHaveText('Triangle');
 		await closeProject(page, `questions-${agent}-${project.name}`);
 	});
 }

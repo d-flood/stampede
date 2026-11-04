@@ -354,7 +354,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                         let original = transcript.inputs.remove(&id).unwrap_or_default();
                         transcript.unblock(&id);
                         let response = match answer {
-                            Answer::Responses(_) => continue,
+                            Answer::Responses(_) | Answer::Redirect { .. } => continue,
                             Answer::Allow => json!({ "behavior": "allow" }),
                             Answer::Rules(rules) => {
                                 let parts = words(original["input"]["command"].as_str().unwrap_or_default());
@@ -1933,7 +1933,7 @@ impl Transcript {
         let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) else { return };
         let input = &block["input"];
         let text = |key: &str| input[key].as_str().unwrap_or_default().to_owned();
-        if !self.replaying {
+        if !self.replaying && name != super::questions::CLAUDE_TOOL {
             let label = match name {
                 "Bash" => format!("Running {}", text("command")),
                 "Read" => format!("Reading {}", self.relative(&text("file_path"))),
@@ -1950,6 +1950,7 @@ impl Transcript {
         match name {
             super::delegation::CLAUDE_TOOL => { self.delegating.insert(id.to_owned()); }
             crate::media::CLAUDE_TOOL => { self.media.insert(id.to_owned()); }
+            super::questions::CLAUDE_TOOL => {}
             html::CLAUDE_TOOL => {
                 if let Some(item) = html::item(input) {
                     self.snippets.insert(id.to_owned(), item);
@@ -2035,7 +2036,7 @@ impl Transcript {
                 let answers = questions.iter().map(|question| {
                     recorded_answers(question, result["answers"][&question.question].as_str().unwrap_or_default())
                 }).collect();
-                let record = AnsweredQuestions { source: Some(id.to_owned()), after: self.len, questions, answers, responses: Default::default() };
+                let record = AnsweredQuestions { source: Some(id.to_owned()), after: self.len, questions, answers, responses: Default::default(), cancelled: false, instruction: None };
                 let _ = self.events.send(Event::QuestionsRecovered(record));
             }
             self.activity.finish(id, &self.events);
@@ -2168,7 +2169,9 @@ impl Transcript {
                 Some("thinking") => self.activity.start(&activity_id, "Thinking…".to_owned(), &self.events),
                 Some("text") => self.activity.start(&activity_id, "Writing response…".to_owned(), &self.events),
                 Some("tool_use") => {
-                    if let (Some(id), Some(name)) = (content["id"].as_str(), content["name"].as_str()) {
+                    if let (Some(id), Some(name)) = (content["id"].as_str(), content["name"].as_str())
+                        && name != super::questions::CLAUDE_TOOL
+                    {
                         self.activity.start(id, format!("Using {name}"), &self.events);
                     }
                 }

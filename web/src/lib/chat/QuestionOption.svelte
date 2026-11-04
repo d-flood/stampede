@@ -3,16 +3,18 @@
 	import Media from '#lib/chat/Media.svelte';
 	import type { Question } from '#lib/device.svelte.ts';
 
-	let { option, rich = false, showLabel = true }: { option: Question['options'][number]; rich?: boolean; showLabel?: boolean } = $props();
+	let { option }: { option: Question['options'][number] } = $props();
 </script>
 
-{#if showLabel}<strong>{option.label}{#if option.recommended}<span class="recommended">Recommended</span>{/if}</strong>{/if}
-{#if rich}<Text item={{ kind: 'text', text: option.description, streaming: false, phase: 'final' }} />{:else}<span>{option.description}</span>{/if}
+<strong>{option.label}{#if option.recommended}<span class="recommended">Recommended</span>{/if}</strong>
+{#if option.description}<div class="description"><Text item={{ kind: 'text', text: option.description, streaming: false, phase: 'final' }} /></div>{/if}
 {#if option.image}<Media item={{ kind: 'media', ...option.image }} />{/if}
 {#if option.preview}<span class="preview">{option.preview}</span>{/if}
 
 <style>
-	.recommended { margin-left: var(--space-2); color: var(--status-waiting); }
-	span { color: var(--muted-fg); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
-	.preview { max-width: 100%; overflow-x: auto; white-space: pre; font-family: var(--font-mono); color: var(--color-fg); }
+	strong { font-weight: 600; overflow-wrap: anywhere; }
+	.recommended { margin-left: var(--space-2); color: var(--status-waiting); font-size: var(--font-size-sm); font-weight: 400; white-space: nowrap; }
+	.description { --font-size-chat: var(--font-size-sm); color: var(--muted-fg); }
+	.description :global(.text > :last-child) { margin-bottom: 0; }
+	.preview { display: block; max-width: 100%; overflow-x: auto; white-space: pre; font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--muted-fg); }
 </style>

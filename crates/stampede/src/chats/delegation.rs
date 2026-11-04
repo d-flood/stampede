@@ -127,10 +127,16 @@ pub fn call(args: &ChatToolsArgs, params: Value) -> Value {
         let request = json!({ "chat_id": args.chat_id, "name": params["name"], "arguments": params["arguments"] });
         writeln!(stream, "{request}")?;
         let mut reply = String::new();
-        std::io::BufReader::new(stream).read_line(&mut reply)?;
+        if std::io::BufReader::new(stream).read_line(&mut reply)? == 0 { return Err(io::ErrorKind::UnexpectedEof.into()); }
         serde_json::from_str(&reply).map_err(io::Error::other)
     };
-    exchange().unwrap_or_else(|cause| error(format!("Could not reach Stampede chat tools: {cause}")))
+    exchange().unwrap_or_else(|cause| match cause.kind() {
+        io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset if params["name"] == super::questions::TOOL => {
+            error("Stampede stopped before the user answered. Ask again.")
+        }
+        io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset => error("Stampede stopped before this call finished."),
+        _ => error(format!("Could not reach Stampede chat tools: {cause}")),
+    })
 }
 
 pub fn bind(data_dir: &Path) -> io::Result<UnixListener> {
@@ -306,6 +312,25 @@ impl Chats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_server_that_stops_mid_call_gives_a_clean_result() {
+        let data = tempfile::tempdir().unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(crate::unix::path(&socket_path(data.path())).unwrap()).unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                std::io::BufReader::new(stream).read_line(&mut line).unwrap();
+            }
+        });
+        let args = ChatToolsArgs { data_dir: data.path().to_owned(), chat_id: None };
+        let question = call(&args, json!({ "name": super::super::questions::TOOL, "arguments": {} }));
+        assert_eq!(question, error("Stampede stopped before the user answered. Ask again."));
+        let other = call(&args, json!({ "name": TOOL, "arguments": {} }));
+        assert_eq!(other, error("Stampede stopped before this call finished."));
+        server.join().unwrap();
+    }
 
     #[test]
     fn compact_results_preserve_full_reports_and_legacy_replay() {

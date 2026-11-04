@@ -713,6 +713,7 @@ impl Transcript {
         self.finish_thinking();
         let Some(id) = data["toolCallId"].as_str() else { return };
         if self.tools.contains_key(id) { return; }
+        if data["mcpServerName"] == html::SERVER && data["mcpToolName"] == super::questions::TOOL { return; }
         let name = data["toolName"].as_str().unwrap_or("tool");
         let args = &data["arguments"];
         let item = if let Some(command) = args["command"].as_str().filter(|_| matches!(name, "bash" | "powershell" | "shell" | "local_shell")) {
@@ -763,6 +764,15 @@ fn tool(name: &str, args: &Value, kind: ToolKind) -> Item {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn question_tool_calls_leave_no_row() {
+        let mut transcript = Transcript::new(Path::new("/project"), mpsc::unbounded_channel().0, Settings::default());
+        transcript.tool_start(&json!({ "toolCallId": "ask", "toolName": "ask_questions", "mcpServerName": html::SERVER,
+            "mcpToolName": super::super::questions::TOOL, "arguments": {} }));
+        transcript.tool_complete(&json!({ "toolCallId": "ask", "success": true, "result": { "content": "{}" } }));
+        assert!(transcript.items.is_empty());
+    }
 
     #[test]
     fn the_cache_lapses_at_copilots_expiry_for_certain_only_on_claude() {

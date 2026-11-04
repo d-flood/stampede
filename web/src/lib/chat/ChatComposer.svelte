@@ -5,6 +5,7 @@
 	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import { count } from '#lib/chat/count.ts';
 	import FileMenu from '#lib/chat/FileMenu.svelte';
+	import { redirect } from '#lib/chat/questions.ts';
 	import { ago } from '#lib/chat/sessions.ts';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
 	import TurnRing from '#lib/chat/TurnRing.svelte';
@@ -106,7 +107,7 @@
 		}
 		if (request) {
 			if (images.length) { error = 'Remove images before answering a request.'; return false; }
-			device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer: { allow: false, instead: text } });
+			device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer: redirect(request, text) });
 			return true;
 		}
 		const [, command, value] = text.trim().match(/^\/(\w+)(?: +(\S+))?$/) ?? [];

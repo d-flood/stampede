@@ -160,20 +160,28 @@ fn prompts(chats: &Chats, input: Input) -> Result<Vec<Question>, String> {
     }).collect()
 }
 
+fn valid_response(question: &Question, response: &Response) -> bool {
+    if response.text.len() > 64 * 1024 { return false; }
+    if response.skipped { return response.selected.is_empty() && response.text.is_empty(); }
+    if response.selected.is_empty() && response.text.trim().is_empty() { return false; }
+    let unique: HashSet<_> = response.selected.iter().collect();
+    unique.len() == response.selected.len() && response.selected.iter().all(|id| question.options.iter().any(|option| option.id == *id))
+        && match question.answer_type {
+            Some(Type::Single) => response.selected.len() <= 1,
+            Some(Type::Multiple) => true,
+            Some(Type::Text) => response.selected.is_empty(),
+            None => false,
+        }
+}
+
 pub fn valid_responses(questions: &[Question], responses: &HashMap<String, Response>) -> bool {
-    responses.len() == questions.len() && questions.iter().all(|question| {
-        let Some(response) = responses.get(&question.id) else { return false };
-        if response.text.len() > 64 * 1024 { return false; }
-        if response.skipped { return response.selected.is_empty() && response.text.is_empty(); }
-        if response.selected.is_empty() && response.text.trim().is_empty() { return false; }
-        let unique: HashSet<_> = response.selected.iter().collect();
-        unique.len() == response.selected.len() && response.selected.iter().all(|id| question.options.iter().any(|option| option.id == *id))
-            && match question.answer_type {
-                Some(Type::Single) => response.selected.len() <= 1,
-                Some(Type::Multiple) => true,
-                Some(Type::Text) => response.selected.is_empty(),
-                None => false,
-            }
+    responses.len() == questions.len()
+        && questions.iter().all(|question| responses.get(&question.id).is_some_and(|response| valid_response(question, response)))
+}
+
+pub fn valid_partial(questions: &[Question], responses: &HashMap<String, Response>) -> bool {
+    responses.iter().all(|(id, response)| {
+        !response.skipped && questions.iter().find(|question| question.id == *id).is_some_and(|question| valid_response(question, response))
     })
 }
 

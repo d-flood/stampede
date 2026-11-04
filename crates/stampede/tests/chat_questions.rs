@@ -57,14 +57,17 @@ async fn answers(agent: &str) {
 }
 
 #[tokio::test]
-async fn cancelling_questions_returns_no_answers_or_history() {
+async fn cancelling_questions_returns_no_answers_and_records_the_dismissal() {
     for agent in ["claude-code", "codex"] {
         let (server, mut socket, chat, request) = launch(agent).await;
         control(&mut socket, json!({ "type": "chat.answer", "chatId": chat["id"], "requestId": request["id"], "answer": { "allow": false } })).await;
         done(&mut socket, &chat).await;
         assert_eq!(result(&server)["structuredContent"], json!({ "answers": {}, "cancelled": true }));
         control(&mut socket, json!({ "type": "hello", "deviceId": "test" })).await;
-        assert_eq!(next_control(&mut socket, "hello").await["chats"][0]["answeredQuestions"], json!([]));
+        let saved = next_control(&mut socket, "hello").await["chats"][0]["answeredQuestions"].clone();
+        assert_eq!(saved.as_array().unwrap().len(), 1);
+        assert_eq!(saved[0]["cancelled"], true);
+        assert!(saved[0].get("responses").is_none());
         close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
     }
 }
@@ -76,6 +79,31 @@ async fn a_replacement_instruction_reaches_the_agent_without_becoming_an_answer(
         "answer": { "allow": false, "instead": "Use the existing defaults." } })).await;
     done(&mut socket, &chat).await;
     assert_eq!(result(&server)["structuredContent"], json!({ "answers": {}, "cancelled": true, "instruction": "Use the existing defaults." }));
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
+}
+
+#[tokio::test]
+async fn a_redirect_keeps_valid_answers_and_saves_the_instruction() {
+    let (server, mut socket, chat, request) = launch("claude-code").await;
+    let storage = json!({ "selected": ["local"], "text": "", "skipped": false });
+    for invalid in [
+        json!({ "storage": { "selected": ["local", "remote"], "text": "", "skipped": false } }),
+        json!({ "storage": { "selected": [], "text": "", "skipped": true } }),
+        json!({ "unknown": storage }),
+    ] {
+        control(&mut socket, json!({ "type": "chat.answer", "chatId": chat["id"], "requestId": request["id"], "answer": { "allow": false, "instead": "Stop.", "responses": invalid } })).await;
+        control(&mut socket, json!({ "type": "chat.attach", "chatId": chat["id"] })).await;
+        next_control(&mut socket, "chat.items").await;
+        assert_eq!(next_control(&mut socket, "chat.request").await["request"]["id"], request["id"]);
+    }
+    control(&mut socket, json!({ "type": "chat.answer", "chatId": chat["id"], "requestId": request["id"],
+        "answer": { "allow": false, "instead": "Use the defaults for the rest.", "responses": { "storage": storage } } })).await;
+    done(&mut socket, &chat).await;
+    assert_eq!(result(&server)["structuredContent"], json!({ "answers": { "storage": storage }, "cancelled": true, "instruction": "Use the defaults for the rest." }));
+    let saved: Value = serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{}.json", chat["id"].as_str().unwrap()))).unwrap()).unwrap();
+    assert_eq!(saved["answeredQuestions"][0]["cancelled"], true);
+    assert_eq!(saved["answeredQuestions"][0]["instruction"], "Use the defaults for the rest.");
+    assert_eq!(saved["answeredQuestions"][0]["responses"], json!({ "storage": storage }));
     close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
 }
 
@@ -124,6 +152,22 @@ async fn interrupting_questions_cancels_the_waiting_tool() {
         while !server.root.path().join("home/questions-result.json").exists() { sleep(Duration::from_millis(20)).await; }
     }).await.unwrap();
     assert_eq!(result(&server)["structuredContent"]["cancelled"], true);
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
+}
+
+#[tokio::test]
+async fn a_restart_during_questions_tells_the_agent_the_user_never_answered() {
+    let (mut server, _socket, chat, _) = launch("claude-code").await;
+    server.restart().await;
+    timeout(Duration::from_secs(10), async {
+        while !server.root.path().join("home/questions-result.json").exists() { sleep(Duration::from_millis(20)).await; }
+    }).await.unwrap();
+    let result = result(&server);
+    assert_eq!(result["isError"], true);
+    assert_eq!(result["content"][0]["text"], "Stampede stopped before the user answered. Ask again.");
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "test" })).await;
+    next_control(&mut socket, "hello").await;
     close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
 }
 

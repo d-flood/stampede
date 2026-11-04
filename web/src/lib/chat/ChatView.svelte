@@ -7,6 +7,7 @@
 	import Queued from '#lib/chat/Queued.svelte';
 	import Rewind from '#lib/chat/Rewind.svelte';
 	import MessageNav from '#lib/chat/MessageNav.svelte';
+	import { clearDraft } from '#lib/chat/questions.ts';
 	import RequestCard from '#lib/chat/RequestCard.svelte';
 	import Shells from '#lib/chat/Shells.svelte';
 	import { commands } from '#lib/chat/shells.ts';
@@ -108,6 +109,7 @@
 				requests = [...requests.filter(({ id }) => id !== message.request.id), message.request];
 				break;
 			case 'chat.resolved':
+				clearDraft(message.requestId);
 				if (message.chatId === chat.id) requests = requests.filter(({ id }) => id !== message.requestId);
 				break;
 			case 'chat.capabilities':

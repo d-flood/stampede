@@ -476,6 +476,7 @@ pub enum Answer {
     Rules(Vec<Rule>),
     Answers(Vec<Vec<String>>),
     Responses(HashMap<String, questions::Response>),
+    Redirect { responses: HashMap<String, questions::Response>, instead: String },
     Deny { instead: Option<String> },
 }
 
@@ -493,7 +494,12 @@ struct Decision {
 
 impl From<Decision> for Answer {
     fn from(Decision { allow, instead, rule, answers, responses }: Decision) -> Self {
-        if let Some(responses) = responses { Answer::Responses(responses) }
+        if let Some(responses) = responses {
+            match instead {
+                Some(instead) => Answer::Redirect { responses, instead },
+                None => Answer::Responses(responses),
+            }
+        }
         else if let Some(answers) = answers { Answer::Answers(answers) }
         else if allow && !rule.is_empty() { Answer::Rules(rule) }
         else if allow { Answer::Allow } else { Answer::Deny { instead } }
@@ -541,6 +547,10 @@ pub struct AnsweredQuestions {
     pub answers: Vec<Vec<String>>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub responses: HashMap<String, questions::Response>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cancelled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instruction: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -1672,21 +1682,31 @@ impl Chats {
             (Answer::Responses(responses), RequestKind::Question { questions, .. })
                 if transcript.questions.contains_key(request_id) && questions::valid_responses(questions, responses) => {},
             (Answer::Responses(_), _) => return,
+            (Answer::Redirect { responses, .. }, RequestKind::Question { questions, .. })
+                if transcript.questions.contains_key(request_id) && questions::valid_partial(questions, responses) => {},
+            (Answer::Redirect { .. }, _) => return,
             (_, RequestKind::Question { .. }) if transcript.questions.contains_key(request_id)
                 && !matches!(answer, Answer::Deny { .. }) => return,
             (Answer::Answers(answers), RequestKind::Question { questions, .. }) if answers.len() == questions.len() => {},
             (Answer::Answers(_), _) => return,
             _ => {},
         }
-        let answered = if transcript.questions.contains_key(request_id) && !matches!(answer, Answer::Responses(_)) { None }
-        else if let RequestKind::Question { questions, .. } = &request.kind {
+        let answered = if let RequestKind::Question { questions, .. } = &request.kind {
             let answers = match &answer {
                 Answer::Answers(answers) => answers.clone(),
-                Answer::Deny { instead: Some(text) } => vec![vec![text.clone()]; questions.len()],
+                Answer::Deny { instead: Some(text) } if !transcript.questions.contains_key(request_id) => vec![vec![text.clone()]; questions.len()],
                 _ => vec![Vec::new(); questions.len()],
             };
-            let responses = match &answer { Answer::Responses(responses) => responses.clone(), _ => HashMap::new() };
-            Some(AnsweredQuestions { source: None, after: transcript.items.len(), questions: questions.clone(), answers, responses })
+            let responses = match &answer {
+                Answer::Responses(responses) | Answer::Redirect { responses, .. } => responses.clone(),
+                _ => HashMap::new(),
+            };
+            let (cancelled, instruction) = match &answer {
+                Answer::Redirect { instead, .. } => (true, Some(instead.clone())),
+                Answer::Deny { instead } => (true, instead.clone()),
+                _ => (false, None),
+            };
+            Some(AnsweredQuestions { source: None, after: transcript.items.len(), questions: questions.clone(), answers, responses, cancelled, instruction })
         } else { None };
         let pending = transcript.questions.remove(request_id);
         if self.resolve(&mut transcript, id, request_id) {
@@ -1700,6 +1720,7 @@ impl Chats {
             if let Some(pending) = pending {
                 let reply = match answer {
                     Answer::Responses(answers) => questions::Reply { answers, cancelled: false, instruction: None },
+                    Answer::Redirect { responses, instead } => questions::Reply { answers: responses, cancelled: true, instruction: Some(instead) },
                     Answer::Deny { instead } => questions::Reply { answers: HashMap::new(), cancelled: true, instruction: instead },
                     _ => unreachable!(),
                 };
