@@ -76,6 +76,10 @@ _Avoid_: agent, agent terminal
 An Agent that Stampede drives directly and shows in its own interface; it keeps running when Devices disconnect or Stampede restarts, stops when its Tab is closed.
 _Avoid_: conversation, thread, session, native agent
 
+**Activity**:
+An Agent's reads, searches, commands and edits between its messages in a turn, summarized in one line.
+_Avoid_: tool calls, work log, steps
+
 **Agent status**:
 One of _working_, _waiting_ (blocked mid-task on the user, e.g. a permission prompt), or _done_ (finished its turn, with no Subagent still running, and sitting at its prompt).
 _Avoid_: state, activity, idle
@@ -155,6 +159,10 @@ _Avoid_: result, status, exit code
 **Usage window**:
 One of an Agent's rolling usage allowances, such as its five-hour or weekly window.
 _Avoid_: quota, rate limit, limit
+
+**Reset**:
+A credit from an Agent's provider that restarts a Usage window early when redeemed, and expires if unused.
+_Avoid_: reset credit, refill
 
 **Note**:
 A durable message an Agent or David attaches to a Ticket: a decision, an answer the Ticket asked for, or a hand-off. Stampede attaches its own, and a refused Landing becomes a Note on the Epic.
@@ -289,3 +297,7 @@ _Avoid_: notification center, inbox
 **Composer**:
 A native text box for writing input that is sent into a Terminal or a Chat all at once.
 _Avoid_: input box, prompt box
+
+**Tray**:
+The row above a Chat's Composer showing its Subagents and other background work at a glance.
+_Avoid_: dock, status strip, status line
