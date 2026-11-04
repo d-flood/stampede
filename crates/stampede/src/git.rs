@@ -361,7 +361,7 @@ pub async fn commit_files(dir: &Path, sha: &str) -> Option<Vec<Change>> {
 }
 
 /// Parses `--name-status -z` output, or `--raw -z --no-abbrev` output, which also gives each file's new blob.
-fn name_status(output: &[u8]) -> Option<Vec<Change>> {
+pub(crate) fn name_status(output: &[u8]) -> Option<Vec<Change>> {
     let mut fields = output.split(|&byte| byte == 0).map(|field| String::from_utf8_lossy(field).into_owned());
     let mut files = Vec::new();
     while let Some(header) = fields.next() {

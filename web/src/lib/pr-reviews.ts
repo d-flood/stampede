@@ -16,8 +16,18 @@ export type PrReview = {
 	source: { commit: string };
 	mergeBase: string;
 	viewed: Record<string, { commit: string; blob: string }>;
-	drafts: unknown[];
+	drafts: DraftComment[];
 };
+
+export type Side = 'target' | 'source';
+
+/** Where a Draft comment sits: line `line`, or lines `startLine` to `line`, on one side. */
+export type Placement = { side: Side; line: number; startLine?: number };
+
+export type DraftComment = Placement & { id: string; path: string; body: string; commit: string; displaced: boolean };
+
+/** The 1-based inclusive line ranges GitHub accepts comments on, per side. */
+export type Hunks = Record<Side, [number, number][]>;
 
 export async function prs(projectId: string): Promise<Availability & { prs: Pr[] }> {
 	return json(await fetch(`/api/projects/${projectId}/prs`));
@@ -51,4 +61,25 @@ export async function setViewed(projectId: string, pr: number, path: string, vie
 
 export async function openWorktree(projectId: string, pr: number): Promise<string> {
 	return (await json<{ projectId: string }>(await fetch(`/api/projects/${projectId}/pr-reviews/${pr}/worktree`, { method: 'POST' }))).projectId;
+}
+
+export async function hunks(projectId: string, pr: number, path: string): Promise<Hunks> {
+	return json(await fetch(`/api/projects/${projectId}/pr-reviews/${pr}/hunks?${new URLSearchParams({ path })}`));
+}
+
+async function draftRequest(method: string, url: string, body?: object): Promise<PrReview> {
+	const headers = body && { 'content-type': 'application/json' };
+	return json(await fetch(url, { method, headers, body: body && JSON.stringify(body) }));
+}
+
+export function createDraft(projectId: string, pr: number, draft: Placement & { path: string; body: string }): Promise<PrReview> {
+	return draftRequest('POST', `/api/projects/${projectId}/pr-reviews/${pr}/drafts`, draft);
+}
+
+export function editDraft(projectId: string, pr: number, id: string, edit: Partial<Placement> & { body?: string }): Promise<PrReview> {
+	return draftRequest('PUT', `/api/projects/${projectId}/pr-reviews/${pr}/drafts/${id}`, edit);
+}
+
+export function deleteDraft(projectId: string, pr: number, id: string): Promise<PrReview> {
+	return draftRequest('DELETE', `/api/projects/${projectId}/pr-reviews/${pr}/drafts/${id}`);
 }

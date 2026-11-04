@@ -8,7 +8,7 @@ use std::{
 
 use axum::{
     Json,
-    extract::{Path as Param, State},
+    extract::{Path as Param, Query, State},
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,61 @@ pub struct PrReview {
     source: Source,
     merge_base: String,
     viewed: BTreeMap<String, Viewed>,
-    drafts: Vec<Value>,
+    drafts: Vec<DraftComment>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DraftComment {
+    id: String,
+    path: String,
+    side: Side,
+    line: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    start_line: Option<u32>,
+    body: String,
+    commit: String,
+    displaced: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Side {
+    Target,
+    Source,
+}
+
+/// The 1-based inclusive line ranges of a file's hunks, which GitHub accepts comments on, per side.
+#[derive(Debug, Default, PartialEq, Serialize)]
+pub struct Hunks {
+    source: Vec<(u32, u32)>,
+    target: Vec<(u32, u32)>,
+}
+
+impl Hunks {
+    /// Whether `start..=end` lies within one hunk of `side`.
+    fn contain(&self, side: Side, start: u32, end: u32) -> bool {
+        let ranges = if side == Side::Source { &self.source } else { &self.target };
+        start <= end && ranges.iter().any(|&(from, to)| from <= start && end <= to)
+    }
+}
+
+/// Reads the hunk headers (`@@ -a,b +c,d @@`) of one file's unified diff.
+fn hunks(diff: &str) -> Hunks {
+    let mut found = Hunks::default();
+    for header in diff.lines().filter_map(|line| line.strip_prefix("@@ -")) {
+        let Some((old, rest)) = header.split_once(" +") else { continue };
+        let Some((new, _)) = rest.split_once(" @@") else { continue };
+        for (range, ranges) in [(old, &mut found.target), (new, &mut found.source)] {
+            let (start, count) = range.split_once(',').unwrap_or((range, "1"));
+            if let (Ok(start), Ok(count)) = (start.parse::<u32>(), count.parse::<u32>())
+                && count > 0
+            {
+                ranges.push((start, start + count - 1));
+            }
+        }
+    }
+    found
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -321,6 +375,139 @@ async fn fetch(state: &AppState, dir: &Path, common_dir: &Path, repository: &Rep
     Ok(review)
 }
 
+#[derive(Deserialize)]
+pub struct PathQuery {
+    path: String,
+}
+
+pub async fn commentable(
+    State(state): State<AppState>,
+    Param((id, number)): Param<(String, u64)>,
+    Query(query): Query<PathQuery>,
+) -> Result<Json<Hunks>, Failure> {
+    let (dir, common_dir) = located(&state, &id).await?;
+    let review = state.pr_reviews.get(&common_dir, number).ok_or_else(|| missing(number))?;
+    file_hunks(&dir, &review, &query.path).await.map(Json)
+}
+
+/// The hunks of `git diff -U3 <mergeBase> <source>` for `path`, a rename's Target side being its old path.
+async fn file_hunks(dir: &Path, review: &PrReview, path: &str) -> Result<Hunks, Failure> {
+    let failed = |error| (StatusCode::INTERNAL_SERVER_ERROR, error);
+    let (base, source) = (review.merge_base.as_str(), review.source.commit.as_str());
+    let names = git::run(dir, &["diff", "-z", "--name-status", "--find-renames", "--relative", base, source, "--"]).await.map_err(failed)?;
+    let from = git::name_status(names.as_bytes()).unwrap_or_default().into_iter().find(|change| change.path == path).and_then(|change| change.from);
+    let mut args = vec!["diff", "-U3", "--no-color", "--no-ext-diff", "--find-renames", "--relative", base, source, "--", path];
+    args.extend(from.as_deref());
+    Ok(hunks(&git::run(dir, &args).await.map_err(failed)?))
+}
+
+fn missing(number: u64) -> Failure {
+    (StatusCode::NOT_FOUND, format!("No PR review of #{number}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewDraft {
+    path: String,
+    side: Side,
+    line: u32,
+    start_line: Option<u32>,
+    body: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftEdit {
+    body: Option<String>,
+    side: Option<Side>,
+    line: Option<u32>,
+    start_line: Option<u32>,
+}
+
+/// Applies `change` to PR review `number` under the fetch lock, so a concurrent fetch never loses it.
+async fn change_review(
+    state: &AppState,
+    id: &str,
+    number: u64,
+    change: impl AsyncFnOnce(&Path, &mut PrReview) -> Result<(), Failure>,
+) -> Result<Json<PrReview>, Failure> {
+    let (dir, common_dir) = located(state, id).await?;
+    let _fetching = state.pr_reviews.fetching.lock().await;
+    let mut review = state.pr_reviews.get(&common_dir, number).ok_or_else(|| missing(number))?;
+    change(&dir, &mut review).await?;
+    state.pr_reviews.save(&common_dir, &review)?;
+    Ok(Json(review))
+}
+
+/// Checks a draft's lines lie within one hunk of its side, giving its `startLine` with a single line's dropped.
+async fn placed(dir: &Path, review: &PrReview, path: &str, side: Side, line: u32, start_line: Option<u32>) -> Result<Option<u32>, Failure> {
+    let start = start_line.unwrap_or(line);
+    if start == 0 || !file_hunks(dir, review, path).await?.contain(side, start, line) {
+        return Err((StatusCode::BAD_REQUEST, format!("{path} lines {start}-{line} are not within one hunk")));
+    }
+    Ok(start_line.filter(|&start| start < line))
+}
+
+fn written(body: String) -> Result<String, Failure> {
+    if body.trim().is_empty() { Err((StatusCode::BAD_REQUEST, "a Draft comment needs a body".to_owned())) } else { Ok(body) }
+}
+
+pub async fn create_draft(
+    State(state): State<AppState>,
+    Param((id, number)): Param<(String, u64)>,
+    Json(draft): Json<NewDraft>,
+) -> Result<Json<PrReview>, Failure> {
+    change_review(&state, &id, number, async |dir, review| {
+        let start_line = placed(dir, review, &draft.path, draft.side, draft.line, draft.start_line).await?;
+        review.drafts.push(DraftComment {
+            id: Uuid::new_v4().to_string(),
+            path: draft.path,
+            side: draft.side,
+            line: draft.line,
+            start_line,
+            body: written(draft.body)?,
+            commit: review.source.commit.clone(),
+            displaced: false,
+        });
+        Ok(())
+    })
+    .await
+}
+
+pub async fn edit_draft(
+    State(state): State<AppState>,
+    Param((id, number, draft_id)): Param<(String, u64, String)>,
+    Json(edit): Json<DraftEdit>,
+) -> Result<Json<PrReview>, Failure> {
+    change_review(&state, &id, number, async |dir, review| {
+        let at = review.drafts.iter().position(|draft| draft.id == draft_id).ok_or_else(|| (StatusCode::NOT_FOUND, format!("No Draft comment {draft_id}")))?;
+        let mut edited = review.drafts[at].clone();
+        if let Some(body) = edit.body {
+            edited.body = written(body)?;
+        }
+        if edit.side.is_some() || edit.line.is_some() || edit.start_line.is_some() {
+            let start_line = if edit.line.is_some() { edit.start_line } else { edit.start_line.or(edited.start_line) };
+            edited.side = edit.side.unwrap_or(edited.side);
+            edited.line = edit.line.unwrap_or(edited.line);
+            edited.start_line = placed(dir, review, &edited.path, edited.side, edited.line, start_line).await?;
+            edited.commit = review.source.commit.clone();
+            edited.displaced = false;
+        }
+        review.drafts[at] = edited;
+        Ok(())
+    })
+    .await
+}
+
+pub async fn delete_draft(State(state): State<AppState>, Param((id, number, draft_id)): Param<(String, u64, String)>) -> Result<Json<PrReview>, Failure> {
+    change_review(&state, &id, number, async |_, review| {
+        let before = review.drafts.len();
+        review.drafts.retain(|draft| draft.id != draft_id);
+        if review.drafts.len() == before { Err((StatusCode::NOT_FOUND, format!("No Draft comment {draft_id}"))) } else { Ok(()) }
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,5 +520,44 @@ mod tests {
         for url in ["https://github.com/acme/gadgets/pull/7", "https://ghe.corp/acme/widgets/pull/7", "https://github.com/acme/widgets/issues/7", "nonsense"] {
             assert_eq!(named(url, &repository).unwrap_err().0, StatusCode::BAD_REQUEST, "{url}");
         }
+    }
+
+    fn ranges(diff: &str) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
+        let Hunks { source, target } = hunks(diff);
+        (source, target)
+    }
+
+    #[test]
+    fn each_hunk_header_gives_its_target_and_source_ranges() {
+        let diff = "diff --git a/list.txt b/list.txt\n--- a/list.txt\n+++ b/list.txt\n@@ -2,7 +2,8 @@ one\n two\n+@@ -9 +9 @@ looks like a header\n@@ -20,6 +21,6 @@ fn x() {\n";
+        assert_eq!(ranges(diff), (vec![(2, 9), (21, 26)], vec![(2, 8), (20, 25)]));
+    }
+
+    #[test]
+    fn a_pure_addition_or_deletion_has_no_range_on_its_empty_side() {
+        assert_eq!(ranges("@@ -3,0 +4,2 @@\n+a\n+b\n"), (vec![(4, 5)], vec![]));
+        assert_eq!(ranges("@@ -4,2 +3,0 @@\n-a\n-b\n"), (vec![], vec![(4, 5)]));
+        assert_eq!(ranges("@@ -4 +4 @@\n-a\n+b\n"), (vec![(4, 4)], vec![(4, 4)]));
+    }
+
+    #[test]
+    fn a_new_file_is_commentable_only_on_the_source_and_a_deleted_one_only_on_the_target() {
+        let new = "new file mode 100644\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1,3 @@\n+a\n+b\n+c\n";
+        assert_eq!(ranges(new), (vec![(1, 3)], vec![]));
+        let deleted = "deleted file mode 100644\n--- a/old.txt\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-a\n-b\n-c\n";
+        assert_eq!(ranges(deleted), (vec![], vec![(1, 3)]));
+        assert_eq!(ranges("Binary files a/x.png and b/x.png differ\n"), (vec![], vec![]));
+    }
+
+    #[test]
+    fn a_range_is_commentable_only_within_one_hunk_of_its_side() {
+        let found = hunks("@@ -2,7 +2,8 @@\n@@ -20,6 +21,6 @@\n");
+        assert!(found.contain(Side::Source, 2, 9));
+        assert!(found.contain(Side::Source, 21, 21));
+        assert!(!found.contain(Side::Source, 9, 21));
+        assert!(!found.contain(Side::Source, 10, 10));
+        assert!(found.contain(Side::Target, 20, 25));
+        assert!(!found.contain(Side::Target, 26, 26));
+        assert!(!found.contain(Side::Source, 5, 4));
     }
 }

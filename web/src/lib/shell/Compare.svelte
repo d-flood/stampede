@@ -4,7 +4,7 @@
 	import { branches, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { letters, refs, split, type Change, type Git, type Refs } from '#lib/git.ts';
-	import { discardReview, openWorktree, prs, refreshReview, setViewed, viewedState, type Availability, type PrReview } from '#lib/pr-reviews.ts';
+	import { discardReview, openWorktree, prs, refreshReview, setViewed, viewedState, type Availability, type DraftComment, type PrReview } from '#lib/pr-reviews.ts';
 	import BranchPicker from '#lib/shell/BranchPicker.svelte';
 	import PrPicker from '#lib/shell/PrPicker.svelte';
 	import { treeRows } from '#lib/shell/tree.ts';
@@ -32,7 +32,7 @@
 		selection?: Selection | Reviewing;
 		reviews?: PrReview[];
 		onselect(selection?: Selection | Reviewing): void;
-		onopen(change: Change, against: Selection | Reviewing): void;
+		onopen(change: Change, against: Selection | Reviewing, draft?: string): void;
 		onfocus(projectId: string): void;
 	};
 
@@ -55,6 +55,8 @@
 	const files = $derived(compared?.result?.files);
 	const rows = $derived(files ? treeRows(files, 'compare', (key) => !collapsed.has(key)) : []);
 	const viewedCount = $derived(review && files ? files.filter((change) => viewedState(review, change) === 'viewed').length : 0);
+	const placed = $derived(review?.drafts.filter((draft) => !draft.displaced) ?? []);
+	const displaced = $derived(review?.drafts.filter((draft) => draft.displaced) ?? []);
 	const reason = $derived(availability && !availability.available && !availability.hidden ? availability.reason : undefined);
 	const failure = $derived.by(() => {
 		if (reviewing !== undefined && reviews && !review) return `No PR review of #${reviewing}`;
@@ -122,6 +124,12 @@
 		act(async () => onfocus(await openWorktree(projectId, pr)));
 	}
 
+	function showDraft(draft: DraftComment) {
+		if (reviewing === undefined) return;
+		const change = files?.find((change) => change.path === draft.path) ?? { path: draft.path, kind: 'modified' as const };
+		onopen(change, { pr: reviewing }, draft.id);
+	}
+
 	function discard(pr: number) {
 		act(async () => {
 			await discardReview(projectId, pr);
@@ -136,6 +144,27 @@
 		<span class="branch" class:unset={!name}>{name ?? 'Choose a branch'}</span>
 		<CaretUpDown aria-hidden="true" />
 	</button>
+{/snippet}
+
+{#snippet draftList(label: string, drafts: DraftComment[])}
+	<div class="heading">
+		<span class="name">{label}</span>
+		<span class="count">{drafts.length}</span>
+	</div>
+	<ul class="drafts" aria-label={label}>
+		{#each drafts as draft (draft.id)}
+			{@const lines = draft.startLine ? `${draft.startLine}–${draft.line}` : draft.line}
+			<li class="row">
+				<button class="entry draft" title="{draft.path}:{lines}" onclick={() => showDraft(draft)}>
+					<span class="where">
+						<span class="name">{draft.path}:{lines}</span>
+						{#if draft.side === 'target'}<span class="side">Target</span>{/if}
+					</span>
+					<span class="body">{draft.body.trim().split('\n')[0]}</span>
+				</button>
+			</li>
+		{/each}
+	</ul>
 {/snippet}
 
 {#snippet prButton(props: Record<string, unknown>)}
@@ -178,6 +207,8 @@
 			</div>
 		{/if}
 		{#if actionError}<p class="note failure" role="alert">{actionError}</p>{/if}
+		{#if placed.length}{@render draftList('Draft comments', placed)}{/if}
+		{#if displaced.length}{@render draftList('Displaced', displaced)}{/if}
 	{:else}
 		<div class="refs">
 			{@render picker('target', 'Target', target)}
@@ -594,6 +625,44 @@
 	.reviews .name {
 		font-family: inherit;
 		font-size: inherit;
+	}
+
+	.drafts {
+		flex: none;
+		max-height: 40%;
+		margin: 0;
+		overflow: auto;
+		padding: 0 0 var(--space-2);
+		list-style: none;
+	}
+
+	.draft {
+		--depth: 0;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0;
+		padding-block: var(--space-1);
+	}
+
+	.where {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-2);
+		min-width: 0;
+	}
+
+	.side {
+		flex: none;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.body {
+		overflow: hidden;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.state {

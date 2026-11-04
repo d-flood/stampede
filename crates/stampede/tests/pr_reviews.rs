@@ -332,3 +332,81 @@ async fn listed(socket: &mut Socket, until: impl Fn(&[Value]) -> bool) -> Vec<Va
     });
     heard.await.expect("projects.changed never came")
 }
+
+#[tokio::test]
+async fn drafts_stay_within_one_hunk_and_every_device_hears_them() {
+    let server = server("pr-reviews-drafts").await;
+    let root = server.root.path();
+    fixture(root, "OPEN");
+    let (repo, _) = repository(root);
+    let list: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+    fs::write(repo.join("list.txt"), &list).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "Add list"]);
+    git(&repo, &["push", "-q", "origin", "main"]);
+    let edited_list = list.replace("line 5\n", "line five\n").replace("line 25\n", "");
+    push_pr(&repo, "main", "list.txt", &edited_list);
+    let mut first = device(server.port, "first").await;
+    let id = open(&mut first, &repo).await;
+    let reviews = format!("/api/projects/{id}/pr-reviews");
+    let (code, review) = post(server.port, &reviews, json!({ "pr": 7 })).await;
+    assert_eq!(code, 200, "{review}");
+
+    let (code, hunks) = get(server.port, &format!("{reviews}/7/hunks?path=list.txt")).await;
+    assert_eq!(code, 200, "{hunks}");
+    assert_eq!(hunks, json!({ "source": [[2, 8], [22, 27]], "target": [[2, 8], [22, 28]] }));
+
+    let mut second = device(server.port, "second").await;
+    control(&mut second, json!({ "type": "pr-reviews.subscribe", "projectId": id })).await;
+    assert_eq!(changed(&mut second, &id).await[0]["drafts"], json!([]));
+
+    let drafts = format!("{reviews}/7/drafts");
+    let (code, created) = post(server.port, &drafts, json!({ "path": "list.txt", "side": "source", "line": 5, "body": "Why five?" })).await;
+    assert_eq!(code, 200, "{created}");
+    let draft = created["drafts"][0].clone();
+    let source = review["source"]["commit"].clone();
+    assert_eq!(draft["id"].as_str().unwrap().len(), 36);
+    let expected = json!({ "id": draft["id"], "path": "list.txt", "side": "source", "line": 5, "body": "Why five?", "commit": source, "displaced": false });
+    assert_eq!(draft, expected);
+    assert_eq!(changed(&mut second, &id).await[0]["drafts"], json!([expected]));
+
+    for (body, reason) in [
+        (json!({ "path": "list.txt", "side": "source", "line": 15, "body": "outside" }), "outside every hunk"),
+        (json!({ "path": "list.txt", "side": "source", "startLine": 7, "line": 22, "body": "across" }), "across two hunks"),
+        (json!({ "path": "list.txt", "side": "target", "line": 29, "body": "past" }), "past the target hunk"),
+        (json!({ "path": "README.md", "side": "source", "line": 1, "body": "unchanged" }), "an unchanged file"),
+        (json!({ "path": "list.txt", "side": "source", "line": 5, "body": " " }), "a blank body"),
+    ] {
+        let (code, refused) = post(server.port, &drafts, body).await;
+        assert_eq!(code, 400, "{reason}: {refused}");
+    }
+
+    let (code, ranged) = post(server.port, &drafts, json!({ "path": "list.txt", "side": "target", "startLine": 23, "line": 25, "body": "Gone?" })).await;
+    assert_eq!(code, 200, "{ranged}");
+    let second_draft = &ranged["drafts"][1];
+    assert_eq!((&second_draft["side"], &second_draft["startLine"], &second_draft["line"]), (&json!("target"), &json!(23), &json!(25)));
+    assert_eq!(changed(&mut second, &id).await[0]["drafts"], ranged["drafts"]);
+
+    let edit = format!("{drafts}/{}", draft["id"].as_str().unwrap());
+    let (code, edited) = request(reqwest::Method::PUT, server.port, &edit, Some(json!({ "body": "Why *five*?" }))).await;
+    assert_eq!(code, 200, "{edited}");
+    let mut rewritten = expected.clone();
+    rewritten["body"] = json!("Why *five*?");
+    assert_eq!(edited["drafts"][0], rewritten);
+    assert_eq!(changed(&mut second, &id).await[0]["drafts"][0], rewritten);
+
+    let (code, moved) = request(reqwest::Method::PUT, server.port, &edit, Some(json!({ "startLine": 3, "line": 6 }))).await;
+    assert_eq!(code, 200, "{moved}");
+    rewritten["startLine"] = json!(3);
+    rewritten["line"] = json!(6);
+    assert_eq!(moved["drafts"][0], rewritten);
+    let (code, refused) = request(reqwest::Method::PUT, server.port, &edit, Some(json!({ "line": 15 }))).await;
+    assert_eq!(code, 400, "{refused}");
+
+    let (code, deleted) = request(reqwest::Method::DELETE, server.port, &edit, None).await;
+    assert_eq!(code, 200, "{deleted}");
+    assert_eq!(deleted["drafts"].as_array().unwrap().len(), 1);
+    assert_eq!(deleted["drafts"][0]["body"], "Gone?");
+    assert_eq!(request(reqwest::Method::DELETE, server.port, &edit, None).await.0, 404);
+    assert_eq!(get(server.port, &reviews).await.1[0]["drafts"], deleted["drafts"]);
+}

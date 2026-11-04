@@ -60,7 +60,7 @@
 		oncompare(selection?: Selection | Reviewing): void;
 		onopen(path: string, cursor?: Cursor): void;
 		onrename(from: string, to: string): void;
-		ondiff(change: Change, against: Against): void;
+		ondiff(change: Change, against: Against, draft?: string): void;
 		onepic(slug: string): void;
 		onfocus(projectId: string): void;
 		toggle?: Snippet;
