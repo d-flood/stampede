@@ -61,7 +61,7 @@ The underlying AI coding harness, such as Claude Code or Codex, driven by a Chat
 _Avoid_: assistant, bot, AI, harness
 
 **Subagent**:
-A child conversation a Chat's Agent spawns to carry out a delegated piece of work and report back; it is not itself an Agent or a Chat.
+A child conversation that does a delegated piece of work for a Chat and reports back, spawned by the Chat's Agent or started by Stampede on another Rig at the Agent's request; it is not itself an Agent or a Chat.
 _Avoid_: task, sidechain, helper, delegate
 
 **Main**:
@@ -206,6 +206,36 @@ _Avoid_: unstaged changes, working changes
 An indication beside a line in the editor that it differs from the most recent commit.
 _Avoid_: git decoration, dirty marker
 
+**Comparison**:
+The changes a Source branch has made since it split off a Target branch; what the Compare section lists.
+_Avoid_: branch diff, compare, diff
+
+**Target**:
+The branch a Comparison measures against, such as the branch a pull request would merge into.
+_Avoid_: base, base branch
+
+**Source**:
+The branch whose changes a Comparison shows, such as a pull request's branch.
+_Avoid_: head, compare branch, feature branch
+
+### Pull requests
+
+**PR review**:
+Examining one GitHub pull request in Stampede as a Comparison and answering it on GitHub with Draft comments; unrelated to a Run's Review.
+_Avoid_: review, code review
+
+**Draft comment**:
+A comment on a line of a PR review's Comparison, kept in Stampede until sent to GitHub.
+_Avoid_: pending comment, note, Finding
+
+**Displaced**:
+True of a Draft comment whose line changed when the Source moved, so it can't be sent until moved or deleted.
+_Avoid_: outdated, orphaned, stale
+
+**Viewed**:
+True of a file in a PR review that David has marked as looked at, until the Source changes it.
+_Avoid_: reviewed, seen, read
+
 ### Layout
 
 **Project rail**:
@@ -228,16 +258,24 @@ _Avoid_: board, epic view
 A Tab showing one file in the editor.
 _Avoid_: file tab, buffer
 
+**Live preview**:
+Markdown editing that shows the text formatted, except on the lines being edited, which show their source.
+_Avoid_: WYSIWYG, rich text, live mode
+
 **Diff tab**:
-A Tab comparing a file against a commit; editable when showing Uncommitted changes, read-only for history.
+A Tab comparing a file against a commit or across a Comparison; editable when showing Uncommitted changes, read-only for history.
 _Avoid_: diff view, diff tile
 
 **Split**:
 Two Tabs shown side by side in the main window.
 _Avoid_: tile, pane
 
+**Launchpad**:
+What a Project's main window shows when it has no Tabs: the ways to open one, such as its Rigs and recent sessions.
+_Avoid_: start screen, new tab page, empty state
+
 **Sidebar**:
-The collapsible panel beside the main window, showing one section at a time: Files, Changes, History, Search, or Epics.
+The collapsible panel beside the main window, showing one section at a time: Files, Changes, History, Compare, Search, or Epics.
 _Avoid_: explorer, wing, panel; never call its sections "tabs"
 
 **Needs attention**:
