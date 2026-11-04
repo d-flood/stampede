@@ -194,3 +194,49 @@ test('Draft comments start from the gutter or a tapped line number, show inline 
 	await reloaded.click();
 	await expect(inline).toBeInViewport();
 });
+
+test('After a force-push and Refresh, a draft on a rewritten line is Displaced until Re-place puts it back inline', async ({ page }, { project }) => {
+	signIn('OPEN');
+	const { push } = repository();
+	push(['list.ts', LIST.replace('line15 = 15', 'line15 = 0')]);
+	await openProject(page, 'widgets');
+	let compare = await openPr(page);
+	await compare.getByRole('list', { name: 'Compared files' }).getByRole('button', { name: 'list.ts', exact: true }).click();
+	const diff = page.locator('.diff:not([hidden])');
+	const desktop = project.name === 'desktop';
+	const pick = (line: number) =>
+		desktop
+			? diff.locator(`.cm-draftAdd[data-side="source"][data-line="${line}"]`).click()
+			: diff.locator('.cm-lineNumbers .cm-gutterElement', { hasText: new RegExp(`^${line}$`) }).click();
+	await pick(15);
+	await page.getByRole('textbox', { name: 'Draft comment on line 15' }).click();
+	await page.keyboard.type('Why zero?');
+	await diff.getByRole('button', { name: 'Save' }).click();
+	const inline = diff.locator('.cm-draftComment[data-draft]');
+	await expect(inline).toHaveCount(1);
+
+	push(['list.ts', LIST.replace('line15 = 15', 'line15 = -1')]);
+	compare = await comparePanel(page);
+	await compare.getByRole('button', { name: 'Refresh' }).click();
+	const displaced = compare.getByRole('list', { name: 'Displaced' });
+	await expect(displaced.getByRole('listitem')).toHaveCount(1);
+	await expect(displaced).toContainText('src/list.ts:15');
+	await expect(displaced).toContainText('Why zero?');
+	await expect(compare.getByText('1 Displaced')).toBeVisible();
+	await expect(compare.getByRole('list', { name: 'Draft comments' })).toHaveCount(0);
+	await expect(inline).toHaveCount(0);
+
+	await displaced.getByRole('button', { name: 'Re-place' }).click();
+	await expect(diff.getByRole('status')).toContainText('Choose a line to re-place');
+	await expect(diff.locator('.cm-draftCommentable').first()).toBeVisible();
+	await pick(14);
+	await expect(inline).toHaveCount(1);
+	await expect(inline).toContainText('Why zero?');
+	await expect(diff.getByRole('status')).toHaveCount(0);
+	await expect(page.getByRole('textbox', { name: /^Draft comment on line/ })).toHaveCount(1);
+
+	compare = await comparePanel(page);
+	await expect(compare.getByRole('list', { name: 'Displaced' })).toHaveCount(0);
+	await expect(compare.getByText('1 Displaced')).toHaveCount(0);
+	await expect(compare.getByRole('list', { name: 'Draft comments' }).getByRole('button')).toContainText('src/list.ts:14');
+});

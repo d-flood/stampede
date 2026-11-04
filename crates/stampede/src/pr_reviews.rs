@@ -56,7 +56,7 @@ struct DraftComment {
     displaced: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Side {
     Target,
@@ -78,22 +78,60 @@ impl Hunks {
     }
 }
 
+/// One hunk header's old and new `(start, count)`. A zero count's start is the line the hunk follows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Hunk {
+    old: (u32, u32),
+    new: (u32, u32),
+}
+
 /// Reads the hunk headers (`@@ -a,b +c,d @@`) of one file's unified diff.
+fn parse(diff: &str) -> Vec<Hunk> {
+    let range = |range: &str| {
+        let (start, count) = range.split_once(',').unwrap_or((range, "1"));
+        Some((start.parse().ok()?, count.parse().ok()?))
+    };
+    diff.lines()
+        .filter_map(|line| line.strip_prefix("@@ -"))
+        .filter_map(|header| {
+            let (old, rest) = header.split_once(" +")?;
+            let (new, _) = rest.split_once(" @@")?;
+            Some(Hunk { old: range(old)?, new: range(new)? })
+        })
+        .collect()
+}
+
 fn hunks(diff: &str) -> Hunks {
     let mut found = Hunks::default();
-    for header in diff.lines().filter_map(|line| line.strip_prefix("@@ -")) {
-        let Some((old, rest)) = header.split_once(" +") else { continue };
-        let Some((new, _)) = rest.split_once(" @@") else { continue };
-        for (range, ranges) in [(old, &mut found.target), (new, &mut found.source)] {
-            let (start, count) = range.split_once(',').unwrap_or((range, "1"));
-            if let (Ok(start), Ok(count)) = (start.parse::<u32>(), count.parse::<u32>())
-                && count > 0
-            {
+    for Hunk { old, new } in parse(diff) {
+        for ((start, count), ranges) in [(old, &mut found.target), (new, &mut found.source)] {
+            if count > 0 {
                 ranges.push((start, start + count - 1));
             }
         }
     }
     found
+}
+
+/// Maps an inclusive 1-based line range through the hunks of `git diff -U0 old new`.
+/// Returns None if any line in the range lies inside a changed hunk, or lines were inserted within it.
+fn map_through(hunks: &[Hunk], start: u32, end: u32) -> Option<(u32, u32)> {
+    let mut shift = 0i64;
+    for &Hunk { old: (at, removed), new: (_, added) } in hunks {
+        if removed == 0 {
+            if at < start {
+                shift += i64::from(added);
+            } else if at < end {
+                return None;
+            }
+        } else if at + removed - 1 < start {
+            shift += i64::from(added) - i64::from(removed);
+        } else if at <= end {
+            return None;
+        }
+    }
+    let moved = |line: u32| u32::try_from(i64::from(line) + shift).ok();
+    Some((moved(start)?, moved(end)?))
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -357,8 +395,9 @@ async fn fetch(state: &AppState, dir: &Path, common_dir: &Path, repository: &Rep
         "CLOSED" => PrState::Closed,
         _ => PrState::Open,
     };
+    let before = existing.as_ref().map(|review| (review.source.commit.clone(), review.merge_base.clone()));
     let (viewed, drafts) = existing.map(|review| (review.viewed, review.drafts)).unwrap_or_default();
-    let review = PrReview {
+    let mut review = PrReview {
         number,
         title: pull.title,
         url: pull.url,
@@ -371,6 +410,9 @@ async fn fetch(state: &AppState, dir: &Path, common_dir: &Path, repository: &Rep
         viewed,
         drafts,
     };
+    if let Some((source, base)) = before.filter(|(source, base)| *source != review.source.commit || *base != review.merge_base) {
+        remap(dir, &source, &base, &mut review).await?;
+    }
     state.pr_reviews.save(common_dir, &review)?;
     Ok(review)
 }
@@ -392,13 +434,71 @@ pub async fn commentable(
 
 /// The hunks of `git diff -U3 <mergeBase> <source>` for `path`, a rename's Target side being its old path.
 async fn file_hunks(dir: &Path, review: &PrReview, path: &str) -> Result<Hunks, Failure> {
-    let failed = |error| (StatusCode::INTERNAL_SERVER_ERROR, error);
+    let from = renames(dir, &review.merge_base, &review.source.commit).await?.remove(path);
+    comparison_hunks(dir, review, path, from.as_deref()).await
+}
+
+async fn comparison_hunks(dir: &Path, review: &PrReview, path: &str, from: Option<&str>) -> Result<Hunks, Failure> {
     let (base, source) = (review.merge_base.as_str(), review.source.commit.as_str());
-    let names = git::run(dir, &["diff", "-z", "--name-status", "--find-renames", "--relative", base, source, "--"]).await.map_err(failed)?;
-    let from = git::name_status(names.as_bytes()).unwrap_or_default().into_iter().find(|change| change.path == path).and_then(|change| change.from);
     let mut args = vec!["diff", "-U3", "--no-color", "--no-ext-diff", "--find-renames", "--relative", base, source, "--", path];
-    args.extend(from.as_deref());
-    Ok(hunks(&git::run(dir, &args).await.map_err(failed)?))
+    args.extend(from);
+    Ok(hunks(&git::run(dir, &args).await.map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?))
+}
+
+/// Each renamed path of the Comparison `base...source`, with its path at `base`.
+async fn renames(dir: &Path, base: &str, source: &str) -> Result<BTreeMap<String, String>, Failure> {
+    let names = git::run(dir, &["diff", "-z", "--name-status", "--find-renames", "--relative", base, source, "--"])
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    let changes = git::name_status(names.as_bytes()).unwrap_or_default();
+    Ok(changes.into_iter().filter_map(|change| Some((change.path, change.from?))).collect())
+}
+
+/// Moves each placed draft of `review` from the Source commit and merge base it was refreshed from to where its
+/// lines are now. A draft whose lines changed, whose file is gone, or which no longer lies within one hunk becomes
+/// Displaced.
+async fn remap(dir: &Path, old_source: &str, old_base: &str, review: &mut PrReview) -> Result<(), Failure> {
+    let mut drafts = std::mem::take(&mut review.drafts);
+    let mut placed: BTreeMap<(String, Side), Vec<&mut DraftComment>> = BTreeMap::new();
+    for draft in drafts.iter_mut().filter(|draft| !draft.displaced) {
+        placed.entry((draft.path.clone(), draft.side)).or_default().push(draft);
+    }
+    if !placed.is_empty() {
+        let was = renames(dir, old_base, old_source).await?;
+        let now = renames(dir, &review.merge_base, &review.source.commit).await?;
+        let mut commentable = BTreeMap::new();
+        for ((path, side), group) in placed {
+            let (before, after) = match side {
+                Side::Source => (format!("{old_source}:./{path}"), format!("{}:./{path}", review.source.commit)),
+                Side::Target => {
+                    let named = |renamed: &BTreeMap<String, String>| renamed.get(&path).cloned().unwrap_or_else(|| path.clone());
+                    (format!("{old_base}:./{}", named(&was)), format!("{}:./{}", review.merge_base, named(&now)))
+                }
+            };
+            let changed = if before == after {
+                Some(Vec::new())
+            } else {
+                git::run(dir, &["diff", "-U0", "--no-color", "--no-ext-diff", &before, &after]).await.ok().map(|diff| parse(&diff))
+            };
+            if !commentable.contains_key(&path) {
+                commentable.insert(path.clone(), comparison_hunks(dir, review, &path, now.get(&path).map(String::as_str)).await?);
+            }
+            let hunks = &commentable[&path];
+            for draft in group {
+                let start = draft.start_line.unwrap_or(draft.line);
+                match changed.as_deref().and_then(|changed| map_through(changed, start, draft.line)) {
+                    Some((start, line)) if hunks.contain(side, start, line) => {
+                        draft.line = line;
+                        draft.start_line = draft.start_line.map(|_| start);
+                        draft.commit = review.source.commit.clone();
+                    }
+                    _ => draft.displaced = true,
+                }
+            }
+        }
+    }
+    review.drafts = drafts;
+    Ok(())
 }
 
 fn missing(number: u64) -> Failure {
@@ -559,5 +659,43 @@ mod tests {
         assert!(found.contain(Side::Target, 20, 25));
         assert!(!found.contain(Side::Target, 26, 26));
         assert!(!found.contain(Side::Source, 5, 4));
+    }
+
+    fn through(diff: &str, start: u32, end: u32) -> Option<(u32, u32)> {
+        map_through(&parse(diff), start, end)
+    }
+
+    #[test]
+    fn lines_above_an_insertion_do_not_move() {
+        assert_eq!(through("@@ -10,0 +11,3 @@\n", 4, 10), Some((4, 10)));
+    }
+
+    #[test]
+    fn lines_below_an_insertion_of_k_lines_shift_by_k() {
+        assert_eq!(through("@@ -10,0 +11,3 @@\n", 11, 12), Some((14, 15)));
+        assert_eq!(through("@@ -0,0 +1,2 @@\n", 1, 1), Some((3, 3)));
+        assert_eq!(through("@@ -3 +3,4 @@\n", 8, 8), Some((11, 11)));
+    }
+
+    #[test]
+    fn lines_below_a_deletion_shift_up() {
+        assert_eq!(through("@@ -4,2 +3,0 @@\n", 9, 9), Some((7, 7)));
+        assert_eq!(through("@@ -2,3 +2 @@\n@@ -20,0 +19,1 @@\n", 10, 25), None);
+        assert_eq!(through("@@ -2,3 +2 @@\n@@ -20,0 +19,1 @@\n", 21, 25), Some((20, 24)));
+    }
+
+    #[test]
+    fn a_line_inside_a_changed_hunk_gives_none() {
+        assert_eq!(through("@@ -5 +5 @@\n", 5, 5), None);
+        assert_eq!(through("@@ -4,2 +3,0 @@\n", 5, 5), None);
+        assert_eq!(through("@@ -5 +5 @@\n", 6, 6), Some((6, 6)));
+    }
+
+    #[test]
+    fn a_range_partly_inside_a_changed_hunk_or_split_by_an_insertion_gives_none() {
+        assert_eq!(through("@@ -5,2 +5,2 @@\n", 2, 5), None);
+        assert_eq!(through("@@ -5,2 +5,2 @@\n", 6, 9), None);
+        assert_eq!(through("@@ -6,0 +7,1 @@\n", 5, 8), None);
+        assert_eq!(through("@@ -8,0 +9,1 @@\n", 5, 8), Some((5, 8)));
     }
 }

@@ -410,3 +410,44 @@ async fn drafts_stay_within_one_hunk_and_every_device_hears_them() {
     assert_eq!(request(reqwest::Method::DELETE, server.port, &edit, None).await.0, 404);
     assert_eq!(get(server.port, &reviews).await.1[0]["drafts"], deleted["drafts"]);
 }
+
+#[tokio::test]
+async fn refresh_moves_drafts_on_unchanged_lines_and_displaces_the_rest() {
+    let server = server("pr-reviews-remap").await;
+    let root = server.root.path();
+    fixture(root, "OPEN");
+    let (repo, _) = repository(root);
+    let list: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+    fs::write(repo.join("list.txt"), &list).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "Add list"]);
+    git(&repo, &["push", "-q", "origin", "main"]);
+    let edited = list.replace("line 5\n", "line five\n").replace("line 20\n", "line twenty\n");
+    push_pr(&repo, "main", "list.txt", &edited);
+    let mut socket = device(server.port, "remap").await;
+    let id = open(&mut socket, &repo).await;
+    let reviews = format!("/api/projects/{id}/pr-reviews");
+    assert_eq!(post(server.port, &reviews, json!({ "pr": 7 })).await.0, 200);
+    let drafts = format!("{reviews}/7/drafts");
+    post(server.port, &drafts, json!({ "path": "list.txt", "side": "source", "line": 5, "body": "A" })).await;
+    let (code, created) = post(server.port, &drafts, json!({ "path": "list.txt", "side": "source", "startLine": 19, "line": 20, "body": "B" })).await;
+    assert_eq!(code, 200, "{created}");
+    let (a, b) = (created["drafts"][0].clone(), created["drafts"][1].clone());
+
+    let pushed = edited.replace("line five\n", "line FIVE\n").replace("line 17\n", "line 17\nnew one\nnew two\n");
+    let commit = push_pr(&repo, "main", "list.txt", &pushed);
+    let (code, refreshed) = post(server.port, &format!("{reviews}/7/refresh"), json!({})).await;
+    assert_eq!(code, 200, "{refreshed}");
+    let (moved_a, moved_b) = (&refreshed["drafts"][0], &refreshed["drafts"][1]);
+    assert_eq!((&moved_b["startLine"], &moved_b["line"], &moved_b["commit"], &moved_b["displaced"]), (&json!(21), &json!(22), &json!(commit), &json!(false)));
+    let mut displaced = a.clone();
+    displaced["displaced"] = json!(true);
+    assert_eq!(moved_a, &displaced);
+    assert_ne!(b["commit"], json!(commit));
+
+    let replace = format!("{drafts}/{}", a["id"].as_str().unwrap());
+    let (code, replaced) = put(server.port, &replace, json!({ "side": "source", "line": 5 })).await;
+    assert_eq!(code, 200, "{replaced}");
+    assert_eq!((&replaced["drafts"][0]["line"], &replaced["drafts"][0]["commit"], &replaced["drafts"][0]["displaced"]), (&json!(5), &json!(commit), &json!(false)));
+}
+

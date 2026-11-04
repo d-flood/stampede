@@ -945,12 +945,13 @@
 		else unfocused = true;
 	}
 
-	function openDiff(projectId: string, { path, from }: Change, against: Against, draft?: string) {
+	function openDiff(projectId: string, { path, from }: Change, against: Against, draft?: string, replace = false) {
 		const diff = openTab(new OpenDiff(projectId, path, against, from));
 		if (!comparing(against)) return;
 		diff.path = path;
 		diff.from = from;
-		diff.draft = draft;
+		diff.draft = replace ? undefined : draft;
+		diff.replacing = replace ? draft : undefined;
 	}
 
 	/** Shows a Comparison, or without one returns to the last plain Comparison this Device chose. */
@@ -1035,7 +1036,7 @@
 		oncompare={(selection) => focused && compare(focused.id, selection)}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		onrename={(from, to) => focused && retarget(focused.id, from, to)}
-		ondiff={(change, against, draft) => focused && openDiff(focused.id, change, against, draft)}
+		ondiff={(change, against, draft, replace) => focused && openDiff(focused.id, change, against, draft, replace)}
 		onepic={(slug) => focused && openEpic(focused.id, slug)}
 		onfocus={focus}
 	>

@@ -4,7 +4,7 @@
 	import { branches, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { letters, refs, split, type Change, type Git, type Refs } from '#lib/git.ts';
-	import { discardReview, openWorktree, prs, refreshReview, setViewed, viewedState, type Availability, type DraftComment, type PrReview } from '#lib/pr-reviews.ts';
+	import { deleteDraft, discardReview, openWorktree, prs, refreshReview, setViewed, viewedState, type Availability, type DraftComment, type PrReview } from '#lib/pr-reviews.ts';
 	import BranchPicker from '#lib/shell/BranchPicker.svelte';
 	import PrPicker from '#lib/shell/PrPicker.svelte';
 	import { treeRows } from '#lib/shell/tree.ts';
@@ -32,7 +32,7 @@
 		selection?: Selection | Reviewing;
 		reviews?: PrReview[];
 		onselect(selection?: Selection | Reviewing): void;
-		onopen(change: Change, against: Selection | Reviewing, draft?: string): void;
+		onopen(change: Change, against: Selection | Reviewing, draft?: string, replace?: boolean): void;
 		onfocus(projectId: string): void;
 	};
 
@@ -124,10 +124,14 @@
 		act(async () => onfocus(await openWorktree(projectId, pr)));
 	}
 
-	function showDraft(draft: DraftComment) {
+	function showDraft(draft: DraftComment, replace = false) {
 		if (reviewing === undefined) return;
 		const change = files?.find((change) => change.path === draft.path) ?? { path: draft.path, kind: 'modified' as const };
-		onopen(change, { pr: reviewing }, draft.id);
+		onopen(change, { pr: reviewing }, draft.id, replace);
+	}
+
+	function removeDraft(pr: number, id: string) {
+		act(() => deleteDraft(projectId, pr, id));
 	}
 
 	function discard(pr: number) {
@@ -167,6 +171,29 @@
 	</ul>
 {/snippet}
 
+{#snippet displacedList(pr: number, drafts: DraftComment[])}
+	<div class="heading">
+		<span class="name">Displaced</span>
+		<span class="count">{drafts.length}</span>
+	</div>
+	<ul class="drafts" aria-label="Displaced">
+		{#each drafts as draft (draft.id)}
+			{@const lines = draft.startLine ? `${draft.startLine}–${draft.line}` : draft.line}
+			<li class="displaced">
+				<span class="where">
+					<span class="name" title="{draft.path}, was line {lines}">{draft.path}:{lines}</span>
+					{#if draft.side === 'target'}<span class="side">Target</span>{/if}
+				</span>
+				<span class="body">{draft.body.trim().split('\n')[0]}</span>
+				<span class="draft-actions">
+					<Button title="Choose a new line for this draft" disabled={acting} onclick={() => showDraft(draft, true)}>Re-place</Button>
+					<Button variant="danger" disabled={acting} onclick={() => removeDraft(pr, draft.id)}>Delete</Button>
+				</span>
+			</li>
+		{/each}
+	</ul>
+{/snippet}
+
 {#snippet prButton(props: Record<string, unknown>)}
 	<button
 		{...mergeProps(props, { onclick: () => !reason && (choosing = true) })}
@@ -200,6 +227,11 @@
 				<IconButton label="Close" title="Back to the plain Comparison" onclick={() => onselect()}><X /></IconButton>
 			</div>
 		</div>
+		{#if displaced.length}
+			<p class="sending" title="Re-place or delete Displaced drafts before sending">
+				<span class="blocked">{displaced.length} Displaced</span>
+			</p>
+		{/if}
 		{#if review && review.state !== 'open'}
 			<div class="banner" role="status">
 				<span>#{review.number} was {review.state} on GitHub.</span>
@@ -208,7 +240,7 @@
 		{/if}
 		{#if actionError}<p class="note failure" role="alert">{actionError}</p>{/if}
 		{#if placed.length}{@render draftList('Draft comments', placed)}{/if}
-		{#if displaced.length}{@render draftList('Displaced', displaced)}{/if}
+		{#if displaced.length}{@render displacedList(reviewing, displaced)}{/if}
 	{:else}
 		<div class="refs">
 			{@render picker('target', 'Target', target)}
@@ -663,6 +695,37 @@
 		font-size: var(--font-size-sm);
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.displaced {
+		display: grid;
+		gap: var(--space-1);
+		padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+	}
+
+	.displaced .name {
+		font-family: var(--font-mono);
+		font-size: var(--font-size-code);
+	}
+
+	.draft-actions {
+		display: flex;
+		gap: var(--space-1);
+	}
+
+	.sending {
+		display: flex;
+		justify-content: flex-end;
+		margin: 0;
+		padding: 0 var(--space-2) var(--space-2);
+	}
+
+	.blocked {
+		padding: 0 var(--space-2);
+		border-radius: var(--radius-sm);
+		background: var(--surface-1);
+		color: var(--status-waiting);
+		font-size: var(--font-size-sm);
 	}
 
 	.state {

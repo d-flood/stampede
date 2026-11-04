@@ -6,13 +6,13 @@
 	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
-	import { draftComments, draftPosition, setDrafts, type Render } from '#lib/editor/drafts.ts';
+	import { draftComments, draftPosition, setDrafts, setReplacing, type Render } from '#lib/editor/drafts.ts';
 	import { comparison } from '#lib/compare.svelte.ts';
 	import { branches, comparing, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import { baseline, index, show, type Git } from '#lib/git.ts';
-	import { createDraft, deleteDraft, editDraft, hunks, setViewed, viewedState, type Hunks, type PrReview } from '#lib/pr-reviews.ts';
+	import { createDraft, deleteDraft, editDraft, hunks, setViewed, viewedState, type Hunks, type Placement, type PrReview } from '#lib/pr-reviews.ts';
 	import DraftBox from '#lib/shell/DraftBox.svelte';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import { ordered } from '#lib/shell/tree.ts';
@@ -71,6 +71,8 @@
 	let sinceViewed = $state(false);
 	let marking = $state(false);
 	const since = $derived(sinceViewed && mark === 'changed' ? review?.viewed[diff.path]?.commit : undefined);
+	const replacing = $derived(review?.drafts.find((draft) => draft.id === diff.replacing && draft.displaced && draft.path === diff.path));
+	let replaceError = $state<string>();
 
 	onMount(() => {
 		let disposed = false;
@@ -176,8 +178,13 @@
 	$effect(() => {
 		const current = shown;
 		if (!current || !review) return;
-		const drafts = review.drafts.filter((draft) => draft.path === current.path);
+		const drafts = placed(review, current.path);
 		for (const view of current.views) view.dispatch({ effects: setDrafts.of(drafts) });
+	});
+
+	$effect(() => {
+		const [current, on] = [shown, !!replacing];
+		if (current) for (const view of current.views) view.dispatch({ effects: setReplacing.of(on) });
 	});
 
 	$effect(() => {
@@ -302,9 +309,32 @@
 		if (shown) build(shown.original, shown.b.state.doc);
 	}
 
+	/** The drafts drawn inline on `path`; a Displaced draft's lines no longer apply. */
+	function placed(review: PrReview, path: string) {
+		return review.drafts.filter((draft) => draft.path === path && !draft.displaced);
+	}
+
 	function applied(updated: PrReview, path: string) {
-		const drafts = updated.drafts.filter((draft) => draft.path === path);
+		const drafts = placed(updated, path);
 		for (const view of shown?.views ?? []) view.dispatch({ effects: setDrafts.of(drafts) });
+	}
+
+	async function replace(placement: Placement) {
+		const draft = replacing;
+		if (!draft || pr === undefined) return;
+		replaceError = undefined;
+		try {
+			applied(await editDraft(diff.projectId, pr, draft.id, placement), draft.path);
+			diff.replacing = undefined;
+			diff.draft = draft.id;
+		} catch (error) {
+			replaceError = error instanceof Error ? error.message : String(error);
+		}
+	}
+
+	function cancelReplacing() {
+		diff.replacing = undefined;
+		replaceError = undefined;
 	}
 
 	function drafting(number: number, path: string): Render {
@@ -335,9 +365,9 @@
 		shown?.destroy();
 		const path = diff.path;
 		const whole = !a.length !== !b.length;
-		const drafts = review?.drafts.filter((draft) => draft.path === path) ?? [];
+		const drafts = review ? placed(review, path) : [];
 		const commenting = (side: 'target' | 'source', unified: boolean) =>
-			commentable && pr !== undefined ? draftComments(side, unified, commentable, drafts, drafting(pr, path)) : [];
+			commentable && pr !== undefined ? draftComments(side, unified, commentable, drafts, drafting(pr, path), replace) : [];
 		const walking = compared
 			? Prec.highest(
 					keymap.of([
@@ -460,6 +490,13 @@
 			{/if}
 		{/if}
 	</div>
+	{#if replacing}
+		<div class="replacing" role="status">
+			<span class="prompt">Choose a line to re-place <q>{replacing.body.trim().split('\n')[0]}</q></span>
+			{#if replaceError}<span class="deleted">{replaceError}</span>{/if}
+			<Button onclick={cancelReplacing}>Cancel</Button>
+		</div>
+	{/if}
 	<Conflict {sync} onshowdiff={(disk) => shown && onshowdiff(disk, shown.b.state.doc.toString())} />
 	<div class="content" bind:this={container}>
 		{#if note}<p>{note}</p>{/if}
@@ -515,6 +552,27 @@
 		flex: none;
 		color: var(--status-waiting);
 		font-size: var(--font-size-sm);
+	}
+
+	.replacing {
+		display: flex;
+		flex: none;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+		border-bottom: var(--border-width) solid var(--border);
+		border-left: 3px solid var(--status-working);
+		background: var(--surface-1);
+		font-size: var(--font-size-sm);
+	}
+
+	.prompt {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.content {
