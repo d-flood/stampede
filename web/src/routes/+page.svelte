@@ -25,9 +25,10 @@
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
-	import { comparing, image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Against, type Cursor, type Selection } from '#lib/files.svelte.ts';
+	import { comparing, image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Against, type Cursor, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { deleteWorktree, status, type Change, type Git, type Trunk, type Update } from '#lib/git.ts';
+	import type { PrReview } from '#lib/pr-reviews.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
@@ -107,7 +108,10 @@
 	let section = $state<Section>(restored.sidebar?.section ?? 'files');
 	let rail = $state(restored.rail?.open ?? false);
 	let markdownMode = $state(restored.markdownMode);
-	let comparisons = $state<Record<string, Selection>>(restored.compare);
+	let comparisons = $state<Record<string, Selection | Reviewing>>(restored.compare);
+	const plainComparisons: Record<string, Selection> = {};
+	for (const [projectId, chosen] of Object.entries(restored.compare)) if ('target' in chosen) plainComparisons[projectId] = chosen;
+	let prReviews = $state.raw<Record<string, PrReview[]>>({});
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
 	let closingChat = $state<Chat>();
@@ -436,6 +440,8 @@
 				}
 				const kept = Object.entries(epics).filter(([projectId]) => projects.some((project) => project.id === projectId));
 				if (kept.length < Object.keys(epics).length) epics = Object.fromEntries(kept);
+				const reviewed = Object.entries(prReviews).filter(([projectId]) => projects.some((project) => project.id === projectId));
+				if (reviewed.length < Object.keys(prReviews).length) prReviews = Object.fromEntries(reviewed);
 				for (const projectId of subscribed) {
 					if (!projects.some((project) => project.id === projectId)) subscribed.delete(projectId);
 				}
@@ -443,6 +449,7 @@
 					if (subscribed.has(id)) continue;
 					subscribed.add(id);
 					device.send({ type: 'epics.subscribe', projectId: id });
+					device.send({ type: 'pr-reviews.subscribe', projectId: id });
 				}
 				if (!activeTab) warmUp();
 				break;
@@ -453,6 +460,9 @@
 			case 'origin.changed':
 				trunks = message.trunks;
 				update = message.update;
+				break;
+			case 'pr-reviews.changed':
+				prReviews = { ...prReviews, [message.projectId]: message.reviews };
 				break;
 			case 'epics.changed':
 				closeArchived(message.projectId, message.epics);
@@ -942,8 +952,16 @@
 		diff.from = from;
 	}
 
+	/** Shows a Comparison, or without one returns to the last plain Comparison this Device chose. */
+	function compare(projectId: string, selection?: Selection | Reviewing) {
+		if (selection && 'target' in selection) plainComparisons[projectId] = selection;
+		const next = selection ?? plainComparisons[projectId];
+		if (next) comparisons[projectId] = next;
+		else delete comparisons[projectId];
+	}
+
 	function showComparison(projectId: string, selection: Selection) {
-		comparisons[projectId] = selection;
+		compare(projectId, selection);
 		section = 'compare';
 		sidebar = true;
 		slide('sidebar');
@@ -1012,7 +1030,8 @@
 		{codexResets}
 		epics={focused && epics[focused.id]}
 		comparison={focused && comparisons[focused.id]}
-		oncompare={(selection) => focused && (comparisons[focused.id] = selection)}
+		reviews={focused && prReviews[focused.id]}
+		oncompare={(selection) => focused && compare(focused.id, selection)}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		onrename={(from, to) => focused && retarget(focused.id, from, to)}
 		ondiff={(change, against) => focused && openDiff(focused.id, change, against)}

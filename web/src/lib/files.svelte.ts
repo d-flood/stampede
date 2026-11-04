@@ -90,14 +90,23 @@ export type Layout = 'split' | 'unified';
 /** Which branches a Comparison compares, by name, so its Diff tab follows them as they move. */
 export type Selection = { target: string; source: string };
 
+/** A PR review's Comparison, by pull request number. */
+export type Reviewing = { pr: number };
+
 /**
  * What a Diff compares: HEAD, the index or the disk with the file on disk; the index with HEAD; a commit with its
  * parent; or a Comparison's Source with where it split off its Target.
  */
-export type Against = 'HEAD' | 'index' | 'staged' | 'disk' | Commit | Selection;
+export type Against = 'HEAD' | 'index' | 'staged' | 'disk' | Commit | Selection | Reviewing;
 
-export function comparing(against: Against): against is Selection {
-	return typeof against === 'object' && 'target' in against;
+export function comparing(against: Against): against is Selection | Reviewing {
+	return typeof against === 'object' && ('target' in against || 'pr' in against);
+}
+
+/** The refs a Comparison names, a PR review's being its hidden fetched refs. */
+export function branches(compared: Selection | Reviewing): Selection {
+	if (!('pr' in compared)) return compared;
+	return { target: `refs/stampede/pr/${compared.pr}/target`, source: `refs/stampede/pr/${compared.pr}/source` };
 }
 
 export class OpenDiff extends OpenFile {
@@ -114,13 +123,14 @@ export class OpenDiff extends OpenFile {
 
 	get id() {
 		const { against } = this;
+		if (comparing(against) && 'pr' in against) return `diff:pr:${against.pr}:${this.projectId}`;
 		if (comparing(against)) return `diff:compare:${against.target}...${against.source}:${this.projectId}`;
 		return `diff:${typeof against === 'string' ? against : against.sha}:${this.projectId}:${this.path}`;
 	}
 
 	get versus() {
 		const { against } = this;
-		if (comparing(against)) return against.target;
+		if (comparing(against)) return 'pr' in against ? `#${against.pr}` : against.target;
 		return typeof against === 'string' ? against : against.short;
 	}
 }

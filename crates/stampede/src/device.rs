@@ -37,6 +37,7 @@ use crate::{
     holder::Owner,
     language_servers::{self, Input, LanguageServers, Server, Switch},
     origin::Origin,
+    pr_reviews::PrReviews,
     projects::{self, Projects},
     protocol::Size,
     runs::Runs,
@@ -136,6 +137,8 @@ enum Control {
     Search(search::Query),
     #[serde(rename = "epics.subscribe")]
     SubscribeEpics { project_id: String },
+    #[serde(rename = "pr-reviews.subscribe")]
+    SubscribePrReviews { project_id: String },
     #[serde(rename = "ticket.start")]
     StartTicket { project_id: String, epic: String, ticket: u32, rig: String },
     #[serde(rename = "lsp.switch")]
@@ -199,13 +202,15 @@ struct Device {
     servers: HashMap<String, Server>,
     epics: Arc<Epics>,
     epic_projects: HashMap<String, PathBuf>,
+    pr_reviews: Arc<PrReviews>,
+    review_projects: HashMap<String, PathBuf>,
     runs: Arc<Runs>,
     origin: watch::Receiver<Origin>,
 }
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, chats, attention, usage, projects, mut config, disk, canvases, git, languages, epics, runs, devices, mut origin, .. }: AppState,
+    AppState { terminals, chats, attention, usage, projects, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
 ) {
     let _connected = devices.connect();
     let (mut sink, mut stream) = socket.split();
@@ -232,6 +237,7 @@ async fn connect(
     let mut git = git.subscribe();
     let mut switches = languages.subscribe();
     let mut epic_changes = epics.subscribe();
+    let mut review_changes = pr_reviews.subscribe();
     let mut device = Device {
         id: Uuid::new_v4().to_string(),
         browser: None,
@@ -255,6 +261,8 @@ async fn connect(
         servers: HashMap::new(),
         epics,
         epic_projects: HashMap::new(),
+        pr_reviews,
+        review_projects: HashMap::new(),
         runs,
         origin: origin.clone(),
     };
@@ -293,6 +301,7 @@ async fn connect(
                 send(&device.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
                 device.stop_servers(|project_id| !projects.iter().any(|project| project.id == project_id));
                 device.epic_projects.retain(|project_id, _| projects.iter().any(|project| project.id == *project_id));
+                device.review_projects.retain(|project_id, _| projects.iter().any(|project| project.id == *project_id));
             }
             changed = changes.recv() => match changed {
                 Ok(owner) => device.terminals_changed(&owner),
@@ -423,6 +432,11 @@ async fn connect(
                         device.send_epics(project_id, Some(common_dir.as_path()));
                     }
                 }
+                Err(RecvError::Closed) => break,
+            },
+            changed = review_changes.recv() => match changed {
+                Ok(changed) => device.reviews_changed(|common_dir| *common_dir == changed),
+                Err(RecvError::Lagged(_)) => device.reviews_changed(|_| true),
                 Err(RecvError::Closed) => break,
             },
         }
@@ -601,6 +615,7 @@ impl Device {
             }
             Control::Search(query) => self.search(query),
             Control::SubscribeEpics { project_id } => self.subscribe_epics(project_id).await,
+            Control::SubscribePrReviews { project_id } => self.subscribe_reviews(project_id).await,
             Control::StartTicket { project_id, epic, ticket, rig } => self.start_ticket(project_id, epic, ticket, rig),
             Control::Switch { project_id, on } => self.languages.switch(&project_id, on),
             Control::OpenServer { channel } => self.open_server(channel),
@@ -819,6 +834,26 @@ impl Device {
         self.send_epics(&project_id, common_dir.as_deref());
         if let Some(common_dir) = common_dir {
             self.epic_projects.insert(project_id, common_dir);
+        }
+    }
+
+    async fn subscribe_reviews(&mut self, project_id: String) {
+        let projects = self.projects.list();
+        let Some(project) = projects.iter().find(|project| project.id == project_id) else {
+            return eprintln!("cannot list the PR reviews of {project_id}: not open");
+        };
+        let common_dir = git::common_dir(Path::new(&project.path)).await;
+        let reviews = common_dir.as_deref().map_or_else(Vec::new, |common_dir| self.pr_reviews.list(common_dir));
+        send(&self.outgoing, json!({ "type": "pr-reviews.changed", "projectId": project_id, "reviews": reviews }));
+        if let Some(common_dir) = common_dir {
+            self.review_projects.insert(project_id, common_dir);
+        }
+    }
+
+    fn reviews_changed(&self, matches: impl Fn(&PathBuf) -> bool) {
+        for (project_id, common_dir) in self.review_projects.iter().filter(|(_, common_dir)| matches(common_dir)) {
+            let reviews = self.pr_reviews.list(common_dir);
+            send(&self.outgoing, json!({ "type": "pr-reviews.changed", "projectId": project_id, "reviews": reviews }));
         }
     }
 
