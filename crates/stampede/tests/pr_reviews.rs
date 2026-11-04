@@ -169,6 +169,28 @@ async fn opening_a_pr_fetches_hidden_refs_that_every_worktree_shares() {
 }
 
 #[tokio::test]
+async fn review_requests_lead_the_pr_list_past_the_cli_default_limit() {
+    let server = server("pr-reviews-list").await;
+    let root = server.root.path();
+    fixture(root, "OPEN");
+    amend(&root.join("gh.json"), |fixture| {
+        let prs = fixture["prs"].as_array_mut().unwrap();
+        for number in 100..140 {
+            let other = json!({ "number": number, "title": "Other", "author": { "login": "octo" }, "isDraft": false, "updatedAt": "2026-11-02T00:00:00Z" });
+            prs.insert(0, other);
+        }
+    });
+    let (repo, _) = repository(root);
+    let mut socket = device(server.port, "first").await;
+    let id = open(&mut socket, &repo).await;
+
+    let (code, listed) = get(server.port, &format!("/api/projects/{id}/prs")).await;
+    assert_eq!(code, 200, "{listed}");
+    let numbers: Vec<_> = listed["prs"].as_array().unwrap().iter().map(|pr| pr["number"].as_u64().unwrap()).collect();
+    assert_eq!((numbers.len(), numbers[0]), (41, 7));
+}
+
+#[tokio::test]
 async fn without_gh_signed_in_the_pr_button_says_why() {
     let server = server("pr-reviews-signed-out").await;
     let root = server.root.path();
@@ -355,6 +377,8 @@ async fn drafts_stay_within_one_hunk_and_every_device_hears_them() {
     let (code, hunks) = get(server.port, &format!("{reviews}/7/hunks?path=list.txt")).await;
     assert_eq!(code, 200, "{hunks}");
     assert_eq!(hunks, json!({ "source": [[2, 8], [22, 27]], "target": [[2, 8], [22, 28]] }));
+    let globbed = get(server.port, &format!("{reviews}/7/hunks?path=%5Bl%5Dist.txt")).await;
+    assert_eq!(globbed, (200, json!({ "source": [], "target": [] })));
 
     let mut second = device(server.port, "second").await;
     control(&mut second, json!({ "type": "pr-reviews.subscribe", "projectId": id })).await;

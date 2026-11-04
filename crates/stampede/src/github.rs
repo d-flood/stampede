@@ -60,11 +60,6 @@ struct Listed {
     updated_at: String,
 }
 
-#[derive(Deserialize)]
-struct Numbered {
-    number: u64,
-}
-
 enum Failure {
     Missing,
     Failed(String),
@@ -188,15 +183,20 @@ fn signed_out(host: &str) -> String {
 
 /// Open pull requests, those requesting the signed-in user's review first, then the most recently updated.
 pub async fn prs(dir: &Path) -> Result<Vec<Pr>, String> {
-    let all = ["pr", "list", "--state", "open", "--json", "number,title,author,isDraft,updatedAt"];
-    let mine = ["pr", "list", "--state", "open", "--search", "review-requested:@me", "--json", "number"];
+    let fields = "number,title,author,isDraft,updatedAt";
+    let all = ["pr", "list", "--state", "open", "--limit", "1000", "--json", fields];
+    let mine = ["pr", "list", "--state", "open", "--limit", "1000", "--search", "review-requested:@me", "--json", fields];
     let (listed, requested) = tokio::join!(gh(dir, &all), gh(dir, &mine));
     let listed: Vec<Listed> = parsed(&listed?)?;
-    let requested: Vec<Numbered> = parsed(&requested?)?;
-    let mut prs: Vec<Pr> = listed
+    let requested: Vec<Listed> = parsed(&requested?)?;
+    let numbers: Vec<u64> = requested.iter().map(|pr| pr.number).collect();
+    let others = listed.into_iter().filter(|pr| !numbers.contains(&pr.number));
+    let mut prs: Vec<Pr> = requested
         .into_iter()
-        .map(|pr| Pr {
-            requested: requested.iter().any(|other| other.number == pr.number),
+        .map(|pr| (true, pr))
+        .chain(others.map(|pr| (false, pr)))
+        .map(|(requested, pr)| Pr {
+            requested,
             number: pr.number,
             title: pr.title,
             author: pr.author.login,

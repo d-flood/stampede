@@ -123,6 +123,32 @@ test('Compare walks what the Source changed since it split off the Target in one
 	await expect(files.getByRole('button', { name: /\.ts$/ })).toHaveCount(4);
 });
 
+test('An open Comparison Diff follows its file when it becomes a rename', async ({ page }) => {
+	const { root, git } = repository('compare-rename');
+	const lines = Array.from({ length: 30 }, (_, n) => `export const line${n} = ${n};\n`).join('');
+	writeFileSync(`${root}/old.ts`, lines);
+	git('add', '.');
+	git('commit', '-qm', 'Initial commit');
+	git('switch', '-qc', 'feature');
+	writeFileSync(`${root}/new.ts`, 'export const unrelated = true;\n');
+	git('add', '.');
+	git('commit', '-qm', 'Add new');
+
+	await openProject(page, 'compare-rename');
+	const compare = await comparePanel(page);
+	await compare.getByRole('list', { name: 'Compared files' }).getByRole('button', { name: 'new.ts', exact: true }).click();
+	const diff = page.locator('.diff:not([hidden])');
+	await expect(diff.locator('.cm-changedLine', { hasText: 'unrelated' })).toBeVisible();
+
+	rmSync(`${root}/old.ts`);
+	writeFileSync(`${root}/new.ts`, lines.replace('line5 = 5;', 'line5 = 50;'));
+	git('add', '-A');
+	git('commit', '-qm', 'Rename');
+	await expect(diff.locator('.path')).toHaveText('old.ts → new.ts');
+	await expect(diff.locator('.cm-changedLine', { hasText: 'line5 = 50' })).toBeVisible();
+	await expect(diff.locator('.cm-changedLine', { hasText: 'line6 = 6' })).toHaveCount(0);
+});
+
 test('Compare names a branch that no longer exists and keeps its pickers usable', async ({ page }) => {
 	const { git } = repository('vanished');
 	git('commit', '-q', '--allow-empty', '-m', 'Initial commit');

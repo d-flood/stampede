@@ -113,12 +113,20 @@ function touchedLines(state: EditorState) {
 	return lines;
 }
 
-function imageParts(state: EditorState, image: SyntaxNode) {
+function imageParts(state: EditorState, image: SyntaxNode, linkLabels: Map<string, string>) {
 	const url = image.getChild('URL');
 	const marks = image.getChildren('LinkMark');
-	if (!url || marks.length < 2) return null;
-	const src = state.sliceDoc(url.from, url.to);
-	return { src: src.startsWith('<') && src.endsWith('>') ? src.slice(1, -1) : src, alt: state.sliceDoc(marks[0].to, marks[1].from) };
+	if (marks.length < 2) return null;
+	const alt = state.sliceDoc(marks[0].to, marks[1].from);
+	const src = url ? state.sliceDoc(url.from, url.to) : marks.length < 4 ? linkLabels.get(referenceLabel(state, image, alt)) : undefined;
+	if (!src) return null;
+	return { src: src.startsWith('<') && src.endsWith('>') ? src.slice(1, -1) : src, alt };
+}
+
+/** The label a reference names, `text` itself for collapsed and shortcut references. */
+function referenceLabel(state: EditorState, node: SyntaxNode, text: string) {
+	const reference = node.getChild('LinkLabel');
+	return normalizeLabel(reference && reference.to - reference.from > 2 ? state.sliceDoc(reference.from + 1, reference.to - 1) : text);
 }
 
 function normalizeLabel(label: string) {
@@ -126,13 +134,14 @@ function normalizeLabel(label: string) {
 }
 
 function scanDefinitions(state: EditorState, tree: ReturnType<typeof syntaxTree>) {
-	const linkLabels = new Set<string>();
+	const linkLabels = new Map<string, string>();
 	const footnoteNumbers = new Map<string, number>();
 	tree.iterate({
 		enter(node) {
 			if (node.name === 'LinkReference') {
-				const label = node.node.getChild('LinkLabel');
-				if (label) linkLabels.add(normalizeLabel(state.sliceDoc(label.from + 1, label.to - 1)));
+				const [label, url] = [node.node.getChild('LinkLabel'), node.node.getChild('URL')];
+				const key = label && normalizeLabel(state.sliceDoc(label.from + 1, label.to - 1));
+				if (key && !linkLabels.has(key)) linkLabels.set(key, url ? state.sliceDoc(url.from, url.to) : '');
 			} else if (node.name === 'FootnoteReference') {
 				const label = state.sliceDoc(node.from + 2, node.to - 1);
 				if (!footnoteNumbers.has(label)) footnoteNumbers.set(label, footnoteNumbers.size + 1);
@@ -144,16 +153,11 @@ function scanDefinitions(state: EditorState, tree: ReturnType<typeof syntaxTree>
 	return { linkLabels, footnoteNumbers };
 }
 
-function isRealLink(state: EditorState, link: SyntaxNode, linkLabels: Set<string>) {
+function isRealLink(state: EditorState, link: SyntaxNode, linkLabels: Map<string, string>) {
 	const marks = link.getChildren('LinkMark');
 	if (link.getChild('URL') || marks.length >= 4) return true;
 	if (marks.length < 2) return false;
-	const reference = link.getChild('LinkLabel');
-	const named =
-		reference && reference.to - reference.from > 2
-			? state.sliceDoc(reference.from + 1, reference.to - 1)
-			: state.sliceDoc(marks[0].to, marks[1].from);
-	return linkLabels.has(normalizeLabel(named));
+	return linkLabels.has(referenceLabel(state, link, state.sliceDoc(marks[0].to, marks[1].from)));
 }
 
 function skipSpaces(state: EditorState, pos: number) {
@@ -213,7 +217,7 @@ function inlineChildren(
 	from: number,
 	to: number,
 	footnoteNumbers: Map<string, number>,
-	linkLabels: Set<string>
+	linkLabels: Map<string, string>
 ): InlineNode[] {
 	const nodes: InlineNode[] = [];
 	let pos = from;
@@ -231,7 +235,7 @@ function inlineChildren(
 	for (let child = parent.firstChild; child; child = child.nextSibling) {
 		if (child.to <= from || child.from >= to) continue;
 		const { name } = child;
-		const parts = name === 'Image' ? imageParts(state, child) : null;
+		const parts = name === 'Image' ? imageParts(state, child, linkLabels) : null;
 		if (name in kinds) {
 			text(child.from);
 			const mark = name === 'Strikethrough' ? 'StrikethroughMark' : 'EmphasisMark';
@@ -291,7 +295,7 @@ function tableModel(
 	table: SyntaxNode,
 	from: number,
 	footnoteNumbers: Map<string, number>,
-	linkLabels: Set<string>
+	linkLabels: Map<string, string>
 ): TableModel | null {
 	const headRow = table.getChild('TableHeader');
 	if (!headRow) return null;
@@ -389,7 +393,7 @@ function buildDecorations(state: EditorState, tree = syntaxTree(state)): Decorat
 					hide(from, from + 1);
 					return false;
 				case 'Image': {
-					const parts = imageParts(state, ref.node);
+					const parts = imageParts(state, ref.node, linkLabels);
 					if (parts && !isActive(from) && !isActive(to)) {
 						ranges.push(Decoration.replace({ widget: new ImageWidget(parts.src, parts.alt) }).range(from, to));
 					}

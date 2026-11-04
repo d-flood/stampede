@@ -440,7 +440,7 @@ async fn file_hunks(dir: &Path, review: &PrReview, path: &str) -> Result<Hunks, 
 
 async fn comparison_hunks(dir: &Path, review: &PrReview, path: &str, from: Option<&str>) -> Result<Hunks, Failure> {
     let (base, source) = (review.merge_base.as_str(), review.source.commit.as_str());
-    let mut args = vec!["diff", "-U3", "--no-color", "--no-ext-diff", "--find-renames", "--relative", base, source, "--", path];
+    let mut args = vec!["--literal-pathspecs", "diff", "-U3", "--no-color", "--no-ext-diff", "--find-renames", "--relative", base, source, "--", path];
     args.extend(from);
     Ok(hunks(&git::run(dir, &args).await.map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?))
 }

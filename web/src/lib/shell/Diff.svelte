@@ -134,7 +134,9 @@
 	$effect(() => {
 		const result = compared?.result;
 		if (!result) return;
-		const [path, from, viewed] = [diff.path, diff.from, since];
+		const [path, viewed] = [diff.path, since];
+		const from = result.files.find((change) => change.path === path)?.from;
+		diff.from = from;
 		let stale = false;
 		const left = viewed ? show(diff.projectId, viewed, path) : show(diff.projectId, result.mergeBase, from ?? path);
 		const lines = pr === undefined || viewed ? undefined : hunks(diff.projectId, pr, path).catch(() => undefined);

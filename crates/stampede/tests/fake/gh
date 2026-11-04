@@ -37,6 +37,7 @@ def main(args):
             prs = [pr for pr in data['prs'] if pr.get('state', 'OPEN') == 'OPEN']
             if option(args, '--search') == 'review-requested:@me':
                 prs = [pr for pr in prs if pr.get('requested')]
+            prs = prs[:int(option(args, '--limit') or 30)]
             print(json.dumps([fields(pr, option(args, '--json')) for pr in prs]))
         case ['pr', 'view']:
             number = int(args[2])

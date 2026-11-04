@@ -9,9 +9,9 @@ import { page } from 'vitest/browser';
 const doc = ['# Title', '', 'Some **bold** words.', '', '- item one', '- [ ] task', '', '| A | B |', '| - | - |', '| 1 | 2 |', '', 'End.'].join('\n');
 let view: EditorView;
 
-async function mount() {
+async function mount(text = doc, options?: Parameters<typeof livePreview>[0]) {
 	const parent = document.body.appendChild(document.createElement('div'));
-	view = new EditorView({ parent, state: EditorState.create({ doc, extensions: [await language('notes.md'), livePreview(), theme] }) });
+	view = new EditorView({ parent, state: EditorState.create({ doc: text, extensions: [await language('notes.md'), livePreview(options), theme] }) });
 }
 
 function line(number: number) {
@@ -75,4 +75,13 @@ test('clicking a task checkbox toggles it in the document', async () => {
 	await checkbox.click();
 	await expect.poll(() => view.state.doc.line(6).text).toBe('- [ ] task');
 	await expect.element(checkbox).not.toBeChecked();
+});
+
+test('shows full, collapsed and shortcut reference images from their definitions', async () => {
+	const gif = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+	const text = ['![Full][Pic]', '', '![pic][]', '', '![pic]', '', '![Missing][nope]', '', `[pic]: <${gif}>`].join('\n');
+	await mount(text, { image: (src) => src });
+	const images = () => [...view.contentDOM.querySelectorAll<HTMLImageElement>('img.cm-lp-image')].map((image) => [image.alt, image.getAttribute('src'), image.complete && image.naturalWidth]);
+	await expect.poll(images).toEqual([['Full', gif, 1], ['pic', gif, 1], ['pic', gif, 1]]);
+	expect(line(7).textContent).toBe('![Missing][nope]');
 });
