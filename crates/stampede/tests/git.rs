@@ -618,6 +618,8 @@ async fn a_comparison_shows_only_what_the_source_changed_since_it_split_off() {
     git(&repo, &["mv", "moved.txt", "renamed.txt"]);
     fs::write(repo.join("edited.txt"), "two\n").unwrap();
     git(&repo, &["commit", "-qam", "Feature"]);
+    git(&repo, &["rm", "-q", "other.txt"]);
+    git(&repo, &["commit", "-qm", "Feature deletes"]);
     git(&repo, &["switch", "-q", "--orphan", "unrelated"]);
     git(&repo, &["commit", "-q", "--allow-empty", "-m", "Unrelated"]);
     git(&repo, &["switch", "-q", "feature"]);
@@ -626,8 +628,9 @@ async fn a_comparison_shows_only_what_the_source_changed_since_it_split_off() {
     let compare = |target: &str, source: &str| format!("/api/projects/{id}/git/compare?target={target}&source={source}");
     let comparison = get(server.port, &compare("main", "feature")).await;
     let expected = json!([
-        { "path": "edited.txt", "kind": "modified" },
-        { "path": "renamed.txt", "kind": "renamed", "from": "moved.txt" },
+        { "path": "edited.txt", "kind": "modified", "blob": rev_parse(&repo, "feature:edited.txt") },
+        { "path": "other.txt", "kind": "deleted" },
+        { "path": "renamed.txt", "kind": "renamed", "from": "moved.txt", "blob": rev_parse(&repo, "feature:renamed.txt") },
     ]);
     assert_eq!(comparison["files"], expected);
     assert_eq!(comparison["mergeBase"], rev_parse(&repo, "main^"));

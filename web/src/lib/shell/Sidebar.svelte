@@ -62,6 +62,7 @@
 		onrename(from: string, to: string): void;
 		ondiff(change: Change, against: Against): void;
 		onepic(slug: string): void;
+		onfocus(projectId: string): void;
 		toggle?: Snippet;
 	};
 
@@ -83,6 +84,7 @@
 		onrename,
 		ondiff,
 		onepic,
+		onfocus,
 		toggle
 	}: Props = $props();
 
@@ -162,7 +164,7 @@
 					{/key}
 				{:else if current === 'compare'}
 					{#key project.id}
-						{#if git}<Compare projectId={project.id} {git} {device} selection={comparison} {reviews} onselect={oncompare} onopen={ondiff} />{/if}
+						{#if git}<Compare projectId={project.id} {git} {device} selection={comparison} {reviews} onselect={oncompare} onopen={ondiff} {onfocus} />{/if}
 					{/key}
 				{:else if current === 'epics'}
 					<Epics epics={epics ?? []} onopen={onepic} />

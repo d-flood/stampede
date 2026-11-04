@@ -2,7 +2,7 @@ import { json, RequestError } from '#lib/files.svelte.ts';
 
 export type Kind = 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
 
-export type Change = { path: string; kind: Kind; from?: string };
+export type Change = { path: string; kind: Kind; from?: string; blob?: string };
 
 export type Operation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
 

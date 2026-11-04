@@ -689,7 +689,7 @@ impl Runs {
             let path = Path::new(&project.path);
             match &project.worktree {
                 Some(Worktree { kind: Kind::Epic { epic, .. }, .. }) if epic != slug => continue,
-                Some(Worktree { kind: Kind::Branch { .. }, .. }) => continue,
+                Some(Worktree { kind: Kind::Branch { .. } | Kind::Detached { .. }, .. }) => continue,
                 None if !path.starts_with(&worktrees) => continue,
                 _ if path.exists() => continue,
                 _ => {}
@@ -729,7 +729,7 @@ impl Runs {
 
     fn prune(&self) {
         for project in self.projects.list().iter() {
-            if let Some(Worktree { parent, kind: Kind::Branch { .. } }) = &project.worktree
+            if let Some(Worktree { parent, kind: Kind::Branch { .. } | Kind::Detached { .. } }) = &project.worktree
                 && !Path::new(&project.path).exists()
             {
                 self.unnest(&project.id, parent);

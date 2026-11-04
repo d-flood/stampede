@@ -32,10 +32,10 @@ function repository() {
 	git('remote', 'add', 'origin', URL);
 	git('config', `url.${origin}.insteadOf`, URL);
 	git('push', '-q', 'origin', 'main');
-	const push = (file: string) => {
+	const push = (...files: string[]) => {
 		git('switch', '-q', '--detach', 'main');
 		mkdirSync(`${root}/src`, { recursive: true });
-		writeFileSync(`${root}/src/${file}`, `export const ${file.split('.')[0]} = true;\n`);
+		for (const file of files) writeFileSync(`${root}/src/${file}`, `export const ${file.split('.')[0]} = true;\n`);
 		git('add', '.');
 		git('commit', '-qm', 'Add widgets');
 		git('push', '-qf', 'origin', `${git('rev-parse', 'HEAD')}:refs/pull/7/head`);
@@ -49,6 +49,14 @@ async function comparePanel(page: Page) {
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'Compare', exact: true }).click();
 	return sidebar.getByRole('region', { name: 'Compare' });
+}
+
+async function openPr(page: Page) {
+	const compare = await comparePanel(page);
+	await compare.getByRole('button', { name: 'Pull request…' }).click();
+	await page.getByRole('dialog', { name: 'Open a pull request' }).getByRole('option', { name: /Add widgets/ }).click();
+	await expect(compare.getByRole('heading')).toHaveText('#7 Add widgets');
+	return compare;
 }
 
 test('A PR review opens from the picker, refreshes, and closes back to the plain Comparison', async ({ page }) => {
@@ -114,4 +122,29 @@ test('Without gh signed in, the PR button is disabled and says why', async ({ pa
 	}
 	await button.click({ force: true });
 	await expect(page.getByRole('dialog', { name: 'Open a pull request' })).toHaveCount(0);
+});
+
+test('Viewed & next marks the file Viewed and moves to the next file', async ({ page }) => {
+	signIn('OPEN');
+	const { push } = repository();
+	push('gadget.ts', 'widget.ts');
+	await openProject(page, 'widgets');
+	let compare = await openPr(page);
+	const files = compare.getByRole('list', { name: 'Compared files' });
+	await expect(compare.getByText('0/2 viewed')).toBeVisible();
+	await files.getByRole('button', { name: 'gadget.ts', exact: true }).click();
+	const diff = page.locator('.diff:not([hidden])');
+	await expect(diff.locator('.path')).toHaveText('src/gadget.ts');
+
+	await diff.getByRole('button', { name: 'Viewed & next' }).click();
+	await expect(diff.locator('.path')).toHaveText('src/widget.ts');
+	compare = await comparePanel(page);
+	await expect(compare.getByText('1/2 viewed')).toBeVisible();
+	const boxes = files.getByRole('checkbox', { name: 'Viewed' });
+	await expect(boxes).toHaveCount(2);
+	await expect(boxes.first()).toBeChecked();
+	await expect(boxes.last()).not.toBeChecked();
+
+	await boxes.first().uncheck();
+	await expect(compare.getByText('0/2 viewed')).toBeVisible();
 });

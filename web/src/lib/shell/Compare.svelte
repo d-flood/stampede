@@ -4,7 +4,7 @@
 	import { branches, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { letters, refs, split, type Change, type Git, type Refs } from '#lib/git.ts';
-	import { discardReview, prs, refreshReview, type Availability, type PrReview } from '#lib/pr-reviews.ts';
+	import { discardReview, openWorktree, prs, refreshReview, setViewed, viewedState, type Availability, type PrReview } from '#lib/pr-reviews.ts';
 	import BranchPicker from '#lib/shell/BranchPicker.svelte';
 	import PrPicker from '#lib/shell/PrPicker.svelte';
 	import { treeRows } from '#lib/shell/tree.ts';
@@ -19,6 +19,7 @@
 	import ArrowsClockwise from '~icons/ph/arrows-clockwise';
 	import CaretRight from '~icons/ph/caret-right';
 	import CaretUpDown from '~icons/ph/caret-up-down';
+	import FolderOpen from '~icons/ph/folder-open';
 	import GitPullRequest from '~icons/ph/git-pull-request';
 	import Trash from '~icons/ph/trash';
 	import X from '~icons/ph/x';
@@ -32,9 +33,10 @@
 		reviews?: PrReview[];
 		onselect(selection?: Selection | Reviewing): void;
 		onopen(change: Change, against: Selection | Reviewing): void;
+		onfocus(projectId: string): void;
 	};
 
-	let { projectId, git, device, selection, reviews, onselect, onopen }: Props = $props();
+	let { projectId, git, device, selection, reviews, onselect, onopen, onfocus }: Props = $props();
 
 	const collapsed = new SvelteSet<string>();
 	let listed = $state.raw<Refs>();
@@ -52,6 +54,7 @@
 	const compared = $derived(against ? comparison(projectId, branches(against)) : undefined);
 	const files = $derived(compared?.result?.files);
 	const rows = $derived(files ? treeRows(files, 'compare', (key) => !collapsed.has(key)) : []);
+	const viewedCount = $derived(review && files ? files.filter((change) => viewedState(review, change) === 'viewed').length : 0);
 	const reason = $derived(availability && !availability.available && !availability.hidden ? availability.reason : undefined);
 	const failure = $derived.by(() => {
 		if (reviewing !== undefined && reviews && !review) return `No PR review of #${reviewing}`;
@@ -111,6 +114,14 @@
 		});
 	}
 
+	function view(pr: number, path: string, viewed: boolean) {
+		act(() => setViewed(projectId, pr, path, viewed));
+	}
+
+	function branchOff(pr: number) {
+		act(async () => onfocus(await openWorktree(projectId, pr)));
+	}
+
 	function discard(pr: number) {
 		act(async () => {
 			await discardReview(projectId, pr);
@@ -148,6 +159,9 @@
 				{#if review}
 					<a class="github" href={review.url} target="_blank" rel="noopener noreferrer"><ArrowSquareOut aria-hidden="true" />Open on GitHub</a>
 				{/if}
+				<IconButton label="Open as worktree" title="Check out this pull request in a worktree beside the Project" disabled={acting || !review} onclick={() => branchOff(reviewing)}>
+					<FolderOpen />
+				</IconButton>
 				<IconButton label="Refresh" title="Fetch the pull request again" disabled={acting || !review} onclick={() => refresh(reviewing)}>
 					<ArrowsClockwise />
 				</IconButton>
@@ -205,7 +219,11 @@
 	{:else if files}
 		<div class="heading">
 			<span class="name">Changed files</span>
-			<span class="count">{files.length} {files.length === 1 ? 'file' : 'files'}</span>
+			{#if review}
+				<span class="count">{viewedCount}/{files.length} viewed</span>
+			{:else}
+				<span class="count">{files.length} {files.length === 1 ? 'file' : 'files'}</span>
+			{/if}
 		</div>
 		<ul class="list" aria-label="Compared files">
 			{#each rows as row (row.key)}
@@ -217,6 +235,7 @@
 						</button>
 					{:else}
 						{@const { change } = row}
+						{@const mark = review && viewedState(review, change)}
 						<button
 							class="entry file"
 							class:deleted={change.kind === 'deleted'}
@@ -225,9 +244,21 @@
 							title={change.from ? `${change.from} → ${change.path}` : change.path}
 							onclick={() => against && onopen(change, against)}
 						>
-							<span class="name">{split(change.path).name}</span>
+							<span class="name" class:viewed={mark === 'viewed'}>{split(change.path).name}</span>
+							{#if mark === 'changed'}<span class="since" role="img" aria-label="Changed since viewed" title="Changed since viewed"></span>{/if}
 							<span class="letter" aria-hidden="true">{letters[change.kind]}</span>
 						</button>
+						{#if review}
+							<label class="viewed-box" title="Viewed">
+								<input
+									type="checkbox"
+									aria-label="Viewed"
+									checked={mark === 'viewed'}
+									disabled={acting}
+									onchange={(event) => view(review.number, change.path, event.currentTarget.checked)}
+								/>
+							</label>
+						{/if}
 					{/if}
 				</li>
 			{/each}
@@ -425,6 +456,33 @@
 
 	.deleted .name {
 		text-decoration: line-through;
+	}
+
+	.file .name.viewed {
+		opacity: 0.55;
+	}
+
+	.since {
+		flex: none;
+		width: 0.5em;
+		height: 0.5em;
+		border-radius: 50%;
+		background: var(--status-waiting);
+	}
+
+	.viewed-box {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: var(--target-min);
+		height: var(--target-min);
+		cursor: pointer;
+	}
+
+	.viewed-box input {
+		margin: 0;
+		accent-color: var(--status-working);
+		cursor: inherit;
 	}
 
 	.letter,
