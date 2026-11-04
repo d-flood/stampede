@@ -353,6 +353,11 @@ test('Start on a Frontier Ticket works it with a fake Agent until it is merged',
 	await expect(confirm.getByRole('listitem')).toHaveText([/^2\s*More · not started$/]);
 	await confirm.getByRole('button', { name: 'Cancel', exact: true }).click();
 	await expect(confirm).toHaveCount(0);
+
+	await panel.getByRole('button', { name: 'Compare with base', exact: true }).click();
+	const compare = (await showSidebar(page)).getByRole('region', { name: 'Compare' });
+	await expect(compare.getByRole('button', { name: /^Source/ })).toContainText(`stampede/${slug}/epic`);
+	await expect(compare.getByRole('list', { name: 'Compared files' }).getByRole('button', { name: 'work.txt', exact: true })).toBeVisible();
 	await showFiles(await showSidebar(page));
 });
 

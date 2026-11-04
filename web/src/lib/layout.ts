@@ -2,7 +2,7 @@ import { claimDeviceId, deviceId, earlyLayout, type Chat, type Terminal } from '
 import { OpenBrowser } from '#lib/browser.svelte.ts';
 import { OpenCanvas } from '#lib/canvas.svelte.ts';
 import { OpenEpic } from '#lib/epics.svelte.ts';
-import { OpenConfig, OpenDiff, OpenFile, type Against, type Layout as DiffMode } from '#lib/files.svelte.ts';
+import { OpenConfig, OpenDiff, OpenFile, type Against, type Layout as DiffMode, type Selection } from '#lib/files.svelte.ts';
 import type { Section } from '#lib/shell/Sidebar.svelte';
 import type { Split, TabGroup } from '#lib/split.ts';
 
@@ -26,6 +26,7 @@ export type Layout = {
 	sidebar: { open: boolean; section: Section };
 	rail?: { open: boolean };
 	diffModes: Record<string, DiffMode>;
+	compare: Record<string, Selection>;
 };
 
 export type Workspace = {
@@ -40,6 +41,7 @@ export type Workspace = {
 	splits: Record<string, Split>;
 	sidebar: Layout['sidebar'];
 	rail?: Layout['rail'];
+	compare: Record<string, Selection>;
 };
 
 let saved: Layout | null = null;
@@ -143,7 +145,7 @@ export function capture(workspace: Workspace): Layout {
 		};
 		for (const file of files) if (file instanceof OpenDiff) diffModes[file.id] = file.layout;
 	}
-	return { focusedProject: workspace.chosen ?? null, projects, sidebar: workspace.sidebar, rail: workspace.rail, diffModes };
+	return { focusedProject: workspace.chosen ?? null, projects, sidebar: workspace.sidebar, rail: workspace.rail, diffModes, compare: workspace.compare };
 }
 
 export function restore() {
@@ -179,5 +181,16 @@ export function restore() {
 			splits[projectId] = { left: half(left), right: half(right), ratio };
 		}
 	}
-	return { chosen: saved?.focusedProject ?? undefined, files, browsers, canvases, epics, chosenTabs, splits, sidebar: saved?.sidebar, rail: saved?.rail };
+	return {
+		chosen: saved?.focusedProject ?? undefined,
+		files,
+		browsers,
+		canvases,
+		epics,
+		chosenTabs,
+		splits,
+		sidebar: saved?.sidebar,
+		rail: saved?.rail,
+		compare: saved?.compare ?? {}
+	};
 }

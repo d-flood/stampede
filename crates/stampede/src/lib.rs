@@ -165,6 +165,7 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/git", get(git::status))
         .route("/api/projects/{id}/git/refs", get(git::refs))
         .route("/api/projects/{id}/git/log", get(git::history))
+        .route("/api/projects/{id}/git/compare", get(git::compare))
         .route("/api/projects/{id}/git/commit/{sha}", get(git::commit))
         .route("/api/projects/{id}/git/show", get(git::show))
         .route("/api/projects/{id}/git/index", get(git::index))

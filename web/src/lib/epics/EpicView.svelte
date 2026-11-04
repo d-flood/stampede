@@ -3,6 +3,7 @@
 	import Text from '#lib/chat/Text.svelte';
 	import { rigs } from '#lib/config.svelte.ts';
 	import type { Chat, Device, Epic, Finding, Review, Reviewer, Ticket, TicketTag } from '#lib/device.svelte.ts';
+	import type { Selection } from '#lib/files.svelte.ts';
 	import Blockers from '#lib/epics/Blockers.svelte';
 	import Tags from '#lib/epics/Tags.svelte';
 	import Progress from '#lib/epics/Progress.svelte';
@@ -40,11 +41,12 @@
 		device: Device;
 		chats: Chat[];
 		onchat: (chatId: string) => void;
+		oncompare: (selection: Selection) => void;
 	};
 
 	type Page = 'brief' | 'setup' | 'worktree' | 'review';
 
-	let { open, epic, loaded, active, device, chats, onchat }: Props = $props();
+	let { open, epic, loaded, active, device, chats, onchat, oncompare }: Props = $props();
 
 	const phone = $derived(form() === 'phone');
 	const tickets = $derived(epic?.tickets ?? []);
@@ -423,6 +425,13 @@
 	{/if}
 {/snippet}
 
+{#snippet compareButton(epic: Epic)}
+	{#if epic.integration && epic.base}
+		{@const target = epic.base}
+		<Button onclick={() => oncompare({ target, source: `stampede/${epic.slug}/epic` })}>Compare with base</Button>
+	{/if}
+{/snippet}
+
 {#snippet landButton(epic: Epic)}
 	<Button variant="primary" disabled={!!unlandable} title={phone ? undefined : unlandable} onclick={() => ((unlanded = undefined), (confirming = true))}>
 		{epic.base ? `Land into ${epic.base}` : 'Land'}
@@ -662,6 +671,7 @@
 			{@render list(epic)}
 		</div>
 		<footer class="land">
+			{@render compareButton(epic)}
 			{@render landButton(epic)}
 			{#if unlandable}<p class="hint">{unlandable}</p>{/if}
 		</footer>
@@ -674,6 +684,7 @@
 			</div>
 			{@render progress()}
 			{@render runBar(epic)}
+			{@render compareButton(epic)}
 			{@render landButton(epic)}
 		</header>
 		<div class="split">

@@ -96,6 +96,23 @@ pub struct Status {
 pub struct Refs {
     local: Vec<String>,
     remote: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Comparison {
+    target: String,
+    source: String,
+    merge_base: String,
+    files: Vec<Change>,
+}
+
+#[derive(Deserialize)]
+pub struct CompareQuery {
+    target: String,
+    source: String,
 }
 
 #[derive(Serialize)]
@@ -136,8 +153,9 @@ pub async fn status(State(state): State<AppState>, Param(id): Param<String>) -> 
 }
 
 pub async fn refs(State(state): State<AppState>, Param(id): Param<String>) -> Result<Json<Refs>, Failure> {
-    let output = git(&root(&state, &id)?, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", "refs/heads", "refs/remotes"]).await.unwrap_or_default();
-    let mut refs = Refs { local: Vec::new(), remote: Vec::new() };
+    let dir = root(&state, &id)?;
+    let output = git(&dir, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", "refs/heads", "refs/remotes"]).await.unwrap_or_default();
+    let mut refs = Refs { local: Vec::new(), remote: Vec::new(), default: None };
     for name in String::from_utf8_lossy(&output).lines() {
         if let Some(local) = name.strip_prefix("refs/heads/") {
             refs.local.push(local.to_owned());
@@ -145,7 +163,55 @@ pub async fn refs(State(state): State<AppState>, Param(id): Param<String>) -> Re
             refs.remote.push(remote.to_owned());
         }
     }
+    refs.default = match crate::origin::default_branch(&dir).await.map(|branch| format!("origin/{branch}")) {
+        Some(remote) if refs.remote.contains(&remote) => Some(remote),
+        _ => ["main", "master"].into_iter().find(|name| refs.local.iter().any(|local| local == name)).map(str::to_owned),
+    };
     Ok(Json(refs))
+}
+
+/// What `source` changed since it split off `target`, both named as branches rather than revisions.
+pub async fn compare(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Query(query): Query<CompareQuery>,
+) -> Result<Json<Comparison>, Failure> {
+    let dir = root(&state, &id)?;
+    let (target, source) = tokio::try_join!(branch(&dir, &query.target), branch(&dir, &query.source))?;
+    let merge_base = git(&dir, &["merge-base", &target, &source])
+        .await
+        .map(|output| String::from_utf8_lossy(&output).trim_end().to_owned())
+        .ok_or_else(|| (StatusCode::CONFLICT, format!("{} and {} share no history", query.target, query.source)))?;
+    let args = ["diff", "-z", "--name-status", "--find-renames", "--relative", &merge_base, &source, "--"];
+    let output = git(&dir, &args).await.ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "git diff failed".to_owned()))?;
+    let files = name_status(&output).unwrap_or_default();
+    Ok(Json(Comparison { target, source, merge_base, files }))
+}
+
+/// The commit a local branch, remote branch or PR review's hidden ref names; anything else git could resolve is refused.
+async fn branch(dir: &Path, name: &str) -> Result<String, Failure> {
+    let refused = || (StatusCode::BAD_REQUEST, format!("{name} is not a branch"));
+    let hidden = name
+        .strip_prefix("refs/stampede/pr/")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(number, side)| !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()) && matches!(side, "source" | "target"));
+    let candidates = if hidden {
+        vec![name.to_owned()]
+    } else {
+        if name.starts_with('-') || name.starts_with("refs/") || run(dir, &["check-ref-format", &format!("refs/heads/{name}")]).await.is_err() {
+            return Err(refused());
+        }
+        vec![format!("refs/heads/{name}"), format!("refs/remotes/{name}")]
+    };
+    for full in candidates.iter().filter(|full| !(full.starts_with("refs/remotes/") && full.ends_with("/HEAD"))) {
+        if let Some(output) = git(dir, &["rev-parse", "--verify", "--quiet", &format!("{full}^{{commit}}")]).await {
+            return Ok(String::from_utf8_lossy(&output).trim_end().to_owned());
+        }
+    }
+    if !hidden && git(dir, &["rev-parse", "--verify", "--quiet", &format!("{name}^{{commit}}")]).await.is_some() {
+        return Err(refused());
+    }
+    Err((StatusCode::NOT_FOUND, format!("{name} does not exist")))
 }
 
 pub async fn history(
@@ -289,7 +355,11 @@ pub async fn commit_files(dir: &Path, sha: &str) -> Option<Vec<Change>> {
         sha,
         "--",
     ];
-    let output = git(dir, &args).await?;
+    name_status(&git(dir, &args).await?)
+}
+
+/// Parses `--name-status -z` output.
+fn name_status(output: &[u8]) -> Option<Vec<Change>> {
     let mut fields = output.split(|&byte| byte == 0).map(|field| String::from_utf8_lossy(field).into_owned());
     let mut files = Vec::new();
     while let Some(status) = fields.next() {

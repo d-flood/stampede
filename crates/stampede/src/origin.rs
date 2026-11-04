@@ -179,7 +179,7 @@ async fn update(dir: &Path, built: &str) -> Option<Update> {
 }
 
 /// The branch origin's HEAD names, else main or master, whichever origin has.
-async fn default_branch(dir: &Path) -> Option<String> {
+pub async fn default_branch(dir: &Path) -> Option<String> {
     if let Ok(head) = git::run(dir, &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]).await {
         return head.strip_prefix("origin/").map(str::to_owned);
     }
