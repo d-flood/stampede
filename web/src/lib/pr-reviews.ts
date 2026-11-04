@@ -83,3 +83,9 @@ export function editDraft(projectId: string, pr: number, id: string, edit: Parti
 export function deleteDraft(projectId: string, pr: number, id: string): Promise<PrReview> {
 	return draftRequest('DELETE', `/api/projects/${projectId}/pr-reviews/${pr}/drafts/${id}`);
 }
+
+export type ReviewEvent = 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES';
+
+export function sendReview(projectId: string, pr: number, body: string, event: ReviewEvent): Promise<PrReview> {
+	return draftRequest('POST', `/api/projects/${projectId}/pr-reviews/${pr}/send`, { body, event });
+}

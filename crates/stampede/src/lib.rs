@@ -176,6 +176,7 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/pr-reviews/{number}/viewed", put(pr_reviews::view))
         .route("/api/projects/{id}/pr-reviews/{number}/worktree", post(pr_reviews::worktree))
         .route("/api/projects/{id}/pr-reviews/{number}/hunks", get(pr_reviews::commentable))
+        .route("/api/projects/{id}/pr-reviews/{number}/send", post(pr_reviews::send))
         .route("/api/projects/{id}/pr-reviews/{number}/drafts", post(pr_reviews::create_draft))
         .route("/api/projects/{id}/pr-reviews/{number}/drafts/{draft}", put(pr_reviews::edit_draft).delete(pr_reviews::delete_draft))
         .route("/api/projects/{id}/git/commit/{sha}", get(git::commit))

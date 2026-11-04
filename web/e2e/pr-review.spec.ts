@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { showSidebar, openProject } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
@@ -9,12 +9,12 @@ test.use({ reducedMotion: 'reduce' });
 const URL = 'https://github.com/acme/widgets.git';
 const LIST = Array.from({ length: 30 }, (_, index) => `export const line${index + 1} = ${index + 1};\n`).join('');
 
-function signIn(state: 'OPEN' | 'MERGED') {
+function signIn(state: 'OPEN' | 'MERGED', { author = 'octo', fail }: { author?: string; fail?: string } = {}) {
 	const pr = {
-		number: 7, title: 'Add widgets', author: { login: 'octo' }, isDraft: false, updatedAt: '2026-11-01T00:00:00Z', state,
+		number: 7, title: 'Add widgets', author: { login: author }, isDraft: false, updatedAt: '2026-11-01T00:00:00Z', state,
 		baseRefName: 'main', url: 'https://github.com/acme/widgets/pull/7', requested: true
 	};
-	const fixture = { user: 'david', repo: { nameWithOwner: 'acme/widgets', url: 'https://github.com/acme/widgets' }, prs: [pr] };
+	const fixture = { user: 'david', repo: { nameWithOwner: 'acme/widgets', url: 'https://github.com/acme/widgets' }, prs: [pr], fail };
 	writeFileSync(`${process.env.STAMPEDE_E2E_ROOT}/gh.json`, JSON.stringify(fixture));
 }
 
@@ -193,4 +193,83 @@ test('Draft comments start from the gutter or a tapped line number, show inline 
 	await expect(reloaded).toContainText('src/list.ts:15');
 	await reloaded.click();
 	await expect(inline).toBeInViewport();
+});
+
+function sentReviews(): { args: string[]; stdin: Record<string, unknown> }[] {
+	const log = `${process.env.STAMPEDE_E2E_ROOT}/gh.log`;
+	return existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : [];
+}
+
+test('Send review posts every draft as one review, keeps them when GitHub refuses, and keeps Viewed marks', async ({ page }, { project }) => {
+	const { git, push } = repository();
+	push(['list.ts', LIST.replace('line15 = 15', 'line15 = 0')]);
+	const message = 'Validation Failed: Pull request review thread line must be part of the diff';
+	signIn('OPEN', { fail: message });
+	await openProject(page, 'widgets');
+	let compare = await openPr(page);
+	const files = compare.getByRole('list', { name: 'Compared files' });
+	await files.getByRole('checkbox', { name: 'Viewed' }).check();
+	await expect(compare.getByText('1/1 viewed')).toBeVisible();
+	await files.getByRole('button', { name: 'list.ts', exact: true }).click();
+	const diff = page.locator('.diff:not([hidden])');
+	if (project.name === 'desktop') await diff.locator('.cm-draftAdd[data-side="source"][data-line="15"]').click();
+	else await diff.locator('.cm-lineNumbers .cm-gutterElement', { hasText: /^15$/ }).click();
+	await page.getByRole('textbox', { name: 'Draft comment on line 15' }).click();
+	await page.keyboard.type('Why zero?');
+	await diff.getByRole('button', { name: 'Save' }).click();
+	await expect(diff.locator('.cm-draftComment[data-draft]')).toHaveCount(1);
+
+	compare = await comparePanel(page);
+	const drafts = compare.getByRole('list', { name: 'Draft comments' });
+	await expect(drafts.getByRole('button')).toHaveCount(1);
+	await compare.getByRole('button', { name: 'Send review… 1' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Send review of #7' });
+	await expect(dialog.getByRole('list', { name: 'Draft comments to send' })).toContainText('src/list.ts:15');
+	await expect(dialog.getByRole('list', { name: 'Draft comments to send' })).toContainText('Why zero?');
+	await expect(dialog.getByRole('radio', { name: /^Comment/ })).toBeChecked();
+	await dialog.getByRole('radio', { name: /^Request changes/ }).check();
+	await dialog.getByRole('textbox', { name: 'Review summary' }).click();
+	await page.keyboard.type('One question');
+	await dialog.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect(dialog.getByRole('alert')).toHaveText(message);
+	await expect(dialog.getByRole('textbox', { name: 'Review summary' })).toContainText('One question');
+	await expect(drafts.getByRole('button')).toHaveCount(1);
+
+	signIn('OPEN');
+	await dialog.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect(dialog).toBeHidden();
+	await expect(drafts).toHaveCount(0);
+	await expect(compare.getByText('1/1 viewed')).toBeVisible();
+	const sent = sentReviews();
+	expect(sent).toHaveLength(2);
+	expect(sent[1].args).toEqual(['api', '--method', 'POST', 'repos/acme/widgets/pulls/7/reviews', '--input', '-']);
+	expect(sent[1].stdin).toEqual({
+		commit_id: git('rev-parse', 'refs/stampede/pr/7/source'), body: 'One question', event: 'REQUEST_CHANGES',
+		comments: [{ path: 'src/list.ts', body: 'Why zero?', side: 'RIGHT', line: 15 }]
+	});
+});
+
+test('Own PRs offer only Comment, and Displaced drafts disable sending', async ({ page }) => {
+	signIn('OPEN', { author: 'david' });
+	repository();
+	await openProject(page, 'widgets');
+	const compare = await openPr(page);
+	await compare.getByRole('button', { name: 'Send review…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Send review of #7' });
+	await expect(dialog.getByRole('radio')).toHaveCount(1);
+	await expect(dialog.getByRole('radio', { name: /^Comment/ })).toBeChecked();
+	await expect(dialog.getByRole('radio', { name: /^Approve/ })).toHaveCount(0);
+	await expect(dialog.getByRole('radio', { name: /^Request changes/ })).toHaveCount(0);
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+	const reviews = `${process.env.STAMPEDE_E2E_ROOT}/data/pr-reviews`;
+	const record = readdirSync(reviews).map((dir) => `${reviews}/${dir}/7.json`).find(existsSync)!;
+	const review = JSON.parse(readFileSync(record, 'utf8'));
+	const draft = { id: 'displaced', path: 'src/widget.ts', side: 'source', line: 1, body: 'Stranded', commit: review.source.commit, displaced: true };
+	writeFileSync(record, JSON.stringify({ ...review, drafts: [draft] }));
+	await page.reload();
+	await expect(page.getByRole('list', { name: 'Displaced' })).toContainText('Stranded');
+	const reloaded = await comparePanel(page);
+	await expect(reloaded.getByRole('button', { name: 'Send review…' })).toBeDisabled();
+	await expect(reloaded).toContainText('Re-place or delete the Displaced draft to send.');
 });
