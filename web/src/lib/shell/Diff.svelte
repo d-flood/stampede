@@ -11,11 +11,13 @@
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import { baseline, index, show, type Git } from '#lib/git.ts';
+	import { setViewed, viewedState, type PrReview } from '#lib/pr-reviews.ts';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import { ordered } from '#lib/shell/tree.ts';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import Toggle from '#lib/ui/Toggle.svelte';
 	import { getOriginalDoc, MergeView, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
 	import { ChangeSet, EditorState, Prec, type Extension, type Text } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
@@ -23,6 +25,7 @@
 	import { onMount, untrack } from 'svelte';
 	import ArrowDown from '~icons/ph/arrow-down';
 	import ArrowUp from '~icons/ph/arrow-up';
+	import CheckSquare from '~icons/ph/check-square';
 	import Columns from '~icons/ph/columns';
 	import FloppyDisk from '~icons/ph/floppy-disk';
 	import Rows from '~icons/ph/rows';
@@ -30,6 +33,7 @@
 	type Props = {
 		diff: OpenDiff;
 		git?: Git;
+		reviews?: PrReview[];
 		device: Device;
 		servers: LanguageServers;
 		active: boolean;
@@ -39,7 +43,7 @@
 	};
 	type Shown = { b: EditorView; original: Text; editable: boolean; setOriginal(content: string): void; destroy(): void };
 
-	let { diff, git, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
+	let { diff, git, reviews, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let shown = $state.raw<Shown>();
@@ -58,6 +62,12 @@
 	const compared = $derived(comparing(diff.against) ? comparison(diff.projectId, branches(diff.against)) : undefined);
 	const walk = $derived(compared?.result ? ordered(compared.result.files) : []);
 	const at = $derived(walk.findIndex((change) => change.path === diff.path));
+	const pr = $derived(comparing(diff.against) && 'pr' in diff.against ? diff.against.pr : undefined);
+	const review = $derived(pr === undefined ? undefined : reviews?.find(({ number }) => number === pr));
+	const mark = $derived(review && walk[at] ? viewedState(review, walk[at]) : undefined);
+	let sinceViewed = $state(false);
+	let marking = $state(false);
+	const since = $derived(sinceViewed && mark === 'changed' ? review?.viewed[diff.path]?.commit : undefined);
 
 	onMount(() => {
 		let disposed = false;
@@ -119,9 +129,10 @@
 	$effect(() => {
 		const result = compared?.result;
 		if (!result) return;
-		const [path, from] = [diff.path, diff.from];
+		const [path, from, viewed] = [diff.path, diff.from, since];
 		let stale = false;
-		Promise.all([language(path), show(diff.projectId, result.mergeBase, from ?? path), show(diff.projectId, result.source, path)]).then(
+		const left = viewed ? show(diff.projectId, viewed, path) : show(diff.projectId, result.mergeBase, from ?? path);
+		Promise.all([language(path), left, show(diff.projectId, result.source, path)]).then(
 			([extension, a, b]) => {
 				if (stale) return;
 				syntax = extension;
@@ -243,6 +254,19 @@
 		diff.from = next.from;
 	}
 
+	async function viewedAndNext() {
+		if (!review || marking) return;
+		marking = true;
+		try {
+			await setViewed(diff.projectId, review.number, diff.path, true);
+			step(1);
+		} catch (error) {
+			note = error instanceof Error ? error.message : String(error);
+		} finally {
+			marking = false;
+		}
+	}
+
 	function stepKey(event: KeyboardEvent) {
 		if (!compared || event.defaultPrevented || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
 		if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
@@ -349,6 +373,16 @@
 		{#if compared}
 			<IconButton label="Previous file" title="Previous file (Alt+↑)" disabled={at <= 0} onclick={() => step(-1)}><ArrowUp /></IconButton>
 			<IconButton label="Next file" title="Next file (Alt+↓)" disabled={at >= walk.length - 1} onclick={() => step(1)}><ArrowDown /></IconButton>
+		{/if}
+		{#if review}
+			{#if mark === 'changed'}
+				<Toggle label="Since viewed" pressed={sinceViewed} onclick={() => (sinceViewed = !sinceViewed)}>Since viewed</Toggle>
+			{/if}
+			{#if form() === 'phone'}
+				<IconButton label="Viewed & next" title="Mark Viewed, then the next file" disabled={marking || at < 0} onclick={viewedAndNext}><CheckSquare /></IconButton>
+			{:else}
+				<Button title="Mark Viewed, then the next file" disabled={marking || at < 0} onclick={viewedAndNext}><CheckSquare /> Viewed &amp; next</Button>
+			{/if}
 		{/if}
 		<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} attached={editable} />
 		{#if shown}

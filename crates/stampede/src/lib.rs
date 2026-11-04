@@ -173,6 +173,8 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/pr-reviews", get(pr_reviews::list).post(pr_reviews::open))
         .route("/api/projects/{id}/pr-reviews/{number}", delete(pr_reviews::discard))
         .route("/api/projects/{id}/pr-reviews/{number}/refresh", post(pr_reviews::refresh))
+        .route("/api/projects/{id}/pr-reviews/{number}/viewed", put(pr_reviews::view))
+        .route("/api/projects/{id}/pr-reviews/{number}/worktree", post(pr_reviews::worktree))
         .route("/api/projects/{id}/git/commit/{sha}", get(git::commit))
         .route("/api/projects/{id}/git/show", get(git::show))
         .route("/api/projects/{id}/git/index", get(git::index))

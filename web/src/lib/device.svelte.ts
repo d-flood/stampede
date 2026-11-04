@@ -6,7 +6,7 @@ import { on } from 'svelte/events';
 
 export type Project = { id: string; path: string; icon?: string; worktree?: Worktree };
 
-export type Worktree = { parent: string } & ({ epic: string; role: 'integration' | { ticket: number } } | { branch: string });
+export type Worktree = { parent: string } & ({ epic: string; role: 'integration' | { ticket: number } } | { branch: string } | { commit: string });
 
 export type Status = 'working' | 'waiting' | 'done';
 

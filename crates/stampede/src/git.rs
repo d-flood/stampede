@@ -38,6 +38,8 @@ pub struct Change {
     pub kind: Kind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blob: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -182,7 +184,7 @@ pub async fn compare(
         .await
         .map(|output| String::from_utf8_lossy(&output).trim_end().to_owned())
         .ok_or_else(|| (StatusCode::CONFLICT, format!("{} and {} share no history", query.target, query.source)))?;
-    let args = ["diff", "-z", "--name-status", "--find-renames", "--relative", &merge_base, &source, "--"];
+    let args = ["diff", "-z", "--raw", "--no-abbrev", "--find-renames", "--relative", &merge_base, &source, "--"];
     let output = git(&dir, &args).await.ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "git diff failed".to_owned()))?;
     let files = name_status(&output).unwrap_or_default();
     Ok(Json(Comparison { target, source, merge_base, files }))
@@ -358,19 +360,29 @@ pub async fn commit_files(dir: &Path, sha: &str) -> Option<Vec<Change>> {
     name_status(&git(dir, &args).await?)
 }
 
-/// Parses `--name-status -z` output.
+/// Parses `--name-status -z` output, or `--raw -z --no-abbrev` output, which also gives each file's new blob.
 fn name_status(output: &[u8]) -> Option<Vec<Change>> {
     let mut fields = output.split(|&byte| byte == 0).map(|field| String::from_utf8_lossy(field).into_owned());
     let mut files = Vec::new();
-    while let Some(status) = fields.next() {
+    while let Some(header) = fields.next() {
         let Some(path) = fields.next() else { break };
-        files.push(match status.chars().next() {
-            Some('A') => Change { path, kind: Kind::Added, from: None },
-            Some('D') => Change { path, kind: Kind::Deleted, from: None },
-            Some('R') => Change { path: fields.next()?, kind: Kind::Renamed, from: Some(path) },
-            Some('C') => Change { path: fields.next()?, kind: Kind::Added, from: None },
-            _ => Change { path, kind: Kind::Modified, from: None },
-        });
+        let (status, blob) = match header.strip_prefix(':') {
+            Some(raw) => {
+                let parts: Vec<&str> = raw.split(' ').collect();
+                let blob = parts.get(3).filter(|blob| blob.bytes().any(|byte| byte != b'0')).map(|blob| (*blob).to_owned());
+                (parts.get(4).copied().unwrap_or_default().to_owned(), blob)
+            }
+            None => (header, None),
+        };
+        let mut change = match status.chars().next() {
+            Some('A') => Change { path, kind: Kind::Added, from: None, blob: None },
+            Some('D') => Change { path, kind: Kind::Deleted, from: None, blob: None },
+            Some('R') => Change { path: fields.next()?, kind: Kind::Renamed, from: Some(path), blob: None },
+            Some('C') => Change { path: fields.next()?, kind: Kind::Added, from: None, blob: None },
+            _ => Change { path, kind: Kind::Modified, from: None, blob: None },
+        };
+        change.blob = blob;
+        files.push(change);
     }
     Some(files)
 }
@@ -379,7 +391,7 @@ pub async fn content_at(dir: &Path, rev: &str, path: &str) -> Vec<u8> {
     git(dir, &["show", &format!("{rev}:./{path}")]).await.unwrap_or_default()
 }
 
-fn inside(path: &str) -> Result<(), Failure> {
+pub fn inside(path: &str) -> Result<(), Failure> {
     if Path::new(path).components().all(|component| matches!(component, Component::Normal(_))) {
         Ok(())
     } else {
@@ -493,19 +505,19 @@ fn parse(output: &[u8], prefix: &Path) -> Status {
             Some(("u", _)) => {
                 let [.., path] = fields(11)[..] else { continue };
                 let Some(path) = relative(path) else { continue };
-                status.conflicted.push(Change { path: path.clone(), kind: Kind::Conflicted, from: None });
+                status.conflicted.push(Change { path: path.clone(), kind: Kind::Conflicted, from: None, blob: None });
                 (Kind::Modified, path, None)
             }
             Some(("?", path)) => {
                 let Some(path) = relative(path) else { continue };
-                status.unstaged.push(Change { path: path.clone(), kind: Kind::Untracked, from: None });
+                status.unstaged.push(Change { path: path.clone(), kind: Kind::Untracked, from: None, blob: None });
                 (Kind::Untracked, path, None)
             }
             _ => continue,
         };
         match changes.entry(path.clone()) {
             Entry::Vacant(entry) => {
-                entry.insert(Change { path, kind, from });
+                entry.insert(Change { path, kind, from, blob: None });
             }
             // Removed from the index yet still on disk, the path is listed both deleted and untracked.
             Entry::Occupied(mut entry) => entry.get_mut().kind = Kind::Modified,
@@ -524,7 +536,7 @@ fn parse(output: &[u8], prefix: &Path) -> Status {
 fn sides(status: &mut Status, xy: &str, path: &str, from: Option<String>) {
     let mut codes = xy.chars();
     let (staged, unstaged) = (codes.next().unwrap_or('.'), codes.next().unwrap_or('.'));
-    let change = |kind, from| Change { path: path.to_owned(), kind, from };
+    let change = |kind, from| Change { path: path.to_owned(), kind, from, blob: None };
     match staged {
         '.' => {}
         'A' | 'C' => status.staged.push(change(Kind::Added, None)),

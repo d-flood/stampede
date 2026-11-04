@@ -38,7 +38,7 @@ pub struct PrReview {
     target: Target,
     source: Source,
     merge_base: String,
-    viewed: BTreeMap<String, Value>,
+    viewed: BTreeMap<String, Viewed>,
     drafts: Vec<Value>,
 }
 
@@ -59,6 +59,13 @@ struct Target {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Source {
     commit: String,
+}
+
+/// The Source commit a file was Viewed at and its blob there, empty for a file the PR deletes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Viewed {
+    commit: String,
+    blob: String,
 }
 
 /// PR review records, one JSON file per pull request under a directory per repository, so every worktree of a
@@ -215,6 +222,43 @@ pub async fn discard(State(state): State<AppState>, Param((id, number)): Param<(
         git::run(&dir, &["update-ref", "-d", name]).await.map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub struct Viewing {
+    path: String,
+    viewed: bool,
+}
+
+pub async fn view(State(state): State<AppState>, Param((id, number)): Param<(String, u64)>, Json(viewing): Json<Viewing>) -> Result<Json<PrReview>, Failure> {
+    let (dir, common_dir) = located(&state, &id).await?;
+    git::inside(&viewing.path)?;
+    let _fetching = state.pr_reviews.fetching.lock().await;
+    let mut review = state.pr_reviews.get(&common_dir, number).ok_or_else(|| (StatusCode::NOT_FOUND, format!("No PR review of #{number}")))?;
+    if !viewing.viewed {
+        review.viewed.remove(&viewing.path);
+    } else {
+        let commit = review.source.commit.clone();
+        let object = async |rev: &str| git::run(&dir, &["rev-parse", "--verify", "--quiet", &format!("{rev}:./{}", viewing.path)]).await.ok();
+        let blob = match object(&commit).await {
+            Some(blob) => blob,
+            None if object(&review.merge_base).await.is_some() => String::new(),
+            None => return Err((StatusCode::NOT_FOUND, format!("#{number} has no {}", viewing.path))),
+        };
+        let kept = format!("refs/stampede/pr/{number}/viewed/{commit}");
+        git::run(&dir, &["update-ref", &kept, &commit]).await.map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        review.viewed.insert(viewing.path, Viewed { commit, blob });
+    }
+    state.pr_reviews.save(&common_dir, &review)?;
+    Ok(Json(review))
+}
+
+pub async fn worktree(State(state): State<AppState>, Param((id, number)): Param<(String, u64)>) -> Result<Json<Value>, Failure> {
+    let (dir, _) = located(&state, &id).await?;
+    let source = format!("refs/stampede/pr/{number}/source^{{commit}}");
+    let commit = git::run(&dir, &["rev-parse", "--verify", "--quiet", &source]).await.map_err(|_| (StatusCode::NOT_FOUND, format!("No PR review of #{number}")))?;
+    let project_id = state.runs.detach_worktree(&id, &format!("pr-{number}"), &commit).await.map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    Ok(Json(json!({ "projectId": project_id })))
 }
 
 /// Fetches the pull request into its hidden refs and records what they now hold, creating the record when new.

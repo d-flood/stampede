@@ -36,6 +36,7 @@ pub enum Kind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         existing: bool,
     },
+    Detached { commit: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
