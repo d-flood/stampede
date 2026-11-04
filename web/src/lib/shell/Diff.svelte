@@ -6,11 +6,14 @@
 	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
+	import { draftComments, draftPosition, setDrafts, type Render } from '#lib/editor/drafts.ts';
 	import { comparison } from '#lib/compare.svelte.ts';
 	import { branches, comparing, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import { baseline, index, show, type Git } from '#lib/git.ts';
+	import { createDraft, deleteDraft, editDraft, hunks, type Hunks, type PrReview } from '#lib/pr-reviews.ts';
+	import DraftBox from '#lib/shell/DraftBox.svelte';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import { ordered } from '#lib/shell/tree.ts';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
@@ -20,7 +23,7 @@
 	import { ChangeSet, EditorState, Prec, type Extension, type Text } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
 	import { basicSetup } from 'codemirror';
-	import { onMount, untrack } from 'svelte';
+	import { mount, onMount, unmount, untrack } from 'svelte';
 	import ArrowDown from '~icons/ph/arrow-down';
 	import ArrowUp from '~icons/ph/arrow-up';
 	import Columns from '~icons/ph/columns';
@@ -30,6 +33,7 @@
 	type Props = {
 		diff: OpenDiff;
 		git?: Git;
+		reviews?: PrReview[];
 		device: Device;
 		servers: LanguageServers;
 		active: boolean;
@@ -37,9 +41,9 @@
 		focused: boolean;
 		onshowdiff(disk: string, buffer: string): void;
 	};
-	type Shown = { b: EditorView; original: Text; editable: boolean; setOriginal(content: string): void; destroy(): void };
+	type Shown = { b: EditorView; views: EditorView[]; path: string; original: Text; editable: boolean; setOriginal(content: string): void; destroy(): void };
 
-	let { diff, git, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
+	let { diff, git, reviews, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
 	let shown = $state.raw<Shown>();
@@ -49,6 +53,7 @@
 	let missed = false;
 	let left: string | undefined;
 	let right: Contents | undefined;
+	let commentable: Hunks | undefined;
 	const sync = new Sync(() => diff, () => shown?.b);
 	const editable = $derived(diff.against === 'HEAD' || diff.against === 'index');
 	const versusHead = $derived(diff.against === 'HEAD' || diff.against === 'staged');
@@ -58,6 +63,8 @@
 	const compared = $derived(comparing(diff.against) ? comparison(diff.projectId, branches(diff.against)) : undefined);
 	const walk = $derived(compared?.result ? ordered(compared.result.files) : []);
 	const at = $derived(walk.findIndex((change) => change.path === diff.path));
+	const pr = $derived(comparing(diff.against) && 'pr' in diff.against ? diff.against.pr : undefined);
+	const review = $derived(pr === undefined ? undefined : reviews?.find((review) => review.number === pr));
 
 	onMount(() => {
 		let disposed = false;
@@ -121,10 +128,12 @@
 		if (!result) return;
 		const [path, from] = [diff.path, diff.from];
 		let stale = false;
-		Promise.all([language(path), show(diff.projectId, result.mergeBase, from ?? path), show(diff.projectId, result.source, path)]).then(
-			([extension, a, b]) => {
+		const lines = pr === undefined ? undefined : hunks(diff.projectId, pr, path).catch(() => undefined);
+		Promise.all([language(path), show(diff.projectId, result.mergeBase, from ?? path), show(diff.projectId, result.source, path), lines]).then(
+			([extension, a, b, ranges]) => {
 				if (stale) return;
 				syntax = extension;
+				commentable = ranges;
 				shown?.destroy();
 				shown = undefined;
 				note = undefined;
@@ -155,6 +164,24 @@
 	$effect(() => {
 		const current = shown?.b;
 		if (current) servers.displayed(current, displayed);
+	});
+
+	$effect(() => {
+		const current = shown;
+		if (!current || !review) return;
+		const drafts = review.drafts.filter((draft) => draft.path === current.path);
+		for (const view of current.views) view.dispatch({ effects: setDrafts.of(drafts) });
+	});
+
+	$effect(() => {
+		const [id, current] = [diff.draft, shown];
+		if (!id || !current) return;
+		for (const view of current.views) {
+			const pos = draftPosition(view, id);
+			if (pos === undefined) continue;
+			view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+			diff.draft = undefined;
+		}
 	});
 
 	$effect(() => {
@@ -255,9 +282,42 @@
 		if (shown) build(shown.original, shown.b.state.doc);
 	}
 
+	function applied(updated: PrReview, path: string) {
+		const drafts = updated.drafts.filter((draft) => draft.path === path);
+		for (const view of shown?.views ?? []) view.dispatch({ effects: setDrafts.of(drafts) });
+	}
+
+	function drafting(number: number, path: string): Render {
+		const { projectId } = diff;
+		return (target, { placement, draft, lines, close }) => {
+			const label = `Draft comment on ${placement.side === 'target' ? 'deleted ' : ''}line ${placement.line}`;
+			const box = mount(DraftBox, {
+				target,
+				props: {
+					body: draft?.body ?? '',
+					saved: !!draft,
+					label,
+					suggestion: lines,
+					async onsave(body: string) {
+						if (draft) return applied(await editDraft(projectId, number, draft.id, { body }), path);
+						applied(await createDraft(projectId, number, { ...placement, path, body }), path);
+						close();
+					},
+					oncancel: close,
+					ondelete: async () => draft && applied(await deleteDraft(projectId, number, draft.id), path)
+				}
+			});
+			return () => unmount(box);
+		};
+	}
+
 	function build(a: string | Text, b: string | Text): Shown {
 		shown?.destroy();
+		const path = diff.path;
 		const whole = !a.length !== !b.length;
+		const drafts = review?.drafts.filter((draft) => draft.path === path) ?? [];
+		const commenting = (side: 'target' | 'source', unified: boolean) =>
+			commentable && pr !== undefined ? draftComments(side, unified, commentable, drafts, drafting(pr, path)) : [];
 		const walking = compared
 			? Prec.highest(
 					keymap.of([
@@ -277,14 +337,16 @@
 		if (diff.layout === 'split') {
 			const view = new MergeView({
 				parent: container,
-				a: { doc: a, extensions: [shared, EditorState.readOnly.of(true)] },
-				b: { doc: b, extensions: working },
+				a: { doc: a, extensions: [shared, EditorState.readOnly.of(true), commenting('target', false)] },
+				b: { doc: b, extensions: [working, commenting('source', false)] },
 				revertControls: editable ? 'a-to-b' : undefined,
 				highlightChanges: !whole,
 				collapseUnchanged: {}
 			});
 			return (shown = {
 				b: view.b,
+				views: [view.a, view.b],
+				path,
 				editable,
 				get original() {
 					return view.a.state.doc;
@@ -296,10 +358,16 @@
 			const view = new EditorView({
 				parent: container,
 				doc: b,
-				extensions: [working, unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {} })]
+				extensions: [
+					working,
+					commenting('source', true),
+					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {} })
+				]
 			});
 			return (shown = {
 				b: view,
+				views: [view],
+				path,
 				editable,
 				get original() {
 					return getOriginalDoc(view.state);

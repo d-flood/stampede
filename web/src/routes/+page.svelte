@@ -945,11 +945,12 @@
 		else unfocused = true;
 	}
 
-	function openDiff(projectId: string, { path, from }: Change, against: Against) {
+	function openDiff(projectId: string, { path, from }: Change, against: Against, draft?: string) {
 		const diff = openTab(new OpenDiff(projectId, path, against, from));
 		if (!comparing(against)) return;
 		diff.path = path;
 		diff.from = from;
+		diff.draft = draft;
 	}
 
 	/** Shows a Comparison, or without one returns to the last plain Comparison this Device chose. */
@@ -1034,7 +1035,7 @@
 		oncompare={(selection) => focused && compare(focused.id, selection)}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		onrename={(from, to) => focused && retarget(focused.id, from, to)}
-		ondiff={(change, against) => focused && openDiff(focused.id, change, against)}
+		ondiff={(change, against, draft) => focused && openDiff(focused.id, change, against, draft)}
 		onepic={(slug) => focused && openEpic(focused.id, slug)}
 	>
 		{#snippet toggle()}{@render sidebarToggle(true)}{/snippet}
@@ -1326,7 +1327,7 @@
 						{#if active || warm()}
 							{#if file instanceof OpenDiff}
 								{#await import('#lib/shell/Diff.svelte') then { default: Diff }}
-									<Diff diff={file} git={git.get(file.projectId)} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
+									<Diff diff={file} git={git.get(file.projectId)} reviews={prReviews[file.projectId]} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
 								{/await}
 							{:else if image(file.path) && !/\.svg$/i.test(file.path)}
 								{#await import('#lib/shell/ImageView.svelte') then { default: ImageView }}

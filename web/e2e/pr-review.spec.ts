@@ -7,6 +7,7 @@ import { showSidebar, openProject } from './shell.ts';
 test.use({ reducedMotion: 'reduce' });
 
 const URL = 'https://github.com/acme/widgets.git';
+const LIST = Array.from({ length: 30 }, (_, index) => `export const line${index + 1} = ${index + 1};\n`).join('');
 
 function signIn(state: 'OPEN' | 'MERGED') {
 	const pr = {
@@ -27,15 +28,16 @@ function repository() {
 	git('init', '-q', '-b', 'main');
 	for (const [key, value] of [['user.name', 'stampede'], ['user.email', 'e2e@stampede.invalid'], ['commit.gpgsign', 'false']]) git('config', key, value);
 	writeFileSync(`${root}/README.md`, 'widgets\n');
+	mkdirSync(`${root}/src`);
+	writeFileSync(`${root}/src/list.ts`, LIST);
 	git('add', '.');
 	git('commit', '-qm', 'Initial commit');
 	git('remote', 'add', 'origin', URL);
 	git('config', `url.${origin}.insteadOf`, URL);
 	git('push', '-q', 'origin', 'main');
-	const push = (file: string) => {
+	const push = (file: string, text = `export const ${file.split('.')[0]} = true;\n`) => {
 		git('switch', '-q', '--detach', 'main');
-		mkdirSync(`${root}/src`, { recursive: true });
-		writeFileSync(`${root}/src/${file}`, `export const ${file.split('.')[0]} = true;\n`);
+		writeFileSync(`${root}/src/${file}`, text);
 		git('add', '.');
 		git('commit', '-qm', 'Add widgets');
 		git('push', '-qf', 'origin', `${git('rev-parse', 'HEAD')}:refs/pull/7/head`);
@@ -114,4 +116,45 @@ test('Without gh signed in, the PR button is disabled and says why', async ({ pa
 	}
 	await button.click({ force: true });
 	await expect(page.getByRole('dialog', { name: 'Open a pull request' })).toHaveCount(0);
+});
+
+test('Draft comments start from the gutter or a tapped line number, show inline and listed, and survive a reload', async ({ page }, { project }) => {
+	signIn('OPEN');
+	const { push } = repository();
+	push('list.ts', LIST.replace('line15 = 15', 'line15 = 0'));
+	await openProject(page, 'widgets');
+	const compare = await comparePanel(page);
+	await compare.getByRole('button', { name: 'Pull request…' }).click();
+	await page.getByRole('dialog', { name: 'Open a pull request' }).getByRole('option', { name: /Add widgets/ }).click();
+	await compare.getByRole('list', { name: 'Compared files' }).getByRole('button', { name: 'list.ts', exact: true }).click();
+	const diff = page.locator('.diff:not([hidden])');
+	await expect(diff.locator('.cm-changedLine', { hasText: 'line15 = 0' })).toBeVisible();
+
+	const adds = diff.locator('.cm-draftAdd');
+	const desktop = project.name === 'desktop';
+	await expect(adds).toHaveCount(desktop ? 14 : 8);
+	const lines = await adds.evaluateAll((elements) => elements.map((element) => Number((element as HTMLElement).dataset.line)));
+	expect(lines.every((line) => line >= 12 && line <= 18)).toBe(true);
+
+	if (desktop) await diff.locator('.cm-draftAdd[data-side="source"][data-line="15"]').click();
+	else await diff.locator('.cm-lineNumbers .cm-gutterElement', { hasText: /^15$/ }).click();
+	const box = page.getByRole('textbox', { name: 'Draft comment on line 15' });
+	await box.click();
+	await page.keyboard.type('Why **zero**?');
+	await diff.getByRole('button', { name: 'Save' }).click();
+	const inline = diff.locator('.cm-draftComment[data-draft]');
+	await expect(inline).toHaveCount(1);
+	await expect(inline).toContainText('Why zero?');
+
+	const listed = (await comparePanel(page)).getByRole('list', { name: 'Draft comments' });
+	await expect(listed.getByRole('button')).toHaveCount(1);
+	await expect(listed.getByRole('button')).toContainText('src/list.ts:15');
+	await expect(listed.getByRole('button')).toContainText('Why **zero**?');
+
+	await page.reload();
+	await expect(inline).toContainText('Why zero?');
+	const reloaded = (await comparePanel(page)).getByRole('list', { name: 'Draft comments' }).getByRole('button');
+	await expect(reloaded).toContainText('src/list.ts:15');
+	await reloaded.click();
+	await expect(inline).toBeInViewport();
 });

@@ -114,6 +114,8 @@ export class OpenDiff extends OpenFile {
 	from = $state<string>();
 	snapshot = $state.raw<{ disk: string; buffer: string }>();
 	layout = $state<Layout>(form() === 'phone' ? 'unified' : 'split');
+	/** The Draft comment to scroll to once its file shows. */
+	draft = $state<string>();
 
 	constructor(projectId: string, path: string, against: Against, from?: string) {
 		super(projectId, path);
