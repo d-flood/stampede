@@ -14,7 +14,7 @@ def fixture():
     for name in ('STAMPEDE_E2E_ROOT', 'STAMPEDE_TEST_ROOT'):
         root = os.environ.get(name)
         if root and (Path(root) / 'gh.json').exists():
-            return json.loads((Path(root) / 'gh.json').read_text())
+            return Path(root), json.loads((Path(root) / 'gh.json').read_text())
     fail('You are not logged into any GitHub hosts. To log in, run: gh auth login')
 
 
@@ -27,7 +27,7 @@ def fields(record, names):
 
 
 def main(args):
-    data = fixture()
+    root, data = fixture()
     match args[:2]:
         case ['auth', 'status']:
             print(f"github.com\n  ✓ Logged in to github.com account {data['user']}")
@@ -44,6 +44,12 @@ def main(args):
             if pr is None:
                 fail(f'GraphQL: Could not resolve to a PullRequest with the number of {number}. (repository.pullRequest)')
             print(json.dumps(fields(pr, option(args, '--json'))))
+        case ['api', *_] if option(args, '--method') == 'POST' and option(args, '--input') == '-':
+            with open(root / 'gh.log', 'a') as log:
+                log.write(json.dumps({'args': args, 'stdin': json.load(sys.stdin)}) + '\n')
+            if 'fail' in data:
+                fail(data['fail'])
+            print('{}')
         case ['api', *_] if args[-1] == 'user':
             print(json.dumps({'login': data['user']}))
         case _:

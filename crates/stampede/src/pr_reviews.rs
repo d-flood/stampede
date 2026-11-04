@@ -608,6 +608,62 @@ pub async fn delete_draft(State(state): State<AppState>, Param((id, number, draf
     .await
 }
 
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum Event {
+    Comment,
+    Approve,
+    RequestChanges,
+}
+
+#[derive(Deserialize)]
+pub struct Sending {
+    body: String,
+    event: Event,
+}
+
+/// The one GitHub review that carries every draft, with `side` as GitHub names it.
+fn payload(review: &PrReview, sending: &Sending) -> Value {
+    let comments: Vec<Value> = review
+        .drafts
+        .iter()
+        .map(|draft| {
+            let side = if draft.side == Side::Source { "RIGHT" } else { "LEFT" };
+            let mut comment = json!({ "path": draft.path, "body": draft.body, "side": side, "line": draft.line });
+            if let Some(start_line) = draft.start_line {
+                comment["start_line"] = json!(start_line);
+                comment["start_side"] = json!(side);
+            }
+            comment
+        })
+        .collect();
+    json!({ "commit_id": review.source.commit, "body": sending.body, "event": sending.event, "comments": comments })
+}
+
+pub async fn send(State(state): State<AppState>, Param((id, number)): Param<(String, u64)>, Json(sending): Json<Sending>) -> Result<Json<PrReview>, Failure> {
+    change_review(&state, &id, number, async |dir, review| {
+        if !matches!(review.state, PrState::Open) {
+            return Err((StatusCode::CONFLICT, format!("#{number} is not open")));
+        }
+        match review.drafts.iter().filter(|draft| draft.displaced).count() {
+            0 => {}
+            1 => return Err((StatusCode::CONFLICT, "1 Draft comment is Displaced".to_owned())),
+            displaced => return Err((StatusCode::CONFLICT, format!("{displaced} Draft comments are Displaced"))),
+        }
+        if review.drafts.is_empty() && sending.body.trim().is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "a review needs Draft comments or a summary".to_owned()));
+        }
+        if review.mine && sending.event != Event::Comment {
+            return Err((StatusCode::BAD_REQUEST, "GitHub refuses approving or requesting changes on your own pull request".to_owned()));
+        }
+        let repository = repository(dir).await?;
+        github::send_review(dir, &repository, number, &payload(review, &sending)).await.map_err(|error| (StatusCode::BAD_GATEWAY, error))?;
+        review.drafts.clear();
+        Ok(())
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

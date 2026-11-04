@@ -411,6 +411,22 @@ async fn drafts_stay_within_one_hunk_and_every_device_hears_them() {
     assert_eq!(get(server.port, &reviews).await.1[0]["drafts"], deleted["drafts"]);
 }
 
+fn amend(file: &Path, change: impl FnOnce(&mut Value)) {
+    let mut value: Value = serde_json::from_slice(&fs::read(file).unwrap()).unwrap();
+    change(&mut value);
+    fs::write(file, value.to_string()).unwrap();
+}
+
+fn record(root: &Path) -> PathBuf {
+    let repositories = fs::read_dir(root.join("data/pr-reviews")).unwrap().flatten();
+    repositories.map(|dir| dir.path().join("7.json")).find(|file| file.exists()).unwrap()
+}
+
+fn sent(root: &Path) -> Vec<Value> {
+    let log = fs::read_to_string(root.join("gh.log")).unwrap_or_default();
+    log.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+}
+
 #[tokio::test]
 async fn refresh_moves_drafts_on_unchanged_lines_and_displaces_the_rest() {
     let server = server("pr-reviews-remap").await;
@@ -451,3 +467,87 @@ async fn refresh_moves_drafts_on_unchanged_lines_and_displaces_the_rest() {
     assert_eq!((&replaced["drafts"][0]["line"], &replaced["drafts"][0]["commit"], &replaced["drafts"][0]["displaced"]), (&json!(5), &json!(commit), &json!(false)));
 }
 
+#[tokio::test]
+async fn sending_posts_every_draft_as_one_review_and_keeps_them_all_unless_github_takes_it() {
+    let server = server("pr-reviews-send").await;
+    let root = server.root.path();
+    fixture(root, "OPEN");
+    let (repo, _) = repository(root);
+    let list: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+    fs::write(repo.join("list.txt"), &list).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "Add list"]);
+    git(&repo, &["push", "-q", "origin", "main"]);
+    let source = push_pr(&repo, "main", "list.txt", &list.replace("line 5\n", "line five\n").replace("line 25\n", ""));
+    let mut socket = device(server.port, "device").await;
+    let id = open(&mut socket, &repo).await;
+    let reviews = format!("/api/projects/{id}/pr-reviews");
+    assert_eq!(post(server.port, &reviews, json!({ "pr": 7 })).await.0, 200);
+    let (_, viewed) = put(server.port, &format!("{reviews}/7/viewed"), json!({ "path": "list.txt", "viewed": true })).await;
+    let drafts = format!("{reviews}/7/drafts");
+    assert_eq!(post(server.port, &drafts, json!({ "path": "list.txt", "side": "source", "line": 5, "body": "Why five?" })).await.0, 200);
+    let (code, before) = post(server.port, &drafts, json!({ "path": "list.txt", "side": "target", "startLine": 23, "line": 25, "body": "Gone?" })).await;
+    assert_eq!(code, 200, "{before}");
+    let send = format!("{reviews}/7/send");
+
+    let message = "Validation Failed: Review cannot request changes on your own pull request";
+    amend(&root.join("gh.json"), |fixture| fixture["fail"] = json!(message));
+    let (code, refused) = post(server.port, &send, json!({ "body": "Two questions", "event": "REQUEST_CHANGES" })).await;
+    assert_eq!((code, refused), (502, json!(message)));
+    assert_eq!(get(server.port, &reviews).await.1[0], before, "a failed send keeps every draft");
+    amend(&root.join("gh.json"), |fixture| fixture.as_object_mut().unwrap().retain(|key, _| key != "fail"));
+    fs::remove_file(root.join("gh.log")).unwrap();
+
+    amend(&record(root), |review| review["drafts"][1]["displaced"] = json!(true));
+    let (code, refused) = post(server.port, &send, json!({ "body": "Two questions", "event": "COMMENT" })).await;
+    assert_eq!((code, refused), (409, json!("1 Draft comment is Displaced")));
+    assert!(sent(root).is_empty(), "a Displaced draft stops gh being called");
+    amend(&record(root), |review| review["drafts"][1]["displaced"] = json!(false));
+
+    control(&mut socket, json!({ "type": "pr-reviews.subscribe", "projectId": id })).await;
+    changed(&mut socket, &id).await;
+    let (code, review) = post(server.port, &send, json!({ "body": "Two questions", "event": "COMMENT" })).await;
+    assert_eq!(code, 200, "{review}");
+    assert_eq!((&review["drafts"], &review["viewed"]), (&json!([]), &viewed["viewed"]));
+    assert_eq!(changed(&mut socket, &id).await[0], review);
+    let sent = sent(root);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0]["args"], json!(["api", "--method", "POST", "repos/acme/widgets/pulls/7/reviews", "--input", "-"]));
+    assert_eq!(
+        sent[0]["stdin"],
+        json!({
+            "commit_id": source, "body": "Two questions", "event": "COMMENT",
+            "comments": [
+                { "path": "list.txt", "body": "Why five?", "side": "RIGHT", "line": 5 },
+                { "path": "list.txt", "body": "Gone?", "side": "LEFT", "line": 25, "start_line": 23, "start_side": "LEFT" }
+            ]
+        })
+    );
+    assert_eq!(post(server.port, &send, json!({ "body": " ", "event": "COMMENT" })).await.0, 400, "nothing left to send");
+}
+
+#[tokio::test]
+async fn own_prs_send_only_comments_and_closed_prs_send_nothing() {
+    let server = server("pr-reviews-send-mine").await;
+    let root = server.root.path();
+    fixture(root, "OPEN");
+    amend(&root.join("gh.json"), |fixture| fixture["prs"][0]["author"]["login"] = json!("david"));
+    let (repo, _) = repository(root);
+    let mut socket = device(server.port, "device").await;
+    let id = open(&mut socket, &repo).await;
+    let reviews = format!("/api/projects/{id}/pr-reviews");
+    let (_, review) = post(server.port, &reviews, json!({ "pr": 7 })).await;
+    assert_eq!(review["mine"], true);
+    let send = format!("{reviews}/7/send");
+    for event in ["APPROVE", "REQUEST_CHANGES"] {
+        assert_eq!(post(server.port, &send, json!({ "body": "Ship it", "event": event })).await.0, 400, "{event}");
+    }
+    assert!(sent(root).is_empty());
+    assert_eq!(post(server.port, &send, json!({ "body": "Ship it", "event": "COMMENT" })).await.0, 200);
+    assert_eq!(sent(root).len(), 1);
+
+    amend(&root.join("gh.json"), |fixture| fixture["prs"][0]["state"] = json!("MERGED"));
+    assert_eq!(post(server.port, &format!("{reviews}/7/refresh"), Value::Null).await.0, 200);
+    assert_eq!(post(server.port, &send, json!({ "body": "Late", "event": "COMMENT" })).await.0, 409);
+    assert_eq!(sent(root).len(), 1);
+}

@@ -2,7 +2,7 @@ use std::{io::ErrorKind, path::Path, process::Stdio, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::{process::Command, time::timeout};
+use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
 use crate::git;
 
@@ -80,14 +80,28 @@ impl From<Failure> for String {
 }
 
 async fn gh(dir: &Path, args: &[&str]) -> Result<Vec<u8>, Failure> {
+    gh_with(dir, args, None).await
+}
+
+async fn gh_with(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, Failure> {
     let mut command = Command::new("gh");
     command
         .current_dir(dir)
         .args(args)
         .envs([("GH_PROMPT_DISABLED", "1"), ("GH_NO_UPDATE_NOTIFIER", "1")])
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let output = match timeout(LIMIT, command.output()).await {
+    let run = async {
+        let mut child = command.spawn()?;
+        if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+            // Ignore a broken pipe: a gh that exits early says why on stderr.
+            let _ = stdin.write_all(input).await;
+        }
+        child.wait_with_output().await
+    };
+    let output = match timeout(LIMIT, run).await {
         Err(_) => return Err(Failure::Failed(format!("gh {} timed out", args.join(" ")))),
         Ok(Err(error)) if error.kind() == ErrorKind::NotFound => return Err(Failure::Missing),
         Ok(Err(error)) => return Err(Failure::Failed(format!("cannot run gh: {error}"))),
@@ -214,6 +228,14 @@ pub async fn login(dir: &Path, host: &str) -> Result<String, String> {
     let args = [&["api"][..], &hostname(host), &["user"]].concat();
     let user: Value = parsed(&gh(dir, &args).await?)?;
     user["login"].as_str().map(str::to_owned).ok_or_else(|| "gh api user named no login".to_owned())
+}
+
+/// Posts `review` to pull request `number` as one review, giving GitHub's message when it refuses.
+pub async fn send_review(dir: &Path, repository: &Repository, number: u64, review: &Value) -> Result<(), String> {
+    let path = format!("repos/{}/{}/pulls/{number}/reviews", repository.owner, repository.name);
+    let args = [&["api"][..], &hostname(&repository.host), &["--method", "POST", &path, "--input", "-"]].concat();
+    gh_with(dir, &args, Some(review.to_string().as_bytes())).await?;
+    Ok(())
 }
 
 #[cfg(test)]

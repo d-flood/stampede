@@ -7,6 +7,7 @@
 	import { deleteDraft, discardReview, openWorktree, prs, refreshReview, setViewed, viewedState, type Availability, type DraftComment, type PrReview } from '#lib/pr-reviews.ts';
 	import BranchPicker from '#lib/shell/BranchPicker.svelte';
 	import PrPicker from '#lib/shell/PrPicker.svelte';
+	import SendReview from '#lib/shell/SendReview.svelte';
 	import { treeRows } from '#lib/shell/tree.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
@@ -43,6 +44,7 @@
 	let availability = $state.raw<Availability>();
 	let picking = $state<Side>();
 	let choosing = $state(false);
+	let sending = $state(false);
 	let acting = $state(false);
 	let actionError = $state<string>();
 	const reviewing = $derived(selection && 'pr' in selection ? selection.pr : undefined);
@@ -227,11 +229,6 @@
 				<IconButton label="Close" title="Back to the plain Comparison" onclick={() => onselect()}><X /></IconButton>
 			</div>
 		</div>
-		{#if displaced.length}
-			<p class="sending" title="Re-place or delete Displaced drafts before sending">
-				<span class="blocked">{displaced.length} Displaced</span>
-			</p>
-		{/if}
 		{#if review && review.state !== 'open'}
 			<div class="banner" role="status">
 				<span>#{review.number} was {review.state} on GitHub.</span>
@@ -241,6 +238,17 @@
 		{#if actionError}<p class="note failure" role="alert">{actionError}</p>{/if}
 		{#if placed.length}{@render draftList('Draft comments', placed)}{/if}
 		{#if displaced.length}{@render displacedList(reviewing, displaced)}{/if}
+		{#if review?.state === 'open'}
+			<div class="send">
+				<Button variant="primary" disabled={!!displaced.length} onclick={() => (sending = true)}>
+					Send review… <span class="badge">{review.drafts.length}</span>
+				</Button>
+				{#if displaced.length}
+					<p class="reason">Re-place or delete {displaced.length === 1 ? 'the Displaced draft' : `the ${displaced.length} Displaced drafts`} to send.</p>
+				{/if}
+			</div>
+			{#key review.number}<SendReview {projectId} {review} bind:open={sending} />{/key}
+		{/if}
 	{:else}
 		<div class="refs">
 			{@render picker('target', 'Target', target)}
@@ -713,18 +721,18 @@
 		gap: var(--space-1);
 	}
 
-	.sending {
-		display: flex;
-		justify-content: flex-end;
-		margin: 0;
-		padding: 0 var(--space-2) var(--space-2);
+	.send {
+		display: grid;
+		gap: var(--space-1);
+		padding: var(--space-2);
 	}
 
-	.blocked {
-		padding: 0 var(--space-2);
-		border-radius: var(--radius-sm);
-		background: var(--surface-1);
-		color: var(--status-waiting);
+	.badge {
+		min-width: 1.5em;
+		padding: 0 var(--space-1);
+		border-radius: 999px;
+		background: color-mix(in oklab, currentColor 18%, transparent);
+		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 	}
 
