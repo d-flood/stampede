@@ -26,11 +26,12 @@
 
 <script lang="ts">
 	import type { Device, Epic, Project, Reading, ResetCredits } from '#lib/device.svelte.ts';
-	import type { Cursor, Selection } from '#lib/files.svelte.ts';
+	import type { Cursor, Reviewing, Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
 	import type { Against } from '#lib/files.svelte.ts';
 	import type { Change } from '#lib/git.ts';
+	import type { PrReview } from '#lib/pr-reviews.ts';
 	import Changes from '#lib/shell/Changes.svelte';
 	import Compare from '#lib/shell/Compare.svelte';
 	import Epics from '#lib/shell/Epics.svelte';
@@ -54,8 +55,9 @@
 		usage: Reading[];
 		codexResets?: ResetCredits | null;
 		epics?: Epic[];
-		comparison?: Selection;
-		oncompare(selection: Selection): void;
+		comparison?: Selection | Reviewing;
+		reviews?: PrReview[];
+		oncompare(selection?: Selection | Reviewing): void;
 		onopen(path: string, cursor?: Cursor): void;
 		onrename(from: string, to: string): void;
 		ondiff(change: Change, against: Against): void;
@@ -75,6 +77,7 @@
 		codexResets,
 		epics,
 		comparison,
+		reviews,
 		oncompare,
 		onopen,
 		onrename,
@@ -159,7 +162,7 @@
 					{/key}
 				{:else if current === 'compare'}
 					{#key project.id}
-						{#if git}<Compare projectId={project.id} {git} {device} selection={comparison} onselect={oncompare} onopen={ondiff} />{/if}
+						{#if git}<Compare projectId={project.id} {git} {device} selection={comparison} {reviews} onselect={oncompare} onopen={ondiff} />{/if}
 					{/key}
 				{:else if current === 'epics'}
 					<Epics epics={epics ?? []} onopen={onepic} />

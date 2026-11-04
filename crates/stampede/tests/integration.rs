@@ -41,6 +41,7 @@ mod loop_submodules;
 mod loop_templates;
 mod loop_ticket;
 mod memory;
+mod pr_reviews;
 mod project_icons;
 mod terminal_after_rebuild;
 mod terminal_reconnect;

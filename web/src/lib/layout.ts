@@ -2,7 +2,7 @@ import { claimDeviceId, deviceId, earlyLayout, type Chat, type Terminal } from '
 import { OpenBrowser } from '#lib/browser.svelte.ts';
 import { OpenCanvas } from '#lib/canvas.svelte.ts';
 import { OpenEpic } from '#lib/epics.svelte.ts';
-import { OpenConfig, OpenDiff, OpenFile, type Against, type Layout as DiffMode, type Selection } from '#lib/files.svelte.ts';
+import { OpenConfig, OpenDiff, OpenFile, type Against, type Layout as DiffMode, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 import type { Section } from '#lib/shell/Sidebar.svelte';
 import type { Split, TabGroup } from '#lib/split.ts';
 
@@ -29,7 +29,7 @@ export type Layout = {
 	rail?: { open: boolean };
 	diffModes: Record<string, DiffMode>;
 	markdownMode: MarkdownMode;
-	compare: Record<string, Selection>;
+	compare: Record<string, Selection | Reviewing>;
 };
 
 export type Workspace = {
@@ -45,7 +45,7 @@ export type Workspace = {
 	sidebar: Layout['sidebar'];
 	rail?: Layout['rail'];
 	markdownMode: MarkdownMode;
-	compare: Record<string, Selection>;
+	compare: Record<string, Selection | Reviewing>;
 };
 
 let saved: Layout | null = null;

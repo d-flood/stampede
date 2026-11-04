@@ -7,7 +7,7 @@
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
 	import { comparison } from '#lib/compare.svelte.ts';
-	import { comparing, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
+	import { branches, comparing, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import { baseline, index, show, type Git } from '#lib/git.ts';
@@ -55,7 +55,7 @@
 	const loaded = $derived(!!git);
 	const from = $derived(git?.changes.find((change) => change.path === diff.path)?.from);
 	const head = $derived(git?.head);
-	const compared = $derived(comparing(diff.against) ? comparison(diff.projectId, diff.against) : undefined);
+	const compared = $derived(comparing(diff.against) ? comparison(diff.projectId, branches(diff.against)) : undefined);
 	const walk = $derived(compared?.result ? ordered(compared.result.files) : []);
 	const at = $derived(walk.findIndex((change) => change.path === diff.path));
 
@@ -66,7 +66,8 @@
 			following.load();
 			const unlisten = device.listen({
 				message(message) {
-					if (message.type === 'hello' || (message.type === 'git.changed' && message.projectId === diff.projectId)) following.load();
+					const changed = message.type === 'git.changed' || message.type === 'pr-reviews.changed';
+					if (message.type === 'hello' || (changed && message.projectId === diff.projectId)) following.load();
 				}
 			});
 			return () => {
@@ -336,7 +337,10 @@
 		{:else if diff.against === 'staged'}
 			<span class="sides">HEAD ↔ index</span>
 		{:else if comparing(diff.against)}
-			{#if form() === 'desktop'}<span class="sides comparison" title="{diff.against.target}...{diff.against.source}">{diff.against.target} ↔ {diff.against.source}</span>{/if}
+			{#if form() === 'desktop'}
+				{@const { target, source } = branches(diff.against)}
+				<span class="sides comparison" title="{target}...{source}">{'pr' in diff.against ? `#${diff.against.pr}` : `${target} ↔ ${source}`}</span>
+			{/if}
 		{:else if diff.against !== 'HEAD'}
 			<span class="sides" title={diff.against.subject}>{diff.against.short}^ ↔ {diff.against.short}</span>
 		{/if}
