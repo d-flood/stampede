@@ -106,6 +106,7 @@
 	let handoff = false;
 	let section = $state<Section>(restored.sidebar?.section ?? 'files');
 	let rail = $state(restored.rail?.open ?? false);
+	let markdownMode = $state(restored.markdownMode);
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
 	let closingChat = $state<Chat>();
@@ -203,7 +204,7 @@
 		sidebar: { title: sectionShowing(section, focused && git.get(focused.id)).label, sub: label }
 	});
 	const deviceLayout = $derived(
-		capture({ chosen, terminals, chats, files, browsers, canvases, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section }, rail: { open: rail } })
+		capture({ chosen, terminals, chats, files, browsers, canvases, epics: epicTabs, chosenTabs, splits, sidebar: { open: sidebar, section }, rail: { open: rail }, markdownMode })
 	);
 
 	$effect(() => device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics }));
@@ -1294,6 +1295,7 @@
 										{active}
 										displayed={active && foreground}
 										focused={file.id === activeTab}
+										bind:markdownMode
 										{onshowdiff}
 									/>
 								{/await}

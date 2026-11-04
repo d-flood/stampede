@@ -16,6 +16,22 @@ export function image(path: string): boolean {
 	return /\.(avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i.test(path);
 }
 
+export function imageSource(projectId: string, path: string, src: string): string | null {
+	if (/^(https?|data):/i.test(src)) return src;
+	if (/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(src)) return null;
+	const parts = path.split('/').slice(0, -1);
+	for (const segment of src.split(/[?#]/, 1)[0].split('/')) {
+		let name = segment;
+		try {
+			name = decodeURIComponent(segment);
+		} catch {}
+		if (!name || name === '.') continue;
+		if (name !== '..') parts.push(name);
+		else if (!parts.pop()) return null;
+	}
+	return `/api/projects/${projectId}/image?${new URLSearchParams({ path: parts.join('/') })}`;
+}
+
 export class OpenFile {
 	projectId: string;
 	path = $state('');
