@@ -1,11 +1,27 @@
+import { codeLines, fenceParser } from '#lib/chat/highlight.ts';
+import { highlight } from '#lib/editor/theme.ts';
 import MarkdownIt from 'markdown-it';
+import { StyleModule } from 'style-mod';
 import Check from '~icons/ph/check?raw';
 import Copy from '~icons/ph/copy?raw';
 
-const markdown = new MarkdownIt({ breaks: true, linkify: true });
+const markdown = new MarkdownIt({ breaks: true, linkify: true, highlight: highlighted });
 const rules = markdown.renderer.rules;
 const copy = `<button class="copy" type="button" aria-label="Copy">${Copy}${Check}</button>`;
 const maxCacheBytes = 2 << 20;
+let loading = false;
+
+if (highlight.module) StyleModule.mount(document, highlight.module);
+
+function highlighted(code: string, info: string): string {
+	const syntax = fenceParser(info);
+	if (syntax === 'loading') loading = true;
+	if (!syntax || syntax === 'loading') return '';
+	const escape = markdown.utils.escapeHtml;
+	return codeLines(code, syntax)
+		.map((line) => line.map(({ text, classes }) => (classes ? `<span class="${classes}">${escape(text)}</span>` : escape(text))).join(''))
+		.join('\n');
+}
 
 rules.link_open = (tokens, index, options, _env, self) => {
 	tokens[index].attrSet('target', '_blank');
@@ -66,9 +82,10 @@ function cached(render: (text: string) => string) {
 			rendered.set(text, existing);
 			return existing;
 		}
+		loading = false;
 		const html = render(text);
 		const size = 2 * (text.length + html.length);
-		if (size > maxCacheBytes) return html;
+		if (loading || size > maxCacheBytes) return html;
 		rendered.set(text, html);
 		bytes += size;
 		while (rendered.size > 200 || bytes > maxCacheBytes) {

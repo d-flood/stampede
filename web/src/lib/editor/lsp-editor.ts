@@ -17,10 +17,11 @@ type Position = { line: number; character: number };
 
 type Report = {
 	kind: 'full' | 'unchanged';
-	items: { range: { start: Position; end: Position }; severity?: number; message: string }[];
+	items: { range: { start: Position; end: Position }; severity?: number; tags?: number[]; message: string }[];
 };
 
 const severities = ['error', 'error', 'warning', 'info', 'hint'] as const;
+const tagClasses: Record<number, string> = { 1: 'cm-lint-unnecessary', 2: 'cm-lint-deprecated' };
 
 function offset(doc: Text, { line, character }: Position) {
 	const found = doc.line(Math.min(line + 1, doc.lines));
@@ -143,7 +144,13 @@ export class Session {
 			timeout: 30_000,
 			workspace: (client) => new SharedWorkspace(client, this),
 			notificationHandlers: { 'window/showMessage': () => true },
-			extensions: [serverCompletion({ override: true }), hoverTooltips(), keymap.of(jumpToDefinitionKeymap), refresh]
+			extensions: [
+				{ clientCapabilities: { textDocument: { diagnostic: { tagSupport: { valueSet: [1, 2] } } } } },
+				serverCompletion({ override: true }),
+				hoverTooltips(),
+				keymap.of(jumpToDefinitionKeymap),
+				refresh
+			]
 		}).connect(this.#transport);
 		for (const entry of this.views) this.#connect(entry);
 	}
@@ -184,10 +191,11 @@ function show(view: EditorView, report: Report, doc: Text) {
 	if (!plugin) return;
 	if (!plugin.syncedDoc.eq(doc)) return view.dispatch(setDiagnostics(view.state, []));
 	const at = (position: Position) => plugin.unsyncedChanges.mapPos(offset(plugin.syncedDoc, position));
-	const diagnostics = report.items.map(({ range, severity, message }) => ({
+	const diagnostics = report.items.map(({ range, severity, tags, message }) => ({
 		from: at(range.start),
 		to: at(range.end),
 		severity: severities[severity ?? 1],
+		markClass: tags?.map((tag) => tagClasses[tag]).filter(Boolean).join(' '),
 		message
 	}));
 	view.dispatch(setDiagnostics(view.state, diagnostics));

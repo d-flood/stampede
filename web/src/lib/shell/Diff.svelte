@@ -21,7 +21,8 @@
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Toggle from '#lib/ui/Toggle.svelte';
 	import { getOriginalDoc, MergeView, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
-	import { ChangeSet, EditorState, Prec, type Extension, type Text } from '@codemirror/state';
+	import { setDiagnostics } from '@codemirror/lint';
+	import { ChangeSet, Compartment, EditorState, Prec, type Extension, type Text } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
 	import { basicSetup } from 'codemirror';
 	import { mount, onMount, unmount, untrack } from 'svelte';
@@ -45,7 +46,7 @@
 	};
 	/** Unsaved text by draft ID, or for a new comment by the side of the view holding it. */
 	type Typed = Record<string, string>;
-	type Shown = { b: EditorView; views: EditorView[]; path: string; original: Text; editable: boolean; typed: Typed; setOriginal(content: string): void; destroy(): void };
+	type Shown = { b: EditorView; views: EditorView[]; path: string; original: Text; editable: boolean; analyzed: boolean; typed: Typed; setOriginal(content: string): void; destroy(): void };
 
 	let { diff, git, reviews, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
 
@@ -59,12 +60,14 @@
 	let right: Contents | undefined;
 	let commentable: Hunks | undefined;
 	const sync = new Sync(() => diff, () => shown?.b);
+	const analysis = new Compartment();
 	const editable = $derived(diff.against === 'HEAD' || diff.against === 'index');
 	const versusHead = $derived(diff.against === 'HEAD' || diff.against === 'staged');
 	const loaded = $derived(!!git);
 	const from = $derived(git?.changes.find((change) => change.path === diff.path)?.from);
 	const head = $derived(git?.head);
 	const compared = $derived(comparing(diff.against) ? comparison(diff.projectId, branches(diff.against)) : undefined);
+	const analyzed = $derived(editable || (!!head && head === compared?.result?.source));
 	const walk = $derived(compared?.result ? ordered(compared.result.files) : []);
 	const at = $derived(walk.findIndex((change) => change.path === diff.path));
 	const pr = $derived(comparing(diff.against) && 'pr' in diff.against ? diff.against.pr : undefined);
@@ -171,6 +174,17 @@
 		const now = editable;
 		untrack(() => {
 			if (shown && shown.editable !== now) build(shown.original, shown.b.state.doc);
+		});
+	});
+
+	$effect(() => {
+		const now = analyzed;
+		untrack(() => {
+			if (!shown || shown.analyzed === now) return;
+			shown.analyzed = now;
+			shown.b.dispatch({ effects: analysis.reconfigure(now ? languageServer(servers, diff.projectId, diff.path, false) : []) });
+			if (now) servers.displayed(shown.b, displayed);
+			else shown.b.dispatch(setDiagnostics(shown.b.state, []));
 		});
 	});
 
@@ -431,7 +445,7 @@
 			shared,
 			EditorState.readOnly.of(!editable),
 			sync.listener,
-			editable ? languageServer(servers, diff.projectId, diff.path, false) : []
+			analysis.of(analyzed ? languageServer(servers, diff.projectId, diff.path, false) : [])
 		];
 		if (diff.layout === 'split') {
 			const view = new MergeView({
@@ -447,6 +461,7 @@
 				views: [view.a, view.b],
 				path,
 				editable,
+				analyzed,
 				typed,
 				get original() {
 					return view.a.state.doc;
@@ -469,6 +484,7 @@
 				views: [view],
 				path,
 				editable,
+				analyzed,
 				typed,
 				get original() {
 					return getOriginalDoc(view.state);
@@ -529,7 +545,7 @@
 				<Button title="Mark Viewed, then the next file" disabled={marking || at < 0} onclick={viewedAndNext}><CheckSquare /> Viewed &amp; next</Button>
 			{/if}
 		{/if}
-		<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} attached={editable} />
+		{#if analyzed}<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} />{/if}
 		{#if shown}
 			{#if diff.layout === 'split'}
 				<IconButton label="Single column" title="Single column" onclick={toggle}><Rows /></IconButton>

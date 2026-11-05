@@ -1,23 +1,33 @@
-import { extension, language as loadLanguage } from '#lib/editor/languages.ts';
+import { extension, fenceExtension, language as loadLanguage } from '#lib/editor/languages.ts';
 import { highlight } from '#lib/editor/theme.ts';
 import { language, type Language } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
 import { highlightCode } from '@lezer/highlight';
+import { SvelteMap } from 'svelte/reactivity';
 
 type Parser = Language['parser'];
 type Token = { text: string; classes: string };
 type Line = { kind: string; prefix: string; tokens: Token[] };
 
 const parsers = new Map<string, Promise<Parser | undefined>>();
+const loaded = new SvelteMap<string, Parser | undefined>();
 
 export function parser(path: string): Promise<Parser | undefined> {
 	const key = extension(path);
 	let found = parsers.get(key);
 	if (!found) {
 		found = loadLanguage(path).then((extensions) => EditorState.create({ extensions }).facet(language)?.parser);
+		found.then((parser) => loaded.set(key, parser), () => loaded.set(key, undefined));
 		parsers.set(key, found);
 	}
 	return found;
+}
+
+export function fenceParser(info: string): Parser | undefined | 'loading' {
+	const name = fenceExtension(info);
+	if (!name) return undefined;
+	parser(`fence.${name}`);
+	return loaded.has(name) ? loaded.get(name) : 'loading';
 }
 
 const inline = /\bpython[\d.]*\b[^\n'"|;&]*?(?:-c\s+(?:'([^']*)|"((?:[^"\\]|\\.)*))|<<-?\s*(['"]?)(\w+)\3[^\n]*\n)/dg;

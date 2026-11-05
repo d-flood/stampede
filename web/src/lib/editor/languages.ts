@@ -91,6 +91,10 @@ export function extension(path: string): string {
 	return path.match(/\.([^./]+)$/)?.[1].toLowerCase() ?? '';
 }
 
+export function fenceExtension(info: string): string | undefined {
+	return LanguageDescription.matchLanguageName(codeLanguages, info)?.name;
+}
+
 export function language(path: string): Promise<Extension> {
 	return loaders[extension(path)]?.() ?? Promise.resolve([]);
 }

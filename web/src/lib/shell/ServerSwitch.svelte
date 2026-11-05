@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { serverLanguage, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
 
-	type Props = { servers: LanguageServers; projectId: string; path: string; attached: boolean };
+	type Props = { servers: LanguageServers; projectId: string; path: string };
 
-	let { servers, projectId, path, attached }: Props = $props();
+	let { servers, projectId, path }: Props = $props();
 
-	const language = $derived(attached ? serverLanguage(path) : undefined);
+	const language = $derived(serverLanguage(path));
 	const on = $derived(servers.switches[projectId] ?? false);
 	const running = $derived(language && servers.states[`lsp:${projectId}:${language}`]);
 	const state = $derived(!on ? 'off' : !language ? 'on' : !running || running === 'off' ? 'starting' : running);

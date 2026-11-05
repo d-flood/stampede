@@ -216,7 +216,7 @@
 		{:else if html}
 			<Segmented aria-label="View" options={[{ value: false, label: 'Edit' }, { value: true, label: 'Preview' }]} bind:value={rendered} />
 		{/if}
-		{#if !rendered}<ServerSwitch {servers} projectId={file.projectId} path={file.path} attached />{/if}
+		{#if !rendered}<ServerSwitch {servers} projectId={file.projectId} path={file.path} />{/if}
 		{#if view && !rendered}
 			<Toggle label="Line wrapping" pressed={wrap} onclick={toggleWrap}><ArrowUDownLeft /></Toggle>
 			{#if prose}<Toggle label="Spell check" pressed={spell} onclick={toggleSpell}><span class="squiggle">abc</span></Toggle>{/if}

@@ -45,8 +45,14 @@ const chrome = EditorView.theme({
 	'.cm-tooltip-autocomplete > ul > li[aria-selected]': { backgroundColor: 'var(--hover)', color: 'var(--color-fg)' },
 	'.cm-lintRange-error': { backgroundImage: 'none', textDecoration: 'underline wavy var(--ansi-1)' },
 	'.cm-lintRange-warning': { backgroundImage: 'none', textDecoration: 'underline wavy var(--ansi-3)' },
+	'.cm-lintRange-info': { backgroundImage: 'none', textDecoration: 'underline wavy var(--ansi-4)' },
+	'.cm-lintRange-hint': { backgroundImage: 'none', textDecoration: 'underline dotted var(--muted-fg)' },
+	'.cm-lint-unnecessary': { opacity: '0.55' },
+	'.cm-lint-deprecated': { textDecoration: 'line-through' },
 	'.cm-diagnostic-error': { borderLeftColor: 'var(--ansi-1)' },
-	'.cm-diagnostic-warning': { borderLeftColor: 'var(--ansi-3)' }
+	'.cm-diagnostic-warning': { borderLeftColor: 'var(--ansi-3)' },
+	'.cm-diagnostic-info': { borderLeftColor: 'var(--ansi-4)' },
+	'.cm-diagnostic-hint': { borderLeftColor: 'var(--muted-fg)' }
 });
 
 export const highlight = HighlightStyle.define([

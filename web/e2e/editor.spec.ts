@@ -41,6 +41,9 @@ test('Markdown opens in Live, keeps edits across modes and refreshes, saves, and
 	await expect(preview.getByRole('listitem')).toHaveCount(2);
 	await expect(preview.getByRole('heading', { name: 'Unsaved' })).toBeVisible();
 	await expect(preview.locator('pre code')).toContainText('const example = true;');
+	const keyword = preview.locator('pre code span').first();
+	await expect(keyword).toHaveText('const');
+	await expect.poll(() => keyword.evaluate((span) => getComputedStyle(span).color !== getComputedStyle(span.parentElement!).color)).toBe(true);
 	await expect(preview.getByRole('cell', { name: '42', exact: true })).toBeVisible();
 	expect(readFileSync(`${root}/notes.MD`, 'utf8')).toBe(original);
 	expect(await page.evaluate(() => 'markdownExecuted' in window)).toBe(false);
