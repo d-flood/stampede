@@ -67,8 +67,8 @@ for (const agent of ['claude', 'codex']) {
 		await panel.getByRole('button', { name: /^1 Subagent · 1 running/ }).click();
 		await expect(panel.locator('header').getByTitle('Name')).toHaveText(agent === 'claude' ? 'Explore' : 'Heisenberg');
 		await expect(panel.getByText('First finding', { exact: true })).toBeVisible();
-		const calls = panel.locator('.transcript:visible details.calls');
-		await expect(calls).toHaveJSProperty('open', true);
+		const calls = panel.locator('.transcript:visible .calls');
+		await expect(calls.locator('> .summary')).toHaveAttribute('aria-expanded', 'true');
 		await expect(calls).toContainText(agent === 'claude' ? 'Read notes.txt' : 'cat notes.txt todo.txt');
 		await expect(panel.getByText('Checking the relevant code.', { exact: true })).toBeVisible();
 		unlinkSync(`${gates}/stream`);
@@ -171,12 +171,12 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 
 	const marker = (text: string) => panel.getByRole('button', { name: new RegExp(`^${text}`) });
 	const spawn = marker('3 Subagents');
-	await expect(panel.locator('details.calls, button.spawn')).toHaveText([/^1 tool call/, '3 Subagents · 2 running', /^1 tool call/, '1 Subagent · done']);
-	const group = panel.locator('details.calls').first();
-	await group.locator('> summary').click();
-	await expect(group).toHaveJSProperty('open', true);
-	await group.locator('> summary').click();
-	await expect(group).toHaveJSProperty('open', false);
+	await expect(panel.locator('.calls > .summary, button.spawn')).toHaveText(['Ran 1 command', '3 Subagents · 2 running', 'Ran 1 command', '1 Subagent · done']);
+	const group = panel.locator('.calls > .summary').first();
+	await group.click();
+	await expect(group).toHaveAttribute('aria-expanded', 'true');
+	await group.click();
+	await expect(group).toHaveAttribute('aria-expanded', 'false');
 	await expect(spawn).toBeVisible();
 	await spawn.click();
 	const spawned = phone ? page.getByRole('dialog', { name: '3 Subagents · 2 running' }).getByRole('listitem') : rows;
@@ -200,8 +200,8 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	] };
 	send({ type: 'chat.item', chatId: chatId!, index: 2, item: items[2] });
 	await expect(panel.getByText('First finding', { exact: true })).toBeVisible();
-	const calls = panel.locator('.transcript:visible details.calls');
-	await expect(calls).toHaveJSProperty('open', true);
+	const calls = panel.locator('.transcript:visible .calls');
+	await expect(calls.locator('> .summary')).toHaveAttribute('aria-expanded', 'true');
 	await expect(calls).toContainText('Read codex.rs');
 	await expect(panel.getByText('Checking the relevant code.', { exact: true })).toBeVisible();
 	await calls.locator('details.running > summary').click();
@@ -244,7 +244,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect.poll(lines).toBe(2);
 	await prompt.getByRole('button', { name: 'Show more' }).click();
 	await expect.poll(lines).toBe(3);
-	await expect(panel.getByText('1 tool call', { exact: true }).filter({ visible: true })).toBeVisible();
+	await expect(panel.getByText('Read 1 file', { exact: true }).filter({ visible: true })).toBeVisible();
 	await expect(report).toHaveText(/^\s*Report\s*Found notes.txt with 3 lines.\s*$/);
 	await expect(report.locator('strong')).toHaveText('notes.txt');
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);

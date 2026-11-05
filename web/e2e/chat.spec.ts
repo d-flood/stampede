@@ -126,17 +126,14 @@ test('a Chat folds tools, thinking, commands and a long first prompt into lines 
 	await prompt.click();
 	await expect(rest).toBeVisible();
 
-	const tools = panel.locator('summary', { hasText: 'Read 2 files · searched the web · used ToolSearch' });
-	const search = panel.getByRole('listitem').filter({ hasText: 'IANA example domain' });
-	const calls = panel.locator('.calls > summary');
-	await expect(calls).toContainText('7 tool calls');
-	await expect(tools).toBeHidden();
-	await calls.click();
-	await expect(tools).toBeVisible();
+	const search = panel.locator('.call').filter({ hasText: 'IANA example domain' });
+	const calls = panel.locator('.calls > .summary');
+	await expect(calls).toHaveText('Ran 2 commands, read 3 files, searched the web 1 time, used 1 tool, 1 failed');
+	await expect(panel.locator('.calls .failure')).toHaveText(/^\s*wc -l missing\.txt\s*failed\s*Show output\s*$/);
 	await expect(search).toBeHidden();
-	await tools.click();
+	await calls.click();
 	await expect(search).toHaveText('Web search IANA example domain');
-	await expect(panel.getByRole('listitem').filter({ hasText: 'todo.txt' })).toHaveText('Read todo.txt');
+	await expect(panel.locator('.call').filter({ hasText: 'todo.txt' })).toHaveText('Read todo.txt');
 
 	await expect(panel.getByText('Thought for 2s')).toHaveCount(2);
 
@@ -441,17 +438,17 @@ for (const agent of ['Claude', 'Codex']) {
 
 		const card = panel.locator('.edit').filter({ hasText: 'Edited notes.txt' });
 		await expect(card).toBeHidden();
-		await panel.locator('.calls > summary').click();
+		const chip = panel.locator('.calls .chip', { hasText: 'notes.txt' });
+		await expect(chip).toHaveText('notes.txt+1−1');
+		await panel.locator('.calls > .summary').click();
 		await expect(card).toContainText('+1 −1');
 		const added = card.getByText('+BETA');
-		if (project.name === 'pixel') {
-			await expect(added).toBeHidden();
-			await card.getByText('Edited notes.txt').click();
-		}
+		await expect(added).toBeHidden();
+		await card.getByText('Edited notes.txt').click();
 		await expect(added).toBeVisible();
 		await expect(card.getByText('-beta')).toBeVisible();
 
-		await card.getByRole('button', { name: 'Open diff' }).click();
+		await chip.click();
 		await expect(page.getByRole('tab', { name: /^notes\.txt ↔ HEAD/ })).toHaveAttribute('aria-selected', 'true');
 		const diff = page.locator('.diff:not([hidden])');
 		await expect(diff.locator('.path')).toHaveText('notes.txt');
@@ -732,10 +729,10 @@ for (const agent of ['claude', 'codex']) {
 			await expect(activity).toContainText(stage === 'thinking' ? 'Thinking' : stage === 'command' ? 'Running wc -l notes.txt' : agent === 'codex' ? 'Searching the web' : 'Reading');
 			await expect(tab.getByTitle('working')).toBeVisible();
 			if (stage !== 'thinking') {
-				const calls = panel.locator('.calls > summary').last();
-				await expect(calls).toContainText(/\d+ tool calls?/);
-				await expect(calls.locator('.latest')).toHaveText(await activity.locator('.label').innerText());
-				await expect(panel.locator('.calls[open]')).toHaveCount(0);
+				const calls = panel.locator('.calls > .summary').last();
+				await expect(calls).toContainText(/^[A-Z][a-z]+ \d/);
+				await expect(calls.locator('.live')).toHaveText(`· ${await activity.locator('.label').innerText()}`);
+				await expect(panel.locator('.calls > .summary[aria-expanded="true"]')).toHaveCount(0);
 			}
 			unlinkSync(`${gates}/${stage}`);
 		}
