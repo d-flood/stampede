@@ -996,7 +996,7 @@ struct Transcript {
     said: Vec<(usize, String)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     activity: super::Activity,
-    commands: HashMap<String, (usize, String, String)>,
+    commands: HashMap<String, (usize, String, String, u64)>,
     snippets: HashMap<String, Item>,
     media: HashSet<String>,
     delegating: HashSet<String>,
@@ -1793,7 +1793,8 @@ impl Transcript {
     }
 
     fn run_shell(&mut self, command: String, progress: &UnboundedSender<shell::Progress>) {
-        let item = Item::Shell { command: command.clone(), status: CommandStatus::Running, output: String::new(), pending: false };
+        let started_at = super::now();
+        let item = Item::Shell { command: command.clone(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(started_at) };
         let index = self.push(item.clone());
         let env = self.location.as_ref().map(|location| location.env.clone()).unwrap_or_default();
         match shell::spawn(index, &command, &self.cwd, &env, progress.clone()) {
@@ -1801,7 +1802,7 @@ impl Transcript {
                 self.running.insert(index, Running { item, stdout: shell::Capture::default(), stderr: shell::Capture::default(), stop: Some(stop) });
             }
             Err(error) => {
-                let _ = self.events.send(Event::Item(index, Item::Shell { command, status: CommandStatus::Failed, output: error.to_string(), pending: false }));
+                let _ = self.events.send(Event::Item(index, Item::Shell { command, status: CommandStatus::Failed, output: error.to_string(), pending: false, started_at: None }));
             }
         }
     }
@@ -1819,9 +1820,10 @@ impl Transcript {
             }
             shell::Progress::Exit { index, code } => {
                 let Some(Running { mut item, stdout, stderr, .. }) = self.running.remove(&index) else { return };
-                let Item::Shell { command, status, pending, .. } = &mut item else { return };
+                let Item::Shell { command, status, pending, started_at, .. } = &mut item else { return };
                 *status = if code == Some(0) { CommandStatus::Ok } else { CommandStatus::Failed };
                 *pending = true;
+                *started_at = None;
                 let block = shell::block(command, &stdout.text(), &stderr.text(), code);
                 let _ = self.events.send(Event::Item(index, item.clone()));
                 self.shell_context.push((index, item, block));
@@ -1837,9 +1839,9 @@ impl Transcript {
     }
 
     fn stop_commands(&mut self) {
-        for (id, (index, command, output)) in self.commands.drain() {
+        for (id, (index, command, output, _)) in self.commands.drain() {
             self.activity.finish(&id, &self.events);
-            let _ = self.events.send(Event::Item(index, Item::Command { command, status: CommandStatus::Failed, output }));
+            let _ = self.events.send(Event::Item(index, Item::Command { command, status: CommandStatus::Failed, output, started_at: None }));
         }
         for (subagent, transcript) in self.subagents.values_mut() {
             transcript.stop_commands();
@@ -1866,7 +1868,7 @@ impl Transcript {
     fn shells(&mut self, parts: Vec<shell::Part>) {
         for part in parts {
             if let shell::Part::Input(command) = part {
-                let item = Item::Shell { command, status: CommandStatus::Ok, output: String::new(), pending: false };
+                let item = Item::Shell { command, status: CommandStatus::Ok, output: String::new(), pending: false, started_at: None };
                 self.shell = Some((self.push(item.clone()), item));
                 continue;
             }
@@ -2130,9 +2132,9 @@ impl Transcript {
                 reported(subagent, report, totals);
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
-            if let Some((index, command, output)) = tool.as_ref().and_then(|tool| self.commands.remove(tool)) {
+            if let Some((index, command, output, _)) = tool.as_ref().and_then(|tool| self.commands.remove(tool)) {
                 let status = if status == Some("completed") { CommandStatus::Ok } else { CommandStatus::Failed };
-                let _ = self.events.send(Event::Item(index, Item::Command { command, status, output }));
+                let _ = self.events.send(Event::Item(index, Item::Command { command, status, output, started_at: None }));
             }
         }
     }
@@ -2265,9 +2267,10 @@ impl Transcript {
             }
             "Bash" => {
                 let command = text("command");
-                let running = Item::Command { command: command.clone(), status: CommandStatus::Running, output: String::new() };
+                let started_at = timestamp.as_str().and_then(super::epoch_ms).unwrap_or_else(super::now);
+                let running = Item::Command { command: command.clone(), status: CommandStatus::Running, output: String::new(), started_at: Some(started_at) };
                 let index = self.push(running);
-                self.commands.insert(id.to_owned(), (index, command, String::new()));
+                self.commands.insert(id.to_owned(), (index, command, String::new(), started_at));
             }
             "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => {
                 self.edits.insert(id.to_owned(), name == "Write");
@@ -2429,7 +2432,7 @@ impl Transcript {
                 }
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
-            let Some((index, command, _)) = self.commands.remove(id) else {
+            let Some((index, command, _, started_at)) = self.commands.remove(id) else {
                 continue;
             };
             let output = match &block["content"] {
@@ -2444,12 +2447,12 @@ impl Transcript {
                 CommandStatus::Failed
             } else if let Some(task) = task {
                 self.tasks.insert(task.to_owned(), id.to_owned());
-                self.commands.insert(id.to_owned(), (index, command.clone(), output.clone()));
+                self.commands.insert(id.to_owned(), (index, command.clone(), output.clone(), started_at));
                 CommandStatus::Running
             } else {
                 CommandStatus::Ok
             };
-            let _ = self.events.send(Event::Item(index, Item::Command { command, status, output }));
+            let _ = self.events.send(Event::Item(index, Item::Command { command, status, output, started_at: (status == CommandStatus::Running).then_some(started_at) }));
         }
         if interrupted(content) {
             self.push(Item::interrupted());
@@ -3195,7 +3198,7 @@ mod subagent_tests {
             for status in ["completed", "failed", "stopped", "killed"] {
                 let (events, mut received) = mpsc::unbounded_channel();
                 let mut transcript = Transcript::new(events, Path::new("/project"));
-                let assistant = json!({ "type": "assistant", "message": { "content": [{
+                let assistant = json!({ "type": "assistant", "timestamp": "2026-11-05T14:00:00Z", "message": { "content": [{
                     "type": "tool_use", "id": "shell", "name": "Bash", "input": { "command": "pnpm dev", "run_in_background": true },
                 }] } });
                 let mut result = json!({ "type": "user", "message": { "content": [{
@@ -3209,7 +3212,7 @@ mod subagent_tests {
                 while let Ok(event) = received.try_recv() {
                     if let Event::Item(index, item) = event { items.insert(index, item); }
                 }
-                assert!(matches!(items.get(&0), Some(Item::Command { status: CommandStatus::Running, output, .. }) if output == "Server starting"));
+                assert!(matches!(items.get(&0), Some(Item::Command { status: CommandStatus::Running, output, started_at, .. }) if output == "Server starting" && *started_at == Some(1_793_887_200_000)));
                 let notification = json!({ "type": "user", "promptSource": "system", "message": { "content": format!(
                     "<task-notification><task-id>task</task-id><status>{status}</status></task-notification>"
                 ) } });
@@ -3218,7 +3221,7 @@ mod subagent_tests {
                     if let Event::Item(index, item) = event { items.insert(index, item); }
                 }
                 let expected = if status == "completed" { CommandStatus::Ok } else { CommandStatus::Failed };
-                assert!(matches!(items.get(&0), Some(Item::Command { status, output, .. }) if *status == expected && output == "Server starting"));
+                assert!(matches!(items.get(&0), Some(Item::Command { status, output, started_at, .. }) if *status == expected && output == "Server starting" && started_at.is_none()));
                 assert_eq!(items.len(), 1);
                 assert!(transcript.commands.is_empty());
             }

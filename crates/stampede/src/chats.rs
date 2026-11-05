@@ -79,13 +79,21 @@ pub enum Item {
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         write: bool,
     },
-    Command { command: String, status: CommandStatus, output: String },
+    Command {
+        command: String,
+        status: CommandStatus,
+        output: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        started_at: Option<u64>,
+    },
     Shell {
         command: String,
         status: CommandStatus,
         output: String,
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         pending: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        started_at: Option<u64>,
     },
     Subagent {
         id: String,
@@ -371,10 +379,10 @@ impl Subagent {
 fn appended(existing: &Item, item: &Item) -> Option<String> {
     let (before, after) = match (existing, item) {
         (Item::Text { text: before, streaming: true, phase }, Item::Text { text: after, streaming: true, phase: same }) if phase == same => (before, after),
-        (Item::Command { command, status, output: before }, Item::Command { command: same, status: unchanged, output: after })
-            if command == same && status == unchanged => (before, after),
-        (Item::Shell { command, status, output: before, pending }, Item::Shell { command: same, status: unchanged, output: after, pending: still })
-            if command == same && status == unchanged && pending == still => (before, after),
+        (Item::Command { command, status, output: before, started_at }, Item::Command { command: same, status: unchanged, output: after, started_at: same_start })
+            if command == same && status == unchanged && started_at == same_start => (before, after),
+        (Item::Shell { command, status, output: before, pending, started_at }, Item::Shell { command: same, status: unchanged, output: after, pending: still, started_at: same_start })
+            if command == same && status == unchanged && pending == still && started_at == same_start => (before, after),
         _ => return None,
     };
     after.strip_prefix(before.as_str()).map(str::to_owned)

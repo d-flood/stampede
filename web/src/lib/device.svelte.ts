@@ -50,8 +50,8 @@ export type Item =
 	| Subagent
 	| { kind: 'edit'; path: string; diff: string; added: number; removed: number; write?: true }
 	| { kind: 'canvas'; canvas: string; added: number; removed: number; write?: true }
-	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string; elided?: true }
-	| { kind: 'shell'; command: string; status: 'running' | 'ok' | 'failed'; output: string; pending?: true; elided?: true }
+	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string; startedAt?: number; elided?: true }
+	| { kind: 'shell'; command: string; status: 'running' | 'ok' | 'failed'; output: string; startedAt?: number; pending?: true; elided?: true }
 	| { kind: 'notice'; notice: 'compacted' | 'error' | 'limit' | 'interrupted' | 'rewound' | 'tickets' | 'speed'; text: string };
 
 export type Request = (

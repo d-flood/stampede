@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { clock, totals } from '#lib/chat/agents.ts';
+	import Elapsed from '#lib/chat/Elapsed.svelte';
+	import { totals } from '#lib/chat/agents.ts';
 	import SubagentDot from '#lib/chat/SubagentDot.svelte';
 	import type { Subagent } from '#lib/device.svelte.ts';
 	import { agentNames, logos } from '#lib/chat/sessions.ts';
@@ -24,7 +25,7 @@
 		{#if subagent.status === 'waiting'}
 			<span class="waiting">waiting for you</span>
 		{:else if subagent.status !== 'done'}
-			{#if subagent.startedAt}{clock(subagent.startedAt)}{/if}
+			{#if subagent.startedAt}<Elapsed startedAt={subagent.startedAt} />{/if}
 		{:else}
 			{#if ended}<span class="outcome">{ended}</span>{/if}
 			{#if ended && subagent.totals}·{/if}

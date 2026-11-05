@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Code from '#lib/chat/Code.svelte';
+	import Elapsed from '#lib/chat/Elapsed.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
 
 	let { item, onexpand, open = $bindable(false) }: { item: Extract<Item, { kind: 'command' }>; onexpand?(): void; open?: boolean } = $props();
@@ -12,7 +13,10 @@
 <details class={item.status} bind:open ontoggle={(event) => event.currentTarget.open && item.elided && onexpand?.()}>
 	<summary>
 		<span class="command">$ <Code code={item.command} path="command.sh" /></span>
-		<span class="outcome">{outcomes[item.status]}</span>
+		<span class="outcome">
+			{#if item.status === 'running' && item.startedAt}<Elapsed startedAt={item.startedAt} />{/if}
+			{outcomes[item.status]}
+		</span>
 	</summary>
 	{#if output}
 		<pre>{output}</pre>
@@ -52,6 +56,9 @@
 	}
 
 	.outcome {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
 		flex-shrink: 0;
 	}
 

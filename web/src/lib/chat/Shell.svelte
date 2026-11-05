@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Code from '#lib/chat/Code.svelte';
+	import Elapsed from '#lib/chat/Elapsed.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
 
 	let { item, onexpand }: { item: Extract<Item, { kind: 'shell' }>; onexpand?(): void } = $props();
@@ -14,6 +15,7 @@
 		<span class="command">! <Code code={item.command} path="command.sh" /></span>
 		<span class="outcome">
 			{#if item.pending}<span class="pending" title="Sent with your next message">next message ·</span>{/if}
+			{#if item.status === 'running' && item.startedAt}<Elapsed startedAt={item.startedAt} />{/if}
 			{outcomes[item.status]}
 		</span>
 	</summary>
@@ -59,6 +61,9 @@
 	}
 
 	.outcome {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
 		flex-shrink: 0;
 		margin-left: auto;
 	}

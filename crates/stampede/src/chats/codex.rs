@@ -852,7 +852,7 @@ impl Transcript {
         if self.thread == thread {
             for id in candidates.difference(live) {
                 if let Some((index, mut item, _)) = self.commands.remove(id) {
-                    if let Item::Command { status, .. } | Item::Shell { status, .. } = &mut item { *status = CommandStatus::Failed; }
+                    if let Item::Command { status, started_at, .. } | Item::Shell { status, started_at, .. } = &mut item { *status = CommandStatus::Failed; *started_at = None; }
                     let _ = self.events.send(Event::Item(index, item));
                 }
             }
@@ -1567,6 +1567,9 @@ impl Transcript {
         let index = match self.commands.remove(id) {
             Some((index, previous, started)) => {
                 turn = started;
+                if let (Item::Command { status: CommandStatus::Running, started_at, .. } | Item::Shell { status: CommandStatus::Running, started_at, .. }, Item::Command { started_at: previous, .. } | Item::Shell { started_at: previous, .. }) = (&mut item, &previous) {
+                    *started_at = *previous;
+                }
                 if (value["aggregatedOutput"].is_null() || value["exitCode"] == -1)
                     && let (Item::Command { output, .. } | Item::Shell { output, .. }, Item::Command { output: previous, .. } | Item::Shell { output: previous, .. }) = (&mut item, previous)
                 {
@@ -1644,8 +1647,8 @@ fn command(item: &Value) -> Item {
     };
     let output = item["aggregatedOutput"].as_str().unwrap_or_default().to_owned();
     match item["source"].as_str() {
-        Some("userShell") => Item::Shell { command, status, output, pending: false },
-        _ => Item::Command { command, status, output },
+        Some("userShell") => Item::Shell { command, status, output, pending: false, started_at: (status == CommandStatus::Running).then(super::now) },
+        _ => Item::Command { command, status, output, started_at: (status == CommandStatus::Running).then(super::now) },
     }
 }
 
@@ -1816,6 +1819,8 @@ mod tests {
             if let Event::Item(index, item) = event { items.insert(index, item); }
         }
         assert!(matches!(items.get(&0), Some(Item::Command { status: CommandStatus::Running, output, .. }) if output == "Server ready\n"));
+        let started_at = match items[&0] { Item::Command { started_at, .. } => started_at, _ => unreachable!() };
+        assert!(started_at.is_some_and(|start| start > 0));
         let mut finished = item;
         finished["status"] = json!("completed");
         transcript.completed(&finished, 0);
@@ -1823,7 +1828,7 @@ mod tests {
             if let Event::Item(index, item) = event { items.insert(index, item); }
         }
         assert_eq!(items.len(), 1);
-        assert!(matches!(items.get(&0), Some(Item::Command { status: CommandStatus::Ok, output, .. }) if output == "Server ready\n"));
+        assert!(matches!(items.get(&0), Some(Item::Command { status: CommandStatus::Ok, output, started_at: start, .. }) if output == "Server ready\n" && start.is_none()));
         assert!(transcript.commands.is_empty());
     }
 
@@ -1844,7 +1849,7 @@ mod tests {
             if let Event::Item(index, item) = event { items.insert(index, item); }
         }
         assert_eq!(items.len(), 1);
-        assert!(matches!(&items[&0], Item::Shell { command, status: CommandStatus::Failed, output, pending: false } if command == "cargo test" && output == "running 3 tests\n"));
+        assert!(matches!(&items[&0], Item::Shell { command, status: CommandStatus::Failed, output, pending: false, .. } if command == "cargo test" && output == "running 3 tests\n"));
     }
 
     #[test]

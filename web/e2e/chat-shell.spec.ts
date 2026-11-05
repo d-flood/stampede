@@ -45,9 +45,14 @@ test('a ! command runs at once, shows its output, and reaches Claude with the ne
 	else await panel.getByRole('button', { name: 'Run', exact: true }).click();
 	const sleeping = panel.locator('details.shell', { hasText: 'sleep 30' });
 	await expect(sleeping).toContainText('running…');
+	await expect(sleeping.locator('.elapsed')).toHaveText(/^0:\d{2}$/);
+	const elapsed = await sleeping.locator('.elapsed').textContent();
+	await expect(sleeping.locator('.elapsed')).not.toHaveText(elapsed!);
+	await expect.poll(() => sleeping.locator('.elapsed').evaluate((node) => getComputedStyle(node).fontVariantNumeric)).toBe('tabular-nums');
 	if (project.name === 'desktop') await composer.press('Escape');
 	else await panel.getByRole('button', { name: 'Interrupt', exact: true }).click();
 	await expect(sleeping).toContainText('✗ failed');
+	await expect(sleeping.locator('.elapsed')).toHaveCount(0);
 	await expect(panel.getByRole('button', { name: 'Interrupt', exact: true })).toHaveCount(0);
 	await closeProject(page, name);
 });

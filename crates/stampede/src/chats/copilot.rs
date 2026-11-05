@@ -568,10 +568,11 @@ impl Transcript {
 
     fn stop_commands(&mut self) {
         for index in 0..self.items.len() {
-            if let Item::Command { status, .. } | Item::Shell { status, .. } = &mut self.items[index]
+            if let Item::Command { status, started_at, .. } | Item::Shell { status, started_at, .. } = &mut self.items[index]
                 && *status == CommandStatus::Running
             {
                 *status = CommandStatus::Failed;
+                *started_at = None;
                 self.changed(index);
             }
         }
@@ -633,11 +634,11 @@ impl Transcript {
                 }
                 self.changed(index);
             }
-            "tool.execution_start" => self.tool_start(data),
+            "tool.execution_start" => self.tool_start(data, super::epoch_ms(&event.timestamp).unwrap_or_else(super::now)),
             "tool.user_requested" => {
                 let (Some(id), Some(command)) = (data["toolCallId"].as_str(), data["arguments"]["command"].as_str()) else { return };
                 if self.tools.contains_key(id) { return; }
-                let index = self.push(Item::Shell { command: command.to_owned(), status: CommandStatus::Running, output: String::new(), pending: false });
+                let index = self.push(Item::Shell { command: command.to_owned(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(super::epoch_ms(&event.timestamp).unwrap_or_else(super::now)) });
                 self.tools.insert(id.to_owned(), (index, data.clone()));
             }
             "tool.execution_complete" => self.tool_complete(data),
@@ -782,7 +783,7 @@ impl Transcript {
         true
     }
 
-    fn tool_start(&mut self, data: &Value) {
+    fn tool_start(&mut self, data: &Value, started_at: u64) {
         self.finish_thinking();
         let Some(id) = data["toolCallId"].as_str() else { return };
         if self.tools.contains_key(id) { return; }
@@ -790,7 +791,7 @@ impl Transcript {
         let name = data["toolName"].as_str().unwrap_or("tool");
         let args = &data["arguments"];
         let item = if let Some(command) = args["command"].as_str().filter(|_| matches!(name, "bash" | "powershell" | "shell" | "local_shell")) {
-            Item::Command { command: command.to_owned(), status: CommandStatus::Running, output: String::new() }
+            Item::Command { command: command.to_owned(), status: CommandStatus::Running, output: String::new(), started_at: Some(started_at) }
         } else if data["mcpServerName"] == html::SERVER && data["mcpToolName"] == html::TOOL {
             html::item(args).unwrap_or_else(|| tool(name, args, ToolKind::Mcp))
         } else {
@@ -806,11 +807,13 @@ impl Transcript {
             if !matches!(self.items[index], Item::Subagent { .. })
                 && let Some(item) = super::delegation::item(&data["result"], self.data_dir.as_deref())
             { self.items[index] = item; self.changed(index); }
-        } else if let Item::Shell { status, output, .. } = &mut self.items[index] {
+        } else if let Item::Shell { status, output, started_at, .. } = &mut self.items[index] {
+            *started_at = None;
             *status = if data["success"] == true { CommandStatus::Ok } else { CommandStatus::Failed };
             if output.is_empty() && let Some(content) = data["result"]["content"].as_str().or(data["error"]["message"].as_str()) { *output = content.to_owned(); }
             self.changed(index);
-        } else if let Item::Command { status, output, .. } = &mut self.items[index] {
+        } else if let Item::Command { status, output, started_at, .. } = &mut self.items[index] {
+            *started_at = None;
             *status = if data["success"] == true { CommandStatus::Ok } else { CommandStatus::Failed };
             if let Some(content) = data["result"]["content"].as_str().or(data["error"]["message"].as_str()) { *output = content.to_owned(); }
             self.changed(index);
@@ -895,7 +898,7 @@ mod tests {
     fn question_tool_calls_leave_no_row() {
         let mut transcript = Transcript::new(Path::new("/project"), mpsc::unbounded_channel().0, Settings::default());
         transcript.tool_start(&json!({ "toolCallId": "ask", "toolName": "ask_questions", "mcpServerName": html::SERVER,
-            "mcpToolName": super::super::questions::TOOL, "arguments": {} }));
+            "mcpToolName": super::super::questions::TOOL, "arguments": {} }), 42);
         transcript.tool_complete(&json!({ "toolCallId": "ask", "success": true, "result": { "content": "{}" } }));
         assert!(transcript.items.is_empty());
     }
@@ -932,7 +935,7 @@ mod tests {
             let (events, _) = mpsc::unbounded_channel();
             let mut transcript = Transcript::new(Path::new("/project"), events, Settings::default());
             transcript.data_dir = Some(directory.path().to_owned());
-            transcript.tool_start(&start);
+            transcript.tool_start(&start, 42);
             if live {
                 transcript.delegated(full.clone());
                 transcript.delegated(full.clone());
@@ -967,8 +970,9 @@ mod tests {
     fn user_shell_commands_stream_only_shell_output_and_keep_it_when_cancelled() {
         let (events, mut received) = mpsc::unbounded_channel();
         let mut transcript = Transcript::new(Path::new("/project"), events, Settings::default());
-        let event = |id: &str, kind: &str, data: Value| serde_json::from_value::<SessionEvent>(json!({ "id": id, "timestamp": "", "parentId": null, "type": kind, "data": data })).unwrap();
+        let event = |id: &str, kind: &str, data: Value| serde_json::from_value::<SessionEvent>(json!({ "id": id, "timestamp": "2026-11-05T14:00:00Z", "parentId": null, "type": kind, "data": data })).unwrap();
         transcript.read(&event("1", "tool.user_requested", json!({ "toolCallId": "call", "toolName": "local_shell", "arguments": { "command": "make" } })), false);
+        assert!(matches!(&transcript.items[0], Item::Shell { started_at: Some(1_793_887_200_000), .. }));
         transcript.read(&event("2", "tool.shell_output", json!({ "toolCallId": "call", "stream": "stdout", "text": "cc main.c\n" })), false);
         transcript.read(&event("3", "tool.execution_partial_result", json!({ "toolCallId": "call", "partialOutput": "cc main.c\n" })), false);
         transcript.read(&event("4", "tool.execution_complete", json!({ "toolCallId": "call", "isUserRequested": true, "success": false, "error": { "message": "cc main.c\ncc main.c\nShell command canceled." } })), false);
@@ -977,6 +981,6 @@ mod tests {
             if let Event::Item(index, item) = event { items.insert(index, item); }
         }
         assert_eq!(items.len(), 1);
-        assert!(matches!(&items[&0], Item::Shell { command, status: CommandStatus::Failed, output, .. } if command == "make" && output == "cc main.c\n"));
+        assert!(matches!(&items[&0], Item::Shell { command, status: CommandStatus::Failed, output, started_at, .. } if command == "make" && output == "cc main.c\n" && started_at.is_none()));
     }
 }

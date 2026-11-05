@@ -8,8 +8,10 @@ test('running shells restore after reload and background updates reach project t
 	let route: WebSocketRoute;
 	let chatId: string;
 	const command = `pnpm dev --host 0.0.0.0 --port 5173 ${'long-argument-'.repeat(20)}`;
-	const shell: Item = { kind: 'command', command, status: 'running', output: 'Server ready\n' };
-	const watcher: Item = { kind: 'command', command: 'pnpm test --watch', status: 'running', output: 'Watching files' };
+	await page.clock.install({ time: new Date('2026-11-05T15:00:00Z') });
+	const startedAt = Date.parse('2026-11-05T14:58:55Z');
+	const shell: Item = { kind: 'command', command, startedAt, status: 'running', output: 'Server ready\n' };
+	const watcher: Item = { kind: 'command', command: 'pnpm test --watch', startedAt, status: 'running', output: 'Watching files' };
 	const child: Item = { kind: 'subagent', id: 'builder', name: 'Builder', task: 'Build the app', status: 'working', items: [watcher] };
 	const items: Item[] = [shell, child, { kind: 'text', text: 'The server is running.', phase: 'final', streaming: false }];
 	await page.routeWebSocket('**/ws', (socket) => {
@@ -34,8 +36,17 @@ test('running shells restore after reload and background updates reach project t
 	await chip.click();
 	await expect(shells).toContainText('Running shells · 2');
 	await expect(shells.getByText('Builder', { exact: true })).toBeVisible();
+	await expect(shells.locator('.elapsed')).toHaveText([/^1:\d{2}$/, /^1:\d{2}$/]);
+	const seconds = async () => (await shells.locator('.elapsed').first().innerText()).split(':').reduce((total, value) => total * 60 + Number(value), 0);
+	const elapsed = await seconds();
+	await page.clock.fastForward(10_000);
+	await expect.poll(seconds).toBeGreaterThanOrEqual(elapsed + 10);
+	route!.send(JSON.stringify({ type: 'chat.item', chatId: chatId!, index: 0, item: { ...shell, output: 'Server ready\nUpdated output' } }));
+	await expect.poll(seconds).toBeGreaterThanOrEqual(elapsed + 10);
+	await expect.poll(() => shells.locator('.elapsed').first().evaluate((node) => getComputedStyle(node).fontVariantNumeric)).toBe('tabular-nums');
+	await expect.poll(() => shells.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
 	await shells.locator('.shell summary').first().click();
-	await expect(shells.getByText('Server ready', { exact: true })).toBeVisible();
+	await expect(shells.getByText(/Server ready\s+Updated output/)).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(shells).toHaveCount(0);
 	await panel.getByRole('region', { name: 'Subagents' }).getByRole('button', { name: /^Subagents/ }).click();
@@ -46,12 +57,14 @@ test('running shells restore after reload and background updates reach project t
 	await expect(chip).toHaveText('2 shells');
 	await chip.click();
 	await expect(shells).toContainText('Running shells · 2');
+	await expect.poll(seconds).toBeGreaterThanOrEqual(elapsed + 10);
 	await page.keyboard.press('Escape');
 	items[0] = { ...shell, status: 'ok' };
 	route!.send(JSON.stringify({ type: 'chat.item', chatId: chatId!, index: 0, item: items[0] }));
 	items[1] = { ...child, status: 'done', items: [{ ...watcher, status: 'failed' }] };
 	route!.send(JSON.stringify({ type: 'chat.item', chatId: chatId!, index: 1, item: items[1] }));
 	await expect(chip).toHaveCount(0);
+	await expect(panel.locator('.elapsed')).toHaveCount(0);
 	const tile = page.locator(`nav[aria-label="Projects"] button[aria-label="${name}"]`);
 	route!.send(JSON.stringify({ type: 'chat.background', chatId: chatId!, background: true }));
 	await expect(tile.getByTitle('background')).toBeVisible();

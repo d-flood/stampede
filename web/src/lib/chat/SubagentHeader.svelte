@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { clock, color, totals, type Placed } from '#lib/chat/agents.ts';
+	import Elapsed from '#lib/chat/Elapsed.svelte';
+	import { color, totals, type Placed } from '#lib/chat/agents.ts';
 	import SubagentDot from '#lib/chat/SubagentDot.svelte';
 	import { agentNames, logos } from '#lib/chat/sessions.ts';
 	import type { Item, Subagent } from '#lib/device.svelte.ts';
@@ -33,7 +34,7 @@
 	<span class="status {subagent.status}" class:ended>
 		<span class="mark" title={ended ?? subagent.status}><Mark /></span>
 		{#if subagent.status !== 'done'}
-			{#if subagent.startedAt}<span>{clock(subagent.startedAt)}</span>{/if}
+			{#if subagent.startedAt}<Elapsed startedAt={subagent.startedAt} />{/if}
 		{:else}
 			{#if ended}<span class="outcome">{ended}</span>{/if}
 			{#if ended && subagent.totals}<span>·</span>{/if}
