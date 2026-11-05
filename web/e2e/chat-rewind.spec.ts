@@ -87,7 +87,8 @@ for (const agent of ['claude-code', 'codex'] as const) {
 			const panel = node.closest('.panel')!.getBoundingClientRect();
 			return rect.right <= panel.right && rect.top >= panel.top && rect.bottom <= panel.bottom;
 		})).toBe(true);
-		await message(3).getByRole('button', { name: 'Rewind from message 3', exact: true }).click();
+		await message(3).getByRole('button', { name: 'Actions for message 3', exact: true }).click();
+		await page.getByRole('menuitem', { name: 'Rewind…', exact: true }).click();
 		const boundary = agent === 'codex' ? 1 : 3;
 		const review = page.getByRole('dialog', { name: `Rewind before message ${boundary}?` });
 		await expect(review).toContainText('Message 3 will be removed, including its prompt and attachments.');
@@ -101,7 +102,8 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		expect(sent.filter((message) => message.type === 'chat.run')).toHaveLength(0);
 		await review.getByRole('button', { name: 'Cancel', exact: true }).click();
 		await expect(review).toHaveCount(0);
-		await message(3).getByRole('button', { name: 'Rewind from message 3', exact: true }).click();
+		await message(3).getByRole('button', { name: 'Actions for message 3', exact: true }).click();
+		await page.getByRole('menuitem', { name: 'Rewind…', exact: true }).click();
 		const confirm = review.getByRole('button', { name: `Rewind before message ${boundary}`, exact: true });
 		route!.send(JSON.stringify({ type: 'chat.status', chatId: chatId!, status: 'working' }));
 		await expect(confirm).toBeDisabled();

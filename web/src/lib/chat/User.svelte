@@ -3,6 +3,8 @@
 	import type { Item } from '#lib/device.svelte.ts';
 	import CaretRight from '~icons/ph/caret-right';
 	import ArrowCounterClockwise from '~icons/ph/arrow-counter-clockwise';
+	import DotsThree from '~icons/ph/dots-three-bold';
+	import Menu from '#lib/ui/Menu.svelte';
 
 	let { item, first, index, number, onrewind }: { item: Extract<Item, { kind: 'user' }>; first: boolean; index: number; number: number; onrewind?(index: number): void } = $props();
 
@@ -11,26 +13,42 @@
 	const markdown = (text: string) => ({ kind: 'text', text, streaming: false, phase: 'final' }) as const;
 </script>
 
+{#snippet more()}
+	{#if onrewind}
+		<Menu items={[{ label: 'Rewind…', icon: ArrowCounterClockwise, onselect: () => onrewind(index) }]}>
+			{#snippet trigger(props)}
+				<button {...props} class="more" aria-label="Actions for message {number}"><DotsThree aria-hidden="true" /></button>
+			{/snippet}
+		</Menu>
+	{/if}
+{/snippet}
+
 <section class="message" data-user-message={index} aria-label="User message {number}">
-	{#if lines.length > 12}
-		<details class="user">
-			<summary>
-				<span class="first">
-					{#if first}<span class="label">First prompt</span>{' · '}{/if}{lines[0]}
-				</span>
-				<span class="label">{lines.length} lines</span>
-				<span class="caret"><CaretRight /></span>
-			</summary>
-			<div class="body"><Text item={markdown(item.text)} /></div>
-		</details>
-	{:else if item.template}
-		<div class="user"><span class="template">/{item.template}</span>{' '}<Text item={markdown(item.text.slice(item.template.length + 1))} /></div>
-	{:else if item.text}
-		<div class="user"><Text item={markdown(item.text)} /></div>
+	{#if item.text}
+		<div class="bubble">
+			{#if lines.length > 12}
+				<details class="user">
+					<summary>
+						<span class="first">
+							{#if first}<span class="label">First prompt</span>{' · '}{/if}{lines[0]}
+						</span>
+						<span class="label">{lines.length} lines</span>
+						<span class="caret"><CaretRight /></span>
+					</summary>
+					<div class="body"><Text item={markdown(item.text)} /></div>
+				</details>
+			{:else if item.template}
+				<div class="user"><span class="template">/{item.template}</span>{' '}<Text item={markdown(item.text.slice(item.template.length + 1))} /></div>
+			{:else}
+				<div class="user"><Text item={markdown(item.text)} /></div>
+			{/if}
+			{@render more()}
+		</div>
 	{/if}
 
 	{#if item.images}
 		<div class="images" aria-label="Attached images">
+			{#if !item.text}{@render more()}{/if}
 			<span class="label">{item.images} image{item.images === 1 ? '' : 's'}</span>
 			{#each item.imageUrls ?? [] as src, index}
 				<a href={src} target="_blank" rel="noreferrer" aria-label="Open attached image {index + 1}">
@@ -40,23 +58,24 @@
 		</div>
 	{/if}
 
-	{#if onrewind}
-		<button class="rewind" aria-label="Rewind from message {number}" onclick={() => onrewind(index)}><ArrowCounterClockwise aria-hidden="true" /> Rewind…</button>
-	{/if}
 </section>
 
 <style>
 	.message { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
-	.rewind { display: inline-flex; align-self: flex-end; align-items: center; gap: var(--space-1); min-height: var(--target-min); padding: 0 var(--space-2); border: none; border-radius: var(--radius-sm); background: none; color: var(--muted-fg); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
-	.rewind:hover { background: var(--hover); color: var(--color-fg); }
-	.rewind:focus-visible { outline: var(--border-width) solid var(--accent); }
+	.bubble { position: relative; align-self: flex-end; max-width: 85%; }
+	.more { position: absolute; bottom: 0; left: 0; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: var(--border-width) solid var(--border); border-radius: 50%; background: var(--surface-1); color: var(--muted-fg); font-size: var(--font-size-sm); cursor: pointer; transform: translate(-50%, 50%); }
+	.more::before { content: ''; position: absolute; inset: calc((24px - var(--target-min)) / 2); border-radius: 50%; }
+	.more:hover, .more[aria-expanded='true'] { background: var(--hover); color: var(--color-fg); }
+	.more:focus-visible { outline: var(--border-width) solid var(--accent); }
 	@media (hover: hover) {
-		.rewind { opacity: 0; transition: opacity var(--dur-med) var(--ease-out); }
-		.message:hover .rewind, .rewind:focus-visible { opacity: 1; }
+		.more { opacity: 0; transition: opacity var(--dur-med) var(--ease-out); }
+		.message:hover .more, .message:focus-within .more, .more[aria-expanded='true'] { opacity: 1; }
+	}
+	@media (hover: none) {
+		.more { width: 20px; height: 20px; font-size: 12px; }
+		.more::before { inset: calc((20px - var(--target-min)) / 2); }
 	}
 	.user {
-		align-self: flex-end;
-		max-width: 85%;
 		padding: var(--space-3) var(--space-4);
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
@@ -114,6 +133,7 @@
 	}
 
 	.images {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		align-items: flex-end;

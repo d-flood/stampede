@@ -53,7 +53,7 @@
 		margin-bottom: 0;
 	}
 
-	.text :global(:is(p, ul, ol, pre, blockquote, table, .code-block)) {
+	.text :global(:is(p, ul, ol, pre, blockquote, .table, .code-block)) {
 		margin: 0 0 var(--space-3);
 	}
 
@@ -89,11 +89,12 @@
 		border-radius: var(--radius-md);
 		background: var(--surface-2);
 		font-family: var(--font-mono);
-		font-size: var(--font-size-code);
+		font-size: 0.85em;
 	}
 
 	.text :global(pre) {
 		overflow-x: auto;
+		tab-size: 4;
 		padding: var(--space-3);
 		border-radius: var(--radius-lg);
 		background: var(--surface-1);
@@ -102,6 +103,7 @@
 	.text :global(pre code) {
 		padding: 0;
 		background: none;
+		font-size: var(--font-size-code);
 	}
 
 	.text :global(.code-block) {
@@ -168,22 +170,30 @@
 		color: var(--muted-fg);
 	}
 
-	.text :global(table) {
-		display: block;
+	.text :global(.table) {
 		width: fit-content;
 		max-width: 100%;
 		overflow-x: auto;
 		overflow-wrap: normal;
-		border-collapse: collapse;
 		border-radius: var(--radius-lg);
 		background: var(--surface-1);
 		box-shadow: var(--shadow-lift);
+	}
+
+	.text :global(table) {
+		border-collapse: collapse;
 	}
 
 	.text :global(:is(th, td)) {
 		padding: var(--space-2) var(--space-3);
 		border-bottom: var(--border-width) solid var(--border);
 		vertical-align: top;
+	}
+
+	@media (pointer: coarse) and (max-width: 767px) {
+		.text :global(:is(th, td)) {
+			white-space: nowrap;
+		}
 	}
 
 	.text :global(th) {

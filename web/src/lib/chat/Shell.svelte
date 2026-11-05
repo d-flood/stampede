@@ -88,5 +88,6 @@
 		background: var(--color-bg);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
+		tab-size: 4;
 	}
 </style>

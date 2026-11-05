@@ -317,7 +317,7 @@
 	}
 
 	.phone .column {
-		font-size: var(--font-size-lg);
+		font-size: var(--font-size-chat);
 		line-height: 1.5;
 	}
 </style>

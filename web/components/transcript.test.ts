@@ -84,3 +84,53 @@ test('opening an elided command requests its original item index', async () => {
 	await view.rerender({ items: [items[0], { kind: 'command', command: 'cat notes.txt', status: 'ok', output: 'Full command output' }] });
 	await expect.element(view.getByText('Full command output', { exact: true })).toBeVisible();
 });
+
+test('turns are spaced further apart than the entries within them', async () => {
+	const items: Item[] = [
+		{ kind: 'user', text: 'Debounce the watcher.', images: 0 },
+		{ kind: 'text', text: 'I’ll map the consumers first.', phase: 'commentary', streaming: false },
+		{ kind: 'tools', calls: [{ kind: 'read', name: 'Read', detail: 'watch.rs' }] },
+		{ kind: 'text', text: 'The watcher is the place.', phase: 'commentary', streaming: false },
+		{ kind: 'text', text: 'Done.', phase: 'final', streaming: false },
+		{ kind: 'user', text: 'Check phone width too.', images: 0 },
+		{ kind: 'text', text: 'Capturing it now.', phase: 'commentary', streaming: false }
+	];
+	const view = await render(Transcript, { items, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
+	const blocks = [...view.container.querySelectorAll('.block')];
+	const gaps = blocks.slice(1).map((block, index) => Math.round(block.getBoundingClientRect().top - blocks[index].getBoundingClientRect().bottom));
+	const between = matchMedia('(pointer: coarse) and (max-width: 767px)').matches ? 32 : 44;
+	expect(view.container.querySelectorAll('.turn')).toHaveLength(2);
+	expect(gaps).toEqual([20, 8, 14, 22, between, 20]);
+	expect(between).toBeGreaterThan(Math.max(...gaps.filter((gap) => gap !== between)));
+});
+
+test('the prompt’s ⋯ menu opens Rewind without reserving layout space', async () => {
+	const onrewind = vi.fn();
+	const items: Item[] = [
+		{ kind: 'text', text: 'Earlier context.', phase: 'final', streaming: false },
+		{ kind: 'user', text: 'Short prompt.', images: 0 },
+		{ kind: 'user', text: Array.from({ length: 20 }, (_, index) => `Line ${index + 1}`).join('\n'), images: 0 }
+	];
+	const view = await render(Transcript, { items, onrewind, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
+	const message = view.getByRole('region', { name: 'User message 1', exact: true });
+	const bubble = message.element().querySelector('.user')!;
+	const height = () => message.element().getBoundingClientRect().height;
+	expect(height()).toBeCloseTo(bubble.getBoundingClientRect().height, 0);
+	const resting = height();
+	const more = view.getByRole('button', { name: 'Actions for message 1', exact: true });
+	await message.hover();
+	await expect.poll(() => getComputedStyle(more.element()).opacity).toBe('1');
+	expect(height()).toBe(resting);
+	(more.element() as HTMLElement).focus();
+	expect(height()).toBe(resting);
+	await more.click();
+	await page.getByRole('menuitem', { name: 'Rewind…', exact: true }).click();
+	expect(onrewind).toHaveBeenCalledWith(1);
+
+	const long = view.getByRole('region', { name: 'User message 2', exact: true });
+	await long.element().querySelector<HTMLElement>('summary')!.click();
+	await expect.element(page.elementLocator(long.element().querySelector('.body')!)).toBeVisible();
+	await view.getByRole('button', { name: 'Actions for message 2', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Rewind…', exact: true }).click();
+	expect(onrewind).toHaveBeenLastCalledWith(2);
+});
