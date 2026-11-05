@@ -76,5 +76,6 @@
 		background: var(--surface-1);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
+		tab-size: 4;
 	}
 </style>

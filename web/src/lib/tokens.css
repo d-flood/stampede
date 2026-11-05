@@ -148,7 +148,7 @@
 
 @media (pointer: coarse) and (max-width: 767px) {
 	:root {
-		--font-size-chat: var(--chat-size, 18px);
+		--font-size-chat: var(--chat-size, 17px);
 	}
 }
 

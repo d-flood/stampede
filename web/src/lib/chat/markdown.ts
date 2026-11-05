@@ -21,6 +21,9 @@ for (const name of ['fence', 'code_block'] as const) {
 	};
 }
 
+rules.table_open = (tokens, index, options, env, self) => (env.copy ? '<div class="table">' : '') + self.renderToken(tokens, index, options);
+rules.table_close = (tokens, index, options, env, self) => self.renderToken(tokens, index, options) + (env.copy ? '</div>' : '');
+
 const inline = rules.code_inline!;
 rules.code_inline = (tokens, index, options, env, self) => {
 	const html = inline(tokens, index, options, env, self);

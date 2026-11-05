@@ -22,15 +22,37 @@
 		return !['user', 'shell', 'text', 'html', 'media', 'notice', 'questions'].includes(item.kind) && !(item.kind === 'canvas' && item.write);
 	}
 
-	const runs = $derived(
-		entries.reduce<{ kind: 'spawn' | 'rail' | 'plain'; indices: number[] }[]>((runs, item, index) => {
+	type Block = { kind: 'spawn' | 'rail' | 'plain'; indices: number[] };
+	const turns = $derived(
+		entries.reduce<Block[][]>((turns, item, index) => {
 			const kind = item.kind === 'subagent' ? 'spawn' : interim(item) ? 'rail' : 'plain';
-			const last = runs.at(-1);
-			if (last?.kind === kind) last.indices.push(index);
-			else runs.push({ kind, indices: [index] });
-			return runs;
+			if (!turns.length || (item.kind === 'user' && turns.at(-1)!.length)) turns.push([]);
+			const turn = turns.at(-1)!;
+			const last = turn.at(-1);
+			if (kind !== 'plain' && last?.kind === kind) last.indices.push(index);
+			else turn.push({ kind, indices: [index] });
+			return turns;
 		}, [])
 	);
+
+	function role(block: Block) {
+		if (block.kind === 'rail') return 'activity';
+		if (block.kind === 'spawn') return 'subagent';
+		const item = entries[block.indices[0]];
+		return item.kind === 'user' ? 'prompt' : item.kind === 'text' ? item.phase : 'other';
+	}
+
+	const quiet = ['commentary', 'activity', 'subagent'];
+
+	function space(turn: Block[], index: number) {
+		if (!index) return undefined;
+		const [previous, current] = [role(turn[index - 1]), role(turn[index])];
+		if (previous === 'prompt') return '20px';
+		if (current === 'final') return '22px';
+		if (previous === 'activity' && current === 'commentary') return '14px';
+		if (quiet.includes(previous) && quiet.includes(current)) return '8px';
+		return 'var(--space-4)';
+	}
 </script>
 
 {#snippet entry(item: Entry, index: number)}
@@ -53,14 +75,41 @@
 	{/if}
 {/snippet}
 
-{#each runs as run (run.indices[0])}
-	{#if run.kind === 'spawn'}
-		<Spawn subagents={run.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} {onopen} {onattend} />
-	{:else if run.kind === 'rail'}
-		<Calls items={run.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={run === runs.at(-1) ? activity : null} open={path.length > 0} {ondiff} {oncanvas} onexpand={onexpand && ((item) => onexpand(items.indexOf(item)))} />
-	{:else}
-		{#each run.indices as index (index)}
-			{@render entry(entries[index], index)}
-		{/each}
-	{/if}
-{/each}
+<div class="turns">
+	{#each turns as turn (turn[0].indices[0])}
+		<div class="turn">
+			{#each turn as block, index (block.indices[0])}
+				<div class="block" style:margin-top={space(turn, index)}>
+					{#if block.kind === 'spawn'}
+						<Spawn subagents={block.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} {onopen} {onattend} />
+					{:else if block.kind === 'rail'}
+						<Calls items={block.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={block === turns.at(-1)!.at(-1) ? activity : null} open={path.length > 0} {ondiff} {oncanvas} onexpand={onexpand && ((item) => onexpand(items.indexOf(item)))} />
+					{:else}
+						{@render entry(entries[block.indices[0]], block.indices[0])}
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/each}
+</div>
+
+<style>
+	.turns {
+		display: flex;
+		flex-direction: column;
+		gap: 44px;
+	}
+
+	.turn,
+	.block {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	@media (pointer: coarse) and (max-width: 767px) {
+		.turns {
+			gap: 32px;
+		}
+	}
+</style>

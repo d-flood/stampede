@@ -47,6 +47,7 @@
 	.counts,
 	.diff {
 		font-family: var(--font-mono);
+		tab-size: 4;
 	}
 
 	.path {
