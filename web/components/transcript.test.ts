@@ -1,6 +1,6 @@
 import Transcript from '#lib/chat/Transcript.svelte';
 import type { Item } from '#lib/device.svelte.ts';
-import { expect, test, vi } from 'vitest';
+import { expect, onTestFinished, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 
@@ -133,4 +133,75 @@ test('the prompt’s ⋯ menu opens Rewind without reserving layout space', asyn
 	await view.getByRole('button', { name: 'Actions for message 2', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Rewind…', exact: true }).click();
 	expect(onrewind).toHaveBeenLastCalledWith(2);
+});
+
+const script = `S=/home/david/.local/share/app/scratchpad; cd "$S"
+python3 - "$S/trial.mjs" <<'EOF'
+import sys
+print(open(sys.argv[1]).read().count("login"))
+EOF
+${Array.from({ length: 40 }, (_, index) => `curl -sf -o /dev/null http://127.0.0.1:44${index}/ && echo "ready ${index}"`).join('\n')}`;
+const handlers = { onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() };
+const highlighted = (element: Element) => element.querySelectorAll('.syntax span[class]').length;
+
+test('a long running command stays on one highlighted line with its full text in the tooltip', async () => {
+	const view = await render(Transcript, { ...handlers, items: [{ kind: 'command', command: 'wc', status: 'running', output: '' }], activity: 'Running wc' });
+	const summary = summaries(view.container)[0];
+	const resting = summary.getBoundingClientRect().height;
+	await view.rerender({ ...handlers, items: [{ kind: 'command', command: script, status: 'running', output: '' }], activity: `Running ${script}` });
+	const live = summary.querySelector<HTMLElement>('.live')!;
+	await expect.poll(() => highlighted(live)).toBeGreaterThan(0);
+	await expect.poll(() => summary.getBoundingClientRect().height).toBe(resting);
+	expect(live.scrollWidth).toBeGreaterThan(live.clientWidth);
+	expect(live.textContent!.length).toBeLessThan(600);
+	expect(live.title).toBe(`Running ${script}`);
+	expect(view.container.scrollWidth).toBeLessThanOrEqual(view.container.clientWidth);
+});
+
+test('every summary segment stays readable beside a long Activity on a narrow screen', async () => {
+	const { innerWidth: width, innerHeight: height } = window;
+	onTestFinished(() => page.viewport(width, height));
+	await page.viewport(360, height);
+	const items: Item[] = [
+		{ kind: 'tools', calls: [{ kind: 'read', name: 'Read', detail: 'a.ts' }, { kind: 'search', name: 'Grep', detail: 'b' }, { kind: 'web', name: 'WebSearch', detail: 'c' }, { kind: 'other', name: 'Custom', detail: '{}' }] },
+		{ kind: 'command', command: 'pnpm lint', status: 'failed', output: '' },
+		{ kind: 'command', command: script, status: 'running', output: '' }
+	];
+	const view = await render(Transcript, { ...handlers, items, activity: `Running ${script}` });
+	const summary = summaries(view.container)[0];
+	const live = summary.querySelector<HTMLElement>('.live')!;
+	await expect.poll(() => summary.getBoundingClientRect().right).toBeLessThanOrEqual(360);
+	const row = summary.getBoundingClientRect();
+	for (const segment of summary.querySelectorAll('.segment')) {
+		const box = segment.getBoundingClientRect();
+		expect(box.left).toBeGreaterThanOrEqual(row.left);
+		expect(box.right).toBeLessThanOrEqual(row.right);
+		expect(box.bottom).toBeLessThanOrEqual(row.bottom);
+	}
+	expect(summary.querySelector('.segment.failed')!.textContent).toBe('1 failed');
+	expect(live.getBoundingClientRect().height).toBeLessThan(summary.querySelector('.segments')!.getBoundingClientRect().height);
+	expect(live.getBoundingClientRect().right).toBeLessThanOrEqual(row.right);
+});
+
+test('only the label of a command in this group is highlighted', async () => {
+	const items: Item[] = [{ kind: 'command', command: 'cargo test', status: 'running', output: '' }];
+	const view = await render(Transcript, { ...handlers, items, activity: 'Running the tests' });
+	const live = () => summaries(view.container)[0].querySelector('.live')!;
+	expect(live().textContent).toBe(' · Running the tests');
+	expect(live().querySelector('.syntax')).toBeNull();
+	await view.rerender({ ...handlers, items, activity: 'Thinking…' });
+	expect(live().textContent).toBe(' · Thinking…');
+	expect(live().querySelector('.syntax')).toBeNull();
+	await view.rerender({ ...handlers, items, activity: 'Running cargo test' });
+	await expect.poll(() => highlighted(live())).toBeGreaterThan(0);
+	expect(live().textContent).toBe(' · Running cargo test');
+});
+
+test('a failed command is highlighted on one line with its full text in the tooltip', async () => {
+	const view = await render(Transcript, { ...handlers, items: [{ kind: 'command', command: script, status: 'failed', output: '' }] });
+	const code = view.container.querySelector<HTMLElement>('.failure code')!;
+	await expect.poll(() => highlighted(code)).toBeGreaterThan(0);
+	expect(code.textContent!.length).toBeLessThan(600);
+	expect(code.title).toBe(script);
+	expect(code.scrollWidth).toBeGreaterThan(code.clientWidth);
 });

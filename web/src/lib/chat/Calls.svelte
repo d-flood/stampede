@@ -17,7 +17,9 @@
 	const segments = $derived(summarize(items));
 	const edits = $derived(chips(items));
 	const failures = $derived(items.flatMap((item, index) => (item.kind === 'command' && item.status === 'failed' ? [{ item, index }] : [])));
+	const running = $derived(items.flatMap((item) => (item.kind === 'command' && activity === `Running ${item.command}` ? [item.command] : []))[0]);
 	const verbs: Partial<Record<ToolCall['kind'], string>> = { read: 'Read', search: 'Search', fetch: 'Fetch', web: 'Web search' };
+	const ROW_CHARACTERS = 500;
 
 	function show(index: number) {
 		expanded = true;
@@ -41,7 +43,7 @@
 
 <div class="calls">
 	<button class="summary" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
-		<span class="caret"><CaretRight /></span><span class="text">{#each segments as segment, index (index)}{#if index}{', '}{/if}<span class="segment" class:failed={segment.failed}>{segment.text}</span>{/each}{#if activity}<span class="live" title={activity}>{` · ${brief(activity)}`}</span>{/if}</span>
+		<span class="caret"><CaretRight /></span><span class="text"><span class="segments">{#each segments as segment, index (index)}{#if index}{', '}{/if}<span class="segment" class:failed={segment.failed}>{segment.text}</span>{/each}</span>{#if activity}<span class="live" title={activity}>{#if running}{' · Running '}<code><Code code={brief(running).slice(0, ROW_CHARACTERS)} path="command.sh" /></code>{:else}{` · ${brief(activity)}`}{/if}</span>{/if}</span>
 	</button>
 	{#if edits.length}
 		<div class="chips">
@@ -58,7 +60,7 @@
 	{/if}
 	{#each failures as { item, index } (index)}
 		<div class="failure">
-			<code title={item.command}>{item.command}</code>
+			<code title={item.command}><Code code={item.command.slice(0, ROW_CHARACTERS)} path="command.sh" /></code>
 			<span class="failed">failed</span>
 			<button onclick={() => show(index)}>Show output</button>
 		</div>
@@ -132,8 +134,11 @@
 	}
 
 	.text {
+		display: flex;
+		flex: 1;
+		flex-wrap: wrap;
+		column-gap: var(--space-1);
 		min-width: 0;
-		overflow-wrap: anywhere;
 	}
 
 	.segment {
@@ -146,7 +151,16 @@
 	}
 
 	.live {
+		flex: 1 1 12rem;
+		min-width: 0;
+		overflow: hidden;
 		color: var(--muted-fg);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.live code {
+		font-family: var(--font-mono);
 	}
 
 	.chips {
