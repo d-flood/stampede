@@ -1,7 +1,7 @@
 <script lang="ts">
-	import SubagentOrigin from '#lib/chat/SubagentOrigin.svelte';
 	import { clock, totals, type Placed } from '#lib/chat/agents.ts';
 	import { icons } from '#lib/chat/icons.ts';
+	import { agentNames, logos } from '#lib/chat/sessions.ts';
 	import type { Subagent } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { SubagentMark, WaitingMark } from '#lib/ui/spinners.ts';
@@ -26,8 +26,9 @@
 		<span class="separator">/</span>
 		<span class="current" aria-current="page"><icons.subagent /><strong>{subagent.task}</strong></span>
 	</nav>
-	<SubagentOrigin origin={subagent.origin} />
-	{#if subagent.name}<span class="chip" title="Type">{subagent.name}</span>{/if}
+	{#if subagent.agent}{@const Logo = logos[subagent.agent]}<span class="logo" role="img" aria-label={agentNames[subagent.agent]} title={agentNames[subagent.agent]}><Logo aria-hidden="true" /></span>{/if}
+	{#if subagent.name}<span class="chip" title="Name">{subagent.name}</span>{/if}
+	{#if subagent.role}<span class="role" title="Role">{subagent.role}</span>{/if}
 	{#if subagent.model}<span class="chip" title="Model">{subagent.model}</span>{/if}
 	<span class="status {subagent.status}" class:ended>
 		<span class="mark" title={ended ?? subagent.status}><Mark /></span>
@@ -51,6 +52,8 @@
 	.current :global(svg) { flex: none; }
 	.current strong { min-width: 0; overflow-wrap: anywhere; }
 	.chip { min-width: 0; padding: 0 var(--space-2); border: var(--border-width) solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--muted-fg); overflow-wrap: anywhere; }
+	.logo { display: inline-flex; flex: none; }
+	.role { color: var(--muted-fg); }
 	.status { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-left: auto; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 	.mark { display: inline-flex; color: var(--status-done); }
 	.working .mark { color: var(--status-working); }

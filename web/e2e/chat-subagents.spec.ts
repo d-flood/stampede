@@ -65,7 +65,7 @@ for (const agent of ['claude', 'codex']) {
 		await panel.getByRole('button', { name: 'Send', exact: true }).click();
 		await expect.poll(() => existsSync(`${gates}/stream`)).toBe(true);
 		await panel.getByRole('button', { name: /^1 Subagent · 1 running/ }).click();
-		await expect(panel.locator('header').getByTitle('Spawned by')).toHaveText('Harness');
+		await expect(panel.locator('header').getByTitle('Name')).toHaveText(agent === 'claude' ? 'Explore' : 'Heisenberg');
 		await expect(panel.getByText('First finding', { exact: true })).toBeVisible();
 		const calls = panel.locator('.transcript:visible details.calls');
 		await expect(calls).toHaveJSProperty('open', true);
@@ -101,9 +101,9 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 		totals: { durationMs: 72_000, tools: 14, tokens: 38_000 },
 		items: [text('Old work.'), { kind: 'tools', calls: [{ kind: 'read', name: 'Read', detail: 'notes.txt' }] }]
 	};
-	const failed: Subagent = { kind: 'subagent', id: 'failed', name: 'general-purpose', task: 'Broken task', status: 'done', outcome: 'failed', startedAt: now - 300_000, totals: { durationMs: 5_000, tools: 1 }, items: [] };
+	const failed: Subagent = { kind: 'subagent', id: 'failed', name: 'Plan', task: 'Broken task', status: 'done', outcome: 'failed', startedAt: now - 300_000, totals: { durationMs: 5_000, tools: 1 }, items: [] };
 	const nested: Subagent = { kind: 'subagent', id: 'nested', name: 'Explore', task: 'Search deeper', status: 'working', startedAt: now, items: [text('Deep work.')] };
-	const active: Subagent = { kind: 'subagent', id: 'active', origin: 'stampede', name: 'Reviewer', task: 'Find the file', status: 'working', startedAt: now - 65_000, activity: 'Reading codex.rs', items: [text('Reading the files.'), nested] };
+	const active: Subagent = { kind: 'subagent', id: 'active', origin: 'stampede', name: 'Reviewer', agent: 'codex', task: 'Find the file', status: 'working', startedAt: now - 65_000, activity: 'Reading codex.rs', items: [text('Reading the files.'), nested] };
 	const waiting: Subagent = { kind: 'subagent', id: 'waiting', name: 'Review', task: 'Review the file', status: 'waiting', startedAt: now, items: [] };
 	let items: Item[] = [];
 	const phone = project.name === 'pixel';
@@ -187,7 +187,8 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await spawned.nth(1).click();
 	await expect(rows).toHaveCount(0);
 	await expect(panel.getByText('Reading the files.', { exact: true })).toBeVisible();
-	await expect(header.getByTitle('Spawned by')).toHaveText('Stampede delegate');
+	await expect(header.getByRole('img', { name: 'Codex' })).toBeVisible();
+	await expect(header.getByTitle('Name')).toHaveText('Reviewer');
 	await expect(composer).toHaveCount(0);
 	items[2] = { ...active, activity: 'Running cargo test', items: [
 		text('Reading the files.'),
@@ -227,8 +228,8 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 		await expect(section('Running')).toHaveText([/^\s*Find the file/, /^\s*Search deeper/, /^\s*Review the file/]);
 	}
 	await expect(done).toHaveCount(2);
-	await expect(done.nth(0)).toHaveText(/^\s*Broken task\s*Harness\s*general-purpose\s*failed\s*·\s*5s · 1 tool$/);
-	await expect(done.nth(1)).toHaveText(/^\s*Old task\s*Harness\s*Explore\s*1m 12s · 14 tools · 38k tokens$/);
+	await expect(done.nth(0)).toHaveText(/^\s*Broken task\s*Plan\s*failed\s*·\s*5s · 1 tool$/);
+	await expect(done.nth(1)).toHaveText(/^\s*Old task\s*Explore\s*1m 12s · 14 tools · 38k tokens$/);
 	await done.nth(1).click();
 	await expect(rows).toHaveCount(0);
 	await expect(panel.getByText('Old work.', { exact: true })).toBeVisible();
@@ -236,8 +237,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(dock).toBeVisible();
 	await expect(panel.getByText('Subagent', { exact: true })).toBeVisible();
 	await expect(breadcrumb).toHaveText(/^Main\s*\/\s*Old task$/);
-	await expect(header.getByTitle('Type')).toHaveText('Explore');
-	await expect(header.getByTitle('Spawned by')).toHaveText('Harness');
+	await expect(header.getByTitle('Name')).toHaveText('Explore');
 	await expect(header.getByTitle('Model')).toHaveText('claude-haiku-4-5');
 	await expect(header).toContainText('1m 12s · 14 tools · 38k tokens');
 	const lines = () => prompt.getByText(/^Find the old file/).evaluate((element) => Math.round(element.clientHeight / parseFloat(getComputedStyle(element).lineHeight)));

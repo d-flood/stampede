@@ -162,6 +162,8 @@ async fn rejoin(
         finished(&turns, &mut done);
         transcript.rejoined(&child, &read["thread"], &turns);
     }
+    transcript.unread.clear();
+    transcript.lists.retain(|_, list| !matches!(list, List::Thread(_)));
     replay.extend(held.into_iter().filter(|message| !stale(message, &done)));
     for message in replay {
         transcript.read(&message);
@@ -183,6 +185,16 @@ async fn rejoin(
     transcript.report(transcript.status);
     if transcript.turn.is_none() { transcript.propose(); }
     Ok((connection, proxy))
+}
+
+/// Names a Codex Subagent by its nickname, keeping its role beside it, or else by its role.
+fn identify(subagent: &mut Subagent, thread: &Value) {
+    let role = thread["agentRole"].as_str().map(str::to_owned);
+    match thread["agentNickname"].as_str() {
+        Some(nickname) => (subagent.name, subagent.role) = (Some(nickname.to_owned()), role),
+        None if role.is_some() => subagent.name = role,
+        None => {}
+    }
 }
 
 /// Adds the ids of the turns and items `turns` holds finished.
@@ -472,6 +484,11 @@ fn run(
             }
             if let Some(input) = transcript.unsteered.take() {
                 let _ = connection.start(&mut transcript, input).await;
+            }
+            for child in std::mem::take(&mut transcript.unread) {
+                if let Ok(id) = connection.request("thread/read", json!({ "threadId": child })).await {
+                    transcript.lists.insert(id, List::Thread(child));
+                }
             }
         }
         let _ = proxy.kill().await;
@@ -775,6 +792,8 @@ struct Transcript {
     compacting: Option<u64>,
     applying: Vec<(Setting, Option<String>)>,
     lists: HashMap<u64, List>,
+    /// Spawned Subagents whose threads have yet to be read for their names.
+    unread: Vec<String>,
     questions: HashMap<String, Vec<Question>>,
     plan: Option<(String, String)>,
     plan_resolved: Option<String>,
@@ -783,6 +802,7 @@ struct Transcript {
 enum List {
     Models,
     Skills,
+    Thread(String),
 }
 
 fn enabled(skills: &Value) -> Vec<Value> {
@@ -886,6 +906,7 @@ impl Transcript {
             compacting: None,
             applying: Vec::new(),
             lists: HashMap::new(),
+            unread: Vec::new(),
             questions: HashMap::new(),
             plan: None,
             plan_resolved: None,
@@ -1096,9 +1117,7 @@ impl Transcript {
         transcript.turn = turns.last().filter(|turn| turn["status"] == "inProgress")
             .and_then(|turn| turn["id"].as_str()).map(str::to_owned);
         subagent.update();
-        if let Some(name) = thread["agentRole"].as_str().or(thread["agentNickname"].as_str()) {
-            subagent.name = Some(name.to_owned());
-        }
+        identify(subagent, thread);
         if subagent.model.is_none() {
             subagent.model = thread["model"].as_str().map(str::to_owned);
         }
@@ -1178,6 +1197,13 @@ impl Transcript {
             match list {
                 List::Models => self.models = message["result"]["data"].as_array().cloned().unwrap_or_default(),
                 List::Skills => self.skills = enabled(&message["result"]),
+                List::Thread(child) => {
+                    if let Some((subagent, _)) = self.subagents.get_mut(&child) {
+                        identify(subagent, &message["result"]["thread"]);
+                        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+                    }
+                    return;
+                }
             }
             return self.declare();
         }
@@ -1606,6 +1632,7 @@ impl Transcript {
         let (mut subagent, events) = Subagent::new(thread, task.to_owned(), super::now());
         subagent.index = self.push(subagent.item());
         self.subagents.insert(thread.to_owned(), (subagent, Transcript::new(thread, &self.cwd, events)));
+        self.unread.push(thread.to_owned());
     }
 
     fn call(&mut self, kind: ToolKind, name: &str, detail: String) {

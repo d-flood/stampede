@@ -671,7 +671,7 @@ async fn subagents(agent: &str) {
             assert_eq!(child["model"], "claude-opus-5-5");
             assert_eq!(child["totals"], json!({ "durationMs": 3456, "tools": 2, "tokens": 14662 }));
         } else {
-            assert_eq!(child.get("name"), restored.then(|| json!("Heisenberg")).as_ref());
+            assert_eq!((child.get("name"), child.get("role")), (Some(&json!("Heisenberg")), None));
             assert_eq!(child["task"], "find_needle");
             assert_eq!(child.get("prompt"), None);
             assert_eq!(child["report"], "notes.txt mentions “needle”; todo.txt does not.");

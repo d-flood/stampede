@@ -108,15 +108,17 @@ async fn a_codex_approval_replayed_before_the_resume_response_is_kept() {
 async fn a_codex_subagents_request_is_answered_from_the_parent_chat() {
     let mut entries: Vec<Value> = include_str!("fixtures/chats/codex/approval.recorded.jsonl")
         .lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-    let mut child: Value = include_str!("fixtures/chats/codex/subagents.recorded.jsonl")
-        .lines().map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .find(|entry| entry["stdout"]["method"] == "item/completed" && entry["stdout"]["params"]["item"]["type"] == "subAgentActivity")
-        .unwrap();
+    let spawned: Vec<Value> = include_str!("fixtures/chats/codex/subagents.recorded.jsonl")
+        .lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect();
+    let spawn = spawned.iter().position(|entry| entry["stdout"]["method"] == "item/completed" && entry["stdout"]["params"]["item"]["type"] == "subAgentActivity").unwrap();
+    let mut child = spawned[spawn].clone();
+    let read = &spawned[spawn + 1..spawn + 3];
+    assert_eq!(read[0]["stdin"]["method"], "thread/read");
     let child_id = child["stdout"]["params"]["item"]["agentThreadId"].clone();
     let index = entries.iter().position(|entry| entry["stdout"]["method"] == "item/commandExecution/requestApproval").unwrap();
     child["stdout"]["params"]["threadId"] = entries[index]["stdout"]["params"]["threadId"].clone();
     entries[index]["stdout"]["params"]["threadId"] = child_id.clone();
-    entries.insert(index, child);
+    entries.splice(index..index, std::iter::once(child).chain(read.iter().cloned()));
     for entry in &mut entries {
         if entry["stdout"]["method"] == "serverRequest/resolved" {
             entry["stdout"]["params"]["threadId"] = child_id.clone();
