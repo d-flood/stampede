@@ -18,7 +18,7 @@ test('an open staged rename Diff follows HEAD after the rename is committed', { 
 	git('add', '.');
 	await openProject(page, 'rename');
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Changes' }).click();
+	await sidebar.getByRole('button', { name: 'Git', exact: true }).click();
 	await sidebar.getByRole('list', { name: 'Staged Changes' }).getByRole('button', { name: 'after.ts', exact: true }).click();
 	const diff = page.locator('.diff:not([hidden])');
 	await expect(diff.locator('.path')).toHaveText('before.ts → after.ts');

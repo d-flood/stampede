@@ -207,7 +207,7 @@ _Avoid_: merge, ship, release
 ### Changes
 
 **Uncommitted changes**:
-Every difference between the files on disk and the Project's most recent commit; what the Changes section lists.
+Every difference between the files on disk and the Project's most recent commit; what the Git section lists.
 _Avoid_: unstaged changes, working changes
 
 **Change marker**:
@@ -283,7 +283,7 @@ What a Project's main window shows when it has no Tabs: the ways to open one, su
 _Avoid_: start screen, new tab page, empty state
 
 **Sidebar**:
-The collapsible panel beside the main window, showing one section at a time: Files, Changes, History, Compare, Search, or Epics.
+The collapsible panel beside the main window, showing one section at a time: Files, Git, Compare, or Epics.
 _Avoid_: explorer, wing, panel; never call its sections "tabs"
 
 **Needs attention**:

@@ -46,7 +46,7 @@
 	import Projects from '#lib/shell/Projects.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
 	import Rename from '#lib/shell/Rename.svelte';
-	import Sidebar, { showing as sectionShowing, type Section } from '#lib/shell/Sidebar.svelte';
+	import Sidebar, { savedSection, showing as sectionShowing, type Section } from '#lib/shell/Sidebar.svelte';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import Usage from '#lib/shell/Usage.svelte';
 	import { arrange, neighbor, type Side, type Split } from '#lib/split.ts';
@@ -106,7 +106,7 @@
 	let main: HTMLElement;
 	let sidebar = $state(restored.sidebar?.open ?? form() === 'desktop');
 	let handoff = false;
-	let section = $state<Section>(restored.sidebar?.section ?? 'files');
+	let section = $state<Section>(savedSection(restored.sidebar?.section));
 	let rail = $state(restored.rail?.open ?? false);
 	let markdownMode = $state(restored.markdownMode);
 	let comparisons = $state<Record<string, Selection | Reviewing>>(restored.compare);

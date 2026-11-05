@@ -12,6 +12,7 @@
 	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import ArrowDown from '~icons/ph/arrow-down';
 	import ArrowUUpLeft from '~icons/ph/arrow-u-up-left';
 	import CaretRight from '~icons/ph/caret-right';
 	import Copy from '~icons/ph/copy';
@@ -36,6 +37,9 @@
 	let copying = $state<string>();
 	let refreshes = 0;
 	let requested: string | undefined;
+	let collapsed = $state(false);
+	let pinned = $state(false);
+	let anchor: HTMLElement;
 
 	onMount(() => {
 		refresh();
@@ -64,8 +68,27 @@
 		cursor = page.cursor;
 	}
 
-	function scrolled({ currentTarget: list }: Event & { currentTarget: HTMLElement }) {
-		if (list.scrollTop + 2 * list.clientHeight >= list.scrollHeight) more();
+	function track(heading: HTMLElement) {
+		const scroller = heading.parentElement!;
+		const scrolled = () => {
+			if (!collapsed && scroller.scrollTop + 2 * scroller.clientHeight >= scroller.scrollHeight) more();
+		};
+		const observer = new IntersectionObserver(([entry]) => (pinned = !entry.isIntersecting && entry.boundingClientRect.top > entry.rootBounds!.bottom), {
+			root: scroller,
+			// The 2px covers the heading's overlapping border and rounded height, so a heading fully in view never reads as pinned.
+			rootMargin: `0px 0px ${2 - heading.offsetHeight}px`
+		});
+		observer.observe(anchor);
+		scroller.addEventListener('scroll', scrolled, { passive: true });
+		return () => {
+			observer.disconnect();
+			scroller.removeEventListener('scroll', scrolled);
+		};
+	}
+
+	function activate() {
+		if (pinned) anchor.scrollIntoView({ block: 'start' });
+		else collapsed = !collapsed;
 	}
 
 	async function toggle(sha: string) {
@@ -137,7 +160,7 @@
 			k: () => rows[Math.max(0, at - 1)]?.focus(),
 			ArrowUp: () => rows[Math.max(0, at - 1)]?.focus(),
 			r: () => commit && edit([commit]),
-			s: () => commit && squashInto(commit),
+			q: () => commit && squashInto(commit),
 			y: () => commit && copy(commit.short),
 			Y: () => commit && copy(commit.sha),
 			z: undoCommit
@@ -149,17 +172,24 @@
 	}
 </script>
 
-<section aria-label="History">
-	<header><h2>History</h2></header>
+<span class="anchor" bind:this={anchor}></span>
+<div class="row heading" class:pinned {@attach track}>
+	<button class="entry" aria-expanded={!collapsed} title={pinned ? 'Jump to History' : undefined} onclick={activate}>
+		<span class="caret" class:open={!collapsed}><CaretRight /></span>
+		<span class="title">History</span>
+		{#if pinned}<span class="jump">Jump<ArrowDown /></span>{/if}
+	</button>
+</div>
+{#if !collapsed}
 	{#if failure}<p class="failure" role="alert">{failure}</p>{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions (Keys act on the focused commit.) -->
-	<div class="list" onscroll={scrolled} onkeydown={key}>
+	<div class="list" onkeydown={key}>
 		<ul aria-label="Commits">
 			{#each commits ?? [] as commit, index (commit.sha)}
 				{@const open = expanded.has(commit.sha)}
 				{@const items = [
 					{ label: 'Edit Message…', icon: PencilSimple, hint: 'r', onselect: () => edit([commit]) },
-					...(index > 0 ? [{ label: 'Squash Newer Commits Into This…', icon: GitMerge, hint: 's', onselect: () => squashInto(commit) }] : []),
+					...(index > 0 ? [{ label: 'Squash Newer Commits Into This…', icon: GitMerge, hint: 'q', onselect: () => squashInto(commit) }] : []),
 					{ label: 'Copy Short Hash', icon: Copy, hint: 'y', onselect: () => copy(commit.short) },
 					{ label: 'Copy Full Hash', icon: Copy, hint: 'Y', onselect: () => copy(commit.sha) },
 					...(index === 0 ? [{ label: 'Undo Last Commit', icon: ArrowUUpLeft, hint: 'z', onselect: undoCommit }] : [])
@@ -219,7 +249,7 @@
 		</ul>
 		{#if commits?.length === 0}<p>No commits</p>{/if}
 	</div>
-</section>
+{/if}
 
 <CopyMode bind:text={copying} />
 
@@ -275,30 +305,50 @@
 </Dialog>
 
 <style>
-	section {
-		display: flex;
+	.anchor {
+		display: block;
+	}
+
+	.heading {
+		position: sticky;
+		top: 0;
+		bottom: 0;
+		z-index: 2;
+		margin-top: calc(-1 * var(--border-width));
+		border-block: var(--border-width) solid var(--border);
+		background: var(--surface-2);
+	}
+
+	.pinned {
+		box-shadow: 0 -6px 12px -8px color-mix(in oklab, var(--ansi-0) 45%, transparent);
+	}
+
+	.entry {
 		flex: 1;
-		flex-direction: column;
-		min-height: 0;
-	}
-
-	header {
-		display: flex;
 		align-items: center;
-		min-height: var(--target-min);
-		padding: 0 var(--space-3);
+		gap: var(--space-1);
+		min-width: 0;
+		padding: 0 var(--space-2);
 	}
 
-	h2 {
-		margin: 0;
-		color: var(--muted-fg);
+	.title {
+		flex: 1;
 		font-size: var(--font-size-sm);
 		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+
+	.jump {
+		display: inline-flex;
+		flex: none;
+		align-items: center;
+		gap: var(--space-1);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
 	}
 
 	.list {
-		flex: 1;
-		overflow: auto;
 		padding-bottom: var(--space-3);
 	}
 

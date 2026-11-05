@@ -681,8 +681,8 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/2`);
 	const worktree = await showSidebar(page);
 	await expect(worktree.getByText(`stampede/${slug}/2`, { exact: true })).toBeVisible();
-	await worktree.getByRole('button', { name: 'Changes', exact: true }).click();
-	await expect(worktree.getByRole('region', { name: 'Changes' }).getByRole('button', { name: 'work.txt', exact: true })).toBeVisible();
+	await worktree.getByRole('button', { name: 'Git', exact: true }).click();
+	await expect(worktree.getByRole('region', { name: 'Git' }).getByRole('button', { name: 'work.txt', exact: true })).toBeVisible();
 
 	if (phone) {
 		await showScreen(page, 'projects');

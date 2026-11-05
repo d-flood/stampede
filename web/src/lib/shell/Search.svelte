@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Device, Found, ServerMessage } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
-	import { form } from '#lib/form.ts';
 	import { split } from '#lib/git.ts';
 	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
@@ -11,16 +10,19 @@
 	import { onMount } from 'svelte';
 	import Eye from '~icons/ph/eye';
 	import EyeSlash from '~icons/ph/eye-slash';
+	import MagnifyingGlass from '~icons/ph/magnifying-glass';
+	import SlidersHorizontal from '~icons/ph/sliders-horizontal';
+	import X from '~icons/ph/x';
 
-	type Props = { projectId: string; device: Device; hidden: boolean; onopen(path: string, cursor: Cursor): void };
+	type Props = { projectId: string; device: Device; query: string; includeIgnored: boolean; onignored(): void; onopen(path: string, cursor: Cursor): void };
 	type Result = { file: string; matches: Found[] };
 
-	let { projectId, device, hidden, onopen }: Props = $props();
+	let { projectId, device, query = $bindable(), includeIgnored, onignored, onopen }: Props = $props();
 
-	let query = $state('');
 	let include = $state('');
 	let exclude = $state('');
-	let toggles = $state({ caseSensitive: false, wholeWord: false, regex: false, includeIgnored: false });
+	let filtering = $state(false);
+	let toggles = $state({ caseSensitive: false, wholeWord: false, regex: false });
 	const PAGE = 200;
 	let results = $state.raw<Result[]>([]);
 	let shown = $state(PAGE);
@@ -46,10 +48,6 @@
 			if (frame !== undefined) cancelAnimationFrame(frame);
 			unlisten();
 		};
-	});
-
-	$effect(() => {
-		if (!hidden && form() === 'desktop') input?.focus();
 	});
 
 	function message(message: ServerMessage) {
@@ -97,12 +95,23 @@
 		current = undefined;
 		if (!query) return;
 		current = crypto.randomUUID();
-		device.send({ type: 'search.start', searchId: current, projectId, query, include: globs(include), exclude: globs(exclude), ...toggles });
+		device.send({ type: 'search.start', searchId: current, projectId, query, include: globs(include), exclude: globs(exclude), includeIgnored, ...toggles });
 	}
 
 	function flip(toggle: keyof typeof toggles) {
 		toggles[toggle] = !toggles[toggle];
 		run();
+	}
+
+	function flipIgnored() {
+		onignored();
+		run();
+	}
+
+	function clear() {
+		query = '';
+		run();
+		input?.focus();
 	}
 
 	function schedule() {
@@ -122,132 +131,161 @@
 	}
 </script>
 
-<section aria-label="Search" {hidden}>
-	<form
-		onsubmit={(event) => {
-			event.preventDefault();
-			run();
-		}}
-	>
-		<div class="query">
+{#snippet eye()}
+	<IconButton type="button" label={includeIgnored ? 'Hide ignored files' : 'Show ignored files'} aria-pressed={includeIgnored} onclick={flipIgnored}>
+		{#if includeIgnored}<Eye />{:else}<EyeSlash />{/if}
+	</IconButton>
+{/snippet}
+
+<form
+	onsubmit={(event) => {
+		event.preventDefault();
+		run();
+	}}
+>
+	<div class="query">
+		<div class="box">
+			<MagnifyingGlass aria-hidden="true" />
 			<TextField
 				bind:ref={input}
 				bind:value={query}
 				mono
 				oninput={schedule}
-				placeholder="Search"
-				aria-label="Search"
+				placeholder="Search in files"
+				aria-label="Search in files"
 				aria-invalid={!!done?.error}
 				enterkeyhint="search"
 				autocomplete="off"
 				spellcheck={false}
 			/>
+			{#if query}<IconButton type="button" label="Clear search" title="Clear search" onclick={clear}><X /></IconButton>{/if}
+		</div>
+		{#if !query}{@render eye()}{/if}
+	</div>
+	{#if query}
+		<div class="options">
 			<Toggle label="Match case" pressed={toggles.caseSensitive} onclick={() => flip('caseSensitive')}>Aa</Toggle>
 			<Toggle label="Match whole word" pressed={toggles.wholeWord} onclick={() => flip('wholeWord')}><u>ab</u></Toggle>
 			<Toggle label="Use regular expression" pressed={toggles.regex} onclick={() => flip('regex')}>.*</Toggle>
+			<Toggle label="Include and exclude files" pressed={filtering} disabled={!!include || !!exclude} onclick={() => (filtering = !filtering)}><SlidersHorizontal /></Toggle>
+			{@render eye()}
+			{#if done?.error}
+				<p class="error" role="alert">{done.error}</p>
+			{:else}
+				<p role="status">{summary}</p>
+			{/if}
 		</div>
-		<TextField
-			bind:value={include}
-			mono
-			oninput={schedule}
-			placeholder="Files to include, e.g. *.ts, src/**"
-			aria-label="Files to include"
-			enterkeyhint="search"
-			autocomplete="off"
-			spellcheck={false}
-		/>
-		<TextField
-			bind:value={exclude}
-			mono
-			oninput={schedule}
-			placeholder="Files to exclude"
-			aria-label="Files to exclude"
-			enterkeyhint="search"
-			autocomplete="off"
-			spellcheck={false}
-		/>
-	</form>
-	<header>
-		{#if done?.error}
-			<p class="error" role="alert">{done.error}</p>
-		{:else}
-			<p role="status">{query ? summary : ''}</p>
+		{#if filtering}
+			<TextField
+				bind:value={include}
+				mono
+				oninput={schedule}
+				placeholder="Files to include, e.g. *.ts, src/**"
+				aria-label="Files to include"
+				enterkeyhint="search"
+				autocomplete="off"
+				spellcheck={false}
+			/>
+			<TextField
+				bind:value={exclude}
+				mono
+				oninput={schedule}
+				placeholder="Files to exclude"
+				aria-label="Files to exclude"
+				enterkeyhint="search"
+				autocomplete="off"
+				spellcheck={false}
+			/>
 		{/if}
-		<IconButton
-			label={toggles.includeIgnored ? 'Skip ignored files' : 'Search ignored files'}
-			aria-pressed={toggles.includeIgnored}
-			onclick={() => flip('includeIgnored')}
-		>
-			{#if toggles.includeIgnored}<Eye />{:else}<EyeSlash />{/if}
-		</IconButton>
-	</header>
-	<ul class="results">
-		{#each results.slice(0, shown) as { file, matches } (file)}
-			{@const { name, dir } = split(file)}
-			<li>
-				<div class="file" title={file}>
-					<span class="name">{name}</span>
-					<span class="dir">{dir}</span>
-					<Badge>{matches.length}</Badge>
-				</div>
-				<ul aria-label={file}>
-					{#each matches as { line, column, preview }, index (index)}
-						<li>
-							<button title={`${file}:${line}:${column}`} onclick={() => onopen(file, { line, column })}>
-								<span class="line">{line}</span>
-								<span class="preview">{preview}</span>
-							</button>
-						</li>
-					{/each}
-				</ul>
-			</li>
-		{/each}
-		{#if results.length > shown}
-			<li class="more"><Button onclick={() => (shown += PAGE)}>Show more</Button></li>
-		{/if}
-	</ul>
-</section>
+	{/if}
+</form>
+<ul class="results" hidden={!query}>
+	{#each results.slice(0, shown) as { file, matches } (file)}
+		{@const { name, dir } = split(file)}
+		<li>
+			<div class="file" title={file}>
+				<span class="name">{name}</span>
+				<span class="dir">{dir}</span>
+				<Badge>{matches.length}</Badge>
+			</div>
+			<ul aria-label={file}>
+				{#each matches as { line, column, preview }, index (index)}
+					<li>
+						<button title={`${file}:${line}:${column}`} onclick={() => onopen(file, { line, column })}>
+							<span class="line">{line}</span>
+							<span class="preview">{preview}</span>
+						</button>
+					</li>
+				{/each}
+			</ul>
+		</li>
+	{/each}
+	{#if results.length > shown}
+		<li class="more"><Button onclick={() => (shown += PAGE)}>Show more</Button></li>
+	{/if}
+</ul>
 
 <style>
-	section {
-		display: flex;
-		flex: 1;
-		flex-direction: column;
-		min-height: 0;
-	}
-
-	section[hidden] {
-		display: none;
-	}
-
 	form {
 		display: flex;
+		flex: none;
 		flex-direction: column;
 		gap: var(--space-1);
-		padding: 0 var(--space-2);
+		padding: 0 var(--space-2) var(--space-1);
 	}
 
 	.query {
 		display: flex;
+		align-items: center;
 		gap: var(--space-1);
 	}
 
-	header {
+	.box {
+		position: relative;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.box > :global(svg) {
+		position: absolute;
+		top: 50%;
+		left: var(--space-2);
+		color: var(--muted-fg);
+		pointer-events: none;
+		translate: 0 -50%;
+	}
+
+	.box :global(input) {
+		padding-inline: calc(var(--space-2) + 1.35em) var(--target-min);
+	}
+
+	.box :global(button) {
+		position: absolute;
+		inset: 0 0 0 auto;
+		font-size: var(--font-size-md);
+	}
+
+	.options {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		padding: 0 var(--space-1) 0 var(--space-3);
+		gap: 0 var(--space-1);
 	}
 
 	p {
-		flex: 1;
+		flex: 1 1 auto;
 		margin: 0;
+		padding-right: var(--space-2);
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
+		text-align: right;
+		white-space: nowrap;
 	}
 
 	.error {
 		color: var(--ansi-1);
 		font-family: var(--font-mono);
+		text-align: left;
 		white-space: pre-wrap;
 	}
 
@@ -259,6 +297,7 @@
 
 	.results {
 		flex: 1;
+		min-height: 0;
 		overflow: auto;
 		padding-bottom: var(--space-3);
 	}

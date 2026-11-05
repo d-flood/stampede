@@ -95,3 +95,20 @@ test('the sidebar toggle moves between the panel and tab strip while preserving 
 	await expect(strip).toHaveCount(0);
 	await expect(docked).toBeFocused();
 });
+
+test('A saved Changes, History or Search section reopens where it moved', { tag: '@desktop' }, async ({ page }) => {
+	await openProject(page, 'alpha');
+	const sections = (await showSidebar(page)).getByRole('group', { name: 'Sections' });
+	await sections.getByRole('button', { name: 'Compare', exact: true }).click();
+	let saved = '';
+	await page.route('**/api/devices/*/layout', async (route) => {
+		if (route.request().method() !== 'GET') return route.fallback();
+		const response = await route.fetch();
+		await route.fulfill({ response, json: { ...(await response.json()), sidebar: { open: true, section: saved } } });
+	});
+	for (const [old, moved] of [['changes', 'Git'], ['history', 'Git'], ['search', 'Files']]) {
+		saved = old;
+		await page.reload();
+		await expect(sections.getByRole('button', { name: moved, exact: true })).toHaveAttribute('aria-pressed', 'true');
+	}
+});

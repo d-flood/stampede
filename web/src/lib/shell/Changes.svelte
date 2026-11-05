@@ -34,7 +34,7 @@
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import TextArea from '#lib/ui/TextArea.svelte';
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, type Snippet } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import Archive from '~icons/ph/archive';
 	import ArrowCounterClockwise from '~icons/ph/arrow-counter-clockwise';
@@ -63,9 +63,10 @@
 		device: Device;
 		onopen(path: string): void;
 		ondiff(change: Change, against: 'index' | 'staged'): void;
+		children: Snippet;
 	};
 
-	let { projectId, git, trunk, device, onopen, ondiff }: Props = $props();
+	let { projectId, git, trunk, device, onopen, ondiff, children }: Props = $props();
 
 	const LARGE = 200;
 	const collapsed = new SvelteSet<string>();
@@ -297,7 +298,7 @@
 	{/if}
 {/snippet}
 
-<section aria-label="Changes">
+<section aria-label="Git">
 	<header>
 		{#if git.upstream}
 			<span class="upstream" title="Upstream branch">{git.upstream}</span>
@@ -328,102 +329,101 @@
 			{/snippet}
 		</Menu>
 	</header>
-	{#if git.changes.length || git.operation || message || failure}
-		<div class="commit">
-			<TextArea
-				bind:ref={box}
-				bind:value={() => message, (value) => (messages[projectId] = value)}
-				aria-label="Commit message"
-				placeholder="Commit message"
-				rows={3}
-				spellcheck="true"
-				onkeydown={commitKey}
-			/>
-			<div class="buttons">
-				<Button title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || !git.staged.length} onclick={draftMessage}>
-					<Sparkle />{drafting ? 'Drafting…' : 'Draft'}
-				</Button>
-				<Button variant="primary" title="Commit (Ctrl+Enter)" disabled={!committable} onclick={commitStaged}>
-					<Check />{git.operation === 'merge' ? 'Commit Merge' : 'Commit'}
-				</Button>
+	{#if failure}<pre class="failure" role="alert">{failure}</pre>{/if}
+	<div class="scroller">
+		{#if git.changes.length || git.operation || message}
+			<div class="commit">
+				<TextArea
+					bind:ref={box}
+					bind:value={() => message, (value) => (messages[projectId] = value)}
+					aria-label="Commit message"
+					placeholder="Commit message"
+					rows={3}
+					spellcheck="true"
+					onkeydown={commitKey}
+				/>
+				<div class="buttons">
+					<Button title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || !git.staged.length} onclick={draftMessage}>
+						<Sparkle />{drafting ? 'Drafting…' : 'Draft'}
+					</Button>
+					<Button variant="primary" title="Commit (Ctrl+Enter)" disabled={!committable} onclick={commitStaged}>
+						<Check />{git.operation === 'merge' ? 'Commit Merge' : 'Commit'}
+					</Button>
+				</div>
 			</div>
-			{#if failure}<pre class="failure" role="alert">{failure}</pre>{/if}
-		</div>
-	{/if}
-	{#if operation}<p class="operation" role="status">{operation}</p>{/if}
-	<!-- svelte-ignore a11y_no_static_element_interactions (Keys act on the focused row.) -->
-	<div class="list" bind:this={list} onkeydown={key} aria-busy={busy}>
-		{#each groups as { section, label, changes, rows } (section)}
-			{@const open = !collapsed.has(section)}
-			<div class="row heading">
-				<button data-key={section} class="entry" aria-expanded={open} onclick={() => toggle(section)}>
-					<span class="caret" class:open><CaretRight /></span>
-					<span class="name">{label}</span>
-					<span class="count">{changes.length}</span>
-				</button>
-				{@render controls(targets.get(section))}
-			</div>
-			{#if open}
-				<ul aria-label={label}>
-					{#each rows as row (row.key)}
-						<li class="row">
-							{#if row.kind === 'folder'}
-								<button data-key={row.key} class="entry" style:--depth={row.depth} aria-expanded={row.open} title={row.folder.path} onclick={() => toggle(row.key, row.changes.length > LARGE ? opened : collapsed)}>
-									<span class="caret" class:open={row.open}><CaretRight /></span>
-									<span class="name">{row.folder.name}</span>
-								</button>
-							{:else}
-								{@const { change } = row}
-								<button
-									data-key={row.key}
-									class="entry file"
-									class:deleted={change.kind === 'deleted'}
-									style:--depth={row.depth}
-									style:--git="var(--git-{change.kind})"
-									title={change.from ? `${change.from} → ${change.path}` : change.path}
-									onclick={() => openRow(targets.get(row.key)!)}
-								>
-									<span class="name">{split(change.path).name}</span>
-									<span class="letter" aria-hidden="true">{letters[change.kind]}</span>
-								</button>
-							{/if}
-							{@render controls(targets.get(row.key))}
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		{:else}
-			<div class="clean">
-				<span class="mark"><CheckCircle /></span>
-				<p>No uncommitted changes</p>
-				<small>The working tree matches {git.branch ?? 'HEAD'}.</small>
-			</div>
-		{/each}
-		{#if saved.length}
-			{@const open = !collapsed.has('stashes')}
-			<div class="row heading">
-				<button class="entry" aria-expanded={open} onclick={() => toggle('stashes')}>
-					<span class="caret" class:open><CaretRight /></span>
-					<span class="name">Stashes</span>
-					<span class="count">{saved.length}</span>
-				</button>
-			</div>
-			{#if open}
-				<ul aria-label="Stashes">
-					{#each saved as { message, date }, index (`${index}:${message}`)}
-						<li class="row stash" title={message}>
-							<span class="name">{message}</span>
-							<span class="date">{date}</span>
-							<span class="actions">
-								<IconButton label={`Pop ${message}`} title="Pop" disabled={busy} onclick={() => run(() => unstash(projectId, index, 'pop'))}><TrayArrowUp /></IconButton>
-								<IconButton label={`Apply ${message}`} title="Apply" disabled={busy} onclick={() => run(() => unstash(projectId, index, 'apply'))}><Copy /></IconButton>
-								<IconButton label={`Drop ${message}`} title="Drop" disabled={busy} onclick={() => (dropping = index)}><Trash /></IconButton>
-							</span>
-						</li>
-					{/each}
-				</ul>
-			{/if}
 		{/if}
+		{#if operation}<p class="operation" role="status">{operation}</p>{/if}
+		<!-- svelte-ignore a11y_no_static_element_interactions (Keys act on the focused row.) -->
+		<div bind:this={list} onkeydown={key} aria-busy={busy}>
+			{#each groups as { section, label, changes, rows } (section)}
+				{@const open = !collapsed.has(section)}
+				<div class="row heading">
+					<button data-key={section} class="entry" aria-expanded={open} onclick={() => toggle(section)}>
+						<span class="caret" class:open><CaretRight /></span>
+						<span class="name">{label}</span>
+						<span class="count">{changes.length}</span>
+					</button>
+					{@render controls(targets.get(section))}
+				</div>
+				{#if open}
+					<ul aria-label={label}>
+						{#each rows as row (row.key)}
+							<li class="row">
+								{#if row.kind === 'folder'}
+									<button data-key={row.key} class="entry" style:--depth={row.depth} aria-expanded={row.open} title={row.folder.path} onclick={() => toggle(row.key, row.changes.length > LARGE ? opened : collapsed)}>
+										<span class="caret" class:open={row.open}><CaretRight /></span>
+										<span class="name">{row.folder.name}</span>
+									</button>
+								{:else}
+									{@const { change } = row}
+									<button
+										data-key={row.key}
+										class="entry file"
+										class:deleted={change.kind === 'deleted'}
+										style:--depth={row.depth}
+										style:--git="var(--git-{change.kind})"
+										title={change.from ? `${change.from} → ${change.path}` : change.path}
+										onclick={() => openRow(targets.get(row.key)!)}
+									>
+										<span class="name">{split(change.path).name}</span>
+										<span class="letter" aria-hidden="true">{letters[change.kind]}</span>
+									</button>
+								{/if}
+								{@render controls(targets.get(row.key))}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			{:else}
+				<p class="clean"><CheckCircle />No uncommitted changes</p>
+			{/each}
+			{#if saved.length}
+				{@const open = !collapsed.has('stashes')}
+				<div class="row heading">
+					<button class="entry" aria-expanded={open} onclick={() => toggle('stashes')}>
+						<span class="caret" class:open><CaretRight /></span>
+						<span class="name">Stashes</span>
+						<span class="count">{saved.length}</span>
+					</button>
+				</div>
+				{#if open}
+					<ul aria-label="Stashes">
+						{#each saved as { message, date }, index (`${index}:${message}`)}
+							<li class="row stash" title={message}>
+								<span class="name">{message}</span>
+								<span class="date">{date}</span>
+								<span class="actions">
+									<IconButton label={`Pop ${message}`} title="Pop" disabled={busy} onclick={() => run(() => unstash(projectId, index, 'pop'))}><TrayArrowUp /></IconButton>
+									<IconButton label={`Apply ${message}`} title="Apply" disabled={busy} onclick={() => run(() => unstash(projectId, index, 'apply'))}><Copy /></IconButton>
+									<IconButton label={`Drop ${message}`} title="Drop" disabled={busy} onclick={() => (dropping = index)}><Trash /></IconButton>
+								</span>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			{/if}
+		</div>
+		{@render children()}
 	</div>
 </section>
 
@@ -515,10 +515,16 @@
 		cursor: default;
 	}
 
+	.scroller {
+		flex: 1;
+		min-height: 0;
+		overflow: auto;
+	}
+
 	.commit {
 		display: grid;
 		gap: var(--space-2);
-		padding: 0 var(--space-3) var(--space-2);
+		padding: var(--space-1) var(--space-3) var(--space-2);
 	}
 
 	.buttons {
@@ -529,7 +535,7 @@
 
 	.failure {
 		max-height: 12em;
-		margin: 0;
+		margin: 0 var(--space-3) var(--space-2);
 		overflow: auto;
 		padding: var(--space-2);
 		border-left: 3px solid var(--git-deleted);
@@ -547,12 +553,6 @@
 		background: var(--surface-1);
 		font-size: var(--font-size-sm);
 		line-height: 1.5;
-	}
-
-	.list {
-		flex: 1;
-		overflow: auto;
-		padding-bottom: var(--space-3);
 	}
 
 	ul {
@@ -687,33 +687,19 @@
 	}
 
 	.clean {
-		display: grid;
-		justify-items: center;
-		gap: var(--space-1);
-		padding: var(--space-6) var(--space-4);
-		color: var(--muted-fg);
-		text-align: center;
-	}
-
-	.clean p {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		min-height: var(--target-min);
 		margin: 0;
-		color: var(--color-fg);
-		font-weight: 500;
-	}
-
-	.clean small {
+		padding: var(--space-1) var(--space-3);
+		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 	}
 
-	.mark {
-		display: grid;
-		place-items: center;
-		width: 2.5em;
-		height: 2.5em;
-		margin-bottom: var(--space-2);
-		border-radius: 50%;
-		background: color-mix(in oklab, var(--status-done) 14%, transparent);
+	.clean :global(svg) {
+		flex: none;
 		color: var(--status-done);
-		font-size: var(--font-size-lg);
+		font-size: var(--font-size-md);
 	}
 </style>

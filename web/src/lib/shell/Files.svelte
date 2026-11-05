@@ -1,8 +1,9 @@
 <script lang="ts">
 	import type { Device } from '#lib/device.svelte.ts';
-	import { copy, create, list, remove, RequestError, type Entry } from '#lib/files.svelte.ts';
+	import { copy, create, list, remove, RequestError, type Cursor, type Entry } from '#lib/files.svelte.ts';
 	import { letters, type Change } from '#lib/git.ts';
 	import Rename from '#lib/shell/Rename.svelte';
+	import Search from '#lib/shell/Search.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -14,17 +15,16 @@
 	import Clipboard from '~icons/ph/clipboard';
 	import Copy from '~icons/ph/copy';
 	import DotsThree from '~icons/ph/dots-three';
-	import Eye from '~icons/ph/eye';
-	import EyeSlash from '~icons/ph/eye-slash';
 	import FilePlus from '~icons/ph/file-plus';
 	import FolderPlus from '~icons/ph/folder-plus';
 	import PencilSimple from '~icons/ph/pencil-simple';
 	import Trash from '~icons/ph/trash';
 
-	type Props = { projectId: string; device: Device; changes: Change[]; onopen(path: string): void; onrename(from: string, to: string): void };
+	type Props = { projectId: string; device: Device; changes: Change[]; hidden: boolean; onopen(path: string, cursor?: Cursor): void; onrename(from: string, to: string): void };
 
-	let { projectId, device, changes, onopen, onrename }: Props = $props();
+	let { projectId, device, changes, hidden, onopen, onrename }: Props = $props();
 
+	let query = $state('');
 	let includeIgnored = $state(false);
 	let listings = $state.raw<Record<string, Entry[]>>({});
 	let target = $state<Entry>();
@@ -40,7 +40,7 @@
 	let pasting = $state(false);
 	let pasteError = $state('');
 	let renamer: Rename;
-	let treeElement: HTMLDivElement;
+	let treeElement = $state<HTMLDivElement>();
 	let focused: Entry | undefined;
 	const expanded = new SvelteSet<string>();
 	const kinds = $derived(new Map(changes.map((change) => [change.path, change.kind])));
@@ -262,23 +262,16 @@
 	</ul>
 {/snippet}
 
-<section aria-label="Files">
-	<header>
-		<h2>Files</h2>
-		<IconButton
-			label={includeIgnored ? 'Hide ignored files' : 'Show ignored files'}
-			aria-pressed={includeIgnored}
-			onclick={showIgnored}
-		>
-			{#if includeIgnored}<Eye />{:else}<EyeSlash />{/if}
-		</IconButton>
-	</header>
-	<Menu context items={creationItems('')}>
-		{#snippet trigger(props)}
-			<div {...props} bind:this={treeElement} class="tree" role="group" aria-label="File tree" aria-busy={pasting}>{@render tree('', 0)}</div>
-		{/snippet}
-	</Menu>
-	{#if pasteError}<p role="alert">{pasteError}</p>{/if}
+<section aria-label="Files" {hidden}>
+	<Search {projectId} {device} bind:query {includeIgnored} onignored={showIgnored} {onopen} />
+	{#if !query}
+		<Menu context items={creationItems('')}>
+			{#snippet trigger(props)}
+				<div {...props} bind:this={treeElement} class="tree" role="group" aria-label="File tree" aria-busy={pasting}>{@render tree('', 0)}</div>
+			{/snippet}
+		</Menu>
+		{#if pasteError}<p role="alert">{pasteError}</p>{/if}
+	{/if}
 </section>
 
 <Dialog
@@ -319,18 +312,8 @@
 		min-height: 0;
 	}
 
-	header {
-		display: flex;
-		align-items: center;
-		padding: 0 var(--space-1) 0 var(--space-3);
-	}
-
-	h2 {
-		flex: 1;
-		margin: 0;
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-		font-weight: 600;
+	section[hidden] {
+		display: none;
 	}
 
 	.tree {

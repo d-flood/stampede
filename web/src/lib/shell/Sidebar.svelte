@@ -4,23 +4,27 @@
 
 	const picker = lazy(() => import('#lib/shell/BranchPicker.svelte'));
 
-	export type Section = 'files' | 'changes' | 'history' | 'compare' | 'search' | 'epics';
+	export type Section = 'files' | 'git' | 'compare' | 'epics';
 
 	const sections: { id: Section; label: string }[] = [
 		{ id: 'files', label: 'Files' },
-		{ id: 'changes', label: 'Changes' },
-		{ id: 'history', label: 'History' },
+		{ id: 'git', label: 'Git' },
 		{ id: 'compare', label: 'Compare' },
-		{ id: 'search', label: 'Search' },
 		{ id: 'epics', label: 'Epics' }
 	];
 
 	export function available(git?: Git) {
-		return sections.filter(({ id }) => id === 'files' || id === 'search' || git?.isRepo);
+		return sections.filter(({ id }) => id === 'files' || git?.isRepo);
 	}
 
 	export function showing(section: Section, git?: Git) {
 		return available(git).find(({ id }) => id === section) ?? sections[0];
+	}
+
+	const moved: Record<string, Section> = { changes: 'git', history: 'git', search: 'files' };
+
+	export function savedSection(saved: string = 'files') {
+		return moved[saved] ?? (saved as Section);
 	}
 </script>
 
@@ -37,7 +41,6 @@
 	import Epics from '#lib/shell/Epics.svelte';
 	import Files from '#lib/shell/Files.svelte';
 	import History from '#lib/shell/History.svelte';
-	import Search from '#lib/shell/Search.svelte';
 	import Usage from '#lib/shell/Usage.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import type { Snippet } from 'svelte';
@@ -150,17 +153,16 @@
 						<button aria-pressed={current === id} onclick={() => (section = id)}>{label}</button>
 					{/each}
 				</div>
-				{#if current === 'files'}
+				{#key project.id}
+					<Files projectId={project.id} {device} changes={git?.changes ?? []} hidden={current !== 'files'} {onopen} {onrename} />
+				{/key}
+				{#if current === 'git'}
 					{#key project.id}
-						<Files projectId={project.id} {device} changes={git?.changes ?? []} {onopen} {onrename} />
-					{/key}
-				{:else if current === 'changes'}
-					{#key project.id}
-						{#if git}<Changes projectId={project.id} {git} {trunk} {device} onopen={(path) => onopen(path)} {ondiff} />{/if}
-					{/key}
-				{:else if current === 'history'}
-					{#key project.id}
-						<History projectId={project.id} {device} onopen={ondiff} />
+						{#if git}
+							<Changes projectId={project.id} {git} {trunk} {device} onopen={(path) => onopen(path)} {ondiff}>
+								<History projectId={project.id} {device} onopen={ondiff} />
+							</Changes>
+						{/if}
 					{/key}
 				{:else if current === 'compare'}
 					{#key project.id}
@@ -169,9 +171,6 @@
 				{:else if current === 'epics'}
 					<Epics epics={epics ?? []} onopen={onepic} />
 				{/if}
-				{#key project.id}
-					<Search projectId={project.id} {device} hidden={current !== 'search'} {onopen} />
-				{/key}
 			{/if}
 			{#if form() === 'desktop'}<Usage readings={usage} {codexResets} />{/if}
 		</div>

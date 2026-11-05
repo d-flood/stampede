@@ -18,7 +18,7 @@ function repository(name: string) {
 async function changesPanel(page: Page, name: string) {
 	await openProject(page, name);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Changes', exact: true }).click();
+	await sidebar.getByRole('button', { name: 'Git', exact: true }).click();
 	return sidebar;
 }
 
@@ -423,7 +423,7 @@ test('History rewords and squashes earlier commits and copies their hashes', { t
 	await openProject(page, 'history');
 	const sidebar = await showSidebar(page);
 	const commits = sidebar.getByRole('list', { name: 'Commits' });
-	await sidebar.getByRole('button', { name: 'History' }).click();
+	await sidebar.getByRole('button', { name: 'Git', exact: true }).click();
 	await sidebar.getByRole('button', { name: `Actions for ${head}` }).click();
 	await expect(page.getByRole('menuitem', { name: 'Edit Message…' })).toBeVisible();
 	await expect(page.getByRole('menuitem', { name: /Squash/ })).toHaveCount(0);
@@ -477,7 +477,7 @@ test('History squashes pushed commits after a warning', { tag: '@desktop' }, asy
 	git('push', '-qu', 'origin', 'main');
 	await openProject(page, 'pushed');
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'History' }).click();
+	await sidebar.getByRole('button', { name: 'Git', exact: true }).click();
 	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD~1')}` }).click();
 	await page.getByRole('menuitem', { name: 'Squash Newer Commits Into This…' }).click();
 	const squash = page.getByRole('dialog', { name: 'Squash 2 commits' });
@@ -488,4 +488,49 @@ test('History squashes pushed commits after a warning', { tag: '@desktop' }, asy
 	await squash.getByRole('button', { name: 'Squash Anyway' }).click();
 	await expect(squash).toBeHidden();
 	expect(git('log', '--format=%s')).toBe('First');
+});
+
+test('Git lists uncommitted work above History in one scroll', async ({ page }) => {
+	const { root, git } = repository('together');
+	writeFileSync(`${root}/README.md`, '# together\n');
+	git('add', '.');
+	git('commit', '-qm', 'Initial commit');
+	writeFileSync(`${root}/README.md`, '# together, edited\n');
+	git('commit', '-qam', 'Edit the readme');
+	for (let index = 0; index < 60; index++) writeFileSync(`${root}/file${index}.txt`, 'new\n');
+	const sidebar = await changesPanel(page, 'together');
+	const history = sidebar.getByRole('button', { name: /^History/ });
+	const commits = sidebar.getByRole('list', { name: 'Commits' });
+	const message = sidebar.getByRole('textbox', { name: 'Commit message' });
+
+	await expect(message).toBeInViewport();
+	await expect(history).toBeInViewport();
+	await expect(history).toContainText('Jump');
+	await expect(commits.getByText('Initial commit')).not.toBeInViewport();
+
+	await history.click();
+	await expect(commits.getByText('Initial commit')).toBeInViewport();
+	await expect(history).not.toContainText('Jump');
+	await expect(message).not.toBeInViewport();
+
+	await commits.locator('[data-sha]').nth(1).focus();
+	await page.keyboard.press('s');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.keyboard.press('q');
+	const squash = page.getByRole('dialog', { name: 'Squash 2 commits' });
+	await expect(squash).toBeVisible();
+	await squash.getByRole('button', { name: 'Cancel' }).click();
+
+	await history.click();
+	await expect(history).toHaveAttribute('aria-expanded', 'false');
+	await expect(commits).toHaveCount(0);
+	await history.click();
+	await expect(commits).toBeVisible();
+
+	git('add', '.');
+	git('commit', '-qm', 'Add the new files');
+	await expect(sidebar.getByText('No uncommitted changes')).toBeVisible();
+	await expect(message).toHaveCount(0);
+	await expect(commits.getByText('Add the new files')).toBeInViewport();
+	await expect(history).not.toContainText('Jump');
 });
