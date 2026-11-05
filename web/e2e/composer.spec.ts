@@ -159,16 +159,50 @@ test('desktop Chats dock the settings and actions under the Composer', { tag: '@
 	await closeProject(page, name);
 });
 
-test('Shift+Tab in the composer cycles the Chat mode', { tag: '@desktop' }, async ({ page }, { project }) => {
+test('Shift+Tab moves focus backward from the composer and leaves the Chat mode', { tag: '@desktop' }, async ({ page }, { project }) => {
+	const runs: unknown[] = [];
+	page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {
+		if (typeof payload === 'string' && JSON.parse(payload).type === 'chat.run') runs.push(JSON.parse(payload));
+	}));
 	const name = `composer-mode-${project.name}`;
 	const { panel, composer } = await launch(page, name);
-	await panel.getByRole('button', { name: 'Mode: default', exact: true }).click();
-	await expect(page.getByRole('menuitemcheckbox', { name: 'accept edits' })).toBeVisible();
-	await page.keyboard.press('Escape');
+	await composer.focus();
 	await composer.press('Shift+Tab');
-	await expect(panel.getByRole('button', { name: 'Mode: accept edits', exact: true })).toBeVisible();
-	await expect(composer).toBeFocused();
-	await composer.press('Shift+Tab');
-	await expect(panel.getByRole('button', { name: 'Mode: plan', exact: true })).toBeVisible();
+	await expect(composer).not.toBeFocused();
+	expect(await composer.evaluate((element) => !!(document.activeElement!.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+	await expect(panel.getByRole('button', { name: 'Mode: default', exact: true })).toBeVisible();
+	expect(runs).toEqual([]);
+	await closeProject(page, name);
+});
+
+test('the model control holds Speed and shows it only once it differs from the default', async ({ page }, { project }) => {
+	const name = `composer-speed-${project.name}`;
+	const { panel } = await launch(page, name);
+	const model = panel.getByRole('button', { name: 'Model: opus xhigh', exact: true });
+	await expect(model).toHaveText(/^\s*opus\s+xhigh\s*$/);
+	await model.click();
+	for (const heading of ['Model', 'Effort', 'Speed', 'Ultracode']) await expect(page.getByRole('menu').getByText(heading, { exact: true })).toBeVisible();
+	await expect(page.getByRole('menuitemcheckbox', { name: 'standard' })).toHaveAttribute('aria-checked', 'true');
+	await page.getByRole('menuitemcheckbox', { name: 'fast' }).click();
+	const fast = panel.getByRole('button', { name: 'Model: opus xhigh fast', exact: true });
+	await expect(fast).toHaveText(/^\s*opus\s+xhigh\s+fast\s*$/);
+	await fast.click();
+	await page.getByRole('menuitemcheckbox', { name: 'standard' }).click();
+	await expect(model).toBeVisible();
+	await closeProject(page, name);
+});
+
+test('phone Composer holds the Chat settings and every control is at least 44px tall', { tag: '@phone' }, async ({ page }, { project }) => {
+	const name = `composer-targets-${project.name}`;
+	const { panel, composer } = await launch(page, name);
+	const model = panel.getByRole('button', { name: /^Model:/ });
+	await expect(model).toBeVisible();
+	const [text, setting] = await Promise.all([composer.boundingBox(), model.boundingBox()]);
+	expect(setting!.y).toBeGreaterThanOrEqual(text!.y + text!.height);
+	await composer.fill('Draft');
+	const controls = panel.locator('.composer .actions button');
+	await expect(controls).toHaveCount(7);
+	for (const box of await controls.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height))) expect(box).toBeGreaterThanOrEqual(44);
+	await expect.poll(() => panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
 	await closeProject(page, name);
 });

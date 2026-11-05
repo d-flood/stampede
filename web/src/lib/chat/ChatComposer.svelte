@@ -155,11 +155,8 @@
 		slash?.key(event);
 		if (!event.defaultPrevented) files?.key(event);
 		if (event.defaultPrevented || !live) return;
-		if (event.key === 'Escape' && stoppable) interrupt();
-		else if (event.key === 'Tab' && event.shiftKey && choices.mode.length) {
-			const at = choices.mode.findIndex((choice) => choice.value === chat.settings.mode);
-			onrun('mode', choices.mode[(at + 1) % choices.mode.length].value);
-		} else return;
+		if (event.key !== 'Escape' || !stoppable) return;
+		interrupt();
 		event.preventDefault();
 	}
 
@@ -177,7 +174,7 @@
 	</div>
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : form() === 'phone' ? undefined : '/ commands · @ files · ! shell · ; clips'} {history} code={(text) => text.trimStart().startsWith('!')} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
 	{#snippet border()}
 		<TurnRing status={chat.status} activity={chat.activity} {shell} />
 	{/snippet}
@@ -191,11 +188,10 @@
 		{#if form() === 'phone'}
 			<Button variant="ghost" aria-label="Commands" tip="Commands" aria-expanded={slash?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => slash?.toggle()}><Terminal /></Button>
 			<Button variant="ghost" aria-label="Reference file" tip="Reference file" aria-expanded={files?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => (files?.isOpen() ? files.dismiss() : composer.insert('@'))}><At /></Button>
-		{:else}
-			<Chips agent={chat.agent} settings={chat.settings} {choices} docked {onrun}>
-				{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
-			</Chips>
 		{/if}
+		<Chips agent={chat.agent} settings={chat.settings} {choices} {onrun}>
+			{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
+		</Chips>
 		<Button variant="ghost" aria-label="Attach image" tip="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
 		<Menu items={[{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]}>
 			{#snippet trigger(props)}
@@ -207,7 +203,6 @@
 				<Button variant="ghost" aria-label="Interrupt" tip="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
 					<span class="stop"><Stop /></span>
 				</Button>
-				{#if form() === 'phone'}<span class="gap"></span>{/if}
 			{/if}
 			{#if text.trimStart().startsWith('!')}
 				<Button variant="primary" disabled={!text.trim().slice(1).trim() || !live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
@@ -231,7 +226,7 @@
 					variant="primary"
 					aria-label="Send"
 					tip="Send"
-					style="min-width: calc(2 * (1.2em + 2 * var(--space-3) + 2 * var(--border-width)))"
+					style={form() === 'phone' ? undefined : 'min-width: calc(2 * (1.2em + 2 * var(--space-3) + 2 * var(--border-width)))'}
 					disabled={(!text.trim() && !images.length) || !live || reading}
 					onmousedown={keepFocus}
 					onclick={() => send(text, false) && clear()}
@@ -271,10 +266,6 @@
 	.stop {
 		display: inline-flex;
 		color: var(--ansi-1);
-	}
-
-	.gap {
-		flex: 1;
 	}
 
 	.plane {

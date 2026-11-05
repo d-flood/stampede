@@ -166,7 +166,7 @@ test('spinners switch between custom and standard in this browser', { tag: '@des
 	await expect.poll(() => page.evaluate(() => localStorage.getItem('stampede.spinners'))).toBeNull();
 });
 
-test('available modes are chosen per Agent and limit a Chat\'s mode menu and Shift+Tab', { tag: '@desktop' }, async ({ page }) => {
+test('available modes are chosen per Agent and limit a Chat\'s mode menu', { tag: '@desktop' }, async ({ page }) => {
 	const name = 'modes';
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
@@ -187,7 +187,5 @@ test('available modes are chosen per Agent and limit a Chat\'s mode menu and Shi
 	await expect(page.getByRole('menuitemcheckbox', { name: 'plan' })).toBeVisible();
 	await expect(page.getByRole('menuitemcheckbox', { name: 'accept edits' })).toHaveCount(0);
 	await page.keyboard.press('Escape');
-	await panel.getByRole('textbox', { name: 'Composer' }).press('Shift+Tab');
-	await expect(panel.getByRole('button', { name: 'Mode: plan', exact: true })).toBeVisible();
 	await closeProject(page, name);
 });

@@ -3,7 +3,6 @@
 	import Activity from '#lib/chat/Activity.svelte';
 	import { same, subagents as flatten } from '#lib/chat/agents.ts';
 	import Button from '#lib/ui/Button.svelte';
-	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import Queued from '#lib/chat/Queued.svelte';
 	import Rewind from '#lib/chat/Rewind.svelte';
 	import MessageNav from '#lib/chat/MessageNav.svelte';
@@ -12,7 +11,6 @@
 	import Shells from '#lib/chat/Shells.svelte';
 	import { commands } from '#lib/chat/shells.ts';
 	import Todos from '#lib/chat/Todos.svelte';
-	import Chips from '#lib/chat/Chips.svelte';
 	import Dock from '#lib/chat/Dock.svelte';
 	import Canvases from '#lib/chat/Canvases.svelte';
 	import { canvases as written } from '#lib/canvas.svelte.ts';
@@ -195,13 +193,6 @@
 <!-- svelte-ignore a11y_interactive_supports_focus (Dropped images have the Attach image button as their keyboard path.) -->
 <div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active} ondragover={dragover} ondrop={drop}>
 	{#if !selected}
-		{#if form() === 'phone'}
-			<Chips agent={chat.agent} settings={chat.settings} {choices} onrun={run}>
-				{#if chat.context}
-					<ContextBar context={chat.context} tokens={chat.tokens} />
-				{/if}
-			</Chips>
-		{/if}
 		{#if source || handoffs.length}
 			<div class="handoffs" aria-label="Chat handoffs">
 				{#if source}<Button onclick={() => onchat(source)}>Source Chat · {source.rig}</Button>{/if}

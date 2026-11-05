@@ -223,6 +223,11 @@
 		gap: var(--space-3);
 	}
 
+	.boxed.phone .actions {
+		flex-wrap: nowrap;
+		gap: var(--space-1);
+	}
+
 	.boxed.phone textarea {
 		min-height: var(--target-min);
 		box-shadow: none;
