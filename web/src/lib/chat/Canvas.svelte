@@ -66,7 +66,7 @@
 		padding: 0;
 		border: 0;
 		background: none;
-		color: var(--status-working);
+		color: var(--accent);
 		font: inherit;
 		cursor: pointer;
 	}

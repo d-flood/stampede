@@ -39,7 +39,7 @@
 	}
 
 	button:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
+		outline: var(--border-width) solid var(--accent);
 		outline-offset: var(--border-width);
 	}
 

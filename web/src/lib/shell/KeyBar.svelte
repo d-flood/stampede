@@ -112,8 +112,8 @@
 	}
 
 	button[aria-pressed='true'] {
-		border-color: var(--status-working);
-		background: var(--status-working);
+		border-color: var(--accent);
+		background: var(--accent);
 		color: var(--color-bg);
 	}
 </style>

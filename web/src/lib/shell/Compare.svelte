@@ -392,7 +392,7 @@
 	}
 
 	.ref:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
+		outline: var(--border-width) solid var(--accent);
 	}
 
 	.ref :global(svg) {
@@ -488,7 +488,7 @@
 	}
 
 	.entry:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
+		outline: var(--border-width) solid var(--accent);
 		outline-offset: calc(-1 * var(--border-width));
 	}
 
@@ -552,7 +552,7 @@
 
 	.viewed-box input {
 		margin: 0;
-		accent-color: var(--status-working);
+		accent-color: var(--accent);
 		cursor: inherit;
 	}
 

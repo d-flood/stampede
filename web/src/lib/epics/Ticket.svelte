@@ -349,7 +349,7 @@
 		padding: 0;
 		border: none;
 		background: none;
-		color: var(--status-working);
+		color: var(--accent);
 		font: inherit;
 		font-size: var(--font-size-sm);
 		cursor: pointer;
@@ -444,7 +444,7 @@
 	.link:focus-visible,
 	.ref:focus-visible,
 	.chip:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
+		outline: var(--border-width) solid var(--accent);
 	}
 
 	.bottom {

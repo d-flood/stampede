@@ -30,12 +30,12 @@
 		--emoji-size: 1.5rem;
 		--emoji-padding: 0.625rem;
 		--font-family: var(--font-ui);
-		--indicator-color: var(--status-working);
+		--indicator-color: var(--accent);
 		--input-border-color: var(--border);
 		--input-border-radius: var(--radius-md);
 		--input-font-color: var(--color-fg);
 		--input-placeholder-color: var(--muted-fg);
-		--outline-color: var(--status-working);
+		--outline-color: var(--accent);
 		--num-columns: 7;
 	}
 

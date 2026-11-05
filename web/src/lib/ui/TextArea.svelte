@@ -24,7 +24,7 @@
 	}
 
 	textarea:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
+		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
 		outline-offset: 1px;
 	}
 </style>

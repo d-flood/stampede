@@ -52,7 +52,7 @@
 	}
 
 	button:focus-visible span {
-		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
+		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
 		outline-offset: 1px;
 	}
 
@@ -61,7 +61,7 @@
 	}
 
 	[aria-pressed='true'] span {
-		border-color: var(--status-working);
+		border-color: var(--accent);
 		background: var(--surface-3);
 	}
 </style>

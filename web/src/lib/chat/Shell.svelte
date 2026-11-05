@@ -29,9 +29,9 @@
 		width: min(100%, 40em);
 		max-width: 85%;
 		padding: 0 var(--space-4);
-		border: var(--border-width) solid color-mix(in oklab, var(--ansi-4) 38%, var(--color-bg));
+		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
-		background: color-mix(in oklab, var(--ansi-4) 16%, var(--color-bg));
+		background: var(--surface-2);
 		font-family: var(--font-mono);
 		font-size: 0.92em;
 	}

@@ -197,7 +197,7 @@
 
 	.console-toggle span, .level, .console-empty { color: var(--muted-fg); }
 	.console-toggle:hover { background: var(--hover); }
-	.console-toggle:focus-visible, .entries:focus-visible { outline: var(--border-width) solid var(--status-working); outline-offset: -1px; }
+	.console-toggle:focus-visible, .entries:focus-visible { outline: var(--border-width) solid var(--accent); outline-offset: -1px; }
 
 	.entries {
 		flex: 1;

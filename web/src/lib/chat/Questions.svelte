@@ -82,5 +82,5 @@
 	section :global(.text > :last-child) { margin-bottom: 0; }
 	.answer { white-space: pre-wrap; overflow-wrap: anywhere; }
 	.unanswered { color: var(--muted-fg); font-size: var(--font-size-sm); }
-	.instruction { width: fit-content; max-width: 85%; margin: var(--space-2) 0 0 auto; padding: var(--space-3) var(--space-4); border: var(--border-width) solid color-mix(in oklab, var(--ansi-4) 38%, var(--color-bg)); border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg); background: color-mix(in oklab, var(--ansi-4) 16%, var(--color-bg)); }
+	.instruction { width: fit-content; max-width: 85%; margin: var(--space-2) 0 0 auto; padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg); background: var(--surface-2); }
 </style>

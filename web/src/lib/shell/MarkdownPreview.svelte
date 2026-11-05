@@ -94,7 +94,7 @@
 	}
 
 	article :global(a) {
-		color: var(--status-working);
+		color: var(--accent);
 	}
 
 	article :global(img) {

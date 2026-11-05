@@ -28,6 +28,7 @@
 		'--border',
 		'--hover',
 		'--muted-fg',
+		'--accent',
 		'--status-working',
 		'--status-waiting',
 		'--status-done',

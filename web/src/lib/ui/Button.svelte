@@ -60,7 +60,7 @@
 	}
 
 	button:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
+		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
 		outline-offset: 1px;
 	}
 
@@ -73,7 +73,7 @@
 	}
 
 	.primary {
-		--fill: var(--status-working);
+		--fill: var(--accent);
 		border-color: color-mix(in oklab, var(--fill), var(--color-fg) 16%);
 		background: linear-gradient(color-mix(in oklab, var(--fill), var(--color-fg) 3%), var(--fill));
 		color: var(--color-bg);
@@ -81,14 +81,14 @@
 	}
 
 	.primary:hover:not(:disabled) {
-		--fill: color-mix(in oklab, var(--status-working), var(--color-fg) 8%);
+		--fill: color-mix(in oklab, var(--accent), var(--color-fg) 8%);
 		background: linear-gradient(color-mix(in oklab, var(--fill), var(--color-fg) 3%), var(--fill));
 	}
 
 	.primary:disabled {
-		border-color: color-mix(in oklab, var(--status-working) 22%, var(--border));
-		background: color-mix(in oklab, var(--status-working) 7%, var(--surface-1));
-		color: color-mix(in oklab, var(--status-working) 35%, var(--muted-fg));
+		border-color: color-mix(in oklab, var(--accent) 22%, var(--border));
+		background: color-mix(in oklab, var(--accent) 7%, var(--surface-1));
+		color: color-mix(in oklab, var(--accent) 35%, var(--muted-fg));
 	}
 
 	.ghost {

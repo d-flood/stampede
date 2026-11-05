@@ -564,7 +564,7 @@
 		gap: var(--space-2);
 		padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
 		border-bottom: var(--border-width) solid var(--border);
-		border-left: 3px solid var(--status-working);
+		border-left: 3px solid var(--accent);
 		background: var(--surface-1);
 		font-size: var(--font-size-sm);
 	}
