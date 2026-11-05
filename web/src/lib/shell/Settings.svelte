@@ -1,3 +1,15 @@
+<script lang="ts" module>
+	type Page = 'general' | 'appearance' | 'agents' | 'rigs' | 'clips';
+
+	let open = $state(false);
+	let chosen = $state<Page>();
+
+	export function openSettings(page: Page) {
+		chosen = page;
+		open = true;
+	}
+</script>
+
 <script lang="ts">
 	import { agentNames, autoFetch, clips, commitInstructions, commitRig, fontNames, hostName, modes, rigs, saveAutoFetch, saveCommitInstructions, saveCommitRig, saveHostName, saveModes, themeLabel, type Agent, type FontRole } from '#lib/config.svelte.ts';
 	import type { Update } from '#lib/git.ts';
@@ -32,14 +44,10 @@
 	import RocketLaunch from '~icons/ph/rocket-launch';
 	import SlidersHorizontal from '~icons/ph/sliders-horizontal';
 
-	type Page = 'general' | 'appearance' | 'agents' | 'rigs' | 'clips';
-
 	let { update }: { update?: Update } = $props();
 
 	const seenKey = 'stampede.update-seen';
-	let open = $state(false);
 	let seen = $state(storedSeen());
-	let chosen = $state<Page>();
 	let refusal = $state<string | null>(null);
 	let commitRefusal = $state<string | null>(null);
 	let modesRefusal = $state<string | null>(null);

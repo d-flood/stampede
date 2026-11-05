@@ -3,7 +3,6 @@
 	import { OpenBrowser } from '#lib/browser.svelte.ts';
 	import { OpenCanvas } from '#lib/canvas.svelte.ts';
 	import Browser from '#lib/shell/Browser.svelte';
-	import { ago, logos } from '#lib/chat/sessions.ts';
 	import { same, subagents } from '#lib/chat/agents.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
@@ -38,7 +37,9 @@
 	import ThemeBar from '#lib/shell/ThemeBar.svelte';
 	import Settings from '#lib/shell/Settings.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
+	import Launchpad from '#lib/shell/Launchpad.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
+	import { menuItems, tabItems } from '#lib/shell/new-tab.ts';
 	import type { Action, Scope } from '#lib/shell/Palette.svelte';
 	import Projects from '#lib/shell/Projects.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
@@ -58,15 +59,12 @@
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
-	import FileCode from '~icons/ph/file-code';
-	import Globe from '~icons/ph/globe';
 	import Plus from '~icons/ph/plus';
 	import Power from '~icons/ph/power';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
 	import TerminalWindow from '~icons/ph/terminal-window';
 	import WifiSlash from '~icons/ph/wifi-slash';
 
-	const RECENT = 5;
 	const editor = () => import('#lib/shell/Editor.svelte');
 	afterPaint(editor);
 	const restored = restore();
@@ -126,6 +124,7 @@
 	let afterPalette: (() => void) | undefined;
 	let unfocused = $state(false);
 	let directories = $state<string[]>([]);
+	let listed = $state(false);
 	type Screen = 'projects' | 'tabs' | 'sidebar';
 	let screen = $state<Screen>('tabs');
 	const order: Screen[] = $derived(sidebarPosition.side === 'left' ? ['projects', 'sidebar', 'tabs'] : ['projects', 'tabs', 'sidebar']);
@@ -189,7 +188,7 @@
 	const tabActions: Action[] = $derived.by(() => {
 		const items = tabTarget === 'drawer'
 			? [{ label: 'Terminal', icon: TerminalWindow, onselect: () => drawer.newTab() }]
-			: tabTarget ? newTab(tabTarget) : [];
+			: tabTarget ? menuItems(newTab(tabTarget)) : [];
 		return items.flatMap((entry) => {
 			const group = 'heading' in entry ? entry.heading : 'Tabs';
 			const items = 'items' in entry ? entry.items : [entry];
@@ -408,6 +407,8 @@
 				const selected = activeTab;
 				const opened = message.projects.filter((project) => !projects.some((other) => other.id === project.id));
 				projects = message.projects;
+				listed = true;
+				if (!projects.length) device.send({ type: 'picker.list' });
 				for (const project of opened) staleGit.add(project.id);
 				if (left?.worktree && !projects.some((project) => project.id === left.id)) {
 					const { parent } = left.worktree;
@@ -678,24 +679,14 @@
 	}
 
 	function newTab(projectId: string) {
-		const items = rigs()
-			.map((rig, index) => ({ label: rig.name, hint: index < 9 ? `Ctrl+Shift+${index + 1}` : `${index + 1}`, icon: logos[rig.agent], onselect: () => launch(rig, projectId) }));
-		const terminal = () => device.send({ type: 'terminal.create', projectId });
-		const rest = [
-			{ label: 'Terminal', hint: 'Ctrl+Shift+T', icon: TerminalWindow, onselect: terminal },
-			{ label: 'Browser', icon: Globe, onselect: () => openBrowser(projectId) },
-			{ label: 'Open file', icon: FileCode, onselect: () => openPalette('files') }
-		];
-		const recent = (sessions[projectId] ?? []).slice(0, RECENT).map((session) => ({
-			label: session.title,
-			icon: logos[session.agent],
-			hint: ago(session.updatedAt),
-			onselect: () => reopen(projectId, session)
-		}));
-		const past = recent.length
-			? [{ heading: 'Sessions', items: [...recent, { label: 'Search sessions…', onselect: () => (palette = 'sessions') }] }]
-			: [];
-		return [...(items.length ? [{ heading: 'Rigs', items }] : []), ...rest, ...past];
+		return tabItems(rigs(), sessions[projectId] ?? [], {
+			launch: (rig) => launch(rig, projectId),
+			terminal: () => device.send({ type: 'terminal.create', projectId }),
+			browser: () => openBrowser(projectId),
+			files: () => openPalette('files'),
+			reopen: (session) => reopen(projectId, session),
+			search: () => (palette = 'sessions')
+		});
 	}
 
 	function reopen(projectId: string, { agent, sessionId }: Session) {
@@ -1191,7 +1182,7 @@
 					</div>
 					{#if focused}
 						{@const projectId = focused.id}
-						<Menu items={newTab(projectId)} resize loading={readingSessions[projectId] ? 'Reading sessions…' : undefined} onopen={() => readSessions(projectId)}>
+						<Menu items={menuItems(newTab(projectId))} resize loading={readingSessions[projectId] ? 'Reading sessions…' : undefined} onopen={() => readSessions(projectId)}>
 							{#snippet trigger(props)}
 								<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
 							{/snippet}
@@ -1362,10 +1353,24 @@
 					<div class="zone" class:over={dragging.over === 'right'} style:flex-grow={1 - ratio}></div>
 				</div>
 			{/if}
-			{#if !focused}
-				<div class="empty">
-					<p>No Project open</p>
-					<Button variant="primary" onclick={pick}>Open Project</Button>
+			{#if focused && tabIds.every((id) => closingTabs.has(id))}
+				{@const projectId = focused.id}
+				{#key projectId}
+					<Launchpad
+						name={label ?? focused.path}
+						path={focused.path}
+						git={git.get(projectId)}
+						items={newTab(projectId)}
+						reading={!!readingSessions[projectId]}
+						onread={() => readSessions(projectId)}
+					/>
+				{/key}
+			{:else if !focused && listed && !picking}
+				<div class="empty" class:top={phone}>
+					<h2>Open a Project</h2>
+					{#await import('#lib/shell/Picker.svelte') then { default: Picker }}
+						<Picker {directories} onopen={open} autofocus={!phone} />
+					{/await}
 				</div>
 			{/if}
 		</div>
@@ -1815,17 +1820,24 @@
 	.empty {
 		grid-row: 1;
 		grid-column: 1 / -1;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: var(--space-3);
-		height: 100%;
-		color: var(--muted-fg);
+		align-self: center;
+		justify-self: center;
+		position: relative;
+		width: min(36rem, 100%);
+		max-height: 100%;
+		padding: var(--space-6);
+		box-sizing: border-box;
+		overflow: hidden auto;
 	}
 
-	.empty p {
-		margin: 0;
+	.empty.top {
+		align-self: start;
+		padding: var(--space-6) 1rem;
+	}
+
+	.empty h2 {
+		margin: 0 0 var(--space-4);
+		font: 500 1.875rem/1.15 var(--font-chat);
 	}
 
 	.reconnecting,
