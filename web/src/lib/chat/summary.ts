@@ -1,9 +1,8 @@
 import type { Item, ToolCall } from '#lib/device.svelte.ts';
 
-export type Segment = { text: string; failed?: true };
 export type Chip = { path: string; added: number; removed: number; canvas?: true };
 
-export function summarize(items: Item[]): Segment[] {
+export function summarize(items: Item[]): string[] {
 	const calls = items.flatMap((item) => (item.kind === 'tools' ? item.calls : []));
 	const commands = items.filter((item) => item.kind === 'command');
 	const failed = commands.filter((item) => item.status === 'failed').length;
@@ -17,13 +16,13 @@ export function summarize(items: Item[]): Segment[] {
 		[count('web'), 'searched the web', 'time'],
 		[count('mcp', 'other'), 'used', 'tool']
 	];
-	const segments: Segment[] = counts.filter(([count]) => count).map(([count, verb, noun]) => ({ text: `${verb} ${count} ${noun}${count === 1 ? '' : 's'}` }));
-	if (failed) segments.push({ text: `${failed} failed`, failed: true });
+	const segments = counts.filter(([count]) => count).map(([count, verb, noun]) => `${verb} ${count} ${noun}${count === 1 ? '' : 's'}`);
+	if (failed) segments.push(`${failed} failed`);
 	if (!segments.length) {
 		const seconds = items.reduce((total, item) => total + (item.kind === 'thinking' ? item.seconds : 0), 0);
-		return [{ text: seconds ? `Thought for ${seconds}s` : 'Thought briefly' }];
+		return [seconds ? `Thought for ${seconds}s` : 'Thought briefly'];
 	}
-	segments[0].text = segments[0].text.charAt(0).toUpperCase() + segments[0].text.slice(1);
+	segments[0] = segments[0].charAt(0).toUpperCase() + segments[0].slice(1);
 	return segments;
 }
 

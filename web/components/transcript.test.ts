@@ -34,7 +34,7 @@ test('messages stay visible while Activity groups update and retain their open s
 	await expect.poll(() => view.container.scrollWidth <= view.container.clientWidth).toBe(true);
 });
 
-test('Activity summaries count every action in order and keep failures visible while collapsed', async () => {
+test('Activity summaries count every action in order and keep failures quiet until expanded', async () => {
 	const ondiff = vi.fn();
 	const onexpand = vi.fn();
 	const items: Item[] = [
@@ -50,10 +50,8 @@ test('Activity summaries count every action in order and keep failures visible w
 	const view = await render(Transcript, { items, onexpand, onopen: vi.fn(), onattend: vi.fn(), ondiff, oncanvas: vi.fn() });
 	const [summary] = summaries(view.container);
 	expect(summary.textContent).toBe('Edited 1 file, ran 2 commands, read 3 files, 1 failed');
-	const probe = view.container.appendChild(document.createElement('span'));
-	probe.style.color = 'var(--ansi-1)';
-	expect(getComputedStyle(summary.querySelector('.failed')!).color).toBe(getComputedStyle(probe).color);
-	probe.remove();
+	const segments = [...summary.querySelectorAll('.segment')];
+	await expect.poll(() => getComputedStyle(segments.at(-1)!).color).toBe(getComputedStyle(segments[0]).color);
 
 	const chips = view.container.querySelectorAll('.chip');
 	expect([...chips].map((chip) => chip.textContent)).toEqual(['parse.ts+5−1']);
@@ -61,16 +59,20 @@ test('Activity summaries count every action in order and keep failures visible w
 	expect(ondiff).toHaveBeenCalledWith('src/parse.ts');
 
 	expect(view.container.querySelector('.rail')).toBeNull();
-	const failure = page.elementLocator(view.container.querySelector('.failure')!);
-	await expect.element(failure).toBeVisible();
-	await expect.element(failure).toHaveTextContent('pnpm test parse failed Show output');
-	await view.getByRole('button', { name: 'Show output' }).click();
+	expect(view.container.textContent).not.toContain('pnpm test parse');
+	await page.elementLocator(summary).click();
 	expect(summary.getAttribute('aria-expanded')).toBe('true');
 	expect(view.container.querySelectorAll('.rail > .step')).toHaveLength(8);
 	expect(view.container.querySelectorAll('.rail details')).toHaveLength(4);
-	expect(view.container.querySelector('.rail details.failed')!.hasAttribute('open')).toBe(true);
+	const failed = view.container.querySelector('.rail details.failed')!;
+	expect(failed.hasAttribute('open')).toBe(false);
+	const probe = view.container.appendChild(document.createElement('span'));
+	probe.style.color = 'var(--ansi-1)';
+	await expect.poll(() => getComputedStyle(view.container.querySelector('[data-dot="failed"] > .marker')!).color).toBe(getComputedStyle(probe).color);
+	probe.remove();
+	await page.elementLocator(failed.querySelector('summary')!).click();
+	expect(failed.hasAttribute('open')).toBe(true);
 	await expect.poll(() => onexpand.mock.calls).toEqual([[7]]);
-	await expect.element(failure).toBeVisible();
 	await expect.poll(() => view.container.scrollWidth <= view.container.clientWidth).toBe(true);
 });
 
@@ -178,7 +180,7 @@ test('every summary segment stays readable beside a long Activity on a narrow sc
 		expect(box.right).toBeLessThanOrEqual(row.right);
 		expect(box.bottom).toBeLessThanOrEqual(row.bottom);
 	}
-	expect(summary.querySelector('.segment.failed')!.textContent).toBe('1 failed');
+	expect([...summary.querySelectorAll('.segment')].at(-1)!.textContent).toBe('1 failed');
 	expect(live.getBoundingClientRect().height).toBeLessThan(summary.querySelector('.segments')!.getBoundingClientRect().height);
 	expect(live.getBoundingClientRect().right).toBeLessThanOrEqual(row.right);
 });
@@ -195,13 +197,4 @@ test('only the label of a command in this group is highlighted', async () => {
 	await view.rerender({ ...handlers, items, activity: 'Running cargo test' });
 	await expect.poll(() => highlighted(live())).toBeGreaterThan(0);
 	expect(live().textContent).toBe(' · Running cargo test');
-});
-
-test('a failed command is highlighted on one line with its full text in the tooltip', async () => {
-	const view = await render(Transcript, { ...handlers, items: [{ kind: 'command', command: script, status: 'failed', output: '' }] });
-	const code = view.container.querySelector<HTMLElement>('.failure code')!;
-	await expect.poll(() => highlighted(code)).toBeGreaterThan(0);
-	expect(code.textContent!.length).toBeLessThan(600);
-	expect(code.title).toBe(script);
-	expect(code.scrollWidth).toBeGreaterThan(code.clientWidth);
 });

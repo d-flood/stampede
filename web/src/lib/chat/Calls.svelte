@@ -16,15 +16,9 @@
 	let shown = $state<Record<number, boolean>>({});
 	const segments = $derived(summarize(items));
 	const edits = $derived(chips(items));
-	const failures = $derived(items.flatMap((item, index) => (item.kind === 'command' && item.status === 'failed' ? [{ item, index }] : [])));
 	const running = $derived(items.flatMap((item) => (item.kind === 'command' && activity === `Running ${item.command}` ? [item.command] : []))[0]);
 	const verbs: Partial<Record<ToolCall['kind'], string>> = { read: 'Read', search: 'Search', fetch: 'Fetch', web: 'Web search' };
 	const ROW_CHARACTERS = 500;
-
-	function show(index: number) {
-		expanded = true;
-		shown[index] = true;
-	}
 
 	function dot(item: Item) {
 		if (item.kind === 'thinking') return 'said';
@@ -43,7 +37,7 @@
 
 <div class="calls">
 	<button class="summary" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
-		<span class="caret"><CaretRight /></span><span class="text"><span class="segments">{#each segments as segment, index (index)}{#if index}{', '}{/if}<span class="segment" class:failed={segment.failed}>{segment.text}</span>{/each}</span>{#if activity}<span class="live" title={activity}>{#if running}{' · Running '}<code><Code code={brief(running).slice(0, ROW_CHARACTERS)} path="command.sh" /></code>{:else}{` · ${brief(activity)}`}{/if}</span>{/if}</span>
+		<span class="caret"><CaretRight /></span><span class="text"><span class="segments">{#each segments as segment, index (index)}{#if index}{', '}{/if}<span class="segment">{segment}</span>{/each}</span>{#if activity}<span class="live" title={activity}>{#if running}{' · Running '}<code><Code code={brief(running).slice(0, ROW_CHARACTERS)} path="command.sh" /></code>{:else}{` · ${brief(activity)}`}{/if}</span>{/if}</span>
 	</button>
 	{#if edits.length}
 		<div class="chips">
@@ -58,13 +52,6 @@
 			{/each}
 		</div>
 	{/if}
-	{#each failures as { item, index } (index)}
-		<div class="failure">
-			<code title={item.command}><Code code={item.command.slice(0, ROW_CHARACTERS)} path="command.sh" /></code>
-			<span class="failed">failed</span>
-			<button onclick={() => show(index)}>Show output</button>
-		</div>
-	{/each}
 	{#if expanded}
 		<div class="rail">
 			{#each items as item, index (index)}
@@ -145,11 +132,6 @@
 		white-space: nowrap;
 	}
 
-	.failed {
-		color: var(--ansi-1);
-		font-weight: 500;
-	}
-
 	.live {
 		flex: 1 1 12rem;
 		min-width: 0;
@@ -208,31 +190,6 @@
 		color: var(--git-deleted);
 	}
 
-	.failure {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		min-height: var(--target-min);
-		padding: 0 var(--space-3);
-		border-left: 2px solid var(--ansi-1);
-		border-radius: 0 var(--radius-md) var(--radius-md) 0;
-		background: color-mix(in srgb, var(--ansi-1) 8%, var(--color-bg));
-		font-size: var(--font-size-sm);
-	}
-
-	.failure code {
-		min-width: 0;
-		overflow: hidden;
-		font-family: var(--font-mono);
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.failure .failed {
-		flex: none;
-	}
-
-	.failure button,
 	.open {
 		flex: none;
 		min-height: var(--target-min);
@@ -245,7 +202,6 @@
 		cursor: pointer;
 	}
 
-	.failure button:hover,
 	.open:hover {
 		text-decoration: underline;
 	}

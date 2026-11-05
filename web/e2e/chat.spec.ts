@@ -123,7 +123,6 @@ test('a Chat folds tools, thinking, commands and a long first prompt into lines 
 	const search = panel.locator('.call').filter({ hasText: 'IANA example domain' });
 	const calls = panel.locator('.calls > .summary');
 	await expect(calls).toHaveText('Ran 2 commands, read 3 files, searched the web 1 time, used 1 tool, 1 failed');
-	await expect(panel.locator('.calls .failure')).toHaveText(/^\s*wc -l missing\.txt\s*failed\s*Show output\s*$/);
 	await expect(search).toBeHidden();
 	await calls.click();
 	await expect(search).toHaveText('Web search IANA example domain');
