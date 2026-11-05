@@ -14,6 +14,10 @@ declare module 'vitest/browser' {
 	}
 }
 
+// Importing the config module starts its requests, and no Host answers them here.
+const pageFetch = globalThis.fetch;
+globalThis.fetch = async (input, init) => (String(input).startsWith('/api/') ? Response.json(null) : pageFetch(input, init));
+
 beforeAll(async () => {
 	await commands.hardwareGpu();
 	await Promise.all(['16px "Literata Variable"', '16px "Fira Sans"', '16px "JetBrains Mono"'].map((font) => document.fonts.load(font)));

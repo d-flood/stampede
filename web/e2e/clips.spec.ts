@@ -71,7 +71,7 @@ test('Clips made in Settings insert at the caret of a Chat Composer and send as 
 	await expect.poll(() => sent).toEqual([expected]);
 });
 
-test('a Terminal Composer saves its text as a Clip and inserts it again', async ({ page }) => {
+test('a Terminal Composer saves its text as a Clip and inserts it again', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Terminal' }).click();

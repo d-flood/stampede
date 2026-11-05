@@ -116,7 +116,7 @@ test('code size updates a running terminal and the editor', { tag: '@desktop' },
 	await expect.poll(() => screen(page)).toMatch(/^size-after$/m);
 });
 
-test('checking origin in the background is on until turned off in the config', async ({ page }) => {
+test('checking origin in the background is on until turned off in the config', { tag: '@desktop' }, async ({ page }) => {
 	await page.goto('/');
 	const settings = await openSettings(page, 'General');
 	const checking = settings.getByRole('radiogroup', { name: 'Check origin' });

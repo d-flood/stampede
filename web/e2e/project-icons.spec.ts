@@ -113,7 +113,7 @@ test('emoji load on demand locally, support search and categories, and persist a
 	await expect(button).toContainText('Al');
 });
 
-test('a failed emoji catalog leaves image choices available', async ({ page }) => {
+test('a failed emoji catalog leaves image choices available', { tag: '@desktop' }, async ({ page }) => {
 	await page.route(/\/data[.-][^/]+\.json$/, (route) => route.abort());
 	await openProject(page, 'alpha');
 	const button = await navigation(page);

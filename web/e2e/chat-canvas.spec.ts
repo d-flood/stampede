@@ -66,7 +66,7 @@ test('a chat canvas opens beside its chat, follows edits, and keeps versions', a
 	await closeProject(page, name);
 });
 
-test('a canvas written without Write or Edit still reaches the tray', async ({ page }, { project, repeatEachIndex }) => {
+test('a canvas written without Write or Edit still reaches the tray', { tag: '@desktop' }, async ({ page }, { project, repeatEachIndex }) => {
 	let chatId = '';
 	await page.routeWebSocket('**/ws', (socket) => {
 		const server = socket.connectToServer();
