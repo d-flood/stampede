@@ -6,13 +6,13 @@
 	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
-	import { draftComments, draftPosition, setDrafts, setReplacing, type Render } from '#lib/editor/drafts.ts';
+	import { draftComments, draftPosition, openPlacement, openPosition, setDrafts, setReplacing, type Render } from '#lib/editor/drafts.ts';
 	import { comparison } from '#lib/compare.svelte.ts';
 	import { branches, comparing, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import { baseline, index, show, type Git } from '#lib/git.ts';
-	import { createDraft, deleteDraft, editDraft, hunks, setViewed, viewedState, type Hunks, type Placement, type PrReview } from '#lib/pr-reviews.ts';
+	import { createDraft, deleteDraft, editDraft, hunks, setViewed, viewedState, type Hunks, type Placement, type PrReview, type Side } from '#lib/pr-reviews.ts';
 	import DraftBox from '#lib/shell/DraftBox.svelte';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import { ordered } from '#lib/shell/tree.ts';
@@ -43,7 +43,9 @@
 		focused: boolean;
 		onshowdiff(disk: string, buffer: string): void;
 	};
-	type Shown = { b: EditorView; views: EditorView[]; path: string; original: Text; editable: boolean; setOriginal(content: string): void; destroy(): void };
+	/** Unsaved text by draft ID, or for a new comment by the side of the view holding it. */
+	type Typed = Record<string, string>;
+	type Shown = { b: EditorView; views: EditorView[]; path: string; original: Text; editable: boolean; typed: Typed; setOriginal(content: string): void; destroy(): void };
 
 	let { diff, git, reviews, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
 
@@ -306,9 +308,35 @@
 		step(event.key === 'ArrowUp' ? -1 : 1);
 	}
 
+	/** One column holds one new comment, so of a split view's two the one with text stays, or else the Source's. */
+	function reopened({ typed, views }: Shown, unified: boolean) {
+		const open = views.map(openPlacement);
+		if (!unified) {
+			if (open[0]?.side === 'target') {
+				typed.target = typed.source;
+				delete typed.source;
+			}
+			return open[0];
+		}
+		const [target, source] = open;
+		if (source && (typed.source || !typed.target)) {
+			delete typed.target;
+			return source;
+		}
+		if (target) typed.source = typed.target;
+		delete typed.target;
+		return target;
+	}
+
 	function toggle() {
 		diff.layout = diff.layout === 'split' ? 'unified' : 'split';
-		if (shown) build(shown.original, shown.b.state.doc);
+		if (!shown) return;
+		const pending = reopened(shown, diff.layout === 'unified');
+		const views = build(shown.original, shown.b.state.doc, { typed: shown.typed, pending }).views;
+		for (const view of views) {
+			const pos = openPosition(view);
+			if (pos !== undefined) view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+		}
 	}
 
 	/** The drafts drawn inline on `path`; a Displaced draft's lines no longer apply. */
@@ -339,23 +367,40 @@
 		replaceError = undefined;
 	}
 
-	function drafting(number: number, path: string): Render {
+	function drafting(number: number, path: string, side: Side, typed: Typed): Render {
 		const { projectId } = diff;
-		return (target, { placement, draft, lines, close }) => {
-			const label = `Draft comment on ${placement.side === 'target' ? 'deleted ' : ''}line ${placement.line}`;
+		return (target, { placement, draft, lines, fresh, close }) => {
+			const key = draft?.id ?? side;
+			const body = draft?.body ?? '';
+			const where = `${placement.side === 'target' ? 'deleted ' : ''}${placement.startLine ? `lines ${placement.startLine}–${placement.line}` : `line ${placement.line}`}`;
+			const named = where[0].toUpperCase() + where.slice(1);
+			const hint = `${matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Shift-click'} another line to extend`;
 			const box = mount(DraftBox, {
 				target,
 				props: {
-					body: draft?.body ?? '',
+					get text() {
+						return typed[key] ?? body;
+					},
+					set text(value) {
+						if (value === body) delete typed[key];
+						else typed[key] = value;
+					},
+					body,
 					saved: !!draft,
-					label,
+					label: `Draft comment on ${where}`,
+					caption: draft ? (placement.startLine ? named : undefined) : `${named} · ${hint}`,
+					autofocus: fresh && !draft,
 					suggestion: lines,
-					async onsave(body: string) {
-						if (draft) return applied(await editDraft(projectId, number, draft.id, { body }), path);
-						applied(await createDraft(projectId, number, { ...placement, path, body }), path);
+					async onsave(text: string) {
+						const updated = await (draft ? editDraft(projectId, number, draft.id, { body: text }) : createDraft(projectId, number, { ...placement, path, body: text }));
+						delete typed[key];
+						applied(updated, path);
+						if (!draft) close();
+					},
+					oncancel() {
+						delete typed[key];
 						close();
 					},
-					oncancel: close,
 					ondelete: async () => draft && applied(await deleteDraft(projectId, number, draft.id), path)
 				}
 			});
@@ -363,13 +408,15 @@
 		};
 	}
 
-	function build(a: string | Text, b: string | Text): Shown {
+	function build(a: string | Text, b: string | Text, kept?: { typed: Typed; pending: Placement | null }): Shown {
 		shown?.destroy();
 		const path = diff.path;
+		const typed = $state<Typed>(kept?.typed ?? {});
+		const pending = kept?.pending ?? null;
 		const whole = !a.length !== !b.length;
 		const drafts = review ? placed(review, path) : [];
-		const commenting = (side: 'target' | 'source', unified: boolean) =>
-			commentable && pr !== undefined ? draftComments(side, unified, commentable, drafts, drafting(pr, path), replace) : [];
+		const commenting = (side: Side, unified: boolean) =>
+			commentable && pr !== undefined ? draftComments(side, unified, commentable, drafts, drafting(pr, path, side, typed), replace, unified || pending?.side === side ? pending : null) : [];
 		const walking = compared
 			? Prec.highest(
 					keymap.of([
@@ -400,6 +447,7 @@
 				views: [view.a, view.b],
 				path,
 				editable,
+				typed,
 				get original() {
 					return view.a.state.doc;
 				},
@@ -421,6 +469,7 @@
 				views: [view],
 				path,
 				editable,
+				typed,
 				get original() {
 					return getOriginalDoc(view.state);
 				},

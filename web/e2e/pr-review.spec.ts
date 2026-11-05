@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures.ts';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { currentTab, showSidebar, openProject } from './shell.ts';
@@ -319,4 +319,210 @@ test('Own PRs offer only Comment, and Displaced drafts disable sending', async (
 	const reloaded = await comparePanel(page);
 	await expect(reloaded.getByRole('button', { name: 'Send review…' })).toBeDisabled();
 	await expect(reloaded).toContainText('Re-place or delete the Displaced draft to send.');
+});
+
+const RANGES = LIST.replace('line5 = 5', 'line5 = 0').replace('line6 = 6', 'line6 = 0').replace('line25 = 25', 'line25 = 0');
+const LONG = Array.from({ length: 300 }, (_, index) => `export const long${index + 1} = ${index + 1};\n`).join('');
+
+async function rangesDiff(page: Page, file = 'list.ts') {
+	signIn('OPEN');
+	repository().push(['list.ts', RANGES], ['long.ts', LONG]);
+	await openProject(page, 'widgets');
+	const compare = await openPr(page);
+	await compare.getByRole('list', { name: 'Compared files' }).getByRole('button', { name: file, exact: true }).click();
+	const diff = page.locator('.diff:not([hidden])');
+	await expect(diff.locator('.cm-draftAdd').first()).toBeVisible();
+	return diff;
+}
+
+const add = (diff: Locator, line: number, side = 'source') => diff.locator(`.cm-draftAdd[data-side="${side}"][data-line="${line}"]`);
+const lineNumber = (diff: Locator, line: number) => diff.locator('.cm-lineNumbers .cm-gutterElement', { hasText: new RegExp(`^${line}$`) }).last();
+const commenting = (page: Page, where: string) => page.getByRole('textbox', { name: `Draft comment on ${where}`, exact: true });
+
+async function press(page: Page, target: Locator) {
+	const box = (await target.boundingBox())!;
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await page.mouse.down();
+}
+
+async function dragOver(page: Page, target: Locator, x = 0) {
+	const box = (await target.boundingBox())!;
+	await page.mouse.move(box.x + box.width / 2 + x, box.y + box.height / 2, { steps: 5 });
+}
+
+test('A gutter drag highlights its range, can end over the code, and sends as one multi-line comment', { tag: '@desktop' }, async ({ page }) => {
+	const diff = await rangesDiff(page);
+	await press(page, add(diff, 3));
+	await dragOver(page, add(diff, 7), 120);
+	await expect(diff.locator('.cm-draftSelected')).toHaveCount(5);
+	await expect(diff.locator('.cm-draftAddOn')).toHaveCount(5);
+	await page.mouse.up();
+
+	const box = commenting(page, 'lines 3–7');
+	await expect(box).toBeFocused();
+	await expect(diff.locator('.cm-draftComment:not([data-draft])')).toContainText('Lines 3–7 · Shift-click another line to extend');
+	await page.keyboard.type('Why zero?');
+	await diff.getByRole('button', { name: 'Save' }).click();
+	await expect(diff.locator('.cm-draftComment[data-draft]')).toContainText('Lines 3–7');
+	await expect(diff.locator('.cm-draftRange')).toHaveCount(5);
+	await expect(diff.locator('.cm-draftSelected')).toHaveCount(0);
+
+	const compare = await comparePanel(page);
+	await expect(compare.getByRole('list', { name: 'Draft comments' }).getByRole('button')).toContainText('src/list.ts:3–7');
+	await compare.getByRole('button', { name: 'Send review… 1' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Send review of #7' });
+	await dialog.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect(dialog).toBeHidden();
+	expect(sentReviews()[0].stdin.comments).toEqual([{ path: 'src/list.ts', body: 'Why zero?', side: 'RIGHT', line: 7, start_line: 3, start_side: 'RIGHT' }]);
+});
+
+test('A drag stays within the hunk it started in, and line numbers drag like the gutter', { tag: '@desktop' }, async ({ page }) => {
+	const diff = await rangesDiff(page);
+	await press(page, add(diff, 3));
+	await dragOver(page, add(diff, 24));
+	await page.mouse.up();
+	await expect(commenting(page, 'lines 3–9')).toBeVisible();
+	await diff.getByRole('button', { name: 'Cancel' }).click();
+
+	await press(page, lineNumber(diff, 23));
+	await dragOver(page, lineNumber(diff, 26));
+	await page.mouse.up();
+	await expect(commenting(page, 'lines 23–26')).toBeVisible();
+});
+
+test('Shift-click extends the open draft either way, and every move keeps what was typed', { tag: '@desktop' }, async ({ page }) => {
+	const diff = await rangesDiff(page);
+	await add(diff, 5).click();
+	await expect(commenting(page, 'line 5')).toBeFocused();
+	await page.keyboard.type('half');
+	await add(diff, 8).click({ modifiers: ['Shift'] });
+	await expect(commenting(page, 'lines 5–8')).toBeFocused();
+	await page.keyboard.type(' done');
+	await add(diff, 3).click({ modifiers: ['Shift'] });
+	await expect(commenting(page, 'lines 3–8')).toHaveText('half done');
+	await add(diff, 25).click();
+	await expect(commenting(page, 'line 25')).toHaveText('half done');
+	await diff.getByRole('button', { name: 'Cancel' }).click();
+	await add(diff, 25).click();
+	await expect(commenting(page, 'line 25')).toHaveText('');
+});
+
+test('A long range survives scrolling: typed text outlasts the composer unmounting, and Shift-click reaches far lines', { tag: '@desktop' }, async ({ page }) => {
+	const diff = await rangesDiff(page, 'long.ts');
+	const scroller = diff.locator('.cm-mergeView');
+	await add(diff, 5).click();
+	await expect(commenting(page, 'line 5')).toBeFocused();
+	await page.keyboard.type('half-written');
+	await scroller.evaluate((element) => (element.scrollTop = element.scrollHeight));
+	await expect(add(diff, 295)).toBeVisible();
+	await expect(commenting(page, 'line 5')).toHaveCount(0);
+	await scroller.evaluate((element) => (element.scrollTop = 0));
+	await expect(commenting(page, 'line 5')).toHaveText('half-written');
+	await expect(commenting(page, 'line 5')).not.toBeFocused();
+
+	await scroller.evaluate((element) => (element.scrollTop = element.scrollHeight));
+	await add(diff, 295).click({ modifiers: ['Shift'] });
+	await expect(commenting(page, 'lines 5–295')).toHaveText('half-written');
+});
+
+test('Dragging to the edge of a long hunk autoscrolls in both layouts', { tag: '@desktop' }, async ({ page }) => {
+	const diff = await rangesDiff(page, 'long.ts');
+	for (const selector of ['.cm-mergeView', '.cm-scroller']) {
+		const scroller = diff.locator(selector).first();
+		const area = (await scroller.boundingBox())!;
+		await press(page, add(diff, 5));
+		await page.mouse.move(area.x + 200, area.y + area.height - 2, { steps: 4 });
+		await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(400);
+		await page.mouse.up();
+		const label = await diff.getByRole('textbox', { name: /^Draft comment on lines 5–\d+$/ }).getAttribute('aria-label');
+		expect(Number(label!.split('–')[1])).toBeGreaterThan(30);
+		await diff.getByRole('button', { name: 'Cancel' }).click();
+		if (selector === '.cm-mergeView') await page.getByRole('button', { name: 'Single column' }).click();
+	}
+});
+
+test('In one column a drag stays on the side it started on', { tag: '@desktop' }, async ({ page }) => {
+	const diff = await rangesDiff(page);
+	await page.getByRole('button', { name: 'Single column' }).click();
+	await press(page, add(diff, 5, 'target'));
+	await dragOver(page, add(diff, 8));
+	await expect(diff.locator('.cm-draftAddOn')).toHaveCount(2);
+	await page.mouse.up();
+	await expect(commenting(page, 'deleted lines 5–6')).toBeVisible();
+	await diff.getByRole('button', { name: 'Cancel' }).click();
+
+	await press(page, add(diff, 4));
+	await dragOver(page, add(diff, 7));
+	await page.mouse.up();
+	await expect(commenting(page, 'lines 4–7')).toBeVisible();
+});
+
+test('On a phone a tap extends the open draft within its hunk, and elsewhere moves it with its text', { tag: '@phone' }, async ({ page }) => {
+	const diff = await rangesDiff(page);
+	await lineNumber(diff, 3).tap();
+	await expect(diff.locator('.cm-draftComment:not([data-draft])')).toContainText('Line 3 · Tap another line to extend');
+	await commenting(page, 'line 3').click();
+	await page.keyboard.type('half');
+	await lineNumber(diff, 7).tap();
+	await expect(commenting(page, 'lines 3–7')).toHaveText('half');
+	await expect(diff.locator('.cm-draftSelected')).toHaveCount(5);
+	await add(diff, 2).tap();
+	await expect(commenting(page, 'lines 2–7')).toHaveText('half');
+	await lineNumber(diff, 2).tap();
+	await expect(commenting(page, 'line 2')).toHaveText('half');
+	await lineNumber(diff, 24).tap();
+	await expect(commenting(page, 'line 24')).toHaveText('half');
+});
+
+test('Switching layout keeps open comments, their text and range, and unsaved edits', { tag: '@desktop' }, async ({ page }) => {
+	const diff = await rangesDiff(page);
+	const [single, sideBySide] = [page.getByRole('button', { name: 'Single column' }), page.getByRole('button', { name: 'Side by side' })];
+
+	await add(diff, 3).click();
+	await add(diff, 7).click({ modifiers: ['Shift'] });
+	await expect(commenting(page, 'lines 3–7')).toBeFocused();
+	await page.keyboard.type('half');
+	await single.click();
+	await expect(commenting(page, 'lines 3–7')).toHaveText('half');
+	await expect(commenting(page, 'lines 3–7')).toBeFocused();
+	await expect(diff.locator('.cm-draftSelected')).toHaveCount(5);
+	await sideBySide.click();
+	await expect(commenting(page, 'lines 3–7')).toHaveText('half');
+	await diff.getByRole('button', { name: 'Cancel' }).click();
+
+	await add(diff, 5, 'target').click();
+	await expect(commenting(page, 'deleted line 5')).toBeFocused();
+	await page.keyboard.type('gone');
+	await add(diff, 25).click();
+	await expect(commenting(page, 'line 25')).toBeFocused();
+	await single.click();
+	await expect(commenting(page, 'deleted line 5')).toHaveText('gone');
+	await expect(commenting(page, 'line 25')).toHaveCount(0);
+	await sideBySide.click();
+	await expect(commenting(page, 'deleted line 5')).toHaveText('gone');
+	await diff.getByRole('button', { name: 'Cancel' }).click();
+
+	await add(diff, 25).click();
+	await expect(commenting(page, 'line 25')).toBeFocused();
+	await page.keyboard.type('saved');
+	await diff.getByRole('button', { name: 'Save' }).click();
+	const saved = commenting(page, 'line 25');
+	await expect(diff.locator('.cm-draftComment[data-draft]')).toHaveCount(1);
+	await saved.click();
+	await page.keyboard.press('End');
+	await page.keyboard.type(' and edited');
+	await single.click();
+	await expect(saved).toHaveText('saved and edited');
+	await expect(diff.getByRole('button', { name: 'Save' })).toBeVisible();
+});
+
+test('Switching layout scrolls a far-down open comment back into view', { tag: '@desktop' }, async ({ page }) => {
+	const diff = await rangesDiff(page, 'long.ts');
+	await diff.locator('.cm-mergeView').evaluate((element) => (element.scrollTop = element.scrollHeight));
+	await add(diff, 295).click();
+	await expect(commenting(page, 'line 295')).toBeFocused();
+	await page.keyboard.type('far down');
+	await page.getByRole('button', { name: 'Single column' }).click();
+	await expect(commenting(page, 'line 295')).toHaveText('far down');
+	await expect(commenting(page, 'line 295')).toBeInViewport();
 });

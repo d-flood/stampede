@@ -3,9 +3,13 @@
 	import Button from '#lib/ui/Button.svelte';
 
 	type Props = {
+		/** Outlives this box, which scrolling far away or changing its range remounts. */
+		text: string;
 		body: string;
 		saved: boolean;
 		label: string;
+		caption?: string;
+		autofocus: boolean;
 		/** The selected Source lines a suggestion starts from; absent on the Target side. */
 		suggestion?: string;
 		onsave(body: string): Promise<unknown>;
@@ -13,10 +17,8 @@
 		ondelete(): Promise<unknown>;
 	};
 
-	let { body, saved, label, suggestion, onsave, oncancel, ondelete }: Props = $props();
+	let { text = $bindable(), body, saved, label, caption, autofocus, suggestion, onsave, oncancel, ondelete }: Props = $props();
 
-	// svelte-ignore state_referenced_locally (The editor owns the text once mounted; a saved body remounts this box.)
-	let text = $state(body);
 	let generation = $state(0);
 	let busy = $state(false);
 	let error = $state<string>();
@@ -53,8 +55,9 @@
 </script>
 
 <div class="draft">
+	{#if caption}<p class="caption">{caption}</p>{/if}
 	{#key generation}
-		<MarkdownEditor bind:text {label} autofocus={!saved || generation > 0} onsave={save} />
+		<MarkdownEditor bind:text {label} autofocus={autofocus || generation > 0} caretAtEnd onsave={save} />
 	{/key}
 	<div class="actions">
 		{#if suggestion !== undefined}
@@ -78,6 +81,12 @@
 		gap: var(--space-2);
 		max-width: 60rem;
 		font-family: var(--font-ui);
+	}
+
+	.caption {
+		margin: 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
 	}
 
 	.draft :global(.cm-editor) {

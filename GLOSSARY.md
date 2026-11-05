@@ -233,7 +233,7 @@ Examining one GitHub pull request in Stampede as a Comparison and answering it o
 _Avoid_: review, code review
 
 **Draft comment**:
-A comment on a line of a PR review's Comparison, kept in Stampede until sent to GitHub.
+A comment on a line or range of lines of a PR review's Comparison, kept in Stampede until sent to GitHub.
 _Avoid_: pending comment, note, Finding
 
 **Displaced**:

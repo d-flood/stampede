@@ -11,9 +11,9 @@
 	import { basicSetup } from 'codemirror';
 	import { onMount } from 'svelte';
 
-	type Props = { text: string; label: string; autofocus?: boolean; onsave?(): void; image?: (src: string) => string | null };
+	type Props = { text: string; label: string; autofocus?: boolean; caretAtEnd?: boolean; onsave?(): void; image?: (src: string) => string | null };
 
-	let { text = $bindable(), label, autofocus = true, onsave, image = (src) => (/^https?:/i.test(src) ? src : null) }: Props = $props();
+	let { text = $bindable(), label, autofocus = true, caretAtEnd = false, onsave, image = (src) => (/^https?:/i.test(src) ? src : null) }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<EditorView>();
@@ -26,6 +26,7 @@
 			parent: container,
 			state: EditorState.create({
 				doc: text,
+				selection: caretAtEnd ? { anchor: text.length } : undefined,
 				extensions: [
 					keys.of([]),
 					keymap.of([{ key: 'Mod-s', run: () => (onsave?.(), true) }]),
