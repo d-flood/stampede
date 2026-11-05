@@ -356,7 +356,7 @@ test('an Ultracode Workflow asks with its script, runs as a subagent, and wakes 
 	await expect(panel.getByText('await parallel([').first()).toBeVisible();
 	await panel.getByRole('button', { name: 'Allow', exact: true }).click();
 	await expect(panel.getByText('The two words are')).toBeVisible();
-	await panel.getByRole('region', { name: 'Subagents' }).getByRole('button', { name: '1 finished' }).click();
+	await panel.getByRole('region', { name: 'Subagents' }).getByRole('button', { name: 'Subagents: 1 done' }).click();
 	await expect(page.getByText('Two agents, no tools: one replies alpha, the other replies beta').first()).toBeVisible();
 	await expect(page.getByText('alpha-beta-pair').first()).toBeVisible();
 });
@@ -640,7 +640,7 @@ async function finishElsewhere(name: string) {
 }
 
 
-test('a Chat pins todos and counts its completed subagent in the dock', async ({ page }, { project }) => {
+test('a Chat pins todos and counts its completed subagent in the Tray', async ({ page }, { project }) => {
 	const name = `subagent-${project.name}`;
 	const root = process.env.STAMPEDE_E2E_ROOT!;
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
@@ -665,15 +665,15 @@ test('a Chat pins todos and counts its completed subagent in the dock', async ({
 	await expect(todos.locator('summary')).toHaveText('Todos 3 of 3');
 	await expect(panel.getByText('Explore · Find file mentioning needle')).toHaveCount(0);
 	const picker = page.getByRole('combobox', { name: /^Session in/ });
-	const dock = panel.getByRole('region', { name: 'Subagents' });
+	const subagents = panel.getByRole('region', { name: 'Subagents' });
 	await expect(picker).toHaveCount(0);
-	await expect(dock.getByRole('button')).toHaveText(['1 finished']);
+	await expect(subagents.getByRole('button')).toHaveAccessibleName('Subagents: 1 done');
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
 	await expect(picker).toHaveCount(0);
 	await tab.click();
 	await expect(picker).toHaveCount(0);
-	await expect(dock.getByRole('button')).toHaveText(['1 finished']);
+	await expect(subagents.getByRole('button')).toHaveAccessibleName('Subagents: 1 done');
 	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 	await tab.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
@@ -757,7 +757,7 @@ for (const agent of ['claude', 'codex']) {
 	});
 }
 
-test('a completed Codex subagent moves to the dock\'s finished chip', { tag: '@desktop' }, async ({ page }, { project }) => {
+test('a completed Codex subagent counts as done in the Tray', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `codex-subagent-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
@@ -769,7 +769,7 @@ test('a completed Codex subagent moves to the dock\'s finished chip', { tag: '@d
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(tab.getByTitle('done')).toBeVisible();
 	await expect(page.getByRole('combobox', { name: /^Session in/ })).toHaveCount(0);
-	await expect(panel.getByRole('region', { name: 'Subagents' }).getByRole('button')).toHaveText(['1 finished']);
+	await expect(panel.getByRole('region', { name: 'Subagents' }).getByRole('button')).toHaveAccessibleName('Subagents: 1 done');
 	await expect(panel.getByText('notes.txt mentions “needle” and has 3 lines.', { exact: true })).toBeVisible();
 	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 });

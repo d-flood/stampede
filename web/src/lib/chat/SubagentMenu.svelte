@@ -6,8 +6,7 @@
 	import type { Snippet } from 'svelte';
 
 	type Props = {
-		heading: string;
-		entries: Placed[];
+		groups: { heading: string; entries: Placed[] }[];
 		main: Item[];
 		open: boolean;
 		trigger: Snippet<[Record<string, unknown>]>;
@@ -16,7 +15,7 @@
 		align?: 'start' | 'end';
 	};
 
-	let { heading, entries, main, open = $bindable(), trigger, onselect, side = 'top', align = 'end' }: Props = $props();
+	let { groups, main, open = $bindable(), trigger, onselect, side = 'top', align = 'end' }: Props = $props();
 </script>
 
 <DropdownMenu.Root bind:open>
@@ -30,20 +29,22 @@
 			{#snippet child({ wrapperProps, props })}
 				<div {...wrapperProps}>
 					<div {...props} class="menu">
-						<DropdownMenu.Group>
-							<DropdownMenu.GroupHeading>
-								{#snippet child({ props })}
-									<div {...props} class="heading">{heading}</div>
-								{/snippet}
-							</DropdownMenu.GroupHeading>
-							{#each entries as { path, subagent } (path.join('/'))}
-								<DropdownMenu.Item onSelect={() => onselect(path)}>
+						{#each groups as { heading, entries } (heading)}
+							<DropdownMenu.Group>
+								<DropdownMenu.GroupHeading>
 									{#snippet child({ props })}
-										<div {...props} class="item"><SubagentRow {subagent} color={color(main, path)} /></div>
+										<div {...props} class="heading">{heading}</div>
 									{/snippet}
-								</DropdownMenu.Item>
-							{/each}
-						</DropdownMenu.Group>
+								</DropdownMenu.GroupHeading>
+								{#each entries as { path, subagent } (path.join('/'))}
+									<DropdownMenu.Item onSelect={() => onselect(path)}>
+										{#snippet child({ props })}
+											<div {...props} class="item"><SubagentRow {subagent} color={color(main, path)} /></div>
+										{/snippet}
+									</DropdownMenu.Item>
+								{/each}
+							</DropdownMenu.Group>
+						{/each}
 					</div>
 				</div>
 			{/snippet}

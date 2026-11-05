@@ -8,11 +8,9 @@
 	import MessageNav from '#lib/chat/MessageNav.svelte';
 	import { clearDraft } from '#lib/chat/questions.ts';
 	import RequestCard from '#lib/chat/RequestCard.svelte';
-	import Shells from '#lib/chat/Shells.svelte';
 	import { commands } from '#lib/chat/shells.ts';
 	import Todos from '#lib/chat/Todos.svelte';
-	import Dock from '#lib/chat/Dock.svelte';
-	import Canvases from '#lib/chat/Canvases.svelte';
+	import Tray from '#lib/chat/Tray.svelte';
 	import { canvases as written } from '#lib/canvas.svelte.ts';
 	import Handoff from '#lib/chat/Handoff.svelte';
 	import MoveToWorktree from '#lib/chat/MoveToWorktree.svelte';
@@ -229,14 +227,8 @@
 		{/key}
 	{/if}
 	<div class="foot">
-		<Shells {items} />
 		{#if selected}<Activity status={selected.status} activity={selected.activity} />{/if}
-		{#if subagents.length || canvases.length}
-			<div class="tray">
-				{#if subagents.length}<Dock {subagents} main={items} onopen={open} onattend={attend} />{/if}
-				{#if canvases.length}<Canvases {canvases} {oncanvas} />{/if}
-			</div>
-		{/if}
+		<Tray {items} {canvases} onopen={open} onattend={attend} {oncanvas} />
 		{#if request}
 			{#key request.id}
 				<RequestCard bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} />
@@ -255,7 +247,6 @@
 
 <style>
 	.handoffs { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: var(--border-width) solid var(--border); font-size: var(--font-size-sm); }
-	.tray { display: flex; align-items: center; gap: var(--space-2); }
 	.subagent { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); }
 	.subagent span, .report .label { color: var(--muted-fg); }
 	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }
