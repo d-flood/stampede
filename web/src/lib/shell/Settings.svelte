@@ -309,7 +309,7 @@
 						<section class="row" aria-labelledby="modes-label">
 							<div class="text">
 								<span class="label" id="modes-label">Modes</span>{@render scope(true)}
-								<p>Offered in each Chat's mode menu, /mode and Shift+Tab.</p>
+								<p>Offered in each Chat's mode menu and /mode.</p>
 							</div>
 							<div class="field">
 								{#each agents as agent (agent)}

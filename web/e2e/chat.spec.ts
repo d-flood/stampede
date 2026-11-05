@@ -234,19 +234,18 @@ test('long model and mode chips stay on one line', { tag: '@phone' }, async ({ p
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Codex', exact: true }).click();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
-	await expect(panel.getByRole('button', { name: 'Effort: high' })).toBeVisible();
+	const before = await panel.getByRole('button', { name: /^Model: .* high$/ }).evaluate((element) => element.getBoundingClientRect().height);
 	route!.send(JSON.stringify({ type: 'chat.settings', chatId: chatId!, settings }));
-	const model = panel.getByRole('button', { name: `Model: ${settings.model}` });
-	const mode = panel.getByRole('button', { name: `Mode: ${settings.mode}` });
+	const model = panel.getByRole('button', { name: `Model: ${settings.model} high`, exact: true });
+	const mode = panel.getByRole('button', { name: `Mode: ${settings.mode}`, exact: true });
 	await expect(model).toBeVisible();
-	const effort = await panel.getByRole('button', { name: 'Effort: high' }).evaluate((element) => element.getBoundingClientRect().height);
-	for (const chip of [model, mode]) await expect.poll(() => chip.evaluate((element) => element.getBoundingClientRect().height)).toBe(effort);
+	for (const chip of [model, mode]) await expect.poll(() => chip.evaluate((element) => element.getBoundingClientRect().height)).toBe(before);
 	await expect.poll(() => panel.locator('.chips').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
 const slashed = [
-	{ agent: 'claude', rig: 'Fake Claude', command: '/code-review', before: 'Effort: xhigh', after: 'Effort: low' },
-	{ agent: 'codex', rig: 'Fake Codex', command: '/openai-docs', before: 'Effort: high', after: 'Effort: low, next turn' }
+	{ agent: 'claude', rig: 'Fake Claude', command: '/code-review', before: /^Model: \S+ xhigh$/, after: /^Model: \S+ low$/ },
+	{ agent: 'codex', rig: 'Fake Codex', command: '/openai-docs', before: /^Model: \S+ high$/, after: /^Model: \S+ low, next turn$/ }
 ];
 
 for (const { agent, rig, command, before, after } of slashed) {
@@ -257,7 +256,7 @@ for (const { agent, rig, command, before, after } of slashed) {
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		await page.getByRole('menuitem', { name: rig, exact: true }).click();
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
-		await expect(panel.getByRole('button', { name: before, exact: true })).toBeVisible();
+		await expect(panel.getByRole('button', { name: before })).toBeVisible();
 
 		const composer = panel.getByRole('textbox', { name: 'Composer' });
 		const menu = panel.getByRole('region', { name: 'Commands' });
@@ -281,17 +280,17 @@ for (const { agent, rig, command, before, after } of slashed) {
 		await menu.getByRole('button', { name: /^\/effort/ }).click();
 		await expect(composer).toHaveValue('/effort ');
 		await menu.getByRole('button', { name: 'low', exact: true }).click();
-		await expect(panel.getByRole('button', { name: after, exact: true })).toBeVisible();
+		await expect(panel.getByRole('button', { name: after })).toBeVisible();
 		await expect(composer).toHaveValue('');
 		await expect(menu).toHaveCount(0);
 
-		await panel.getByRole('button', { name: after, exact: true }).click();
+		await panel.getByRole('button', { name: after }).click();
 		await expect(page.getByRole('menuitemcheckbox', { name: 'low' })).toHaveAttribute('aria-checked', 'true');
 		await page.keyboard.press('Escape');
 	});
 }
 
-test('speed and Ultracode change from the slash menu, and phones show them only once chosen', async ({ page }, { project }) => {
+test('speed and Ultracode change from the slash menu and show on the model control only once chosen', async ({ page }, { project }) => {
 	const name = `speed-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
@@ -300,34 +299,29 @@ test('speed and Ultracode change from the slash menu, and phones show them only 
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	const menu = panel.getByRole('region', { name: 'Commands' });
-	await expect(panel.getByRole('button', { name: 'Effort: xhigh', exact: true })).toBeVisible();
-	const phone = project.name === 'pixel';
-	await expect(panel.getByRole('button', { name: 'Speed: standard', exact: true })).toHaveCount(phone ? 0 : 1);
-	await expect(panel.getByRole('button', { name: 'Ultracode: off', exact: true })).toHaveCount(phone ? 0 : 1);
-	if (!phone) {
+	await expect(panel.getByRole('button', { name: 'Model: opus xhigh', exact: true })).toBeVisible();
+	await expect(panel.getByRole('button', { name: /^(Speed|Ultracode):/ })).toHaveCount(0);
+	if (project.name !== 'pixel') {
 		const size = page.viewportSize()!;
 		await page.setViewportSize({ width: 900, height: size.height });
-		await expect(panel.getByRole('button', { name: 'Speed: standard', exact: true })).toHaveCount(0);
-		await expect(panel.getByRole('button', { name: 'Ultracode: off', exact: true })).toHaveCount(0);
-		await expect(panel.getByRole('button', { name: 'Model: opus', exact: true })).toHaveText('opus');
-		await expect.poll(() => panel.getByRole('button', { name: 'Model: opus', exact: true }).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+		await expect.poll(() => panel.getByRole('button', { name: 'Model: opus xhigh', exact: true }).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 		await page.setViewportSize(size);
 	}
 
 	await composer.fill('/speed ');
 	await menu.getByRole('button', { name: /^fast/ }).click();
-	await expect(panel.getByRole('button', { name: 'Speed: fast', exact: true })).toBeVisible();
+	await expect(panel.getByRole('button', { name: 'Model: opus xhigh fast', exact: true })).toBeVisible();
 	await composer.fill('/ultracode ');
 	await menu.getByRole('button', { name: /^on/ }).click();
-	const ultracode = panel.getByRole('button', { name: 'Ultracode: on', exact: true });
-	await expect(ultracode).toHaveText('ultracode on');
+	const model = panel.getByRole('button', { name: 'Model: opus xhigh fast ultracode on', exact: true });
+	await expect(model).toContainText('ultracode on');
 	await expect.poll(() => panel.locator('.chips').first().evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 
-	await panel.getByRole('button', { name: 'Speed: fast', exact: true }).click();
+	await model.click();
 	await expect(page.getByRole('menuitemcheckbox', { name: 'standard' })).toHaveAttribute('aria-checked', 'false');
 	await expect(page.getByRole('menuitemcheckbox', { name: 'fast' })).toContainText('Costs more; plans use usage credits');
 	await page.getByRole('menuitemcheckbox', { name: 'standard' }).click();
-	await expect(panel.getByRole('button', { name: 'Speed: standard', exact: true })).toHaveCount(phone ? 0 : 1);
+	await expect(panel.getByRole('button', { name: 'Model: opus xhigh ultracode on', exact: true })).toBeVisible();
 });
 
 test('/speed takes the name Codex shows for a tier and applies on the next turn', { tag: '@desktop' }, async ({ page }, { project }) => {
@@ -337,12 +331,15 @@ test('/speed takes the name Codex shows for a tier and applies on the next turn'
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: 'Fake Codex', exact: true }).click();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
-	await expect(panel.getByRole('button', { name: 'Speed: standard', exact: true })).toBeVisible();
-	await expect(panel.getByRole('button', { name: /^Ultracode/ })).toHaveCount(0);
+	await expect(panel.getByRole('button', { name: /^Model: \S+ high$/ })).toBeVisible();
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	await composer.fill('/speed fast');
 	await composer.press('Enter');
-	await expect(panel.getByRole('button', { name: 'Speed: fast, next turn', exact: true })).toBeVisible();
+	await expect(panel.getByRole('button', { name: /^Model: \S+ high fast, next turn$/ })).toBeVisible();
+	await panel.getByRole('button', { name: /^Model:/ }).click();
+	await expect(page.getByRole('menu').getByText('Speed · next turn', { exact: true })).toBeVisible();
+	await expect(page.getByRole('menu').getByText('Ultracode', { exact: true })).toHaveCount(0);
+	await page.keyboard.press('Escape');
 	await expect(composer).toHaveValue('');
 });
 
