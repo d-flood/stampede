@@ -59,6 +59,7 @@ async fn both_agents_get_owned_scratch_and_shared_worktree_build_settings() {
             assert_eq!(fs::canonicalize(temp).unwrap().to_str(), environment["CLAUDE_CODE_TMPDIR"].as_str());
             assert_eq!(Path::new(environment["CARGO_TARGET_DIR"].as_str().unwrap()), repo.join("target"));
             assert_eq!(environment["NODE_COMPILE_CACHE"], environments[0]["NODE_COMPILE_CACHE"]);
+            assert_eq!(environment["PATH"].as_str().unwrap().split(':').next().map(Path::new), Path::new(env!("CARGO_BIN_EXE_stampede")).parent());
         }
         control(&mut socket, json!({ "type": "chat.close", "chatId": first })).await;
         timeout(Duration::from_secs(10), async {

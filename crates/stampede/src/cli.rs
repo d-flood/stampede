@@ -360,11 +360,17 @@ pub fn cli(command: CliCommand) -> Result<(), String> {
     Ok(())
 }
 
+fn unreachable(path: &Path, error: io::Error) -> String {
+    let hint = match error.kind() {
+        io::ErrorKind::PermissionDenied => "a command sandbox may be blocking this socket, so run the command outside it",
+        _ => "is it running with this --data-dir?",
+    };
+    format!("cannot reach the Stampede server at {}: {error}; {hint}", path.display())
+}
+
 fn exchange(data_dir: &Path, request: &Request) -> Result<String, String> {
     let path = socket_path(data_dir);
-    let unreachable = |error: io::Error| {
-        format!("cannot reach the Stampede server at {}: {error}; is it running with this --data-dir?", path.display())
-    };
+    let unreachable = |error: io::Error| unreachable(&path, error);
     let address = crate::unix::path(&path).map_err(unreachable)?;
     let mut stream = UnixStream::connect(&address).map_err(unreachable)?;
     let mut line = serde_json::to_vec(request).map_err(|error| error.to_string())?;
@@ -688,4 +694,16 @@ fn show(epic: &Epic, number: u32) -> Result<String, String> {
         }
     }
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_blocked_socket_names_the_sandbox_and_a_missing_server_names_the_data_dir() {
+        let path = Path::new("/data/cli.sock");
+        assert!(unreachable(path, io::Error::from_raw_os_error(1)).contains("command sandbox"));
+        assert!(unreachable(path, io::ErrorKind::ConnectionRefused.into()).contains("--data-dir"));
+    }
 }

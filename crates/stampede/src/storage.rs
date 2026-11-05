@@ -34,6 +34,12 @@ fn lease(path: &Path) -> io::Result<File> {
     OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path.join(".lease"))
 }
 
+fn path_with_stampede(configured: Option<&String>) -> Option<String> {
+    let binary = std::env::current_exe().ok()?;
+    let inherited = configured.cloned().or_else(|| std::env::var("PATH").ok())?;
+    Some(format!("{}:{inherited}", binary.parent()?.display()))
+}
+
 impl Storage {
     pub fn new(data: &Path) -> Self {
         Self { data: data.to_owned(), root: data.join("storage") }
@@ -71,8 +77,15 @@ impl Storage {
             ("npm_config_cache".to_owned(), cache.join("npm").to_string_lossy().into_owned()),
         ]);
         let checkout = repository.as_deref().and_then(Path::parent).unwrap_or(cwd);
-        env.insert("CARGO_TARGET_DIR".to_owned(), checkout.join("target").to_string_lossy().into_owned());
+        if [cwd, checkout].iter().any(|directory| directory.join("Cargo.toml").exists()) {
+            let target = checkout.join("target");
+            let _ = fs::create_dir_all(&target);
+            env.insert("CARGO_TARGET_DIR".to_owned(), target.to_string_lossy().into_owned());
+        }
         env.extend(overrides.clone());
+        if let Some(path) = path_with_stampede(env.get("PATH")) {
+            env.insert("PATH".to_owned(), path);
+        }
         env.insert("STAMPEDE_SCRATCH".to_owned(), scratch.to_string_lossy().into_owned());
         env.insert("STAMPEDE_CACHE".to_owned(), cache.to_string_lossy().into_owned());
         Ok(Session { storage: self.clone(), owner: owner.to_owned(), scratch, cache, _scratch_lease: scratch_lease, _cache_lease: cache_lease, env })
@@ -318,6 +331,30 @@ mod tests {
         let session = storage.prepare("setup", root.path(), &overrides).await.unwrap();
         assert_eq!(session.env["CARGO_TARGET_DIR"], "/custom/target");
         assert_eq!(fs::canonicalize(&session.env["TMPDIR"]).unwrap(), session.scratch);
+    }
+
+    #[tokio::test]
+    async fn only_rust_projects_get_a_shared_build_target() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = Storage::new(root.path());
+        let project = root.path().join("project");
+        fs::create_dir(&project).unwrap();
+        assert!(std::process::Command::new("git").args(["init", "-q"]).current_dir(&project).status().unwrap().success());
+        let session = storage.prepare("setup", &project, &BTreeMap::new()).await.unwrap();
+        assert!(!session.env.contains_key("CARGO_TARGET_DIR"));
+        assert!(!project.join("target").exists());
+        fs::write(project.join("Cargo.toml"), "").unwrap();
+        let session = storage.prepare("setup-2", &project, &BTreeMap::new()).await.unwrap();
+        assert_eq!(fs::canonicalize(&session.env["CARGO_TARGET_DIR"]).unwrap(), fs::canonicalize(project.join("target")).unwrap());
+    }
+
+    #[tokio::test]
+    async fn agents_find_the_running_stampede_first_on_their_path() {
+        let root = tempfile::tempdir().unwrap();
+        let overrides = BTreeMap::from([("PATH".to_owned(), "/rig/bin".to_owned())]);
+        let session = Storage::new(root.path()).prepare("setup", root.path(), &overrides).await.unwrap();
+        let directory = std::env::current_exe().unwrap().parent().unwrap().display().to_string();
+        assert_eq!(session.env["PATH"], format!("{directory}:/rig/bin"));
     }
 
     #[tokio::test]

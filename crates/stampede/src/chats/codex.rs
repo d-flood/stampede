@@ -573,7 +573,7 @@ fn thread(data_dir: &Path, chat_id: &str, cwd: &Path, settings: &AgentSettings, 
 fn tool_config(data_dir: &Path, chat_id: &str, env: &BTreeMap<String, String>) -> Value {
     let mut config = html::config(data_dir, chat_id);
     config["tool_timeout_sec"] = json!(86400);
-    let environment: BTreeMap<_, _> = crate::storage::ENVIRONMENT.into_iter().filter_map(|name| env.get(name).map(|value| (name, value))).collect();
+    let environment: BTreeMap<_, _> = crate::storage::ENVIRONMENT.into_iter().chain(["PATH"]).filter_map(|name| env.get(name).map(|value| (name, value))).collect();
     let mut config = json!({ "tools.update_plan": { "enabled": true }, "tools.experimental_request_user_input": { "enabled": false }, "mcp_servers.stampede_chat": config });
     if !environment.is_empty() {
         config["shell_environment_policy.set"] = json!(environment);
@@ -582,9 +582,10 @@ fn tool_config(data_dir: &Path, chat_id: &str, env: &BTreeMap<String, String>) -
     config
 }
 
+/// Codex's sandbox refuses to run any command while a writable root is missing.
 fn writable_roots(data_dir: &Path, env: &BTreeMap<String, String>) -> Vec<String> {
     ["STAMPEDE_SCRATCH", "STAMPEDE_CACHE", "CARGO_TARGET_DIR"].into_iter()
-        .filter_map(|name| env.get(name)).filter(|path| Path::new(path).is_absolute()).cloned()
+        .filter_map(|name| env.get(name)).filter(|path| Path::new(path).is_absolute() && Path::new(path).is_dir()).cloned()
         .chain([crate::canvas::root(data_dir).display().to_string()]).collect()
 }
 
@@ -1928,6 +1929,14 @@ mod tests {
         for (reported, expected) in [(json!("priority"), Some("priority")), (json!("default"), None), (Value::Null, None)] {
             assert_eq!(current(&json!({ "serviceTier": reported })).chosen.speed.as_deref(), expected);
         }
+    }
+
+    #[test]
+    fn a_missing_directory_is_not_a_writable_root() {
+        let root = tempfile::tempdir().unwrap();
+        let existing = root.path().display().to_string();
+        let env = BTreeMap::from([("STAMPEDE_SCRATCH".to_owned(), existing.clone()), ("CARGO_TARGET_DIR".to_owned(), root.path().join("target").display().to_string())]);
+        assert_eq!(writable_roots(root.path(), &env), [existing, crate::canvas::root(root.path()).display().to_string()]);
     }
 
     #[test]

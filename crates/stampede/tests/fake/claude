@@ -161,7 +161,7 @@ if Path('.fake-slow-exit').exists():
 args = sys.argv[1:]
 if (capture := os.environ.get('STAMPEDE_FAKE_ENVIRONMENT')) and os.environ.get('STAMPEDE_SCRATCH'):
     with open(capture, 'a') as output:
-        json.dump({name: os.environ.get(name) for name in ['TMPDIR', 'CLAUDE_CODE_TMPDIR', 'NODE_COMPILE_CACHE', 'CARGO_TARGET_DIR']}, output)
+        json.dump({name: os.environ.get(name) for name in ['TMPDIR', 'CLAUDE_CODE_TMPDIR', 'NODE_COMPILE_CACHE', 'CARGO_TARGET_DIR', 'PATH']}, output)
         output.write('\n')
 if '-p' in args or '--print' in args:
     fail(f'print mode in {args}')
