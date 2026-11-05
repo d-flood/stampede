@@ -25,6 +25,8 @@ export type Subagent = {
 	id: string;
 	origin?: 'harness' | 'stampede';
 	name?: string;
+	role?: string;
+	agent?: Agent;
 	task: string;
 	status: Status;
 	outcome?: 'completed' | 'failed' | 'stopped';

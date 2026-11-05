@@ -92,6 +92,10 @@ pub enum Item {
         origin: SubagentOrigin,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent: Option<crate::config::Agent>,
         task: String,
         status: Status,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -248,6 +252,7 @@ struct Subagent {
     index: usize,
     id: String,
     name: Option<String>,
+    role: Option<String>,
     task: String,
     status: Status,
     outcome: Option<Outcome>,
@@ -271,6 +276,7 @@ impl Subagent {
             index: 0,
             id: id.to_owned(),
             name: None,
+            role: None,
             task,
             status: Status::Working,
             outcome: None,
@@ -338,6 +344,8 @@ impl Subagent {
             id: self.id.clone(),
             origin: SubagentOrigin::Harness,
             name: self.name.clone(),
+            role: self.role.clone(),
+            agent: None,
             task: self.task.clone(),
             status: self.status,
             outcome: self.outcome.filter(|_| done),

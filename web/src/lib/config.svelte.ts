@@ -21,7 +21,7 @@ type Keybar = { extra: string[] };
 export type Appearance = { theme: ITheme; fontFamily: string; fontSize: number; scrollback: number };
 export type FontRole = 'ui' | 'chat' | 'code';
 export type Agent = 'claude-code' | 'codex' | 'copilot';
-export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex', copilot: 'GitHub Copilot' };
+export { agentNames } from '#lib/chat/sessions.ts';
 export type Rig = { name: string; agent: Agent; shortcut?: string; model?: string; effort?: string; speed?: string; ultracode?: string; mode?: string };
 export type Template = { name: string; description: string };
 export type Mode = { value: string; label: string; available: boolean };

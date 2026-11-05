@@ -44,6 +44,7 @@ async fn review(agent: &str, target: &str, finding: &str) {
     }).await.unwrap();
     assert_eq!(live["name"], "target");
     assert_eq!(live["origin"], "stampede");
+    assert_eq!(live["agent"], target);
     assert_eq!(live["status"], "working");
     assert_eq!(live["prompt"], TASK);
     assert_eq!(fs::read_to_string(server.root.path().join("home/reviewed.txt")).unwrap(), "incorrect value\n");
@@ -95,6 +96,7 @@ async fn review(agent: &str, target: &str, finding: &str) {
     assert_eq!(delegated.len(), 1);
     assert_eq!(delegated[0]["status"], "done");
     assert_eq!(delegated[0]["origin"], "stampede");
+    assert_eq!(delegated[0]["agent"], target);
     assert_eq!(delegated[0]["outcome"], "completed");
     assert_eq!(delegated[0]["report"], finding);
     assert_eq!(delegated[0]["elided"], true);
@@ -120,6 +122,8 @@ async fn review(agent: &str, target: &str, finding: &str) {
         ]);
         fs::write(path, entries.iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
     }
+    let config = server.root.path().join("config.toml");
+    fs::write(&config, fs::read_to_string(&config).unwrap().replace(r#"name = "target""#, r#"name = "renamed""#)).unwrap();
     server.restart().await;
     let (mut restored, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
     control(&mut restored, json!({ "type": "hello", "deviceId": "test" })).await;
@@ -131,6 +135,7 @@ async fn review(agent: &str, target: &str, finding: &str) {
     assert_eq!(delegated["report"], finding);
     assert_eq!(delegated["outcome"], "completed");
     assert!(delegated["model"].is_string());
+    assert_eq!((&delegated["name"], &delegated["agent"]), (&json!("target"), &json!(target)));
     socket = restored;
     close_chat(&mut socket, server.root.path(), source["id"].as_str().unwrap()).await;
 }

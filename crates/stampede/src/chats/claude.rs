@@ -1976,7 +1976,7 @@ impl Transcript {
                 let started_at = timestamp.as_str().filter(|_| replaying).and_then(super::epoch_ms).unwrap_or_else(super::now);
                 let task = if name == "Workflow" { "Workflow".to_owned() } else { text("description") };
                 let (mut subagent, events) = Subagent::new(id, task, started_at);
-                subagent.name = input["subagent_type"].as_str().map(str::to_owned);
+                subagent.name = input["subagent_type"].as_str().filter(|kind| *kind != "general-purpose").map(str::to_owned);
                 subagent.prompt = input["prompt"].as_str().or(input["script"].as_str()).map(str::to_owned);
                 subagent.model = input["model"].as_str().map(str::to_owned);
                 subagent.index = self.push(subagent.item());

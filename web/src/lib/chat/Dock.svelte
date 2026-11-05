@@ -1,7 +1,7 @@
 <script lang="ts">
-	import SubagentOrigin from '#lib/chat/SubagentOrigin.svelte';
 	import { clock, type Placed } from '#lib/chat/agents.ts';
 	import { icons } from '#lib/chat/icons.ts';
+	import { agentNames, logos } from '#lib/chat/sessions.ts';
 	import SubagentMenu from '#lib/chat/SubagentMenu.svelte';
 	import SubagentSheet from '#lib/chat/SubagentSheet.svelte';
 	import { form } from '#lib/form.ts';
@@ -66,7 +66,9 @@
 				<button class="pill {subagent.status}" style:min-width="{PILL}em" title={subagent.task} onclick={() => (subagent.status === 'waiting' ? onattend(subagent.id) : onopen(path))}>
 					<span class="mark">{#if subagent.status === 'waiting'}<WaitingMark />{:else}<SubagentMark />{/if}</span>
 					<span class="task">{subagent.task}</span>
-					<SubagentOrigin origin={subagent.origin} />
+					{#if subagent.agent}{@const Logo = logos[subagent.agent]}<span class="logo" role="img" aria-label={agentNames[subagent.agent]} title={agentNames[subagent.agent]}><Logo aria-hidden="true" /></span>{/if}
+					{#if subagent.name}<span class="name">{subagent.name}</span>{/if}
+					{#if subagent.role}<span class="role">{subagent.role}</span>{/if}
 					{#if subagent.startedAt}<span class="clock">{clock(subagent.startedAt)}</span>{/if}
 				</button>
 			{/each}
@@ -96,5 +98,7 @@
 	.waiting { border-color: var(--status-waiting); background: color-mix(in oklab, var(--status-waiting) 16%, transparent); }
 	.waiting .mark { color: var(--status-waiting); }
 	.task { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: start; }
-	.clock { flex: none; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+	.logo { display: inline-flex; flex: none; }
+	.name { flex: 0 1 auto; max-width: 8em; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+	.role, .clock { flex: none; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 </style>

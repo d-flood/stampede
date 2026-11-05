@@ -88,6 +88,34 @@ async fn closing_a_working_codex_chat_interrupts_its_turn() {
     );
 }
 
+#[tokio::test]
+async fn a_live_codex_subagent_carries_its_nickname_and_role_before_any_resume() {
+    let directory = tempfile::tempdir().unwrap();
+    let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/codex/subagents.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let fixture = directory.path().join("subagents.jsonl");
+    fs::write(&fixture, recording.replace(r#""agentRole": null"#, r#""agentRole": "explorer""#)).unwrap();
+    let (server, mut socket, chat) = launch(fixture.to_str().unwrap()).await;
+    let chat_id = chat["id"].as_str().unwrap();
+    control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Find needle using a subagent and track the steps." })).await;
+    let mut items = Vec::new();
+    let named = timeout(Duration::from_secs(20), async {
+        loop {
+            let message = next(&mut socket).await;
+            if message["chatId"] != chat_id || !matches!(message["type"].as_str(), Some("chat.item" | "chat.append")) { continue; }
+            apply(&mut items, &message);
+            if let Some(subagent) = items.iter().find(|item| item["kind"] == "subagent" && item.get("name").is_some()) {
+                break subagent.clone();
+            }
+        }
+    })
+    .await
+    .expect("the Subagent was never named");
+    assert_eq!((named["name"].as_str(), named["role"].as_str(), named["status"].as_str()), (Some("Heisenberg"), Some("explorer"), Some("working")));
+    let reads: Vec<Value> = received(&server).into_iter().filter(|message| message["method"] == "thread/read").collect();
+    assert_eq!(reads.len(), 1);
+    assert_eq!(reads[0]["params"], json!({ "threadId": "01a146a6-43f6-79a0-a77a-01771282aaae" }));
+}
+
 async fn launch(fixture: &str) -> (Server, Socket, Value) {
     let config = format!(
         r#"

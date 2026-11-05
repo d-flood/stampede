@@ -5,6 +5,7 @@ import OpenAI from '~icons/simple-icons/openai';
 import Copilot from '~icons/simple-icons/githubcopilot';
 
 export const logos: Record<Agent, Component> = { 'claude-code': Claude, codex: OpenAI, copilot: Copilot };
+export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex', copilot: 'GitHub Copilot' };
 
 const units: [Intl.RelativeTimeFormatUnit, number][] = [
 	['year', 31_536_000],

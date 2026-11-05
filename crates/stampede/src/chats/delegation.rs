@@ -31,6 +31,8 @@ struct Request {
 struct Report {
     id: String,
     rig: String,
+    #[serde(default)]
+    agent: Option<crate::config::Agent>,
     task: String,
     model: Option<String>,
     started_at: u64,
@@ -60,7 +62,7 @@ impl Report {
 
     fn item(&self, status: Status, activity: Option<String>, items: Vec<Item>) -> Item {
         Item::Subagent {
-            id: self.id.clone(), origin: super::SubagentOrigin::Stampede, name: Some(self.rig.clone()), task: self.task.lines().next().unwrap_or_default().chars().take(200).collect(),
+            id: self.id.clone(), origin: super::SubagentOrigin::Stampede, name: Some(self.rig.clone()), role: None, agent: self.agent, task: self.task.lines().next().unwrap_or_default().chars().take(200).collect(),
             status, outcome: self.outcome, prompt: Some(self.task.clone()), report: self.report.clone(), model: self.model.clone(),
             started_at: self.started_at, totals: Some(self.totals), activity, items,
         }
@@ -80,7 +82,7 @@ pub fn item(result: &Value, data_dir: Option<&Path>) -> Option<Item> {
         (saved.id == id && value["rig"] == saved.rig).then_some(saved)
     }).or_else(|| serde_json::from_value::<Report>(value.clone()).ok()).or_else(|| {
         Some(Report {
-            id: value["id"].as_str()?.to_owned(), rig: value["rig"].as_str()?.to_owned(), task: "Delegated task".to_owned(),
+            id: value["id"].as_str()?.to_owned(), rig: value["rig"].as_str()?.to_owned(), agent: None, task: "Delegated task".to_owned(),
             model: None, started_at: 0, outcome: serde_json::from_value(value["outcome"].clone()).ok(),
             report: value["report"].as_str().map(str::to_owned), totals: Totals { duration_ms: 0, tools: 0, tokens: None },
         })
@@ -210,7 +212,7 @@ impl Chats {
         let mut changes = self.subscribe();
         let child = self.start(&source.project_id, &source.cwd, rig, None, None, Some(source.id.clone()), None).await?;
         let entry = self.get(&child.id).ok_or_else(|| io::Error::other("The delegated agent did not start."))?;
-        let mut report = Report { id: child.id.clone(), rig: child.rig.clone(), task, model: child.settings.chosen.model.clone(),
+        let mut report = Report { id: child.id.clone(), rig: child.rig.clone(), agent: Some(rig.agent), task, model: child.settings.chosen.model.clone(),
             started_at: super::now(), outcome: None, report: None, totals: Totals { duration_ms: 0, tools: 0, tokens: None } };
         self.send(&child.id, &report.task, false, &[]);
         let mut disconnected = [0];
@@ -336,7 +338,7 @@ mod tests {
     fn compact_results_preserve_full_reports_and_legacy_replay() {
         let data = tempfile::tempdir().unwrap();
         let mut report = Report {
-            id: "0123456789abcdef".to_owned(), rig: "Reviewer".to_owned(), task: "Review this task".to_owned(),
+            id: "0123456789abcdef".to_owned(), rig: "Reviewer".to_owned(), agent: Some(crate::config::Agent::Codex), task: "Review this task".to_owned(),
             model: Some("model".to_owned()), started_at: 42, outcome: Some(Outcome::Completed),
             report: Some("界".repeat(MAX_REPORT)), totals: Totals { duration_ms: 1000, tools: 3, tokens: Some(100) },
         };
