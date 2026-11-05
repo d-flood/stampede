@@ -57,10 +57,10 @@ export async function showScreen(page: Page, name: 'projects' | 'tabs' | 'sideba
 	for (let step = 0; current !== name; step++) {
 		expect(step, `reach the ${name} screen`).toBeLessThan(3);
 		const index = names.indexOf(current);
-		const back = names[index - 1] ?? names[index + 1];
+		const back = current === 'tabs' ? 'projects' : names[index - 1] ?? names[index + 1];
 		const focused = page.getByRole('navigation', { name: 'Projects' }).locator('[aria-current="true"]').first();
 		if (back !== name && name === 'tabs' && current === 'projects' && (await focused.count())) await focused.click();
-		else if (back !== name && current === 'tabs' && names[index + 1] === name) await swipe(page);
+		else if (back !== name && current === 'tabs') await swipe(page, names[index + 1] === name ? -1 : 1);
 		else await page.locator('.phone > header > button').first().click();
 		const previous = current;
 		await expect.poll(active).not.toBe(previous);
@@ -69,14 +69,17 @@ export async function showScreen(page: Page, name: 'projects' | 'tabs' | 'sideba
 	}
 }
 
-async function swipe(page: Page) {
-	const box = (await page.locator('.phone > header').boundingBox())!;
-	const width = page.viewportSize()!.width;
+async function swipe(page: Page, direction: -1 | 1) {
+	const box = (await page.locator('.phone > header').first().boundingBox())!;
+	const x = direction === -1 ? page.viewportSize()!.width - 20 : 20;
+	await touchSwipe(page, x, box.y + box.height + 8, direction * 200);
+}
+
+export async function touchSwipe(page: Page, x: number, y: number, distance: number) {
 	const session = await page.context().newCDPSession(page);
 	try {
-		const y = box.y + box.height + 8;
-		await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: width - 20, y }] });
-		for (let step = 1; step <= 5; step++) await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: width - 20 - step * 40, y }] });
+		await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+		for (let step = 1; step <= 5; step++) await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + distance * step / 5, y }] });
 		await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 	} finally {
 		await session.detach();
@@ -173,11 +176,13 @@ export async function currentTab(page: Page) {
 	return (await compact(page)) ? tabsHeading(page) : page.getByRole('tab', { selected: true });
 }
 
-/** Counts open Tabs from the desktop strip, or from the phone header's "Project, N tabs". */
+/** Counts open Tabs from the desktop strip, or from the phone header's position, which a lone Tab doesn't show. */
 export async function tabCount(page: Page) {
 	if (!(await compact(page))) return page.getByRole('tab').count();
-	const count = (await (await tabsHeading(page)).locator('.count').textContent()) ?? '';
-	return Number(/(\d+) tabs?$/.exec(count)?.[1] ?? 0);
+	const title = await tabsHeading(page);
+	const position = title.locator('.position');
+	if (await position.count()) return Number((await position.textContent())?.split('/')[1]);
+	return (await title.getAttribute('data-current-tab')) ? 1 : 0;
 }
 
 /** Asserts whether the Tab with this id is shown, from the desktop strip or the phone header. */

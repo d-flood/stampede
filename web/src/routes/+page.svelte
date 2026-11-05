@@ -38,6 +38,7 @@
 	import Settings from '#lib/shell/Settings.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Launchpad from '#lib/shell/Launchpad.svelte';
+	import TabIcons from '#lib/shell/TabIcons.svelte';
 	import TabSwitcher, { type SwitcherTab } from '#lib/shell/TabSwitcher.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
 	import { menuItems, tabItems } from '#lib/shell/new-tab.ts';
@@ -135,6 +136,7 @@
 	let animationFrame = 0;
 	let screens: HTMLElement | undefined;
 	let held = $state(false);
+	let titleDrag = $state(0);
 	let drawer: Drawer;
 	let renamer = $state<Rename>();
 	let drawerOpen = $state(false);
@@ -206,16 +208,17 @@
 	});
 	const openTabs = $derived(tabIds.filter((id) => !closingTabs.has(id)).flatMap((id) => tabRow(id) ?? []));
 	const current = $derived(openTabs.find(({ id }) => id === activeTab));
+	const currentIndex = $derived(openTabs.findIndex(({ id }) => id === activeTab));
 	const CurrentMark = $derived(current?.status && marks[current.status]);
 	const titles = $derived({
 		projects: { title: 'Projects', sub: hostName() ?? undefined },
 		tabs: {
 			title: current?.label ?? label ?? 'Tabs',
-			sub: label && `${label}, ${openTabs.length} tab${openTabs.length === 1 ? '' : 's'}`
+			sub: label
 		},
 		sidebar: { title: sectionShowing(section, focused && git.get(focused.id)).label, sub: label }
 	});
-	const back = $derived(order[screenIndex - 1] ?? order[screenIndex + 1]);
+	const back = $derived(screen === 'tabs' ? 'projects' : (order[screenIndex - 1] ?? order[screenIndex + 1]));
 	let switching = $state(false);
 	const deviceLayout = $derived(
 		capture({
@@ -620,6 +623,60 @@
 			stopSlide();
 			off.forEach((listener) => listener());
 			screens = undefined;
+		};
+	}
+
+	function settleInto(element: Element | null, keyframes: Keyframe[]) {
+		if (!matchMedia('(prefers-reduced-motion: reduce)').matches) element?.animate(keyframes, { duration: 160, easing: 'cubic-bezier(0.2, 0.8, 0.3, 1)' });
+	}
+
+	function swipesTabs(element: HTMLElement) {
+		let gesture: { x: number; y: number; time: number; horizontal: boolean } | undefined;
+		const start = ({ touches }: TouchEvent) => {
+			gesture = touches.length === 1 && openTabs.length > 1 ? { x: touches[0].clientX, y: touches[0].clientY, time: performance.now(), horizontal: false } : undefined;
+		};
+		const move = (event: TouchEvent) => {
+			if (!gesture) return;
+			const dx = event.touches[0].clientX - gesture.x;
+			const dy = event.touches[0].clientY - gesture.y;
+			if (!gesture.horizontal) {
+				if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+				if (Math.abs(dy) >= Math.abs(dx) || !event.cancelable) {
+					gesture = undefined;
+					return;
+				}
+				gesture.horizontal = true;
+			}
+			event.preventDefault();
+			titleDrag = openTabs[currentIndex - Math.sign(dx)] ? dx : dx / 4;
+		};
+		const release = (event: TouchEvent) => {
+			if (gesture?.horizontal) {
+				const dx = event.changedTouches[0].clientX - gesture.x;
+				const distance = Math.abs(dx);
+				const advance = event.type !== 'touchcancel' && (distance > element.clientWidth * 0.2 || distance / (performance.now() - gesture.time) > 0.5);
+				const next = advance ? openTabs[currentIndex - Math.sign(dx)] : undefined;
+				const title = element.querySelector('.title');
+				if (next && focused) {
+					choose(focused.id, next.id);
+					settleInto(title, [{ transform: `translateX(${-Math.sign(dx) * 40}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }]);
+					settleInto(main, [{ transform: `translateX(${-Math.sign(dx) * 24}px)`, opacity: 0.5 }, { transform: 'none', opacity: 1 }]);
+				} else {
+					settleInto(title, [{ transform: `translateX(${titleDrag}px)` }, { transform: 'none' }]);
+				}
+				titleDrag = 0;
+			}
+			gesture = undefined;
+		};
+		const off = [
+			on(element, 'touchstart', start, { passive: true }),
+			on(element, 'touchmove', move, { passive: false }),
+			on(element, 'touchend', release),
+			on(element, 'touchcancel', release)
+		];
+		return () => {
+			off.forEach((listener) => listener());
+			titleDrag = 0;
 		};
 	}
 
@@ -1419,15 +1476,21 @@
 				{#if back === 'projects'}<Folders />{:else if back === 'tabs'}<Cards />{:else}<SidebarSimple style={sidebarPosition.side === 'right' ? 'transform: scaleX(-1)' : undefined} />{/if}
 			</IconButton>
 			{#if screen === 'tabs' && focused}
-				<h1 data-current-tab={current?.id}>
+				<h1 data-current-tab={current?.id} {@attach swipesTabs}>
 					<button class="switch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => (switching = true)}>
-						<span class="title">
+						<span class="title" style:transform={titleDrag ? `translateX(${titleDrag}px)` : undefined}>
 							<span class="name">{title}</span>
 							{#if CurrentMark}<span class="mark {current?.status}" title={current?.status}><CurrentMark /></span>{/if}
 							{#if current?.dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
 							<CaretDown />
 						</span>
-						<span class="count">{sub}</span>
+						<span class="count">
+							<span class="project">{sub}</span>
+							{#if openTabs.length > 1}
+								<TabIcons tabs={openTabs} current={activeTab} />
+								<span class="position">{currentIndex + 1}/{openTabs.length}</span>
+							{/if}
+						</span>
 					</button>
 				</h1>
 			{:else}
@@ -1732,7 +1795,7 @@
 		flex-direction: column;
 		justify-content: center;
 		box-sizing: border-box;
-		max-width: 100%;
+		width: 100%;
 		min-height: var(--target-min);
 		padding: 0 var(--space-2);
 		border: none;
@@ -1764,17 +1827,33 @@
 	}
 
 	.name,
-	.count {
+	.project {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.count {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		min-width: 0;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		font-weight: 400;
 		line-height: 1.2;
+		white-space: nowrap;
+	}
+
+	.project:not(:only-child) {
+		flex: none;
+		max-width: 45%;
+	}
+
+	.position {
+		flex: none;
+		font-family: var(--font-mono);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.mark {

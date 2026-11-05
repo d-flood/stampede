@@ -675,7 +675,7 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 
 	await second.click();
 	await expect(second).toHaveAttribute('aria-current', 'true');
-	if (phone) await expect(page.locator('.phone > header h1 .count')).toHaveText(`${slug}/2, 1 tab`);
+	if (phone) await expect(page.locator('.phone > header h1 .count')).toHaveText(`${slug}/2`);
 	else await expect(page.getByRole('complementary', { name: 'Sidebar' }).getByRole('heading', { level: 1 })).toHaveText(`${slug}/2`);
 	const chat = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/2`);

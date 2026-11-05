@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
-import { newTab, openProject, openSettings, openSwitcher, showScreen } from './shell.ts';
+import { newTab, openProject, openSettings, openSwitcher, showScreen, touchSwipe } from './shell.ts';
 
 async function settled(page: Page, name: string) {
 	await expect.poll(() => page.locator('.screens').evaluate((element, name) => {
@@ -11,6 +11,11 @@ async function settled(page: Page, name: string) {
 
 function back(page: Page) {
 	return page.locator('.phone > header > button').first();
+}
+
+async function swipeTitle(page: Page, distance: number) {
+	const box = (await page.locator('.phone > header h1').boundingBox())!;
+	await touchSwipe(page, box.x + box.width / 2, box.y + box.height / 2, distance);
 }
 
 for (const side of ['left', 'right']) {
@@ -32,7 +37,7 @@ for (const side of ['left', 'right']) {
 		for (const from of order as (keyof typeof destinations)[]) {
 			await showScreen(page, from);
 			const index = order.indexOf(from);
-			const to = (order[index - 1] ?? order[index + 1]) as keyof typeof destinations;
+			const to = (from === 'tabs' ? 'projects' : order[index - 1] ?? order[index + 1]) as keyof typeof destinations;
 			await expect(back(page)).toHaveAccessibleName(destinations[to]);
 			await back(page).click();
 			await settled(page, to);
@@ -65,7 +70,7 @@ test('phone chrome is one header whose title switches Tabs', { tag: '@phone' }, 
 	const panel = page.locator('.panel[role="tabpanel"]:visible');
 	const transcript = panel.locator('.transcript:visible');
 	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
-	await expect(title).toContainText('alpha, 2 tabs');
+	await expect(title.locator('.position')).toHaveText(/\/2$/);
 
 	await expect(page.getByRole('tablist', { name: 'Tabs', exact: true })).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeHidden();
@@ -90,7 +95,56 @@ test('phone chrome is one header whose title switches Tabs', { tag: '@phone' }, 
 	await expect(title).toHaveText(/^greeting\.ts/);
 
 	await (await openSwitcher(page)).getByRole('button', { name: 'Terminal', exact: true }).click();
-	await expect(title).toContainText('alpha, 3 tabs');
+	await expect(title.locator('.position')).toHaveText(/\/3$/);
+});
+
+test('phone title swipes move between Tabs, stop at either end and leave the screen alone', { tag: '@phone' }, async ({ page }) => {
+	await openProject(page, 'alpha');
+	const title = page.getByRole('heading', { level: 1 });
+	await expect(title.locator('.position')).toHaveCount(0);
+	await newTab(page, 'Terminal');
+	await expect(title.locator('.position')).toHaveCount(0);
+	await newTab(page, 'Fake Claude');
+	await newTab(page, 'Terminal');
+	const position = title.locator('.position');
+	const icons = title.locator('.icon');
+	await expect(position).toHaveText('2/3');
+	await expect(icons).toHaveCount(3);
+	const statusBar = (index: number) => icons.nth(index).evaluate((element) => getComputedStyle(element, '::after').backgroundColor);
+	await expect.poll(() => statusBar(0)).toBe('rgba(0, 0, 0, 0)');
+	await expect.poll(() => statusBar(2)).not.toBe('rgba(0, 0, 0, 0)');
+
+	for (const [distance, expected] of [[120, '1/3'], [120, '1/3'], [-120, '2/3'], [-120, '3/3'], [-120, '3/3']] as const) {
+		await swipeTitle(page, distance);
+		await expect(position).toHaveText(expected);
+		await expect(icons.nth(Number(expected[0]) - 1)).toHaveClass(/\bnow\b/);
+		await expect(title.locator('.icon.now')).toHaveCount(1);
+		await expect.poll(() => title.locator('.title').evaluate((element) => getComputedStyle(element).transform)).toBe('none');
+		await settled(page, 'tabs');
+	}
+	await expect(title).toContainText('Fake Claude');
+	await expect(page.getByRole('dialog', { name: 'Tabs', exact: true })).toBeHidden();
+
+	await showScreen(page, 'sidebar');
+	await settled(page, 'sidebar');
+});
+
+test('phone header keeps the current Tab icon in view among many Tabs', { tag: '@phone' }, async ({ page }) => {
+	await openProject(page, 'alpha');
+	for (let count = 0; count < 12; count++) await newTab(page, 'Terminal');
+	const title = page.getByRole('heading', { level: 1 });
+	await expect(title.locator('.position')).toHaveText('12/12');
+	const inView = () => title.locator('.icons').evaluate((row) => {
+		const box = row.getBoundingClientRect();
+		const current = row.querySelector('.now')!.getBoundingClientRect();
+		return current.left >= box.left && current.right <= box.right;
+	});
+	await expect.poll(inView).toBe(true);
+	for (let count = 0; count < 5; count++) await swipeTitle(page, 120);
+	await expect(title.locator('.position')).toHaveText('7/12');
+	await expect.poll(inView).toBe(true);
+	const header = await page.locator('.phone > header').boundingBox();
+	expect(header!.height).toBeLessThanOrEqual(64);
 });
 
 test('phone Projects screen holds Settings and the Drawer', { tag: '@phone' }, async ({ page }) => {
@@ -130,9 +184,20 @@ test('phone left button respects reduced motion', { tag: '@phone' }, async ({ pa
 	await page.emulateMedia({ reducedMotion: 'reduce' });
 	await page.goto('/');
 	await settled(page, 'tabs');
-	await page.getByRole('button', { name: 'Files', exact: true }).click();
-	await settled(page, 'sidebar');
 	await page.getByRole('button', { name: 'Projects', exact: true }).click();
 	await settled(page, 'projects');
-	await expect(back(page)).toHaveAccessibleName('Files');
+	await page.getByRole('button', { name: 'Files', exact: true }).click();
+	await settled(page, 'sidebar');
+	await expect(back(page)).toHaveAccessibleName('Projects');
+});
+
+test('phone title swipe respects reduced motion', { tag: '@phone' }, async ({ page }) => {
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	await openProject(page, 'alpha');
+	await newTab(page, 'Terminal');
+	await newTab(page, 'Terminal');
+	const title = page.getByRole('heading', { level: 1 });
+	await swipeTitle(page, 120);
+	await expect(title.locator('.position')).toHaveText('1/2');
+	expect(await page.locator('.phone main').evaluate((element) => element.getAnimations().length)).toBe(0);
 });
