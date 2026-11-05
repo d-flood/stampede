@@ -88,13 +88,14 @@ test('high usage follows the displayed percent', async () => {
 });
 
 test('hovering reveals every reading at once and keeps countdowns current', async () => {
-	vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+	vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
 	vi.setSystemTime(now);
 	const view = await render(Usage, { readings, codexResets: resets });
-	const started = performance.now();
 	await view.getByRole('button', { name: 'Usage details' }).hover();
-	await expect.element(tooltip(), { timeout: 250 }).toBeVisible();
-	expect(performance.now() - started).toBeLessThan(250);
+	await new Promise(requestAnimationFrame);
+	// Polling advances fake timers, which would run an open delay; this read has to come first.
+	expect(tooltip().query()).not.toBeNull();
+	await expect.element(tooltip()).toBeVisible();
 	expect(inTooltip('.window')()).toEqual([
 		expect.stringMatching(/^5h 100% .* in 3h 9m$/),
 		expect.stringMatching(/^Weekly 12% .* in 6d 14h$/),

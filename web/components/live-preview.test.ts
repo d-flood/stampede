@@ -37,8 +37,7 @@ test('formats every line of an unfocused editor', async () => {
 	expect(line(1).classList).toContain('cm-lp-h1');
 	expect(parseFloat(getComputedStyle(line(1)).fontSize)).toBeGreaterThan(parseFloat(getComputedStyle(line(3)).fontSize));
 	expect(line(3).textContent).toBe('Some bold words.');
-	const bold = [...line(3).querySelectorAll('span')].find((span) => span.textContent === 'bold')!;
-	expect(Number(getComputedStyle(bold).fontWeight)).toBeGreaterThanOrEqual(700);
+	await expect.poll(() => Number(getComputedStyle([...line(3).querySelectorAll('span')].find((span) => span.textContent === 'bold')!).fontWeight)).toBeGreaterThanOrEqual(700);
 	expect(line(5).textContent).toBe('•item one');
 	expect(line(5).querySelector('.cm-lp-bullet')).not.toBeNull();
 	await expect.element(page.getByRole('checkbox', { name: 'Task done' })).not.toBeChecked();
