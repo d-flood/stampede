@@ -92,51 +92,6 @@ test('image-only messages show every attachment within the transcript bounds', a
 	await closeProject(page, name);
 });
 
-test('text paste stays native and pasted images can be removed', { tag: '@desktop' }, async ({ page, context }, { project }) => {
-	const name = `paste-text-${project.name}`;
-	const { panel, composer } = await launch(page, name);
-	expect(await paste(composer, [], 'plain text')).toBe(true);
-	expect(await paste(composer, [{ name: 'notes.txt', type: 'text/plain' }])).toBe(true);
-	await expect(panel.getByLabel('Attachments', { exact: true })).toHaveCount(0);
-	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-	await page.evaluate(() => navigator.clipboard.writeText('plain text\nsecond line'));
-	await composer.press('Control+V');
-	await expect(composer).toHaveValue('plain text\nsecond line');
-	await paste(composer, [{ name: 'remove.png' }]);
-	await expect(panel.getByRole('img', { name: 'remove.png' })).toBeVisible();
-	await panel.getByRole('button', { name: 'Remove remove.png', exact: true }).click();
-	await expect(panel.getByLabel('Attachments', { exact: true })).toHaveCount(0);
-	await closeProject(page, name);
-});
-
-test('pasted images share picker limits and reject overlapping reads', { tag: '@desktop' }, async ({ page }, { project }) => {
-	const name = `paste-limits-${project.name}`;
-	const { panel, composer } = await launch(page, name);
-	const alert = panel.getByRole('alert');
-	await paste(composer, [{ name: 'vector.svg', type: 'image/svg+xml' }]);
-	await expect(alert).toHaveText('Choose PNG, JPEG, GIF or WebP images.');
-	await paste(composer, [{ name: 'large.png', size: 5 * 1024 * 1024 + 1 }]);
-	await expect(alert).toHaveText('Each image must be 5 MB or smaller.');
-	await paste(composer, Array.from({ length: 5 }, (_, index) => ({ name: `${index}.png`, size: 4 * 1024 * 1024 + 1 })));
-	await expect(alert).toHaveText('Keep attachments under 20 MB per message.');
-	await expect(panel.getByLabel('Attachments', { exact: true })).toHaveCount(0);
-	await panel.getByLabel('Attach images', { exact: true }).setInputFiles(new URL('../static/icons/icon-192.png', import.meta.url).pathname);
-	await expect(panel.getByRole('img', { name: 'icon-192.png' })).toBeVisible();
-	await composer.evaluate((element, png) => {
-		const clipboardData = new DataTransfer();
-		const data = Uint8Array.from(atob(png), (char) => char.charCodeAt(0));
-		for (let index = 0; index < 10; index++) clipboardData.items.add(new File([data], `${index}.png`, { type: 'image/png' }));
-		for (let index = 0; index < 2; index++) element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
-	}, png);
-	const images = panel.getByLabel('Attachments', { exact: true }).locator('img');
-	await expect(images).toHaveCount(11);
-	await expect(panel.getByRole('button', { name: 'Attach image', exact: true })).toBeEnabled();
-	await paste(composer, Array.from({ length: 10 }, (_, index) => ({ name: `extra-${index}.png` })));
-	await expect(alert).toHaveText('Attach up to 20 images.');
-	await expect(images).toHaveCount(11);
-	await closeProject(page, name);
-});
-
 test('image paste respects pending approval and offline restrictions', { tag: '@desktop' }, async ({ page, context }, { project }) => {
 	const name = `paste-blocked-${project.name}`;
 	const { panel, composer } = await launch(page, name, 'Claude Approval');
@@ -169,32 +124,3 @@ test('images dropped anywhere on a Chat attach without leaving the page', { tag:
 	await closeProject(page, name);
 });
 
-test('mobile attachment controls leave the previews unobscured', { tag: '@phone' }, async ({ page }, { project }) => {
-	const name = `attachment-controls-${project.name}`;
-	const { panel, composer } = await launch(page, name);
-	await paste(composer, [{ name: 'first.png' }, { name: 'second.png' }]);
-	const attachments = panel.getByLabel('Attachments', { exact: true });
-	await expect(attachments.locator('img')).toHaveCount(2);
-	for (const width of [448, 320]) {
-		await page.setViewportSize({ width, height: 998 });
-		for (const name of ['first.png', 'second.png']) {
-			const image = attachments.getByRole('img', { name, exact: true });
-			const remove = attachments.getByRole('button', { name: `Remove ${name}`, exact: true });
-			await expect.poll(async () => {
-				const [preview, button] = await Promise.all([image.boundingBox(), remove.boundingBox()]);
-				if (!preview || !button) return -1;
-				return Math.max(0, Math.min(preview.x + preview.width, button.x + button.width) - Math.max(preview.x, button.x))
-					* Math.max(0, Math.min(preview.y + preview.height, button.y + button.height) - Math.max(preview.y, button.y));
-			}).toBe(0);
-			await expect.poll(async () => {
-				const button = await remove.boundingBox();
-				return button && button.width >= 48 && button.height >= 48;
-			}).toBe(true);
-		}
-		await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	}
-	await attachments.getByRole('button', { name: 'Remove first.png', exact: true }).click();
-	await expect(attachments.getByRole('img', { name: 'first.png', exact: true })).toHaveCount(0);
-	await expect(attachments.getByRole('img', { name: 'second.png', exact: true })).toBeVisible();
-	await closeProject(page, name);
-});

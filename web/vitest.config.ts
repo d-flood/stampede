@@ -16,7 +16,7 @@ export default defineConfig({
 			'@codemirror/lang-markdown', '@codemirror/lang-python', '@codemirror/lang-rust', '@codemirror/lang-vue',
 			'@codemirror/lang-yaml', '@codemirror/language', '@codemirror/state', '@codemirror/view', '@lezer/highlight',
 			'@codemirror/legacy-modes/mode/diff', '@codemirror/legacy-modes/mode/dockerfile', '@codemirror/legacy-modes/mode/shell',
-			'@codemirror/legacy-modes/mode/toml', '@codemirror/legacy-modes/mode/xml', '@replit/codemirror-lang-svelte', 'bits-ui', 'style-mod'
+			'@codemirror/legacy-modes/mode/toml', '@codemirror/legacy-modes/mode/xml', '@replit/codemirror-lang-svelte', 'bits-ui', 'fuzzysort', 'style-mod'
 		]
 	},
 	test: {

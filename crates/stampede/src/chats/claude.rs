@@ -816,7 +816,7 @@ const ENTRY: Only = Only(&[
 const RESULT: Only = Only(&[
     "type", "content", "structuredPatch", "original_file", "updated_file", "filePath", "notebook_path", "answers", "questions",
     "task_type", "task_id", "task", "agentId", "resolvedModel", "isAsync", "status", "totalDurationMs", "totalToolUseCount",
-    "totalTokens", "backgroundTaskId",
+    "totalTokens", "backgroundTaskId", "resumedAgentId",
 ]);
 
 fn entry(line: &str) -> Option<Value> {
@@ -1601,7 +1601,8 @@ impl Transcript {
         match message["type"].as_str() {
             Some("system") if message["subtype"] == "task_started" => {
                 if let (Some(task), Some(tool)) = (message["task_id"].as_str(), message["tool_use_id"].as_str()) {
-                    self.tasks.insert(task.to_owned(), tool.to_owned());
+                    // SendMessage restarts a task under its own tool use, but the run still belongs to the original Agent call.
+                    self.tasks.entry(task.to_owned()).or_insert_with(|| tool.to_owned());
                     if message["task_type"] == "local_workflow"
                         && let Some((subagent, _)) = self.subagents.get_mut(tool)
                     {
@@ -1817,12 +1818,14 @@ impl Transcript {
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
         }
+        let resumed = tool.is_some_and(|tool| !self.subagents.contains_key(tool) && !self.commands.contains_key(tool));
         let tool = tool.filter(|tool| self.subagents.contains_key(*tool) || self.commands.contains_key(*tool))
             .or_else(|| task.and_then(|task| self.tasks.get(task).map(String::as_str))).map(str::to_owned);
         if let Some(outcome) = outcome(status) {
             if let Some((subagent, _)) = tool.as_ref().and_then(|tool| self.subagents.get_mut(tool)) {
                 subagent.finish(Some(outcome));
-                reported(subagent, report, totals);
+                // A resumed run's notification only says where its report went; the report itself is in its items.
+                reported(subagent, report.filter(|_| !resumed), totals);
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
             if let Some((index, command, output)) = tool.as_ref().and_then(|tool| self.commands.remove(tool)) {
@@ -1990,6 +1993,9 @@ impl Transcript {
                 self.todos = todos.collect();
                 self.report_todos();
             }
+            "SubagentHandback" => {
+                self.push(Item::Text { text: text("message"), streaming: false, phase: Phase::Final });
+            }
             "TaskCreate" => {
                 self.creating.insert(id.to_owned());
             }
@@ -2070,6 +2076,11 @@ impl Transcript {
             {
                 self.todos.push((task.to_owned(), Todo { text: text.to_owned(), status: TodoStatus::Pending }));
                 self.report_todos();
+            }
+            if let Some((subagent, _)) = result["resumedAgentId"].as_str().and_then(|agent| self.tasks.get(agent)).and_then(|tool| self.subagents.get_mut(tool)) {
+                subagent.resume();
+                if !self.replaying && self.history.is_none() { subagent.started_at = super::now(); }
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
             if let Some((subagent, transcript)) = self.subagents.get_mut(id) {
                 if let Some(task) = result["agentId"].as_str() { self.tasks.insert(task.to_owned(), id.to_owned()); }
@@ -2675,6 +2686,91 @@ mod subagent_tests {
                 }
             }
         }
+    }
+
+    fn latest_subagent(received: &mut mpsc::UnboundedReceiver<Event>) -> Option<(Status, Option<Outcome>, Option<String>)> {
+        let mut latest = None;
+        while let Ok(event) = received.try_recv() {
+            if let Event::Item(_, Item::Subagent { status, outcome, report, .. }) = event {
+                latest = Some((status, outcome, report));
+            }
+        }
+        latest
+    }
+
+    #[test]
+    fn resumed_subagent_runs_until_its_new_run_finishes() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        for message in [
+            json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "agent", "name": "Agent", "input": { "description": "Review" } }] } }),
+            json!({ "type": "system", "subtype": "task_started", "task_id": "reviewer", "tool_use_id": "agent" }),
+            json!({ "type": "user", "tool_use_result": { "status": "completed", "agentId": "reviewer", "content": [{ "type": "text", "text": "First report" }] }, "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "agent", "content": "First report" },
+            ] } }),
+        ] {
+            transcript.read(&message);
+        }
+        assert_eq!(latest_subagent(&mut received), Some((Status::Done, Some(Outcome::Completed), Some("First report".to_owned()))));
+
+        for message in [
+            json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "resume", "name": "SendMessage", "input": { "to": "reviewer" } }] } }),
+            json!({ "type": "system", "subtype": "task_started", "task_id": "reviewer", "tool_use_id": "resume", "is_backgrounded": true }),
+            json!({ "type": "user", "tool_use_result": { "success": true, "resumedAgentId": "reviewer" }, "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "resume", "content": "Resuming agent" },
+            ] } }),
+            json!({ "type": "result", "subtype": "success" }),
+        ] {
+            transcript.read(&message);
+        }
+        assert_eq!(latest_subagent(&mut received), Some((Status::Working, None, None)));
+
+        for message in [
+            json!({ "type": "assistant", "parent_tool_use_id": "agent", "message": { "content": [
+                { "type": "tool_use", "id": "handback", "name": "SubagentHandback", "input": { "message": "Second report" } },
+            ] } }),
+            json!({ "type": "system", "subtype": "task_updated", "task_id": "reviewer", "patch": { "status": "completed" } }),
+            json!({ "type": "system", "subtype": "task_notification", "task_id": "reviewer", "tool_use_id": "resume", "status": "completed", "summary": "Agent \"Review\" finished" }),
+        ] {
+            transcript.read(&message);
+        }
+        assert_eq!(latest_subagent(&mut received), Some((Status::Done, Some(Outcome::Completed), Some("Second report".to_owned()))));
+    }
+
+    #[test]
+    fn resumed_subagent_is_restored_from_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("projects/test");
+        let nested = project.join("session/subagents");
+        fs::create_dir_all(&nested).unwrap();
+        let handback = json!({ "type": "assistant", "message": { "content": [
+            { "type": "tool_use", "id": "handback", "name": "SubagentHandback", "input": { "message": "Second report" } },
+        ] } });
+        fs::write(nested.join("agent-reviewer.jsonl"), handback.to_string()).unwrap();
+        let env = BTreeMap::from([("CLAUDE_CONFIG_DIR".to_owned(), directory.path().to_str().unwrap().to_owned())]);
+        let mut entries = vec![
+            json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "agent", "name": "Agent", "input": { "description": "Review" } }] } }),
+            json!({ "type": "user", "toolUseResult": { "status": "completed", "agentId": "reviewer", "content": [{ "type": "text", "text": "First report" }] }, "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "agent", "content": "First report" },
+            ] } }),
+            json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "resume", "name": "SendMessage", "input": { "to": "reviewer" } }] } }),
+            json!({ "type": "user", "toolUseResult": { "success": true, "resumedAgentId": "reviewer" }, "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "resume", "content": "Resuming agent" },
+            ] } }),
+        ];
+        let replay = |entries: &[Value]| {
+            let (events, mut received) = mpsc::unbounded_channel();
+            let mut transcript = Transcript::new(events, Path::new("/project"));
+            fs::write(project.join("session.jsonl"), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+            transcript.history(&env, "session", None, false);
+            latest_subagent(&mut received)
+        };
+        assert_eq!(replay(&entries), Some((Status::Working, None, None)));
+
+        entries.push(json!({ "type": "attachment", "isMeta": true, "attachment": { "type": "queued_command", "prompt":
+            "<task-notification><task-id>reviewer</task-id><tool-use-id>resume</tool-use-id><status>completed</status><result>This agent's report was delivered to you.</result></task-notification>",
+        } }));
+        assert_eq!(replay(&entries), Some((Status::Done, Some(Outcome::Completed), Some("Second report".to_owned()))));
     }
 
     #[test]

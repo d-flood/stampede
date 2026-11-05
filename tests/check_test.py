@@ -127,6 +127,14 @@ if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
         self.assertEqual([browser["suite"] for browser in browsers], ["0", "1"])
         self.assertTrue(self.calls("--ignored"))
 
+    def test_plain_check_leaves_the_phone_project_to_all_and_explicit_runs(self):
+        self.run_check()
+        self.assertEqual(len(self.calls("playwright test --project=desktop")), 1)
+        self.run_check("all")
+        self.run_check("e2e", "--list")
+        self.assertEqual(len(self.calls("playwright test --project=desktop")), 1)
+        self.assertEqual(len(self.calls("playwright test --list")), 1)
+
     def test_component_checks_need_neither_rust_nor_a_production_frontend(self):
         self.run_check("components", "text.test.ts")
         self.assertFalse(self.calls("cargo"))

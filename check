@@ -47,7 +47,7 @@ functional() {
     run_logged "Rust test compilation" target/check/rust-compile.log cargo test --workspace --no-run --quiet
     run_logged "Rust tests" target/check/rust-tests.log cargo test --workspace --quiet
     runner
-    STAMPEDE_CHECK_PERF=0 run_logged "Browser tests" target/check/e2e-tests.log pnpm -C web exec playwright test
+    STAMPEDE_CHECK_PERF=0 run_logged "Browser tests" target/check/e2e-tests.log pnpm -C web exec playwright test "$@"
 }
 
 performance() {
@@ -62,7 +62,7 @@ performance() {
 }
 
 case ${1:-} in
-    "") functional ;;
+    "") functional --project=desktop ;;
     all)
         functional
         performance

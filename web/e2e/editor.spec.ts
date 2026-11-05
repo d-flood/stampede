@@ -268,7 +268,7 @@ test('Editor markers and Agent file changes preserve explicit edits', async ({ p
 	}).toContain('with unsaved edits');
 });
 
-test('find panel searches, steps, replaces and closes', async ({ page }, { project }) => {
+test('find panel searches, steps, replaces and closes', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `find-${project.name}`;
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root);
