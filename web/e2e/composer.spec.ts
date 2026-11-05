@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { closeProject, openProject, pinned } from './shell.ts';
+import { closeProject, newTab, openProject, pinned } from './shell.ts';
 
 test('chat composer submits with Enter on desktop and keeps mobile Enter as a newline', async ({ page, context }, { project }) => {
 	const errors: string[] = [];
@@ -15,9 +15,8 @@ test('chat composer submits with Enter on desktop and keeps mobile Enter as a ne
 	const name = `composer-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).getByTitle('done')).toBeVisible();
+	await newTab(page, 'Fake Claude');
+	await expect((await pinned(page.getByRole('tab', { name: /^Fake Claude/ }))).getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	await expect(composer).toBeFocused();
@@ -61,8 +60,7 @@ test('chat composer submits with Enter on desktop and keeps mobile Enter as a ne
 async function launch(page: Page, name: string, rig = 'Fake Claude') {
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: rig, exact: true }).click();
+	await newTab(page, rig);
 	const tab = await pinned(page.getByRole('tab', { name: new RegExp(`^${rig}`) }));
 	await expect(tab.getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });

@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures.ts';
-import { openProject, screen } from './shell.ts';
+import { newTab, openProject, screen } from './shell.ts';
 
 test('Terminal dimensions follow project rail and sidebar toggles', { tag: '@desktop' }, async ({ page }) => {
 	let resized: { cols: number; rows: number } | undefined;
@@ -9,8 +9,7 @@ test('Terminal dimensions follow project rail and sidebar toggles', { tag: '@des
 		if (message.type === 'terminal.resized') resized = { cols: message.cols, rows: message.rows };
 	}));
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal' }).click();
+	await newTab(page, 'Terminal');
 	await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/\S/);
 	const terminal = page.getByRole('tabpanel').locator('.terminal').filter({ visible: true });
 	await expect(terminal).not.toHaveClass(/resizing/);

@@ -1,7 +1,7 @@
 import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import { mkdirSync } from 'node:fs';
-import { openProject, pinned } from './shell.ts';
+import { newTab, openProject, pinned } from './shell.ts';
 
 test('a cold prompt cache turns the context ring red and confirms before re-reading a large context', async ({ page }, { project, repeatEachIndex }) => {
 	let chatId = '';
@@ -20,8 +20,7 @@ test('a cold prompt cache turns the context ring red and confirms before re-read
 	const name = `cache-${project.name}-${repeatEachIndex}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	await expect(tab.getByTitle('done')).toBeVisible();
 

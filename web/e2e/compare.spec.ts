@@ -2,7 +2,7 @@ import { expect, test } from './fixtures.ts';
 import type { Locator, Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { openProject, showSidebar } from './shell.ts';
+import { currentTab, openProject, showSidebar, tabCount } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
@@ -69,13 +69,12 @@ test('Compare walks what the Source changed since it split off the Target in one
 	await pick(page, compare, 'Target', 'older');
 	await expect(files.getByRole('button', { name: /\.ts$/ })).toHaveCount(3);
 
-	const tabs = page.getByRole('tab');
-	const count = await tabs.count();
+	const count = await tabCount(page);
 	await files.getByRole('button', { name: 'a.ts', exact: true }).click();
-	await expect(tabs).toHaveCount(count + 1);
+	await expect.poll(() => tabCount(page)).toBe(count + 1);
 	const diff = page.locator('.diff:not([hidden])');
 	await expect(diff.locator('.path')).toHaveText('src/a.ts');
-	await expect(page.getByRole('tab', { selected: true })).toContainText('older');
+	await expect(await currentTab(page)).toContainText('older');
 	if (project.name === 'desktop') await expect(diff.locator('.sides')).toHaveText('older ↔ feature');
 	await expect(diff.locator('.cm-changedLine', { hasText: 'a = 2' })).toBeVisible();
 	await diff.locator('.cm-content').last().click();
@@ -87,7 +86,7 @@ test('Compare walks what the Source changed since it split off the Target in one
 	await expect(previous).toBeDisabled();
 	await next.click();
 	await expect(diff.locator('.path')).toHaveText('src/b.ts');
-	await expect(tabs).toHaveCount(count + 1);
+	await expect.poll(() => tabCount(page)).toBe(count + 1);
 	await page.keyboard.press('Alt+ArrowUp');
 	await expect(diff.locator('.path')).toHaveText('src/a.ts');
 	await page.keyboard.press('Alt+ArrowDown');
@@ -102,8 +101,8 @@ test('Compare walks what the Source changed since it split off the Target in one
 	await expect(diff.locator('.path')).toHaveText('src/b.ts');
 	await previous.click();
 	await expect(diff.locator('.path')).toHaveText('src/a.ts');
-	await expect(tabs).toHaveCount(count + 1);
-	await expect(page.getByRole('tab', { selected: true })).toContainText('a.ts');
+	await expect.poll(() => tabCount(page)).toBe(count + 1);
+	await expect(await currentTab(page)).toContainText('a.ts');
 
 	writeFileSync(`${root}/src/a.ts`, 'export const a = 3;\n');
 	writeFileSync(`${root}/src/later.ts`, 'export const later = true;\n');
@@ -116,7 +115,7 @@ test('Compare walks what the Source changed since it split off the Target in one
 
 	await page.reload();
 	await expect(page.locator('.diff:not([hidden]) .path')).toHaveText('src/a.ts');
-	await expect(tabs).toHaveCount(count + 1);
+	await expect.poll(() => tabCount(page)).toBe(count + 1);
 	compare = await comparePanel(page);
 	await expect(compare.getByRole('button', { name: /^Target/ })).toContainText('older');
 	await expect(compare.getByRole('button', { name: /^Source/ })).toContainText('feature');

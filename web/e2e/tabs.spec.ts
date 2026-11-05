@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { closeProject, openProject, showSidebar } from './shell.ts';
+import { closeProject, expectCurrent, newTab, openProject, openSwitcher, showSidebar } from './shell.ts';
 
 async function chooseNewTab(page: Page, label: string) {
 	await page.keyboard.press('Control+T');
@@ -27,24 +27,30 @@ test('active tabs expose a close button and preserve unsaved edits', async ({ pa
 			Math.abs(element.scrollLeft - element.querySelector<HTMLElement>('[data-screen="tabs"]')!.offsetLeft) < 1
 		)).toBe(true);
 	}
+	const phone = project.name === 'pixel';
 	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true });
-	const close = tabs.getByRole('button', { name: `Close ${file}`, exact: true });
+	const closer = async () => (phone ? await openSwitcher(page) : tabs).getByRole('button', { name: `Close ${file}`, exact: true });
+	const close = await closer();
 	await expect(close).toBeVisible();
 	await expect.poll(async () => {
 		const box = await close.boundingBox();
-		return box && box.width >= (project.name === 'pixel' ? 48 : 26) && box.height >= (project.name === 'pixel' ? 48 : 26);
+		return box && box.width >= (phone ? 48 : 26) && box.height >= (phone ? 48 : 26);
 	}).toBe(true);
+	if (phone) await page.keyboard.press('Escape');
 	await page.locator('.editor:not([hidden]) .cm-content').click();
 	await page.keyboard.type('unsaved');
-	if (project.name === 'pixel') await close.tap();
+	if (phone) await (await closer()).tap();
 	else await close.click();
 	const dialog = page.getByRole('dialog', { name: 'Discard unsaved changes?' });
 	await expect(dialog).toBeVisible();
 	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-	await expect(tabs.getByRole('tab', { name: file })).toHaveAttribute('aria-selected', 'true');
+	if (phone) await page.keyboard.press('Escape');
+	await expectCurrent(page, file);
+	await page.locator('.editor:not([hidden]) .cm-content').click();
 	await page.keyboard.press('Control+W');
 	await dialog.getByRole('button', { name: 'Discard', exact: true }).click();
-	await expect(tabs.getByRole('tab', { name: file })).toHaveCount(0);
+	if (phone) await expectCurrent(page, file, false);
+	else await expect(tabs.getByRole('tab', { name: file })).toHaveCount(0);
 });
 
 test('terminal and drawer tabs close directly on desktop and tablet', async ({ page }, { project }) => {
@@ -55,8 +61,7 @@ test('terminal and drawer tabs close directly on desktop and tablet', async ({ p
 	await expect(page.getByRole('dialog')).toBeHidden();
 	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true });
 	for (let i = 0; i < 2; i++) {
-		await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-		await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+		await newTab(page, 'Terminal');
 		await expect(tabs.getByRole('tab')).toHaveCount(i + 1);
 		await expect(tabs.getByRole('tab').last()).toHaveAttribute('aria-selected', 'true');
 	}
@@ -201,8 +206,7 @@ test('created tabs activate before the tab list broadcast arrives', { tag: '@des
 	for (const label of ['Terminal', 'Fake Claude']) {
 		delaying = true;
 		created = '';
-		await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-		await page.getByRole('menuitem', { name: label, exact: true }).click();
+		await newTab(page, label);
 		await expect.poll(() => created).not.toBe('');
 		const tab = page.locator(`[data-tab="${created}"]`);
 		await expect(tab).toHaveAttribute('aria-selected', 'true');
@@ -219,8 +223,7 @@ test('new tab picker matches the menu and focuses the selected content', { tag: 
 	const folder = 'tab-picker';
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${folder}`, { recursive: true });
 	await openProject(page, folder);
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+	await newTab(page, 'Terminal');
 	const terminal = page.locator('.terminal:visible [contenteditable="true"]');
 	await expect(terminal).toBeVisible();
 	await page.getByRole('button', { name: 'New Tab', exact: true }).click();

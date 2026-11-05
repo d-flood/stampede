@@ -1,9 +1,11 @@
 import { expect, test } from './fixtures.ts';
-import { openProject } from './shell.ts';
+import { closeTab, expectCurrent, openProject, openSwitcher } from './shell.ts';
 
 test.use({ starterRigs: true });
 
-test('New Tab shows session loading and fits the loaded sessions', async ({ page }) => {
+test('New Tab shows session loading and fits the loaded sessions', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
+	const item = phone ? 'button' : 'menuitem';
 	let release: (() => void) | undefined;
 	await page.routeWebSocket('**/ws', (socket) => {
 		const server = socket.connectToServer();
@@ -19,14 +21,14 @@ test('New Tab shows session loading and fits the loaded sessions', async ({ page
 		});
 	});
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	const menu = page.getByRole('menu');
+	if (!phone) await page.getByRole('button', { name: 'New Tab', exact: true }).click();
+	const menu = phone ? await openSwitcher(page) : page.getByRole('menu');
 	await expect(menu.getByRole('status')).toHaveText('Reading sessions…');
-	await expect(menu.getByRole('menuitem', { name: 'Terminal', exact: true })).toBeEnabled();
+	await expect(menu.getByRole(item, { name: 'Terminal', exact: true })).toBeEnabled();
 	await expect.poll(() => release !== undefined).toBe(true);
 	release!();
 	await expect(menu.getByRole('status')).toHaveCount(0);
-	await expect(menu.getByRole('menuitem', { name: /Continue investigating/ })).toBeVisible();
+	await expect(menu.getByRole(item, { name: /Continue investigating/ })).toBeVisible();
 	await expect.poll(() => menu.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
 		return bounds.left >= 0 && bounds.right <= innerWidth;
@@ -42,7 +44,8 @@ test('New Tab shows session loading and fits the loaded sessions', async ({ page
 	await expect(picker.getByRole('combobox')).toBeFocused();
 });
 
-test('the Launchpad offers the New Tab items and comes back focused when the last Tab closes', async ({ page }) => {
+test('the Launchpad offers the New Tab items and comes back focused when the last Tab closes', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
 	await page.routeWebSocket('**/ws', (socket) => {
 		const server = socket.connectToServer();
 		server.onMessage((message) => {
@@ -63,22 +66,26 @@ test('the Launchpad offers the New Tab items and comes back focused when the las
 	for (const [index, label] of offered.entries()) await expect(launchpad.getByRole('button').nth(index)).toHaveAccessibleName(label);
 	await expect(launchpad.getByRole('button', { name: 'Claude Code', exact: true })).toHaveAccessibleDescription('Default model');
 
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	const menu = page.getByRole('menu');
-	await expect(menu.getByRole('menuitem')).toHaveCount(offered.length);
-	for (const [index, label] of offered.entries()) await expect(menu.getByRole('menuitem').nth(index)).toHaveAccessibleName(label);
+	if (!phone) await page.getByRole('button', { name: 'New Tab', exact: true }).click();
+	const items = phone ? (await openSwitcher(page)).locator('section').getByRole('button') : page.getByRole('menu').getByRole('menuitem');
+	await expect(items).toHaveCount(offered.length);
+	for (const [index, label] of offered.entries()) await expect(items.nth(index)).toHaveAccessibleName(label);
 	await page.keyboard.press('Escape');
 
 	const primary = launchpad.getByRole('button', { name: 'Claude Code', exact: true });
-	const tab = page.getByRole('tab', { name: /^Claude Code/ });
 	await primary.click();
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expectCurrent(page, 'Claude Code');
 	await expect(launchpad).toHaveCount(0);
-	await page.getByRole('button', { name: /^Close Claude Code/ }).click();
-	await expect(tab).toHaveCount(0);
-	await expect(primary).toBeFocused();
-	await page.keyboard.press('Enter');
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await closeTab(page, 'Claude Code');
+	await expect(page.getByRole('tab', { name: /^Claude Code/ })).toHaveCount(0);
+	if (phone) {
+		await page.keyboard.press('Escape');
+		await primary.click();
+	} else {
+		await expect(primary).toBeFocused();
+		await page.keyboard.press('Enter');
+	}
+	await expectCurrent(page, 'Claude Code');
 	await expect(launchpad).toHaveCount(0);
 });
 

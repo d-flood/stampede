@@ -2,7 +2,7 @@ import type { Item, ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, newTab, openProject } from './shell.ts';
 
 const snippet: Item = {
 	kind: 'html',
@@ -37,8 +37,7 @@ test('chat HTML is responsive, isolated, interactive, and restored on reload', a
 	const name = `html-${project.name}-${repeatEachIndex}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const block = page.getByRole('region', { name: 'Research workflow' });
 	const frame = block.locator('iframe');
 	const content = frame.contentFrame();
@@ -109,12 +108,10 @@ test('chat HTML that arrives while its Chat is hidden loads with layout once sho
 	const name = `html-hidden-${repeatEachIndex}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const chat = page.getByRole('tab', { name: /^Fake Claude/ });
 	await expect(chat).toHaveAttribute('aria-selected', 'true');
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+	await newTab(page, 'Terminal');
 	await expect(chat).toHaveAttribute('aria-selected', 'false');
 	items = [{ kind: 'html', title: 'Measured', html: '<script>document.body.dataset.width = String(innerWidth)</script>' }];
 	route!.send(JSON.stringify({ type: 'chat.items', chatId, items }));

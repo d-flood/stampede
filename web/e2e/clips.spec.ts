@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { openProject, openSettings } from './shell.ts';
+import { newTab, openProject, openSettings } from './shell.ts';
 
 test('Clips made in Settings insert at the caret of a Chat Composer and send as typed', { tag: '@desktop' }, async ({ page }) => {
 	const sent: string[] = [];
@@ -38,8 +38,7 @@ test('Clips made in Settings insert at the caret of a Chat Composer and send as 
 	await settings.getByRole('button', { name: 'Done', exact: true }).click();
 
 	await openProject(page, 'beta');
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
@@ -73,8 +72,7 @@ test('Clips made in Settings insert at the caret of a Chat Composer and send as 
 
 test('a Terminal Composer saves its text as a Clip and inserts it again', async ({ page }) => {
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Terminal' }).click();
+	await newTab(page, 'Terminal');
 	await page.getByRole('button', { name: 'Composer', exact: true }).click();
 	const composer = page.getByRole('textbox', { name: 'Composer', exact: true });
 	const saveAs = page.getByRole('button', { name: 'Save as Clip', exact: true });

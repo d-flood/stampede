@@ -1,7 +1,7 @@
 import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, closeTab, expectCurrent, newTab, openProject, tabCount } from './shell.ts';
 
 test('a chat canvas opens beside its chat, follows edits, and keeps versions', async ({ page }, { project, repeatEachIndex }) => {
 	let chatId = '';
@@ -19,8 +19,7 @@ test('a chat canvas opens beside its chat, follows edits, and keeps versions', a
 	const name = `canvas-${project.name}-${repeatEachIndex}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const card = page.getByText('Wrote canvas report');
 	await expect(card).toBeVisible();
 	const file = `${process.env.STAMPEDE_E2E_ROOT}/data/canvases/${chatId}/report.html`;
@@ -33,7 +32,8 @@ test('a chat canvas opens beside its chat, follows edits, and keeps versions', a
 		await expect(page.getByRole('tablist', { name: 'Right Tabs' }).getByRole('tab', { name: 'report' })).toHaveAttribute('aria-selected', 'true');
 		await expect(card).toBeVisible();
 	} else {
-		await expect(tab).toHaveAttribute('aria-selected', 'false');
+		await expect.poll(() => tabCount(page)).toBe(2);
+		await expectCurrent(page, 'report', false);
 		await page.getByRole('button', { name: 'Open', exact: true }).click();
 		await expect(content.getByRole('heading', { name: 'First draft' })).toBeVisible();
 	}
@@ -58,11 +58,11 @@ test('a chat canvas opens beside its chat, follows edits, and keeps versions', a
 	await expect(canvas.getByRole('button', { name: 'Next version' })).toBeDisabled();
 	await page.reload();
 	await expect(content.getByRole('heading', { name: 'Fourth draft' })).toBeAttached();
-	await page.getByRole('button', { name: 'Close report' }).click();
+	await closeTab(page, 'report');
 	await expect(tab).not.toBeVisible();
 	await page.getByRole('region', { name: 'Canvases' }).getByRole('button', { name: 'report' }).click();
 	await expect(content.getByRole('heading', { name: 'Fourth draft' })).toBeAttached();
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expectCurrent(page, 'report');
 	await closeProject(page, name);
 });
 
@@ -81,8 +81,7 @@ test('a canvas written without Write or Edit still reaches the tray', async ({ p
 	const name = `scripted-canvas-${project.name}-${repeatEachIndex}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	await expect.poll(() => chatId).not.toBe('');
 	const directory = `${process.env.STAMPEDE_E2E_ROOT}/data/canvases/${chatId}`;
 	mkdirSync(directory, { recursive: true });

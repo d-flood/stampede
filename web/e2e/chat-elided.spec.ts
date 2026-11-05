@@ -2,7 +2,7 @@ import type { ClientMessage, Item, ServerMessage, Subagent } from '#lib/device.s
 import { expect, test } from './fixtures.ts';
 import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { openProject } from './shell.ts';
+import { newTab, openProject } from './shell.ts';
 
 test('a finished subagent and a long command output arrive in brief and load when opened', { tag: '@desktop' }, async ({ page }, { project }) => {
 	let route: WebSocketRoute;
@@ -37,8 +37,7 @@ test('a finished subagent and a long command output arrive in brief and load whe
 	const name = `chat-elided-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const panel = page.locator('.panel[role="tabpanel"]:visible');
 	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 	route!.send(JSON.stringify({ type: 'chat.items', chatId: chatId!, items } satisfies ServerMessage));

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, newTab, openProject, pinned } from './shell.ts';
 
 test('@ references a tracked file by its plain path', async ({ page }, { project }) => {
 	const sent: string[] = [];
@@ -19,9 +19,8 @@ test('@ references a tracked file by its plain path', async ({ page }, { project
 	writeFileSync(`${root}/README.md`, '');
 	execFileSync('git', ['init', '-q', root]);
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).getByTitle('done')).toBeVisible();
+	await newTab(page, 'Fake Claude');
+	await expect((await pinned(page.getByRole('tab', { name: /^Fake Claude/ }))).getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	const menu = panel.getByRole('region', { name: 'Files' });
@@ -76,8 +75,7 @@ test('@ shows progress while the file list loads and recovers from a failed load
 		await route.continue();
 	});
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	const menu = panel.getByRole('region', { name: 'Files' });

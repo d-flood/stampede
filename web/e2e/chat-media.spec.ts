@@ -3,7 +3,7 @@ import { expect, test } from './fixtures.ts';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, newTab, openProject } from './shell.ts';
 
 function publish(path: string, title: string): Extract<Item, { kind: 'media' }> {
 	const output = execFileSync(process.env.STAMPEDE_E2E_BINARY ?? fileURLToPath(new URL('../../target/debug/stampede', import.meta.url)), [
@@ -57,8 +57,7 @@ test('chat media survives source removal and reload, plays recordings, and fits 
 		});
 	});
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const image = page.getByRole('img', { name: 'Application screenshot' });
 	const video = page.locator('video[aria-label="Screen recording"]');
 	await expect(image).toBeVisible();

@@ -2,7 +2,7 @@ import type { ClientMessage, Item, ServerMessage } from '#lib/device.svelte.ts';
 import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, newTab, openProject } from './shell.ts';
 
 for (const agent of ['claude-code', 'codex'] as const) {
 	test(`${agent} previews the exact rewind boundary and steps through user messages`, { tag: agent === 'codex' ? '@desktop' : [] }, async ({ page }, { project }) => {
@@ -36,8 +36,7 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		const name = `rewind-review-${agent}-${project.name}`;
 		mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 		await openProject(page, name);
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+		await newTab(page, 'Fake Claude');
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 		const nav = panel.getByRole('navigation', { name: 'User messages', exact: true });
 		const transcript = panel.locator('.transcript');
@@ -53,7 +52,7 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await expect(nav.getByRole('button', { name: 'Message 6 of 6: Prompt 6', exact: true })).toBeVisible();
 		await expect.poll(() => column.evaluate((node) => ({ left: node.getBoundingClientRect().left, width: node.getBoundingClientRect().width }))).toEqual(before);
 		await transcript.evaluate((node) => { node.scrollTop += 100; });
-		await expect.poll(opacity).toBe('0');
+		await expect.poll(opacity).toBe(project.name === 'pixel' ? '1' : '0');
 		await transcript.evaluate((node) => { node.scrollTop -= 100; });
 		await expect.poll(opacity).toBe('1');
 		const previous = nav.getByRole('button', { name: 'Previous message', exact: true });
@@ -75,9 +74,11 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await expect.poll(opacity).toBe('1');
 		await nav.getByRole('button', { name: 'Message 6 of 6: Prompt 6', exact: true }).click();
 		await page.getByRole('menuitemcheckbox', { name: '1. Prompt 1', exact: true }).click();
-		await landed(1);
+		// The phone navigator floats over the transcript, so the first message tops out above its edge.
+		const first = () => project.name === 'pixel' ? expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(0) : landed(1);
+		await first();
 		await transcript.evaluate((node) => { node.scrollTop = 0; });
-		await landed(1);
+		await first();
 		await nav.getByRole('button', { name: 'Message 1 of 6: Prompt 1', exact: true }).click();
 		await page.getByRole('menuitemcheckbox', { name: '3. Prompt 3', exact: true }).click();
 		await landed(3);

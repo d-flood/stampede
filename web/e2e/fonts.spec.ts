@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import { readFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
-import { openProject, openSettings, screen } from './shell.ts';
+import { newTab, openProject, openSettings, screen } from './shell.ts';
 
 async function platformFont(page: Page, selector: string) {
 	const session = await page.context().newCDPSession(page);
@@ -23,8 +23,7 @@ test('UI, chat and code fonts each come from the Host and apply only to their ow
 	const family = families.find((name) => name === 'DejaVu Sans') ?? families.find((name) => !/JetBrains|Symbols/.test(name));
 	expect(family).toBeDefined();
 	const chosen = new RegExp(`^"${family}"`);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal' }).click();
+	await newTab(page, 'Terminal');
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.fontFamily)).toMatch(/^"JetBrains Mono"/);
 	await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/\S/);
 	const original = config();

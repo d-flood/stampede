@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { openProject, openSettings } from './shell.ts';
+import { currentTab, newTab, openProject, openSettings, pinned } from './shell.ts';
 
 test('numbered rigs can be reordered and launched with Ctrl+Shift+number', { tag: '@desktop' }, async ({ page, request }) => {
 	await openProject(page, 'beta');
@@ -145,9 +145,8 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 	expect(reviewer).toMatchObject({ speed: 'fast', ultracode: 'on' });
 	await expect(name).toHaveValue(created);
 	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: created, exact: true }).click();
-	await expect(page.getByRole('tab', { name: new RegExp(`^${created}`) }).getByTitle('done')).toBeVisible();
+	await newTab(page, created);
+	await expect((await pinned(page.getByRole('tab', { name: new RegExp(`^${created}`) }))).getByTitle('done')).toBeVisible();
 	await page.reload();
 	await openSettings(page, 'Rigs');
 	await rig.selectOption(created);
@@ -162,7 +161,7 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 	await expect(rig).toHaveValue('Careful Reviewer');
 	await expect(rig.locator('option').filter({ hasText: /^Reviewer$/ })).toHaveCount(0);
 	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
-	await expect(page.getByRole('tab', { name: /^Careful Reviewer/ })).toBeVisible();
+	await expect(await currentTab(page)).toContainText('Careful Reviewer');
 	await page.reload();
 	await openSettings(page, 'Rigs');
 	await rig.selectOption('Careful Reviewer');
@@ -241,8 +240,7 @@ test('rig names must be nonempty and unique, discovery failures can be retried a
 test('rig deletion can be cancelled and retried while preserving existing chats', { tag: '@desktop' }, async ({ page, request }) => {
 	const configured: { name: string }[] = await (await request.get('/api/rigs')).json();
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const chat = page.getByRole('tab', { name: /^Fake Claude/ });
 	await expect(chat.getByTitle('done')).toBeVisible();
 	await openSettings(page, 'Rigs');
@@ -296,8 +294,7 @@ test('Copilot rigs use CLI models and open a chat', { tag: '@desktop' }, async (
 	const rigs = await (await request.get('/api/rigs')).json();
 	expect(rigs.find((rig: { name: string }) => rig.name === 'Copilot')).toMatchObject({ agent: 'copilot', model: 'gemini-3.8-flash', effort: 'high', mode: 'default' });
 	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Copilot', exact: true }).click();
+	await newTab(page, 'Copilot');
 	await expect(page.getByRole('tab', { name: /^Copilot/ }).getByTitle('done')).toBeVisible();
 	const composer = page.getByRole('textbox', { name: 'Composer', exact: true });
 	await composer.fill('Hello');

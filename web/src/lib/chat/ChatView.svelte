@@ -204,7 +204,7 @@
 		<SubagentHeader subagent={selected} path={opened} {trail} main={items} onopen={open} />
 	{/if}
 	<div class="conversation" hidden={!!selected}>
-		<div class="transcript" bind:this={scroller} style:padding-top="max(var(--space-6), {messageNavHeight}px)" {@attach follow}>
+		<div class="transcript" bind:this={scroller} style:padding-top="max(var(--space-6), {form() === 'phone' ? 0 : messageNavHeight}px)" {@attach follow}>
 			<div class="column">
 				{#if !items.length && !chat.queued.length}<EmptyChat rig={chat.rig} agent={chat.agent} settings={chat.settings} {choices} {project} {branch} />{/if}
 				<Transcript {items} {active} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={(index) => run('rewind', index)} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />

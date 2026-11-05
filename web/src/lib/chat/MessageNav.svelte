@@ -15,13 +15,15 @@
 	let above = $state(false);
 	let below = $state(false);
 	let revealed = $state(false);
+	let away = $state(false);
 	let gutter = $state(0);
 	let landing: number | undefined;
+	const phone = $derived(form() === 'phone');
 	const position = $derived(messages.findIndex(({ index }) => index === current));
-	const shown = $derived(revealed && current !== undefined);
+	const shown = $derived(phone ? away : revealed && current !== undefined);
 
 	function edge() {
-		return scroller!.getBoundingClientRect().top + (nav?.offsetHeight ?? 0);
+		return scroller!.getBoundingClientRect().top + (nav ? nav.offsetTop + nav.offsetHeight : 0);
 	}
 
 	function entries() {
@@ -33,7 +35,7 @@
 		const list = entries();
 		const at = list.findLast(({ top }) => top <= line + 2);
 		current = at && Number(at.node.dataset.userMessage);
-		above = list.some(({ top }) => top < line - 2);
+		above = list.some(({ top }) => top < line - 2) && scroller!.scrollTop > 0;
 		below = list.some(({ top }) => top > line + 2) && scroller!.scrollTop < scroller!.scrollHeight - scroller!.clientHeight - 1;
 		gutter = scroller!.offsetWidth - scroller!.clientWidth;
 	}
@@ -43,15 +45,19 @@
 		const observer = new ResizeObserver(update);
 		observer.observe(element);
 		if (element.firstElementChild) observer.observe(element.firstElementChild);
+		// Only scrolling moves `away`, so growth that the transcript re-pins to the bottom never flashes the pill.
+		const measure = () => (away = element.scrollTop < element.scrollHeight - element.clientHeight - 2);
 		const off = on(element, 'scroll', () => {
 			const top = element.scrollTop;
 			if (top !== landing && top !== last) revealed = top < last;
 			landing = undefined;
 			last = top;
+			measure();
 			update();
 		});
+		measure();
 		update();
-		return () => { observer.disconnect(); off(); revealed = false; };
+		return () => { observer.disconnect(); off(); revealed = false; away = false; };
 	}
 
 	function jump(node?: HTMLElement | null) {
@@ -68,29 +74,30 @@
 </script>
 
 {#if messages.length && scroller}
-	<nav bind:this={nav} bind:offsetHeight={height} aria-label="User messages" class:shown class:phone={form() === 'phone'} style:right="{gutter}px" inert={!shown} {@attach () => watch(scroller!)}>
+	<nav bind:this={nav} bind:offsetHeight={height} aria-label="User messages" class:shown class:phone style:--gutter="{gutter}px" inert={!shown} {@attach () => watch(scroller!)}>
 		<div class="row">
+			{#if phone}<IconButton label="Previous message" disabled={!above} onclick={() => step(-1)}><CaretUp /></IconButton>{/if}
 			<Menu items={messages.map((message, number) => ({ label: `${number + 1}. ${message.summary}`, checked: message.index === current, onselect: () => jump(scroller?.querySelector<HTMLElement>(`[data-user-message="${message.index}"]`)) }))}>
 				{#snippet trigger(props)}
 					<button {...props} class="current" aria-label={position < 0 ? `${messages.length} user messages` : `Message ${position + 1} of ${messages.length}: ${messages[position].summary}`}>
-						<ListNumbers aria-hidden="true" />
+						{#if !phone}<ListNumbers aria-hidden="true" />{/if}
 						{#if position < 0}
 							<span class="summary">{messages.length} message{messages.length === 1 ? '' : 's'}</span>
 						{:else}
 							<span class="count">{position + 1}/{messages.length}</span>
-							<span class="summary">{messages[position].summary}</span>
+							{#if !phone}<span class="summary">{messages[position].summary}</span>{/if}
 						{/if}
 					</button>
 				{/snippet}
 			</Menu>
-			<IconButton label="Previous message" disabled={!above} onclick={() => step(-1)}><CaretUp /></IconButton>
+			{#if !phone}<IconButton label="Previous message" disabled={!above} onclick={() => step(-1)}><CaretUp /></IconButton>{/if}
 			<IconButton label="Next message" disabled={!below} onclick={() => step(1)}><CaretDown /></IconButton>
 		</div>
 	</nav>
 {/if}
 
 <style>
-	nav { position: absolute; z-index: 1; top: 0; left: 0; border-bottom: var(--border-width) solid var(--border); background: var(--surface-1); box-shadow: var(--shadow-float); font-size: var(--font-size-sm); opacity: 0; transform: translateY(-100%); pointer-events: none; transition: transform var(--dur-med) ease, opacity var(--dur-med) ease; }
+	nav { position: absolute; z-index: 1; top: 0; right: var(--gutter); left: 0; border-bottom: var(--border-width) solid var(--border); background: var(--surface-1); box-shadow: var(--shadow-float); font-size: var(--font-size-sm); opacity: 0; transform: translateY(-100%); pointer-events: none; transition: transform var(--dur-med) ease, opacity var(--dur-med) ease; }
 	nav.shown { opacity: 1; transform: none; pointer-events: auto; }
 	.row { display: flex; align-items: center; gap: var(--space-1); max-width: 760px; margin: 0 auto; padding: 0 var(--space-4); }
 	.current { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--target-min); padding: 0 var(--space-2); border: none; border-radius: var(--radius-md); background: none; color: var(--color-fg); font: inherit; text-align: left; cursor: pointer; }
@@ -99,6 +106,9 @@
 	.current :global(svg) { flex: none; color: var(--muted-fg); }
 	.count { flex: none; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 	.summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.phone { font-size: var(--font-size-md); }
-	.phone .row { padding: 0 var(--space-2); }
+	nav.phone { top: var(--space-2); right: calc(var(--gutter) + var(--space-2)); left: auto; border: var(--border-width) solid var(--border); border-radius: calc(var(--target-min) / 2); background: var(--color-bg); font-size: var(--font-size-md); transform: translateY(calc(-1 * var(--space-2))); }
+	nav.phone.shown { transform: none; }
+	.phone .row { gap: 0; padding: 0; }
+	.phone .current { flex: none; justify-content: center; min-width: var(--target-min); padding: 0 var(--space-1); border-radius: 0; }
+	.phone :global(button) { border-radius: calc(var(--target-min) / 2); }
 </style>

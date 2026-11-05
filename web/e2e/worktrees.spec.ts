@@ -2,16 +2,13 @@ import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { Page, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { openProject, pinned, showSidebar } from './shell.ts';
+import { newTab, openProject, pinned, showScreen, showSidebar } from './shell.ts';
 
 const alpha = () => `${process.env.STAMPEDE_E2E_ROOT}/projects/alpha`;
 const git = (...args: string[]) => execFileSync('git', ['-C', alpha(), ...args], { encoding: 'utf8' }).trim();
 
 async function projectsScreen(page: Page) {
-	if (test.info().project.name !== 'pixel') return;
-	const back = page.getByRole('button', { name: 'Previous screen' });
-	while (!(await back.isDisabled())) await back.click();
-	await expect.poll(() => page.locator('.screens').evaluate((element) => element.scrollLeft)).toBe(0);
+	if (test.info().project.name === 'pixel') await showScreen(page, 'projects');
 }
 
 async function mint(page: Page, branch: string, from?: string) {
@@ -118,8 +115,7 @@ test('a working Chat in a worktree spins on its Project square and tile', { tag:
 	const tile = rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: /^spin/ });
 	await tile.click();
 
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	await expect(tab.getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
@@ -153,8 +149,7 @@ test('a worktree tile carries the shell and attention marks of its Chats', { tag
 	});
 	await openProject(page, 'alpha');
 	await mint(page, 'marks');
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	await expect((await pinned(page.getByRole('tab', { name: /^Fake Claude/ }))).getByTitle('done')).toBeVisible();
 
 	const rail = page.getByRole('navigation', { name: 'Projects' });

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from './fixtures.ts';
-import { openProject, screen } from './shell.ts';
+import { expectShown, newTab, openProject, screen, showTab } from './shell.ts';
 
 function call(chatId: string, name: string, args: object) {
 	const output = execFileSync(process.env.STAMPEDE_E2E_BINARY!, [
@@ -24,13 +24,11 @@ test('agents stage editable commands, users run them, and hidden output remains 
 		if (message.type === 'chat.created') chatId = message.chat.id;
 	}));
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	await expect.poll(() => chatId).not.toBe('');
 	const command = "printf 'unreviewed\\n' > staged-output\nprintf 'second line\\n'";
 	const { terminal_id: id } = call(chatId, 'stage_command', { command });
-	const tab = page.locator(`[data-tab="${id}"]`);
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expectShown(page, id);
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('button', { name: 'Run', exact: true }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	await expect(composer).toHaveValue(command);
@@ -52,8 +50,8 @@ test('agents stage editable commands, users run them, and hidden output remains 
 	await expect(page.getByText('Review command before running')).not.toBeVisible();
 	await expect.poll(() => existsSync(output) ? readFileSync(output, 'utf8') : '').toBe('edited\n');
 	await expect.poll(() => screen(page)).toMatch(/^visible-result$/m);
-	await page.locator(`[data-tab="${chatId}"]`).click();
-	await expect(tab).toHaveAttribute('aria-selected', 'false');
+	await showTab(page, chatId);
+	await expectShown(page, id, false);
 	const read = call(chatId, 'read_terminal', { terminal_id: id });
 	expect(read.pending).toBe(false);
 	expect(read.output).toMatch(/^visible-result$/m);
