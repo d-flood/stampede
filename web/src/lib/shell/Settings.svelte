@@ -379,7 +379,7 @@
 
 	nav button:focus-visible,
 	.back:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
+		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
 		outline-offset: -2px;
 	}
 
@@ -399,7 +399,7 @@
 	}
 
 	[aria-current='page'] .icon {
-		color: var(--status-working);
+		color: var(--accent);
 	}
 
 	.title {
@@ -470,7 +470,7 @@
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		background: var(--status-working);
+		background: var(--accent);
 	}
 
 	.padded {
@@ -607,14 +607,14 @@
 	}
 
 	.mode:has(input:checked) {
-		border-color: color-mix(in oklab, var(--status-working) 55%, var(--border));
-		background: color-mix(in oklab, var(--status-working) 14%, transparent);
+		border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+		background: color-mix(in oklab, var(--accent) 14%, transparent);
 		color: var(--color-fg);
 	}
 
 	.mode:has(input:checked) > :global(svg) {
 		display: inline;
-		color: var(--status-working);
+		color: var(--accent);
 	}
 
 	.mode:has(input:disabled) {
@@ -623,11 +623,11 @@
 	}
 
 	.mode:hover:has(input:enabled) {
-		border-color: var(--status-working);
+		border-color: var(--accent);
 	}
 
 	.mode:has(input:focus-visible) {
-		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
+		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
 		outline-offset: 1px;
 	}
 
@@ -686,8 +686,8 @@
 		width: 2em;
 		height: 2em;
 		border-radius: var(--radius-md);
-		background: color-mix(in oklab, var(--status-working) 16%, var(--surface-2));
-		color: var(--status-working);
+		background: color-mix(in oklab, var(--accent) 16%, var(--surface-2));
+		color: var(--accent);
 	}
 
 	.phone nav > button > :global(svg) {
@@ -710,7 +710,7 @@
 		border: none;
 		border-radius: var(--radius-md);
 		background: none;
-		color: var(--status-working);
+		color: var(--accent);
 		font: inherit;
 		cursor: pointer;
 	}

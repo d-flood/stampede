@@ -124,12 +124,12 @@
 	}
 
 	.schemes button:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
+		outline: var(--border-width) solid var(--accent);
 		outline-offset: var(--border-width);
 	}
 
 	.schemes button[aria-pressed='true'] {
-		border-color: var(--status-working);
+		border-color: var(--accent);
 		background: var(--surface-3);
 		color: var(--color-fg);
 	}

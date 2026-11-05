@@ -117,7 +117,7 @@
 
 	.chip.pending {
 		border-style: dashed;
-		border-color: var(--status-working);
+		border-color: var(--accent);
 	}
 
 	.phone {

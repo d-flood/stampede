@@ -61,6 +61,6 @@
 	}
 
 	button:hover:not(:disabled) { background: var(--hover); }
-	button:focus-visible { outline: var(--border-width) solid var(--status-working); }
+	button:focus-visible { outline: var(--border-width) solid var(--accent); }
 	button:disabled { cursor: default; }
 </style>

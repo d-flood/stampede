@@ -1040,7 +1040,7 @@
 	}
 
 	.picker:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
+		outline: var(--border-width) solid var(--accent);
 	}
 
 	.split {
@@ -1257,7 +1257,7 @@
 	.add:focus-visible,
 	.archive:focus-visible,
 	.link:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
+		outline: var(--border-width) solid var(--accent);
 		outline-offset: calc(-1 * var(--border-width));
 	}
 
@@ -1344,7 +1344,7 @@
 	}
 
 	.finding summary:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
+		outline: var(--border-width) solid var(--accent);
 	}
 
 	.finding summary .number {
@@ -1428,7 +1428,7 @@
 		padding: 0;
 		border: none;
 		background: none;
-		color: var(--status-working);
+		color: var(--accent);
 		font: inherit;
 		font-size: var(--font-size-sm);
 		cursor: pointer;

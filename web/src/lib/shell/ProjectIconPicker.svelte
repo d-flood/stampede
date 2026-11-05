@@ -190,7 +190,7 @@
 		cursor: pointer;
 	}
 	.file:hover { background: var(--hover); }
-	.file:focus-visible { outline: var(--border-width) solid var(--status-working); }
+	.file:focus-visible { outline: var(--border-width) solid var(--accent); }
 	.file span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); }
 	.file img, .file :global(svg) { width: 3rem; height: 3rem; object-fit: contain; }
 	p { margin: 0; color: var(--muted-fg); }

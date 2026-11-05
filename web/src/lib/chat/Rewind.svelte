@@ -73,5 +73,5 @@
 	.messages { display: flex; flex-direction: column; gap: var(--space-2); max-height: 55dvh; overflow-y: auto; }
 	.messages button { min-height: var(--target-min); padding: var(--space-3); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); color: var(--color-fg); font: inherit; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
 	.messages button:hover { background: var(--hover); }
-	.messages button:focus-visible { outline: var(--border-width) solid var(--status-working); }
+	.messages button:focus-visible { outline: var(--border-width) solid var(--accent); }
 </style>

@@ -162,7 +162,7 @@
 	}
 
 	.summary :global(.cm-editor.cm-focused) {
-		border-color: var(--status-working);
+		border-color: var(--accent);
 	}
 
 	.summary :global(.cm-gutters) {
@@ -192,13 +192,13 @@
 	}
 
 	.choice:has(input:checked) {
-		background: color-mix(in oklab, var(--status-working) 10%, transparent);
+		background: color-mix(in oklab, var(--accent) 10%, transparent);
 	}
 
 	.choice input {
 		grid-row: span 2;
 		margin: 0;
-		accent-color: var(--status-working);
+		accent-color: var(--accent);
 	}
 
 	.label {

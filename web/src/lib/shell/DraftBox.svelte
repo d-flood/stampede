@@ -87,7 +87,7 @@
 	}
 
 	.draft :global(.cm-editor.cm-focused) {
-		border-color: var(--status-working);
+		border-color: var(--accent);
 	}
 
 	.draft :global(.cm-gutters) {

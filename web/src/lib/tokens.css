@@ -56,6 +56,7 @@
 	--color-selection-bg: var(--light-selection-bg);
 	--color-selection-fg: var(--light-selection-fg);
 	--color-editor-selection: var(--light-editor-selection);
+	--muted-fg: var(--light-muted-fg);
 
 	--surface-1: color-mix(in oklab, var(--color-bg) 96%, var(--color-fg));
 	--surface-2: color-mix(in oklab, var(--color-bg) 92%, var(--color-fg));
@@ -63,8 +64,8 @@
 	--border: color-mix(in oklab, var(--color-bg) 86%, var(--color-fg));
 	--border-strong: color-mix(in oklab, var(--color-bg) 76%, var(--color-fg));
 	--hover: color-mix(in oklab, var(--color-bg) 90%, var(--color-fg));
-	--muted-fg: color-mix(in oklab, var(--color-fg) 60%, var(--color-bg));
 
+	--accent: var(--ansi-4);
 	--status-working: var(--ansi-4);
 	--status-waiting: var(--ansi-3);
 	--status-done: var(--ansi-2);
@@ -134,6 +135,7 @@
 	--color-selection-bg: var(--dark-selection-bg);
 	--color-selection-fg: var(--dark-selection-fg);
 	--color-editor-selection: var(--dark-editor-selection);
+	--muted-fg: var(--dark-muted-fg);
 }
 
 @media (pointer: coarse) {

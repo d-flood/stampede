@@ -229,7 +229,7 @@
 	li + li { border-top: var(--border-width) solid var(--border); }
 	.row { display: grid; grid-template-columns: 1em 8.5rem minmax(0, 1fr); align-items: center; column-gap: var(--space-3); width: 100%; min-height: var(--target-min); padding: var(--space-3) var(--space-4); border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 	.row:hover { background: var(--hover); }
-	.row:focus-visible, .quiet:focus-visible { outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent); outline-offset: -2px; }
+	.row:focus-visible, .quiet:focus-visible { outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent); outline-offset: -2px; }
 	.caret { display: inline-flex; color: var(--muted-fg); transition: transform var(--dur-med) var(--ease-out); }
 	li.open .caret { transform: rotate(90deg); }
 	li.open .row { grid-template-columns: 1em minmax(0, 1fr); }
@@ -262,7 +262,7 @@
 	input[type='radio']:checked { background: radial-gradient(circle, var(--status-waiting) 42%, transparent 48%); }
 	input[type='checkbox']:checked { background: var(--status-waiting); }
 	input[type='checkbox']:checked::before { content: ''; width: 10px; height: 10px; background: var(--color-bg); clip-path: polygon(14% 44%, 0 65%, 40% 100%, 100% 16%, 82% 0, 38% 65%); }
-	input:focus-visible { outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent); outline-offset: 2px; }
+	input:focus-visible { outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent); outline-offset: 2px; }
 	input:disabled { opacity: 0.5; cursor: default; }
 	.key { min-width: 1ch; color: var(--muted-fg); font-family: var(--font-mono); font-size: var(--font-size-sm); opacity: 0; transition: opacity var(--dur-fast); }
 	.form:focus-within .key { opacity: 1; }
@@ -270,7 +270,7 @@
 	.note.aligned { padding-left: calc(16px + var(--space-3)); }
 	textarea { flex: 1; min-width: 0; min-height: var(--target-min); max-height: 12lh; padding: var(--space-1) 0; border: 0; border-bottom: var(--border-width) solid var(--border-strong); border-radius: 0; background: none; color: inherit; font: inherit; line-height: 1.4; resize: none; field-sizing: content; transition: border-color var(--dur-fast); }
 	textarea::placeholder { color: var(--muted-fg); }
-	textarea:focus { outline: none; border-color: var(--status-working); box-shadow: 0 1px 0 var(--status-working); }
+	textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 1px 0 var(--accent); }
 	.phone h2 { font-size: var(--font-size-lg); }
 	.phone .row { grid-template-columns: 1em minmax(0, 1fr); min-height: 44px; }
 	.phone .value { grid-column: 2; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }

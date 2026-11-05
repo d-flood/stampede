@@ -147,7 +147,7 @@
 	}
 
 	.text :global(.copy:focus-visible) {
-		outline: var(--border-width) solid var(--status-working);
+		outline: var(--border-width) solid var(--accent);
 	}
 
 	.text :global(.copy[data-copied]) {
@@ -197,7 +197,7 @@
 	}
 
 	.text :global(a) {
-		color: var(--status-working);
+		color: var(--accent);
 	}
 
 	.streaming > :global(:last-child)::after {

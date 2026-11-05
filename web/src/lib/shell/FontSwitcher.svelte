@@ -55,11 +55,11 @@
 	}
 
 	.specimen:hover {
-		border-color: color-mix(in oklab, var(--status-working) 60%, var(--border-strong));
+		border-color: color-mix(in oklab, var(--accent) 60%, var(--border-strong));
 	}
 
 	.specimen:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--status-working) 70%, transparent);
+		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
 		outline-offset: 1px;
 	}
 

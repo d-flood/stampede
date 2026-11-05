@@ -43,7 +43,7 @@
 
 	a {
 		flex-shrink: 0;
-		color: var(--status-working);
+		color: var(--accent);
 	}
 
 	img, video {

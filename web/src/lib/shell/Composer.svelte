@@ -181,7 +181,7 @@
 	}
 
 	textarea:focus-visible {
-		outline: var(--border-width) solid var(--status-working);
+		outline: var(--border-width) solid var(--border-strong);
 	}
 
 	textarea.code {
@@ -212,10 +212,6 @@
 		outline: none;
 		field-sizing: content;
 		align-content: safe center;
-	}
-
-	.boxed textarea:focus-visible {
-		border-color: var(--status-working);
 	}
 
 	.boxed .actions {

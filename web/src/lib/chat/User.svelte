@@ -49,7 +49,7 @@
 	.message { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
 	.rewind { display: inline-flex; align-self: flex-end; align-items: center; gap: var(--space-1); min-height: var(--target-min); padding: 0 var(--space-2); border: none; border-radius: var(--radius-sm); background: none; color: var(--muted-fg); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
 	.rewind:hover { background: var(--hover); color: var(--color-fg); }
-	.rewind:focus-visible { outline: var(--border-width) solid var(--status-working); }
+	.rewind:focus-visible { outline: var(--border-width) solid var(--accent); }
 	@media (hover: hover) {
 		.rewind { opacity: 0; transition: opacity var(--dur-med) var(--ease-out); }
 		.message:hover .rewind, .rewind:focus-visible { opacity: 1; }
@@ -58,9 +58,9 @@
 		align-self: flex-end;
 		max-width: 85%;
 		padding: var(--space-3) var(--space-4);
-		border: var(--border-width) solid color-mix(in oklab, var(--ansi-4) 38%, var(--color-bg));
+		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
-		background: color-mix(in oklab, var(--ansi-4) 16%, var(--color-bg));
+		background: var(--surface-2);
 	}
 
 	details.user {

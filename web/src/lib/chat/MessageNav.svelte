@@ -95,7 +95,7 @@
 	.row { display: flex; align-items: center; gap: var(--space-1); max-width: 760px; margin: 0 auto; padding: 0 var(--space-4); }
 	.current { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--target-min); padding: 0 var(--space-2); border: none; border-radius: var(--radius-md); background: none; color: var(--color-fg); font: inherit; text-align: left; cursor: pointer; }
 	.current:hover, .current[data-state='open'] { background: var(--hover); }
-	.current:focus-visible { outline: var(--border-width) solid var(--status-working); }
+	.current:focus-visible { outline: var(--border-width) solid var(--accent); }
 	.current :global(svg) { flex: none; color: var(--muted-fg); }
 	.count { flex: none; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 	.summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -249,10 +249,10 @@ const style = EditorView.theme({
 		opacity: 0.45,
 		userSelect: 'none'
 	},
-	'.cm-draftAdd:hover': { background: 'var(--status-working)', color: 'var(--color-bg)', opacity: 1 },
+	'.cm-draftAdd:hover': { background: 'var(--accent)', color: 'var(--color-bg)', opacity: 1 },
 	'.cm-lineNumbers .cm-gutterElement': { cursor: 'pointer' },
-	'.cm-draftCommentable': { boxShadow: 'inset 3px 0 var(--status-working)' },
-	'&.cm-draftReplacing .cm-draftAdd': { color: 'var(--status-working)', opacity: 1 },
+	'.cm-draftCommentable': { boxShadow: 'inset 3px 0 var(--accent)' },
+	'&.cm-draftReplacing .cm-draftAdd': { color: 'var(--accent)', opacity: 1 },
 	'.cm-draftComment': {
 		padding: 'var(--space-2) var(--space-2) var(--space-2) var(--space-3)',
 		borderBlock: 'var(--border-width) solid var(--border)',

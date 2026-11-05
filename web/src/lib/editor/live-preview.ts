@@ -602,7 +602,7 @@ const styles = EditorView.theme({
 	'.cm-lp-h2': { paddingTop: 'var(--space-3)', fontSize: '1.35em' },
 	'.cm-lp-h3': { paddingTop: 'var(--space-2)', fontSize: '1.15em' },
 
-	'.cm-lp-link': { color: 'var(--status-working)', textDecoration: 'underline', textUnderlineOffset: '0.14em' },
+	'.cm-lp-link': { color: 'var(--accent)', textDecoration: 'underline', textUnderlineOffset: '0.14em' },
 	'.cm-lp-unlinked, .cm-lp-unlinked *': { color: 'var(--color-fg)', textDecoration: 'none' },
 	'.cm-lp-inline-code': {
 		padding: '1px var(--space-1)',
@@ -653,12 +653,12 @@ const styles = EditorView.theme({
 		width: '0.75em',
 		height: '0.75em',
 		margin: '0',
-		border: '1.5px solid var(--status-working)',
+		border: '1.5px solid var(--accent)',
 		borderRadius: '3px',
 		background: 'transparent',
 		cursor: 'pointer'
 	},
-	'.cm-lp-task-box input:checked': { background: 'var(--status-working)' },
+	'.cm-lp-task-box input:checked': { background: 'var(--accent)' },
 	'.cm-lp-done': { color: 'var(--muted-fg)' },
 
 	'.cm-lp-hr': { position: 'relative' },
@@ -720,7 +720,7 @@ const styles = EditorView.theme({
 	'.cm-lp-table th': { background: 'var(--surface-2)', fontWeight: '600' },
 	'.cm-lp-table tbody tr:last-child td': { borderBottom: 'none' },
 
-	'.cm-lp-fnref': { verticalAlign: 'super', color: 'var(--status-working)', fontSize: '0.7em', lineHeight: '0' },
+	'.cm-lp-fnref': { verticalAlign: 'super', color: 'var(--accent)', fontSize: '0.7em', lineHeight: '0' },
 	'.cm-lp-fndef': { color: 'var(--muted-fg)', fontSize: '0.9em' },
 	'.cm-lp-fndef-first': { position: 'relative', paddingTop: 'var(--space-3)' },
 	'.cm-lp-fndef-first::before': {
@@ -731,7 +731,7 @@ const styles = EditorView.theme({
 		width: '5rem',
 		borderTop: 'var(--border-width) solid var(--border-strong)'
 	},
-	'.cm-lp-fnnum': { marginRight: '0.4em', color: 'var(--status-working)', fontSize: '0.8em', verticalAlign: 'super', lineHeight: '0' },
+	'.cm-lp-fnnum': { marginRight: '0.4em', color: 'var(--accent)', fontSize: '0.8em', verticalAlign: 'super', lineHeight: '0' },
 
 	'@media (pointer: coarse)': {
 		'.cm-lp-task': { paddingBlock: 'var(--space-2)' },
