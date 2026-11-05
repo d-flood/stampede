@@ -71,6 +71,12 @@
 	--status-waiting: var(--ansi-3);
 	--status-done: var(--ansi-2);
 	--status-background: var(--ansi-6);
+	--subagent-1: var(--ansi-4);
+	--subagent-2: var(--ansi-5);
+	--subagent-3: var(--ansi-6);
+	--subagent-4: var(--ansi-12);
+	--subagent-5: var(--ansi-13);
+	--subagent-6: var(--ansi-14);
 
 	--git-modified: var(--ansi-3);
 	--git-renamed: var(--ansi-6);

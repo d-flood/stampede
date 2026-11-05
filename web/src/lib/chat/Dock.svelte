@@ -4,13 +4,14 @@
 	import { agentNames, logos } from '#lib/chat/sessions.ts';
 	import SubagentMenu from '#lib/chat/SubagentMenu.svelte';
 	import SubagentSheet from '#lib/chat/SubagentSheet.svelte';
+	import type { Item } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { SubagentMark, WaitingMark } from '#lib/ui/spinners.ts';
 
 	const PILL = 10;
 	const MORE = 3.5;
 
-	let { subagents, onopen, onattend }: { subagents: Placed[]; onopen(path: string[]): void; onattend(subagent: string): void } = $props();
+	let { subagents, main, onopen, onattend }: { subagents: Placed[]; main: Item[]; onopen(path: string[]): void; onattend(subagent: string): void } = $props();
 
 	const running = $derived(subagents.filter(({ subagent }) => subagent.status !== 'done'));
 	const finished = $derived(subagents.filter(({ subagent }) => subagent.status === 'done').reverse().sort((a, b) => ended(b) - ended(a)));
@@ -59,7 +60,7 @@
 			<span class="icon"><icons.subagent /></span>
 			<span class="summary">{#each summary as [label, count], index (label)}{#if index}{' · '}{/if}<span class:asking={label === 'waiting'}>{count} {label}</span>{/each}</span>
 		</button>
-		<SubagentSheet title="Subagents" groups={[{ heading: 'Running', entries: running }, { heading: 'Finished', entries: finished }].filter(({ entries }) => entries.length)} bind:open={sheet} {onopen} {onattend} />
+		<SubagentSheet title="Subagents" groups={[{ heading: 'Running', entries: running }, { heading: 'Finished', entries: finished }].filter(({ entries }) => entries.length)} bind:open={sheet} {main} {onopen} {onattend} />
 	{:else}
 		<div class="pills" {@attach measure}>
 			{#each running.slice(0, fits) as { path, subagent } (path.join('/'))}
@@ -73,11 +74,11 @@
 				</button>
 			{/each}
 			{#if fits < running.length}
-				<SubagentMenu heading="Running" entries={running} bind:open={more} trigger={overflow} onselect={onopen} />
+				<SubagentMenu heading="Running" entries={running} {main} bind:open={more} trigger={overflow} onselect={onopen} />
 			{/if}
 		</div>
 		{#if finished.length}
-			<SubagentMenu heading="Finished" entries={finished} bind:open={list} trigger={chip} onselect={onopen} />
+			<SubagentMenu heading="Finished" entries={finished} {main} bind:open={list} trigger={chip} onselect={onopen} />
 		{/if}
 	{/if}
 </section>

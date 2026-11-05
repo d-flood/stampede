@@ -1,20 +1,16 @@
 <script lang="ts">
 	import { clock, totals } from '#lib/chat/agents.ts';
+	import SubagentDot from '#lib/chat/SubagentDot.svelte';
 	import type { Subagent } from '#lib/device.svelte.ts';
 	import { agentNames, logos } from '#lib/chat/sessions.ts';
-	import { SubagentMark, WaitingMark } from '#lib/ui/spinners.ts';
-	import CheckBold from '~icons/ph/check-bold';
-	import XBold from '~icons/ph/x-bold';
 
-	let { subagent }: { subagent: Subagent } = $props();
+	let { subagent, color }: { subagent: Subagent; color: string } = $props();
 
-	const marks = { working: SubagentMark, waiting: WaitingMark, done: CheckBold };
 	const ended = $derived(subagent.outcome === 'failed' || subagent.outcome === 'stopped' ? subagent.outcome : undefined);
-	const Mark = $derived(ended ? XBold : marks[subagent.status]);
 </script>
 
-<span class="row {subagent.status}" class:ended>
-	<span class="mark"><Mark /></span>
+<span class="row">
+	<SubagentDot {color} />
 	<span class="body">
 		<span class="title">
 			<span class="task">{subagent.task}</span>
@@ -25,7 +21,9 @@
 		{#if subagent.status !== 'done' && subagent.activity}<span class="activity">{subagent.activity}</span>{/if}
 	</span>
 	<span class="meta">
-		{#if subagent.status !== 'done'}
+		{#if subagent.status === 'waiting'}
+			<span class="waiting">waiting for you</span>
+		{:else if subagent.status !== 'done'}
 			{#if subagent.startedAt}{clock(subagent.startedAt)}{/if}
 		{:else}
 			{#if ended}<span class="outcome">{ended}</span>{/if}
@@ -37,10 +35,8 @@
 
 <style>
 	.row { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; }
-	.mark { display: inline-flex; flex: none; color: var(--status-done); }
-	.working .mark { color: var(--status-working); }
-	.waiting .mark { color: var(--status-waiting); }
-	.ended .mark, .outcome { color: var(--ansi-1); }
+	.outcome { color: var(--ansi-1); }
+	.waiting { color: var(--status-waiting); }
 	.body { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 	.title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; }
 	.task, .activity { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

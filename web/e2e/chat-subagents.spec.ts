@@ -64,7 +64,7 @@ for (const agent of ['claude', 'codex']) {
 		await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
 		await panel.getByRole('button', { name: 'Send', exact: true }).click();
 		await expect.poll(() => existsSync(`${gates}/stream`)).toBe(true);
-		await panel.getByRole('button', { name: /^1 Subagent · 1 running/ }).click();
+		await panel.locator('button.spawn').click();
 		await expect(panel.locator('header').getByTitle('Name')).toHaveText(agent === 'claude' ? 'Explore' : 'Heisenberg');
 		await expect(panel.getByText('First finding', { exact: true })).toBeVisible();
 		const calls = panel.locator('.transcript:visible .calls');
@@ -169,23 +169,15 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(page.getByRole('combobox', { name: /^Session in/ })).toHaveCount(0);
 	await expect(tab.getByTitle('working')).toBeVisible();
 
-	const marker = (text: string) => panel.getByRole('button', { name: new RegExp(`^${text}`) });
-	const spawn = marker('3 Subagents');
-	await expect(panel.locator('.calls > .summary, button.spawn')).toHaveText(['Ran 1 command', '3 Subagents · 2 running', 'Ran 1 command', '1 Subagent · done']);
+	const line = (task: string) => panel.locator('button.spawn:visible', { hasText: task });
+	await expect(panel.locator('.calls > .summary, button.spawn')).toHaveText(['Ran 1 command', /^\s*Explore\s*Old task\s*finished in 1m 12s, 14 tools$/, /^\s*Reviewer\s*Find the file\s*1:\d\d$/, /^\s*Review\s*Review the file\s*waiting for you$/, 'Ran 1 command', /^\s*Plan\s*Broken task\s*failed$/]);
+	await expect(line('Find the file').getByRole('img', { name: 'Codex' })).toBeVisible();
 	const group = panel.locator('.calls > .summary').first();
 	await group.click();
 	await expect(group).toHaveAttribute('aria-expanded', 'true');
 	await group.click();
 	await expect(group).toHaveAttribute('aria-expanded', 'false');
-	await expect(spawn).toBeVisible();
-	await spawn.click();
-	const spawned = phone ? page.getByRole('dialog', { name: '3 Subagents · 2 running' }).getByRole('listitem') : rows;
-	await expect(spawned).toHaveCount(3);
-	await expect(spawned.nth(0)).toContainText('Old task');
-	await expect(spawned.nth(1)).toContainText('Find the file');
-	await expect(spawned.nth(2)).toContainText('Review the file');
-	await spawned.nth(1).click();
-	await expect(rows).toHaveCount(0);
+	await line('Find the file').click();
 	await expect(panel.getByText('Reading the files.', { exact: true })).toBeVisible();
 	await expect(header.getByRole('img', { name: 'Codex' })).toBeVisible();
 	await expect(header.getByTitle('Name')).toHaveText('Reviewer');
@@ -211,11 +203,11 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(panel.getByText('First finding: missing validation.', { exact: true })).toBeVisible();
 	await expect(report).toHaveCount(0);
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await marker('1 Subagent · 1 running').click();
+	await line('Search deeper').click();
 	await expect(rows).toHaveCount(0);
 	await expect(panel.getByText('Deep work.', { exact: true })).toBeVisible();
 	await panel.getByRole('button', { name: 'Back to Main' }).click();
-	await marker('1 Subagent · done').click();
+	await line('Broken task').click();
 	await expect(rows).toHaveCount(0);
 	await expect(breadcrumb).toHaveText(/^Main\s*\/\s*Broken task$/);
 	await expect(composer).toHaveCount(0);
@@ -284,7 +276,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(composer).toHaveCount(0);
 	await panel.getByRole('button', { name: 'Back to Main' }).click();
 	await expect(composer).toBeVisible();
-	await expect(spawn).toHaveText('3 Subagents · 1 running');
+	await expect(line('Find the file')).toHaveText(/finished in 1m 20s, 3 tools$/);
 
 	await page.reload();
 	await expect(phone ? chip(4, '1 waiting · 4 finished') : pill('Review the file')).toBeVisible();

@@ -12,6 +12,11 @@ export function subagents(items: Item[], parent: string[] = []): Placed[] {
 	});
 }
 
+export function color(main: Item[], path: string[]) {
+	const index = Math.max(0, subagents(main).findIndex((placed) => same(placed.path, path)));
+	return `var(--subagent-${(index % 6) + 1})`;
+}
+
 export function same(a: string[], b: string[]) {
 	return a.length === b.length && a.every((id, index) => id === b[index]);
 }
@@ -30,9 +35,16 @@ export function clock(startedAt: number) {
 	return `${Math.floor(minutes / 60)}:${pad(minutes % 60)}:${pad(seconds % 60)}`;
 }
 
-export function totals({ durationMs, tools, tokens }: NonNullable<Subagent['totals']>) {
-	const seconds = Math.round(durationMs / 1000);
+export function duration(milliseconds: number) {
+	const seconds = Math.round(milliseconds / 1000);
 	const minutes = Math.floor(seconds / 60);
-	const duration = minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
-	return [duration, `${tools} ${tools === 1 ? 'tool' : 'tools'}`, tokens !== undefined && `${count(tokens)} tokens`].filter(Boolean).join(' · ');
+	return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+export function tools(count: number) {
+	return `${count} ${count === 1 ? 'tool' : 'tools'}`;
+}
+
+export function totals({ durationMs, tools: used, tokens }: NonNullable<Subagent['totals']>) {
+	return [duration(durationMs), tools(used), tokens !== undefined && `${count(tokens)} tokens`].filter(Boolean).join(' · ');
 }

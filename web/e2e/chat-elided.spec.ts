@@ -50,7 +50,7 @@ test('a finished subagent and a long command output arrive in brief and load whe
 	await expect(command.locator('pre')).toContainText('a line of build output');
 	expect(expanded).toEqual([0]);
 
-	await panel.getByRole('button', { name: /^1 Subagent · done/ }).click();
+	await panel.locator('button.spawn').click();
 	await expect(panel.getByText('Inner work.', { exact: true })).toBeVisible();
 	expect(expanded).toEqual([0, 1]);
 });

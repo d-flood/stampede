@@ -1,15 +1,15 @@
 <script lang="ts">
-	import { clock, totals, type Placed } from '#lib/chat/agents.ts';
-	import { icons } from '#lib/chat/icons.ts';
+	import { clock, color, totals, type Placed } from '#lib/chat/agents.ts';
+	import SubagentDot from '#lib/chat/SubagentDot.svelte';
 	import { agentNames, logos } from '#lib/chat/sessions.ts';
-	import type { Subagent } from '#lib/device.svelte.ts';
+	import type { Item, Subagent } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { SubagentMark, WaitingMark } from '#lib/ui/spinners.ts';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CheckBold from '~icons/ph/check-bold';
 	import XBold from '~icons/ph/x-bold';
 
-	let { subagent, trail, onopen }: { subagent: Subagent; trail: Placed[]; onopen(path: string[]): void } = $props();
+	let { subagent, path, trail, main, onopen }: { subagent: Subagent; path: string[]; trail: Placed[]; main: Item[]; onopen(path: string[]): void } = $props();
 
 	const marks = { working: SubagentMark, waiting: WaitingMark, done: CheckBold };
 	const ended = $derived(subagent.outcome === 'failed' || subagent.outcome === 'stopped' ? subagent.outcome : undefined);
@@ -21,10 +21,10 @@
 		<button class="crumb" onclick={() => onopen([])}><CaretLeft />Main</button>
 		{#each trail as { path, subagent: ancestor } (path.join('/'))}
 			<span class="separator">/</span>
-			<button class="crumb" title={ancestor.task} onclick={() => onopen(path)}>{ancestor.task}</button>
+			<button class="crumb" title={ancestor.task} onclick={() => onopen(path)}><SubagentDot color={color(main, path)} />{ancestor.task}</button>
 		{/each}
 		<span class="separator">/</span>
-		<span class="current" aria-current="page"><icons.subagent /><strong>{subagent.task}</strong></span>
+		<span class="current" aria-current="page"><SubagentDot color={color(main, path)} /><strong>{subagent.task}</strong></span>
 	</nav>
 	{#if subagent.agent}{@const Logo = logos[subagent.agent]}<span class="logo" role="img" aria-label={agentNames[subagent.agent]} title={agentNames[subagent.agent]}><Logo aria-hidden="true" /></span>{/if}
 	{#if subagent.name}<span class="chip" title="Name">{subagent.name}</span>{/if}
