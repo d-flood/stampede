@@ -1,13 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { closeProject, openProject, pinned } from './shell.ts';
+import { closeProject, newTab, openProject, pinned } from './shell.ts';
 
 test('canceling a queued message returns text and images alongside the current draft', async ({ page }, { project }) => {
 	const name = `unqueue-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude (steer)', exact: true }).click();
+	await newTab(page, 'Fake Claude (steer)');
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude \(steer\)/ }));
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });

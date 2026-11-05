@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures.ts';
 import { readFileSync } from 'node:fs';
-import { openProject, openSettings, screen, showSidebar } from './shell.ts';
+import { newTab, openProject, openSettings, screen, showSidebar } from './shell.ts';
 
 test('theme selection updates the UI, editor, and running Terminal and survives reload', { tag: '@desktop' }, async ({ page }) => {
 	let terminalId: string | undefined;
@@ -10,8 +10,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 		if (message.type === 'terminal.created') terminalId = message.terminal.id;
 	}));
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal' }).click();
+	await newTab(page, 'Terminal');
 	await expect.poll(() => terminalId).toBeDefined();
 	await expect(page.locator(`[data-tab="${terminalId}"]`)).toHaveAttribute('aria-selected', 'true');
 	const input = page.getByRole('tabpanel').locator('.terminal textarea');
@@ -274,8 +273,7 @@ test('the color scheme button cycles light, dark, and system on this device', { 
 	await expect.poll(async () => (await (await page.request.get('/api/theme')).json()).name).toBe('light:Alabaster,dark:Dracula');
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal' }).click();
+	await newTab(page, 'Terminal');
 	const toggle = page.getByRole('button', { name: /^Color scheme/ });
 	await expect(toggle).toHaveAccessibleName('Color scheme: System');
 	await expect.poll(background).toBe('rgb(40, 42, 54)');

@@ -3,7 +3,7 @@ import { expect, test } from './fixtures.ts';
 import type { WebSocketRoute } from '@playwright/test';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { openProject } from './shell.ts';
+import { newTab, openProject, pinned } from './shell.ts';
 
 for (const agent of ['claude', 'codex']) {
 	test(`${agent} subagents expose live tools, thinking and output through the server`, { tag: '@desktop' }, async ({ page }, { project }) => {
@@ -58,8 +58,7 @@ for (const agent of ['claude', 'codex']) {
 		const name = `live-subagent-${agent}-${project.name}`;
 		mkdirSync(`${root}/projects/${name}`);
 		await openProject(page, name);
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: `Activity ${agent} ${project.name}`, exact: true }).click();
+		await newTab(page, `Activity ${agent} ${project.name}`);
 		const panel = page.locator('.panel[role="tabpanel"]:visible');
 		await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
 		await panel.getByRole('button', { name: 'Send', exact: true }).click();
@@ -121,9 +120,8 @@ test('the Tray counts Subagents with colored dots, surfaces waiting ones and kee
 	const name = `subagent-tray-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
+	await newTab(page, 'Fake Claude');
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	const panel = page.locator('.panel[role="tabpanel"]:visible');
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	const subagents = panel.getByRole('region', { name: 'Subagents' });
@@ -326,8 +324,7 @@ test('only the viewed Chat comet and label move; peripheral and waiting marks ho
 	await openProject(page, name);
 	const panel = page.locator('.panel[role="tabpanel"]:visible');
 	for (const created of [1, 2]) {
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+		await newTab(page, 'Fake Claude');
 		await expect.poll(() => chatIds.length).toBe(created);
 		await panel.getByRole('textbox', { name: 'Composer' }).waitFor();
 	}

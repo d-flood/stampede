@@ -38,6 +38,7 @@
 	import Settings from '#lib/shell/Settings.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Launchpad from '#lib/shell/Launchpad.svelte';
+	import TabSwitcher, { type SwitcherTab } from '#lib/shell/TabSwitcher.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
 	import { menuItems, tabItems } from '#lib/shell/new-tab.ts';
 	import type { Action, Scope } from '#lib/shell/Palette.svelte';
@@ -52,13 +53,14 @@
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
-	import Tab from '#lib/ui/Tab.svelte';
+	import Tab, { marks } from '#lib/ui/Tab.svelte';
 	import TooltipGroup from '#lib/ui/TooltipGroup.svelte';
 	import { onMount, untrack } from 'svelte';
 	import { on } from 'svelte/events';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import CaretLeft from '~icons/ph/caret-left';
-	import CaretRight from '~icons/ph/caret-right';
+	import CaretDown from '~icons/ph/caret-down';
+	import Cards from '~icons/ph/cards';
+	import Folders from '~icons/ph/folders';
 	import Plus from '~icons/ph/plus';
 	import Power from '~icons/ph/power';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
@@ -202,11 +204,19 @@
 			}));
 		});
 	});
+	const openTabs = $derived(tabIds.filter((id) => !closingTabs.has(id)).flatMap((id) => tabRow(id) ?? []));
+	const current = $derived(openTabs.find(({ id }) => id === activeTab));
+	const CurrentMark = $derived(current?.status && marks[current.status]);
 	const titles = $derived({
 		projects: { title: 'Projects', sub: hostName() ?? undefined },
-		tabs: { title: label ?? 'Tabs', sub: undefined },
+		tabs: {
+			title: current?.label ?? label ?? 'Tabs',
+			sub: label && `${label}, ${openTabs.length} tab${openTabs.length === 1 ? '' : 's'}`
+		},
 		sidebar: { title: sectionShowing(section, focused && git.get(focused.id)).label, sub: label }
 	});
+	const back = $derived(order[screenIndex - 1] ?? order[screenIndex + 1]);
+	let switching = $state(false);
 	const deviceLayout = $derived(
 		capture({
 			chosen,
@@ -817,18 +827,38 @@
 
 	function closeActiveTab() {
 		if (drawer.ownsFocus()) return drawer.closeActiveTab();
-		if (!focused || !activeTab) return;
-		const file = fileTabs.find((file) => file.id === activeTab);
-		const browser = browserTabs.find((browser) => browser.id === activeTab);
-		const canvas = canvasTabs.find((canvas) => canvas.id === activeTab);
-		const epic = openEpics.find((epic) => epic.id === activeTab);
-		const chat = chatTabs.find((chat) => chat.id === activeTab);
+		if (activeTab) closeAny(activeTab);
+	}
+
+	function closeAny(tabId: string) {
+		if (!focused) return;
+		const file = fileTabs.find((file) => file.id === tabId);
+		const browser = browserTabs.find((browser) => browser.id === tabId);
+		const canvas = canvasTabs.find((canvas) => canvas.id === tabId);
+		const epic = openEpics.find((epic) => epic.id === tabId);
+		const chat = chatTabs.find((chat) => chat.id === tabId);
 		if (file) closeFile(file);
 		else if (browser) closeBrowser(browser);
 		else if (canvas) closeCanvas(canvas);
 		else if (epic) closeEpic(epic);
 		else if (chat) closeChat(chat);
-		else closeTab(focused.id, activeTab);
+		else closeTab(focused.id, tabId);
+	}
+
+	function tabRow(id: string): SwitcherTab | undefined {
+		const tab = tabs.find((tab) => tab.id === id);
+		if (tab) return { id, variant: 'terminal', label: tab.label };
+		const chat = chatTabs.find((chat) => chat.id === id);
+		if (chat) return { id, variant: 'agent', agent: chat.agent, label: chat.title ?? chat.rig, status: chatStatus(chat), still: shownChats.includes(id) };
+		const browser = browserTabs.find((browser) => browser.id === id);
+		if (browser) return { id, variant: 'browser', label: browser.name };
+		const canvas = canvasTabs.find((canvas) => canvas.id === id);
+		if (canvas) return { id, variant: 'canvas', label: canvas.name };
+		const epic = openEpics.find((epic) => epic.id === id);
+		if (epic) return { id, variant: 'epic', label: epic.name };
+		const file = fileTabs.find((file) => file.id === id);
+		if (file instanceof OpenDiff) return { id, variant: 'diff', label: `${file.name} ↔ ${file.versus}` };
+		if (file) return { id, variant: 'editor', label: file.name, dirty: file.dirty };
 	}
 
 	function closeChat(chat: Chat, confirmed = false) {
@@ -1005,7 +1035,7 @@
 <svelte:window onpagehide={() => sendClosing(deviceLayout)} />
 
 {#snippet attention()}
-	{#if !phone}<SchemeToggle />{/if}
+	<SchemeToggle />
 	<Settings {update} />
 	<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
 {/snippet}
@@ -1057,6 +1087,7 @@
 		style:grid-template-columns={split &&
 			`minmax(0, ${split.ratio}fr) var(--border-width) minmax(0, ${1 - split.ratio}fr)`}
 	>
+		{#if !phone}
 		<TooltipGroup>
 			{#each groups as group, index (index)}
 				<div
@@ -1066,7 +1097,7 @@
 					onfocusin={() => focused && group.active && choose(focused.id, group.active)}
 					onpointerdown={grab}
 				>
-					{#if !phone && !sidebar && sidebarPosition.side === 'left' && index === 0}
+					{#if !sidebar && sidebarPosition.side === 'left' && index === 0}
 						{@render sidebarToggle(false)}
 					{/if}
 					<div
@@ -1188,12 +1219,13 @@
 							{/snippet}
 						</Menu>
 					{/if}
-					{#if !phone && !sidebar && sidebarPosition.side === 'right' && index === groups.length - 1}
+					{#if !sidebar && sidebarPosition.side === 'right' && index === groups.length - 1}
 						{@render sidebarToggle(false)}
 					{/if}
 				</div>
 			{/each}
 		</TooltipGroup>
+		{/if}
 		{#if split}
 			<div
 				class="divider"
@@ -1381,15 +1413,29 @@
 	{@const { title, sub } = titles[screen]}
 	<div class="phone">
 		<header>
-			<IconButton label="Previous screen" disabled={screenIndex === 0} onclick={() => slide(order[screenIndex - 1])}>
-				<CaretLeft />
+			<IconButton label={back === 'tabs' ? 'Tabs' : titles[back].title} onclick={() => slide(back)}>
+				{#if back === 'projects'}<Folders />{:else if back === 'tabs'}<Cards />{:else}<SidebarSimple style={sidebarPosition.side === 'right' ? 'transform: scaleX(-1)' : undefined} />{/if}
 			</IconButton>
-			<h1>{title}{#if sub}{' '}<span class="sub">{sub}</span>{/if}</h1>
-			{@render attention()}
-			<IconButton label="Drawer" onclick={() => drawer.toggle()}><TerminalWindow /></IconButton>
-			<IconButton label="Next screen" disabled={screenIndex === order.length - 1} onclick={() => slide(order[screenIndex + 1])}>
-				<CaretRight />
-			</IconButton>
+			{#if screen === 'tabs' && focused}
+				<h1 data-current-tab={current?.id}>
+					<button class="switch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => (switching = true)}>
+						<span class="title">
+							<span class="name">{title}</span>
+							{#if CurrentMark}<span class="mark {current?.status}" title={current?.status}><CurrentMark /></span>{/if}
+							{#if current?.dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
+							<CaretDown />
+						</span>
+						<span class="count">{sub}</span>
+					</button>
+				</h1>
+			{:else}
+				<h1>{title}{#if sub}{' '}<span class="sub">{sub}</span>{/if}</h1>
+			{/if}
+			<div class="tools" hidden={screen !== 'projects'}>
+				<Settings {update} />
+				<IconButton label="Drawer" onclick={() => drawer.toggle()}><TerminalWindow /></IconButton>
+			</div>
+			<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
 		</header>
 		<div class="screens" class:held {@attach (element) => swipeable(element, order)} onscrollend={landed}>
 			{#each order as name (name)}
@@ -1456,6 +1502,20 @@
 {/if}
 
 <Drawer bind:this={drawer} bind:open={drawerOpen} {device} />
+
+{#if phone && focused}
+	{@const projectId = focused.id}
+	<TabSwitcher
+		bind:open={switching}
+		tabs={openTabs}
+		current={activeTab}
+		items={newTab(projectId)}
+		reading={!!readingSessions[projectId]}
+		onread={() => readSessions(projectId)}
+		onchoose={(tabId) => choose(projectId, tabId)}
+		onclose={closeAny}
+	/>
+{/if}
 
 {#if focused}
 	{@const projectId = focused.id}
@@ -1663,6 +1723,90 @@
 		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-weight: 400;
+	}
+
+	.switch {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		box-sizing: border-box;
+		max-width: 100%;
+		min-height: var(--target-min);
+		padding: 0 var(--space-2);
+		border: none;
+		border-radius: var(--radius-md);
+		background: none;
+		color: inherit;
+		font: inherit;
+		text-align: start;
+		cursor: pointer;
+	}
+
+	.switch:hover,
+	.switch[aria-expanded='true'] {
+		background: var(--hover);
+	}
+
+	.title {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		min-width: 0;
+		line-height: 1.2;
+	}
+
+	.title > :global(svg) {
+		flex: none;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.name,
+	.count {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.count {
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		font-weight: 400;
+		line-height: 1.2;
+	}
+
+	.mark {
+		--pulse: 0;
+		display: inline-flex;
+		color: var(--mark);
+	}
+
+	.mark.working {
+		--mark: var(--status-working);
+	}
+
+	.mark.waiting {
+		--mark: var(--status-waiting);
+	}
+
+	.mark.background {
+		--mark: var(--status-background);
+	}
+
+	.mark.done {
+		--mark: var(--status-done);
+	}
+
+	.dirty {
+		flex: none;
+		width: 0.5em;
+		height: 0.5em;
+		border-radius: 50%;
+		background: currentColor;
+	}
+
+	.tools:not([hidden]) {
+		display: flex;
 	}
 
 	.screens {

@@ -2,18 +2,14 @@ import { expect, test } from './fixtures.ts';
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { Locator, Page } from '@playwright/test';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, openProject, showScreen } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="#369"/></svg>';
 
 async function navigation(page: Page) {
-	if (test.info().project.name === 'pixel') {
-		const back = page.getByRole('button', { name: 'Previous screen' });
-		while (!(await back.isDisabled())) await back.click();
-		await expect.poll(() => page.locator('.screens').evaluate((element) => element.scrollLeft)).toBe(0);
-	}
+	if (test.info().project.name === 'pixel') await showScreen(page, 'projects');
 	return page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'alpha', exact: true });
 }
 

@@ -2,7 +2,7 @@ import type { ServerMessage } from '#lib/device.svelte.ts';
 import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { openProject } from './shell.ts';
+import { newTab, openProject } from './shell.ts';
 
 for (const streaming of [true, false]) {
 	test(`closing a Chat releases cached ${streaming ? 'streaming' : 'completed'} reply versions`, { tag: '@desktop' }, async ({ page }, { project }) => {
@@ -20,8 +20,7 @@ for (const streaming of [true, false]) {
 		const name = `chat-memory-${project.name}`;
 		mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 		await openProject(page, name);
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+		await newTab(page, 'Fake Claude');
 		await expect(page.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 		const cdp = await page.context().newCDPSession(page);
 		const heap = async () => {

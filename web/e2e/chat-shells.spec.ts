@@ -2,7 +2,7 @@ import type { Item, ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { openProject } from './shell.ts';
+import { newTab, openProject } from './shell.ts';
 
 test('running shells restore after reload and background updates reach project tiles', async ({ page }, { project }) => {
 	let route: WebSocketRoute;
@@ -25,8 +25,7 @@ test('running shells restore after reload and background updates reach project t
 	const name = `shells-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const panel = page.locator('.panel[role="tabpanel"]:visible');
 	const chip = panel.getByRole('region', { name: 'Shells' }).getByRole('button');
 	const shells = page.getByRole('region', { name: 'Running shells' });

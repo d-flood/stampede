@@ -2,7 +2,7 @@ import type { ClientMessage } from '#lib/device.svelte.ts';
 import { appendFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from './fixtures.ts';
-import { openProject, pinned } from './shell.ts';
+import { expectSelected, newTab, openProject, pinned } from './shell.ts';
 
 const summary = 'Continue implementing authentication.\n\nKeep local-first behavior. Login is unfinished; next inspect src/auth.ts. Verification: no tests run.';
 
@@ -18,8 +18,7 @@ for (const agent of ['claude-code', 'codex'] as const) {
 			if (typeof payload === 'string') sent.push(JSON.parse(payload));
 		}));
 		await openProject(page, 'alpha');
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: 'Handoff source', exact: true }).click();
+		await newTab(page, 'Handoff source');
 		const source = await pinned(page.getByRole('tab', { name: /^Handoff source/ }));
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 		const handoff = async () => {
@@ -57,13 +56,13 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		unlinkSync(`${root}/handoff/handoff`);
 		await expect(dialog).toBeHidden();
 		const created = await pinned(page.getByRole('tab', { name: new RegExp(`^${target}`) }));
-		await expect(created).toHaveAttribute('aria-selected', 'true');
+		await expectSelected(created);
 		await expect(panel.getByRole('textbox', { name: 'Composer' })).toHaveValue(summary);
 		await expect(panel.locator('.user')).toHaveCount(0);
 		expect(sent.filter((message) => message.type === 'chat.send')).toHaveLength(1);
 		expect(sent.find((message) => message.type === 'chat.handoff')).toMatchObject({ rig: target, focus: 'Authentication only' });
 		await panel.getByRole('button', { name: 'Source Chat · Handoff source', exact: true }).click();
-		await expect(source).toHaveAttribute('aria-selected', 'true');
+		await expectSelected(source);
 		await expect(panel.getByRole('textbox', { name: 'Composer' })).toHaveValue('Keep this source draft');
 		await panel.getByRole('button', { name: `New Chat · ${target}`, exact: true }).click();
 		const edited = `${summary}\n\nStart with the login form.`;

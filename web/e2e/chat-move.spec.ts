@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { openProject, pinned, showSidebar } from './shell.ts';
+import { newTab, openProject, pinned, showSidebar } from './shell.ts';
 
 const alpha = () => `${process.env.STAMPEDE_E2E_ROOT}/projects/alpha`;
 const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trimEnd();
@@ -10,8 +10,7 @@ test('a Chat moves to a new worktree with the uncommitted changes and a note in 
 	git(alpha(), 'config', 'user.name', 'stampede');
 	git(alpha(), 'config', 'user.email', 'e2e@stampede.invalid');
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });

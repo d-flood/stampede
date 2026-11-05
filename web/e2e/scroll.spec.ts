@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import type { Locator, Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { openProject, screen } from './shell.ts';
+import { newTab, openProject, screen } from './shell.ts';
 
 // A smooth phone slide that lands just as the next one starts can snap back to the screen it left.
 test.use({ reducedMotion: 'reduce' });
@@ -11,8 +11,7 @@ const report = /\^\[\[<64;\d+;\d+M/;
 async function newTerminal(page: Page, name: string) {
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal' }).click();
+	await newTab(page, 'Terminal');
 	await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/\S/);
 	await page.locator('.terminal:visible [contenteditable="true"]').focus();
 }

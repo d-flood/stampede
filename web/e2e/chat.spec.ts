@@ -4,16 +4,15 @@ import type { Locator, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { closeProject, openProject, pinned, showSidebar, showScreen } from './shell.ts';
+import { closePinned, closeProject, expectCurrent, expectSelected, expectShown, newTab, openProject, pinned, openSwitcher, showScreen, showSidebar, showTab, tabCount } from './shell.ts';
 
 test('a Claude Code Chat streams its reply, shows done, and asks before closing while working', async ({ page }, { project }) => {
 	const name = `chat-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expectSelected(tab);
 	await expect(tab.getByTitle('done')).toBeVisible();
 	const square = page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name, exact: true });
 	await expect(square.getByTitle('working')).toHaveCount(0);
@@ -39,8 +38,7 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(tab.getByTitle('working')).toBeVisible();
 	await expect(square.getByTitle('working')).toBeVisible();
-	await tab.click({ button: 'right' });
-	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await closePinned(tab);
 	const confirm = page.getByRole('dialog', { name: 'Close Fake Claude?' });
 	await expect(confirm).toBeVisible();
 	await confirm.getByRole('button', { name: 'Close' }).click();
@@ -54,10 +52,9 @@ test('a closed Chat stays disabled until its Agent exits', { tag: '@desktop' }, 
 	mkdirSync(directory, { recursive: true });
 	writeFileSync(`${directory}/.fake-slow-exit`, '');
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expectSelected(tab);
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await panel.getByRole('textbox', { name: 'Composer' }).fill('Greet the reader');
 	await panel.getByRole('button', { name: 'Send' }).click();
@@ -77,10 +74,9 @@ test('a Codex Chat streams its reply, shows done, and closes', { tag: '@desktop'
 	const name = `codex-chat-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Codex', exact: true }).click();
+	await newTab(page, 'Fake Codex');
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Codex/ }));
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expectSelected(tab);
 	await expect(tab.getByTitle('done')).toBeVisible();
 
 	const prompt = 'Greet the reader in one short sentence with one word in **bold**. Use no names and no tools.';
@@ -97,8 +93,7 @@ test('a Codex Chat streams its reply, shows done, and closes', { tag: '@desktop'
 	await context.hover();
 	await expect(page.getByRole('tooltip').filter({ hasText: 'Context 22k / 475k (5%)' })).toContainText('22k in · 14 out');
 
-	await tab.click({ button: 'right' });
-	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await closePinned(tab);
 	await expect(tab).toHaveCount(0);
 });
 
@@ -106,10 +101,9 @@ test('a Chat folds tools, thinking, commands and a long first prompt into lines 
 	const name = `blocks-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude Tools', exact: true }).click();
+	await newTab(page, 'Fake Claude Tools');
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude Tools/ }));
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expectSelected(tab);
 	await expect(tab.getByTitle('done')).toBeVisible();
 
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
@@ -145,8 +139,7 @@ test('a Chat folds tools, thinking, commands and a long first prompt into lines 
 	await failed.click();
 	await expect(output).toBeVisible();
 
-	await tab.click({ button: 'right' });
-	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await closePinned(tab);
 	await expect(tab).toHaveCount(0);
 });
 
@@ -156,15 +149,13 @@ test('a working Chat steers, queues until its turn ends, and interrupts, with no
 	await openProject(page, name);
 	const keys = page.getByRole('toolbar', { name: 'Keys' });
 	if (project.name === 'pixel') {
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+		await newTab(page, 'Terminal');
 		await page.locator('.terminal:visible canvas').click();
 		await expect(keys).toBeVisible();
 	}
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude (steer)', exact: true }).click();
+	await newTab(page, 'Fake Claude (steer)');
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude \(steer\)/ }));
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expectSelected(tab);
 	await expect(tab.getByTitle('done')).toBeVisible();
 
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
@@ -209,8 +200,7 @@ test('a working Chat steers, queues until its turn ends, and interrupts, with no
 	await expect(panel.getByRole('button', { name: 'Send' })).toBeVisible();
 	await expect(keys).toHaveCount(0);
 
-	await tab.click({ button: 'right' });
-	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await closePinned(tab);
 	await expect(tab).toHaveCount(0);
 });
 test('long model and mode chips stay on one line', { tag: '@phone' }, async ({ page }, { project }) => {
@@ -231,8 +221,7 @@ test('long model and mode chips stay on one line', { tag: '@phone' }, async ({ p
 	const name = `chips-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Codex', exact: true }).click();
+	await newTab(page, 'Fake Codex');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const before = await panel.getByRole('button', { name: /^Model: .* high$/ }).evaluate((element) => element.getBoundingClientRect().height);
 	route!.send(JSON.stringify({ type: 'chat.settings', chatId: chatId!, settings }));
@@ -253,8 +242,7 @@ for (const { agent, rig, command, before, after } of slashed) {
 		const name = `slash-${agent}-${project.name}`;
 		mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 		await openProject(page, name);
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: rig, exact: true }).click();
+		await newTab(page, rig);
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 		await expect(panel.getByRole('button', { name: before })).toBeVisible();
 
@@ -294,8 +282,7 @@ test('speed and Ultracode change from the slash menu and show on the model contr
 	const name = `speed-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	const menu = panel.getByRole('region', { name: 'Commands' });
@@ -328,8 +315,7 @@ test('/speed takes the name Codex shows for a tier and applies on the next turn'
 	const name = `speed-codex-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Codex', exact: true }).click();
+	await newTab(page, 'Fake Codex');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await expect(panel.getByRole('button', { name: /^Model: \S+ high$/ })).toBeVisible();
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
@@ -347,8 +333,7 @@ test('an Ultracode Workflow asks with its script, runs as a subagent, and wakes 
 	const name = `workflow-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude Workflow', exact: true }).click();
+	await newTab(page, 'Fake Claude Workflow');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await panel.getByRole('textbox', { name: 'Composer' }).fill('Run the workflow');
 	await panel.getByRole('button', { name: 'Send', exact: true }).click();
@@ -366,8 +351,7 @@ test('/create-epic sends two turns while showing one user command', async ({ pag
 	const name = `template-${project.name}`;
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
 	await expect(tab.getByTitle('done')).toBeVisible();
 
@@ -402,9 +386,8 @@ test('/create-epic sends two turns while showing one user command', async ({ pag
 	await expect(panel.locator('.user')).toHaveText('/create-epic go');
 	await expect(panel.getByRole('region', { name: 'User message 2' })).toHaveCount(0);
 
-	await tab.click({ button: 'right' });
-	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await closePinned(tab);
+	await page.getByRole('dialog', { name: /^Close / }).getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(tab).toHaveCount(0);
 });
 
@@ -422,10 +405,9 @@ for (const agent of ['Claude', 'Codex']) {
 		// The fake Agent only replays its recording, so the edit it reports is made here.
 		writeFileSync(`${root}/notes.txt`, 'alpha\nBETA\ngamma\n');
 		await openProject(page, name);
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: `Fake ${agent} Edits`, exact: true }).click();
+		await newTab(page, `Fake ${agent} Edits`);
 		const tab = await pinned(page.getByRole('tab', { name: new RegExp(`^Fake ${agent} Edits`) }));
-		await expect(tab).toHaveAttribute('aria-selected', 'true');
+		await expectSelected(tab);
 		await expect(tab.getByTitle('done')).toBeVisible();
 
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
@@ -446,7 +428,7 @@ for (const agent of ['Claude', 'Codex']) {
 		await expect(card.getByText('-beta')).toBeVisible();
 
 		await chip.click();
-		await expect(page.getByRole('tab', { name: /^notes\.txt ↔ HEAD/ })).toHaveAttribute('aria-selected', 'true');
+		await expectCurrent(page, 'notes.txt ↔ HEAD');
 		const diff = page.locator('.diff:not([hidden])');
 		await expect(diff.locator('.path')).toHaveText('notes.txt');
 		await expect(diff.locator('.cm-changedLine', { hasText: /^BETA$/ })).toBeVisible();
@@ -457,14 +439,13 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 	const name = `attention-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
-	const terminalTab = page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab').first();
-	await expect(terminalTab).toHaveAttribute('aria-selected', 'true');
+	await newTab(page, 'Terminal');
+	const terminalTab = await pinned(page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab').first());
+	const terminalId = (await terminalTab.getAttribute('data-tab')) ?? (await terminalTab.getAttribute('data-current-tab'))!;
+	await expectShown(page, terminalId);
 
 	const { projectId, chatId } = await page.evaluate(finishElsewhere, name);
-	const chatTab = page.locator(`[data-tab="${chatId}"]`);
-	await expect(chatTab).toHaveAttribute('aria-selected', 'false');
+	await expectShown(page, chatId, false);
 	const mark = page.locator(`nav[aria-label="Projects"] button[aria-label="${name}"]`).getByText('1', { exact: true });
 	await expect(mark).toBeAttached();
 	const list = page.getByRole('button', { name: 'Attention list' });
@@ -474,30 +455,29 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 			: page.getByRole('menuitem', { name: `Fake Claude in ${name}` });
 	await list.click();
 	await entry.click();
-	await expect(chatTab).toHaveAttribute('aria-selected', 'true');
+	await expectShown(page, chatId);
 	await list.click();
 	await expect(entry).toHaveCount(0);
 	await expect(mark).toHaveCount(0);
 	await page.keyboard.press('Escape');
 
 	// An unknown Tab falls back to the last one, so another Chat keeps this one from being chosen by default.
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	await expect(page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab').last()).toHaveAttribute('aria-selected', 'true');
-	await expect(chatTab).toHaveAttribute('aria-selected', 'false');
+	await newTab(page, 'Fake Claude');
+	if (project.name !== 'pixel') await expect(page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab').last()).toHaveAttribute('aria-selected', 'true');
+	await expectShown(page, chatId, false);
 	const notification = { projectId, chatId, label: 'Fake Claude', status: 'done' };
 	await page.evaluate((data) => navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data })), notification);
-	await expect(chatTab).toHaveAttribute('aria-selected', 'true');
+	await expectShown(page, chatId);
 
 	const saved = page.waitForResponse((response) => {
 		const request = response.request();
 		const layout = request.method() === 'PUT' && JSON.parse(request.postData() ?? '{}');
 		return layout?.projects?.[projectId]?.active?.kind === 'terminal';
 	});
-	await terminalTab.click();
+	await showTab(page, terminalId);
 	await saved;
 	await page.goto(`/?${new URLSearchParams({ project: projectId, tab: chatId })}`);
-	await expect(chatTab).toHaveAttribute('aria-selected', 'true');
+	await expectShown(page, chatId);
 });
 
 test('four Usage window meters show their readings and turn amber from 90%', async ({ page }, { project }) => {
@@ -544,24 +524,29 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 	const name = `launch-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await expect(page.getByRole('menuitem', { name: 'Fake Claude', exact: true })).toHaveCount(1);
-	await expect(page.getByRole('menuitem', { name: /as Chat|as TUI/ })).toHaveCount(0);
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(1);
+	const phone = project.name === 'pixel';
+	const chats = (count: number) => phone ? expect.poll(() => tabCount(page)).toBe(count) : expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(count);
+	const menu = phone ? (await openSwitcher(page)).locator('section') : page.getByRole('menu');
+	if (!phone) await page.getByRole('button', { name: 'New Tab' }).click();
+	const item = phone ? 'button' : 'menuitem';
+	await expect(menu.getByRole(item, { name: 'Fake Claude', exact: true })).toHaveCount(1);
+	await expect(menu.getByRole(item, { name: /as Chat|as TUI/ })).toHaveCount(0);
+	await menu.getByRole(item, { name: 'Fake Claude', exact: true }).click();
+	await chats(1);
 
 	await page.keyboard.press('Control+;');
 	await page.keyboard.press('p');
 	await page.getByPlaceholder('Switch Project, launch a Rig, or open a file').fill('Fake Claude');
 	await page.getByRole('option', { name: 'Fake Claude', exact: true }).click();
-	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(2);
+	await chats(2);
 
 	await page.keyboard.press('Control+;');
 	await page.keyboard.press('r');
 	await expect(page.getByRole('status').filter({ hasText: 'Fake Claude' })).toBeVisible();
 	await page.keyboard.press('c');
-	await expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(3);
-	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).last()).toHaveAttribute('aria-selected', 'true');
+	await chats(3);
+	if (phone) await expectCurrent(page, 'Fake Claude');
+	else await expect(page.getByRole('tab', { name: /^Fake Claude/ }).last()).toHaveAttribute('aria-selected', 'true');
 	expect(created).toEqual(['chat.create', 'chat.create', 'chat.create']);
 	await expect(page.getByRole('button', { name: 'Open as TUI' })).toHaveCount(0);
 	await closeProject(page, name);
@@ -581,13 +566,19 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 	utimesSync(`${sessions}/${session}.jsonl`, new Date(), new Date());
 	await openProject(page, name);
 
-	const newTab = page.getByRole('button', { name: 'New Tab' });
-	const listed = page.getByRole('group', { name: 'Sessions' }).getByRole('menuitem');
-	await newTab.click();
+	const phone = project.name === 'pixel';
+	const sessionItems = async () => {
+		if (phone) return (await openSwitcher(page)).getByRole('region', { name: 'Recent sessions' }).getByRole('button');
+		await page.getByRole('button', { name: 'New Tab' }).click();
+		return page.getByRole('group', { name: 'Sessions' }).getByRole('menuitem');
+	};
+	let listed = await sessionItems();
 	await expect(listed).toHaveText([/Palette study/, /Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
-	await expect
-		.poll(() => page.getByRole('menu').evaluate((menu) => menu.getBoundingClientRect().bottom <= window.innerHeight))
-		.toBe(true);
+	if (!phone) {
+		await expect
+			.poll(() => page.getByRole('menu').evaluate((menu) => menu.getBoundingClientRect().bottom <= window.innerHeight))
+			.toBe(true);
+	}
 	await listed.getByText('Search sessions…').click();
 	const palette = page.getByRole('dialog', { name: 'Past Sessions' });
 	await palette.getByPlaceholder('Find a session by title').fill('palette');
@@ -597,19 +588,18 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 	await page.keyboard.press('Escape');
 	await expect(palette).toBeHidden();
 
-	await newTab.click();
+	listed = await sessionItems();
 	await listed.filter({ hasText: 'Palette study' }).click();
-	const tab = page.getByRole('tab', { name: 'Palette study' });
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	const tab = await pinned(page.getByRole('tab', { name: 'Palette study' }));
+	await expectSelected(tab);
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await expect(panel.getByRole('region', { name: 'User message 1' }).getByText('Name a color in one word.')).toBeVisible();
 	await expect(panel.getByText('Crimson')).toBeVisible();
 
-	await newTab.click();
+	listed = await sessionItems();
 	await expect(listed).toHaveText([/Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
 	await page.keyboard.press('Escape');
-	await tab.click({ button: 'right' });
-	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await closePinned(tab);
 	await expect(tab).toHaveCount(0);
 });
 
@@ -645,8 +635,7 @@ test('a Chat pins todos and counts its completed subagent in the Tray', async ({
 	const root = process.env.STAMPEDE_E2E_ROOT!;
 	mkdirSync(`${root}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: `Fake Claude Subagent ${project.name}`, exact: true }).click();
+	await newTab(page, `Fake Claude Subagent ${project.name}`);
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude Subagent/ }));
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
@@ -668,15 +657,14 @@ test('a Chat pins todos and counts its completed subagent in the Tray', async ({
 	const subagents = panel.getByRole('region', { name: 'Subagents' });
 	await expect(picker).toHaveCount(0);
 	await expect(subagents.getByRole('button')).toHaveAccessibleName('Subagents: 1 done');
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+	const chatId = (await tab.getAttribute('data-tab')) ?? (await tab.getAttribute('data-current-tab'))!;
+	await newTab(page, 'Terminal');
 	await expect(picker).toHaveCount(0);
-	await tab.click();
+	await showTab(page, chatId);
 	await expect(picker).toHaveCount(0);
 	await expect(subagents.getByRole('button')).toHaveAccessibleName('Subagents: 1 done');
 	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
-	await tab.click({ button: 'right' });
-	await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+	await closePinned(tab);
 	await expect(tab).toHaveCount(0);
 });
 
@@ -713,8 +701,7 @@ for (const agent of ['claude', 'codex']) {
 		writeFileSync(`${gates}/tools.jsonl`, entries.map((entry) => JSON.stringify(entry)).join('\n'));
 		mkdirSync(`${root}/projects/${name}`);
 		await openProject(page, name);
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: `Activity ${agent} ${project.name}`, exact: true }).click();
+		await newTab(page, `Activity ${agent} ${project.name}`);
 		const tab = await pinned(page.getByRole('tab', { name: new RegExp(`^Activity ${agent}`) }));
 		const panel = page.locator('.panel[role="tabpanel"]:visible');
 		const activity = panel.getByRole('status', { name: 'Current activity' });
@@ -736,8 +723,7 @@ for (const agent of ['claude', 'codex']) {
 		await expect(tab.getByTitle('done')).toBeVisible();
 		await expect(activity).toHaveCount(0);
 		if (agent === 'codex') {
-			await page.getByRole('button', { name: 'New Tab' }).click();
-			await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+			await newTab(page, 'Terminal');
 			const chatId = await tab.getAttribute('data-tab');
 			await page.evaluate((chatId) => new Promise<void>((resolve) => {
 				const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
@@ -761,8 +747,7 @@ test('a completed Codex subagent counts as done in the Tray', { tag: '@desktop' 
 	const name = `codex-subagent-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: `Fake Codex Subagent ${project.name}`, exact: true }).click();
+	await newTab(page, `Fake Codex Subagent ${project.name}`);
 	const tab = await pinned(page.getByRole('tab', { name: /^Fake Codex Subagent/ }));
 	const panel = page.locator('.panel[role="tabpanel"]:visible');
 	await panel.getByRole('textbox', { name: 'Composer' }).fill('Find needle using a subagent and track the steps.');
@@ -779,8 +764,7 @@ for (const agent of ['Claude', 'Codex']) {
 		const name = `rewind-${agent}-${project.name}`;
 		mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 		await openProject(page, name);
-		await page.getByRole('button', { name: 'New Tab' }).click();
-		await page.getByRole('menuitem', { name: `${agent} Rewind`, exact: true }).click();
+		await newTab(page, `${agent} Rewind`);
 		const tab = await pinned(page.getByRole('tab', { name: new RegExp(`^${agent} Rewind`) }));
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 		const composer = panel.getByRole('textbox', { name: 'Composer' });

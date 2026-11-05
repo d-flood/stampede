@@ -1,11 +1,8 @@
-<script lang="ts">
+<script lang="ts" module>
 	import type { Agent } from '#lib/config.svelte.ts';
 	import { logos } from '#lib/chat/sessions.ts';
 	import ShellMark from '#lib/ui/ShellMark.svelte';
 	import { WaitingMark, WorkingMark } from '#lib/ui/spinners.ts';
-	import Tooltip from '#lib/ui/Tooltip.svelte';
-	import { mergeProps } from 'bits-ui';
-	import type { HTMLButtonAttributes } from 'svelte/elements';
 	import Article from '~icons/ph/article';
 	import Browsers from '~icons/ph/browsers';
 	import CheckBold from '~icons/ph/check-bold';
@@ -13,15 +10,31 @@
 	import Globe from '~icons/ph/globe';
 	import GitDiff from '~icons/ph/git-diff';
 	import TerminalWindow from '~icons/ph/terminal-window';
+
+	export type Variant = 'agent' | 'terminal' | 'editor' | 'diff' | 'browser' | 'canvas' | 'epic';
+	export type Status = 'working' | 'waiting' | 'background' | 'done';
+
+	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe, canvas: Browsers, epic: Article };
+	export const marks = { working: WorkingMark, waiting: WaitingMark, background: ShellMark, done: CheckBold };
+
+	export function tabIcon(variant: Variant, agent: Agent = 'claude-code') {
+		return variant === 'agent' ? logos[agent] : icons[variant];
+	}
+</script>
+
+<script lang="ts">
+	import Tooltip from '#lib/ui/Tooltip.svelte';
+	import { mergeProps } from 'bits-ui';
+	import type { HTMLButtonAttributes } from 'svelte/elements';
 	import X from '~icons/ph/x';
 
 	type Props = HTMLButtonAttributes & {
-		variant: 'agent' | 'terminal' | 'editor' | 'diff' | 'browser' | 'canvas' | 'epic';
+		variant: Variant;
 		label: string;
 		tooltip?: string;
 		agent?: Agent;
 		against?: string;
-		status?: 'working' | 'waiting' | 'background' | 'done';
+		status?: Status;
 		active?: boolean;
 		dirty?: boolean;
 		deleted?: boolean;
@@ -48,9 +61,7 @@
 		...rest
 	}: Props = $props();
 
-	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe, canvas: Browsers, epic: Article };
-	const marks = { working: WorkingMark, waiting: WaitingMark, background: ShellMark, done: CheckBold };
-	const Icon = $derived(variant === 'agent' ? logos[agent] : icons[variant]);
+	const Icon = $derived(tabIcon(variant, agent));
 	const Mark = $derived(status && marks[status]);
 
 	// Measuring waits for the frame, so it reuses that frame's layout instead of forcing one mid-update.

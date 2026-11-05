@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures.ts';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { openProject, showSidebar } from './shell.ts';
+import { openProject, pinned, showSidebar } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
@@ -218,10 +218,10 @@ test('Editor markers and Agent file changes preserve explicit edits', async ({ p
 	await line.click();
 	await page.keyboard.press('End');
 	await page.keyboard.type(' edited');
-	const tab = page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab', { name: file });
+	const tab = await pinned(page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab', { name: file }));
 	await expect(tab.getByTitle('Unsaved changes')).toBeVisible();
 	if (project.name === 'desktop') await page.keyboard.press('ControlOrMeta+s');
-	else await page.getByRole('button', { name: 'Save' }).click();
+	else await page.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(tab.getByTitle('Unsaved changes')).toHaveCount(0);
 
 	const marker = page.locator('.cm-changeGutter .cm-change-modified');

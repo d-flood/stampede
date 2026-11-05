@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { closeProject, openProject, pinned } from './shell.ts';
+import { closeProject, expectSelected, newTab, openProject, pinned } from './shell.ts';
 
 const prompt = 'Run the shell command `mkdir -p out && touch out/approved.txt` exactly as written, then reply with the single word Done.';
 
@@ -45,10 +45,9 @@ test('past Claude questions reopen with their full options, previews and answers
 async function launch(page: Page, rig: string, name: string) {
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: rig, exact: true }).click();
+	await newTab(page, rig);
 	const tab = await pinned(page.getByRole('tab', { name: new RegExp(`^${rig}`) }));
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expectSelected(tab);
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
 	await composer.fill(prompt);

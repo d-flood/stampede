@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'vite';
-import { openProject } from './shell.ts';
+import { newTab, openProject } from './shell.ts';
 
 test('Browser Tabs proxy a Vite app with HMR and survive reopening', async ({ page }, { project }) => {
 	const sockets: string[] = [];
@@ -50,12 +50,10 @@ test('Browser Tabs proxy a Vite app with HMR and survive reopening', async ({ pa
 		const url = `http://localhost:${listening.port}/`;
 		await openProject(page, 'alpha');
 		if (project.name === 'desktop') {
-			await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-			await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+			await newTab(page, 'Terminal');
 			await expect(page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab')).not.toHaveCount(0);
 		}
-		await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-		await page.getByRole('menuitem', { name: 'Browser', exact: true }).click();
+		await newTab(page, 'Browser');
 		const browser = page.getByRole('tabpanel', { name: 'Browser', exact: true });
 		await browser.getByRole('textbox', { name: 'Host address' }).fill('http://example.com');
 		await browser.getByRole('button', { name: 'Go', exact: true }).click();

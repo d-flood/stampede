@@ -2,7 +2,7 @@ import { expect, test } from './fixtures.ts';
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { copyFileSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, newTab, openProject } from './shell.ts';
 
 const NOTE = 'Add a note or your own answer';
 
@@ -11,8 +11,7 @@ async function launch(page: Page, agent: string, name: string) {
 	mkdirSync(path, { recursive: true });
 	copyFileSync(fileURLToPath(new URL('../static/icons/icon-512.png', import.meta.url)), `${path}/preview.png`);
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: `Rich ${agent} Questions`, exact: true }).click();
+	await newTab(page, `Rich ${agent} Questions`);
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await panel.getByRole('textbox', { name: 'Composer' }).fill('Ask me questions.');
 	await panel.getByRole('button', { name: 'Send' }).click();

@@ -2,7 +2,7 @@ import type { ServerMessage } from '#lib/device.svelte.ts';
 import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { closeProject, openProject, openSettings, screen, showSidebar } from './shell.ts';
+import { closeProject, newTab, openProject, openSettings, screen, showSidebar } from './shell.ts';
 
 test('Fira Sans loads for the UI, Literata for chat text and JetBrains Mono for code', { tag: '@desktop' }, async ({ page }) => {
 	await page.goto('/');
@@ -91,8 +91,7 @@ test('code size updates a running terminal and the editor', { tag: '@desktop' },
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'greeting.ts', exact: true }).click();
 	await expect(page.locator('.cm-editor')).toBeVisible();
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click();
+	await newTab(page, 'Terminal');
 	await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/\S/);
 	const input = page.getByRole('tabpanel').locator('.terminal textarea');
 	await input.focus();
@@ -145,8 +144,7 @@ test('spinners switch between custom and standard in this browser', { tag: '@des
 	const name = 'spinners';
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	await page.locator('.panel[role="tabpanel"]:visible').getByRole('textbox', { name: 'Composer' }).waitFor();
 	route!.send(JSON.stringify({ type: 'chat.status', chatId: chatId!, status: 'working' }));
 	const working = page.getByRole('tab', { name: /^Fake Claude/ }).getByTitle('working').locator('svg');
@@ -180,8 +178,7 @@ test('available modes are chosen per Agent and limit a Chat\'s mode menu', { tag
 	await expect.poll(() => dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
 
-	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await panel.getByRole('button', { name: 'Mode: default', exact: true }).click();
 	await expect(page.getByRole('menuitemcheckbox', { name: 'plan' })).toBeVisible();

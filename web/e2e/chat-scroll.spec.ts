@@ -2,7 +2,7 @@ import type { Item, ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { closeProject, openProject, openSettings } from './shell.ts';
+import { closeProject, newTab, openProject, openSettings, showScreen } from './shell.ts';
 
 test('chat follows messages until scrolled up and resumes at the bottom', { tag: '@desktop' }, async ({ page }, { project, repeatEachIndex }) => {
 	let route: WebSocketRoute;
@@ -20,8 +20,7 @@ test('chat follows messages until scrolled up and resumes at the bottom', { tag:
 	const name = `chat-scroll-${project.name}-${repeatEachIndex}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const panel = page.locator('.panel[role="tabpanel"]:visible');
 	const transcript = panel.locator('.transcript:visible');
 	const distance = () => transcript.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight);
@@ -64,7 +63,8 @@ test('chat follows messages until scrolled up and resumes at the bottom', { tag:
 	await closeProject(page, name);
 });
 
-test('the initial message stays below the navigator at the top of a chat', async ({ page }) => {
+test('the initial message stays below the navigator at the top of a chat', async ({ page }, { project }) => {
+	const phone = project.name === 'pixel';
 	let chatId: string;
 	const items: Item[] = [
 		{ kind: 'user', text: "On mobile, I'd like the swiping animation to be faster between e.g. projects and tabs. Also, can the order of screens follow the sidebar side setting?", images: 0 },
@@ -80,20 +80,23 @@ test('the initial message stays below the navigator at the top of a chat', async
 		});
 	});
 	await openProject(page, 'alpha');
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+	await newTab(page, 'Fake Claude');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const transcript = panel.locator('.transcript');
 	const nav = panel.getByRole('navigation', { name: 'User messages', exact: true });
 	const message = panel.getByRole('region', { name: 'User message 1', exact: true });
 	await expect(message).toBeAttached();
 	await expect.poll(() => transcript.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThan(2);
+	if (phone) await expect(nav).toHaveCSS('opacity', '0');
 	await transcript.evaluate((node) => { node.scrollTop = 0; });
 	await expect(nav).toHaveCSS('opacity', '1');
-	const unobscured = () => expect.poll(async () => {
-		const [prompt, bar] = await Promise.all([message.boundingBox(), nav.boundingBox()]);
-		return prompt!.y - (bar!.y + bar!.height);
-	}).toBeGreaterThanOrEqual(0);
+	// The phone navigator floats over the transcript instead of pushing it down.
+	const unobscured = () => phone
+		? expect.poll(() => transcript.evaluate((node) => getComputedStyle(node).paddingTop === getComputedStyle(node).getPropertyValue('--space-6').trim())).toBe(true)
+		: expect.poll(async () => {
+			const [prompt, bar] = await Promise.all([message.boundingBox(), nav.boundingBox()]);
+			return prompt!.y - (bar!.y + bar!.height);
+		}).toBeGreaterThanOrEqual(0);
 	await unobscured();
 	await expect(nav.getByRole('button', { name: 'Previous message', exact: true })).toBeDisabled();
 	await openSettings(page, 'Appearance');
@@ -101,6 +104,7 @@ test('the initial message stays below the navigator at the top of a chat', async
 	await settings.getByRole('combobox', { name: 'UI font size', exact: true }).selectOption('22');
 	await settings.getByRole('combobox', { name: 'Chat font size', exact: true }).selectOption('26');
 	await settings.getByRole('button', { name: 'Done', exact: true }).click();
+	if (phone) await showScreen(page, 'tabs');
 	await expect(nav).toHaveCSS('opacity', '1');
 	await unobscured();
 });

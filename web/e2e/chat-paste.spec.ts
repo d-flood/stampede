@@ -1,15 +1,14 @@
 import type { Locator, Page } from '@playwright/test';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { expect, test } from './fixtures.ts';
-import { closeProject, openProject } from './shell.ts';
+import { closeProject, newTab, openProject } from './shell.ts';
 
 const png = readFileSync(new URL('../static/icons/icon-192.png', import.meta.url)).toString('base64');
 
 async function launch(page: Page, name: string, rig = 'Fake Claude') {
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
 	await openProject(page, name);
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: rig, exact: true }).click();
+	await newTab(page, rig);
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	return { panel, composer: panel.getByRole('textbox', { name: 'Composer' }) };
 }

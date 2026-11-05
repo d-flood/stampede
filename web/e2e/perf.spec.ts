@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import type { Locator, Page } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { openProject, screen, showSidebar, showScreen } from './shell.ts';
+import { newTab, openProject, screen, showScreen, showSidebar } from './shell.ts';
 
 declare global {
 	interface Window {
@@ -42,8 +42,7 @@ function mark(page: Page, name: string, after = 0) {
 async function newTerminal(page: Page) {
 	const tabs = page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab');
 	const count = await tabs.count();
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal' }).click();
+	await newTab(page, 'Terminal');
 	await expect(tabs).toHaveCount(count + 1);
 	const id = (await tabs.last().getAttribute('data-tab'))!;
 	await mark(page, `painted:${id}`);

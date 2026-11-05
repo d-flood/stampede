@@ -2,7 +2,7 @@ import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { showSidebar, openProject } from './shell.ts';
+import { currentTab, showSidebar, openProject } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
@@ -86,7 +86,7 @@ test('A PR review opens from the picker, refreshes, and closes back to the plain
 	await files.getByRole('button', { name: 'widget.ts', exact: true }).click();
 	const diff = page.locator('.diff:not([hidden])');
 	await expect(diff.locator('.path')).toHaveText('src/widget.ts');
-	await expect(page.getByRole('tab', { selected: true })).toContainText('#7');
+	await expect(await currentTab(page)).toContainText('#7');
 	await expect(diff.locator('.cm-changedLine', { hasText: 'widget = true' })).toBeVisible();
 	expect(git('branch', '--format=%(refname:short)')).toBe('main');
 

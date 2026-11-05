@@ -3,7 +3,7 @@ import type { Locator, Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { openProject, showSidebar, showScreen } from './shell.ts';
+import { expectCurrent, openProject, showSidebar, showScreen } from './shell.ts';
 
 const stampede = process.env.STAMPEDE_E2E_BINARY ?? fileURLToPath(new URL('../../target/debug/stampede', import.meta.url));
 
@@ -31,8 +31,7 @@ test('an Epic made through the CLI shows live in the Epics section, its Tab and 
 	await expect(card).toContainText('0 of 2 resolved');
 	await card.click();
 
-	const tab = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab', { name: `Epic ${slug}` });
-	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expectCurrent(page, `Epic ${slug}`);
 	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
 	const tickets = panel.getByRole('region', { name: 'Tickets' });
 	await expect(tickets.getByRole('button', { name: /^\d/ })).toHaveText([/^\s*1\s*The section/, /^\s*2\s*The tab/]);
@@ -293,7 +292,7 @@ test('David changes Blockers, adds a Ticket, edits the Brief and Setup Command, 
 	await expect(epics.getByRole('button', { name: new RegExp(`^${slug}-active\\s`) })).toBeVisible();
 	await epics.getByRole('checkbox', { name: 'Show archived' }).uncheck();
 	await expect(card).toHaveCount(0);
-	await expect(page.getByRole('tab', { name: `Epic ${slug}`, exact: true })).toHaveAttribute('aria-selected', 'true');
+	await expectCurrent(page, `Epic ${slug}`);
 	await epics.getByRole('checkbox', { name: 'Show archived' }).check();
 	await card.click();
 	await page.reload();
@@ -676,8 +675,8 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 
 	await second.click();
 	await expect(second).toHaveAttribute('aria-current', 'true');
-	const heading = phone ? page.locator('.phone > header h1') : page.getByRole('complementary', { name: 'Sidebar' }).getByRole('heading', { level: 1 });
-	await expect(heading).toHaveText(`${slug}/2`);
+	if (phone) await expect(page.locator('.phone > header h1 .count')).toHaveText(`${slug}/2, 1 tab`);
+	else await expect(page.getByRole('complementary', { name: 'Sidebar' }).getByRole('heading', { level: 1 })).toHaveText(`${slug}/2`);
 	const chat = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/2`);
 	const worktree = await showSidebar(page);

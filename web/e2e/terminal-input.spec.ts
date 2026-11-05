@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
-import { openProject, screen } from './shell.ts';
+import { expectShown, newTab, openProject, screen, tabCount } from './shell.ts';
 
 
 async function terminal(page: Page) {
@@ -17,13 +17,11 @@ async function terminal(page: Page) {
 		});
 	});
 	await openProject(page, test.info().project.name === 'desktop' ? 'alpha' : 'beta');
-	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab');
-	const count = await tabs.count();
-	await page.getByRole('button', { name: 'New Tab' }).click();
-	await page.getByRole('menuitem', { name: 'Terminal' }).click();
-	await expect(tabs).toHaveCount(count + 1);
+	const count = await tabCount(page);
+	await newTab(page, 'Terminal');
+	await expect.poll(() => tabCount(page)).toBe(count + 1);
 	await expect.poll(() => created).not.toBe('');
-	await expect(page.locator(`[data-tab="${created}"]`)).toHaveAttribute('aria-selected', 'true');
+	await expectShown(page, created);
 	await expect(page.locator('.terminal:visible canvas')).toBeVisible();
 	await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/\S/);
 	await expect.poll(() => page.evaluate(() => window.terminal?.hasBracketedPaste())).toBe(true);
