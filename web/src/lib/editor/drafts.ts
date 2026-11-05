@@ -1,7 +1,7 @@
 import type { DraftComment, Hunks, Placement, Side } from '#lib/pr-reviews.ts';
 import { getChunks, getOriginalDoc } from '@codemirror/merge';
 import { Facet, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state';
-import { BlockType, Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, type BlockInfo } from '@codemirror/view';
+import { BlockType, Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, type BlockInfo, type ViewUpdate } from '@codemirror/view';
 
 /** Fills a draft widget's DOM, giving back what tears it down. `fresh` is false when scrolling brought the widget back. */
 export type Render = (dom: HTMLElement, shown: { placement: Placement; draft?: DraftComment; lines?: string; fresh: boolean; close(): void }) => () => void;
@@ -344,6 +344,27 @@ function tint(percent: number) {
 	return `linear-gradient(${color}, ${color})`;
 }
 
+const fitting = ViewPlugin.fromClass(
+	class {
+		constructor(readonly view: EditorView) {
+			this.fit();
+		}
+
+		update(update: ViewUpdate) {
+			if (update.geometryChanged) this.fit();
+		}
+
+		// Keep widgets within the visible width, since unwrapped long lines widen the content.
+		fit() {
+			this.view.requestMeasure({
+				key: this,
+				read: (view) => view.scrollDOM.clientWidth - view.contentDOM.offsetLeft,
+				write: (width, view) => view.dom.style.setProperty('--draft-width', `${width}px`)
+			});
+		}
+	}
+);
+
 const style = EditorView.theme({
 	'.cm-draftGutter .cm-gutterElement': { display: 'flex', flexDirection: 'column' },
 	'.cm-draftAdds': { display: 'flex', flex: 1, flexDirection: 'column', width: '1.25em' },
@@ -368,7 +389,9 @@ const style = EditorView.theme({
 		padding: 'var(--space-2) var(--space-2) var(--space-2) var(--space-3)',
 		borderBlock: 'var(--border-width) solid var(--border)',
 		background: 'var(--surface-1)',
-		whiteSpace: 'normal'
+		whiteSpace: 'normal',
+		boxSizing: 'border-box',
+		maxWidth: 'var(--draft-width)'
 	},
 	'@media (pointer: coarse)': { '.cm-draftAdds': { width: 'var(--space-6)' } }
 });
@@ -385,6 +408,7 @@ export function draftComments(side: Side, unified: boolean, hunks: Hunks, drafts
 		replacingClass,
 		adds,
 		pressing,
+		fitting,
 		style
 	];
 }
