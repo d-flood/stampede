@@ -304,3 +304,61 @@ test('the Tray counts Subagents with colored dots, surfaces waiting ones and kee
 	await expect(breadcrumb).toContainText('Task 11');
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
+
+test('only the viewed Chat comet and label move; peripheral and waiting marks hold still', { tag: '@desktop' }, async ({ page }) => {
+	await page.emulateMedia({ reducedMotion: 'no-preference' });
+	let route: WebSocketRoute;
+	const chatIds: string[] = [];
+	await page.routeWebSocket('**/ws', (socket) => {
+		route = socket;
+		const server = socket.connectToServer();
+		server.onMessage((data) => {
+			if (typeof data === 'string') {
+				const message: ServerMessage = JSON.parse(data);
+				if (message.type === 'chat.created') chatIds.push(message.chat.id);
+			}
+			socket.send(data);
+		});
+	});
+	const send = (message: ServerMessage) => route.send(JSON.stringify(message));
+	const name = 'motion';
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
+	await openProject(page, name);
+	const panel = page.locator('.panel[role="tabpanel"]:visible');
+	for (const created of [1, 2]) {
+		await page.getByRole('button', { name: 'New Tab' }).click();
+		await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
+		await expect.poll(() => chatIds.length).toBe(created);
+		await panel.getByRole('textbox', { name: 'Composer' }).waitFor();
+	}
+	const [background, viewed] = chatIds;
+	for (const chatId of chatIds) {
+		send({ type: 'chat.status', chatId, status: 'working' });
+		send({ type: 'chat.activity', chatId, activity: 'Reading notes.txt' });
+	}
+	const moving = (locator: ReturnType<typeof page.locator>) => locator.evaluateAll((elements) => elements.flatMap((element) => element.getAnimations({ subtree: true })).filter((animation) => animation.playState === 'running').length);
+	const mark = (chatId: string) => page.locator(`[data-tab="${chatId}"] .mark`);
+	const ring = panel.locator('.ring');
+	const label = panel.getByRole('status', { name: 'Current activity' }).locator('.label');
+
+	await expect(mark(viewed)).toHaveAttribute('title', 'working');
+	await expect.poll(() => moving(ring)).toBeGreaterThan(0);
+	await expect.poll(() => moving(label)).toBeGreaterThan(0);
+	await expect.poll(() => moving(mark(background))).toBeGreaterThan(0);
+	await expect.poll(() => moving(mark(viewed))).toBe(0);
+	await expect.poll(() => panel.evaluate((element) => element.getAnimations({ subtree: true }).filter((animation) => animation.playState === 'running').every((animation) => (animation.effect as KeyframeEffect).target?.closest('.ring, .legend')))).toBe(true);
+	const rail = page.locator('[data-project] .spinner');
+	await expect(rail.first()).toBeVisible();
+	await expect.poll(() => moving(rail)).toBe(0);
+
+	send({ type: 'chat.status', chatId: viewed, status: 'waiting' });
+	await expect(mark(viewed)).toHaveAttribute('title', 'waiting');
+	await expect.poll(() => moving(ring)).toBe(0);
+	await expect.poll(() => moving(panel.getByRole('status', { name: 'Current activity' }))).toBe(0);
+	await expect.poll(() => moving(mark(viewed))).toBe(0);
+
+	await page.locator(`[data-tab="${background}"]`).click();
+	await expect.poll(() => moving(mark(background))).toBe(0);
+	await expect.poll(() => moving(mark(viewed))).toBe(0);
+	await expect.poll(() => moving(ring)).toBeGreaterThan(0);
+});

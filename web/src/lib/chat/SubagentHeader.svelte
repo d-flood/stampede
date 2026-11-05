@@ -55,7 +55,7 @@
 	.logo { display: inline-flex; flex: none; }
 	.role { color: var(--muted-fg); }
 	.status { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-left: auto; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
-	.mark { display: inline-flex; color: var(--status-done); }
+	.mark { --pulse: 0; display: inline-flex; color: var(--status-done); }
 	.working .mark { color: var(--status-working); }
 	.waiting .mark { color: var(--status-waiting); }
 	.ended .mark, .outcome { color: var(--ansi-1); }

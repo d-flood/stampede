@@ -77,7 +77,6 @@
 
 	.high .fill {
 		stroke: var(--ansi-3);
-		animation: pulse 2s ease-in-out var(--pulse);
 	}
 
 	.high .percent {
@@ -101,11 +100,5 @@
 		border-radius: 50%;
 		background: var(--ansi-1);
 		content: '';
-	}
-
-	@keyframes pulse {
-		50% {
-			opacity: 0.45;
-		}
 	}
 </style>

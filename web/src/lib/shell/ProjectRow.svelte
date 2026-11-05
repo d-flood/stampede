@@ -337,6 +337,7 @@
 
 	.spinner,
 	.shell {
+		--pulse: 0;
 		right: calc(-1 * var(--space-1) - var(--border-width));
 		bottom: calc(-1 * var(--space-1) - var(--border-width));
 	}
