@@ -5,10 +5,11 @@
 	import { colorScheme, selectScheme, type Scheme } from '#lib/scheme.svelte.ts';
 	import { selectSidebarSide, sidebarPosition, type SidebarSide } from '#lib/sidebar.svelte.ts';
 	import { selectSpinners, spinners, type SpinnerStyle } from '#lib/spinners.svelte.ts';
-	import { themeBar, type ThemeChoice } from '#lib/themes.svelte.ts';
+	import { themeBar, type Slot, type ThemeChoice } from '#lib/themes.svelte.ts';
 	import ClipEditor from '#lib/shell/ClipEditor.svelte';
 	import RigEditor from '#lib/shell/RigEditor.svelte';
 	import FontSwitcher from '#lib/shell/FontSwitcher.svelte';
+	import ThemeCards from '#lib/shell/ThemeCards.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
 	import { defaultSizes, selectTextSize, typography } from '#lib/typography.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -66,6 +67,10 @@
 		{ value: 'system', label: 'System' },
 		{ value: 'light', label: 'Light' },
 		{ value: 'dark', label: 'Dark' }
+	];
+	const themeSlots: { slot: Slot; label: string }[] = [
+		{ slot: 'light', label: 'Light theme' },
+		{ slot: 'dark', label: 'Dark theme' }
 	];
 	const spinnerStyles: { value: SpinnerStyle; label: string }[] = [
 		{ value: 'custom', label: 'Custom' },
@@ -228,10 +233,18 @@
 								<Segmented aria-labelledby="scheme-label" options={schemes} bind:value={() => colorScheme.choice, selectScheme} />
 							</div>
 						</section>
+						{#each themeSlots as { slot, label } (slot)}
+							<section class="row" aria-labelledby="{slot}-theme-label">
+								<div class="text">
+									<span class="label" id="{slot}-theme-label">{label}</span>{@render scope(true)}
+								</div>
+								<div class="cards"><ThemeCards {slot} labelledby="{slot}-theme-label" /></div>
+							</section>
+						{/each}
 						<section class="row" aria-labelledby="theme-label">
 							<div class="text">
-								<span class="label" id="theme-label">Theme</span>{@render scope(true)}
-								<p>One theme for light mode and one for dark.</p>
+								<span class="label" id="theme-label">Ghostty themes</span>{@render scope(true)}
+								<p>Use any Ghostty theme, one for light mode and one for dark. Saved: {themeLabel()}.</p>
 							</div>
 							<div class="control"><ThemeSwitcher onpreview={(choice) => ((docking = choice), (open = false))} /></div>
 						</section>
@@ -531,6 +544,11 @@
 		box-sizing: border-box;
 		flex: 0 1 15rem;
 		min-width: 0;
+	}
+
+	.cards {
+		flex: 1 1 100%;
+		max-width: 36rem;
 	}
 
 	.font {

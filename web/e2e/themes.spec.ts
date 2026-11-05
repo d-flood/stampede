@@ -22,7 +22,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await page.keyboard.press('Enter');
 	await expect.poll(() => screen(page)).toMatch(/^theme-before$/m);
 	await openSettings(page, 'Appearance');
-	await page.getByRole('button', { name: 'Change theme' }).click();
+	await page.getByRole('button', { name: 'More Ghostty themes' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	await expect(search).toBeFocused();
@@ -41,7 +41,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.theme?.background)).toBe('#282a36');
 	expect(readFileSync(config, 'utf8')).toBe(original);
-	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Default');
+	await expect(page.getByRole('button', { name: 'More Ghostty themes' })).toHaveAttribute('title', 'Theme: Light: Limestone · Dark: Jet');
 	await dialog.getByRole('button', { name: 'Next theme', exact: true }).click();
 	await expect(dialog.locator('.preview')).toContainText('Dracula+');
 	await dialog.getByRole('button', { name: 'Next theme', exact: true }).click();
@@ -53,14 +53,14 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await expect(dialog).toBeHidden();
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(originalBackground);
 	expect(readFileSync(config, 'utf8')).toBe(original);
-	await page.getByRole('button', { name: 'Change theme' }).click();
+	await page.getByRole('button', { name: 'More Ghostty themes' }).click();
 	await expect(search).toBeFocused();
 	await all.check();
 	await search.fill('Dracula');
 	await dracula.click();
 	await dialog.getByRole('button', { name: 'Apply theme', exact: true }).click();
 	await expect(dialog).toBeHidden();
-	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Dracula');
+	await expect(page.getByRole('button', { name: 'More Ghostty themes' })).toHaveAttribute('title', 'Theme: Light: Dracula · Dark: Jet');
 	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.theme?.background)).toBe('#282a36');
@@ -69,13 +69,13 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await page.keyboard.type('echo theme-after');
 	await page.keyboard.press('Enter');
 	await expect.poll(() => screen(page)).toMatch(/^theme-after$/m);
-	expect(readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain('theme = "Dracula"');
+	expect(readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain('theme = "light:Dracula,dark:Jet"');
 
 	await page.reload();
 	await openSettings(page, 'Appearance');
-	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Dracula');
+	await expect(page.getByRole('button', { name: 'More Ghostty themes' })).toHaveAttribute('title', 'Theme: Light: Dracula · Dark: Jet');
 	await expect.poll(() => screen(page)).toMatch(/^theme-after$/m);
-	await page.getByRole('button', { name: 'Change theme' }).click();
+	await page.getByRole('button', { name: 'More Ghostty themes' }).click();
 	await all.check();
 	await dialog.getByRole('combobox', { name: 'Search themes' }).fill('Dracula');
 	await expect(dracula.getByLabel('Current theme')).toBeVisible();
@@ -97,7 +97,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 test('late previews cannot replace a newer preview or restore after closing', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	await openSettings(page, 'Appearance');
-	await page.getByRole('button', { name: 'Change theme' }).click();
+	await page.getByRole('button', { name: 'More Ghostty themes' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	const original = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
@@ -140,7 +140,7 @@ test('late previews cannot replace a newer preview or restore after closing', { 
 test('preview and save failures leave the saved theme intact', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
 	await openSettings(page, 'Appearance');
-	await page.getByRole('button', { name: 'Change theme' }).click();
+	await page.getByRole('button', { name: 'More Ghostty themes' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	const original = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
@@ -171,7 +171,7 @@ test('light and dark themes follow the system color scheme', async ({ page }, { 
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
 	await openSettings(page, 'Appearance');
-	await page.getByRole('button', { name: 'Change theme' }).click();
+	await page.getByRole('button', { name: 'More Ghostty themes' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	const light = dialog.getByRole('button', { name: /^Light/ });
@@ -183,7 +183,7 @@ test('light and dark themes follow the system color scheme', async ({ page }, { 
 	await search.fill('Dracula');
 	await dialog.getByRole('option', { name: 'Dracula', exact: true }).click();
 	await expect.poll(background).toBe('rgb(40, 42, 54)');
-	await expect(light).toContainText('Same as dark');
+	await expect(light).toContainText('Limestone');
 	await light.click();
 	await expect(light).toHaveAttribute('aria-pressed', 'true');
 	await search.fill('Alabaster');
@@ -212,8 +212,8 @@ test('light and dark themes follow the system color scheme', async ({ page }, { 
 	await page.reload();
 	await expect.poll(background).toBe('rgb(247, 247, 247)');
 	await openSettings(page, 'Appearance');
-	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', 'Theme: Light: Alabaster · Dark: Dracula');
-	await page.getByRole('button', { name: 'Change theme' }).click();
+	await expect(page.getByRole('button', { name: 'More Ghostty themes' })).toHaveAttribute('title', 'Theme: Light: Alabaster · Dark: Dracula');
+	await page.getByRole('button', { name: 'More Ghostty themes' }).click();
 	await expect(light).toHaveAttribute('aria-pressed', 'true');
 	await expect(dialog.getByRole('button', { name: 'Apply theme', exact: true })).toBeDisabled();
 	await all.check();
@@ -233,19 +233,24 @@ test('the picker shortlists light and dark themes until all are shown', async ({
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
 	await openSettings(page, 'Appearance');
-	await page.getByRole('button', { name: 'Change theme' }).click();
+	await page.getByRole('button', { name: 'More Ghostty themes' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	const preview = dialog.locator('.preview strong');
 	const option = (name: string) => dialog.getByRole('option', { name, exact: true });
 	await expect(search).toHaveAttribute('placeholder', 'Search dark themes');
+	await expect(dialog.getByRole('option').first()).toHaveText('Walnut');
+	await expect(dialog.getByRole('option').nth(1)).toHaveText('Shale');
+	await expect(dialog.getByRole('option').nth(2)).toHaveText(/^Jet/);
 	await expect(option('Vesper')).toBeVisible();
 	await expect(option('Dawnfox')).toBeHidden();
 	await expect(option('Dracula')).toBeHidden();
 	await dialog.getByRole('button', { name: 'Previous theme', exact: true }).click();
-	await expect(preview).toHaveText('Zenbones Dark');
+	await expect(preview).toHaveText('Shale');
 	await dialog.getByRole('button', { name: /^Light/ }).click();
 	await expect(search).toHaveAttribute('placeholder', 'Search light themes');
+	await expect(dialog.getByRole('option').first()).toHaveText('Vellum');
+	await expect(dialog.getByRole('option').nth(1)).toHaveText(/^Limestone/);
 	await expect(option('Dawnfox')).toBeVisible();
 	await expect(option('Vesper')).toBeHidden();
 	await dialog.getByRole('button', { name: 'Next theme', exact: true }).click();
@@ -266,6 +271,7 @@ test('the color scheme button cycles light, dark, and system on this device', { 
 		headers: { 'Content-Type': 'application/json' }
 	});
 	expect(saved.ok()).toBe(true);
+	await expect.poll(async () => (await (await page.request.get('/api/theme')).json()).name).toBe('light:Alabaster,dark:Dracula');
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await openProject(page, 'alpha');
 	await page.getByRole('button', { name: 'New Tab' }).click();
@@ -306,7 +312,7 @@ test('theme previews dock into the app and hand back to the picker', async ({ pa
 	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
 	const original = await background();
 	const settings = await openSettings(page, 'Appearance');
-	await page.getByRole('button', { name: 'Change theme' }).click();
+	await page.getByRole('button', { name: 'More Ghostty themes' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
 	const search = dialog.getByRole('combobox', { name: 'Search themes' });
 	await dialog.getByRole('checkbox', { name: 'Show all themes' }).check();
@@ -335,7 +341,7 @@ test('theme previews dock into the app and hand back to the picker', async ({ pa
 	}
 
 	await openSettings(page, 'Appearance');
-	await page.getByRole('button', { name: 'Change theme' }).click();
+	await page.getByRole('button', { name: 'More Ghostty themes' }).click();
 	await expect(bar).toBeHidden();
 	await expect(search).toHaveValue('Dracula');
 	await expect(dialog.locator('.preview strong')).toHaveText('Dracula');
@@ -360,16 +366,53 @@ test('the command palette previews themes in the app and applies one', { tag: '@
 	const status = bar.getByRole('status');
 	const apply = bar.getByRole('button', { name: 'Apply', exact: true });
 	await expect(bar.getByRole('button', { name: 'Next theme', exact: true })).toBeFocused();
-	await expect(status).toHaveText(/^Default \d+ themes$/);
+	await expect(status).toHaveText(/^Limestone 2 of \d+$/);
 	await expect(apply).toBeDisabled();
 	await page.keyboard.press('ArrowRight');
-	await expect(status).toHaveText(/ 1 of \d+$/);
+	await expect(status).toHaveText(/ 3 of \d+$/);
 	await expect(apply).toBeEnabled();
 	const name = await status.locator('strong').textContent();
 	await apply.click();
 	await expect(bar).toBeHidden();
-	expect(readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain(`theme = ${JSON.stringify(name)}`);
+	expect(readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toContain(`theme = ${JSON.stringify(`light:${name},dark:Jet`)}`);
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: /^Appearance/ }).click();
-	await expect(page.getByRole('button', { name: 'Change theme' })).toHaveAttribute('title', `Theme: ${name}`);
+	await expect(page.getByRole('button', { name: 'More Ghostty themes' })).toHaveAttribute('title', `Theme: Light: ${name} · Dark: Jet`);
+});
+
+test('Appearance cards choose one slot and keep the other', async ({ page }, { project }) => {
+	const background = () => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
+	const config = () => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
+	await page.emulateMedia({ colorScheme: 'light' });
+	await openProject(page, project.name === 'desktop' ? 'alpha' : 'beta');
+	const original = config();
+	const settings = await openSettings(page, 'Appearance');
+	const light = settings.getByRole('group', { name: 'Light theme' });
+	const dark = settings.getByRole('group', { name: 'Dark theme' });
+	await expect(light.getByRole('button')).toHaveText(['Vellum', 'Limestone']);
+	await expect(dark.getByRole('button')).toHaveText(['Walnut', 'Shale', 'Jet']);
+	await expect(light.getByRole('button', { name: 'Limestone' })).toHaveAttribute('aria-pressed', 'true');
+	await expect(light.getByRole('button', { name: 'Vellum' })).toHaveAttribute('aria-pressed', 'false');
+	await expect(dark.getByRole('button', { name: 'Jet' })).toHaveAttribute('aria-pressed', 'true');
+	await expect(dark.getByRole('button', { name: 'Jet' })).toHaveCSS('background-color', 'rgb(0, 0, 0)');
+	await expect(light.getByRole('button', { name: 'Vellum' })).toHaveCSS('background-color', 'rgb(242, 237, 229)');
+	await expect.poll(background).toBe('rgb(239, 242, 243)');
+	expect(config()).toBe(original);
+
+	await dark.getByRole('button', { name: 'Shale' }).click();
+	await expect(dark.getByRole('button', { name: 'Shale' })).toHaveAttribute('aria-pressed', 'true');
+	await expect(dark.getByRole('button', { name: 'Jet' })).toHaveAttribute('aria-pressed', 'false');
+	await expect(light.getByRole('button', { name: 'Limestone' })).toHaveAttribute('aria-pressed', 'true');
+	expect(config()).toContain('theme = "light:Limestone,dark:Shale"');
+	await expect.poll(background).toBe('rgb(239, 242, 243)');
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await expect.poll(background).toBe('rgb(20, 26, 31)');
+	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+	await settings.getByRole('button', { name: 'More Ghostty themes' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Choose a theme' });
+	await expect(dialog.getByRole('combobox', { name: 'Search themes' })).toBeFocused();
+	await expect(dialog.getByRole('option', { name: /^Shale/ }).getByLabel('Current theme')).toBeVisible();
+	await dialog.getByRole('checkbox', { name: 'Show all themes' }).check();
+	await expect(dialog.getByRole('option', { name: 'Dracula', exact: true })).toBeAttached();
 });

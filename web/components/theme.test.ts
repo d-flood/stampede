@@ -3,10 +3,23 @@ import { afterEach, expect, test, vi } from 'vitest';
 vi.stubGlobal('fetch', () => new Promise(() => {}));
 const { applyTheme } = await import('#lib/config.svelte.ts');
 
-const palettes: Record<string, { background: string; foreground: string }> = {
-	Default: { background: '#282c34', foreground: '#ffffff' },
+const files = import.meta.glob<string>('../../crates/stampede/themes/*', { query: '?raw', import: 'default', eager: true });
+
+function parse(text: string) {
+	const values = Object.fromEntries(text.split('\n').filter(Boolean).map((line) => line.split(/\s*=\s*(.*)/s).slice(0, 2)));
+	const palette = text.match(/^palette = \d+=#\w+$/gm)!.map((line) => line.split('=').at(-1)!);
+	return { background: values.background, foreground: values.foreground, palette };
+}
+
+const palettes: Record<string, { background: string; foreground: string; palette?: string[] }> = {
+	...Object.fromEntries(Object.entries(files).map(([path, text]) => [path.split('/').at(-1)!, parse(text)])),
 	'Monokai Pro Light': { background: '#faf4f2', foreground: '#29242a' }
 };
+
+test('reads all five Stampede themes', () => {
+	expect(Object.keys(palettes).sort()).toEqual(['Jet', 'Limestone', 'Monokai Pro Light', 'Shale', 'Vellum', 'Walnut']);
+	for (const { palette } of Object.values(palettes)) if (palette) expect(palette).toHaveLength(16);
+});
 
 const canvas = document.createElement('canvas').getContext('2d', { willReadFrequently: true })!;
 
@@ -35,14 +48,14 @@ afterEach(() => {
 	document.body.replaceChildren();
 });
 
-for (const [name, { background, foreground }] of Object.entries(palettes)) {
+for (const [name, { background, foreground, palette: colors }] of Object.entries(palettes)) {
 	for (const scheme of ['light', 'dark'] as const) {
 		test(`${name} muted text reads at 4.5:1 on the background and first surface in ${scheme}`, () => {
 			const palette = {
 				name,
 				background,
 				foreground,
-				palette: Array(16).fill(foreground),
+				palette: colors ?? Array(16).fill(foreground),
 				cursor: foreground,
 				cursorText: background,
 				selectionBackground: foreground,
