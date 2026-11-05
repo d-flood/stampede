@@ -81,7 +81,7 @@ for (const agent of ['claude', 'codex']) {
 	});
 }
 
-test('the dock shows running subagents as pills and keeps finished ones reachable', async ({ page }, { project }) => {
+test('the Tray counts Subagents with colored dots, surfaces waiting ones and keeps every one reachable', async ({ page }, { project }) => {
 	let route: WebSocketRoute;
 	let chatId: string;
 	const now = Date.now();
@@ -118,7 +118,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 		});
 	});
 	const send = (message: ServerMessage) => route.send(JSON.stringify(message));
-	const name = `subagent-dock-${project.name}`;
+	const name = `subagent-tray-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`);
 	await openProject(page, name);
 	await page.getByRole('button', { name: 'New Tab' }).click();
@@ -126,46 +126,45 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	const tab = page.getByRole('tab', { name: /^Fake Claude/ });
 	const panel = page.locator('.panel[role="tabpanel"]:visible');
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
-	const dock = panel.getByRole('region', { name: 'Subagents' });
+	const subagents = panel.getByRole('region', { name: 'Subagents' });
+	const tray = panel.getByRole('region', { name: 'Tray' });
 	const header = panel.locator('header');
 	const breadcrumb = header.getByRole('navigation', { name: 'Breadcrumb' });
 	const prompt = panel.getByRole('region', { name: 'Prompt' });
 	const report = panel.getByRole('region', { name: 'Report' });
 	await expect(composer).toBeVisible();
-	await expect(dock).toHaveCount(0);
+	await expect(subagents).toHaveCount(0);
 
 	items = [command('ls'), old, active, waiting, command('pwd'), failed];
 	send({ type: 'chat.items', chatId: chatId!, items });
-	const pill = (task: string) => dock.getByRole('button', { name: new RegExp(`^${task}`) });
-	const chip = (finished: number, summary: string) => dock.getByRole('button', { name: phone ? summary : `${finished} finished`, exact: true });
+	const chip = (summary: string) => subagents.getByRole('button', { name: `Subagents: ${summary}`, exact: true });
+	const attention = subagents.getByRole('button', { name: /^\d+ waiting$/ });
 	const sheet = page.getByRole('dialog', { name: 'Subagents' });
 	const section = (name: string) => sheet.getByRole('region', { name }).getByRole('listitem');
+	const menuGroup = (name: string) => page.getByRole('menu').getByRole('group').filter({ has: page.getByText(name, { exact: true }) }).getByRole('menuitem');
 	const rows = phone ? page.getByRole('dialog').getByRole('listitem') : page.getByRole('menuitem');
 	const choose = async (task: string) => {
-		if (!phone) return pill(task).click();
-		await dock.getByRole('button').click();
-		await sheet.getByRole('button', { name: new RegExp(`^${task}`) }).click();
-		await expect(sheet).toHaveCount(0);
+		await subagents.getByRole('button', { name: /^Subagents/ }).click();
+		await (phone ? sheet.getByRole('button', { name: new RegExp(`^${task}`) }) : page.getByRole('menuitem', { name: new RegExp(`^${task}`) })).click();
+		await expect(rows).toHaveCount(0);
 	};
-	if (phone) {
-		await expect(dock.getByRole('button')).toHaveCount(1);
-		await expect(chip(2, '2 running · 1 waiting · 2 finished')).toBeVisible();
-	} else {
-		await expect(pill('Find the file')).toBeVisible();
-		await expect(pill('Search deeper')).toBeVisible();
-		await expect(pill('Review the file')).toBeVisible();
-		await expect(dock.getByRole('button')).toHaveCount(4);
-		await expect.poll(() => pill('Review the file').evaluate((element) => {
-			const probe = element.appendChild(document.createElement('span'));
-			probe.style.color = 'var(--status-waiting)';
-			const yellow = getComputedStyle(probe).color;
-			probe.remove();
-			return getComputedStyle(element).borderTopColor === yellow && getComputedStyle(element.querySelector('.mark')!).color === yellow;
-		})).toBe(true);
-		await expect(pill('Find the file')).toHaveText(/1:\d\d$/);
-		const clock = await pill('Find the file').textContent();
-		await expect.poll(() => pill('Find the file').textContent()).not.toBe(clock);
-	}
+	const oneRow = () => tray.evaluate((element) => {
+		const boxes = [...element.children].map((child) => child.getBoundingClientRect());
+		return Math.max(...boxes.map(({ top }) => top)) < Math.min(...boxes.map(({ bottom }) => bottom));
+	});
+	await expect(chip('2 running, 2 done')).toBeVisible();
+	await expect(subagents.locator('.dot')).toHaveCount(3);
+	await expect(chip('2 running, 2 done')).toContainText('+2');
+	await expect(attention).toHaveText('1 waiting');
+	await expect.poll(() => attention.evaluate((element) => {
+		const probe = element.appendChild(document.createElement('span'));
+		probe.style.color = 'var(--status-waiting)';
+		const yellow = getComputedStyle(probe).color;
+		probe.remove();
+		return getComputedStyle(element).color === yellow;
+	})).toBe(true);
+	await expect(subagents.getByRole('button')).toHaveCount(2);
+	await expect.poll(oneRow).toBe(true);
 	await expect(page.getByRole('combobox', { name: /^Session in/ })).toHaveCount(0);
 	await expect(tab.getByTitle('working')).toBeVisible();
 
@@ -213,12 +212,11 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(composer).toHaveCount(0);
 	await panel.getByRole('button', { name: 'Back to Main' }).click();
 
-	await chip(2, '2 running · 1 waiting · 2 finished').click();
-	const done = phone ? section('Finished') : rows;
-	if (phone) {
-		await expect(sheet.getByRole('heading', { level: 3 })).toHaveText(['Running', 'Finished']);
-		await expect(section('Running')).toHaveText([/^\s*Find the file/, /^\s*Search deeper/, /^\s*Review the file/]);
-	}
+	await chip('2 running, 2 done').click();
+	const done = phone ? section('Finished') : menuGroup('Finished');
+	if (phone) await expect(sheet.getByRole('heading', { level: 3 })).toHaveText(['Running', 'Finished']);
+	else await expect(page.getByRole('menu').getByRole('group')).toHaveText([/^Running/, /^Finished/]);
+	await expect(phone ? section('Running') : menuGroup('Running')).toHaveText([/^\s*Find the file/, /^\s*Search deeper/, /^\s*Review the file/]);
 	await expect(done).toHaveCount(2);
 	await expect(done.nth(0)).toHaveText(/^\s*Broken task\s*Plan\s*failed\s*·\s*5s · 1 tool$/);
 	await expect(done.nth(1)).toHaveText(/^\s*Old task\s*Explore\s*1m 12s · 14 tools · 38k tokens$/);
@@ -226,7 +224,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(rows).toHaveCount(0);
 	await expect(panel.getByText('Old work.', { exact: true })).toBeVisible();
 	await expect(composer).toHaveCount(0);
-	await expect(dock).toBeVisible();
+	await expect(subagents).toBeVisible();
 	await expect(panel.getByText('Subagent', { exact: true })).toBeVisible();
 	await expect(breadcrumb).toHaveText(/^Main\s*\/\s*Old task$/);
 	await expect(header.getByTitle('Name')).toHaveText('Explore');
@@ -244,7 +242,7 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	send({ type: 'chat.request', chatId: chatId!, request: { kind: 'command', id: 'review', words: [['touch', 'reviewed.txt']], suggestion: [], sessionPrefixes: true, subagent: 'waiting' } });
 	const approval = panel.getByRole('region', { name: 'Approval' });
 	await expect(approval).toContainText('Asked by Review the file');
-	await choose('Review the file');
+	await attention.click();
 	await expect(composer).toBeVisible();
 	await expect(breadcrumb).toHaveCount(0);
 	await expect(approval).toBeFocused();
@@ -256,8 +254,8 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(breadcrumb).toHaveText(/^Main\s*\/\s*Find the file\s*\/\s*Search deeper$/);
 	items[2] = { ...active, items: [text('Reading the files.'), { ...nested, status: 'done', outcome: 'completed' }] };
 	send({ type: 'chat.item', chatId: chatId!, index: 2, item: items[2] });
-	await expect(chip(3, '1 running · 1 waiting · 3 finished')).toBeVisible();
-	await expect(pill('Search deeper')).toHaveCount(0);
+	await expect(chip('1 running, 3 done')).toBeVisible();
+	await expect(attention).toHaveText('1 waiting');
 	await expect(panel.getByText('Deep work.', { exact: true })).toBeVisible();
 	await expect(composer).toHaveCount(0);
 
@@ -268,8 +266,8 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(report).toHaveCount(0);
 	items[2] = { ...items[2], status: 'done', outcome: 'completed', activity: null, report: 'The file is `codex.rs`.', totals: { durationMs: 80_000, tools: 3 } } as Subagent;
 	send({ type: 'chat.item', chatId: chatId!, index: 2, item: items[2] });
-	await expect(chip(4, '1 waiting · 4 finished')).toBeVisible();
-	await expect(pill('Find the file')).toHaveCount(0);
+	await expect(chip('4 done')).toBeVisible();
+	await expect(attention).toHaveText('1 waiting');
 	await expect(panel.getByText('Reading the files.', { exact: true })).toBeVisible();
 	await expect(report.locator('code')).toHaveText('codex.rs');
 	await expect(header).toContainText('1m 20s · 3 tools');
@@ -279,8 +277,8 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(line('Find the file')).toHaveText(/finished in 1m 20s, 3 tools$/);
 
 	await page.reload();
-	await expect(phone ? chip(4, '1 waiting · 4 finished') : pill('Review the file')).toBeVisible();
-	await chip(4, '1 waiting · 4 finished').click();
+	await expect(attention).toHaveText('1 waiting');
+	await chip('4 done').click();
 	await done.filter({ hasText: 'Find the file' }).click();
 	await expect(panel.getByText('Reading the files.', { exact: true })).toBeVisible();
 	await expect(composer).toHaveCount(0);
@@ -288,29 +286,18 @@ test('the dock shows running subagents as pills and keeps finished ones reachabl
 	await expect(composer).toBeVisible();
 	items[3] = { ...waiting, status: 'done', outcome: 'stopped' };
 	send({ type: 'chat.item', chatId: chatId!, index: 3, item: items[3] });
-	await expect(dock.getByRole('button')).toHaveCount(1);
-	await expect(chip(5, '5 finished')).toBeVisible();
+	await expect(subagents.getByRole('button')).toHaveCount(1);
+	await expect(chip('5 done')).toBeVisible();
 	await expect(tab.getByTitle('done')).toBeVisible();
 
 	const many = Array.from({ length: 12 }, (_, index): Subagent => ({ kind: 'subagent', id: `many-${index}`, name: 'Explore', task: `Task ${index}`, status: 'working', startedAt: now, activity: `Reading file-${index}.rs`, items: [] }));
 	items = [...items, ...many];
 	send({ type: 'chat.items', chatId: chatId!, items });
-	if (phone) await chip(5, '12 running · 5 finished').click();
-	else {
-		const more = dock.getByRole('button', { name: /^\+\d+$/ });
-		await expect(more).toBeVisible();
-		const hidden = Number((await more.textContent())!.slice(1));
-		await expect(dock.getByRole('button', { name: /^Task \d+/ })).toHaveCount(12 - hidden);
-		await expect.poll(() => dock.evaluate((element) => {
-			const bounds = element.getBoundingClientRect();
-			return [...element.querySelectorAll('button')].every((button) => {
-				const box = button.getBoundingClientRect();
-				return box.right <= bounds.right && box.bottom <= bounds.bottom;
-			});
-		})).toBe(true);
-		await more.click();
-	}
-	const running = phone ? section('Running') : rows;
+	await expect(chip('12 running, 5 done')).toContainText('+14');
+	await expect(subagents.locator('.dot')).toHaveCount(3);
+	await expect.poll(oneRow).toBe(true);
+	await chip('12 running, 5 done').click();
+	const running = phone ? section('Running') : menuGroup('Running');
 	await expect(running).toHaveCount(12);
 	await expect(running.nth(11)).toContainText('Reading file-11.rs');
 	await running.nth(11).click();

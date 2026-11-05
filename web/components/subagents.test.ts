@@ -54,7 +54,7 @@ test('a Subagent keeps its spawn-order color on its transcript line, menu row an
 	expect(dot(top.getByRole('button', { name: /Review the diff/ }).element())).toBe('var(--subagent-3)');
 
 	const trigger = createRawSnippet(() => ({ render: () => '<button>Subagents</button>' }));
-	await render(SubagentMenu, { heading: 'Subagents', entries: subagents(main), main, open: true, trigger, onselect: vi.fn() });
+	await render(SubagentMenu, { groups: [{ heading: 'Subagents', entries: subagents(main) }], main, open: true, trigger, onselect: vi.fn() });
 	expect(dot(page.getByRole('menuitem', { name: /Search deeper/ }).element())).toBe('var(--subagent-2)');
 
 	const header = await render(SubagentHeader, { subagent: nested, path: ['parent', 'nested'], trail: subagents(main).slice(0, 1), main, onopen: vi.fn() });
