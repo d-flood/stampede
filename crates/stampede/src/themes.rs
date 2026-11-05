@@ -6,8 +6,14 @@ use serde::Serialize;
 use crate::config::Error;
 
 #[derive(RustEmbed)]
+#[folder = "themes"]
+struct Stampede;
+
+#[derive(RustEmbed)]
 #[folder = "vendor/ghostty-themes/themes"]
 struct Bundled;
+
+const DEFAULT: &str = "light:Limestone,dark:Jet";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,13 +55,17 @@ impl Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        let palette = parse("").unwrap();
-        Self { name: None, light: palette.clone(), dark: palette }
+        let own = |name: &str| {
+            let file = Stampede::get(name).unwrap();
+            let palette = parse(std::str::from_utf8(&file.data).unwrap()).unwrap();
+            Palette { name: Some(name.to_owned()), ..palette }
+        };
+        Self { name: Some(DEFAULT.to_owned()), light: own("Limestone"), dark: own("Jet") }
     }
 }
 
 pub fn names() -> io::Result<Vec<String>> {
-    let mut names: BTreeSet<_> = Bundled::iter().map(|name| name.into_owned()).collect();
+    let mut names: BTreeSet<_> = Stampede::iter().chain(Bundled::iter()).map(|name| name.into_owned()).collect();
     let user = crate::home().join(".config/ghostty/themes");
     match fs::read_dir(user) {
         Ok(entries) => {
@@ -82,7 +92,7 @@ fn lookup(name: &str) -> Result<Palette, Error> {
     let text = match fs::read_to_string(&user) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let file = Bundled::get(name).ok_or_else(|| format!("no theme named {name:?}"))?;
+            let file = Stampede::get(name).or_else(|| Bundled::get(name)).ok_or_else(|| format!("no theme named {name:?}"))?;
             String::from_utf8(file.data.into_owned())?
         }
         Err(error) => return Err(format!("{}: {error}", user.display()).into()),

@@ -27,7 +27,6 @@
 
 <button
 	class="swatch"
-	aria-label="Change theme"
 	title="Theme: {themeLabel()}"
 	aria-haspopup="dialog"
 	aria-expanded={open}
@@ -36,7 +35,7 @@
 	<span class="colors" aria-hidden="true">
 		{#each [1, 2, 3, 4, 5, 6] as color (color)}<span style:background="var(--ansi-{color})"></span>{/each}
 	</span>
-	<span class="name">{themeLabel()}</span>
+	<span class="name">More Ghostty themes</span>
 	<CaretRight />
 </button>
 <Dialog

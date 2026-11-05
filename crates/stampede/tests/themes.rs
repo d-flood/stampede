@@ -80,3 +80,51 @@ async fn themes_are_listed_saved_and_reloaded_without_rewriting_other_settings()
     assert_eq!(response.status(), 400);
     assert_eq!(fs::read_to_string(&config).unwrap(), invalid);
 }
+
+#[tokio::test]
+async fn stampede_themes_are_listed_and_resolve_while_catalog_themes_stay_intact() {
+    let server = Server::start("themes-own-").await;
+    let client = reqwest::Client::new();
+    let api = format!("http://127.0.0.1:{}/api", server.port);
+    let names: Vec<String> = serde_json::from_value(get(&client, &format!("{api}/themes")).await).unwrap();
+    for (name, background, accent) in [
+        ("Vellum", "#f2ede5", "#2f4e9e"),
+        ("Walnut", "#1e1915", "#93aaf0"),
+        ("Limestone", "#eff2f3", "#0c6a70"),
+        ("Shale", "#141a1f", "#6cc3be"),
+        ("Jet", "#000000", "#7fb2ff"),
+    ] {
+        assert!(names.iter().any(|listed| listed == name), "{name} is listed");
+        let theme = get(&client, &format!("{api}/themes/{name}")).await;
+        assert_eq!(theme["dark"]["name"], name);
+        assert_eq!(theme["dark"]["background"], background);
+        assert_eq!(theme["dark"]["palette"][4], accent);
+    }
+    let chalk = get(&client, &format!("{api}/themes/Chalk")).await;
+    assert_eq!(chalk["dark"]["background"], "#2b2d2e");
+    assert_eq!(chalk["dark"]["palette"][1], "#b23a52");
+}
+
+#[tokio::test]
+async fn a_missing_theme_defaults_to_limestone_and_jet_and_a_configured_one_is_kept() {
+    let original = "# no theme\nrig = []\n[editor]\nkeymap = 'vim'\n";
+    let mut server = Server::with_config("themes-default-", original).await;
+    let client = reqwest::Client::new();
+    let api = format!("http://127.0.0.1:{}/api", server.port);
+    let theme = get(&client, &format!("{api}/theme")).await;
+    assert_eq!(theme["light"]["name"], "Limestone");
+    assert_eq!(theme["light"]["background"], "#eff2f3");
+    assert_eq!(theme["dark"]["name"], "Jet");
+    assert_eq!(theme["dark"]["background"], "#000000");
+    let config = server.root.path().join("config.toml");
+    assert_eq!(fs::read_to_string(&config).unwrap(), original);
+
+    let configured = "theme = \"Chalk\"\nrig = []\n";
+    fs::write(&config, configured).unwrap();
+    server.restart().await;
+    let theme = get(&client, &format!("{api}/theme")).await;
+    assert_eq!(theme["name"], "Chalk");
+    assert_eq!(theme["light"]["background"], "#2b2d2e");
+    assert_eq!(theme["dark"]["background"], "#2b2d2e");
+    assert_eq!(fs::read_to_string(&config).unwrap(), configured);
+}

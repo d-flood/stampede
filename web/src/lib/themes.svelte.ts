@@ -3,9 +3,12 @@ import { isDark } from '#lib/scheme.svelte.ts';
 
 export type Slot = 'light' | 'dark';
 
+export const curated: Record<Slot, string[]> = { light: ['Vellum', 'Limestone'], dark: ['Walnut', 'Shale', 'Jet'] };
+
 const shortlist: Record<Slot, string[]> = {
-	light: ['3024 Day', 'Bluloco Light', 'Dawnfox', 'Dayfox', 'Havn Daggry', 'Monokai Pro Light', 'Spring', 'Zenbones Light'],
+	light: [...curated.light, '3024 Day', 'Bluloco Light', 'Dawnfox', 'Dayfox', 'Havn Daggry', 'Monokai Pro Light', 'Spring', 'Zenbones Light'],
 	dark: [
+		...curated.dark,
 		'0x96f',
 		'Horizon',
 		'Lab Fox',
@@ -52,7 +55,8 @@ export class ThemeChoice {
 	// Getters rather than $derived: a choice outlives the picker that creates it, and Svelte freezes deriveds whose owning effect is destroyed.
 	get matches() {
 		const query = this.query.toLowerCase().trim();
-		return this.names.filter((name) => (this.all || shortlist[this.scheme].includes(name)) && name.toLowerCase().includes(query));
+		const names = this.all ? this.names : shortlist[this.scheme].filter((name) => this.names.includes(name));
+		return names.filter((name) => name.toLowerCase().includes(query));
 	}
 
 	get candidate() {
