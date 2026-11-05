@@ -318,6 +318,14 @@ impl Subagent {
         self.outcome = outcome.or(self.outcome);
     }
 
+    fn resume(&mut self) {
+        self.status = Status::Working;
+        self.outcome = None;
+        self.report = None;
+        self.duration = None;
+        self.tools = None;
+    }
+
     fn item(&self) -> Item {
         let done = self.status == Status::Done;
         let report = self.items.iter().rev().find_map(|item| match item {
