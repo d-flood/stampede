@@ -65,7 +65,7 @@
 		padding: var(--space-3) var(--space-4);
 		border: var(--border-width) solid color-mix(in oklab, var(--tint) 35%, var(--border));
 		border-radius: var(--radius-lg);
-		background: color-mix(in oklab, var(--tint) 7%, var(--color-bg));
+		background: color-mix(in srgb, var(--tint) 7%, var(--color-bg));
 		font-family: var(--font-ui);
 	}
 

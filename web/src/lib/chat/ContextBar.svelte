@@ -62,7 +62,7 @@
 	}
 
 	.track {
-		stroke: var(--surface-3);
+		stroke: var(--border);
 	}
 
 	.fill {

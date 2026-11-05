@@ -25,7 +25,7 @@
 	}
 
 	.monogram {
-		background: color-mix(in oklab, var(--hue) 15%, transparent);
+		background: color-mix(in oklab, var(--hue) 15%, var(--tile-base, var(--surface-1)));
 		color: color-mix(in oklab, var(--hue), var(--color-fg) 30%);
 		font-weight: 700;
 	}

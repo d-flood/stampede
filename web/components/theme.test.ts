@@ -1,4 +1,8 @@
+import Notice from '#lib/chat/Notice.svelte';
+import type { Project } from '#lib/device.svelte.ts';
+import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
 import { afterEach, expect, test, vi } from 'vitest';
+import { render } from 'vitest-browser-svelte';
 
 vi.stubGlobal('fetch', () => new Promise(() => {}));
 const { applyTheme } = await import('#lib/config.svelte.ts');
@@ -64,30 +68,50 @@ function measure(name: string, { background, foreground, palette: colors }: Pars
 	};
 	applyTheme({ name, light: palette, dark: palette });
 	document.documentElement.dataset.scheme = scheme;
-	const probes = ['--color-bg', '--surface-1'].map((surface) => {
+	const probes = ['--color-bg', '--surface-1', '--surface-2', '--surface-3'].map((surface) => {
 		const probe = document.createElement('p');
 		probe.textContent = 'Muted';
 		probe.style.cssText = `background: var(${surface}); color: var(--muted-fg)`;
 		document.body.append(probe);
 		return probe;
 	});
-	const [page, surface] = probes.map((probe) => rendered(getComputedStyle(probe).backgroundColor));
+	const [page, surface, ...rest] = probes.map((probe) => rendered(getComputedStyle(probe).backgroundColor));
+	const steps = [surface, ...rest].map((color) => Math.max(...color.map((channel, i) => Math.abs(channel - page[i]))));
 	const muted = rendered(getComputedStyle(probes[0]).color);
 	probes.forEach((probe) => probe.remove());
-	return { page, surface, muted };
+	return { page, surface, muted, steps };
 }
 
 for (const [name, parsed] of Object.entries(palettes)) {
 	for (const scheme of ['light', 'dark'] as const) {
 		test(`${name} muted text reads at 4.5:1 on the background and first surface in ${scheme}`, () => {
-			const { page, surface, muted } = measure(name, parsed, scheme);
+			const { page, surface, muted, steps } = measure(name, parsed, scheme);
 			expect(page).toEqual(rendered(parsed.background));
-			expect(surface).not.toEqual(page);
+			expect(steps.at(-1)).toBeGreaterThan(0);
 			expect(contrast(muted, page)).toBeGreaterThanOrEqual(4.5);
 			expect(contrast(muted, surface)).toBeGreaterThanOrEqual(4.5);
 		});
 	}
 }
+
+test('Jet keeps its surfaces near black', () => {
+	expect(Math.max(...measure('Jet', palettes.Jet, 'dark').steps)).toBeLessThanOrEqual(8);
+});
+
+test('a monogram tile stays dark on a pure black background', async () => {
+	measure('Jet', palettes.Jet, 'dark');
+	const view = await render(ProjectIcon, { project: { path: '/alpha' } as Project });
+	const tile = view.container.querySelector<HTMLElement>('.monogram')!;
+	tile.style.setProperty('--hue', 'var(--ansi-2)');
+	expect(Math.max(...rendered(getComputedStyle(tile).backgroundColor))).toBeLessThanOrEqual(0x12);
+});
+
+test('a Notice tint stays visible on a pure black background', async () => {
+	measure('Jet', palettes.Jet, 'dark');
+	const view = await render(Notice, { item: { kind: 'notice', notice: 'error', text: 'Failed.' }, agent: 'codex' });
+	const background = rendered(getComputedStyle(view.container.querySelector('.card')!).backgroundColor);
+	expect(Math.max(...background)).toBeGreaterThanOrEqual(0x10);
+});
 
 for (const scheme of ['light', 'dark'] as const) {
 	test(`every catalog theme's muted text reads at 4.5:1 on the background and first surface in ${scheme}`, () => {

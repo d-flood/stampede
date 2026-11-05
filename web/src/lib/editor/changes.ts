@@ -169,7 +169,7 @@ const style = EditorView.theme({
 		alignSelf: 'stretch',
 		margin: 0,
 		padding: '0 2px 0 6px',
-		background: 'color-mix(in oklab, var(--git-deleted) 14%, var(--color-bg))',
+		background: 'color-mix(in srgb, var(--git-deleted) 14%, var(--color-bg))',
 		font: 'inherit'
 	},
 	'.cm-changeOriginal button': {

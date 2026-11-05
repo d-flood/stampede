@@ -305,7 +305,7 @@
 		gap: var(--space-1);
 		padding: var(--space-2) var(--space-3);
 		border-bottom: var(--border-width) solid var(--border);
-		background: color-mix(in oklab, var(--status-waiting) 16%, var(--color-bg));
+		background: color-mix(in srgb, var(--status-waiting) 16%, var(--color-bg));
 	}
 
 	.message {

@@ -62,6 +62,6 @@
 
 	[aria-pressed='true'] span {
 		border-color: var(--accent);
-		background: var(--surface-3);
+		background: var(--border);
 	}
 </style>

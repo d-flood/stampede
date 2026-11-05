@@ -68,7 +68,7 @@
 	}
 
 	.card {
-		--card-surface: color-mix(in lab, var(--card-bg) 96%, var(--card-fg));
+		--card-surface: color-mix(in oklab, var(--card-bg) 96%, var(--card-fg));
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
@@ -121,7 +121,7 @@
 		width: 46%;
 		height: 14px;
 		border-radius: 6px 6px 2px 6px;
-		background: color-mix(in lab, var(--card-bg) 88%, var(--card-fg));
+		background: color-mix(in oklab, var(--card-bg) 88%, var(--card-fg));
 	}
 
 	.mini .prose {

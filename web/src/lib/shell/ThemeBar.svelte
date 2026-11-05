@@ -92,7 +92,7 @@
 	}
 
 	.schemes :global([aria-pressed='true']) {
-		background: var(--surface-3);
+		background: var(--border);
 		color: var(--color-fg);
 	}
 

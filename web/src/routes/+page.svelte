@@ -1999,7 +1999,7 @@
 		padding: var(--space-2) var(--space-3);
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg);
-		background: color-mix(in oklab, var(--status-waiting) 16%, var(--color-bg));
+		background: color-mix(in srgb, var(--status-waiting) 16%, var(--color-bg));
 		box-shadow: var(--shadow-float);
 		translate: -50%;
 		max-width: calc(100vw - 2 * var(--space-2));

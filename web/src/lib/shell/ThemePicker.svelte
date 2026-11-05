@@ -130,7 +130,7 @@
 
 	.schemes button[aria-pressed='true'] {
 		border-color: var(--accent);
-		background: var(--surface-3);
+		background: var(--border);
 		color: var(--color-fg);
 	}
 

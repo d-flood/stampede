@@ -202,7 +202,7 @@
 		padding: 0 var(--space-3);
 		border-left: 2px solid var(--ansi-1);
 		border-radius: 0 var(--radius-md) var(--radius-md) 0;
-		background: color-mix(in oklab, var(--ansi-1) 8%, var(--color-bg));
+		background: color-mix(in srgb, var(--ansi-1) 8%, var(--color-bg));
 		font-size: var(--font-size-sm);
 	}
 

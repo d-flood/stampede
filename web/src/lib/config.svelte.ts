@@ -217,36 +217,6 @@ function hex(rgb: number[]): string {
 		.join('')}`;
 }
 
-const d50 = [0.96429567, 1, 0.8251046];
-const toXyz = [
-	[0.436065742824811, 0.3851514688337912, 0.14307845442264197],
-	[0.22249319175623702, 0.7168870538238823, 0.06061979053616537],
-	[0.013923904500943465, 0.09708128566574634, 0.7140993584005155]
-];
-const fromXyz = [
-	[3.1341359569958707, -1.6173863321612538, -0.4906619460083532],
-	[-0.978795502912089, 1.916254567259524, 0.03344273116131949],
-	[0.07195537988411677, -0.2289768264158322, 1.405386058324125]
-];
-
-function lab(hex: string): number[] {
-	const rgb = linear(hex);
-	const [x, y, z] = toXyz.map((row, i) => {
-		const t = row.reduce((sum, value, j) => sum + value * rgb[j], 0) / d50[i];
-		return t > 216 / 24389 ? Math.cbrt(t) : ((24389 / 27) * t + 16) / 116;
-	});
-	return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
-}
-
-// Matches CSS color-mix(in lab, a weight, b).
-function mixLab(a: string, b: string, weight: number): string {
-	const [x, y] = [lab(a), lab(b)];
-	const [L, A, B] = x.map((value, i) => value * weight + y[i] * (1 - weight));
-	const fy = (L + 16) / 116;
-	const xyz = [fy + A / 500, fy, fy - B / 200].map((f, i) => (f ** 3 > 216 / 24389 ? f ** 3 : (116 * f - 16) / (24389 / 27)) * d50[i]);
-	return hex(fromXyz.map((row) => row.reduce((sum, value, j) => sum + value * xyz[j], 0)));
-}
-
 function contrast(a: string, b: string): number {
 	const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
 	return (light + 0.05) / (dark + 0.05);
@@ -260,7 +230,7 @@ function editorSelection({ foreground, background, selectionBackground }: Palett
 }
 
 function mutedText({ foreground, background }: Palette): string {
-	const surface = mixLab(background, foreground, 0.96);
+	const surface = mix(background, foreground, 0.96);
 	const readable = (color: string) => contrast(color, background) >= 4.5 && contrast(color, surface) >= 4.5;
 	for (let percent = 60; percent < 100; percent++) {
 		const muted = mix(foreground, background, percent / 100);

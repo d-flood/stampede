@@ -51,7 +51,7 @@
 	}
 
 	button:hover:not(:disabled) {
-		background: linear-gradient(color-mix(in oklab, var(--surface-3), var(--color-fg) 3%), var(--surface-3));
+		background: linear-gradient(color-mix(in oklab, var(--border), var(--color-fg) 3%), var(--border));
 	}
 
 	button:active:not(:disabled) {

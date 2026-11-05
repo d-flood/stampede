@@ -30,7 +30,7 @@ const chrome = EditorView.theme({
 	'.cm-searchMatch.cm-searchMatch-selected': {
 		backgroundColor: 'color-mix(in oklab, var(--status-waiting) 55%, transparent)'
 	},
-	'.cm-selectionMatch': { backgroundColor: 'var(--surface-3)' },
+	'.cm-selectionMatch': { backgroundColor: 'var(--border)' },
 	'.cm-panels': { backgroundColor: 'var(--surface-1)', color: 'var(--color-fg)' },
 	'.cm-panels-top': { borderBottom: 'var(--border-width) solid var(--border)' },
 	'.cm-panels-bottom': { borderTop: 'var(--border-width) solid var(--border)' },

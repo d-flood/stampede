@@ -206,11 +206,13 @@
 	}
 
 	.project:hover {
+		--tile-base: var(--hover);
 		background: var(--hover);
 		color: var(--color-fg);
 	}
 
 	.project.focused {
+		--tile-base: var(--surface-3);
 		border-color: color-mix(in oklab, var(--color-fg) 38%, var(--color-bg));
 		background: var(--surface-3);
 		color: var(--color-fg);
@@ -270,6 +272,7 @@
 	}
 
 	.card .square {
+		--tile-base: var(--surface-3);
 		width: var(--square);
 		height: var(--square);
 		background: var(--surface-3);

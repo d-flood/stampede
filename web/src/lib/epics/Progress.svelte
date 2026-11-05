@@ -28,7 +28,7 @@
 		height: 4px;
 		overflow: hidden;
 		border-radius: 2px;
-		background: var(--surface-3);
+		background: var(--border);
 	}
 
 	.segmented {
@@ -41,6 +41,6 @@
 	.segmented span {
 		flex: 1;
 		border-radius: 2px;
-		background: var(--surface-3);
+		background: var(--border);
 	}
 </style>

@@ -16,7 +16,7 @@
 		height: 1.6em;
 		padding: 0 var(--space-1);
 		border-radius: 0.8em;
-		background: var(--surface-3);
+		background: var(--border);
 		color: var(--color-fg);
 		font-size: var(--font-size-sm);
 		font-variant-numeric: tabular-nums;
