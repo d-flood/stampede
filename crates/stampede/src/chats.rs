@@ -732,7 +732,6 @@ pub enum Builtin {
     Ultracode(String),
     Mode(String),
     Compact,
-    Clear,
     Rewind(usize),
 }
 
@@ -1748,7 +1747,7 @@ impl Chats {
 
     pub fn run(&self, id: &str, builtin: Builtin) {
         if let Some(entry) = self.get(id) {
-            if matches!(builtin, Builtin::Rewind(_) | Builtin::Clear | Builtin::Compact)
+            if matches!(builtin, Builtin::Rewind(_) | Builtin::Compact)
                 && entry.chat.lock().unwrap().status != Status::Done { return; }
             if matches!(builtin, Builtin::Rewind(_)) {
                 if !entry.chat.lock().unwrap().queued.is_empty() { return; }

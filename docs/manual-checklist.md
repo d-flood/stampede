@@ -67,7 +67,7 @@ Use a throwaway Project and repeat each applicable item with Claude Code and Cod
 - [ ] Remove an attachment before sending.
 - [ ] An image larger than 5 MB is refused with a message.
 - [ ] `/model`, `/effort`, `/speed`, `/ultracode` and `/mode` update their chips and take effect.
-- [ ] `/compact` reduces context fill; `/clear` starts a fresh conversation in the same Tab.
+- [ ] `/compact` reduces context fill; `/clear` is not offered and is refused when typed.
 - [ ] An edit card opens its file in the Diff tab.
 - [ ] Claude `/rewind` restores an Edit/Write change and removes the chosen prompt and later transcript; Bash and subagent changes remain.
 - [ ] Codex `/rewind` removes the selected turn and later transcript, leaves files unchanged, and says so.

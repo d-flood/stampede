@@ -77,7 +77,6 @@ test('sending from the Composer while a card is up denies the request instead', 
 	await expect(card).toBeVisible();
 	await composer.fill('/');
 	const menu = panel.getByRole('region', { name: 'Commands' });
-	await expect(menu.getByRole('button', { name: /^\/clear/ })).toBeDisabled();
 	await expect(menu.getByRole('button', { name: /^\/compact/ })).toBeDisabled();
 	await composer.fill('/effort low');
 	await panel.getByRole('button', { name: 'Send' }).click();

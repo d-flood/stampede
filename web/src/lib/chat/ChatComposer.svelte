@@ -110,8 +110,13 @@
 			device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer: redirect(request, text) });
 			return true;
 		}
+		const typed = text.trim().match(/^\/(\w+)/)?.[1];
+		if (typed && ['clear', 'reset', 'new'].includes(typed) && !capabilities.commands.some(({ name }) => name === typed)) {
+			error = `/${typed} isn't available here. Open a new Chat instead.`;
+			return false;
+		}
 		const [, command, value] = text.trim().match(/^\/(\w+)(?: +(\S+))?$/) ?? [];
-		if (!images.length && (command === 'compact' || command === 'clear' || command === 'rewind')) {
+		if (!images.length && (command === 'compact' || command === 'rewind')) {
 			if (chat.status !== 'done' || value) return false;
 			onrun(command);
 			return true;

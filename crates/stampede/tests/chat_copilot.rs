@@ -382,7 +382,7 @@ async fn copilot_lists_models_and_saved_sessions() {
 }
 
 #[tokio::test]
-async fn copilot_settings_compaction_rewind_and_clear_use_sdk_operations() {
+async fn copilot_settings_compaction_and_rewind_use_sdk_operations() {
     let (server, mut socket, chat) = launch("simple-turn", "default").await;
     let id = chat["id"].as_str().unwrap();
     chat_turn(&mut socket, id, &chat["status"], "Hello").await;
@@ -410,12 +410,6 @@ async fn copilot_settings_compaction_rewind_and_clear_use_sdk_operations() {
             if message["status"] == "working" { working = true; } else if working && message["status"] == "done" { break; }
         }
     }).await.expect("the attach snapshot's status is not the end of the new turn");
-    let before: Value = serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{id}.json"))).unwrap()).unwrap();
-    control(&mut socket, json!({ "type": "chat.run", "chatId": id, "command": "clear" })).await;
-    timeout(Duration::from_secs(10), next_control(&mut socket, "chat.items")).await.unwrap();
-    assert_eq!(items(&mut socket, &chat).await["items"], json!([]));
-    let after: Value = serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{id}.json"))).unwrap()).unwrap();
-    assert_ne!(before["agentSession"], after["agentSession"]);
     close_chat(&mut socket, server.root.path(), id).await;
 }
 

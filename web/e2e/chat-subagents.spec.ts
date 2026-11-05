@@ -80,6 +80,25 @@ for (const agent of ['claude', 'codex']) {
 	});
 }
 
+test('a forked skill is a Subagent you can open while it works', { tag: '@desktop' }, async ({ page }, { project }) => {
+	const root = process.env.STAMPEDE_E2E_ROOT!;
+	const gates = `${root}/forked-${project.name}`;
+	const name = `forked-skill-${project.name}`;
+	mkdirSync(`${root}/projects/${name}`);
+	await openProject(page, name);
+	await newTab(page, `Fake Claude Forked ${project.name}`);
+	const panel = page.locator('.panel[role="tabpanel"]:visible');
+	await panel.getByRole('textbox', { name: 'Composer' }).fill('Run forky');
+	await panel.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect.poll(() => existsSync(`${gates}/forked`)).toBe(true);
+	await expect(panel.locator('button.spawn')).toContainText('/forky');
+	await panel.locator('button.spawn').click();
+	await expect(panel.locator('.transcript:visible .calls')).toContainText('echo one');
+	await expect(panel.getByRole('region', { name: 'Report' })).toHaveCount(0);
+	unlinkSync(`${gates}/forked`);
+	await expect(panel.getByRole('region', { name: 'Report' })).toContainText('forky finished.');
+});
+
 test('the Tray counts Subagents with colored dots, surfaces waiting ones and keeps every one reachable', async ({ page }, { project }) => {
 	let route: WebSocketRoute;
 	let chatId: string;

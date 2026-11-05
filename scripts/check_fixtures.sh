@@ -73,7 +73,7 @@ env = { STAMPEDE_FAKE_FIXTURE = "approval", CODEX_HOME = "$STAMPEDE_E2E_ROOT/cod
 EOF
 
 for form in desktop pixel; do
-mkdir "$STAMPEDE_E2E_ROOT/subagent-$form" "$STAMPEDE_E2E_ROOT/gated-$form"
+mkdir "$STAMPEDE_E2E_ROOT/subagent-$form" "$STAMPEDE_E2E_ROOT/gated-$form" "$STAMPEDE_E2E_ROOT/forked-$form"
 cat >> "$STAMPEDE_E2E_ROOT/config.toml" <<EOF
 
 [[rig]]
@@ -85,6 +85,11 @@ env = { STAMPEDE_FAKE_FIXTURE = "$PWD/crates/stampede/tests/fixtures/chats/claud
 name = "Fake Claude Subagent $form"
 agent = "claude-code"
 env = { STAMPEDE_FAKE_FIXTURE = "subagents", STAMPEDE_FAKE_GATES = "$STAMPEDE_E2E_ROOT/subagent-$form", CLAUDE_CONFIG_DIR = "$STAMPEDE_E2E_ROOT/claude" }
+
+[[rig]]
+name = "Fake Claude Forked $form"
+agent = "claude-code"
+env = { STAMPEDE_FAKE_FIXTURE = "$PWD/crates/stampede/tests/fixtures/chats/claude-code/forked-skill.synthetic.jsonl", STAMPEDE_FAKE_GATES = "$STAMPEDE_E2E_ROOT/forked-$form", CLAUDE_CONFIG_DIR = "$STAMPEDE_E2E_ROOT/claude" }
 
 [[rig]]
 name = "Fake Codex Subagent $form"

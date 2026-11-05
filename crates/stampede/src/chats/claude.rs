@@ -56,7 +56,7 @@ const DENIED: &str = "The user denied this request.";
 
 const MANAGEMENT: &[&str] = &[
     "mcp", "hooks", "memory", "permissions", "plugin", "plugins", "statusline", "theme", "export", "add-dir",
-    "agents", "login", "logout", "config", "heapdump", "fast",
+    "agents", "login", "logout", "config", "heapdump", "fast", "clear",
 ];
 
 pub fn speeds(model: &Value) -> Vec<Choice> {
@@ -301,8 +301,11 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
     let (commands, mut pending) = mpsc::unbounded_channel();
     let (progress, mut progressed) = mpsc::unbounded_channel();
     tokio::spawn(async move {
+        let mut tails = tokio::time::interval(TAIL_INTERVAL);
+        tails.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
+                _ = tails.tick(), if transcript.following() => transcript.follow(),
                 command = pending.recv() => match command {
                     Some(Command::Send(text, images)) => {
                         let text = match transcript.take_shell_context() {
@@ -598,10 +601,6 @@ async fn send(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, text: &s
 async fn run(writer: &mut OwnedWriteHalf, transcript: &mut Transcript, builtin: Builtin) -> io::Result<()> {
     let (setting, request, value) = match builtin {
         Builtin::Compact => return send(writer, transcript, "/compact", &[]).await,
-        Builtin::Clear => {
-            transcript.take_shell_context();
-            return send(writer, transcript, "/clear", &[]).await;
-        }
         Builtin::Rewind(_) => return Ok(()),
         Builtin::Model(model) => {
             if transcript.settings.chosen.speed.as_deref() == Some("fast") && !transcript.supports_fast(&model) {
@@ -811,12 +810,13 @@ struct Only(&'static [&'static str]);
 const ENTRY: Only = Only(&[
     "type", "subtype", "uuid", "isSidechain", "isMeta", "isCompactSummary", "promptSource", "renderedRole", "message", "attachment",
     "toolUseResult", "thinkingDurationMs", "error", "timestamp", "usage", "task_id", "tool_use_id", "status", "patch", "summary",
+    "promptId", "content",
 ]);
 
 const RESULT: Only = Only(&[
     "type", "content", "structuredPatch", "original_file", "updated_file", "filePath", "notebook_path", "answers", "questions",
     "task_type", "task_id", "task", "agentId", "resolvedModel", "isAsync", "status", "totalDurationMs", "totalToolUseCount",
-    "totalTokens", "backgroundTaskId", "resumedAgentId",
+    "totalTokens", "backgroundTaskId", "resumedAgentId", "result", "commandName", "background", "transcriptDir", "workflowName", "summary",
 ]);
 
 fn entry(line: &str) -> Option<Value> {
@@ -1035,6 +1035,103 @@ struct Transcript {
     recheck_ultracode: bool,
     fast_refused: bool,
     workflows: HashSet<String>,
+    tail: Option<Tail>,
+    journal: Option<Tail>,
+    /// Its messages have come from the stream or from history, so its session file would only repeat them.
+    fed: bool,
+    span: Option<(u64, u64)>,
+    skills: HashMap<String, String>,
+    command: Option<(String, String)>,
+    agents: Option<(String, PathBuf)>,
+    outputs: HashSet<String>,
+}
+
+/// A finished agent's last entries may still be on their way to its session file.
+const TAIL_IDLE_TICKS: u8 = 2;
+const TAIL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const AGENT_TASKS: [&str; 6] = ["local_agent", "remote_agent", "in_process_teammate", "local_workflow", "auto_mode_scan", "local_memory_import"];
+
+struct Tail {
+    path: PathBuf,
+    read: u64,
+    idle: u8,
+}
+
+impl Tail {
+    fn new(path: PathBuf) -> Self {
+        Self { path, read: 0, idle: 0 }
+    }
+
+    fn lines(&mut self, finished: bool) -> Vec<String> {
+        let mut bytes = Vec::new();
+        let added = File::open(&self.path).and_then(|mut file| {
+            file.seek(SeekFrom::Start(self.read))?;
+            file.read_to_end(&mut bytes)
+        });
+        let end = added.ok().and(bytes.iter().rposition(|byte| *byte == b'\n')).map_or(0, |last| last + 1);
+        self.read += end as u64;
+        self.idle = if end > 0 { 0 } else if finished { self.idle.saturating_add(1) } else { self.idle };
+        String::from_utf8_lossy(&bytes[..end]).lines().map(str::to_owned).collect()
+    }
+
+    fn open(&self) -> bool {
+        self.idle < TAIL_IDLE_TICKS
+    }
+}
+
+fn timed(subagent: &mut Subagent, transcript: &Transcript) {
+    if let Some((first, last)) = transcript.span {
+        subagent.started_at = first;
+        subagent.duration = Some(last.saturating_sub(first));
+    }
+}
+
+fn agent_model(subagent: &mut Subagent, entry: &Value) {
+    if subagent.model.is_none() {
+        subagent.model = entry["message"]["model"].as_str().filter(|model| *model != "<synthetic>").map(str::to_owned);
+    }
+}
+
+fn agent_prompt(entry: &Value) -> Option<&str> {
+    if entry["type"] != "user" { return None; }
+    let content = &entry["message"]["content"];
+    content.as_str().or_else(|| content[0]["text"].as_str())
+}
+
+fn replay_agent(subagent: &mut Subagent, transcript: &mut Transcript, history: &Path, path: &Path) {
+    transcript.history = Some(history.to_owned());
+    transcript.fed = true;
+    for entry in File::open(path).into_iter().flat_map(lines).filter_map(|line| entry(&line)) {
+        if subagent.prompt.is_none() { subagent.prompt = agent_prompt(&entry).map(str::to_owned); }
+        agent_model(subagent, &entry);
+        transcript.saw(&entry);
+        transcript.nested(&entry, &entry["toolUseResult"]);
+    }
+    transcript.history = None;
+}
+
+/// A typed forked command is tied to its session file only by the prompt it ran under, which any agent it spawned shares.
+fn forked_agent(history: &Path, prompt: &str) -> Option<String> {
+    let forked = |file: fs::DirEntry| {
+        let name = file.file_name().into_string().ok()?;
+        let agent = name.strip_prefix("agent-")?.strip_suffix(".jsonl")?.to_owned();
+        let meta: Value = serde_json::from_slice(&fs::read(file.path().with_extension("meta.json")).ok()?).ok()?;
+        if meta.get("toolUseId").is_some() || meta.get("parentAgentId").is_some() { return None; }
+        let first: Value = serde_json::from_str(&lines(File::open(file.path()).ok()?).next()?).ok()?;
+        (first["promptId"] == prompt).then_some(agent)
+    };
+    fs::read_dir(history.with_extension("").join("subagents")).ok()?.flatten().find_map(forked)
+}
+
+/// An agent spawned by another records no agent id with its result, only its tool call in its own metadata.
+fn spawned_agent(history: &Path, tool: &str) -> Option<String> {
+    let spawned = |file: fs::DirEntry| {
+        let name = file.file_name().into_string().ok()?;
+        let agent = name.strip_prefix("agent-")?.strip_suffix(".meta.json")?.to_owned();
+        let meta: Value = serde_json::from_slice(&fs::read(file.path()).ok()?).ok()?;
+        (meta["toolUseId"] == tool).then_some(agent)
+    };
+    fs::read_dir(history.with_extension("").join("subagents")).ok()?.flatten().find_map(spawned)
 }
 
 enum Asked {
@@ -1093,6 +1190,14 @@ impl Transcript {
             steering: HashSet::new(),
             asked: HashMap::new(),
             models: Vec::new(),
+            tail: None,
+            journal: None,
+            fed: false,
+            span: None,
+            skills: HashMap::new(),
+            command: None,
+            agents: None,
+            outputs: HashSet::new(),
             slash_commands: Vec::new(),
             settings: Settings::default(),
             applied: AgentSettings::default(),
@@ -1451,12 +1556,19 @@ impl Transcript {
         }
         match entry["type"].as_str() {
             Some("system") if entry["subtype"] == "compact_boundary" => self.compacted = true,
+            Some("system") if entry["subtype"] == "local_command" => {
+                self.recorded_fork();
+                self.local_output(&entry["content"], &entry["uuid"]);
+            }
             Some("user") if entry["promptSource"] != "system" => match entry["message"]["content"].as_str() {
                 Some(content) => {
                     let (parts, typed) = shell::parse(content);
                     let shelled = !parts.is_empty();
                     self.shells(parts);
                     if let Some(text) = prompt(typed).filter(|text| !shelled || !text.is_empty()) {
+                        if let Some(id) = entry["promptId"].as_str().filter(|_| text.starts_with('/')) {
+                            self.command = Some((text.clone(), id.to_owned()));
+                        }
                         self.last_input = Some(entry["message"]["content"].clone());
                         self.checkpoint(entry);
                         self.push(Item::User { text, images: 0, image_urls: Vec::new(), template: None, rewind_from: None });
@@ -1488,6 +1600,195 @@ impl Transcript {
                 self.assistant(entry, &entry["thinkingDurationMs"], false);
             }
             _ => {}
+        }
+    }
+
+    fn recorded_fork(&mut self) {
+        let (Some((command, prompt)), Some(history)) = (self.command.take(), self.history.clone()) else { return };
+        let Some(agent) = forked_agent(&history, &prompt) else { return };
+        let task = command.split_whitespace().next().unwrap_or(&command).to_owned();
+        let (mut subagent, events) = Subagent::new(&agent, task, super::now());
+        subagent.index = self.push(subagent.item());
+        let mut transcript = Transcript::new(events, &self.cwd);
+        let path = history.with_extension("").join("subagents").join(format!("agent-{agent}.jsonl"));
+        replay_agent(&mut subagent, &mut transcript, &history, &path);
+        subagent.update();
+        subagent.finish(Some(Outcome::Completed));
+        timed(&mut subagent, &transcript);
+        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+        self.tasks.insert(agent.clone(), agent.clone());
+        self.subagents.insert(agent, (subagent, transcript));
+    }
+
+    /// Compacting repeats the output of earlier commands under their original uuids.
+    fn local_output(&mut self, output: &Value, uuid: &Value) {
+        let text = output.as_str().and_then(|output| tagged(output, "local-command-stdout").or_else(|| tagged(output, "local-command-stderr")));
+        let Some(text) = text.filter(|text| !text.is_empty()) else { return };
+        if uuid.as_str().is_some_and(|uuid| !self.outputs.insert(uuid.to_owned())) { return; }
+        self.push(Item::Text { text: text.to_owned(), streaming: false, phase: Phase::Final });
+    }
+
+    /// A forked skill makes no Agent call, and a typed one no tool call at all, so its task is the first sign of it.
+    fn task_started(&mut self, message: &Value) {
+        let Some(task) = message["task_id"].as_str() else { return };
+        let id = message["tool_use_id"].as_str().unwrap_or(task);
+        if message["parent_task_id"].is_null()
+            && AGENT_TASKS.contains(&message["task_type"].as_str().unwrap_or_default())
+            && !self.tasks.contains_key(task)
+            && !self.subagents.contains_key(id)
+            && !self.issued.contains_key(id)
+        {
+            self.fork(id, message["description"].as_str().unwrap_or("Subagent").to_owned());
+            if id != task && !self.replaying { self.activity.start(id, format!("Running {}", self.subagents[id].0.task), &self.events); }
+            if let Some((subagent, _)) = self.subagents.get_mut(id) {
+                subagent.prompt = message["prompt"].as_str().map(str::to_owned);
+                subagent.name = message["subagent_type"].as_str().filter(|kind| *kind != "general-purpose").map(str::to_owned);
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
+        }
+        // SendMessage restarts a task under its own tool use, but the run still belongs to the original Agent call.
+        self.tasks.entry(task.to_owned()).or_insert_with(|| id.to_owned());
+        if message["task_type"] == "local_workflow"
+            && let Some((subagent, _)) = self.subagents.get_mut(id)
+        {
+            self.workflows.insert(id.to_owned());
+            subagent.name = message["workflow_name"].as_str().map(str::to_owned);
+            if let Some(description) = message["description"].as_str() { subagent.task = description.to_owned(); }
+            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+        }
+    }
+
+    fn fork(&mut self, id: &str, task: String) {
+        let (mut subagent, events) = Subagent::new(id, task, super::now());
+        let call = self.tools.as_ref().and_then(|(_, calls)| calls.iter().rposition(|call| call.name == "Skill"));
+        subagent.index = match (call, self.tools.as_mut()) {
+            (Some(call), Some((index, calls))) => {
+                calls.remove(call);
+                let (index, calls) = (*index, calls.clone());
+                if calls.is_empty() {
+                    self.tools = None;
+                    let _ = self.events.send(Event::Item(index, subagent.item()));
+                    index
+                } else {
+                    let _ = self.events.send(Event::Item(index, Item::Tools { calls }));
+                    self.push(subagent.item())
+                }
+            }
+            _ => self.push(subagent.item()),
+        };
+        self.subagents.insert(id.to_owned(), (subagent, Transcript::new(events, &self.cwd)));
+    }
+
+    fn saw(&mut self, entry: &Value) {
+        if let Some(at) = entry["timestamp"].as_str().and_then(super::epoch_ms) {
+            self.span = Some((self.span.map_or(at, |(first, _)| first), at));
+        }
+    }
+
+    fn following(&self) -> bool {
+        self.subagents.values().any(|(subagent, transcript)| {
+            subagent.status != Status::Done
+                || transcript.tail.as_ref().is_some_and(Tail::open)
+                || transcript.journal.as_ref().is_some_and(Tail::open)
+                || transcript.following()
+        })
+    }
+
+    /// The stream carries only the main conversation's own agents, so the rest are read from their session files.
+    fn follow(&mut self) {
+        let (Some(location), Some(session)) = (&self.location, &self.session) else { return };
+        if self.agents.as_ref().is_none_or(|(known, _)| known != session)
+            && let Some(file) = session_file(&location.env, session)
+        {
+            self.agents = Some((session.clone(), file.with_extension("").join("subagents")));
+        }
+        if let Some((_, directory)) = self.agents.clone() {
+            let tasks: HashMap<String, String> = self.tasks.iter().map(|(task, tool)| (tool.clone(), task.clone())).collect();
+            self.attach(&directory, &tasks, false);
+        }
+        self.read_followed();
+    }
+
+    fn attach(&mut self, directory: &Path, tasks: &HashMap<String, String>, nested: bool) {
+        if nested {
+            let forks: Vec<_> = self.skills.iter().filter(|(id, _)| tasks.contains_key(*id)).map(|(id, skill)| (id.clone(), skill.clone())).collect();
+            for (id, skill) in forks {
+                self.skills.remove(&id);
+                self.fork(&id, format!("/{skill}"));
+            }
+        }
+        for (id, (_, transcript)) in &mut self.subagents {
+            if transcript.tail.is_none() && !transcript.fed
+                && let Some(task) = tasks.get(id).filter(|task| nested || *task == id)
+            {
+                transcript.tail = Some(Tail::new(directory.join(format!("agent-{task}.jsonl"))));
+            }
+            transcript.attach(directory, tasks, true);
+        }
+    }
+
+    fn read_followed(&mut self) {
+        for (subagent, transcript) in self.subagents.values_mut() {
+            transcript.read_own(subagent);
+            transcript.read_followed();
+            if subagent.update() {
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
+        }
+    }
+
+    fn read_own(&mut self, subagent: &mut Subagent) {
+        let finished = subagent.status == Status::Done;
+        if let Some(mut tail) = self.tail.take() {
+            for entry in tail.lines(finished).iter().filter_map(|line| entry(line)) {
+                self.saw(&entry);
+                if subagent.prompt.is_none() { subagent.prompt = agent_prompt(&entry).map(str::to_owned); }
+                agent_model(subagent, &entry);
+                self.nested(&entry, &entry["toolUseResult"]);
+            }
+            self.tail = Some(tail);
+        }
+        if let Some(mut journal) = self.journal.take() {
+            for line in journal.lines(finished) {
+                if let (Ok(entry), Some(directory)) = (serde_json::from_str::<Value>(&line), journal.path.parent()) {
+                    self.journaled(&entry, directory);
+                }
+            }
+            self.journal = Some(journal);
+        }
+    }
+
+    fn journaled(&mut self, entry: &Value, directory: &Path) {
+        let Some(agent) = entry["agentId"].as_str().filter(|agent| !agent.is_empty()) else { return };
+        let path = directory.join(format!("agent-{agent}.jsonl"));
+        match entry["type"].as_str() {
+            Some("started") if !self.subagents.contains_key(agent) => {
+                let label = entry["label"].as_str().unwrap_or("Agent").to_owned();
+                let (mut subagent, events) = Subagent::new(agent, label, super::now());
+                subagent.name = entry["phase"].as_str().map(str::to_owned);
+                subagent.index = self.push(subagent.item());
+                let mut transcript = Transcript::new(events, &self.cwd);
+                transcript.tail = Some(Tail::new(path));
+                self.subagents.insert(agent.to_owned(), (subagent, transcript));
+            }
+            Some(kind @ ("result" | "failed")) => {
+                let Some((subagent, transcript)) = self.subagents.get_mut(agent) else { return };
+                transcript.read_own(subagent);
+                subagent.update();
+                subagent.finish(Some(if kind == "result" { Outcome::Completed } else { Outcome::Failed }));
+                timed(subagent, transcript);
+                let report = entry["result"].as_str().map(str::to_owned).or_else(|| entry.get("result").map(Value::to_string));
+                reported(subagent, report.as_deref(), [None; 3]);
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
+            _ => {}
+        }
+    }
+
+    fn settle(&mut self, outcome: Outcome) {
+        for (subagent, _) in self.subagents.values_mut().filter(|(subagent, _)| subagent.status != Status::Done) {
+            subagent.finish(Some(outcome));
+            let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
         }
     }
 
@@ -1599,20 +1900,7 @@ impl Transcript {
         self.task_notification(message);
         let top = message["parent_tool_use_id"].is_null();
         match message["type"].as_str() {
-            Some("system") if message["subtype"] == "task_started" => {
-                if let (Some(task), Some(tool)) = (message["task_id"].as_str(), message["tool_use_id"].as_str()) {
-                    // SendMessage restarts a task under its own tool use, but the run still belongs to the original Agent call.
-                    self.tasks.entry(task.to_owned()).or_insert_with(|| tool.to_owned());
-                    if message["task_type"] == "local_workflow"
-                        && let Some((subagent, _)) = self.subagents.get_mut(tool)
-                    {
-                        self.workflows.insert(tool.to_owned());
-                        subagent.name = message["workflow_name"].as_str().map(str::to_owned);
-                        if let Some(description) = message["description"].as_str() { subagent.task = description.to_owned(); }
-                        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
-                    }
-                }
-            }
+            Some("system") if message["subtype"] == "task_started" => self.task_started(message),
             Some("system") if message["subtype"] == "task_progress" => {
                 if let Some(tool) = message["tool_use_id"].as_str().filter(|tool| self.workflows.contains(*tool))
                     && let Some((subagent, _)) = self.subagents.get_mut(tool)
@@ -1664,6 +1952,7 @@ impl Transcript {
                 }
                 self.stream(&message["event"])
             }
+            Some("assistant") if top && message["local_command_source"].is_string() => self.local_output(&message["local_command_source"], &message["uuid"]),
             Some("assistant") if top => self.assistant(message, &message["thinking_duration_ms"], true),
             Some("user") if top => self.results(&message["message"]["content"], &message["tool_use_result"]),
             Some("assistant" | "user" | "stream_event") => {
@@ -1739,6 +2028,8 @@ impl Transcript {
                 self.todos.clear();
                 self.creating.clear();
                 self.tasks.clear();
+                self.skills.clear();
+                self.agents = None;
                 self.todos_held = false;
                 self.pending.clear();
                 self.checkpoints.clear();
@@ -1754,6 +2045,9 @@ impl Transcript {
     fn route(&mut self, parent: &str, message: &Value) -> bool {
         for (id, (subagent, transcript)) in &mut self.subagents {
             if id == parent {
+                transcript.fed = true;
+                transcript.saw(message);
+                agent_model(subagent, message);
                 transcript.nested(message, &message["tool_use_result"]);
             } else if !transcript.route(parent, message) {
                 continue;
@@ -1769,6 +2063,8 @@ impl Transcript {
     fn task_notification(&mut self, message: &Value) {
         match message["type"].as_str() {
             Some("system") if message["subtype"] == "task_updated" || message["subtype"] == "task_notification" => {
+                // An agent can finish before the next tick has found it.
+                if self.history.is_none() { self.follow(); }
                 let usage = &message["usage"];
                 self.task_status(
                     message["task_id"].as_str(),
@@ -1822,10 +2118,16 @@ impl Transcript {
         let tool = tool.filter(|tool| self.subagents.contains_key(*tool) || self.commands.contains_key(*tool))
             .or_else(|| task.and_then(|task| self.tasks.get(task).map(String::as_str))).map(str::to_owned);
         if let Some(outcome) = outcome(status) {
-            if let Some((subagent, _)) = tool.as_ref().and_then(|tool| self.subagents.get_mut(tool)) {
+            if let Some((subagent, transcript)) = tool.as_ref().and_then(|tool| self.subagents.get_mut(tool)) {
                 subagent.finish(Some(outcome));
-                // A resumed run's notification only says where its report went; the report itself is in its items.
-                reported(subagent, report.filter(|_| !resumed), totals);
+                if task == tool.as_deref() { timed(subagent, transcript); }
+                if transcript.journal.is_some() {
+                    transcript.settle(outcome);
+                    subagent.update();
+                }
+                // A resumed run's notification only says where its report went, and a forked skill's repeats its command.
+                let report = report.filter(|report| !resumed && *report != subagent.task);
+                reported(subagent, report, totals);
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
             if let Some((index, command, output)) = tool.as_ref().and_then(|tool| self.commands.remove(tool)) {
@@ -1985,6 +2287,10 @@ impl Transcript {
                 subagent.index = self.push(subagent.item());
                 self.subagents.insert(id.to_owned(), (subagent, Transcript::new(events, &self.cwd)));
             }
+            "Skill" => {
+                self.skills.insert(id.to_owned(), text("skill"));
+                self.call(ToolKind::Other, name, input.to_string());
+            }
             "TodoWrite" => {
                 let todos = input["todos"].as_array().into_iter().flatten().map(|todo| {
                     let text = todo["content"].as_str().unwrap_or_default().to_owned();
@@ -2082,25 +2388,40 @@ impl Transcript {
                 if !self.replaying && self.history.is_none() { subagent.started_at = super::now(); }
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
             }
+            self.skills.remove(id);
+            let forked = result["status"] == "forked";
+            if forked && !self.subagents.contains_key(id) {
+                self.fork(id, format!("/{}", result["commandName"].as_str().unwrap_or("skill")));
+            }
             if let Some((subagent, transcript)) = self.subagents.get_mut(id) {
                 if let Some(task) = result["agentId"].as_str() { self.tasks.insert(task.to_owned(), id.to_owned()); }
                 if let Some(history) = &self.history
-                    && let Some(agent) = result["agentId"].as_str()
+                    && let Some(agent) = result["agentId"].as_str().map(str::to_owned).or_else(|| spawned_agent(history, id))
                 {
                     let path = history.with_extension("").join("subagents").join(format!("agent-{agent}.jsonl"));
-                    transcript.history = Some(history.clone());
-                    for entry in File::open(path).into_iter().flat_map(lines).filter_map(|line| entry(&line)) {
-                        transcript.nested(&entry, &entry["toolUseResult"]);
+                    replay_agent(subagent, transcript, history, &path);
+                }
+                if let Some(name) = result["workflowName"].as_str() {
+                    subagent.name = Some(name.to_owned());
+                    if let Some(summary) = result["summary"].as_str() { subagent.task = summary.to_owned(); }
+                }
+                if let Some(directory) = result["transcriptDir"].as_str() {
+                    transcript.journal = Some(Tail::new(Path::new(directory).join("journal.jsonl")));
+                    if self.history.is_some() {
+                        transcript.read_own(subagent);
+                        transcript.read_followed();
                     }
-                    transcript.history = None;
                 }
                 subagent.update();
+                if forked || result["totalDurationMs"].is_null() { timed(subagent, transcript); }
                 if let Some(model) = result["resolvedModel"].as_str() {
                     subagent.model = Some(model.to_owned());
                 }
-                if result["isAsync"] != true && result["status"] != "async_launched" {
+                if result["isAsync"] != true && result["status"] != "async_launched" && result["background"] != true {
                     let texts: Vec<&str> = result["content"].as_array().into_iter().flatten().filter_map(|block| block["text"].as_str()).collect();
-                    let report = Some(texts.join("\n")).filter(|report| !report.is_empty());
+                    let text = texts.join("\n");
+                    let text = text.split_once("</tools-used-before-summary>").map_or(text.as_str(), |(_, rest)| rest).trim_start();
+                    let report = Some(text.to_owned()).filter(|report| !report.is_empty()).or_else(|| result["result"].as_str().map(str::to_owned));
                     let fallback = if block["is_error"] == true { Outcome::Failed } else { Outcome::Completed };
                     subagent.finish(Some(outcome(result["status"].as_str()).unwrap_or(fallback)));
                     let totals = [&result["totalDurationMs"], &result["totalToolUseCount"], &result["totalTokens"]].map(Value::as_u64);
@@ -2405,6 +2726,315 @@ mod cache_tests {
 #[cfg(test)]
 mod subagent_tests {
     use super::*;
+    struct Files {
+        root: tempfile::TempDir,
+        env: BTreeMap<String, String>,
+        session: PathBuf,
+        agents: PathBuf,
+    }
+
+    fn files() -> Files {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("projects/project");
+        let agents = project.join("session/subagents");
+        fs::create_dir_all(&agents).unwrap();
+        let session = project.join("session.jsonl");
+        fs::write(&session, "").unwrap();
+        let env = BTreeMap::from([("CLAUDE_CONFIG_DIR".to_owned(), root.path().display().to_string())]);
+        Files { root, env, session, agents }
+    }
+
+    fn lines_of(entries: &[Value]) -> String {
+        entries.iter().map(|entry| format!("{entry}\n")).collect()
+    }
+
+    fn append(path: &Path, text: &str) {
+        use std::io::Write;
+        fs::OpenOptions::new().create(true).append(true).open(path).unwrap().write_all(text.as_bytes()).unwrap();
+    }
+
+    fn live(files: &Files) -> (Transcript, UnboundedReceiver<Event>) {
+        let (events, received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        transcript.location = Some(Location { data_dir: files.root.path().to_owned(), id: "chat".to_owned(), env: files.env.clone() });
+        transcript.session = Some("session".to_owned());
+        (transcript, received)
+    }
+
+    fn apply(received: &mut UnboundedReceiver<Event>, items: &mut BTreeMap<usize, Item>) {
+        while let Ok(event) = received.try_recv() {
+            if let Event::Item(index, item) = event { items.insert(index, item); }
+        }
+    }
+
+    fn agent_entries() -> Vec<Value> {
+        vec![
+            json!({ "type": "user", "promptId": "prompt", "timestamp": "2026-11-05T14:00:00.000Z", "isSidechain": true, "message": { "content": "Do the thing" } }),
+            json!({ "type": "assistant", "timestamp": "2026-11-05T14:00:01.000Z", "isSidechain": true, "message": { "id": "one", "content": [
+                { "type": "tool_use", "id": "echo", "name": "Bash", "input": { "command": "echo one" } },
+            ] } }),
+            json!({ "type": "user", "timestamp": "2026-11-05T14:00:02.000Z", "isSidechain": true, "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "echo", "content": "one" },
+            ] } }),
+            json!({ "type": "assistant", "timestamp": "2026-11-05T14:00:03.000Z", "isSidechain": true, "message": { "id": "two", "content": [{ "type": "text", "text": "All done." }] } }),
+        ]
+    }
+
+    fn assert_agent(item: Option<&Item>, id: &str, label: &str, outcome: Option<Outcome>) {
+        let Some(Item::Subagent { id: found, task, status, outcome: ended, prompt, report, items, .. }) = item else { panic!("{item:?}") };
+        assert_eq!((found.as_str(), task.as_str(), *status, *ended), (id, label, Status::Done, outcome));
+        assert_eq!(report.as_deref(), Some("All done."));
+        assert_eq!(prompt.as_deref(), Some("Do the thing"));
+        assert!(matches!(items.as_slice(), [Item::Command { command, status: CommandStatus::Ok, output, .. }] if command == "echo one" && output == "one"), "{items:?}");
+    }
+
+    #[test]
+    fn a_tail_returns_only_complete_new_lines() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("agent.jsonl");
+        let mut tail = Tail::new(path.clone());
+        assert!(tail.lines(false).is_empty());
+        append(&path, "one\ntw");
+        assert_eq!(tail.lines(false), ["one"]);
+        assert!(tail.lines(false).is_empty());
+        append(&path, "o\n");
+        assert_eq!(tail.lines(false), ["two"]);
+        assert!(tail.open());
+        for _ in 0..TAIL_IDLE_TICKS { tail.lines(true); }
+        assert!(!tail.open());
+        append(&path, "three\n");
+        assert_eq!(tail.lines(true), ["three"]);
+        assert!(tail.open());
+    }
+
+    #[test]
+    fn a_forked_skill_called_by_a_subagent_is_read_from_its_session_file() {
+        let files = files();
+        let (mut transcript, mut received) = live(&files);
+        let mut items = BTreeMap::new();
+        append(&files.agents.join("agent-forktask.jsonl"), &lines_of(&agent_entries()));
+        for message in [
+            json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "content": [{ "type": "tool_use", "id": "outer", "name": "Agent", "input": { "description": "outer" } }] } }),
+            json!({ "type": "system", "subtype": "task_started", "task_id": "outertask", "tool_use_id": "outer", "task_type": "local_agent", "description": "outer" }),
+            json!({ "type": "assistant", "parent_tool_use_id": "outer", "message": { "content": [{ "type": "tool_use", "id": "skill", "name": "Skill", "input": { "skill": "forky" } }] } }),
+            json!({ "type": "system", "subtype": "task_started", "task_id": "forktask", "tool_use_id": "skill", "task_type": "local_agent", "parent_task_id": "outertask", "description": "/forky" }),
+            json!({ "type": "system", "subtype": "task_notification", "task_id": "forktask", "tool_use_id": "skill", "status": "completed", "summary": "/forky" }),
+        ] { transcript.read(&message); }
+        transcript.follow();
+        apply(&mut received, &mut items);
+        let Some(Item::Subagent { items: nested, .. }) = items.get(&0) else { panic!("{items:?}") };
+        assert_agent(nested.first(), "skill", "/forky", Some(Outcome::Completed));
+    }
+
+    #[test]
+    fn a_typed_forked_command_is_followed_live_and_restored_from_history() {
+        let files = files();
+        let (mut transcript, mut received) = live(&files);
+        let mut items = BTreeMap::new();
+        let path = files.agents.join("agent-forktask.jsonl");
+        transcript.read(&json!({ "type": "system", "subtype": "task_started", "task_id": "forktask", "task_type": "local_agent",
+            "description": "/forky", "prompt": "Do the thing", "subagent_type": "general-purpose", "skip_transcript": true, "ambient": true }));
+        assert!(transcript.following());
+        let entries = agent_entries();
+        append(&path, &lines_of(&entries[..2]));
+        transcript.follow();
+        apply(&mut received, &mut items);
+        let Some(Item::Subagent { status: Status::Working, items: nested, .. }) = items.get(&0) else { panic!("{items:?}") };
+        assert!(matches!(nested.as_slice(), [Item::Command { status: CommandStatus::Running, .. }]), "{nested:?}");
+        append(&path, &lines_of(&entries[2..]));
+        transcript.read(&json!({ "type": "system", "subtype": "task_notification", "task_id": "forktask", "status": "completed", "summary": "/forky" }));
+        transcript.follow();
+        transcript.read(&json!({ "type": "assistant", "parent_tool_use_id": "forked-command-forky", "message": { "content": [{ "type": "tool_use", "id": "echo", "name": "Bash", "input": { "command": "echo one" } }] } }));
+        apply(&mut received, &mut items);
+        assert_agent(items.get(&0), "forktask", "/forky", Some(Outcome::Completed));
+        for _ in 0..=TAIL_IDLE_TICKS { transcript.follow(); }
+        assert!(!transcript.following());
+
+        fs::write(files.agents.join("agent-forktask.meta.json"), json!({ "agentType": "general-purpose" }).to_string()).unwrap();
+        append(&files.agents.join("agent-inner.jsonl"), &lines_of(&[json!({ "type": "user", "promptId": "prompt", "message": { "content": "Inner" } })]));
+        fs::write(files.agents.join("agent-inner.meta.json"), json!({ "toolUseId": "t", "parentAgentId": "forktask" }).to_string()).unwrap();
+        append(&files.session, &lines_of(&[
+            json!({ "type": "user", "uuid": "a", "parentUuid": null, "promptId": "prompt", "message": { "content": "/forky now" } }),
+            json!({ "type": "system", "subtype": "local_command", "uuid": "b", "parentUuid": "a", "isMeta": false, "content": "<local-command-stdout>All done.</local-command-stdout>" }),
+        ]));
+        let (mut restored, mut received) = live(&files);
+        restored.history(&files.env, "session", None, true);
+        let mut items = BTreeMap::new();
+        apply(&mut received, &mut items);
+        assert!(matches!(items.get(&0), Some(Item::User { text, .. }) if text == "/forky now"), "{items:?}");
+        assert_agent(items.get(&1), "forktask", "/forky", Some(Outcome::Completed));
+        let Some(Item::Subagent { totals: Some(totals), .. }) = items.get(&1) else { panic!("{items:?}") };
+        assert_eq!(totals.duration_ms, 3000);
+        assert!(matches!(items.get(&2), Some(Item::Text { text, phase: Phase::Final, .. }) if text == "All done."), "{items:?}");
+        assert_eq!(items.len(), 3);
+        restored.follow();
+        apply(&mut received, &mut items);
+        assert_agent(items.get(&1), "forktask", "/forky", Some(Outcome::Completed));
+    }
+
+    #[test]
+    fn an_agent_nested_under_an_agent_fills_from_its_session_file() {
+        let files = files();
+        let (mut transcript, mut received) = live(&files);
+        let mut items = BTreeMap::new();
+        for message in [
+            json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "content": [{ "type": "tool_use", "id": "outer", "name": "Agent", "input": { "description": "outer" } }] } }),
+            json!({ "type": "system", "subtype": "task_started", "task_id": "outertask", "tool_use_id": "outer", "task_type": "local_agent", "description": "outer" }),
+            json!({ "type": "assistant", "parent_tool_use_id": "outer", "message": { "content": [{ "type": "tool_use", "id": "inner", "name": "Agent", "input": { "description": "inner", "prompt": "Do the thing" } }] } }),
+            json!({ "type": "system", "subtype": "task_started", "task_id": "innertask", "tool_use_id": "inner", "parent_task_id": "outertask", "task_type": "local_agent", "description": "inner" }),
+        ] { transcript.read(&message); }
+        append(&files.agents.join("agent-innertask.jsonl"), &lines_of(&agent_entries()));
+        append(&files.agents.join("agent-outertask.jsonl"), &lines_of(&[json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "Duplicated from the stream" }] } })]));
+        transcript.follow();
+        transcript.read(&json!({ "type": "system", "subtype": "task_notification", "task_id": "innertask", "tool_use_id": "inner", "status": "completed", "summary": "All done." }));
+        apply(&mut received, &mut items);
+        let Some(Item::Subagent { items: outer, .. }) = items.get(&0) else { panic!("{items:?}") };
+        assert_eq!(outer.len(), 1, "{outer:?}");
+        assert_agent(outer.first(), "inner", "inner", Some(Outcome::Completed));
+
+        fs::write(files.agents.join("agent-innertask.meta.json"), json!({ "toolUseId": "inner", "parentAgentId": "outertask" }).to_string()).unwrap();
+        fs::write(files.agents.join("agent-outertask.jsonl"), lines_of(&[
+            json!({ "type": "user", "message": { "content": "Outer prompt" } }),
+            json!({ "type": "assistant", "message": { "id": "a", "content": [{ "type": "tool_use", "id": "inner", "name": "Agent", "input": { "description": "inner", "prompt": "Do the thing" } }] } }),
+            json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "inner", "content": [{ "type": "text", "text": "All done." }] }] } }),
+        ])).unwrap();
+        append(&files.session, &lines_of(&[
+            json!({ "type": "assistant", "uuid": "a", "parentUuid": null, "message": { "content": [{ "type": "tool_use", "id": "outer", "name": "Agent", "input": { "description": "outer" } }] } }),
+            json!({ "type": "user", "uuid": "b", "parentUuid": "a", "message": { "content": [{ "type": "tool_result", "tool_use_id": "outer", "content": "x" }] }, "toolUseResult": {
+                "status": "completed", "agentId": "outertask", "content": [{ "type": "text", "text": "  <tools-used-before-summary>Agent</tools-used-before-summary>\nOuter report" }], "totalDurationMs": 5 } }),
+        ]));
+        let (mut restored, mut received) = live(&files);
+        restored.history(&files.env, "session", None, true);
+        let mut items = BTreeMap::new();
+        apply(&mut received, &mut items);
+        let Some(Item::Subagent { report, items: outer, .. }) = items.get(&0) else { panic!("{items:?}") };
+        assert_eq!(report.as_deref(), Some("Outer report"));
+        assert_agent(outer.first(), "inner", "inner", Some(Outcome::Completed));
+        let Some(Item::Subagent { totals: Some(totals), .. }) = outer.first() else { panic!("{outer:?}") };
+        assert_eq!(totals.duration_ms, 3000);
+    }
+
+    #[test]
+    fn a_workflows_agents_are_explorable_live_and_from_history() {
+        let files = files();
+        let directory = files.agents.join("workflows/run");
+        fs::create_dir_all(&directory).unwrap();
+        let (mut transcript, mut received) = live(&files);
+        let mut items = BTreeMap::new();
+        let call = json!({ "type": "tool_use", "id": "run", "name": "Workflow", "input": { "script": "phase('Go')" } });
+        let launched = json!({ "status": "async_launched", "taskId": "wf", "taskType": "local_workflow", "workflowName": "probe", "summary": "Probe", "transcriptDir": directory });
+        let launch = json!({ "type": "tool_result", "tool_use_id": "run", "content": "Workflow launched" });
+        transcript.read(&json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "content": [call] } }));
+        transcript.read(&json!({ "type": "system", "subtype": "task_started", "task_id": "wf", "tool_use_id": "run", "task_type": "local_workflow", "workflow_name": "probe", "description": "Probe" }));
+        transcript.read(&json!({ "type": "user", "parent_tool_use_id": null, "message": { "content": [launch] }, "tool_use_result": launched }));
+        append(&directory.join("journal.jsonl"), &lines_of(&[
+            json!({ "type": "launched" }),
+            json!({ "type": "started", "key": "k", "agentId": "one", "label": "Finder", "phase": "Go" }),
+            json!({ "type": "started", "key": "l", "agentId": "two", "label": "Abandoned", "phase": "Go" }),
+        ]));
+        append(&directory.join("agent-one.jsonl"), &lines_of(&agent_entries()[..2]));
+        transcript.follow();
+        apply(&mut received, &mut items);
+        let Some(Item::Subagent { name, items: agents, .. }) = items.get(&0) else { panic!("{items:?}") };
+        assert_eq!(name.as_deref(), Some("probe"));
+        assert_eq!(agents.len(), 2, "{agents:?}");
+        assert!(matches!(&agents[0], Item::Subagent { task, name: Some(phase), status: Status::Working, items, .. } if task == "Finder" && phase == "Go" && items.len() == 1), "{agents:?}");
+        append(&directory.join("agent-one.jsonl"), &lines_of(&agent_entries()[2..]));
+        append(&directory.join("journal.jsonl"), &lines_of(&[json!({ "type": "result", "key": "k", "agentId": "one", "result": "All done." })]));
+        transcript.follow();
+        transcript.read(&json!({ "type": "system", "subtype": "task_notification", "task_id": "wf", "tool_use_id": "run", "status": "completed", "summary": "Finished" }));
+        for _ in 0..=TAIL_IDLE_TICKS { transcript.follow(); }
+        assert!(!transcript.following());
+        apply(&mut received, &mut items);
+        let check = |item: Option<&Item>| {
+            let Some(Item::Subagent { task, name, status: Status::Done, items: agents, .. }) = item else { panic!("{item:?}") };
+            assert_eq!((task.as_str(), name.as_deref()), ("Probe", Some("probe")));
+            assert_agent(agents.first(), "one", "Finder", Some(Outcome::Completed));
+            assert!(matches!(agents.get(1), Some(Item::Subagent { status: Status::Done, outcome: Some(Outcome::Completed), .. })), "{agents:?}");
+        };
+        check(items.get(&0));
+
+        append(&files.session, &lines_of(&[
+            json!({ "type": "assistant", "uuid": "a", "parentUuid": null, "message": { "content": [call] } }),
+            json!({ "type": "user", "uuid": "b", "parentUuid": "a", "message": { "content": [launch] }, "toolUseResult": launched }),
+            json!({ "type": "user", "uuid": "c", "parentUuid": "b", "isMeta": true, "message": { "content":
+                "<task-notification>\n<task-id>wf</task-id>\n<tool-use-id>run</tool-use-id>\n<status>completed</status>\n<result>Finished</result>\n</task-notification>" } }),
+        ]));
+        let (mut restored, mut received) = live(&files);
+        restored.history(&files.env, "session", None, true);
+        let mut items = BTreeMap::new();
+        apply(&mut received, &mut items);
+        check(items.get(&0));
+        for _ in 0..=TAIL_IDLE_TICKS { restored.follow(); }
+        assert!(!restored.following());
+        apply(&mut received, &mut items);
+        check(items.get(&0));
+    }
+
+    #[test]
+    fn typed_command_output_shows_once_live_and_from_history() {
+        let files = files();
+        let (mut transcript, mut received) = live(&files);
+        let mut items = BTreeMap::new();
+        let output = |uuid: &str, source: &str, text: &str| json!({ "type": "assistant", "parent_tool_use_id": null, "uuid": uuid, "local_command_source": source,
+            "message": { "id": uuid, "model": "<synthetic>", "content": [{ "type": "text", "text": text }] } });
+        for message in [
+            output("usage", "<local-command-stdout>## Usage</local-command-stdout>", "## Usage"),
+            output("failed", "<local-command-stderr>Bad arguments</local-command-stderr>", "Bad arguments"),
+            output("silent", "<local-command-stdout></local-command-stdout>", ""),
+            json!({ "type": "system", "subtype": "compact_boundary" }),
+            output("usage", "<local-command-stdout>## Usage</local-command-stdout>", "## Usage"),
+            json!({ "type": "user", "parent_tool_use_id": null, "message": { "content": "<local-command-stdout>Compacted PostCompact [hook output]</local-command-stdout>" } }),
+            json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "id": "model", "content": [{ "type": "text", "text": "Not streamed" }] } }),
+        ] { transcript.read(&message); }
+        apply(&mut received, &mut items);
+        let texts: Vec<_> = items.values().filter_map(|item| match item { Item::Text { text, phase: Phase::Final, streaming: false } => Some(text.as_str()), _ => None }).collect();
+        assert_eq!(texts, ["## Usage", "Bad arguments"], "{items:?}");
+        assert_eq!(items.values().filter(|item| matches!(item, Item::Text { .. })).count(), 2);
+
+        append(&files.session, &lines_of(&[
+            json!({ "type": "user", "uuid": "a", "parentUuid": null, "promptId": "p", "message": { "content": "<command-name>/usage</command-name>\n<command-message>usage</command-message>\n<command-args></command-args>" } }),
+            json!({ "type": "system", "subtype": "local_command", "uuid": "b", "parentUuid": "a", "isMeta": false, "content": "<local-command-stdout>## Usage</local-command-stdout>" }),
+            json!({ "type": "system", "subtype": "local_command", "uuid": "c", "parentUuid": "b", "isMeta": false, "content": "<local-command-stdout></local-command-stdout>" }),
+        ]));
+        let (mut restored, mut received) = live(&files);
+        restored.history(&files.env, "session", None, true);
+        let mut items = BTreeMap::new();
+        apply(&mut received, &mut items);
+        assert!(matches!(items.get(&0), Some(Item::User { text, .. }) if text == "/usage"), "{items:?}");
+        assert!(matches!(items.get(&1), Some(Item::Text { text, .. }) if text == "## Usage"), "{items:?}");
+        assert_eq!(items.len(), 2, "{items:?}");
+    }
+
+    #[test]
+    fn user_started_tasks_are_rows_and_memory_housekeeping_stays_hidden() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        let mut items = BTreeMap::new();
+        for (task, kind) in [("scan", "auto_mode_scan"), ("import", "local_memory_import"), ("dream", "dream"), ("save", "post_turn_memory")] {
+            transcript.read(&json!({ "type": "system", "subtype": "task_started", "task_id": task, "task_type": kind, "description": kind, "skip_transcript": true, "ambient": true }));
+        }
+        transcript.read(&json!({ "type": "system", "subtype": "task_notification", "task_id": "scan", "status": "completed", "skip_transcript": true, "ambient": true }));
+        apply(&mut received, &mut items);
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert!(matches!(items.get(&0), Some(Item::Subagent { id, task, status: Status::Done, outcome: Some(Outcome::Completed), .. }) if id == "scan" && task == "auto_mode_scan"), "{items:?}");
+        assert!(matches!(items.get(&1), Some(Item::Subagent { id, status: Status::Working, .. }) if id == "import"), "{items:?}");
+    }
+
+    #[test]
+    fn an_unforked_skill_stays_a_tool_call_and_a_task_with_no_agent_stays_hidden() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(events, Path::new("/project"));
+        let mut items = BTreeMap::new();
+        transcript.read(&json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "content": [{ "type": "tool_use", "id": "skill", "name": "Skill", "input": { "skill": "plain" } }] } }));
+        transcript.read(&json!({ "type": "user", "parent_tool_use_id": null, "message": { "content": [{ "type": "tool_result", "tool_use_id": "skill", "content": "Launching skill" }] },
+            "tool_use_result": { "success": true, "commandName": "plain" } }));
+        transcript.read(&json!({ "type": "system", "subtype": "task_started", "task_id": "dream", "task_type": "dream", "description": "Dreaming", "skip_transcript": true }));
+        transcript.read(&json!({ "type": "system", "subtype": "task_started", "task_id": "shell", "task_type": "local_bash", "description": "sleep" }));
+        apply(&mut received, &mut items);
+        assert!(matches!(items.get(&0), Some(Item::Tools { calls }) if calls[0].name == "Skill"), "{items:?}");
+        assert_eq!(items.len(), 1);
+    }
 
     #[test]
     fn a_workflow_keeps_working_past_its_launch_until_its_task_finishes() {

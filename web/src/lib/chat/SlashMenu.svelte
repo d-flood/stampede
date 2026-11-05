@@ -31,14 +31,14 @@
 		replaceText(next);
 	}
 
-	const builtins = ['effort', 'model', 'speed', 'ultracode', 'mode', 'compact', 'clear', 'rewind'];
+	const builtins = ['effort', 'model', 'speed', 'ultracode', 'mode', 'compact', 'rewind'];
 
 	function run(command: Builtin, value?: string | number) {
 		onrun(command, value);
 		replace('');
 	}
 
-	function now(command: 'compact' | 'clear' | 'rewind', detail: string): Row {
+	function now(command: 'compact' | 'rewind', detail: string): Row {
 		const later = working ? 'after this turn' : detail;
 		return { label: `/${command}`, detail: later, disabled: working, choose: () => run(command) };
 	}
@@ -70,7 +70,6 @@
 			})),
 			{ label: '/mode', choices: choices.mode, current: settings.mode, choose: () => replace('/mode ') },
 			now('compact', 'free up context'),
-			now('clear', 'new session'),
 			now('rewind', capabilities.rewindsFiles ? 'conversation and tracked files' : 'conversation only; files unchanged'),
 			...templates().map(({ name, description }) => ({ label: `/${name}`, detail: description, choose: () => replace(`/${name} `) }))
 		];

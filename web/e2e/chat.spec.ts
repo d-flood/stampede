@@ -278,6 +278,27 @@ for (const { agent, rig, command, before, after } of slashed) {
 	});
 }
 
+test('/clear is not offered and is refused when typed', { tag: '@desktop' }, async ({ page }, { project }) => {
+	const name = `no-clear-${project.name}`;
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await newTab(page, 'Fake Claude');
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	const menu = panel.getByRole('region', { name: 'Commands' });
+	await expect(panel.getByRole('button', { name: 'Model: opus xhigh', exact: true })).toBeVisible();
+	await composer.fill('/');
+	await expect(menu.getByRole('button', { name: /^\/compact/ })).toBeVisible();
+	await expect(menu.getByRole('button', { name: /^\/clear/ })).toHaveCount(0);
+	for (const command of ['/clear', '/reset', '/new My next task']) {
+		await composer.fill(command);
+		await panel.getByRole('button', { name: 'Send', exact: true }).click();
+		await expect(panel.getByRole('alert')).toContainText(`${command.split(' ')[0]} isn't available here`);
+		await expect(composer).toHaveValue(command);
+	}
+	await expect(panel.locator('.transcript:visible').getByText('/clear', { exact: true })).toHaveCount(0);
+});
+
 test('speed and Ultracode change from the slash menu and show on the model control only once chosen', async ({ page }, { project }) => {
 	const name = `speed-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });

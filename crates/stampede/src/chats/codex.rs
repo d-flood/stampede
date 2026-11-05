@@ -445,16 +445,6 @@ fn run(
                             Err(_) => break,
                         }
                     }
-                    Some(Request::Run(Builtin::Clear)) if transcript.idle() => {
-                        match connection.call("thread/start", thread(&data_dir, &transcript.chat_id, &cwd, &AgentSettings::default(), &env)).await {
-                            Ok(started) => {
-                                let previous = json!({ "threadId": transcript.thread });
-                                let _ = connection.call("thread/unsubscribe", previous).await;
-                                transcript.restart(&started);
-                            }
-                            Err(error) => eprintln!("codex /clear: {error}"),
-                        }
-                    }
                     Some(Request::Run(Builtin::Model(model))) => transcript.choose(Setting::Model, model),
                     Some(Request::Run(Builtin::Effort(effort))) => transcript.choose(Setting::Effort, effort),
                     Some(Request::Run(Builtin::Speed(speed))) => transcript.choose(Setting::Speed, speed),
@@ -1002,41 +992,6 @@ impl Transcript {
         Some(json!({ "type": "skill", "name": name, "path": skill["path"] }))
     }
 
-    /// Moves to the new thread `/clear` started, keeping the chosen settings for its first turn.
-    fn restart(&mut self, started: &Value) {
-        let Some(thread) = started["thread"]["id"].as_str() else { return };
-        self.thread = thread.to_owned();
-        self.activity.clear(&self.events);
-        self.len = 0;
-        self.streaming.clear();
-        self.thinking.clear();
-        self.tools = None;
-        self.commands.clear();
-        self.subagents.clear();
-        self.delegated.clear();
-        self.asked.clear();
-        self.edits.clear();
-        self.steering.clear();
-        self.unsteered = None;
-        self.applying.clear();
-        self.checkpoints.clear();
-        self.questions.clear();
-        self.plan = None;
-        self.previous = 0;
-        let _ = self.events.send(Event::Session(self.thread.clone()));
-        let _ = self.events.send(Event::Reset);
-        let _ = self.events.send(Event::Truncate(0));
-        let fresh = current(started);
-        for setting in [Setting::Model, Setting::Effort, Setting::Speed, Setting::Mode] {
-            match self.settings.get(setting) {
-                None => *self.settings.get_mut(setting) = fresh.get(setting).clone(),
-                chosen if chosen != fresh.get(setting) => self.settings.mark_pending(setting),
-                _ => {}
-            }
-        }
-        self.report_settings();
-    }
-
     fn report(&mut self, status: Status) {
         if status == Status::Done { self.activity.clear(&self.events); }
         self.status = status;
@@ -1305,6 +1260,8 @@ impl Transcript {
             self.activity.finish(id, &self.events);
         }
         match message["method"].as_str() {
+            Some("item/autoApprovalReview/started") => self.review_started(params),
+            Some("item/autoApprovalReview/completed") => self.review_completed(params),
             Some("thread/name/updated") => {
                 if let Some(name) = params["threadName"].as_str() {
                     let _ = self.events.send(Event::Title(name.to_owned()));
@@ -1625,6 +1582,30 @@ impl Transcript {
         }
     }
 
+    fn review_started(&mut self, params: &Value) {
+        let Some(id) = params["reviewId"].as_str().filter(|id| !self.subagents.contains_key(*id)) else { return };
+        let (mut subagent, events) = Subagent::new(id, "Automatic approval review".to_owned(), params["startedAtMs"].as_u64().unwrap_or_else(super::now));
+        let action = &params["action"];
+        subagent.prompt = Some(action["command"].as_str().map_or_else(|| action.to_string(), str::to_owned));
+        subagent.index = self.push(subagent.item());
+        self.subagents.insert(id.to_owned(), (subagent, Transcript::new(id, &self.cwd, events)));
+    }
+
+    fn review_completed(&mut self, params: &Value) {
+        if !params["reviewId"].as_str().is_some_and(|id| self.subagents.contains_key(id)) { self.review_started(params); }
+        let Some((subagent, _)) = params["reviewId"].as_str().and_then(|id| self.subagents.get_mut(id)) else { return };
+        let review = &params["review"];
+        let status = review["status"].as_str().unwrap_or_default();
+        subagent.finish(Some(match status {
+            "approved" | "denied" => Outcome::Completed,
+            "aborted" => Outcome::Stopped,
+            _ => Outcome::Failed,
+        }));
+        subagent.report = Some(format!("{status}: {}", review["rationale"].as_str().unwrap_or_default()));
+        subagent.duration = params["completedAtMs"].as_u64().zip(params["startedAtMs"].as_u64()).map(|(end, start)| end.saturating_sub(start));
+        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+    }
+
     fn spawn(&mut self, thread: &str, task: &str) {
         if self.subagents.contains_key(thread) {
             return;
@@ -1727,6 +1708,27 @@ fn edit(id: String, changes: &Value) -> super::RequestKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_automatic_approval_review_is_a_subagent() {
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new("thread", Path::new("/project"), events);
+        let params = json!({ "threadId": "thread", "reviewId": "review", "startedAtMs": 1000, "review": { "status": "inProgress" },
+            "action": { "type": "command", "command": "touch /elsewhere" } });
+        transcript.read(&json!({ "method": "item/autoApprovalReview/started", "params": params }));
+        let mut latest = || std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+            Event::Item(0, item) => Some(item),
+            _ => None,
+        }).last();
+        assert!(matches!(latest(), Some(Item::Subagent { status: Status::Working, prompt: Some(prompt), .. }) if prompt == "touch /elsewhere"));
+        let params = json!({ "threadId": "thread", "reviewId": "review", "startedAtMs": 1000, "completedAtMs": 3500,
+            "review": { "status": "denied", "rationale": "Too risky." }, "action": { "type": "command", "command": "touch /elsewhere" } });
+        transcript.read(&json!({ "method": "item/autoApprovalReview/completed", "params": params }));
+        let Some(Item::Subagent { task, status, outcome, report, totals, .. }) = latest() else { panic!() };
+        assert_eq!((task.as_str(), status, outcome, report.as_deref()), ("Automatic approval review", Status::Done, Some(Outcome::Completed), Some("denied: Too risky.")));
+        assert_eq!(totals.unwrap().duration_ms, 2500);
+        assert_eq!(transcript.subagents.len(), 1);
+    }
 
     #[test]
     fn subagents_publish_reasoning_and_output_before_completion() {

@@ -611,6 +611,50 @@ async fn codex_subagent_activity_stays_nested_and_todos_replace_live_and_after_r
     subagents("codex").await;
 }
 
+#[tokio::test]
+async fn a_forked_skill_is_an_explorable_subagent_live_and_after_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = format!("{}/tests/fixtures/chats/claude-code/forked-skill.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
+    let (mut server, mut socket, chat_id) = launch_with_gates("claude-code", &fixture, Some(directory.path())).await;
+    let mut view = View::default();
+    control(&mut socket, json!({ "type": "chat.send", "chatId": chat_id, "text": "Run forky" })).await;
+    timeout(Duration::from_secs(5), async {
+        while !directory.path().join("forked").exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await.unwrap();
+    let working = |view: &View| view.items.iter().any(|item| item["kind"] == "subagent" && item["status"] == "working");
+    view.follow(&mut socket, &chat_id, working).await;
+    assert!(!view.items.iter().any(|item| item["kind"] == "tools"), "{:?}", view.items);
+    let index = view.items.iter().position(|item| item["kind"] == "subagent").unwrap();
+    control(&mut socket, json!({ "type": "chat.expand", "chatId": chat_id, "index": index })).await;
+    view.follow(&mut socket, &chat_id, |view| view.items[index].get("elided").is_none()).await;
+    assert_eq!(view.items[index]["items"][0]["command"], "echo one");
+    fs::remove_file(directory.path().join("forked")).unwrap();
+    view.follow(&mut socket, &chat_id, |view| view.statuses.last().is_some_and(|status| status == "done")).await;
+    assert_eq!(view.statuses, ["working", "done"]);
+    assert_eq!(view.items.last().unwrap()["text"], "main done.");
+    let finished = |child: &Value| {
+        assert_eq!((&child["id"], &child["task"]), (&json!("toolu_forked_skill"), &json!("/forky")));
+        assert_eq!((&child["status"], &child["outcome"]), (&json!("done"), &json!("completed")));
+        assert_eq!(child["report"], "forky finished.");
+        assert_eq!(child["model"], "claude-opus-5-5");
+        assert!(child["prompt"].as_str().unwrap().ends_with("reply: forky finished."));
+        assert_eq!(child["items"], json!([{ "kind": "command", "command": "echo one", "status": "ok", "output": "one" }]));
+    };
+    finished(&view.items[index]);
+    assert_eq!(view.items.iter().filter(|item| item["kind"] == "subagent").count(), 1);
+    let before = view.items;
+    server.restart().await;
+    let (mut socket, mut restored) = reattach(&server, &chat_id, before.len()).await;
+    assert_eq!(restored.items.len(), before.len());
+    control(&mut socket, json!({ "type": "chat.expand", "chatId": chat_id, "index": index })).await;
+    restored.follow(&mut socket, &chat_id, |view| view.items[index].get("elided").is_none()).await;
+    finished(&restored.items[index]);
+    assert_eq!(restored.items[index]["startedAt"], 1793887202000u64);
+    assert_eq!(restored.items[index]["totals"]["durationMs"], 10000);
+}
+
 async fn subagents(agent: &str) {
     let directory = tempfile::tempdir().unwrap();
     let recording = fs::read_to_string(format!("{}/tests/fixtures/chats/{agent}/subagents.recorded.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();

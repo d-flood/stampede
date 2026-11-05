@@ -96,7 +96,7 @@ export type Capabilities = {
 	commands: { name: string; description: string; hint: string }[];
 };
 
-export type Builtin = Setting | 'compact' | 'clear' | 'rewind';
+export type Builtin = Setting | 'compact' | 'rewind';
 
 export type Chat = {
 	id: string;

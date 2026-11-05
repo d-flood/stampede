@@ -27,7 +27,7 @@ const CODEX_MODES: &[[&str; 2]] = &[
 
 const MANAGEMENT: &[&str] = &[
     "mcp", "hooks", "memory", "permissions", "plugin", "plugins", "statusline", "theme", "export", "add-dir",
-    "agents", "login", "logout", "config", "heapdump", "fast",
+    "agents", "login", "logout", "config", "heapdump", "fast", "clear",
 ];
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -97,8 +97,8 @@ async fn claude_built_ins_reach_the_agent_as_control_requests_and_user_text() {
     timeout(Duration::from_secs(10), async {
         while record(&server, &chat_id)["context"]["used"] != 4436 { sleep(Duration::from_millis(20)).await; }
     }).await.expect("the context meter shows Claude's post-compact usage");
-    view.turn(&mut socket, &chat_id, json!({ "type": "chat.run", "chatId": chat_id, "command": "clear" })).await;
-    assert_eq!(view.items, Vec::<Value>::new(), "/clear leaves an empty transcript");
+    view.turn(&mut socket, &chat_id, json!({ "type": "chat.send", "chatId": chat_id, "text": "/clear" })).await;
+    assert_eq!(view.items, Vec::<Value>::new(), "a conversation reset leaves an empty transcript");
     assert_eq!(record(&server, &chat_id)["agentSession"], "6fc0d30d-f1f5-4ff0-93f6-de0071507543");
     assert_eq!(record(&server, &chat_id)["context"], Value::Null);
     assert_eq!(record(&server, &chat_id)["tokens"], Value::Null);
@@ -270,15 +270,11 @@ async fn codex_built_ins_ride_the_next_turn_or_reach_the_daemon_as_requests() {
     view.turn(&mut socket, &chat_id, json!({ "type": "chat.run", "chatId": chat_id, "command": "compact" })).await;
     let cache = json!({ "expires": 1792187053113u64, "then": "probably-warm" });
     assert_eq!(record(&server, &chat_id)["context"], json!({ "used": 14094, "window": 258400, "cache": cache }), "Codex's post-compact estimate reaches the meter");
-    run(&mut socket, &chat_id, json!({ "command": "clear" })).await;
-    view.follow(&mut socket, &chat_id, |view| view.items.is_empty() && view.last()["pending"] != json!([])).await;
     let collaboration = |mode| {
         let settings = json!({ "model": "gpt-6-luna", "reasoning_effort": "low", "developer_instructions": null });
         json!({ "mode": mode, "settings": settings })
     };
     let first = "01a14675-2f6f-7231-8ebf-ac1b6988103c";
-    let second = "01a14675-45f7-75f1-b408-8825bb0affc5";
-    let cwd = server.root.path().join("home");
 
     let log = received(&server);
     let methods: Vec<&Value> = log.iter().map(|message| &message["method"]).collect();
@@ -293,8 +289,6 @@ async fn codex_built_ins_ride_the_next_turn_or_reach_the_daemon_as_requests() {
             "turn/start",
             "turn/start",
             "thread/compact/start",
-            "thread/start",
-            "thread/unsubscribe",
         ]
     );
     let params: Vec<&Value> = log.iter().map(|message| &message["params"]).collect();
@@ -324,25 +318,9 @@ async fn codex_built_ins_ride_the_next_turn_or_reach_the_daemon_as_requests() {
         })
     );
     assert_eq!(params[7], &json!({ "threadId": first }));
-    assert_eq!(common::without_storage(params[8]), json!({ "cwd": cwd, "config": {
-        "tools.update_plan": { "enabled": true },
-        "tools.experimental_request_user_input": { "enabled": false },
-        "mcp_servers.stampede_chat": { "command": env!("CARGO_BIN_EXE_stampede"), "args": ["chat-tools", "--data-dir", server.root.path().join("data"), "--chat-id", chat_id], "tool_timeout_sec": 86400 },
-    } }));
-    assert_eq!(params[9], &json!({ "threadId": first }));
-    assert_eq!(record(&server, &chat_id)["agentSession"], second);
-    assert_eq!(record(&server, &chat_id)["context"], Value::Null);
-    assert_eq!(record(&server, &chat_id)["tokens"], Value::Null);
-    assert_eq!(record(&server, &chat_id)["todos"], json!([]));
-    assert_eq!(
-        view.last(),
-        json!({ "model": "gpt-6-luna", "effort": "low", "mode": "default", "pending": ["model", "effort", "mode"] }),
-        "the new thread starts on Codex's defaults, so the chosen settings wait for its first turn"
-    );
-
     close_chat(&mut socket, server.root.path(), &chat_id).await;
     let closed = received(&server).pop().unwrap();
-    assert_eq!((&closed["method"], &closed["params"]), (&json!("thread/unsubscribe"), &json!({ "threadId": second })));
+    assert_eq!((&closed["method"], &closed["params"]), (&json!("thread/unsubscribe"), &json!({ "threadId": first })));
 }
 
 #[tokio::test]

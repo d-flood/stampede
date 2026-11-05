@@ -26,8 +26,8 @@ use uuid::Uuid;
 
 use super::{
     AgentCommand, Answer, Builtin, CLOSING, Capabilities, Chat, Choice, ChoiceDescription, CommandStatus,
-    Cache, Context, Driver, Event, Image, Item, Lapse, Notice, Phase, Question, Request, RequestKind, Session,
-    Settings, Status, Tokens, ToolCall, ToolKind, html, relative, unified, words, HOUR,
+    Cache, Context, Driver, Event, Image, Item, Lapse, Notice, Outcome, Phase, Question, Request, RequestKind, Session,
+    Settings, Status, Subagent, Tokens, ToolCall, ToolKind, html, relative, unified, words, HOUR,
 };
 use crate::{config::{Agent, AgentSettings}, usage::{Consumption, Reading, Unit, Window}};
 
@@ -308,7 +308,7 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
     let connection = Connection::open(&chat.cwd, env).await?;
     let (interactions, pending) = mpsc::unbounded_channel();
     let handlers = Arc::new(Handlers(interactions));
-    let session = open_session(&connection.client, data_dir, chat, handlers.clone()).await?;
+    let session = open_session(&connection.client, data_dir, chat, handlers).await?;
     let subscribed = session.subscribe();
     let models = models(&session).await?;
     let history = if chat.agent_session.is_some() { rpc(session.get_events()).await? } else { Vec::new() };
@@ -340,15 +340,8 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
     }
     transcript.report_settings();
     let (requests, actions) = mpsc::unbounded_channel();
-    let location = Location { data_dir: data_dir.to_owned(), chat: chat.clone(), handlers };
-    tokio::spawn(drive(connection, session, subscribed, transcript, pending, actions, location));
+    tokio::spawn(drive(connection, session, subscribed, transcript, pending, actions, chat.id.clone()));
     Ok((Copilot { requests }, received))
-}
-
-struct Location {
-    data_dir: PathBuf,
-    chat: Chat,
-    handlers: Arc<Handlers>,
 }
 
 async fn drive(
@@ -358,7 +351,7 @@ async fn drive(
     mut transcript: Transcript,
     mut interactions: UnboundedReceiver<Interaction>,
     mut actions: UnboundedReceiver<Action>,
-    location: Location,
+    chat_id: String,
 ) {
     let mut pending = HashMap::<String, oneshot::Sender<Answer>>::new();
     let mut shells = HashSet::<String>::new();
@@ -397,8 +390,8 @@ async fn drive(
                     Ok(())
                 }
                 Some(Action::Run(builtin)) => {
-                    let result = run(&connection.client, &location, &mut session, &mut subscribed, &mut transcript, builtin).await;
-                    if result.is_ok() { report_cost(&session, &location.chat.id, &transcript.events).await; }
+                    let result = run(&mut session, &mut transcript, builtin).await;
+                    if result.is_ok() { report_cost(&session, &chat_id, &transcript.events).await; }
                     result
                 }
                 Some(Action::Delegated(item)) => { transcript.delegated(item); Ok(()) }
@@ -431,7 +424,7 @@ async fn drive(
                 Ok(event) => {
                     transcript.read(&event, false);
                     if matches!(event.event_type.as_str(), "assistant.usage" | "session.idle") {
-                        report_cost(&session, &location.chat.id, &transcript.events).await;
+                        report_cost(&session, &chat_id, &transcript.events).await;
                     }
                     if transcript.status == Status::Done { resolve(&mut pending, &transcript.events); }
                     Ok(())
@@ -460,7 +453,7 @@ async fn send(session: &CopilotSession, transcript: &mut Transcript, text: &str,
     }
 }
 
-async fn run(client: &Client, location: &Location, session: &mut CopilotSession, subscribed: &mut github_copilot_sdk::subscription::EventSubscription, transcript: &mut Transcript, builtin: Builtin) -> io::Result<()> {
+async fn run(session: &mut CopilotSession, transcript: &mut Transcript, builtin: Builtin) -> io::Result<()> {
     match builtin {
         Builtin::Model(model) => {
             rpc(session.set_model(&model, None)).await?;
@@ -474,17 +467,6 @@ async fn run(client: &Client, location: &Location, session: &mut CopilotSession,
         }
         Builtin::Mode(mode) if Agent::Copilot.modes().contains(&mode.as_str()) => transcript.settings.chosen.mode = Some(mode),
         Builtin::Compact => { rpc(session.rpc().history().compact()).await?; }
-        Builtin::Clear if transcript.status == Status::Done => {
-            let mut chat = location.chat.clone();
-            chat.agent_session = None;
-            chat.settings = transcript.settings.clone();
-            let next = open_session(client, &location.data_dir, &chat, location.handlers.clone()).await?;
-            let _ = rpc(session.disconnect()).await;
-            *session = next;
-            *subscribed = session.subscribe();
-            transcript.reset();
-            let _ = transcript.events.send(Event::Session(session.id().to_string()));
-        }
         Builtin::Rewind(index) if transcript.status == Status::Done => {
             let event_id = transcript.user_events.get(&index).ok_or_else(|| io::Error::other("Choose a user message to rewind to"))?.clone();
             transcript.status(Status::Working);
@@ -518,11 +500,12 @@ struct Transcript {
     status: Status,
     tokens: Tokens,
     cache: Option<Cache>,
+    subagents: HashMap<String, (Subagent, Transcript)>,
 }
 
 impl Transcript {
     fn new(cwd: &Path, events: UnboundedSender<Event>, settings: Settings) -> Self {
-        Self { data_dir: None, cwd: cwd.to_owned(), events, items: Vec::new(), seen: HashSet::new(), messages: HashMap::new(), user_events: HashMap::new(), last_input: None, tools: HashMap::new(), thinking: None, settings, capabilities: Capabilities::default(), efforts: HashMap::new(), status: Status::Done, tokens: Tokens { input: 0, output: 0 }, cache: None }
+        Self { data_dir: None, cwd: cwd.to_owned(), events, items: Vec::new(), seen: HashSet::new(), messages: HashMap::new(), user_events: HashMap::new(), last_input: None, tools: HashMap::new(), thinking: None, settings, capabilities: Capabilities::default(), efforts: HashMap::new(), status: Status::Done, tokens: Tokens { input: 0, output: 0 }, cache: None, subagents: HashMap::new() }
     }
 
     fn push(&mut self, item: Item) -> usize {
@@ -557,7 +540,7 @@ impl Transcript {
 
     fn reset(&mut self) {
         self.items.clear(); self.messages.clear(); self.user_events.clear(); self.tools.clear(); self.thinking = None;
-        self.seen.clear(); self.last_input = None;
+        self.seen.clear(); self.last_input = None; self.subagents.clear();
         self.tokens = Tokens { input: 0, output: 0 };
         let _ = self.events.send(Event::Truncate(0));
         let _ = self.events.send(Event::Reset);
@@ -592,12 +575,25 @@ impl Transcript {
                 self.changed(index);
             }
         }
+        for (subagent, transcript) in self.subagents.values_mut() {
+            transcript.stop_commands();
+            if subagent.update() {
+                self.items[subagent.index] = subagent.item();
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
+        }
     }
 
     fn read(&mut self, event: &SessionEvent, history: bool) {
         if !self.seen.insert(event.id.clone()) { return; }
+        if self.route(event, history) { return; }
         let data = &event.data;
+        if event.event_type == "user.message" && data["source"].as_str().is_some_and(|source| source.starts_with("agent-")) { return; }
         match event.event_type.as_str() {
+            "subagent.started" => {
+                if !self.subagent_started(event) { self.adopt(event, None, &Value::Null); }
+            }
+            "subagent.completed" | "subagent.failed" => { self.subagent_ended(event); }
             "user.message" => {
                 self.finish_thinking();
                 let text = data["content"].as_str().unwrap_or_default().to_owned();
@@ -709,6 +705,83 @@ impl Transcript {
         }
     }
 
+    /// Tool output names no parent, only its tool call.
+    fn route(&mut self, event: &SessionEvent, history: bool) -> bool {
+        if !matches!(event.event_type.as_str(), "assistant.message_delta" | "assistant.message" | "assistant.reasoning_delta" | "assistant.reasoning"
+            | "tool.execution_start" | "tool.user_requested" | "tool.execution_complete" | "tool.execution_partial_result" | "tool.shell_output") { return false; }
+        let (parent, tool) = (event.data["parentToolCallId"].as_str(), event.data["toolCallId"].as_str());
+        self.in_subagents(|id, transcript| {
+            if parent == Some(id) || (parent.is_none() && tool.is_some_and(|tool| transcript.tools.contains_key(tool))) {
+                transcript.read(event, history);
+                return true;
+            }
+            transcript.route(event, history)
+        })
+    }
+
+    fn in_subagents(&mut self, mut act: impl FnMut(&str, &mut Transcript) -> bool) -> bool {
+        for (id, (subagent, transcript)) in &mut self.subagents {
+            if !act(id, transcript) { continue; }
+            if subagent.update() {
+                self.items[subagent.index] = subagent.item();
+                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            }
+            return true;
+        }
+        false
+    }
+
+    fn subagent_started(&mut self, event: &SessionEvent) -> bool {
+        let Some(id) = event.data["toolCallId"].as_str() else { return false };
+        let Some((index, start)) = self.tools.get(id).cloned() else {
+            return self.in_subagents(|_, transcript| transcript.subagent_started(event));
+        };
+        self.adopt(event, Some(index), &start["arguments"]);
+        true
+    }
+
+    fn adopt(&mut self, event: &SessionEvent, row: Option<usize>, arguments: &Value) {
+        let data = &event.data;
+        let Some(id) = data["toolCallId"].as_str() else { return };
+        let task = arguments["description"].as_str().or(data["agentDisplayName"].as_str()).unwrap_or("Subagent").to_owned();
+        let (mut subagent, events) = Subagent::new(id, task, super::epoch_ms(&event.timestamp).unwrap_or_else(super::now));
+        subagent.name = data["agentName"].as_str().filter(|name| *name != "general-purpose").map(str::to_owned);
+        subagent.prompt = arguments["prompt"].as_str().map(str::to_owned);
+        subagent.model = data["model"].as_str().map(str::to_owned);
+        subagent.index = match row {
+            Some(index) => {
+                self.items[index] = subagent.item();
+                self.changed(index);
+                index
+            }
+            None => self.push(subagent.item()),
+        };
+        let mut transcript = Transcript::new(&self.cwd, events, Settings::default());
+        transcript.data_dir = self.data_dir.clone();
+        self.subagents.insert(id.to_owned(), (subagent, transcript));
+    }
+
+    fn subagent_ended(&mut self, event: &SessionEvent) -> bool {
+        let data = &event.data;
+        let Some(id) = data["toolCallId"].as_str() else { return false };
+        let Some((subagent, transcript)) = self.subagents.get_mut(id) else {
+            return self.in_subagents(|_, transcript| transcript.subagent_ended(event));
+        };
+        transcript.finish();
+        subagent.update();
+        let failed = event.event_type == "subagent.failed";
+        subagent.finish(Some(if failed { Outcome::Failed } else if data["cancelled"] == true { Outcome::Stopped } else { Outcome::Completed }));
+        if failed { subagent.report = data["error"].as_str().map(str::to_owned); }
+        subagent.duration = data["durationMs"].as_u64().or(subagent.duration);
+        subagent.tools = data["totalToolCalls"].as_u64().map(|tools| tools as usize).or(subagent.tools);
+        subagent.tokens = data["totalTokens"].as_u64().or(subagent.tokens);
+        subagent.model = data["model"].as_str().map(str::to_owned).or(subagent.model.take());
+        let (index, item) = (subagent.index, subagent.item());
+        self.items[index] = item;
+        self.changed(index);
+        true
+    }
+
     fn tool_start(&mut self, data: &Value) {
         self.finish_thinking();
         let Some(id) = data["toolCallId"].as_str() else { return };
@@ -764,6 +837,59 @@ fn tool(name: &str, args: &Value, kind: ToolKind) -> Item {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subagents_keep_their_work_nested_live_and_from_history() {
+        for history in [false, true] {
+            let (events, mut received) = mpsc::unbounded_channel();
+            let mut transcript = Transcript::new(Path::new("/project"), events, Settings::default());
+            let task = "task";
+            let entries = [
+                ("tool.execution_start", json!({ "toolCallId": task, "toolName": "task", "arguments": { "description": "Find it", "prompt": "Run echo", "agent_type": "general-purpose" } })),
+                ("subagent.started", json!({ "toolCallId": task, "agentName": "general-purpose", "agentDisplayName": "finder", "agentDescription": "", "model": "claude-sonnet-5.5" })),
+                ("user.message", json!({ "content": "Run echo", "source": "agent-1" })),
+                ("assistant.message", json!({ "messageId": "commentary", "content": "Looking", "parentToolCallId": task })),
+                ("tool.execution_start", json!({ "toolCallId": "bash", "parentToolCallId": task, "toolName": "bash", "arguments": { "command": "echo inner" } })),
+                ("tool.execution_partial_result", json!({ "toolCallId": "bash", "partialOutput": "inn" })),
+                ("tool.execution_complete", json!({ "toolCallId": "bash", "parentToolCallId": task, "success": true, "result": { "content": "inner" } })),
+                ("assistant.message", json!({ "messageId": "answer", "content": "done", "parentToolCallId": task })),
+                ("subagent.completed", json!({ "toolCallId": task, "agentName": "general-purpose", "agentDisplayName": "finder", "model": "claude-sonnet-5.5", "totalToolCalls": 1, "totalTokens": 46466, "durationMs": 2097 })),
+                ("tool.execution_complete", json!({ "toolCallId": task, "success": true, "result": { "content": "done" } })),
+                ("assistant.message", json!({ "messageId": "main", "content": "main done." })),
+            ];
+            for (id, (kind, data)) in entries.into_iter().enumerate() {
+                let event = json!({ "id": id.to_string(), "timestamp": "2026-11-05T14:00:00.000Z", "parentId": null, "type": kind, "data": data });
+                transcript.read(&serde_json::from_value::<SessionEvent>(event).unwrap(), history);
+            }
+            let [Item::Subagent { id, task, name, prompt, report, status, outcome, model, totals, items, .. }, Item::Text { text, .. }] = transcript.items.as_slice() else { panic!("{:?}", transcript.items) };
+            assert_eq!((id.as_str(), task.as_str(), name, text.as_str()), ("task", "Find it", &None, "main done."));
+            assert_eq!((prompt.as_deref(), report.as_deref()), (Some("Run echo"), Some("done")));
+            assert_eq!((*status, *outcome, model.as_deref()), (Status::Done, Some(Outcome::Completed), Some("claude-sonnet-5.5")));
+            let totals = totals.as_ref().unwrap();
+            assert_eq!((totals.duration_ms, totals.tools, totals.tokens), (2097, 1, Some(46466)));
+            assert!(matches!(items.as_slice(), [Item::Text { text, .. }, Item::Command { command, status: CommandStatus::Ok, output, .. }]
+                if text == "Looking" && command == "echo inner" && output == "inner"), "{items:?}");
+            let last = std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+                Event::Item(0, item) => Some(item),
+                _ => None,
+            }).last();
+            assert!(matches!(last, Some(Item::Subagent { status: Status::Done, .. })));
+        }
+    }
+
+    #[test]
+    fn a_failed_subagent_reports_its_error() {
+        let mut transcript = Transcript::new(Path::new("/project"), mpsc::unbounded_channel().0, Settings::default());
+        for (id, (kind, data)) in [
+            ("subagent.started", json!({ "toolCallId": "task", "agentName": "explore", "agentDisplayName": "Explore", "agentDescription": "" })),
+            ("subagent.failed", json!({ "toolCallId": "task", "agentName": "explore", "agentDisplayName": "Explore", "error": "Out of budget" })),
+        ].into_iter().enumerate() {
+            let event = json!({ "id": id.to_string(), "timestamp": "2026-11-05T14:00:00.000Z", "parentId": null, "type": kind, "data": data });
+            transcript.read(&serde_json::from_value::<SessionEvent>(event).unwrap(), false);
+        }
+        let [Item::Subagent { task, name, report, outcome, .. }] = transcript.items.as_slice() else { panic!("{:?}", transcript.items) };
+        assert_eq!((task.as_str(), name.as_deref(), report.as_deref(), *outcome), ("Explore", Some("explore"), Some("Out of budget"), Some(Outcome::Failed)));
+    }
 
     #[test]
     fn question_tool_calls_leave_no_row() {
