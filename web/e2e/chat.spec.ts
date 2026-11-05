@@ -498,9 +498,9 @@ test('four Usage window meters show their readings and warn from 80%', async ({ 
 	}
 	const high = usage.getByRole('meter', { name: 'Codex · 5h' });
 	await expect(high).toHaveAttribute('aria-valuenow', '91');
-	await expect(usage.locator('.warn')).toHaveText(['5h 91%']);
+	await expect(high).toHaveText('91 5h');
 	await expect.poll(() => filledWith(high, '--status-waiting')).toBe(true);
-	await expect.poll(() => filledWith(usage.getByRole('meter', { name: 'Claude · week' }), '--muted-fg')).toBe(true);
+	await expect.poll(() => filledWith(usage.getByRole('meter', { name: 'Claude · week' }), '--brand')).toBe(true);
 	await usage.getByRole('button', { name: 'Usage details' }).click();
 	const details = page.getByRole('dialog', { name: 'Usage details' });
 	await expect(details.locator('.age')).toHaveCount(2);
@@ -513,7 +513,7 @@ function filledWith(meter: Locator, token: string) {
 		probe.style.color = `var(${token})`;
 		const color = getComputedStyle(probe).color;
 		probe.remove();
-		return getComputedStyle(element.querySelector('.fill')!).backgroundColor === color;
+		return getComputedStyle(element.querySelector('.arc')!).stroke === color;
 	}, token);
 }
 

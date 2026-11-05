@@ -11,8 +11,8 @@
 	let { readings, codexResets = null }: { readings: Reading[]; codexResets?: ResetCredits | null } = $props();
 
 	const windows = [
-		{ window: 'five-hour', label: '5h', name: '5h' },
-		{ window: 'weekly', label: 'Weekly', name: 'week' }
+		{ window: 'five-hour', label: '5h', name: '5h', short: '5h' },
+		{ window: 'weekly', label: 'Weekly', name: 'week', short: 'wk' }
 	] as const;
 	const agents = [
 		{ agent: 'claude-code', label: 'Claude', Logo: logos['claude-code'] },
@@ -76,9 +76,9 @@
 	}
 
 	function measured(agent: string) {
-		return windows.flatMap(({ window, label, name }) => {
+		return windows.flatMap(({ window, label, name, short }) => {
 			const reading = readings.find((reading) => reading.agent === agent && reading.window === window);
-			return reading?.used === undefined ? [] : [{ window, label, name, reading, percent: Math.round(reading.used * 100) }];
+			return reading?.used === undefined ? [] : [{ window, label, name, short, reading, percent: Math.round(reading.used * 100) }];
 		});
 	}
 </script>
@@ -191,28 +191,21 @@
 		{#each visibleAgents as { agent, label, Logo } (agent)}
 			<div class="agent {agent}" role="group" aria-label={label}>
 				<span class="brand" aria-hidden="true"><Logo /></span>
-				{#if agent !== 'copilot' && measured(agent).length}
-					<span class="bars">
-						{#each windows as { window, label: period, name } (window)}
-							{@const reading = readings.find((reading) => reading.agent === agent && reading.window === window)}
-							{#if reading?.used !== undefined}
-								{@const percent = Math.round(reading.used * 100)}
-								<span class="bar" class:high={percent >= high} role="meter" aria-label="{label} · {name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% used. ${details(reading)}`}>
-									<span class="fill" style:width="{Math.min(percent, 100)}%"></span>
-								</span>
-							{:else}
-								<span class="bar empty"></span>
-							{/if}
-						{/each}
-					</span>
-					{@const warnings = measured(agent).filter(({ percent }) => percent >= high)}
-					{#if warnings.length}
-						<span class="warns">
-							{#each warnings as { window, label: period, percent } (window)}
-								<span class="warn"><span class="window-label">{`${period} `}</span>{percent}%</span>
-							{/each}
+				{#if agent !== 'copilot'}
+					{@const meters = measured(agent)}
+					{@const hottest = meters.reduce((top, meter) => (meter.percent > top.percent ? meter : top), meters[0])}
+					{#each meters as meter (meter.window)}
+						<span class="meter" class:high={meter.percent >= high} class:secondary={meter !== hottest} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
+							<span class="ring">
+								<svg viewBox="0 0 40 40" aria-hidden="true">
+									<circle class="track" cx="20" cy="20" r="18.3" />
+									<circle class="arc" cx="20" cy="20" r="18.3" pathLength="100" stroke-dasharray="{Math.min(meter.percent, 100)} 100" transform="rotate(-90 20 20)" />
+								</svg>
+								<span class="number">{meter.percent}</span>
+							</span>
+							<span class="label">{meter.short}</span>
 						</span>
-					{/if}
+					{/each}
 				{/if}
 				{#if agent === 'codex' && resets > 0}
 					<span class="count"><ResetIcon aria-hidden="true" />{resets}<span class="assistive">{` ${resets === 1 ? 'reset' : 'resets'}`}</span></span>
@@ -227,7 +220,7 @@
 		position: relative;
 		flex: none;
 		box-sizing: border-box;
-		height: 40px;
+		height: 50px;
 		margin-top: auto;
 		border-top: var(--border-width) solid var(--border);
 		font-size: var(--font-size-sm);
@@ -239,6 +232,7 @@
 	}
 
 	.phone {
+		height: 58px;
 		margin: 0;
 		border-top: none;
 		border-bottom: var(--border-width) solid var(--border);
@@ -264,6 +258,10 @@
 	}
 
 	.row {
+		--ring: 30px;
+		--number: 11px;
+		--label: 10px;
+		--logo: 16px;
 		position: relative;
 		display: flex;
 		align-items: center;
@@ -277,10 +275,19 @@
 		pointer-events: none;
 	}
 
+	.phone .row {
+		--ring: 36px;
+		--number: 12.5px;
+		--label: 10.5px;
+		--logo: 18px;
+		gap: var(--space-4);
+	}
+
 	.agent {
 		display: flex;
+		flex: none;
 		align-items: center;
-		gap: var(--space-2);
+		gap: var(--space-1);
 	}
 
 	.claude-code {
@@ -305,29 +312,73 @@
 	}
 
 	.brand :global(svg) {
-		width: 16px;
-		height: 16px;
+		width: var(--logo, 16px);
+		height: var(--logo, 16px);
 		color: var(--brand);
 	}
 
-	.bars {
+	.meter {
 		display: flex;
 		flex: none;
 		flex-direction: column;
-		gap: 3px;
-		width: 34px;
+		align-items: center;
+		gap: 1px;
+		line-height: 1;
+	}
+
+	.ring {
+		display: grid;
+		place-items: center;
+		width: var(--ring);
+		height: var(--ring);
+	}
+
+	.ring svg,
+	.number {
+		grid-area: 1 / 1;
+	}
+
+	.ring svg {
+		width: 100%;
+		height: 100%;
+		fill: none;
+		stroke-width: 3.4;
+	}
+
+	.track {
+		stroke: color-mix(in oklab, var(--brand) 16%, var(--surface-3));
+	}
+
+	.arc {
+		stroke: var(--brand);
+		transition: stroke-dasharray calc(4 * var(--dur-med)) var(--ease-out);
+	}
+
+	.number {
+		color: var(--color-fg);
+		font-size: var(--number);
+		font-weight: 500;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.label {
+		font-size: var(--label);
+	}
+
+	.high .arc {
+		stroke: var(--status-waiting);
+	}
+
+	.high .number {
+		color: var(--status-waiting);
 	}
 
 	.bar {
 		display: block;
-		height: 3px;
+		height: 5px;
 		overflow: hidden;
-		border-radius: 2px;
+		border-radius: 3px;
 		background: color-mix(in oklab, var(--muted-fg) 25%, transparent);
-	}
-
-	.bar.empty {
-		visibility: hidden;
 	}
 
 	.fill {
@@ -341,25 +392,11 @@
 		background: var(--status-waiting);
 	}
 
-	.warns {
-		display: grid;
-		grid-auto-columns: minmax(0, max-content);
-		grid-auto-flow: column;
-		gap: inherit;
-	}
-
-	.warn {
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.warn,
 	.window.high .percent {
 		color: var(--status-waiting);
 		font-weight: 500;
 	}
 
-	.warn,
 	.percent,
 	.count {
 		font-variant-numeric: tabular-nums;
@@ -380,23 +417,21 @@
 		clip-path: inset(50%);
 	}
 
-	@container (max-width: 11rem) {
-		.row {
+	@container (max-width: 300px) {
+		.copilot,
+		.secondary {
+			display: none;
+		}
+	}
+
+	@container (max-width: 176px) {
+		.row,
+		.phone .row {
+			--ring: 28px;
+			--number: 10.5px;
+			--logo: 14px;
 			gap: var(--space-2);
 			padding: 0 var(--space-3);
-		}
-
-		.agent {
-			gap: var(--space-1);
-		}
-
-		.bars {
-			width: 14px;
-		}
-
-		.copilot,
-		.window-label {
-			display: none;
 		}
 	}
 
@@ -456,11 +491,6 @@
 		align-items: center;
 		gap: 0 var(--space-2);
 		padding-top: var(--space-1);
-	}
-
-	.window .bar {
-		height: 5px;
-		border-radius: 3px;
 	}
 
 	.percent {

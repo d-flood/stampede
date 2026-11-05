@@ -1,5 +1,6 @@
 import Usage from '#lib/shell/Usage.svelte';
 import CodexResets from '#lib/shell/CodexResets.svelte';
+import { form } from '#lib/form.ts';
 import type { Reading } from '#lib/device.svelte.ts';
 import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
@@ -26,10 +27,11 @@ function inTooltip(selector: string) {
 	return () => [...document.querySelectorAll(`[role="tooltip"] ${selector}`)].map((node) => node.textContent?.replace(/\s+/g, ' ').trim());
 }
 
-test('the row shows bars, numbers only at high usage, and the Reset count', async () => {
+test('the row shows labelled rings with numbers and the Reset count', async () => {
 	const view = await render(Usage, { readings, codexResets: resets });
 	const section = view.getByRole('region', { name: 'Usage windows' });
-	await expect.poll(() => section.element().getBoundingClientRect().height).toBe(40);
+	await expect.poll(() => section.element().getBoundingClientRect().height).toBe(form() === 'phone' ? 58 : 50);
+	expect(view.container.querySelector('.ring')!.getBoundingClientRect().width).toBe(form() === 'phone' ? 36 : 30);
 	expect(view.getByRole('group').elements()).toHaveLength(3);
 	expect(view.getByRole('meter').elements()).toHaveLength(3);
 	await expect.element(view.getByRole('meter', { name: 'Claude · 5h' })).toHaveAttribute('aria-valuenow', '100');
@@ -37,18 +39,19 @@ test('the row shows bars, numbers only at high usage, and the Reset count', asyn
 	await expect.element(view.getByRole('meter', { name: 'Codex · week' })).toHaveAttribute('aria-valuenow', '43');
 	const claude = view.getByRole('group', { name: 'Claude', exact: true }).element();
 	const codex = view.getByRole('group', { name: 'Codex', exact: true }).element();
-	expect(claude.textContent?.trim()).toBe('5h 100%');
-	const warning = claude.querySelector('.warn')!;
+	expect(claude.textContent?.replace(/\s+/g, ' ').trim()).toBe('100 5h 12 wk');
+	const warning = claude.querySelector('.high .number')!;
 	const probe = warning.appendChild(document.createElement('i'));
 	probe.style.color = 'var(--status-waiting)';
 	expect(getComputedStyle(warning).color).toBe(getComputedStyle(probe).color);
 	probe.remove();
-	expect(codex.textContent?.replace(/\s+/g, ' ').trim()).toBe('2 resets');
+	expect(codex.textContent?.replace(/\s+/g, ' ').trim()).toBe('43 wk 2 resets');
 	await expect.element(view.getByRole('group', { name: 'Codex', exact: true }).getByText('2 resets')).toBeVisible();
 	expect(view.getByRole('group', { name: 'Copilot', exact: true }).element().textContent?.trim()).toBe('');
-	for (const [used, shown] of [[0.79, ''], [0.8, 'Weekly 80%']] as const) {
+	for (const [used, high] of [[0.79, false], [0.8, true]] as const) {
 		await view.rerender({ readings: [{ ...readings[2], used }], codexResets: { availableCount: 1 } });
-		await expect.poll(() => codex.querySelector('.warn')?.textContent ?? '').toBe(shown);
+		await expect.poll(() => codex.querySelector('.meter')?.classList.contains('high')).toBe(high);
+		expect(codex.querySelector('.number')?.textContent).toBe(String(Math.round(used * 100)));
 		expect(codex.textContent).toContain('1 reset');
 	}
 	await view.rerender({ readings: [readings[2]], codexResets: { availableCount: 0 } });
@@ -57,15 +60,16 @@ test('the row shows bars, numbers only at high usage, and the Reset count', asyn
 	await expect.poll(() => getComputedStyle(view.container.querySelector('section')!).display).toBe('none');
 });
 
-test('Resets, logos, and bars stay visible when every window is high', async () => {
+test('Resets, logos, and rings fit at every Sidebar width when every window is high', async () => {
 	const full: Reading[] = (['claude-code', 'codex'] as const).flatMap((agent) => (['five-hour', 'weekly'] as const).map((window) => ({ agent, window, used: 1, readAt: now })));
 	const view = await render(Usage, { readings: [...full, readings[3]], codexResets: { availableCount: 12 } });
 	const row = view.container.querySelector('.row')!;
-	for (const width of [160, 320]) {
+	for (const [width, rings] of [[160, 2], [320, 4]]) {
 		view.container.style.width = `${width}px`;
 		await expect.poll(() => {
 			const box = row.getBoundingClientRect();
-			return box.width === width && [...row.querySelectorAll('.claude-code .brand, .codex .brand, .bars, .count')].every((node) => {
+			const shown = [...row.querySelectorAll('.ring')].filter((node) => node.getBoundingClientRect().width > 0);
+			return box.width === width && shown.length === rings && [...row.querySelectorAll('.claude-code .brand, .codex .brand, .count'), ...shown].every((node) => {
 				const { left, right } = node.getBoundingClientRect();
 				return left >= box.left && right <= box.right;
 			});
@@ -76,7 +80,7 @@ test('Resets, logos, and bars stay visible when every window is high', async () 
 test('high usage follows the displayed percent', async () => {
 	const view = await render(Usage, { readings: [{ ...readings[2], used: 0.796 }], codexResets: null });
 	await expect.element(view.getByRole('meter', { name: 'Codex · week' })).toHaveClass('high');
-	expect(view.container.querySelector('.warn')?.textContent).toBe('Weekly 80%');
+	expect(view.container.querySelector('.number')?.textContent).toBe('80');
 	await view.getByRole('button', { name: 'Usage details' }).click();
 	const popover = page.getByRole('dialog', { name: 'Usage details' });
 	await expect.element(popover).toBeVisible();
