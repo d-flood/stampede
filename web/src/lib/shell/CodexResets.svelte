@@ -3,7 +3,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 
-	let { credits, now }: { credits: ResetCredits; now: number } = $props();
+	let { credits, now, label }: { credits: ResetCredits; now: number; label?: string } = $props();
 	let confirming = $state(false);
 	let busy = $state(false);
 	let error = $state('');
@@ -43,7 +43,10 @@
 	}
 </script>
 
-<div class="resets" aria-label="Codex resets">
+<div class="resets" class:action={label} aria-label="Codex resets">
+	{#if label}
+		{#if credits.availableCount > 0}<Button variant="primary" disabled={busy || confirming} onclick={() => { confirming = true; message = ''; }}>{label}</Button>{/if}
+	{:else}
 	<div class="summary">
 		<span>{credits.availableCount} {credits.availableCount === 1 ? 'reset' : 'resets'}</span>
 		{#if credits.availableCount > 0 && credits.expiresAt !== undefined}
@@ -57,6 +60,7 @@
 		{/if}
 	</div>
 	<Button disabled={!credits.availableCount || busy || confirming} aria-label="Use a Codex reset" onclick={() => { confirming = true; message = ''; }}>Use</Button>
+	{/if}
 	{#if confirming}
 		<div class="confirmation">
 			<span>Use 1 reset?</span>
@@ -80,6 +84,10 @@
 		font-size: var(--font-size-sm);
 	}
 
+	.action {
+		display: contents;
+	}
+
 	.summary {
 		display: flex;
 		flex: 1;
@@ -94,7 +102,7 @@
 		white-space: nowrap;
 	}
 
-	.resets :global(button) {
+	.resets:not(.action) :global(button) {
 		padding: 0 var(--space-2);
 		font-size: var(--font-size-sm);
 	}
@@ -110,6 +118,12 @@
 
 	.confirmation span {
 		flex: 1;
+	}
+
+	.confirmation,
+	.error,
+	.message {
+		order: 1;
 	}
 
 	.error,

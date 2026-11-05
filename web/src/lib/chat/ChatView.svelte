@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ChatComposer from '#lib/chat/ChatComposer.svelte';
+	import EmptyChat from '#lib/chat/EmptyChat.svelte';
 	import Activity from '#lib/chat/Activity.svelte';
 	import { same, subagents as flatten } from '#lib/chat/agents.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -19,7 +20,7 @@
 	import Text from '#lib/chat/Text.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import { modes } from '#lib/config.svelte.ts';
-	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ServerMessage } from '#lib/device.svelte.ts';
+	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ResetCredits, ServerMessage } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import { onMount, tick } from 'svelte';
@@ -27,7 +28,7 @@
 	import GitBranch from '~icons/ph/git-branch';
 	import GitFork from '~icons/ph/git-fork';
 
-	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, ondiff, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; ondiff(path: string): void; oncanvas(canvas: string): void } =
+	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, branch, codexResets = null, ondiff, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; branch?: string; codexResets?: ResetCredits | null; ondiff(path: string): void; oncanvas(canvas: string): void } =
 		$props();
 
 	const subagents = $derived(flatten(items));
@@ -46,6 +47,7 @@
 	let composer = $state<ChatComposer>();
 	let handoff = $state<Handoff>();
 	let mover = $state<MoveToWorktree>();
+	const onhandoff = $derived(handoff?.enabled() ? () => handoff?.show() : undefined);
 	const branches = $derived([
 		{ label: 'New Chat from here…', icon: GitFork, disabled: !handoff?.enabled(), onselect: () => handoff?.show() },
 		{ label: 'Move to new worktree…', icon: GitBranch, disabled: !mover?.enabled(), onselect: () => mover?.show() }
@@ -204,7 +206,8 @@
 	<div class="conversation" hidden={!!selected}>
 		<div class="transcript" bind:this={scroller} style:padding-top="max(var(--space-6), {messageNavHeight}px)" {@attach follow}>
 			<div class="column">
-				<Transcript {items} {active} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={(index) => run('rewind', index)} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
+				{#if !items.length && !chat.queued.length}<EmptyChat rig={chat.rig} agent={chat.agent} settings={chat.settings} {choices} {project} {branch} />{/if}
+				<Transcript {items} {active} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={(index) => run('rewind', index)} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
 			</div>
 		</div>
@@ -215,7 +218,7 @@
 			<div class="transcript" {@attach follow}>
 				<div class="column">
 					{#if selected.prompt}<Prompt prompt={selected.prompt} />{/if}
-					<Transcript items={selected.items} main={items} {active} activity={selected.activity} path={opened} onopen={open} onattend={attend} {ondiff} {oncanvas} />
+					<Transcript items={selected.items} main={items} {active} activity={selected.activity} path={opened} agent={selected.agent ?? chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} />
 					{#if selected.report}
 						<section class="report" aria-label="Report">
 							<span class="label">Report</span>
@@ -276,6 +279,7 @@
 		flex-direction: column;
 		gap: var(--space-4);
 		max-width: 760px;
+		min-height: 100%;
 		margin: 0 auto;
 		line-height: 1.55;
 	}
