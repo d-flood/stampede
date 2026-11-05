@@ -52,6 +52,7 @@
 	let commitRefusal = $state<string | null>(null);
 	let modesRefusal = $state<string | null>(null);
 	let fetchRefusal = $state<string | null>(null);
+	let editingRig = $state(false);
 	let docking: ThemeChoice | undefined;
 	const agents = Object.keys(agentNames) as Agent[];
 	const phone = $derived(form() === 'phone');
@@ -182,7 +183,7 @@
 		{/if}
 		{#if current}
 			<div class="pane">
-				{#if phone}<button class="back" aria-label="All settings" onclick={() => (chosen = undefined)}><CaretLeft /> Settings</button>{/if}
+				{#if phone && !editingRig}<button class="back" aria-label="All settings" onclick={() => (chosen = undefined)}><CaretLeft /> Settings</button>{/if}
 				{#if current === 'general'}
 					<h3>General</h3>
 					{#if update}
@@ -338,10 +339,12 @@
 						</section>
 					</div>
 				{:else if current === 'rigs'}
-					<section aria-labelledby="rigs-label">
-						<h3 id="rigs-label">Rigs</h3>
-						<p class="lede">Starting settings for new chats. {@render scope(true)}</p>
-						<div class="group padded">{#if open}<RigEditor />{/if}</div>
+					<section aria-label="Rigs">
+						{#if !editingRig}
+							<h3>Rigs</h3>
+							<p class="lede">Starting settings for new chats. Order sets the Ctrl+Shift shortcuts. {@render scope(true)}</p>
+						{/if}
+						{#if open}<RigEditor bind:editing={editingRig} />{/if}
 					</section>
 				{:else}
 					<section aria-labelledby="clips-label">
