@@ -1124,6 +1124,7 @@
 												variant="agent"
 												agent={chat.agent}
 												status={chatStatus(chat)}
+												still={shownChats.includes(id)}
 												label={chat.title ?? chat.rig}
 												tooltip={chat.title && `${chat.title}\n${chat.rig}`}
 												active={id === group.active}

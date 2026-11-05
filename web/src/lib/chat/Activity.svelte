@@ -13,7 +13,7 @@
 {/if}
 
 <style>
-	.activity { display: flex; align-items: center; gap: var(--space-2); min-height: var(--target-min); color: var(--status-working); font-size: var(--font-size-sm); }
+	.activity { --pulse: 0; display: flex; align-items: center; gap: var(--space-2); min-height: var(--target-min); color: var(--status-working); font-size: var(--font-size-sm); }
 	.waiting { color: var(--status-waiting); }
 	.label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
