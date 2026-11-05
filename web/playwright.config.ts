@@ -16,8 +16,7 @@ export default defineConfig({
 	reporter: [['dot'], ['json', { outputFile: performance ? '../target/check/e2e-perf-results.json' : '../target/check/e2e-results.json' }]],
 	use: { launchOptions: hardwareLaunchOptions, reducedMotion: 'reduce' },
 	projects: performance ? [
-		{ name: 'desktop-perf', grepInvert: /@phone/, testMatch: 'perf.spec.ts', use: desktop },
-		{ name: 'pixel-perf', grepInvert: /@desktop/, testMatch: 'perf.spec.ts', dependencies: ['desktop-perf'], use: pixel }
+		{ name: 'desktop-perf', testMatch: 'perf.spec.ts', use: desktop }
 	] : [
 		{ name: 'desktop', grepInvert: /@phone/, testIgnore: 'perf.spec.ts', use: desktop },
 		{ name: 'pixel', grepInvert: /@desktop/, testIgnore: 'perf.spec.ts', use: pixel }

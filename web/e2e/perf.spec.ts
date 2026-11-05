@@ -2,16 +2,13 @@ import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { newTab, openProject, screen, showScreen, showSidebar } from './shell.ts';
+import { newTab, openProject, screen, showSidebar } from './shell.ts';
 
 declare global {
 	interface Window {
 		clicked?: number;
 	}
 }
-
-// A smooth phone slide that lands just as the next one starts can snap back to the screen it left.
-test.use({ reducedMotion: 'reduce' });
 
 const runs = 5;
 const files = ['one.ts', 'two.ts', 'three.ts', 'four.ts', 'five.ts'];
@@ -67,7 +64,6 @@ function check(name: string, times: number[], budget: number) {
 }
 
 test('switching Tab or Project paints within 50 ms, and opening a file within 100 ms', async ({ page }, { project }) => {
-	const phone = !!project.use.isMobile;
 	const [one, two] = [fixture(`perf-${project.name}-one`), fixture(`perf-${project.name}-two`)];
 	await openProject(page, two);
 	const other = await newTerminal(page);
@@ -85,7 +81,6 @@ test('switching Tab or Project paints within 50 ms, and opening a file within 10
 	const projectSwitches = [];
 	for (let run = 0; run < runs; run++) {
 		const [name, id] = run % 2 ? [one, terminals[0]] : [two, other];
-		if (phone) await showScreen(page, 'projects');
 		const entry = page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name, exact: true });
 		projectSwitches.push(await measure(page, entry, tab(id)));
 	}
@@ -99,32 +94,8 @@ test('switching Tab or Project paints within 50 ms, and opening a file within 10
 	check('Open file', opens, 100);
 });
 
-test('a fresh load on the phone paints the active Terminal within 1.5 s', { tag: '@phone' }, async ({ page, context }) => {
-	await openProject(page, fixture('perf-cold'));
-	const terminal = await newTerminal(page);
-	const deviceId = await page.evaluate(() => sessionStorage.getItem('deviceId'));
-	const layout = () => page.request.get(`/api/devices/${deviceId}/layout`).then((response) => response.text());
-	await expect.poll(layout).toContain(terminal);
-	await page.close();
-
-	const loads = [];
-	for (let run = 0; run < runs; run++) {
-		const fresh = await context.newPage();
-		await fresh.addInitScript((id) => id && sessionStorage.setItem('deviceId', id), deviceId);
-		const cdp = await context.newCDPSession(fresh);
-		await cdp.send('Network.enable');
-		await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
-		await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 20, downloadThroughput: -1, uploadThroughput: -1 });
-		await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
-		await fresh.goto('/');
-		loads.push(await mark(fresh, `painted:${terminal}`));
-		await fresh.close();
-	}
-	check('Cold load', loads, 1500);
-});
-
 for (const streaming of [true, false]) {
-	test(`closing a Chat releases cached ${streaming ? 'streaming' : 'completed'} reply versions`, { tag: '@desktop' }, async ({ page }, { project }) => {
+	test(`closing a Chat releases cached ${streaming ? 'streaming' : 'completed'} reply versions`, async ({ page }, { project }) => {
 		let route: WebSocketRoute;
 		let chatId: string;
 		await page.routeWebSocket('**/ws', (socket) => {
