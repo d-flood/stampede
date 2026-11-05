@@ -240,6 +240,10 @@ _Avoid_: pending comment, note, Finding
 True of a Draft comment whose line changed when the Source moved, so it can't be sent until moved or deleted.
 _Avoid_: outdated, orphaned, stale
 
+**Suggested**:
+True of a Draft comment a Chat wrote, until David accepts or edits it; it can't be sent until then or deleted.
+_Avoid_: proposed, AI comment, agent comment
+
 **Viewed**:
 True of a file in a PR review that David has marked as looked at, until the Source changes it.
 _Avoid_: reviewed, seen, read

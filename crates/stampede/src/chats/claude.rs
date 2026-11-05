@@ -212,7 +212,7 @@ async fn launch(
     config["timeout"] = json!(86400000);
     let tools = ["--mcp-config".to_owned(), json!({ "mcpServers": { html::SERVER: config } }).to_string(),
         "--allowedTools".to_owned(), [html::CLAUDE_TOOL, crate::media::CLAUDE_TOOL, super::delegation::CLAUDE_LIST, super::delegation::CLAUDE_TOOL, super::questions::CLAUDE_TOOL,
-            super::terminal_tools::CLAUDE_STAGE, super::terminal_tools::CLAUDE_READ, crate::cli::CLAUDE_TOOL].join(","),
+            super::terminal_tools::CLAUDE_STAGE, super::terminal_tools::CLAUDE_READ, crate::cli::CLAUDE_TOOL, crate::pr_reviews::CLAUDE_TOOL].join(","),
         "--disallowedTools".to_owned(), "AskUserQuestion".to_owned(),
         "--add-dir".to_owned(), crate::canvas::root(data_dir).display().to_string()];
     let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.claude_flags()).chain(tools);

@@ -51,6 +51,7 @@ pub mod tools {
     pub const READ_TERMINAL: &str = include_str!("templates/tools/read_terminal.md").trim_ascii_end();
     pub const LIST_RIGS: &str = include_str!("templates/tools/list_rigs.md").trim_ascii_end();
     pub const DELEGATE_TO_RIG: &str = include_str!("templates/tools/delegate_to_rig.md").trim_ascii_end();
+    pub const PR_REVIEW: &str = include_str!("templates/tools/pr_review.md").trim_ascii_end();
     pub const EPIC_TICKET: &str = include_str!("templates/tools/epic_ticket.md").trim_ascii_end();
     pub const EPIC_RESOLVER: &str = include_str!("templates/tools/epic_resolver.md").trim_ascii_end();
     pub const EPIC_REVIEWER: &str = include_str!("templates/tools/epic_reviewer.md").trim_ascii_end();

@@ -1,8 +1,8 @@
 use crate::common;
 
-use std::{env, fs, path::Path, path::PathBuf, process::Command, time::Duration};
+use std::{env, fs, io::Write, path::Path, path::PathBuf, process::{Command, Stdio}, time::Duration};
 
-use common::{Server, control, git, next_control};
+use common::{Server, close_chat, control, git, next_control};
 use serde_json::{Value, json};
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
@@ -574,4 +574,104 @@ async fn own_prs_send_only_comments_and_closed_prs_send_nothing() {
     assert_eq!(post(server.port, &format!("{reviews}/7/refresh"), Value::Null).await.0, 200);
     assert_eq!(post(server.port, &send, json!({ "body": "Late", "event": "COMMENT" })).await.0, 409);
     assert_eq!(sent(root).len(), 1);
+}
+
+/// What the Chat-tools server of `chat` replies to each `pr_review` call, as its text and whether it failed.
+fn pr_review(root: &Path, chat: &str, calls: &[Value]) -> Vec<(String, bool)> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stampede"))
+        .arg("chat-tools").arg("--data-dir").arg(root.join("data")).arg("--chat-id").arg(chat)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let lines: String = calls.iter().map(|arguments| format!("{}\n", json!({ "id": 1, "method": "tools/call", "params": { "name": "pr_review", "arguments": arguments } }))).collect();
+    child.stdin.take().unwrap().write_all(lines.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let reply = |line: &str| {
+        let result = serde_json::from_str::<Value>(line).unwrap()["result"].clone();
+        (result["content"][0]["text"].as_str().unwrap().to_owned(), result["isError"] == true)
+    };
+    String::from_utf8(output.stdout).unwrap().lines().map(reply).collect()
+}
+
+#[tokio::test]
+async fn a_chats_pr_review_tool_suggests_drafts_that_hold_the_send_until_accepted() {
+    let config = "[[rig]]\nname = \"opus\"\nagent = \"claude-code\"\nenv = { STAMPEDE_FAKE_FIXTURE = \"simple-turn\" }\n";
+    let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
+    let server = Server::with_env("pr-reviews-tool", config, vec![("PATH", path.into())]).await;
+    let root = server.root.path();
+    fixture(root, "OPEN");
+    let (repo, _) = repository(root);
+    let list: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+    fs::write(repo.join("list.txt"), &list).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "Add list"]);
+    git(&repo, &["push", "-q", "origin", "main"]);
+    let source = push_pr(&repo, "main", "list.txt", &list.replace("line 5\n", "line five\n").replace("line 25\n", ""));
+    let mut socket = device(server.port, "device").await;
+    let id = open(&mut socket, &repo).await;
+    let reviews = format!("/api/projects/{id}/pr-reviews");
+    assert_eq!(post(server.port, &reviews, json!({ "pr": 7 })).await.0, 200);
+    let drafts = format!("{reviews}/7/drafts");
+    let (_, mine) = post(server.port, &drafts, json!({ "path": "list.txt", "side": "source", "line": 5, "body": "Why five?" })).await;
+    let mine = mine["drafts"][0]["id"].as_str().unwrap().to_owned();
+    control(&mut socket, json!({ "type": "chat.create", "projectId": id, "rig": "opus" })).await;
+    let chat = next_control(&mut socket, "chat.created").await["chat"]["id"].as_str().unwrap().to_owned();
+
+    let comment = |start: u32, line: u32, commit: &str, body: &str| {
+        json!({ "action": "comment", "pr": 7, "path": "list.txt", "start_line": start, "line": line, "commit": commit, "body": body })
+    };
+    let replies = pr_review(root, &chat, &[
+        json!({ "action": "show", "pr": 7 }),
+        json!({ "action": "show", "pr": 9 }),
+        comment(14, 15, &source, "Outside"),
+        comment(3, 6, "0000000", "Stale"),
+        comment(3, 6, &source, "Rename these?"),
+        json!({ "action": "comment", "pr": 7, "path": "list.txt", "side": "target", "line": 25, "commit": source, "body": "Why gone?" }),
+        json!({ "action": "edit", "pr": 7, "draft": mine, "body": "Mine now" }),
+    ]);
+    let shown = &replies[0].0;
+    assert!(shown.starts_with(&format!("# #7: Add widgets\n\nState: open\nSource commit: {source}\n")), "{shown}");
+    assert!(shown.ends_with(&format!("\n### {mine} · list.txt:5 (source) · the user's\n\nWhy five?\n")), "{shown}");
+    assert_eq!(replies[1], ("The user has no PR review of #9 open in this repository".to_owned(), true));
+    assert_eq!(replies[2], ("list.txt lines 14-15 are not within one hunk; on the source side they are lines 2-8, 22-27".to_owned(), true));
+    assert_eq!(replies[3], (format!("#7's Source is now {source}, so `show` it again and check your lines there"), true));
+    let added: Vec<_> = replies[4..6].iter().map(|(text, failed)| {
+        assert!(!failed, "{text}");
+        text.strip_prefix("Added Draft comment ").unwrap().strip_suffix('.').unwrap().to_owned()
+    }).collect();
+    assert_eq!(replies[6], (format!("Draft comment {mine} is not one you suggested"), true));
+
+    let suggested = json!({ "chat": chat, "rig": "opus" });
+    let expected = json!({
+        "id": added[0], "path": "list.txt", "side": "source", "startLine": 3, "line": 6, "body": "Rename these?",
+        "commit": source, "displaced": false, "suggested": suggested
+    });
+    let (_, listed) = get(server.port, &reviews).await;
+    assert_eq!(listed[0]["drafts"][1], expected);
+    assert_eq!((&listed[0]["drafts"][2]["side"], &listed[0]["drafts"][2]["line"]), (&json!("target"), &json!(25)));
+
+    let replies = pr_review(root, &chat, &[
+        json!({ "action": "edit", "pr": 7, "draft": added[0], "body": "Rename these." }),
+        json!({ "action": "delete", "pr": 7, "draft": added[1] }),
+        json!({ "action": "show", "pr": 7 }),
+    ]);
+    assert_eq!(replies[0], (format!("Replaced the body of Draft comment {}.", added[0]), false));
+    assert_eq!(replies[1], (format!("Deleted Draft comment {}.", added[1]), false));
+    assert!(replies[2].0.ends_with(&format!("\n### {} · list.txt:3-6 (source) · Suggested by you\n\nRename these.\n", added[0])), "{}", replies[2].0);
+
+    let send = format!("{reviews}/7/send");
+    assert_eq!(post(server.port, &send, json!({ "body": "", "event": "COMMENT" })).await, (409, json!("1 Draft comment is Suggested")));
+    assert!(sent(root).is_empty(), "a Suggested draft stops gh being called");
+    let (code, accepted) = put(server.port, &format!("{drafts}/{}", added[0]), json!({})).await;
+    assert_eq!(code, 200, "{accepted}");
+    let mut kept = expected.clone();
+    kept["body"] = json!("Rename these.");
+    kept.as_object_mut().unwrap().remove("suggested");
+    assert_eq!(accepted["drafts"][1], kept);
+    let refused = pr_review(root, &chat, &[json!({ "action": "delete", "pr": 7, "draft": added[0] })]);
+    assert_eq!(refused[0], (format!("Draft comment {} is not one you suggested", added[0]), true));
+
+    assert_eq!(post(server.port, &send, json!({ "body": "", "event": "COMMENT" })).await.0, 200);
+    let comments = &sent(root)[0]["stdin"]["comments"];
+    assert_eq!(comments[1], json!({ "path": "list.txt", "body": "Rename these.", "side": "RIGHT", "line": 6, "start_line": 3, "start_side": "RIGHT" }));
+    close_chat(&mut socket, root, &chat).await;
 }

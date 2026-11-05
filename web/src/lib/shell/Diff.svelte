@@ -12,7 +12,7 @@
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import { baseline, index, show, type Git } from '#lib/git.ts';
-	import { createDraft, deleteDraft, editDraft, hunks, setViewed, viewedState, type Hunks, type Placement, type PrReview, type Side } from '#lib/pr-reviews.ts';
+	import { acceptDraft, createDraft, deleteDraft, editDraft, hunks, setViewed, viewedState, type Hunks, type Placement, type PrReview, type Side } from '#lib/pr-reviews.ts';
 	import DraftBox from '#lib/shell/DraftBox.svelte';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import { ordered } from '#lib/shell/tree.ts';
@@ -402,7 +402,7 @@
 					body,
 					saved: !!draft,
 					label: `Draft comment on ${where}`,
-					caption: draft ? (placement.startLine ? named : undefined) : `${named} · ${hint}`,
+					caption: draft ? [draft.suggested && `Suggested by ${draft.suggested.rig}`, placement.startLine && named].filter(Boolean).join(' · ') || undefined : `${named} · ${hint}`,
 					autofocus: fresh && !draft,
 					suggestion: lines,
 					async onsave(text: string) {
@@ -415,7 +415,8 @@
 						delete typed[key];
 						close();
 					},
-					ondelete: async () => draft && applied(await deleteDraft(projectId, number, draft.id), path)
+					ondelete: async () => draft && applied(await deleteDraft(projectId, number, draft.id), path),
+					onaccept: draft?.suggested && (async () => applied(await acceptDraft(projectId, number, draft.id), path))
 				}
 			});
 			return () => unmount(box);

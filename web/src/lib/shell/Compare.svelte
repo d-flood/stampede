@@ -57,7 +57,8 @@
 	const files = $derived(compared?.result?.files);
 	const rows = $derived(files ? treeRows(files, 'compare', (key) => !collapsed.has(key)) : []);
 	const viewedCount = $derived(review && files ? files.filter((change) => viewedState(review, change) === 'viewed').length : 0);
-	const placed = $derived(review?.drafts.filter((draft) => !draft.displaced) ?? []);
+	const placed = $derived(review?.drafts.filter((draft) => !draft.displaced && !draft.suggested) ?? []);
+	const suggested = $derived(review?.drafts.filter((draft) => !draft.displaced && draft.suggested) ?? []);
 	const displaced = $derived(review?.drafts.filter((draft) => draft.displaced) ?? []);
 	const reason = $derived(availability && !availability.available && !availability.hidden ? availability.reason : undefined);
 	const failure = $derived.by(() => {
@@ -165,6 +166,7 @@
 					<span class="where">
 						<span class="name">{draft.path}:{lines}</span>
 						{#if draft.side === 'target'}<span class="side">Target</span>{/if}
+						{#if draft.suggested}<span class="side">{draft.suggested.rig}</span>{/if}
 					</span>
 					<span class="body">{draft.body.trim().split('\n')[0]}</span>
 				</button>
@@ -236,15 +238,19 @@
 			</div>
 		{/if}
 		{#if actionError}<p class="note failure" role="alert">{actionError}</p>{/if}
+		{#if suggested.length}{@render draftList('Suggested', suggested)}{/if}
 		{#if placed.length}{@render draftList('Draft comments', placed)}{/if}
 		{#if displaced.length}{@render displacedList(reviewing, displaced)}{/if}
 		{#if review?.state === 'open'}
 			<div class="send">
-				<Button variant="primary" disabled={!!displaced.length} onclick={() => (sending = true)}>
+				<Button variant="primary" disabled={!!displaced.length || !!suggested.length} onclick={() => (sending = true)}>
 					Send review… <span class="badge">{review.drafts.length}</span>
 				</Button>
 				{#if displaced.length}
 					<p class="reason">Re-place or delete {displaced.length === 1 ? 'the Displaced draft' : `the ${displaced.length} Displaced drafts`} to send.</p>
+				{/if}
+				{#if suggested.length}
+					<p class="reason">Accept or delete {suggested.length === 1 ? 'the Suggested draft' : `the ${suggested.length} Suggested drafts`} to send.</p>
 				{/if}
 			</div>
 			{#key review.number}<SendReview {projectId} {review} bind:open={sending} />{/key}

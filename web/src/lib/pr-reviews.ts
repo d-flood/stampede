@@ -24,7 +24,7 @@ export type Side = 'target' | 'source';
 /** Where a Draft comment sits: line `line`, or lines `startLine` to `line`, on one side. */
 export type Placement = { side: Side; line: number; startLine?: number };
 
-export type DraftComment = Placement & { id: string; path: string; body: string; commit: string; displaced: boolean };
+export type DraftComment = Placement & { id: string; path: string; body: string; commit: string; displaced: boolean; suggested?: { chat: string; rig: string } };
 
 /** The 1-based inclusive line ranges GitHub accepts comments on, per side. */
 export type Hunks = Record<Side, [number, number][]>;
@@ -78,6 +78,11 @@ export function createDraft(projectId: string, pr: number, draft: Placement & { 
 
 export function editDraft(projectId: string, pr: number, id: string, edit: Partial<Placement> & { body?: string }): Promise<PrReview> {
 	return draftRequest('PUT', `/api/projects/${projectId}/pr-reviews/${pr}/drafts/${id}`, edit);
+}
+
+/** Accepts a Suggested draft, as any edit does. */
+export function acceptDraft(projectId: string, pr: number, id: string): Promise<PrReview> {
+	return editDraft(projectId, pr, id, {});
 }
 
 export function deleteDraft(projectId: string, pr: number, id: string): Promise<PrReview> {

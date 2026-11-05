@@ -16,9 +16,10 @@ use tokio::{
 };
 
 use crate::{
-    chats::Duty,
+    chats::{Chat, Duty},
     epics::{Author, Epic, Epics, Event, Tag},
     git,
+    pr_reviews::{self, PrReviews},
     runs::Runs,
 };
 
@@ -338,6 +339,8 @@ enum Request {
     Remediated { epic: String, message: String, cwd: PathBuf },
     #[serde(rename = "tool")]
     Tool { chat: String, arguments: Value },
+    #[serde(rename = "pr-review")]
+    PrReview { chat: String, rig: String, cwd: PathBuf, arguments: Value },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -422,10 +425,21 @@ pub fn tool(duty: Duty) -> Value {
 
 /// Answers an `epic` tool call for `chat` with what the server replies.
 pub fn call(data_dir: &Path, chat: Option<&str>, arguments: Value) -> Value {
-    let reply = match chat {
+    replied(match chat {
         Some(chat) => exchange(data_dir, &Request::Tool { chat: chat.to_owned(), arguments }),
         None => Err("this Chat has no part in a Run".to_owned()),
-    };
+    })
+}
+
+/// Answers a `pr_review` tool call for `chat` with what the server replies.
+pub fn review(data_dir: &Path, chat: Option<Chat>, arguments: Value) -> Value {
+    replied(match chat {
+        Some(Chat { id, rig, cwd, .. }) => exchange(data_dir, &Request::PrReview { chat: id, rig, cwd, arguments }),
+        None => Err("this is not a Chat Stampede runs".to_owned()),
+    })
+}
+
+fn replied(reply: Result<String, String>) -> Value {
     let (text, failed) = match reply {
         Ok(text) => (text, false),
         Err(text) => (text, true),
@@ -512,12 +526,12 @@ pub fn bind(data_dir: &Path) -> io::Result<UnixListener> {
     UnixListener::bind(&address)
 }
 
-pub fn listen(listener: UnixListener, epics: Arc<Epics>, runs: Arc<Runs>) {
+pub fn listen(listener: UnixListener, epics: Arc<Epics>, runs: Arc<Runs>, reviews: Arc<PrReviews>) {
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
-                    tokio::spawn(respond(stream, Arc::clone(&epics), Arc::clone(&runs)));
+                    tokio::spawn(respond(stream, Arc::clone(&epics), Arc::clone(&runs), Arc::clone(&reviews)));
                 }
                 Err(error) => eprintln!("cannot accept a CLI connection: {error}"),
             }
@@ -525,14 +539,14 @@ pub fn listen(listener: UnixListener, epics: Arc<Epics>, runs: Arc<Runs>) {
     });
 }
 
-async fn respond(stream: tokio::net::UnixStream, epics: Arc<Epics>, runs: Arc<Runs>) {
+async fn respond(stream: tokio::net::UnixStream, epics: Arc<Epics>, runs: Arc<Runs>, reviews: Arc<PrReviews>) {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
     if tokio::io::BufReader::new(reader).read_line(&mut line).await.is_err() {
         return;
     }
     let handled = match serde_json::from_str(&line) {
-        Ok(request) => handle(&epics, &runs, request).await,
+        Ok(request) => handle(&epics, &runs, &reviews, request).await,
         Err(error) => Err(format!("cannot read the request: {error}")),
     };
     let response = handled.map_or_else(Response::Error, Response::Output);
@@ -541,7 +555,7 @@ async fn respond(stream: tokio::net::UnixStream, epics: Arc<Epics>, runs: Arc<Ru
     let _ = writer.write_all(&reply).await;
 }
 
-async fn handle(epics: &Epics, runs: &Runs, request: Request) -> Result<String, String> {
+async fn handle(epics: &Epics, runs: &Runs, reviews: &PrReviews, request: Request) -> Result<String, String> {
     match request {
         Request::AddEpic { slug, title, brief, cwd } => {
             let project = git::common_dir(&cwd)
@@ -588,7 +602,8 @@ async fn handle(epics: &Epics, runs: &Runs, request: Request) -> Result<String, 
         Request::Judge { epic, finding, accepted, reason, cwd } => runs.judge(&epic, finding, accepted, &reason, &cwd),
         Request::Reviewed { epic, cwd } => runs.reviewed(&epic, &cwd),
         Request::Remediated { epic, message, cwd } => runs.remediated(&epic, &cwd, &message).await,
-        Request::Tool { chat, arguments } => Box::pin(handle(epics, runs, on_behalf(epics, &chat, arguments)?)).await,
+        Request::Tool { chat, arguments } => Box::pin(handle(epics, runs, reviews, on_behalf(epics, &chat, arguments)?)).await,
+        Request::PrReview { chat, rig, cwd, arguments } => pr_reviews::act(reviews, &chat, &rig, &cwd, arguments).await,
     }
 }
 

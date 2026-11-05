@@ -15,9 +15,11 @@
 		onsave(body: string): Promise<unknown>;
 		oncancel(): void;
 		ondelete(): Promise<unknown>;
+		/** Present on a Suggested draft. */
+		onaccept?(): Promise<unknown>;
 	};
 
-	let { text = $bindable(), body, saved, label, caption, autofocus, suggestion, onsave, oncancel, ondelete }: Props = $props();
+	let { text = $bindable(), body, saved, label, caption, autofocus, suggestion, onsave, oncancel, ondelete, onaccept }: Props = $props();
 
 	let generation = $state(0);
 	let busy = $state(false);
@@ -67,6 +69,9 @@
 		<span class="gap"></span>
 		{#if saved}
 			<Button variant="danger" disabled={busy} onclick={() => run(ondelete)}>Delete</Button>
+		{/if}
+		{#if onaccept && !dirty}
+			<Button variant="primary" disabled={busy} onclick={() => run(onaccept)}>Accept</Button>
 		{/if}
 		{#if !saved || dirty}
 			<Button disabled={busy} onclick={cancel}>Cancel</Button>

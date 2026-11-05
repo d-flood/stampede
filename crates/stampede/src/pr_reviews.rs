@@ -54,6 +54,15 @@ struct DraftComment {
     body: String,
     commit: String,
     displaced: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    suggested: Option<Suggester>,
+}
+
+/// The Chat that wrote a Suggested draft, and its Rig.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Suggester {
+    chat: String,
+    rig: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -61,6 +70,12 @@ struct DraftComment {
 enum Side {
     Target,
     Source,
+}
+
+impl Side {
+    fn name(self) -> &'static str {
+        if self == Side::Source { "source" } else { "target" }
+    }
 }
 
 /// The 1-based inclusive line ranges of a file's hunks, which GitHub accepts comments on, per side.
@@ -71,10 +86,13 @@ pub struct Hunks {
 }
 
 impl Hunks {
+    fn of(&self, side: Side) -> &[(u32, u32)] {
+        if side == Side::Source { &self.source } else { &self.target }
+    }
+
     /// Whether `start..=end` lies within one hunk of `side`.
     fn contain(&self, side: Side, start: u32, end: u32) -> bool {
-        let ranges = if side == Side::Source { &self.source } else { &self.target };
-        start <= end && ranges.iter().any(|&(from, to)| from <= start && end <= to)
+        start <= end && self.of(side).iter().any(|&(from, to)| from <= start && end <= to)
     }
 }
 
@@ -209,6 +227,21 @@ impl PrReviews {
         saved.map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, format!("cannot save {}: {error}", file.display())))?;
         let _ = self.changed.send(common_dir.to_owned());
         Ok(())
+    }
+
+    /// Applies `change` to PR review `number` under the fetch lock, so a concurrent fetch never loses it.
+    async fn change(
+        &self,
+        dir: &Path,
+        common_dir: &Path,
+        number: u64,
+        change: impl AsyncFnOnce(&Path, &mut PrReview) -> Result<(), Failure>,
+    ) -> Result<PrReview, Failure> {
+        let _fetching = self.fetching.lock().await;
+        let mut review = self.get(common_dir, number).ok_or_else(|| missing(number))?;
+        change(dir, &mut review).await?;
+        self.save(common_dir, &review)?;
+        Ok(review)
     }
 
     fn remove(&self, common_dir: &Path, number: u64) -> Result<(), Failure> {
@@ -524,7 +557,6 @@ pub struct DraftEdit {
     start_line: Option<u32>,
 }
 
-/// Applies `change` to PR review `number` under the fetch lock, so a concurrent fetch never loses it.
 async fn change_review(
     state: &AppState,
     id: &str,
@@ -532,18 +564,18 @@ async fn change_review(
     change: impl AsyncFnOnce(&Path, &mut PrReview) -> Result<(), Failure>,
 ) -> Result<Json<PrReview>, Failure> {
     let (dir, common_dir) = located(state, id).await?;
-    let _fetching = state.pr_reviews.fetching.lock().await;
-    let mut review = state.pr_reviews.get(&common_dir, number).ok_or_else(|| missing(number))?;
-    change(&dir, &mut review).await?;
-    state.pr_reviews.save(&common_dir, &review)?;
-    Ok(Json(review))
+    state.pr_reviews.change(&dir, &common_dir, number, change).await.map(Json)
 }
 
 /// Checks a draft's lines lie within one hunk of its side, giving its `startLine` with a single line's dropped.
 async fn placed(dir: &Path, review: &PrReview, path: &str, side: Side, line: u32, start_line: Option<u32>) -> Result<Option<u32>, Failure> {
     let start = start_line.unwrap_or(line);
-    if start == 0 || !file_hunks(dir, review, path).await?.contain(side, start, line) {
-        return Err((StatusCode::BAD_REQUEST, format!("{path} lines {start}-{line} are not within one hunk")));
+    let hunks = file_hunks(dir, review, path).await?;
+    if start == 0 || !hunks.contain(side, start, line) {
+        let ranges: Vec<_> = hunks.of(side).iter().map(|(from, to)| format!("{from}-{to}")).collect();
+        let side = side.name();
+        let within = if ranges.is_empty() { format!("it has none on the {side} side") } else { format!("on the {side} side they are lines {}", ranges.join(", ")) };
+        return Err((StatusCode::BAD_REQUEST, format!("{path} lines {start}-{line} are not within one hunk; {within}")));
     }
     Ok(start_line.filter(|&start| start < line))
 }
@@ -568,6 +600,7 @@ pub async fn create_draft(
             body: written(draft.body)?,
             commit: review.source.commit.clone(),
             displaced: false,
+            suggested: None,
         });
         Ok(())
     })
@@ -582,6 +615,8 @@ pub async fn edit_draft(
     change_review(&state, &id, number, async |dir, review| {
         let at = review.drafts.iter().position(|draft| draft.id == draft_id).ok_or_else(|| (StatusCode::NOT_FOUND, format!("No Draft comment {draft_id}")))?;
         let mut edited = review.drafts[at].clone();
+        // Any edit David makes, even an empty one, accepts a Suggested draft.
+        edited.suggested = None;
         if let Some(body) = edit.body {
             edited.body = written(body)?;
         }
@@ -645,11 +680,13 @@ pub async fn send(State(state): State<AppState>, Param((id, number)): Param<(Str
         if !matches!(review.state, PrState::Open) {
             return Err((StatusCode::CONFLICT, format!("#{number} is not open")));
         }
-        match review.drafts.iter().filter(|draft| draft.displaced).count() {
-            0 => {}
-            1 => return Err((StatusCode::CONFLICT, "1 Draft comment is Displaced".to_owned())),
-            displaced => return Err((StatusCode::CONFLICT, format!("{displaced} Draft comments are Displaced"))),
-        }
+        let held = |count: usize, what: &str| match count {
+            0 => Ok(()),
+            1 => Err((StatusCode::CONFLICT, format!("1 Draft comment is {what}"))),
+            count => Err((StatusCode::CONFLICT, format!("{count} Draft comments are {what}"))),
+        };
+        held(review.drafts.iter().filter(|draft| draft.displaced).count(), "Displaced")?;
+        held(review.drafts.iter().filter(|draft| draft.suggested.is_some()).count(), "Suggested")?;
         if review.drafts.is_empty() && sending.body.trim().is_empty() {
             return Err((StatusCode::BAD_REQUEST, "a review needs Draft comments or a summary".to_owned()));
         }
@@ -662,6 +699,134 @@ pub async fn send(State(state): State<AppState>, Param((id, number)): Param<(Str
         Ok(())
     })
     .await
+}
+
+pub const TOOL: &str = "pr_review";
+pub const CLAUDE_TOOL: &str = "mcp__stampede_chat__pr_review";
+
+/// The `pr_review` tool of every Chat, which leaves Suggested drafts on a PR review of its Project's repository.
+pub fn tool() -> Value {
+    let text = json!({ "type": "string" });
+    let number = json!({ "type": "integer", "minimum": 1 });
+    json!({
+        "name": TOOL,
+        "description": crate::templates::tools::PR_REVIEW,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": { "enum": ["show", "comment", "edit", "delete"] },
+                "pr": number,
+                "path": text,
+                "side": { "enum": ["source", "target"] },
+                "line": number,
+                "start_line": number,
+                "commit": text,
+                "body": text,
+                "draft": text,
+            },
+            "required": ["action", "pr"],
+            "additionalProperties": false,
+        },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
+    })
+}
+
+#[derive(Deserialize)]
+struct Call {
+    pr: u64,
+    #[serde(flatten)]
+    action: Action,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "lowercase")]
+enum Action {
+    Show,
+    Comment { path: String, side: Option<Side>, line: u32, start_line: Option<u32>, commit: String, body: String },
+    Edit { draft: String, body: String },
+    Delete { draft: String },
+}
+
+/// Answers a `pr_review` call of Chat `chat`, which runs with Rig `rig` in `cwd`.
+pub async fn act(reviews: &PrReviews, chat: &str, rig: &str, cwd: &Path, arguments: Value) -> Result<String, String> {
+    let Call { pr, action } = serde_json::from_value(arguments).map_err(|error| format!("cannot read the arguments: {error}"))?;
+    let common_dir = git::common_dir(cwd).await.ok_or_else(|| format!("{} is not inside a git repository", cwd.display()))?;
+    let review = reviews.get(&common_dir, pr).ok_or_else(|| format!("The user has no PR review of #{pr} open in this repository"))?;
+    let reply = match action {
+        Action::Show => return Ok(shown(&review, chat)),
+        Action::Comment { path, side, line, start_line, commit, body } => {
+            let id = Uuid::new_v4().to_string();
+            let reply = format!("Added Draft comment {id}.");
+            let (side, suggested) = (side.unwrap_or(Side::Source), Some(Suggester { chat: chat.to_owned(), rig: rig.to_owned() }));
+            reviews.change(cwd, &common_dir, pr, async |dir, review| {
+                if commit != review.source.commit {
+                    let now = &review.source.commit;
+                    return Err((StatusCode::CONFLICT, format!("#{pr}'s Source is now {now}, so `show` it again and check your lines there")));
+                }
+                let start_line = placed(dir, review, &path, side, line, start_line).await?;
+                review.drafts.push(DraftComment { id, path, side, line, start_line, body: written(body)?, commit, displaced: false, suggested });
+                Ok(())
+            }).await.map(|_| reply)
+        }
+        Action::Edit { draft, body } => {
+            let reply = format!("Replaced the body of Draft comment {draft}.");
+            reviews.change(cwd, &common_dir, pr, async |_, review| {
+                yours(review, &draft, chat)?.body = written(body)?;
+                Ok(())
+            }).await.map(|_| reply)
+        }
+        Action::Delete { draft } => {
+            let reply = format!("Deleted Draft comment {draft}.");
+            reviews.change(cwd, &common_dir, pr, async |_, review| {
+                yours(review, &draft, chat)?;
+                review.drafts.retain(|found| found.id != draft);
+                Ok(())
+            }).await.map(|_| reply)
+        }
+    };
+    reply.map_err(|(_, message)| message)
+}
+
+/// Draft comment `id` of `review`, when it is a Suggested draft of `chat`.
+fn yours<'a>(review: &'a mut PrReview, id: &str, chat: &str) -> Result<&'a mut DraftComment, Failure> {
+    let draft = review.drafts.iter_mut().find(|draft| draft.id == id).ok_or_else(|| (StatusCode::NOT_FOUND, format!("No Draft comment {id}")))?;
+    match &draft.suggested {
+        Some(suggester) if suggester.chat == chat => Ok(draft),
+        _ => Err((StatusCode::FORBIDDEN, format!("Draft comment {id} is not one you suggested"))),
+    }
+}
+
+/// What `show` tells Chat `chat` about `review`.
+fn shown(review: &PrReview, chat: &str) -> String {
+    let (source, base) = (&review.source.commit, &review.merge_base);
+    let state = match review.state {
+        PrState::Open => "open",
+        PrState::Merged => "merged",
+        PrState::Closed => "closed",
+    };
+    let mut text = format!(
+        "# #{}: {}\n\nState: {state}\nSource commit: {source}\nTarget side: {base}, where the Source split off\n\n\
+         Read the change with `git diff --relative {base} {source}`, a file's source lines with `git show {source}:./<path>`, \
+         and its target lines with `git show {base}:./<path>`.\n",
+        review.number, review.title
+    );
+    if review.drafts.is_empty() {
+        text.push_str("\nNo Draft comments yet.\n");
+    } else {
+        text.push_str("\n## Draft comments\n");
+    }
+    for draft in &review.drafts {
+        let lines = draft.start_line.map_or_else(|| draft.line.to_string(), |start| format!("{start}-{}", draft.line));
+        let whose = match &draft.suggested {
+            Some(suggester) if suggester.chat == chat => "Suggested by you".to_owned(),
+            Some(suggester) => format!("Suggested by {}", suggester.rig),
+            None => "the user's".to_owned(),
+        };
+        let displaced = if draft.displaced { ", Displaced" } else { "" };
+        let (id, path, side, body) = (&draft.id, &draft.path, draft.side.name(), draft.body.trim_end());
+        text.push_str(&format!("\n### {id} · {path}:{lines} ({side}) · {whose}{displaced}\n\n{body}\n"));
+    }
+    text
 }
 
 #[cfg(test)]

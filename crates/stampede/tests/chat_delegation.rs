@@ -57,7 +57,7 @@ async fn review(agent: &str, target: &str, finding: &str) {
     assert_eq!(child["parent"], source["id"]);
     let catalog = catalog(&server, &child).await;
     let names: Vec<_> = catalog["tools"].as_array().unwrap().iter().map(|tool| tool["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["ask_questions", "stage_command", "read_terminal", "render_html", "render_media"]);
+    assert_eq!(names, ["ask_questions", "stage_command", "read_terminal", "render_html", "render_media", "pr_review"]);
     for name in ["list_rigs", "delegate_to_rig"] {
         assert_eq!(call(&server, &child, name, json!({ "rig": "source", "task": TASK })).await["isError"], true);
     }

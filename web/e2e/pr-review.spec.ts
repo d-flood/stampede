@@ -321,6 +321,38 @@ test('Own PRs offer only Comment, and Displaced drafts disable sending', async (
 	await expect(reloaded).toContainText('Re-place or delete the Displaced draft to send.');
 });
 
+test('A Suggested draft holds the send until Accept makes it a plain Draft comment', async ({ page }) => {
+	signIn('OPEN');
+	repository();
+	await openProject(page, 'widgets');
+	await openPr(page);
+	const reviews = `${process.env.STAMPEDE_E2E_ROOT}/data/pr-reviews`;
+	const record = readdirSync(reviews).map((dir) => `${reviews}/${dir}/7.json`).find(existsSync)!;
+	const review = JSON.parse(readFileSync(record, 'utf8'));
+	const suggested = { chat: 'chat', rig: 'opus' };
+	const draft = { id: 'suggested', path: 'src/widget.ts', side: 'source', line: 1, body: 'Name it widgets?', commit: review.source.commit, displaced: false, suggested };
+	writeFileSync(record, JSON.stringify({ ...review, drafts: [draft] }));
+	await page.reload();
+	await expect(page.getByRole('list', { name: 'Suggested' })).toContainText('opus');
+	let compare = await comparePanel(page);
+	const listed = compare.getByRole('list', { name: 'Suggested' });
+	await expect(listed).toContainText('Name it widgets?');
+	await expect(compare.getByRole('button', { name: 'Send review…' })).toBeDisabled();
+	await expect(compare).toContainText('Accept or delete the Suggested draft to send.');
+
+	await listed.getByRole('button').click();
+	const inline = page.locator('.diff:not([hidden]) .cm-draftComment[data-draft="suggested"]');
+	await expect(inline).toContainText('Suggested by opus');
+	await inline.getByRole('button', { name: 'Accept' }).click();
+	await expect(inline.getByRole('button', { name: 'Accept' })).toHaveCount(0);
+	await expect(inline).not.toContainText('Suggested by opus');
+
+	compare = await comparePanel(page);
+	await expect(compare.getByRole('list', { name: 'Suggested' })).toHaveCount(0);
+	await expect(compare.getByRole('list', { name: 'Draft comments' })).toContainText('Name it widgets?');
+	await expect(compare.getByRole('button', { name: 'Send review…' })).toBeEnabled();
+});
+
 const RANGES = LIST.replace('line5 = 5', 'line5 = 0').replace('line6 = 6', 'line6 = 0').replace('line25 = 25', 'line25 = 0');
 const LONG = Array.from({ length: 300 }, (_, index) => `export const long${index + 1} = ${index + 1};\n`).join('');
 

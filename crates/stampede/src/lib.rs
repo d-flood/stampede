@@ -240,7 +240,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
         Arc::clone(&attention),
         Arc::clone(&usage),
     )?;
-    cli::listen(requests, Arc::clone(&epics), Arc::clone(&runs));
+    cli::listen(requests, Arc::clone(&epics), Arc::clone(&runs), Arc::clone(&pr_reviews));
     let devices = device::Devices::default();
     usage::spawn(Arc::clone(&usage), config.clone(), devices.subscribe(), Arc::clone(&epics));
     terminals.scrollback(config.borrow().scrollback);

@@ -120,7 +120,7 @@ function widget(state: EditorState, placement: Placement, draft?: DraftComment) 
 		placement.side === 'source' && state.facet(config).side === 'source'
 			? state.sliceDoc(state.doc.line(firstLine(placement)).from, at.pos)
 			: undefined;
-	const key = JSON.stringify([draft?.id, placement.side, placement.startLine, placement.line, draft?.body]);
+	const key = JSON.stringify([draft?.id, placement.side, placement.startLine, placement.line, draft?.body, !!draft?.suggested]);
 	return Decoration.widget({ widget: new DraftWidget(key, placement, draft, lines), block: true, side: at.side }).range(at.pos);
 }
 

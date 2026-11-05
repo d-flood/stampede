@@ -103,6 +103,7 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
             if chat.as_ref().is_none_or(|chat| chat.parent.is_none()) {
                 tools.splice(0..0, [super::delegation::list_tool(), super::delegation::tool()]);
             }
+            tools.push(crate::pr_reviews::tool());
             tools.extend(chat.and_then(|chat| chat.duty).map(crate::cli::tool));
             catalog
         }
@@ -121,6 +122,9 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
         }
         Some("tools/call") if request["params"]["name"] == crate::cli::TOOL => {
             crate::cli::call(data_dir, args.chat_id.as_deref(), request["params"]["arguments"].clone())
+        }
+        Some("tools/call") if request["params"]["name"] == crate::pr_reviews::TOOL => {
+            crate::cli::review(data_dir, record(args), request["params"]["arguments"].clone())
         }
         Some("tools/call") if request["params"]["name"] == crate::media::TOOL => {
             crate::media::call(data_dir, &request["params"]["arguments"])
