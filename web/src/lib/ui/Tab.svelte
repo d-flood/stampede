@@ -40,7 +40,6 @@
 		deleted?: boolean;
 		ended?: boolean;
 		closing?: boolean;
-		still?: boolean;
 		onclose?: () => void;
 	};
 
@@ -56,7 +55,6 @@
 		deleted = false,
 		ended = false,
 		closing = false,
-		still = false,
 		onclose,
 		...rest
 	}: Props = $props();
@@ -94,7 +92,7 @@
 		<Icon />
 		<span class="label">{label}</span>
 		{#if variant === 'diff'}<span class="vs">↔ {against}</span>{/if}
-		{#if Mark}<span class="mark" class:still title={status}><Mark /></span>{/if}
+		{#if Mark}<span class="mark" title={status}><Mark /></span>{/if}
 		{#if dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
 	</button>
 {/snippet}
@@ -275,9 +273,5 @@
 	.mark {
 		display: inline-flex;
 		color: var(--mark);
-	}
-
-	.still {
-		--pulse: 0;
 	}
 </style>

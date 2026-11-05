@@ -10,7 +10,7 @@
 </script>
 
 <span class="row">
-	<SubagentDot {color} />
+	<SubagentDot {color} pulse={subagent.status !== 'done'} />
 	<span class="body">
 		<span class="title">
 			<span class="task">{subagent.task}</span>

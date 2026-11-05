@@ -18,7 +18,7 @@
 	{#each subagents as subagent (subagent.id)}
 		{@const placed = [...path, subagent.id]}
 		<button class="spawn" class:failed={subagent.outcome === 'failed'} class:waiting={subagent.status === 'waiting'} onclick={() => (subagent.status === 'waiting' ? onattend(subagent.id) : onopen(placed))}>
-			<SubagentDot color={color(main, placed)} />
+			<SubagentDot color={color(main, placed)} pulse={subagent.status !== 'done'} />
 			{#if subagent.agent}{@const Logo = logos[subagent.agent]}<span class="logo" role="img" aria-label={agentNames[subagent.agent]} title={agentNames[subagent.agent]}><Logo aria-hidden="true" /></span>{/if}
 			{#if subagent.name}<span class="name">{subagent.name}</span>{/if}
 			{#if subagent.role}<span class="role">{subagent.role}</span>{/if}

@@ -333,5 +333,12 @@
 
 	[data-dot='running'] > .marker {
 		color: var(--status-working);
+		animation: fade 1.6s ease-in-out var(--pulse);
+	}
+
+	@keyframes fade {
+		50% {
+			opacity: 0.3;
+		}
 	}
 </style>

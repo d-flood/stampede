@@ -8,7 +8,7 @@
 	import { untrack } from 'svelte';
 	import X from '~icons/ph/x';
 
-	export type SwitcherTab = { id: string; variant: Variant; label: string; agent?: Agent; status?: Status; still?: boolean; dirty?: boolean };
+	export type SwitcherTab = { id: string; variant: Variant; label: string; agent?: Agent; status?: Status; dirty?: boolean };
 
 	type Props = {
 		open: boolean;
@@ -64,7 +64,7 @@
 				>
 					<span class="icon"><Icon /></span>
 					<span class="label" class:mono={tab.variant === 'terminal'} id="{id}-tab-{index}">{tab.label}</span>
-					{#if Mark}<span class="mark" class:still={tab.still} role="img" aria-label={tab.status} id="{id}-mark-{index}"><Mark /></span>{/if}
+					{#if Mark}<span class="mark" role="img" aria-label={tab.status} id="{id}-mark-{index}"><Mark /></span>{/if}
 					{#if tab.dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
 				</button>
 				<IconButton label="Close {tab.label}" onclick={() => ((open = false), onclose(tab.id))}><X /></IconButton>
@@ -191,10 +191,6 @@
 		display: inline-flex;
 		flex: none;
 		color: var(--mark);
-	}
-
-	.still {
-		--pulse: 0;
 	}
 
 	.working {

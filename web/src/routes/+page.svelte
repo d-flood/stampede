@@ -849,7 +849,7 @@
 		const tab = tabs.find((tab) => tab.id === id);
 		if (tab) return { id, variant: 'terminal', label: tab.label };
 		const chat = chatTabs.find((chat) => chat.id === id);
-		if (chat) return { id, variant: 'agent', agent: chat.agent, label: chat.title ?? chat.rig, status: chatStatus(chat), still: shownChats.includes(id) };
+		if (chat) return { id, variant: 'agent', agent: chat.agent, label: chat.title ?? chat.rig, status: chatStatus(chat) };
 		const browser = browserTabs.find((browser) => browser.id === id);
 		if (browser) return { id, variant: 'browser', label: browser.name };
 		const canvas = canvasTabs.find((canvas) => canvas.id === id);
@@ -1146,7 +1146,6 @@
 												variant="agent"
 												agent={chat.agent}
 												status={chatStatus(chat)}
-												still={shownChats.includes(id)}
 												label={chat.title ?? chat.rig}
 												tooltip={chat.title && `${chat.title}\n${chat.rig}`}
 												active={id === group.active}
@@ -1779,7 +1778,6 @@
 	}
 
 	.mark {
-		--pulse: 0;
 		display: inline-flex;
 		color: var(--mark);
 	}

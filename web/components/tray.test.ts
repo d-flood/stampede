@@ -1,6 +1,6 @@
 import Tray from '#lib/chat/Tray.svelte';
 import type { Item, Subagent } from '#lib/device.svelte.ts';
-import { expect, test, vi } from 'vitest';
+import { expect, onTestFinished, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 
@@ -68,4 +68,14 @@ test('five Subagents show three dots then +2, and the chip opens them grouped Ru
 test('the Tray renders nothing without Subagents, shells or canvases', async () => {
 	const view = await render(Tray, { items: [{ kind: 'text', text: 'Hi', phase: 'final', streaming: false }], ...callbacks() });
 	await expect.element(view.getByRole('region', { name: 'Tray' })).not.toBeInTheDocument();
+});
+
+test('working and waiting Subagent dots pulse; done ones hold still', async () => {
+	document.documentElement.style.setProperty('--pulse', 'infinite');
+	onTestFinished(() => {
+		document.documentElement.style.removeProperty('--pulse');
+	});
+	const view = await render(Tray, { items: [agent('a'), agent('b', { status: 'waiting' }), agent('c', { status: 'done', outcome: 'completed' })], ...callbacks() });
+	const dots = [...view.getByRole('region', { name: 'Subagents' }).element().querySelectorAll('.dot')];
+	expect(dots.map((dot) => dot.getAnimations().length > 0)).toEqual([true, true, false]);
 });

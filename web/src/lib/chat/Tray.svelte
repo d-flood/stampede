@@ -73,7 +73,7 @@
 {#snippet trigger(props: Record<string, unknown>)}
 	<button {...props} class="open" aria-label={['Subagents', summary].filter(Boolean).join(': ')}>
 		<span class="dots">
-			{#each shown.slice(0, DOTS) as { path } (path.join('/'))}<SubagentDot color={color(items, path)} />{/each}
+			{#each shown.slice(0, DOTS) as { path, subagent } (path.join('/'))}<SubagentDot color={color(items, path)} pulse={subagent.status !== 'done'} />{/each}
 		</span>
 		{#if shown.length > DOTS}<span class="more">+{shown.length - DOTS}</span>{/if}
 		{#if summary}<span>{summary}</span>{/if}

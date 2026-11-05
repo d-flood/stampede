@@ -303,7 +303,7 @@ test('the Tray counts Subagents with colored dots, surfaces waiting ones and kee
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-test('only the viewed Chat comet and label move; peripheral and waiting marks hold still', { tag: '@desktop' }, async ({ page }) => {
+test('working and waiting marks keep moving in the viewed Chat, its Tab and the rail', { tag: '@desktop' }, async ({ page }) => {
 	await page.emulateMedia({ reducedMotion: 'no-preference' });
 	let route: WebSocketRoute;
 	const chatIds: string[] = [];
@@ -342,20 +342,19 @@ test('only the viewed Chat comet and label move; peripheral and waiting marks ho
 	await expect.poll(() => moving(ring)).toBeGreaterThan(0);
 	await expect.poll(() => moving(label)).toBeGreaterThan(0);
 	await expect.poll(() => moving(mark(background))).toBeGreaterThan(0);
-	await expect.poll(() => moving(mark(viewed))).toBe(0);
-	await expect.poll(() => panel.evaluate((element) => element.getAnimations({ subtree: true }).filter((animation) => animation.playState === 'running').every((animation) => (animation.effect as KeyframeEffect).target?.closest('.ring, .legend')))).toBe(true);
+	await expect.poll(() => moving(mark(viewed))).toBeGreaterThan(0);
 	const rail = page.locator('[data-project] .spinner');
 	await expect(rail.first()).toBeVisible();
-	await expect.poll(() => moving(rail)).toBe(0);
+	await expect.poll(() => moving(rail)).toBeGreaterThan(0);
 
 	send({ type: 'chat.status', chatId: viewed, status: 'waiting' });
 	await expect(mark(viewed)).toHaveAttribute('title', 'waiting');
-	await expect.poll(() => moving(ring)).toBe(0);
-	await expect.poll(() => moving(panel.getByRole('status', { name: 'Current activity' }))).toBe(0);
-	await expect.poll(() => moving(mark(viewed))).toBe(0);
-
-	await page.locator(`[data-tab="${background}"]`).click();
-	await expect.poll(() => moving(mark(background))).toBe(0);
-	await expect.poll(() => moving(mark(viewed))).toBe(0);
+	await expect.poll(() => moving(mark(viewed))).toBeGreaterThan(0);
 	await expect.poll(() => moving(ring)).toBeGreaterThan(0);
+	await expect.poll(() => moving(panel.getByRole('status', { name: 'Current activity' }))).toBeGreaterThan(0);
+
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	await expect.poll(() => moving(mark(viewed))).toBe(0);
+	await expect.poll(() => moving(mark(background))).toBe(0);
+	await expect.poll(() => moving(rail)).toBe(0);
 });

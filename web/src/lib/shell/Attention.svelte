@@ -173,10 +173,6 @@
 		flex: none;
 	}
 
-	.mark {
-		--pulse: 0;
-	}
-
 	.icon {
 		width: 1em;
 	}
