@@ -2,9 +2,11 @@
 	import { logos } from '#lib/chat/sessions.ts';
 	import type { Reading, ResetCredits } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import CodexResets from '#lib/shell/CodexResets.svelte';
+	import CodexResets, { expiry } from '#lib/shell/CodexResets.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
+	import { mergeProps, Popover } from 'bits-ui';
 	import { onMount } from 'svelte';
+	import ResetIcon from '~icons/ph/arrow-counter-clockwise-bold';
 
 	let { readings, codexResets = null }: { readings: Reading[]; codexResets?: ResetCredits | null } = $props();
 
@@ -17,23 +19,19 @@
 		{ agent: 'codex', label: 'Codex', Logo: logos.codex },
 		{ agent: 'copilot', label: 'Copilot', Logo: logos.copilot }
 	] as const;
+	const high = 0.8;
 
 	const visibleAgents = $derived(agents.filter(({ agent }) => (agent === 'codex' && codexResets !== null) || readings.some((reading) => reading.agent === agent && (agent === 'copilot' || reading.used !== undefined))));
+	const resets = $derived(codexResets?.availableCount ?? 0);
 
 	let now = $state(Date.now());
-	let section: HTMLElement;
-	let compact = $state(false);
+	let open = $state(false);
+	let tip = $state(false);
+	let popover = $state<HTMLElement>();
 
 	onMount(() => {
 		const timer = setInterval(() => (now = Date.now()), 30_000);
-		const observer = new ResizeObserver(() => {
-			compact = getComputedStyle(section.querySelector('.agent') ?? section).getPropertyValue('--compact').trim() === '1';
-		});
-		observer.observe(section);
-		return () => {
-			clearInterval(timer);
-			observer.disconnect();
-		};
+		return () => clearInterval(timer);
 	});
 
 	function resetTime(resetsAt: number) {
@@ -76,116 +74,162 @@
 			: `Resets: ${new Date(reading.resetsAt).toLocaleString()}`;
 		return [updated, reset].filter(Boolean).join('\n');
 	}
+
+	function measured(agent: string) {
+		return windows.flatMap(({ window, label, name }) => {
+			const reading = readings.find((reading) => reading.agent === agent && reading.window === window);
+			return reading?.used === undefined ? [] : [{ window, label, name, reading, used: reading.used, percent: Math.round(reading.used * 100) }];
+		});
+	}
 </script>
 
-<section bind:this={section} aria-label="Usage windows" class:phone={form() === 'phone'}>
-	{#each visibleAgents as { agent, label, Logo } (agent)}
-		{@const updated = Math.max(0, ...readings.filter((reading) => reading.agent === agent).map((reading) => reading.readAt))}
-		<div class="agent {agent}" role="group" aria-label={label}>
-			<div class="identity">
-				<span class="brand" aria-hidden="true"><Logo /></span>
-				<div>
-					<div class="name">{label}</div>
-					<div class="age">{updated ? age(updated) : ''}</div>
-				</div>
-			</div>
-			{#if agent === 'copilot'}
-				{@const reading = readings.find((reading) => reading.agent === agent && reading.window === 'monthly')}
-				{@const currentSessions = readings.filter((reading) => reading.agent === agent && reading.window === 'session')}
-				{@const unit = currentSessions.some((reading) => reading.consumption?.unit === 'credits') ? 'credits' : 'requests'}
-				{@const sessions = currentSessions.filter((reading) => reading.consumption?.unit === unit)}
-				{@const consumption = reading?.consumption ?? (sessions.length ? { amount: sessions.reduce((total, reading) => total + reading.consumption!.amount, 0), unit } : undefined)}
-				{@const partial = !reading?.consumption && (sessions.some((reading) => reading.partial) || sessions.length < currentSessions.length)}
-				{@const description = [
-					partial ? 'Reported cost; some usage may be missing' : '',
-					!reading?.consumption && consumption?.unit === 'requests' ? 'Cost not reported' : '',
-					reading?.consumption ? 'This billing period' : !sessions.length ? 'Billing usage not reported' : '',
-					reading?.consumption && reading.startsAt !== undefined && reading.resetsAt !== undefined ? `${periodDate(reading.startsAt)} – ${periodDate(reading.resetsAt)}` : ''
-				].filter(Boolean).join('\n')}
-				<Tooltip text={description} disabled={!compact || !description}>
-					{#snippet children(props)}
-						<div {...props} class="billing">
-							<span class="amount">
-								{#if consumption}
-									{#if consumption.unit === 'credits'}
-										{cost(consumption.amount)}
-										{#if partial}<span class="unit reported">reported</span>{/if}
-									{:else}
-										{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-										<span class="unit">{consumption.unit}</span>
-									{/if}
-								{:else}
-									<span class="unavailable-prefix">Usage{' '}</span>unavailable
-								{/if}
-							</span>
-							{#if consumption?.unit === 'credits'}
-								<span class="credits">{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })} credits</span>
-							{/if}
-							{#if reading?.consumption || !sessions.length}
-								<span class="period">{reading?.consumption ? 'This billing period' : 'Billing usage not reported'}</span>
-							{/if}
-							{#if !reading?.consumption && consumption?.unit === 'requests'}<span class="cost-unavailable">Cost not reported</span>{/if}
-							{#if reading?.consumption && reading.startsAt !== undefined && reading.resetsAt !== undefined}
-								<span class="cycle">
-									<time datetime={new Date(reading.startsAt).toISOString()}>{periodDate(reading.startsAt)}</time>
-									–
-									<time datetime={new Date(reading.resetsAt).toISOString()}>{periodDate(reading.resetsAt)}</time>
-								</span>
-							{/if}
-						</div>
-					{/snippet}
-				</Tooltip>
+{#snippet billing()}
+	{@const reading = readings.find((reading) => reading.agent === 'copilot' && reading.window === 'monthly')}
+	{@const currentSessions = readings.filter((reading) => reading.agent === 'copilot' && reading.window === 'session')}
+	{@const unit = currentSessions.some((reading) => reading.consumption?.unit === 'credits') ? 'credits' : 'requests'}
+	{@const sessions = currentSessions.filter((reading) => reading.consumption?.unit === unit)}
+	{@const consumption = reading?.consumption ?? (sessions.length ? { amount: sessions.reduce((total, reading) => total + reading.consumption!.amount, 0), unit } : undefined)}
+	{@const partial = !reading?.consumption && (sessions.some((reading) => reading.partial) || sessions.length < currentSessions.length)}
+	<div class="billing">
+		<span class="amount">
+			{#if consumption}
+				{#if consumption.unit === 'credits'}
+					{cost(consumption.amount)}
+					{#if partial}<span class="unit">reported</span>{/if}
+				{:else}
+					{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+					<span class="unit">{consumption.unit}</span>
+				{/if}
 			{:else}
-				{#each windows as { window, label: period, name }, column (window)}
-					{@const reading = readings.find((reading) => reading.agent === agent && reading.window === window)}
-					{@const used = reading?.used}
-					{#if used !== undefined}
-						{@const percent = Math.round(used * 100)}
-						{@const description = details(reading)}
-						{@const reset = reading?.resetsAt === undefined ? '' : `${resetTime(reading.resetsAt)} · ${until(reading.resetsAt)}`}
-						<div class="meter" class:high={used >= 0.9} style:grid-column={column + 2}>
-							<Tooltip delayDuration={0} text={reset} disabled={!compact || !reset}>
-								{#snippet children(props)}
-									<span {...props} class="ring" role="meter" aria-label="{label} · {name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% used. ${description}`}>
-										<svg viewBox="0 0 40 40" aria-hidden="true">
-											<circle class="track" cx="20" cy="20" r="17" />
-											<circle class="fill" cx="20" cy="20" r="17" pathLength="100" stroke-dasharray="{Math.max(0, Math.min(percent, 100))} 100" transform="rotate(-90 20 20)" />
-										</svg>
-										<span class="percent">{percent}%</span>
-									</span>
-								{/snippet}
-							</Tooltip>
-							<span class="label">{period}</span>
-							{#if reading?.resetsAt !== undefined}
+				Usage unavailable
+			{/if}
+		</span>
+		{#if consumption?.unit === 'credits'}
+			<span class="credits">{consumption.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })} credits</span>
+		{/if}
+		{#if reading?.consumption || !sessions.length}
+			<span class="period">{reading?.consumption ? 'This billing period' : 'Billing usage not reported'}</span>
+		{/if}
+		{#if !reading?.consumption && consumption?.unit === 'requests'}<span class="period">Cost not reported</span>{/if}
+		{#if reading?.consumption && reading.startsAt !== undefined && reading.resetsAt !== undefined}
+			<span class="cycle">
+				<time datetime={new Date(reading.startsAt).toISOString()}>{periodDate(reading.startsAt)}</time>
+				–
+				<time datetime={new Date(reading.resetsAt).toISOString()}>{periodDate(reading.resetsAt)}</time>
+			</span>
+		{/if}
+	</div>
+{/snippet}
+
+{#snippet detail(popover: boolean)}
+	<div class="detail">
+		{#each visibleAgents as { agent, label, Logo } (agent)}
+			{@const updated = Math.max(0, ...readings.filter((reading) => reading.agent === agent).map((reading) => reading.readAt))}
+			<div class="agent-detail {agent}">
+				<div class="heading">
+					<span class="brand" aria-hidden="true"><Logo /></span>
+					<strong>{label}</strong>
+					{#if updated}<span class="age">{age(updated)}</span>{/if}
+				</div>
+				{#if agent === 'copilot'}
+					{@render billing()}
+				{:else}
+					{#each measured(agent) as { window, label: period, reading, used, percent } (window)}
+						<div class="window" class:high={used >= high}>
+							<span class="period">{period}</span>
+							<span class="bar" aria-hidden="true"><span class="fill" style:width="{Math.min(percent, 100)}%"></span></span>
+							<span class="percent">{percent}%</span>
+							{#if reading.resetsAt !== undefined}
 								<span class="reset">
 									<time aria-label="Resets {new Date(reading.resetsAt).toLocaleString()}" datetime={new Date(reading.resetsAt).toISOString()}>{resetTime(reading.resetsAt)}</time>
 									<span class="countdown">{until(reading.resetsAt)}</span>
 								</span>
 							{/if}
 						</div>
+					{/each}
+				{/if}
+				{#if agent === 'codex' && codexResets}
+					{#if popover}
+						<CodexResets credits={codexResets} {now} />
+					{:else}
+						<div class="resets">
+							{codexResets.availableCount} {codexResets.availableCount === 1 ? 'reset' : 'resets'}{#if codexResets.availableCount > 0 && codexResets.expiresAt !== undefined}{' · '}<time datetime={new Date(codexResets.expiresAt).toISOString()}>{expiry(codexResets, now)}</time>{/if}
+						</div>
 					{/if}
-				{/each}
-			{/if}
-			{#if agent === 'codex' && codexResets}
-				<CodexResets credits={codexResets} {now} />
-			{/if}
-		</div>
-	{/each}
+				{/if}
+			</div>
+		{/each}
+	</div>
+{/snippet}
+
+{#snippet tooltipDetail()}
+	{@render detail(false)}
+{/snippet}
+
+<section aria-label="Usage windows" class:phone={form() === 'phone'} hidden={!visibleAgents.length}>
+	<Popover.Root bind:open={() => open, (value) => { open = value; if (value) tip = false; }}>
+		<Tooltip delayDuration={0} ignoreNonKeyboardFocus bind:open={() => tip, (value) => (tip = value && !open)} content={tooltipDetail}>
+			{#snippet children(tooltip)}
+				<Popover.Trigger>
+					{#snippet child({ props })}
+						<button {...mergeProps(tooltip, props)} class="trigger" aria-label="Usage details"></button>
+					{/snippet}
+				</Popover.Trigger>
+			{/snippet}
+		</Tooltip>
+		<Popover.Portal>
+			<Popover.Content side={form() === 'phone' ? 'bottom' : 'top'} align="start" sideOffset={4} collisionPadding={8} onOpenAutoFocus={(event) => { event.preventDefault(); popover?.focus(); }}>
+				{#snippet child({ wrapperProps, props })}
+					<div {...wrapperProps}>
+						<div {...props} bind:this={popover} tabindex="-1" class="popover" role="dialog" aria-label="Usage details">{@render detail(true)}</div>
+					</div>
+				{/snippet}
+			</Popover.Content>
+		</Popover.Portal>
+	</Popover.Root>
+	<div class="row">
+		{#each visibleAgents as { agent, label, Logo } (agent)}
+			<div class="agent {agent}" role="group" aria-label={label}>
+				<span class="brand" aria-hidden="true"><Logo /></span>
+				{#if agent !== 'copilot' && measured(agent).length}
+					<span class="bars">
+						{#each windows as { window, label: period, name } (window)}
+							{@const reading = readings.find((reading) => reading.agent === agent && reading.window === window)}
+							{#if reading?.used !== undefined}
+								{@const percent = Math.round(reading.used * 100)}
+								<span class="bar" class:high={reading.used >= high} role="meter" aria-label="{label} · {name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% used. ${details(reading)}`}>
+									<span class="fill" style:width="{Math.min(percent, 100)}%"></span>
+								</span>
+							{:else}
+								<span class="bar empty"></span>
+							{/if}
+						{/each}
+					</span>
+					{#each measured(agent).filter(({ used }) => used >= high) as { window, label: period, percent } (window)}
+						<span class="warn"><span class="window-label">{`${period} `}</span>{percent}%</span>
+					{/each}
+				{/if}
+				{#if agent === 'codex' && resets > 0}
+					<span class="count"><ResetIcon aria-hidden="true" />{resets}<span class="assistive">{` ${resets === 1 ? 'reset' : 'resets'}`}</span></span>
+				{/if}
+			</div>
+		{/each}
+	</div>
 </section>
 
 <style>
 	section {
-		display: grid;
-		grid-template-columns: max-content repeat(2, minmax(0, 1fr));
-		column-gap: var(--space-3);
+		position: relative;
+		flex: none;
+		box-sizing: border-box;
+		height: 40px;
 		margin-top: auto;
-		padding: var(--space-1) var(--space-4);
 		border-top: var(--border-width) solid var(--border);
 		font-size: var(--font-size-sm);
 		container-type: inline-size;
 	}
 
-	section:not(:has(.agent)) {
+	section[hidden] {
 		display: none;
 	}
 
@@ -195,46 +239,44 @@
 		border-bottom: var(--border-width) solid var(--border);
 	}
 
-	.agent {
-		--compact: 0;
-		display: grid;
-		grid-template-columns: subgrid;
-		grid-column: 1 / -1;
-		align-items: start;
-		padding: var(--space-3) 0;
+	.trigger {
+		position: absolute;
+		inset: 0;
+		padding: 0;
+		border: none;
+		background: transparent;
+		cursor: pointer;
 	}
 
-	.agent + .agent {
-		border-top: var(--border-width) dashed var(--border);
+	.trigger:hover,
+	.trigger[data-state='open'] {
+		background: var(--hover);
 	}
 
-	.billing {
-		display: grid;
-		grid-column: span 2;
-		gap: var(--space-1);
-		min-width: 0;
+	.trigger:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
 	}
 
-	.amount {
+	.row {
+		position: relative;
 		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 0 var(--space-1);
-		font-size: var(--font-size-md);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.unit,
-	.credits,
-	.cost-unavailable,
-	.period,
-	.cycle {
+		align-items: center;
+		gap: var(--space-3);
+		height: 100%;
+		box-sizing: border-box;
+		padding: 0 var(--space-4);
+		overflow: hidden;
 		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
+		white-space: nowrap;
+		pointer-events: none;
 	}
 
-	.unit {
-		font-family: var(--font-ui);
+	.agent {
+		display: flex;
+		flex: none;
+		align-items: center;
+		gap: var(--space-2);
 	}
 
 	.claude-code {
@@ -249,12 +291,8 @@
 		--brand: var(--color-fg);
 	}
 
-	.identity {
-		display: flex;
-		align-self: center;
-		align-items: center;
-		gap: var(--space-2);
-		min-width: 0;
+	:global([data-scheme='dark']) .codex {
+		--brand: #b7c5ee;
 	}
 
 	.brand {
@@ -263,50 +301,159 @@
 	}
 
 	.brand :global(svg) {
-		width: 18px;
-		height: 18px;
+		width: 16px;
+		height: 16px;
 		color: var(--brand);
 	}
 
-	.name {
-		font-size: var(--font-size-md);
+	.bars {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		width: 34px;
+	}
+
+	.bar {
+		display: block;
+		height: 3px;
+		overflow: hidden;
+		border-radius: 2px;
+		background: color-mix(in oklab, var(--muted-fg) 25%, transparent);
+	}
+
+	.bar.empty {
+		visibility: hidden;
+	}
+
+	.fill {
+		display: block;
+		height: 100%;
+		background: var(--muted-fg);
+		transition: width calc(4 * var(--dur-med)) var(--ease-out);
+	}
+
+	.high .fill {
+		background: var(--status-waiting);
+	}
+
+	.warn,
+	.window.high .percent {
+		color: var(--status-waiting);
 		font-weight: 500;
 	}
 
-	.meter {
-		display: grid;
-		grid-template-columns: 32px minmax(0, 1fr);
-		grid-template-rows: auto auto;
+	.warn,
+	.percent,
+	.count {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.count {
+		display: flex;
 		align-items: center;
-		column-gap: var(--space-2);
-		min-width: 0;
+		gap: 3px;
 	}
 
-	.meter > .ring {
-		grid-row: span 2;
+	.assistive {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
 	}
 
-	.meter:not(:has(.reset)) .label {
-		grid-row: span 2;
+	@container (max-width: 11rem) {
+		.row {
+			gap: var(--space-2);
+			padding: 0 var(--space-3);
+		}
+
+		.agent {
+			gap: var(--space-1);
+		}
+
+		.bars {
+			width: 14px;
+		}
+
+		.copilot,
+		.window-label {
+			display: none;
+		}
 	}
 
-	.label,
-	.reset {
+	.popover {
+		box-sizing: border-box;
+		width: min(24rem, 100vw - 2 * var(--space-4));
+		padding: var(--space-2) var(--space-3);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--surface-2);
+		box-shadow: var(--shadow-float);
+		color: var(--color-fg);
+		font-family: var(--font-ui);
+		font-size: var(--font-size-sm);
+		outline: none;
+	}
+
+	.detail {
+		display: grid;
+		gap: var(--space-2);
+		min-width: 15rem;
+		white-space: normal;
+	}
+
+	.agent-detail + .agent-detail {
+		padding-top: var(--space-2);
+		border-top: var(--border-width) solid var(--border);
+	}
+
+	.heading {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+	}
+
+	.heading strong {
+		font-weight: 500;
+	}
+
+	.age,
+	.period,
+	.reset,
+	.unit,
+	.credits,
+	.cycle,
+	.resets {
 		color: var(--muted-fg);
 	}
 
-	.label {
-		color: var(--color-fg);
-		font-weight: 500;
+	.age {
+		margin-left: auto;
+	}
+
+	.window {
+		display: grid;
+		grid-template-columns: 3.5rem minmax(3rem, 1fr) 2.75rem;
+		align-items: center;
+		gap: 0 var(--space-2);
+		padding-top: var(--space-1);
+	}
+
+	.window .bar {
+		height: 5px;
+		border-radius: 3px;
+	}
+
+	.percent {
+		text-align: right;
 	}
 
 	.reset {
 		display: flex;
-		grid-column: 2;
+		grid-column: 2 / -1;
 		flex-wrap: wrap;
 		gap: 0 var(--space-1);
-		margin-top: calc(-1 * var(--space-1));
-		font-size: var(--font-size-sm);
 	}
 
 	.reset time::after {
@@ -318,134 +465,26 @@
 		white-space: nowrap;
 	}
 
-	.ring {
+	.billing {
 		display: grid;
-		place-items: center;
-		width: 32px;
-		height: 32px;
+		gap: var(--space-1);
+		padding-top: var(--space-1);
 	}
 
-	.ring svg,
-	.percent {
-		grid-area: 1 / 1;
-	}
-
-	.ring svg {
-		width: 100%;
-		height: 100%;
-		fill: none;
-		stroke-width: 3;
-	}
-
-	.track {
-		stroke: color-mix(in oklab, var(--brand) 16%, var(--surface-3));
-	}
-
-	.fill {
-		stroke: var(--brand);
-		transition: stroke-dasharray calc(4 * var(--dur-med)) var(--ease-out);
-	}
-
-	.percent,
-	.age {
-		font-size: var(--font-size-sm);
+	.amount {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0 var(--space-1);
+		font-size: var(--font-size-md);
 		font-variant-numeric: tabular-nums;
 	}
 
-	.age {
-		margin-top: var(--space-1);
-		color: var(--muted-fg);
-		white-space: nowrap;
+	.resets {
+		padding-top: var(--space-1);
 	}
 
-	.high .fill {
-		stroke: var(--ansi-3);
-	}
-
-	.high .percent {
-		color: var(--ansi-3);
-	}
-
-	:global([data-scheme='dark']) .codex {
-		--brand: #b7c5ee;
-	}
-
-	@container (min-width: 22rem) {
-		.phone .meter {
-			grid-template-columns: 40px minmax(0, 1fr);
-		}
-
-		.phone .ring {
-			width: 40px;
-			height: 40px;
-		}
-	}
-
-	@container (max-width: 16rem) {
-		.amount {
-			font-size: var(--font-size-sm);
-		}
-
-		section:not(.phone) .identity > div,
-		section:not(.phone) .label,
-		section:not(.phone) .reset {
-			display: none;
-		}
-
-		section:not(.phone) .meter {
-			grid-template-columns: 32px;
-			justify-content: center;
-		}
-	}
-
-	@container (max-width: 24rem) {
-		.agent {
-			--compact: 1;
-		}
-
-		.reset time {
-			display: none;
-		}
-
-		.reset {
-			margin-top: 0;
-		}
-
-		.billing .period,
-		.billing .cycle,
-		.cost-unavailable,
-		.reported,
-		.unavailable-prefix {
-			display: none;
-		}
-
-		.amount {
-			flex-wrap: nowrap;
-			white-space: nowrap;
-		}
-
-		.credits {
-			white-space: nowrap;
-		}
-	}
-
-	@container (min-width: 32rem) {
-		.identity {
-			gap: var(--space-3);
-		}
-
-		.brand :global(svg) {
-			width: 25px;
-			height: 25px;
-		}
-
-		.meter {
-			grid-template-columns: 44px minmax(0, 1fr);
-		}
-
-		.ring {
-			width: 44px;
-			height: 44px;
-		}
+	.popover :global(.resets) {
+		margin-top: var(--space-2);
 	}
 </style>

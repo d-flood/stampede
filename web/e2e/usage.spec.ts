@@ -2,7 +2,7 @@ import type { Reading, ResetCredits, ServerMessage } from '#lib/device.svelte.ts
 import { expect, test } from './fixtures.ts';
 import { showScreen } from './shell.ts';
 
-test('Codex resets stay attached to the meters and retry a redemption safely', async ({ page }, { project }) => {
+test('Codex resets show in the Usage row and retry a redemption safely from its popover', async ({ page }, { project }) => {
 	const now = Date.now();
 	const day = 86_400_000;
 	let credits: ResetCredits | null = { availableCount: 2, expiresAt: now + 2 * day, creditId: 'next' };
@@ -37,15 +37,19 @@ test('Codex resets stay attached to the meters and retry a redemption safely', a
 		await expect(sidebar).toBeVisible();
 		usage = sidebar.getByRole('region', { name: 'Usage windows' });
 	}
-	const row = usage.getByRole('group', { name: 'Codex', exact: true }).locator('.resets');
-	await expect(row).toBeVisible();
+	const codex = usage.getByRole('group', { name: 'Codex', exact: true });
+	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(40);
+	await expect(codex).toHaveText('5h 100% 2 resets');
+	await usage.getByRole('button', { name: 'Usage details' }).click();
+	const details = page.getByRole('dialog', { name: 'Usage details' });
+	const row = details.locator('.resets');
 	await expect(row).toContainText('2 resets');
 	await expect(row.locator('time')).toHaveText('Expires in 2d');
-	await row.getByRole('button', { name: 'Use a Codex reset' }).click();
+	await row.getByRole('button', { name: 'Use a reset' }).click();
 	await expect(row.getByText('Use 1 reset?')).toBeVisible();
 	expect(attempts).toHaveLength(0);
 	await row.getByRole('button', { name: 'Cancel', exact: true }).click();
-	await row.getByRole('button', { name: 'Use a Codex reset' }).click();
+	await row.getByRole('button', { name: 'Use a reset' }).click();
 	await row.getByRole('button', { name: 'Confirm', exact: true }).click();
 	await expect(row.getByRole('alert')).toHaveText('Connection lost. Retry this reset.');
 	await row.getByRole('button', { name: 'Retry', exact: true }).click();
@@ -56,4 +60,5 @@ test('Codex resets stay attached to the meters and retry a redemption safely', a
 	await expect(row).toContainText('1 reset');
 	await expect(row.locator('time')).toHaveText('Expires in 17d');
 	await expect(usage.getByRole('meter', { name: 'Codex · 5h' })).toHaveAttribute('aria-valuenow', '0');
+	await expect(codex).toHaveText('1 reset');
 });

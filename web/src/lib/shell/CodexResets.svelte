@@ -1,5 +1,17 @@
-<script lang="ts">
+<script lang="ts" module>
 	import type { ResetCredits } from '#lib/device.svelte.ts';
+
+	export function expiry(credits: ResetCredits, now: number) {
+		if (credits.expiresAt === undefined) return '';
+		const minutes = Math.max(0, Math.ceil((credits.expiresAt - now) / 60_000));
+		if (!minutes) return 'Expires now';
+		if (minutes >= 1440) return `Expires in ${Math.ceil(minutes / 1440)}d`;
+		if (minutes >= 60) return `Expires in ${Math.ceil(minutes / 60)}h`;
+		return `Expires in ${minutes}m`;
+	}
+</script>
+
+<script lang="ts">
 	import Button from '#lib/ui/Button.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 
@@ -9,14 +21,7 @@
 	let error = $state('');
 	let message = $state('');
 	let attempt = $state<{ idempotencyKey: string; creditId?: string }>();
-	const expiry = $derived.by(() => {
-		if (credits.expiresAt === undefined) return '';
-		const minutes = Math.max(0, Math.ceil((credits.expiresAt - now) / 60_000));
-		if (!minutes) return 'Expires now';
-		if (minutes >= 1440) return `Expires in ${Math.ceil(minutes / 1440)}d`;
-		if (minutes >= 60) return `Expires in ${Math.ceil(minutes / 60)}h`;
-		return `Expires in ${minutes}m`;
-	});
+	const expires = $derived(expiry(credits, now));
 
 	async function redeem() {
 		if (busy) return;
@@ -54,12 +59,12 @@
 			<span aria-hidden="true">·</span>
 			<Tooltip text={`Next reset expires ${new Date(expiresAt).toLocaleString()}`}>
 				{#snippet children(props)}
-					<time {...props} datetime={new Date(expiresAt).toISOString()}>{expiry}</time>
+					<time {...props} datetime={new Date(expiresAt).toISOString()}>{expires}</time>
 				{/snippet}
 			</Tooltip>
 		{/if}
 	</div>
-	<Button disabled={!credits.availableCount || busy || confirming} aria-label="Use a Codex reset" onclick={() => { confirming = true; message = ''; }}>Use</Button>
+	<Button disabled={!credits.availableCount || busy || confirming} onclick={() => { confirming = true; message = ''; }}>Use a reset</Button>
 	{/if}
 	{#if confirming}
 		<div class="confirmation">
