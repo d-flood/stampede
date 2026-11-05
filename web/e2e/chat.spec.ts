@@ -500,7 +500,7 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 	await expect(chatTab).toHaveAttribute('aria-selected', 'true');
 });
 
-test('four Usage window meters show their readings and turn amber from 90%', async ({ page }, { project }) => {
+test('four Usage window meters show their readings and warn from 80%', async ({ page }, { project }) => {
 	await page.goto('/');
 	let usage = page.getByRole('region', { name: 'Usage windows' });
 	if (project.name === 'pixel') {
@@ -518,11 +518,13 @@ test('four Usage window meters show their readings and turn amber from 90%', asy
 	}
 	const high = usage.getByRole('meter', { name: 'Codex · 5h' });
 	await expect(high).toHaveAttribute('aria-valuenow', '91');
-	await expect(usage.getByText('91%')).toBeVisible();
-	await expect.poll(() => filledWith(high, '--ansi-3')).toBe(true);
-	await expect.poll(() => filledWith(usage.getByRole('meter', { name: 'Claude · week' }), '--brand')).toBe(true);
-	await expect(usage.locator('.age')).toHaveCount(2);
-	await expect(usage.locator('.age').first()).toHaveText(/^(just now|\d+[mhd] ago)$/);
+	await expect(usage.locator('.warn')).toHaveText(['5h 91%']);
+	await expect.poll(() => filledWith(high, '--status-waiting')).toBe(true);
+	await expect.poll(() => filledWith(usage.getByRole('meter', { name: 'Claude · week' }), '--muted-fg')).toBe(true);
+	await usage.getByRole('button', { name: 'Usage details' }).click();
+	const details = page.getByRole('dialog', { name: 'Usage details' });
+	await expect(details.locator('.age')).toHaveCount(2);
+	await expect(details.locator('.age').first()).toHaveText(/^(just now|\d+[mhd] ago)$/);
 });
 
 function filledWith(meter: Locator, token: string) {
@@ -531,7 +533,7 @@ function filledWith(meter: Locator, token: string) {
 		probe.style.color = `var(${token})`;
 		const color = getComputedStyle(probe).color;
 		probe.remove();
-		return getComputedStyle(element.querySelector('.fill')!).stroke === color;
+		return getComputedStyle(element.querySelector('.fill')!).backgroundColor === color;
 	}, token);
 }
 

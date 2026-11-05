@@ -33,34 +33,32 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', { tag
 	await sections.getByRole('button', { name: 'Epics', exact: true }).click();
 	await expect(sections.getByRole('button', { name: 'Epics', exact: true })).toHaveAttribute('aria-pressed', 'true');
 	const usage = sidebar.getByRole('region', { name: 'Usage windows' });
+	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(40);
 	for (const name of ['Claude', 'Codex']) {
 		const agent = usage.getByRole('group', { name, exact: true });
-		await expect(agent.getByText(name, { exact: true })).toBeHidden();
 		await expect(agent.locator('.brand svg')).toBeVisible();
+		await expect(agent.getByRole('meter')).toHaveCount(2);
 	}
-	for (const meter of await usage.locator('.meter').all()) {
-		await expect(meter.locator('.ring')).toBeVisible();
-		await expect(meter.locator('.label')).toBeHidden();
-		await expect(meter.locator('.reset')).toBeHidden();
-	}
-	const firstRing = usage.getByRole('meter', { name: 'Claude · 5h' });
 	await expect(usage.locator('[title]')).toHaveCount(0);
-	await firstRing.hover();
+	const trigger = usage.getByRole('button', { name: 'Usage details' });
+	await trigger.hover();
 	const tooltip = page.getByRole('tooltip');
-	await expect(tooltip).toHaveText(await usage.locator('.reset').first().evaluate((element) => [...element.children].map((child) => child.textContent).join(' · ') || element.textContent!));
+	await expect(tooltip.locator('.countdown')).toHaveCount(4);
 	await expect.poll(() => tooltip.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
 		return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight;
 	})).toBe(true);
 	await page.keyboard.press('Escape');
 	await expect(tooltip).toBeHidden();
-	await usage.getByRole('meter', { name: 'Claude · week', exact: true }).focus();
-	await expect(tooltip).toHaveText(await usage.locator('.reset').nth(1).evaluate((element) => [...element.children].map((child) => child.textContent).join(' · ') || element.textContent!));
+	await trigger.focus();
+	await page.keyboard.press('Enter');
+	const details = page.getByRole('dialog', { name: 'Usage details' });
+	await expect(details.locator('.countdown')).toHaveCount(4);
 	await page.keyboard.press('Escape');
-	await expect(tooltip).toBeHidden();
+	await expect(details).toBeHidden();
 	await resizer.focus();
 	await page.mouse.move(900, 400);
-	await expect.poll(() => usage.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+	await expect.poll(() => usage.locator('.row').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 	const edge = (await resizer.boundingBox())!;
 	await page.mouse.move(edge.x + edge.width / 2, edge.y + 200);
 	await page.mouse.down();
@@ -69,11 +67,7 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', { tag
 	await page.mouse.move(1200, 200);
 	await expect(resizer).toHaveAttribute('aria-valuenow', '640');
 	await page.mouse.up();
-	for (const name of ['Claude', 'Codex']) await expect(usage.getByText(name, { exact: true })).toBeVisible();
-	for (const meter of await usage.locator('.meter').all()) {
-		await expect(meter.locator('.label')).toBeVisible();
-		await expect(meter.locator('.reset')).toBeVisible();
-	}
+	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(40);
 	await expect.poll(async () => (await page.locator('main').boundingBox())!.width).toBeGreaterThan(500);
 	await page.setViewportSize({ width: 800, height: 800 });
 	await expect(resizer).toHaveAttribute('aria-valuemax', '480');

@@ -3,12 +3,12 @@
 	import { Tooltip } from 'bits-ui';
 	import { hasContext, type Snippet } from 'svelte';
 
-	let { text, delayDuration = 400, disabled = false, ignoreNonKeyboardFocus = false, children }: { text: string; delayDuration?: number; disabled?: boolean; ignoreNonKeyboardFocus?: boolean; children: Snippet<[Record<string, unknown>]> } = $props();
+	let { text = '', content, open = $bindable(false), delayDuration = 400, disabled = false, ignoreNonKeyboardFocus = false, children }: { text?: string; content?: Snippet; open?: boolean; delayDuration?: number; disabled?: boolean; ignoreNonKeyboardFocus?: boolean; children: Snippet<[Record<string, unknown>]> } = $props();
 	const inGroup = hasContext(grouped);
 </script>
 
 {#snippet root()}
-	<Tooltip.Root {delayDuration} {ignoreNonKeyboardFocus}>
+	<Tooltip.Root bind:open {delayDuration} {ignoreNonKeyboardFocus}>
 		<Tooltip.Trigger {disabled}>
 			{#snippet child({ props })}
 				{@render children(props)}
@@ -18,7 +18,7 @@
 			<Tooltip.Content sideOffset={4} collisionPadding={8}>
 				{#snippet child({ wrapperProps, props })}
 					<div {...wrapperProps}>
-						<div {...props} class="tooltip" role="tooltip">{text}</div>
+						<div {...props} class="tooltip" role="tooltip">{#if content}{@render content()}{:else}{text}{/if}</div>
 					</div>
 				{/snippet}
 			</Tooltip.Content>
