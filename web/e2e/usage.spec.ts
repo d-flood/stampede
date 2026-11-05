@@ -38,7 +38,7 @@ test('Codex resets show in the Usage row and retry a redemption safely from its 
 		usage = sidebar.getByRole('region', { name: 'Usage windows' });
 	}
 	const codex = usage.getByRole('group', { name: 'Codex', exact: true });
-	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(project.name === 'pixel' ? 58 : 50);
+	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(project.name === 'pixel' ? 48 : 40);
 	await expect(codex).toHaveText('100 5h 2 resets');
 	await usage.getByRole('button', { name: 'Usage details' }).click();
 	const details = page.getByRole('dialog', { name: 'Usage details' });

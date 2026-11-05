@@ -518,7 +518,7 @@ test('four Usage window meters show their readings and warn from 80%', async ({ 
 	}
 	const high = usage.getByRole('meter', { name: 'Codex · 5h' });
 	await expect(high).toHaveAttribute('aria-valuenow', '91');
-	await expect(high).toHaveText('91 5h');
+	await expect(high).toContainText('91 5h');
 	await expect.poll(() => filledWith(high, '--status-waiting')).toBe(true);
 	await expect.poll(() => filledWith(usage.getByRole('meter', { name: 'Claude · week' }), '--brand')).toBe(true);
 	await usage.getByRole('button', { name: 'Usage details' }).click();

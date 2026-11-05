@@ -23,6 +23,7 @@
 
 	const visibleAgents = $derived(agents.filter(({ agent }) => (agent === 'codex' && codexResets !== null) || readings.some((reading) => reading.agent === agent && (agent === 'copilot' || reading.used !== undefined))));
 	const resets = $derived(codexResets?.availableCount ?? 0);
+	const crowded = $derived(agents.flatMap(({ agent }) => measured(agent)).length > 3);
 
 	let now = $state(Date.now());
 	let open = $state(false);
@@ -56,14 +57,19 @@
 		return `${Math.floor(minutes / (24 * 60))}d ago`;
 	}
 
-	function until(resetsAt: number) {
+	function remaining(resetsAt: number) {
 		const minutes = Math.max(0, Math.ceil((resetsAt - now) / 60_000));
 		if (minutes === 0) return 'now';
 		const days = Math.floor(minutes / (24 * 60));
 		const hours = Math.floor((minutes % (24 * 60)) / 60);
-		if (days) return `in ${days}d ${hours}h`;
-		if (hours) return `in ${hours}h ${minutes % 60}m`;
-		return `in ${minutes}m`;
+		if (days) return `${days}d ${hours}h`;
+		if (hours) return `${hours}h ${minutes % 60}m`;
+		return `${minutes}m`;
+	}
+
+	function until(resetsAt: number) {
+		const left = remaining(resetsAt);
+		return left === 'now' ? left : `in ${left}`;
 	}
 
 	function details(reading: Reading | undefined) {
@@ -187,7 +193,7 @@
 			</Popover.Content>
 		</Popover.Portal>
 	</Popover.Root>
-	<div class="row">
+	<div class="row" class:crowded>
 		{#each visibleAgents as { agent, label, Logo } (agent)}
 			<div class="agent {agent}" role="group" aria-label={label}>
 				<span class="brand" aria-hidden="true"><Logo /></span>
@@ -203,7 +209,12 @@
 								</svg>
 								<span class="number">{meter.percent}</span>
 							</span>
-							<span class="label">{meter.short}</span>
+							<span class="caption">
+								<span>{meter.short}</span>
+								{#if meter.reading.resetsAt !== undefined}
+									<span class="remaining">{remaining(meter.reading.resetsAt)}</span>
+								{/if}
+							</span>
 						</span>
 					{/each}
 				{/if}
@@ -220,7 +231,6 @@
 		position: relative;
 		flex: none;
 		box-sizing: border-box;
-		height: 50px;
 		margin-top: auto;
 		border-top: var(--border-width) solid var(--border);
 		font-size: var(--font-size-sm);
@@ -232,7 +242,6 @@
 	}
 
 	.phone {
-		height: 58px;
 		margin: 0;
 		border-top: none;
 		border-bottom: var(--border-width) solid var(--border);
@@ -264,11 +273,8 @@
 		--logo: 16px;
 		position: relative;
 		display: flex;
-		align-items: center;
 		gap: var(--space-3);
-		height: 100%;
-		box-sizing: border-box;
-		padding: 0 var(--space-4);
+		padding: 4.5px var(--space-4);
 		overflow: hidden;
 		color: var(--muted-fg);
 		white-space: nowrap;
@@ -281,12 +287,13 @@
 		--label: 10.5px;
 		--logo: 18px;
 		gap: var(--space-4);
+		padding-block: 5.5px;
 	}
 
 	.agent {
 		display: flex;
 		flex: none;
-		align-items: center;
+		align-items: flex-start;
 		gap: var(--space-1);
 	}
 
@@ -317,13 +324,22 @@
 		color: var(--brand);
 	}
 
+	.agent .brand {
+		align-items: center;
+		height: var(--ring);
+	}
+
 	.meter {
 		display: flex;
 		flex: none;
-		flex-direction: column;
+		flex-direction: var(--meter-flow, row);
 		align-items: center;
-		gap: 1px;
+		gap: 1px 2px;
 		line-height: 1;
+	}
+
+	.meter + .meter {
+		margin-left: var(--space-1);
 	}
 
 	.ring {
@@ -361,8 +377,16 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	.label {
+	.caption {
+		display: grid;
+		gap: 1px;
 		font-size: var(--label);
+		text-align: var(--caption-align, start);
+	}
+
+	.remaining {
+		color: color-mix(in oklab, var(--color-fg) 80%, var(--muted-fg));
+		font-variant-numeric: tabular-nums;
 	}
 
 	.high .arc {
@@ -407,6 +431,7 @@
 		flex: none;
 		align-items: center;
 		gap: 3px;
+		height: var(--ring);
 	}
 
 	.assistive {
@@ -417,10 +442,42 @@
 		clip-path: inset(50%);
 	}
 
+	@container (max-width: 319px) {
+		.row {
+			--meter-flow: column;
+			--caption-align: center;
+		}
+	}
+
+	@container (max-width: 351px) {
+		.phone .row {
+			--meter-flow: column;
+			--caption-align: center;
+		}
+	}
+
+	@container (max-width: 394px) {
+		.crowded {
+			--meter-flow: column;
+			--caption-align: center;
+		}
+	}
+
+	@container (max-width: 429px) {
+		.phone .crowded {
+			--meter-flow: column;
+			--caption-align: center;
+		}
+	}
+
 	@container (max-width: 300px) {
 		.copilot,
 		.secondary {
 			display: none;
+		}
+
+		.meter + .meter {
+			margin-left: 0;
 		}
 	}
 
@@ -431,7 +488,7 @@
 			--number: 10.5px;
 			--logo: 14px;
 			gap: var(--space-2);
-			padding: 0 var(--space-3);
+			padding-inline: var(--space-3);
 		}
 	}
 

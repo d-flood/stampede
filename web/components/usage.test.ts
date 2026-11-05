@@ -27,10 +27,12 @@ function inTooltip(selector: string) {
 	return () => [...document.querySelectorAll(`[role="tooltip"] ${selector}`)].map((node) => node.textContent?.replace(/\s+/g, ' ').trim());
 }
 
-test('the row shows labelled rings with numbers and the Reset count', async () => {
+test('the row shows labelled rings with numbers, reset times, and the Reset count', async () => {
+	vi.useFakeTimers({ toFake: ['Date'] });
+	vi.setSystemTime(now);
 	const view = await render(Usage, { readings, codexResets: resets });
 	const section = view.getByRole('region', { name: 'Usage windows' });
-	await expect.poll(() => section.element().getBoundingClientRect().height).toBe(form() === 'phone' ? 58 : 50);
+	await expect.poll(() => section.element().getBoundingClientRect().height).toBe(form() === 'phone' ? 48 : 40);
 	expect(view.container.querySelector('.ring')!.getBoundingClientRect().width).toBe(form() === 'phone' ? 36 : 30);
 	expect(view.getByRole('group').elements()).toHaveLength(3);
 	expect(view.getByRole('meter').elements()).toHaveLength(3);
@@ -39,13 +41,13 @@ test('the row shows labelled rings with numbers and the Reset count', async () =
 	await expect.element(view.getByRole('meter', { name: 'Codex · week' })).toHaveAttribute('aria-valuenow', '43');
 	const claude = view.getByRole('group', { name: 'Claude', exact: true }).element();
 	const codex = view.getByRole('group', { name: 'Codex', exact: true }).element();
-	expect(claude.textContent?.replace(/\s+/g, ' ').trim()).toBe('100 5h 12 wk');
+	expect(claude.textContent?.replace(/\s+/g, ' ').trim()).toBe('100 5h 3h 9m 12 wk 6d 14h');
 	const warning = claude.querySelector('.high .number')!;
 	const probe = warning.appendChild(document.createElement('i'));
 	probe.style.color = 'var(--status-waiting)';
 	expect(getComputedStyle(warning).color).toBe(getComputedStyle(probe).color);
 	probe.remove();
-	expect(codex.textContent?.replace(/\s+/g, ' ').trim()).toBe('43 wk 2 resets');
+	expect(codex.textContent?.replace(/\s+/g, ' ').trim()).toBe('43 wk 4d 20h 2 resets');
 	await expect.element(view.getByRole('group', { name: 'Codex', exact: true }).getByText('2 resets')).toBeVisible();
 	expect(view.getByRole('group', { name: 'Copilot', exact: true }).element().textContent?.trim()).toBe('');
 	for (const [used, high] of [[0.79, false], [0.8, true]] as const) {
@@ -58,23 +60,66 @@ test('the row shows labelled rings with numbers and the Reset count', async () =
 	await expect.poll(() => codex.querySelector('.count')).toBeNull();
 	await view.rerender({ readings: [], codexResets: null });
 	await expect.poll(() => getComputedStyle(view.container.querySelector('section')!).display).toBe('none');
+	vi.useRealTimers();
 });
 
-test('Resets, logos, and rings fit at every Sidebar width when every window is high', async () => {
-	const full: Reading[] = (['claude-code', 'codex'] as const).flatMap((agent) => (['five-hour', 'weekly'] as const).map((window) => ({ agent, window, used: 1, readAt: now })));
-	const view = await render(Usage, { readings: [...full, readings[3]], codexResets: { availableCount: 12 } });
+const longest: Reading[] = (['claude-code', 'codex'] as const).flatMap((agent) => [
+	{ agent, window: 'five-hour' as const, used: 1, readAt: now, resetsAt: now + 4 * hour + 59 * minute },
+	{ agent, window: 'weekly' as const, used: 1, readAt: now, resetsAt: now + 6 * day + 23 * hour }
+]);
+
+test('Resets, logos, rings, and reset times fit at every Sidebar width when every window is high', async () => {
+	vi.useFakeTimers({ toFake: ['Date'] });
+	vi.setSystemTime(now);
+	const view = await render(Usage, { readings: [...longest, readings[3]], codexResets: { availableCount: 12 } });
 	const row = view.container.querySelector('.row')!;
-	for (const [width, rings] of [[160, 2], [320, 4]]) {
+	for (const [width, rings] of [[160, 2], [320, 4], [form() === 'phone' ? 430 : 395, 4]]) {
 		view.container.style.width = `${width}px`;
 		await expect.poll(() => {
 			const box = row.getBoundingClientRect();
 			const shown = [...row.querySelectorAll('.ring')].filter((node) => node.getBoundingClientRect().width > 0);
-			return box.width === width && shown.length === rings && [...row.querySelectorAll('.claude-code .brand, .codex .brand, .count'), ...shown].every((node) => {
+			return box.width === width && shown.length === rings && [...row.querySelectorAll('.claude-code .brand, .codex .brand, .count, .caption'), ...shown].filter((node) => node.getBoundingClientRect().width > 0).every((node) => {
 				const { left, right } = node.getBoundingClientRect();
 				return left >= box.left && right <= box.right;
 			});
 		}).toBe(true);
 	}
+	vi.useRealTimers();
+});
+
+test('every caption moves below its ring at once and logos stay on the ring line', async () => {
+	vi.useFakeTimers({ toFake: ['Date'] });
+	vi.setSystemTime(now);
+	const phone = form() === 'phone';
+	const three = longest.slice(0, 3);
+	const view = await render(Usage, { readings: longest, codexResets: { availableCount: 3 } });
+	const row = view.container.querySelector('.row')!;
+	const section = view.container.querySelector('section')!;
+	const center = (node: Element) => {
+		const { top, bottom } = node.getBoundingClientRect();
+		return (top + bottom) / 2;
+	};
+	const cases = [
+		{ rings: longest, width: phone ? 430 : 395, placement: 'beside', height: phone ? 48 : 40 },
+		{ rings: longest, width: phone ? 429 : 394, placement: 'below', height: phone ? 71 : 62 },
+		{ rings: three, width: phone ? 352 : 320, placement: 'beside', height: phone ? 48 : 40 },
+		{ rings: three, width: phone ? 351 : 319, placement: 'below', height: phone ? 71 : 62 }
+	];
+	for (const { rings, width, placement, height } of cases) {
+		await view.rerender({ readings: rings, codexResets: { availableCount: 3 } });
+		view.container.style.width = `${width}px`;
+		await expect.poll(() => [...row.querySelectorAll('.meter')].map((meter) => {
+			const ring = meter.querySelector('.ring')!.getBoundingClientRect();
+			const caption = meter.querySelector('.caption')!.getBoundingClientRect();
+			if (caption.left >= ring.right) return 'beside';
+			return caption.top >= ring.bottom ? 'below' : 'overlapping';
+		})).toEqual(rings.map(() => placement));
+		await expect.poll(() => section.getBoundingClientRect().height).toBe(height);
+		const line = center(row.querySelector('.ring')!);
+		for (const node of row.querySelectorAll('.brand, .ring, .count')) expect(center(node)).toBeCloseTo(line, 0);
+		expect(row.querySelector('.agent:last-child')!.getBoundingClientRect().right).toBeLessThanOrEqual(row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight));
+	}
+	vi.useRealTimers();
 });
 
 test('high usage follows the displayed percent', async () => {
@@ -109,6 +154,7 @@ test('hovering reveals every reading at once and keeps countdowns current', asyn
 	expect(inTooltip('.resets')()).toEqual(['2 resets · Expires in 2d']);
 	await vi.advanceTimersByTimeAsync(minute);
 	await expect.poll(() => inTooltip('.countdown')()[0]).toBe('in 3h 8m');
+	expect(view.container.querySelector('.remaining')?.textContent).toBe('3h 8m');
 	await view.rerender({ readings: [{ ...readings[0], resetsAt: now + 2 * minute }] });
 	await expect.poll(() => inTooltip('.countdown')()[0]).toBe('in 1m');
 	await vi.advanceTimersByTimeAsync(minute);
