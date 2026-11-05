@@ -58,6 +58,27 @@ fn command_turn(output: &str) -> NamedTempFile {
     written(&entries)
 }
 
+/// The simple turn, with a subagent that runs a subagent of its own before its result.
+fn nested_subagent_turn() -> NamedTempFile {
+    let message = |kind: &str, parent: Option<&str>, content: Value, result: Value| json!({ "stdout": {
+        "type": kind, "parent_tool_use_id": parent, "message": { "content": [content] }, "tool_use_result": result,
+    } });
+    let agent = |id: &str| json!({ "type": "tool_use", "id": id, "name": "Agent", "input": { "description": id } });
+    let report = |id: &str| json!({ "type": "tool_result", "tool_use_id": id, "content": [{ "type": "text", "text": "Found." }] });
+    let completed = json!({ "status": "completed", "content": [{ "type": "text", "text": "Found." }], "totalDurationMs": 1000, "totalToolUseCount": 1 });
+    let mut entries = recorded("simple-turn");
+    let at = entries.iter().position(|entry| entry["stdout"]["type"] == "result").unwrap();
+    entries.splice(at..at, [
+        message("assistant", None, agent("outer"), Value::Null),
+        message("assistant", Some("outer"), agent("inner"), Value::Null),
+        message("assistant", Some("inner"), json!({ "type": "tool_use", "id": "read", "name": "Read", "input": { "file_path": "/tmp/stampede-chat/notes.txt" } }), Value::Null),
+        message("user", Some("inner"), json!({ "type": "tool_result", "tool_use_id": "read", "content": "notes" }), Value::Null),
+        message("user", Some("outer"), report("inner"), completed.clone()),
+        message("user", None, report("outer"), completed),
+    ]);
+    written(&entries)
+}
+
 async fn launch(fixture: &str) -> Server {
     let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
     Server::with_env("memory", &CONFIG.replace("PATH_TO_FIXTURE", fixture), vec![("PATH", path.into())]).await
@@ -270,6 +291,26 @@ async fn a_long_command_output_reaches_a_device_once_it_expands_the_command() {
     let expanded = expand(&mut other, chat_id.as_str().unwrap(), index).await;
     assert_eq!(expanded["output"], output);
     assert_eq!(expanded.get("elided"), None);
+}
+
+#[tokio::test]
+async fn a_finished_subagent_keeps_its_nested_subagents_briefed() {
+    let fixture = nested_subagent_turn();
+    let server = launch(fixture.path().to_str().unwrap()).await;
+    let mut socket = device(server.port, "device").await;
+    let chat_id = attached_chat(&mut socket).await;
+    finish_turn(&mut socket, &chat_id).await;
+
+    let mut other = device(server.port, "other").await;
+    control(&mut other, json!({ "type": "chat.attach", "chatId": chat_id })).await;
+    let items = next_control(&mut other, "chat.items").await["items"].as_array().unwrap().clone();
+    let index = items.iter().position(|item| item["kind"] == "subagent").unwrap();
+    let outer = &items[index];
+    assert_eq!((&outer["status"], &outer["elided"]), (&json!("done"), &json!(true)));
+    let [inner] = outer["items"].as_array().unwrap().as_slice() else { panic!("{outer}") };
+    assert_eq!((&inner["id"], &inner["status"], &inner["elided"], &inner["items"]), (&json!("inner"), &json!("done"), &json!(true), &json!([])));
+    let expanded = expand(&mut other, chat_id.as_str().unwrap(), index).await;
+    assert_eq!(expanded["items"][0]["items"][0]["kind"], "tools");
 }
 
 #[tokio::test]

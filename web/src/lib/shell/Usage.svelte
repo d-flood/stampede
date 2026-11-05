@@ -19,7 +19,7 @@
 		{ agent: 'codex', label: 'Codex', Logo: logos.codex },
 		{ agent: 'copilot', label: 'Copilot', Logo: logos.copilot }
 	] as const;
-	const high = 0.8;
+	const high = 80;
 
 	const visibleAgents = $derived(agents.filter(({ agent }) => (agent === 'codex' && codexResets !== null) || readings.some((reading) => reading.agent === agent && (agent === 'copilot' || reading.used !== undefined))));
 	const resets = $derived(codexResets?.availableCount ?? 0);
@@ -78,7 +78,7 @@
 	function measured(agent: string) {
 		return windows.flatMap(({ window, label, name }) => {
 			const reading = readings.find((reading) => reading.agent === agent && reading.window === window);
-			return reading?.used === undefined ? [] : [{ window, label, name, reading, used: reading.used, percent: Math.round(reading.used * 100) }];
+			return reading?.used === undefined ? [] : [{ window, label, name, reading, percent: Math.round(reading.used * 100) }];
 		});
 	}
 </script>
@@ -134,8 +134,8 @@
 				{#if agent === 'copilot'}
 					{@render billing()}
 				{:else}
-					{#each measured(agent) as { window, label: period, reading, used, percent } (window)}
-						<div class="window" class:high={used >= high}>
+					{#each measured(agent) as { window, label: period, reading, percent } (window)}
+						<div class="window" class:high={percent >= high}>
 							<span class="period">{period}</span>
 							<span class="bar" aria-hidden="true"><span class="fill" style:width="{Math.min(percent, 100)}%"></span></span>
 							<span class="percent">{percent}%</span>
@@ -197,7 +197,7 @@
 							{@const reading = readings.find((reading) => reading.agent === agent && reading.window === window)}
 							{#if reading?.used !== undefined}
 								{@const percent = Math.round(reading.used * 100)}
-								<span class="bar" class:high={reading.used >= high} role="meter" aria-label="{label} · {name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% used. ${details(reading)}`}>
+								<span class="bar" class:high={percent >= high} role="meter" aria-label="{label} · {name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% used. ${details(reading)}`}>
 									<span class="fill" style:width="{Math.min(percent, 100)}%"></span>
 								</span>
 							{:else}
@@ -205,9 +205,14 @@
 							{/if}
 						{/each}
 					</span>
-					{#each measured(agent).filter(({ used }) => used >= high) as { window, label: period, percent } (window)}
-						<span class="warn"><span class="window-label">{`${period} `}</span>{percent}%</span>
-					{/each}
+					{@const warnings = measured(agent).filter(({ percent }) => percent >= high)}
+					{#if warnings.length}
+						<span class="warns">
+							{#each warnings as { window, label: period, percent } (window)}
+								<span class="warn"><span class="window-label">{`${period} `}</span>{percent}%</span>
+							{/each}
+						</span>
+					{/if}
 				{/if}
 				{#if agent === 'codex' && resets > 0}
 					<span class="count"><ResetIcon aria-hidden="true" />{resets}<span class="assistive">{` ${resets === 1 ? 'reset' : 'resets'}`}</span></span>
@@ -274,7 +279,6 @@
 
 	.agent {
 		display: flex;
-		flex: none;
 		align-items: center;
 		gap: var(--space-2);
 	}
@@ -308,6 +312,7 @@
 
 	.bars {
 		display: flex;
+		flex: none;
 		flex-direction: column;
 		gap: 3px;
 		width: 34px;
@@ -336,6 +341,18 @@
 		background: var(--status-waiting);
 	}
 
+	.warns {
+		display: grid;
+		grid-auto-columns: minmax(0, max-content);
+		grid-auto-flow: column;
+		gap: inherit;
+	}
+
+	.warn {
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
 	.warn,
 	.window.high .percent {
 		color: var(--status-waiting);
@@ -350,6 +367,7 @@
 
 	.count {
 		display: flex;
+		flex: none;
 		align-items: center;
 		gap: 3px;
 	}

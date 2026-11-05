@@ -9,7 +9,8 @@
 	const runs = $derived(
 		(['model', 'effort', 'mode'] as const).flatMap((setting) => {
 			const value = settings[setting];
-			return value ? [choices[setting].find((choice) => choice.value === value)?.label ?? value] : [];
+			const label = choices[setting].find((choice) => choice.value === value)?.label ?? value;
+			return value ? [setting === 'mode' ? `${label} mode` : label] : [];
 		})
 	);
 	const hints = [

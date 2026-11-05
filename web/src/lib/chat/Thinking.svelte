@@ -26,7 +26,6 @@
 	.text {
 		min-width: 0;
 		overflow: hidden;
-		color: color-mix(in oklab, var(--muted-fg) 80%, var(--color-bg));
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}

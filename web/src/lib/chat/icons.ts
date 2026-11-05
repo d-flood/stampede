@@ -27,10 +27,6 @@ export const icons: Record<ToolCall['kind'] | 'command' | 'edit' | 'write' | 'to
 };
 
 export function icon(item: Item): Component | undefined {
-	if (item.kind === 'tools') {
-		const kinds = new Set(item.calls.map((call) => call.kind));
-		return icons[kinds.size === 1 ? [...kinds][0] : 'other'];
-	}
-	if (item.kind === 'command' || item.kind === 'subagent') return icons[item.kind];
+	if (item.kind === 'command') return icons.command;
 	if (item.kind === 'edit' || item.kind === 'canvas') return icons[item.write ? 'write' : 'edit'];
 }

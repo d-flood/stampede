@@ -75,7 +75,7 @@
 					aria-label="Mode: {label('mode')}{pending('mode') ? ', next turn' : ''}"
 					title={pending('mode') ? 'Takes effect on the next turn' : undefined}
 				>
-					<span class="label">{label('mode')}</span>
+					<span class="label">{label('mode')}{phone ? '' : ' mode'}</span>
 					{#if !phone}<CaretDown aria-hidden="true" />{/if}
 				</button>
 			{/snippet}

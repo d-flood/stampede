@@ -3,7 +3,7 @@ import CodexResets from '#lib/shell/CodexResets.svelte';
 import type { Reading } from '#lib/device.svelte.ts';
 import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 
 const now = Date.parse('2026-10-17T14:00:00Z');
 const minute = 60_000;
@@ -55,6 +55,32 @@ test('the row shows bars, numbers only at high usage, and the Reset count', asyn
 	await expect.poll(() => codex.querySelector('.count')).toBeNull();
 	await view.rerender({ readings: [], codexResets: null });
 	await expect.poll(() => getComputedStyle(view.container.querySelector('section')!).display).toBe('none');
+});
+
+test('Resets, logos, and bars stay visible when every window is high', async () => {
+	const full: Reading[] = (['claude-code', 'codex'] as const).flatMap((agent) => (['five-hour', 'weekly'] as const).map((window) => ({ agent, window, used: 1, readAt: now })));
+	const view = await render(Usage, { readings: [...full, readings[3]], codexResets: { availableCount: 12 } });
+	const row = view.container.querySelector('.row')!;
+	for (const width of [160, 320]) {
+		view.container.style.width = `${width}px`;
+		await expect.poll(() => {
+			const box = row.getBoundingClientRect();
+			return box.width === width && [...row.querySelectorAll('.claude-code .brand, .codex .brand, .bars, .count')].every((node) => {
+				const { left, right } = node.getBoundingClientRect();
+				return left >= box.left && right <= box.right;
+			});
+		}).toBe(true);
+	}
+});
+
+test('high usage follows the displayed percent', async () => {
+	const view = await render(Usage, { readings: [{ ...readings[2], used: 0.796 }], codexResets: null });
+	await expect.element(view.getByRole('meter', { name: 'Codex · week' })).toHaveClass('high');
+	expect(view.container.querySelector('.warn')?.textContent).toBe('Weekly 80%');
+	await view.getByRole('button', { name: 'Usage details' }).click();
+	const popover = page.getByRole('dialog', { name: 'Usage details' });
+	await expect.element(popover).toBeVisible();
+	expect(popover.element().querySelector('.window.high .percent')?.textContent).toBe('80%');
 });
 
 test('hovering reveals every reading at once and keeps countdowns current', async () => {
@@ -164,4 +190,28 @@ test('reset confirmation retries the same request and presents every outcome', a
 	expect(view.container.querySelector('time')).toBeNull();
 	await view.rerender({ credits: { availableCount: 0 } });
 	await expect.element(view.getByRole('button', { name: 'Use a reset' })).toBeDisabled();
+});
+
+test('closing Usage details keeps a pending Reset retry', async () => {
+	const attempts: { idempotencyKey: string; creditId?: string }[] = [];
+	const original = globalThis.fetch;
+	vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+		if (input !== '/api/usage/codex/reset') return original(input, init);
+		attempts.push(JSON.parse(String(init?.body)));
+		return attempts.length === 1 ? new Response('Connection lost. Retry this reset.', { status: 502 }) : Response.json('reset');
+	});
+	const view = await render(Usage, { readings, codexResets: resets });
+	const popover = page.getByRole('dialog', { name: 'Usage details' });
+	await view.getByRole('button', { name: 'Usage details' }).click();
+	await popover.getByRole('button', { name: 'Use a reset' }).click();
+	await popover.getByRole('button', { name: 'Confirm', exact: true }).click();
+	await expect.element(popover.getByRole('alert')).toHaveTextContent('Connection lost. Retry this reset.');
+	await userEvent.keyboard('{Escape}');
+	await expect.element(popover).not.toBeInTheDocument();
+	await view.getByRole('button', { name: 'Usage details' }).click();
+	await popover.getByRole('button', { name: 'Use a reset' }).click();
+	await popover.getByRole('button', { name: 'Retry', exact: true }).click();
+	await expect.element(popover.getByRole('status')).toHaveTextContent('Reset applied');
+	expect(attempts).toHaveLength(2);
+	expect(attempts[1]).toEqual(attempts[0]);
 });

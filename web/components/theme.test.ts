@@ -4,14 +4,17 @@ vi.stubGlobal('fetch', () => new Promise(() => {}));
 const { applyTheme } = await import('#lib/config.svelte.ts');
 
 const files = import.meta.glob<string>('../../crates/stampede/themes/*', { query: '?raw', import: 'default', eager: true });
+const catalog = import.meta.glob<string>('../../crates/stampede/vendor/ghostty-themes/themes/*', { query: '?raw', import: 'default', eager: true });
 
-function parse(text: string) {
+type Parsed = { background: string; foreground: string; palette?: string[] };
+
+function parse(text: string): Parsed {
 	const values = Object.fromEntries(text.split('\n').filter(Boolean).map((line) => line.split(/\s*=\s*(.*)/s).slice(0, 2)));
 	const palette = text.match(/^palette = \d+=#\w+$/gm)!.map((line) => line.split('=').at(-1)!);
 	return { background: values.background, foreground: values.foreground, palette };
 }
 
-const palettes: Record<string, { background: string; foreground: string; palette?: string[] }> = {
+const palettes: Record<string, Parsed> = {
 	...Object.fromEntries(Object.entries(files).map(([path, text]) => [path.split('/').at(-1)!, parse(text)])),
 	'Monokai Pro Light': { background: '#faf4f2', foreground: '#29242a' }
 };
@@ -48,34 +51,53 @@ afterEach(() => {
 	document.body.replaceChildren();
 });
 
-for (const [name, { background, foreground, palette: colors }] of Object.entries(palettes)) {
+function measure(name: string, { background, foreground, palette: colors }: Parsed, scheme: 'light' | 'dark') {
+	const palette = {
+		name,
+		background,
+		foreground,
+		palette: colors ?? Array(16).fill(foreground),
+		cursor: foreground,
+		cursorText: background,
+		selectionBackground: foreground,
+		selectionForeground: background
+	};
+	applyTheme({ name, light: palette, dark: palette });
+	document.documentElement.dataset.scheme = scheme;
+	const probes = ['--color-bg', '--surface-1'].map((surface) => {
+		const probe = document.createElement('p');
+		probe.textContent = 'Muted';
+		probe.style.cssText = `background: var(${surface}); color: var(--muted-fg)`;
+		document.body.append(probe);
+		return probe;
+	});
+	const [page, surface] = probes.map((probe) => rendered(getComputedStyle(probe).backgroundColor));
+	const muted = rendered(getComputedStyle(probes[0]).color);
+	probes.forEach((probe) => probe.remove());
+	return { page, surface, muted };
+}
+
+for (const [name, parsed] of Object.entries(palettes)) {
 	for (const scheme of ['light', 'dark'] as const) {
 		test(`${name} muted text reads at 4.5:1 on the background and first surface in ${scheme}`, () => {
-			const palette = {
-				name,
-				background,
-				foreground,
-				palette: colors ?? Array(16).fill(foreground),
-				cursor: foreground,
-				cursorText: background,
-				selectionBackground: foreground,
-				selectionForeground: background
-			};
-			applyTheme({ name, light: palette, dark: palette });
-			document.documentElement.dataset.scheme = scheme;
-			const probes = ['--color-bg', '--surface-1'].map((surface) => {
-				const probe = document.createElement('p');
-				probe.textContent = 'Muted';
-				probe.style.cssText = `background: var(${surface}); color: var(--muted-fg)`;
-				document.body.append(probe);
-				return probe;
-			});
-			const [page, surface] = probes.map((probe) => rendered(getComputedStyle(probe).backgroundColor));
-			const muted = rendered(getComputedStyle(probes[0]).color);
-			expect(page).toEqual(rendered(background));
+			const { page, surface, muted } = measure(name, parsed, scheme);
+			expect(page).toEqual(rendered(parsed.background));
 			expect(surface).not.toEqual(page);
 			expect(contrast(muted, page)).toBeGreaterThanOrEqual(4.5);
 			expect(contrast(muted, surface)).toBeGreaterThanOrEqual(4.5);
 		});
 	}
+}
+
+for (const scheme of ['light', 'dark'] as const) {
+	test(`every catalog theme's muted text reads at 4.5:1 on the background and first surface in ${scheme}`, () => {
+		const failing = Object.entries(catalog).flatMap(([path, text]) => {
+			const name = path.split('/').at(-1)!;
+			const { page, surface, muted } = measure(name, parse(text), scheme);
+			const worst = Math.min(contrast(muted, page), contrast(muted, surface));
+			return worst < 4.5 ? [`${name} ${worst.toFixed(2)}`] : [];
+		});
+		expect(Object.keys(catalog).length).toBeGreaterThan(400);
+		expect(failing).toEqual([]);
+	});
 }

@@ -912,16 +912,12 @@ impl Device {
     }
 }
 
-/// A finished subagent's items, a running subagent's items other than its own subagents, and a long finished command's
-/// output stay on the server until a Device expands the item.
+/// A subagent's items other than its own subagents, and a long finished command's output, stay on the server until a
+/// Device expands the item.
 fn brief(mut item: chats::Item) -> Value {
     let mut nested = None;
     let elided = match &mut item {
-        chats::Item::Subagent { status: chats::Status::Done, items, .. } if !items.is_empty() => {
-            items.clear();
-            true
-        }
-        chats::Item::Subagent { status: chats::Status::Working | chats::Status::Waiting, items, .. } => {
+        chats::Item::Subagent { status, items, .. } if *status != chats::Status::Done || !items.is_empty() => {
             let subagents = std::mem::take(items).into_iter().filter(|item| matches!(item, chats::Item::Subagent { .. }));
             nested = Some(subagents.map(brief).collect::<Vec<_>>());
             true

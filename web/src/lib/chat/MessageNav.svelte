@@ -16,14 +16,19 @@
 	let below = $state(false);
 	let revealed = $state(false);
 	let away = $state(false);
+	let atTop = $state(false);
 	let gutter = $state(0);
 	let landing: number | undefined;
 	const phone = $derived(form() === 'phone');
 	const position = $derived(messages.findIndex(({ index }) => index === current));
-	const shown = $derived(phone ? away : revealed && current !== undefined);
+	const shown = $derived(phone ? away && !atTop : revealed && current !== undefined);
+
+	function bottom() {
+		return nav ? nav.offsetTop + nav.offsetHeight : 0;
+	}
 
 	function edge() {
-		return scroller!.getBoundingClientRect().top + (nav ? nav.offsetTop + nav.offsetHeight : 0);
+		return scroller!.getBoundingClientRect().top + bottom();
 	}
 
 	function entries() {
@@ -46,7 +51,10 @@
 		observer.observe(element);
 		if (element.firstElementChild) observer.observe(element.firstElementChild);
 		// Only scrolling moves `away`, so growth that the transcript re-pins to the bottom never flashes the pill.
-		const measure = () => (away = element.scrollTop < element.scrollHeight - element.clientHeight - 2);
+		const measure = () => {
+			away = element.scrollTop < element.scrollHeight - element.clientHeight - 2;
+			atTop = element.scrollTop < bottom();
+		};
 		const off = on(element, 'scroll', () => {
 			const top = element.scrollTop;
 			if (top !== landing && top !== last) revealed = top < last;

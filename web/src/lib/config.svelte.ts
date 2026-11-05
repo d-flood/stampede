@@ -261,11 +261,19 @@ function editorSelection({ foreground, background, selectionBackground }: Palett
 
 function mutedText({ foreground, background }: Palette): string {
 	const surface = mixLab(background, foreground, 0.96);
+	const readable = (color: string) => contrast(color, background) >= 4.5 && contrast(color, surface) >= 4.5;
 	for (let percent = 60; percent < 100; percent++) {
 		const muted = mix(foreground, background, percent / 100);
-		if (contrast(muted, background) >= 4.5 && contrast(muted, surface) >= 4.5) return muted;
+		if (readable(muted)) return muted;
 	}
-	return foreground;
+	const extreme = ['#000000', '#ffffff'].reduce((best, color) =>
+		Math.min(contrast(color, background), contrast(color, surface)) > Math.min(contrast(best, background), contrast(best, surface)) ? color : best
+	);
+	for (let percent = 0; percent < 100; percent++) {
+		const muted = mix(extreme, foreground, percent / 100);
+		if (readable(muted)) return muted;
+	}
+	return extreme;
 }
 
 export function applyTheme(theme: ThemeResponse) {

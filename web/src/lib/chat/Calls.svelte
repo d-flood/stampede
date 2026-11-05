@@ -146,7 +146,7 @@
 	}
 
 	.live {
-		color: color-mix(in oklab, var(--muted-fg) 80%, var(--color-bg));
+		color: var(--muted-fg);
 	}
 
 	.chips {

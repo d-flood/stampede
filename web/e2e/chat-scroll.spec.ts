@@ -87,10 +87,14 @@ test('the initial message stays below the navigator at the top of a chat', async
 	const message = panel.getByRole('region', { name: 'User message 1', exact: true });
 	await expect(message).toBeAttached();
 	await expect.poll(() => transcript.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThan(2);
-	if (phone) await expect(nav).toHaveCSS('opacity', '0');
+	if (phone) {
+		await expect(nav).toHaveCSS('opacity', '0');
+		await transcript.evaluate((node) => { node.scrollTop = (node.scrollHeight - node.clientHeight) / 2; });
+		await expect(nav).toHaveCSS('opacity', '1');
+	}
 	await transcript.evaluate((node) => { node.scrollTop = 0; });
-	await expect(nav).toHaveCSS('opacity', '1');
-	// The phone navigator floats over the transcript instead of pushing it down.
+	await expect(nav).toHaveCSS('opacity', phone ? '0' : '1');
+	// The phone navigator floats over the transcript instead of pushing it down, so it hides at the top.
 	const unobscured = () => phone
 		? expect.poll(() => transcript.evaluate((node) => getComputedStyle(node).paddingTop === getComputedStyle(node).getPropertyValue('--space-6').trim())).toBe(true)
 		: expect.poll(async () => {
@@ -105,6 +109,6 @@ test('the initial message stays below the navigator at the top of a chat', async
 	await settings.getByRole('combobox', { name: 'Chat font size', exact: true }).selectOption('26');
 	await settings.getByRole('button', { name: 'Done', exact: true }).click();
 	if (phone) await showScreen(page, 'tabs');
-	await expect(nav).toHaveCSS('opacity', '1');
+	await expect(nav).toHaveCSS('opacity', phone ? '0' : '1');
 	await unobscured();
 });

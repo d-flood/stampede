@@ -117,7 +117,7 @@
 	function summary(rig: Rig) {
 		const value = rig.mode ?? defaultMode(rig.agent);
 		const label = modes(rig.agent).find((choice) => choice.value === value)?.label ?? value;
-		return [rig.model ?? 'Default model', rig.effort, label, rig.speed, rig.ultracode && `Ultracode ${rig.ultracode}`].filter(Boolean).join(', ');
+		return [rig.model ?? 'Default model', rig.effort, label, rig.speed !== 'standard' && rig.speed !== 'default' && rig.speed, rig.ultracode === 'on' && 'Ultracode on'].filter(Boolean).join(', ');
 	}
 
 	async function save() {

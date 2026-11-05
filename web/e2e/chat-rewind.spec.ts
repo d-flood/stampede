@@ -79,6 +79,11 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await first();
 		await transcript.evaluate((node) => { node.scrollTop = 0; });
 		await first();
+		if (project.name === 'pixel') {
+			await expect.poll(opacity).toBe('0');
+			await transcript.evaluate((node) => { node.scrollTop = 100; });
+			await expect.poll(opacity).toBe('1');
+		}
 		await nav.getByRole('button', { name: 'Message 1 of 6: Prompt 1', exact: true }).click();
 		await page.getByRole('menuitemcheckbox', { name: '3. Prompt 3', exact: true }).click();
 		await landed(3);

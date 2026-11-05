@@ -1,6 +1,8 @@
 <script lang="ts" module>
 	import type { ResetCredits } from '#lib/device.svelte.ts';
 
+	let attempt = $state<{ idempotencyKey: string; creditId?: string }>();
+
 	export function expiry(credits: ResetCredits, now: number) {
 		if (credits.expiresAt === undefined) return '';
 		const minutes = Math.max(0, Math.ceil((credits.expiresAt - now) / 60_000));
@@ -20,7 +22,6 @@
 	let busy = $state(false);
 	let error = $state('');
 	let message = $state('');
-	let attempt = $state<{ idempotencyKey: string; creditId?: string }>();
 	const expires = $derived(expiry(credits, now));
 
 	async function redeem() {

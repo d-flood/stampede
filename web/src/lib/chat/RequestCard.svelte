@@ -133,6 +133,7 @@
 		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		overflow-wrap: anywhere;
+		tab-size: 4;
 	}
 
 	pre.code,
