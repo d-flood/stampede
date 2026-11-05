@@ -25,3 +25,11 @@ test('the project picker focuses its input and opens a path chosen with arrow ke
 	await expect(dialog).toBeHidden();
 	await expect(page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'beta', exact: true })).toHaveAttribute('aria-current', 'true');
 });
+
+test('with no Project open, one click on a folder in the inline picker opens it', async ({ page }) => {
+	await page.goto('/');
+	const picker = page.getByRole('main').getByRole('option', { name: /\/beta$/ });
+	await picker.click();
+	await expect(page.getByRole('region', { name: 'beta', exact: true })).toBeVisible();
+	await expect(page.getByRole('main').getByRole('combobox')).toHaveCount(0);
+});

@@ -41,3 +41,55 @@ test('New Tab shows session loading and fits the loaded sessions', async ({ page
 	await expect(picker.getByRole('status')).toHaveCount(0);
 	await expect(picker.getByRole('combobox')).toBeFocused();
 });
+
+test('the Launchpad offers the New Tab items and comes back focused when the last Tab closes', async ({ page }) => {
+	await page.routeWebSocket('**/ws', (socket) => {
+		const server = socket.connectToServer();
+		server.onMessage((message) => {
+			if (typeof message === 'string' && JSON.parse(message).type === 'sessions.listed') {
+				const data = JSON.parse(message);
+				socket.send(JSON.stringify({ ...data, sessions: [{ agent: 'codex', sessionId: 'past-session', title: 'Continue the collation', updatedAt: Date.now() }] }));
+				return;
+			}
+			socket.send(message);
+		});
+	});
+	await openProject(page, 'alpha');
+	const launchpad = page.getByRole('region', { name: 'alpha', exact: true });
+	await expect(launchpad.getByText(/, main, \d+ changed files?$/)).toBeVisible();
+	const offered = ['Claude Code', 'Codex', 'Terminal', 'Browser', 'Open file', 'Continue the collation', 'Search sessions…'];
+	await expect(launchpad.getByRole('button', { name: 'Continue the collation', exact: true })).toBeVisible();
+	await expect(launchpad.getByRole('button')).toHaveCount(offered.length);
+	for (const [index, label] of offered.entries()) await expect(launchpad.getByRole('button').nth(index)).toHaveAccessibleName(label);
+	await expect(launchpad.getByRole('button', { name: 'Claude Code', exact: true })).toHaveAccessibleDescription('Default model');
+
+	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
+	const menu = page.getByRole('menu');
+	await expect(menu.getByRole('menuitem')).toHaveCount(offered.length);
+	for (const [index, label] of offered.entries()) await expect(menu.getByRole('menuitem').nth(index)).toHaveAccessibleName(label);
+	await page.keyboard.press('Escape');
+
+	const primary = launchpad.getByRole('button', { name: 'Claude Code', exact: true });
+	const tab = page.getByRole('tab', { name: /^Claude Code/ });
+	await primary.click();
+	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expect(launchpad).toHaveCount(0);
+	await page.getByRole('button', { name: /^Close Claude Code/ }).click();
+	await expect(tab).toHaveCount(0);
+	await expect(primary).toBeFocused();
+	await page.keyboard.press('Enter');
+	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	await expect(launchpad).toHaveCount(0);
+});
+
+test('a Launchpad without Rigs offers Create a Rig, which opens Rigs settings', async ({ page }) => {
+	await page.route('**/api/rigs', (route) => route.request().method() === 'GET' ? route.fulfill({ json: [] }) : route.fallback());
+	await openProject(page, 'alpha');
+	const launchpad = page.getByRole('region', { name: 'alpha', exact: true });
+	await expect(launchpad.getByRole('button', { name: /^Terminal/ })).toBeVisible();
+	await expect(launchpad.getByRole('button', { name: /^Browser/ })).toBeVisible();
+	await expect(launchpad.getByRole('button', { name: /^Open file/ })).toBeVisible();
+	await launchpad.getByRole('button', { name: /^Create a Rig/ }).click();
+	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+	await expect(settings.getByRole('heading', { name: 'Rigs', exact: true })).toBeVisible();
+});
