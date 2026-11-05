@@ -1,6 +1,6 @@
 - Other agents edit this checkout concurrently. Never `git stash`/`checkout`/`reset`; stage only your own paths; unrelated diffs or compile errors aren't yours.
 - To test whether a failure predates you: `git worktree add --detach /tmp/base HEAD`, then `./check e2e <spec>:<line> --repeat-each 5` there. Full-run single failures are often flakes.
-- Run tests only via `./check`: `./check e2e <spec> [playwright args]`, `./check rust --test integration <module>::`. Never raw `cargo test`/`playwright`. Exit 75 = another worktree holds the lock. `./check` ≈8 min, desktop E2E only; `./check all` adds phone and perf. Background them.
+- Run tests only via `./check`: `./check e2e <spec> [playwright args]`, `./check rust --test integration <module>::`. Never raw `cargo test`/`playwright`. A run waits while another worktree holds the lock. `./check` ≈8 min, desktop E2E only; `./check all` adds phone and perf. Background them.
 - E2E failure artifacts: `web/test-results/<test>-<desktop|pixel>/` (`error-context.md`, `server.log`, PNGs). The next run wipes them. "Logged preview failure" from browser.spec.ts is expected.
 - Screenshots/manual UI checks: temp `web/e2e/zz-*.spec.ts` importing `./fixtures.ts` + `./shell.ts`, run via `./check e2e`, then delete. Don't launch Chromium or the server yourself.
 - E2E projects (alpha/beta) and "Fake …" rigs: `scripts/check_fixtures.sh`. Fake agents `crates/stampede/tests/fake/*` replay `tests/fixtures/chats/<agent>/$STAMPEDE_FAKE_FIXTURE.*.jsonl`.

@@ -229,7 +229,18 @@ Path(os.environ["CHECK_TEST_ROOT"]).joinpath("served.json").write_text(json.dump
         self.assertEqual(len(self.calls(" install ")), 2)
         self.assertEqual(len(self.calls("pnpm -C web build")), 2)
 
-    def test_overlapping_check_is_rejected_and_lock_is_released(self):
+    def wait_for_lock(self, check):
+        log = self.root / "waiting.log"
+        with log.open("w") as stderr:
+            waiting = subprocess.Popen([str(check), "rust"], env=self.env, stdout=subprocess.DEVNULL, stderr=stderr)
+        deadline = time.monotonic() + 5
+        while "already running" not in log.read_text() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertIn("already running", log.read_text())
+        self.assertIsNone(waiting.poll())
+        return waiting
+
+    def test_overlapping_check_waits_for_the_lock(self):
         hold = self.root / "hold"
         hold.touch()
         first = subprocess.Popen([str(self.root / "check"), "rust"], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -238,12 +249,12 @@ Path(os.environ["CHECK_TEST_ROOT"]).joinpath("served.json").write_text(json.dump
             while not (self.root / "started").exists() and time.monotonic() < deadline:
                 time.sleep(0.02)
             self.assertTrue((self.root / "started").exists())
-            result = self.run_check("rust", success=False)
-            self.assertIn("already running", result.stderr)
+            waiting = self.wait_for_lock(self.root / "check")
+            self.assertEqual(len(self.calls("cargo test")), 1)
         finally:
             hold.unlink()
             first.communicate(timeout=10)
-        self.run_check("rust")
+        self.assertEqual(waiting.wait(timeout=10), 0)
         self.assertEqual(len(self.calls("cargo test")), 2)
 
     def test_worktrees_share_the_check_lock(self):
@@ -261,11 +272,11 @@ Path(os.environ["CHECK_TEST_ROOT"]).joinpath("served.json").write_text(json.dump
             while not (self.root / "started").exists() and time.monotonic() < deadline:
                 time.sleep(0.02)
             self.assertTrue((self.root / "started").exists())
-            result = subprocess.run([str(other / "check"), "rust"], env=self.env, capture_output=True, text=True, timeout=3)
-            self.assertEqual(result.returncode, 75, result.stdout + result.stderr)
+            waiting = self.wait_for_lock(other / "check")
         finally:
             (self.root / "hold").unlink()
             first.communicate(timeout=10)
+        self.assertEqual(waiting.wait(timeout=15), 0)
 
     def test_worktrees_reuse_build_artifacts(self):
         def git(*args):

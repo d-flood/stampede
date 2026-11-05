@@ -20,8 +20,8 @@ def main():
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            print("./check is already running for this repository.", file=sys.stderr)
-            return 75
+            print("./check is already running for this repository; waiting for it to finish.", file=sys.stderr)
+            fcntl.flock(lock, fcntl.LOCK_EX)
         with build_environment(target_directory(ROOT), "stampede-e2e-") as env:
             root = env["TMPDIR"]
             env.update(STAMPEDE_CHECK_LOCKED=str(ROOT), STAMPEDE_E2E_ROOT=root)
