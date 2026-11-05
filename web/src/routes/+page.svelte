@@ -1301,6 +1301,9 @@
 								onopen={(path) => (openSubagents[chat.id] = path)}
 								active={showing(chat.id)}
 								focused={chat.id === activeTab}
+								project={projectLabels.get(chat.projectId)}
+								branch={git.get(chat.projectId)?.branch}
+								{codexResets}
 								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}
 								oncanvas={(canvas) => openCanvas(chat.projectId, canvas, chat.id)}
 							/>

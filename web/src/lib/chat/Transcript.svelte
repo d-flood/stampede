@@ -9,10 +9,11 @@
 	import User from '#lib/chat/User.svelte';
 	import Questions from '#lib/chat/Questions.svelte';
 	import Shell from '#lib/chat/Shell.svelte';
-	import type { AnsweredQuestions, Item, Subagent } from '#lib/device.svelte.ts';
+	import type { Agent } from '#lib/config.svelte.ts';
+	import type { AnsweredQuestions, Item, ResetCredits, Subagent } from '#lib/device.svelte.ts';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
-	let { items, main, active = true, answered = [], activity, path = [], onopen, onattend, ondiff, oncanvas, onexpand, onrewind }: { items: Item[]; main?: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(index: number): void; onrewind?(index: number): void } = $props();
+	let { items, main, active = true, answered = [], activity, path = [], agent, resets, onopen, onattend, ondiff, oncanvas, onexpand, onrewind, onhandoff }: { items: Item[]; main?: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; agent?: Agent; resets?: ResetCredits | null; onhandoff?(): void; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(index: number): void; onrewind?(index: number): void } = $props();
 	const entries = $derived.by(() => {
 		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map((record) => ({ kind: 'questions', record }));
 		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
@@ -69,7 +70,7 @@
 	{:else if item.kind === 'shell'}
 		<Shell {item} onexpand={onexpand && (() => onexpand(items.indexOf(item)))} />
 	{:else if item.kind === 'notice'}
-		<Notice {item} />
+		<Notice {item} {agent} {resets} {onhandoff} />
 	{:else if item.kind === 'questions'}
 		<Questions record={item.record} />
 	{/if}
