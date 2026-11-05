@@ -1,36 +1,42 @@
 <script lang="ts">
-	import { icons } from '#lib/chat/icons.ts';
-	import SubagentMenu from '#lib/chat/SubagentMenu.svelte';
-	import SubagentSheet from '#lib/chat/SubagentSheet.svelte';
-	import type { Subagent } from '#lib/device.svelte.ts';
-	import { form } from '#lib/form.ts';
+	import { clock, color, duration, tools } from '#lib/chat/agents.ts';
+	import { agentNames, logos } from '#lib/chat/sessions.ts';
+	import SubagentDot from '#lib/chat/SubagentDot.svelte';
+	import type { Item, Subagent } from '#lib/device.svelte.ts';
 
-	let { subagents, path, onopen, onattend }: { subagents: Subagent[]; path: string[]; onopen(path: string[]): void; onattend(subagent: string): void } = $props();
+	let { subagents, path, main, onopen, onattend }: { subagents: Subagent[]; path: string[]; main: Item[]; onopen(path: string[]): void; onattend(subagent: string): void } = $props();
 
-	const entries = $derived(subagents.map((subagent) => ({ path: [...path, subagent.id], subagent })));
-	const running = $derived(subagents.filter(({ status }) => status !== 'done').length);
-	const status = $derived(subagents.some(({ status }) => status === 'waiting') ? 'waiting' : running ? 'working' : 'done');
-	const text = $derived(`${subagents.length} ${subagents.length === 1 ? 'Subagent' : 'Subagents'} · ${running ? `${running} running` : 'done'}`);
-	let open = $state(false);
+	function state(subagent: Subagent) {
+		if (subagent.status === 'waiting') return 'waiting for you';
+		if (subagent.status === 'working') return subagent.startedAt ? clock(subagent.startedAt) : 'started';
+		if (subagent.outcome === 'failed' || subagent.outcome === 'stopped') return subagent.outcome;
+		return subagent.totals ? `finished in ${duration(subagent.totals.durationMs)}, ${tools(subagent.totals.tools)}` : 'finished';
+	}
 </script>
 
-{#snippet marker(props: Record<string, unknown>)}
-	<button {...props} class="spawn {status}"><span class="icon"><icons.subagent /></span>{text}</button>
-{/snippet}
-
-{#if entries.length === 1}
-	{@render marker({ onclick: () => onopen(entries[0].path) })}
-{:else if form() === 'phone'}
-	{@render marker({ onclick: () => (open = true) })}
-	<SubagentSheet title={text} groups={[{ entries }]} bind:open {onopen} {onattend} />
-{:else}
-	<SubagentMenu heading="Subagents" {entries} bind:open trigger={marker} onselect={onopen} side="bottom" align="start" />
-{/if}
+<div class="lines">
+	{#each subagents as subagent (subagent.id)}
+		{@const placed = [...path, subagent.id]}
+		<button class="spawn" class:failed={subagent.outcome === 'failed'} class:waiting={subagent.status === 'waiting'} onclick={() => (subagent.status === 'waiting' ? onattend(subagent.id) : onopen(placed))}>
+			<SubagentDot color={color(main, placed)} />
+			{#if subagent.agent}{@const Logo = logos[subagent.agent]}<span class="logo" role="img" aria-label={agentNames[subagent.agent]} title={agentNames[subagent.agent]}><Logo aria-hidden="true" /></span>{/if}
+			{#if subagent.name}<span class="name">{subagent.name}</span>{/if}
+			{#if subagent.role}<span class="role">{subagent.role}</span>{/if}
+			<span class="task">{subagent.task}</span>
+			<span class="state">{state(subagent)}</span>
+		</button>
+	{/each}
+</div>
 
 <style>
-	.spawn { display: inline-flex; align-self: flex-start; align-items: center; gap: var(--space-2); max-width: 100%; min-height: var(--target-min); padding: 0 var(--space-3) 0 var(--space-2); border: var(--border-width) solid var(--border); border-radius: calc(var(--target-min) / 2); background: var(--surface-1); color: var(--muted-fg); font: inherit; font-size: var(--font-size-sm); white-space: nowrap; cursor: pointer; }
-	.spawn:hover { background: var(--hover); color: var(--color-fg); }
-	.icon { display: inline-flex; flex: none; }
-	.working .icon { color: var(--status-working); }
-	.waiting .icon { color: var(--status-waiting); }
+	.lines { display: flex; flex-direction: column; align-items: flex-start; }
+	.spawn { display: flex; align-items: center; gap: var(--space-2); max-width: 100%; min-height: var(--target-min); padding: 0 var(--space-2); margin-left: calc(-1 * var(--space-2)); border: none; border-radius: var(--radius-md); background: none; color: var(--muted-fg); font-family: var(--font-ui); font-size: var(--font-size-sm); white-space: nowrap; text-align: start; cursor: pointer; }
+	.spawn:hover { background: var(--hover); }
+	.logo { display: inline-flex; flex: none; color: var(--color-fg); }
+	.name { flex: none; color: var(--color-fg); font-weight: 600; }
+	.role { flex: none; }
+	.task { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--color-fg); text-overflow: ellipsis; }
+	.state { flex: none; font-variant-numeric: tabular-nums; }
+	.waiting .state { color: var(--status-waiting); }
+	.failed .state { color: var(--ansi-1); }
 </style>

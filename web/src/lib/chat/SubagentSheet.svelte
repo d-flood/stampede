@@ -1,17 +1,19 @@
 <script lang="ts">
-	import type { Placed } from '#lib/chat/agents.ts';
+	import { color, type Placed } from '#lib/chat/agents.ts';
 	import SubagentRow from '#lib/chat/SubagentRow.svelte';
+	import type { Item } from '#lib/device.svelte.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 
 	type Props = {
 		title: string;
 		groups: { heading?: string; entries: Placed[] }[];
+		main: Item[];
 		open: boolean;
 		onopen(path: string[]): void;
 		onattend(subagent: string): void;
 	};
 
-	let { title, groups, open = $bindable(), onopen, onattend }: Props = $props();
+	let { title, groups, main, open = $bindable(), onopen, onattend }: Props = $props();
 	let attending = false;
 
 	function choose({ path, subagent }: Placed) {
@@ -25,7 +27,7 @@
 {#snippet list(entries: Placed[])}
 	<ul class="list">
 		{#each entries as entry (entry.path.join('/'))}
-			<li><button class="item" onclick={() => choose(entry)}><SubagentRow subagent={entry.subagent} /></button></li>
+			<li><button class="item" onclick={() => choose(entry)}><SubagentRow subagent={entry.subagent} color={color(main, entry.path)} /></button></li>
 		{/each}
 	</ul>
 {/snippet}

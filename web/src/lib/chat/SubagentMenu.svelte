@@ -1,12 +1,14 @@
 <script lang="ts">
-	import type { Placed } from '#lib/chat/agents.ts';
+	import { color, type Placed } from '#lib/chat/agents.ts';
 	import SubagentRow from '#lib/chat/SubagentRow.svelte';
 	import { DropdownMenu } from 'bits-ui';
+	import type { Item } from '#lib/device.svelte.ts';
 	import type { Snippet } from 'svelte';
 
 	type Props = {
 		heading: string;
 		entries: Placed[];
+		main: Item[];
 		open: boolean;
 		trigger: Snippet<[Record<string, unknown>]>;
 		onselect(path: string[]): void;
@@ -14,7 +16,7 @@
 		align?: 'start' | 'end';
 	};
 
-	let { heading, entries, open = $bindable(), trigger, onselect, side = 'top', align = 'end' }: Props = $props();
+	let { heading, entries, main, open = $bindable(), trigger, onselect, side = 'top', align = 'end' }: Props = $props();
 </script>
 
 <DropdownMenu.Root bind:open>
@@ -37,7 +39,7 @@
 							{#each entries as { path, subagent } (path.join('/'))}
 								<DropdownMenu.Item onSelect={() => onselect(path)}>
 									{#snippet child({ props })}
-										<div {...props} class="item"><SubagentRow {subagent} /></div>
+										<div {...props} class="item"><SubagentRow {subagent} color={color(main, path)} /></div>
 									{/snippet}
 								</DropdownMenu.Item>
 							{/each}

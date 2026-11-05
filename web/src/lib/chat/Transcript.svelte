@@ -12,7 +12,7 @@
 	import type { AnsweredQuestions, Item, Subagent } from '#lib/device.svelte.ts';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
-	let { items, active = true, answered = [], activity, path = [], onopen, onattend, ondiff, oncanvas, onexpand, onrewind }: { items: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(index: number): void; onrewind?(index: number): void } = $props();
+	let { items, main, active = true, answered = [], activity, path = [], onopen, onattend, ondiff, oncanvas, onexpand, onrewind }: { items: Item[]; main?: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(index: number): void; onrewind?(index: number): void } = $props();
 	const entries = $derived.by(() => {
 		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map((record) => ({ kind: 'questions', record }));
 		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
@@ -81,7 +81,7 @@
 			{#each turn as block, index (block.indices[0])}
 				<div class="block" style:margin-top={space(turn, index)}>
 					{#if block.kind === 'spawn'}
-						<Spawn subagents={block.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} {onopen} {onattend} />
+						<Spawn subagents={block.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} main={main ?? items} {onopen} {onattend} />
 					{:else if block.kind === 'rail'}
 						<Calls items={block.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={block === turns.at(-1)!.at(-1) ? activity : null} open={path.length > 0} {ondiff} {oncanvas} onexpand={onexpand && ((item) => onexpand(items.indexOf(item)))} />
 					{:else}

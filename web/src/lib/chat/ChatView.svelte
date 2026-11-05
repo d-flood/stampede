@@ -201,7 +201,7 @@
 		{/if}
 		<Todos todos={chat.todos} />
 	{:else}
-		<SubagentHeader subagent={selected} {trail} onopen={open} />
+		<SubagentHeader subagent={selected} path={opened} {trail} main={items} onopen={open} />
 	{/if}
 	<div class="conversation" hidden={!!selected}>
 		<div class="transcript" bind:this={scroller} style:padding-top="max(var(--space-6), {messageNavHeight}px)" {@attach follow}>
@@ -217,7 +217,7 @@
 			<div class="transcript" {@attach follow}>
 				<div class="column">
 					{#if selected.prompt}<Prompt prompt={selected.prompt} />{/if}
-					<Transcript items={selected.items} {active} activity={selected.activity} path={opened} onopen={open} onattend={attend} {ondiff} {oncanvas} />
+					<Transcript items={selected.items} main={items} {active} activity={selected.activity} path={opened} onopen={open} onattend={attend} {ondiff} {oncanvas} />
 					{#if selected.report}
 						<section class="report" aria-label="Report">
 							<span class="label">Report</span>
@@ -233,7 +233,7 @@
 		{#if selected}<Activity status={selected.status} activity={selected.activity} />{/if}
 		{#if subagents.length || canvases.length}
 			<div class="tray">
-				{#if subagents.length}<Dock {subagents} onopen={open} onattend={attend} />{/if}
+				{#if subagents.length}<Dock {subagents} main={items} onopen={open} onattend={attend} />{/if}
 				{#if canvases.length}<Canvases {canvases} {oncanvas} />{/if}
 			</div>
 		{/if}
