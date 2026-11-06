@@ -24,8 +24,8 @@ export const sections = {
 	canvas: { bars: 7, style: 'groove' },
 	grill: { bars: 12, style: 'lift' },
 	worktrees: { bars: 4, style: 'groove' },
-	editor: { bars: 6, style: 'groove' },
-	git: { bars: 6, style: 'lift' },
+	editor: { bars: 7, style: 'groove' },
+	git: { bars: 7, style: 'lift' },
 	terminals: { bars: 4, style: 'groove' },
 	light: { bars: 4, style: 'break' },
 	extras: { bars: 8, style: 'peak' }

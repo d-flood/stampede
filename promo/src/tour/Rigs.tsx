@@ -56,7 +56,7 @@ export const Rigs = () => {
 	const { t, at } = useClock(keys);
 	return (
 		<AbsoluteFill>
-			<Screen scene="rigs" frames={desktop as Frames} events={events} t={t} shots={shots} rest={{ x: 900, y: 300 }} />
+			<Screen scene="rigs" frames={desktop as Frames} events={events} t={t} shots={shots} rest={{ x: 1150, y: 300 }} />
 			<Presses t={t} />
 			<Lower from={0} to={at(codex)}>A Rig is an agent, configured and ready.</Lower>
 			<Lower from={at(codex)} to={at(closed)}>Provider, model, effort, permissions.</Lower>

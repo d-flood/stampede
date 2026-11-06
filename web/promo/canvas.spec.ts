@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '../e2e/fixtures.ts';
+import { pinned } from '../e2e/shell.ts';
 import { Chat } from './chat.ts';
 import { Director } from './record.ts';
 import { configure, project, seed } from './stage.ts';
@@ -124,7 +125,7 @@ test('mockups open on a live canvas that keeps every version', async ({ browser,
 	await expect(sidebar).toBeHidden();
 	await desktop.getByRole('button', { name: 'New Tab' }).first().click();
 	await desktop.getByRole('menuitem', { name: 'Claude', exact: true }).click();
-	const tab = desktop.getByRole('tab', { name: /^Claude/ });
+	const tab = await pinned(desktop.getByRole('tab', { name: /^Claude/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const id = (await tab.getAttribute('data-tab'))!;
 	const panel = desktop.getByRole('tabpanel').filter({ has: desktop.getByRole('textbox', { name: 'Composer' }) });

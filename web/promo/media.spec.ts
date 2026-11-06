@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '../e2e/fixtures.ts';
+import { pinned } from '../e2e/shell.ts';
 import { Chat } from './chat.ts';
 import { Director } from './record.ts';
 import { configure, project, seed } from './stage.ts';
@@ -192,7 +193,7 @@ test('an agent shows screenshots and recordings in the chat', async ({ browser, 
 	await expect(sidebar).toBeHidden();
 	await desktop.getByRole('button', { name: 'New Tab' }).first().click();
 	await desktop.getByRole('menuitem', { name: 'Claude', exact: true }).click();
-	const tab = desktop.getByRole('tab', { name: /^Claude/ });
+	const tab = await pinned(desktop.getByRole('tab', { name: /^Claude/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const chat = (await tab.getAttribute('data-tab'))!;
 	const panel = desktop.getByRole('tabpanel').filter({ has: desktop.getByRole('textbox', { name: 'Composer' }) });

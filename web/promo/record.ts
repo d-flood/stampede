@@ -61,6 +61,11 @@ export class Director {
 		return box;
 	}
 
+	async hover(device: string, target: Locator, travel = 0.7) {
+		await this.point(device, target, travel);
+		await target.hover();
+	}
+
 	async rest(device: string, page: Page, x: number, y: number) {
 		this.events.push({ t: now(), device, type: 'move', x, y });
 		await page.mouse.move(x, y, { steps: 12 });

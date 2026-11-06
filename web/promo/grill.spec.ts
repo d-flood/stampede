@@ -1,6 +1,7 @@
-import { writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '../e2e/fixtures.ts';
+import { pinned } from '../e2e/shell.ts';
 import { Chat, type Question } from './chat.ts';
 import { brief, tickets } from './offline.ts';
 import { Director } from './record.ts';
@@ -43,16 +44,17 @@ function conversation(root: string) {
 		.prompt()
 		.say("I'll grill you on the plan. First round:")
 		.ask([conflicts, 'Newest edit per field (Recommended)'], [banner, 'Banner with queued edits (Recommended)'])
-		.say('Settled: the newest edit wins per field, and a banner counts queued edits. Send `/spec` when you are ready.')
+		.say('Settled: the newest edit wins per field, and a banner counts queued edits. Send `/create-epic` when you are ready.')
 		.end('Settled.')
 		.prompt()
 		.say('Writing the Brief.')
 		.run(bin, 'epic', 'add', 'offline', '--title', 'Work offline', '--brief', join(root, 'brief.md'), ...data)
 		.bash(`stampede epic add offline --title "Work offline" --brief - <<'EOF'\n${brief}EOF`, 'Create the Epic', 'Added Epic offline to the Project at ~/projects/tidepool/.git.')
-		.say('Created the Epic **offline**. Send `/tickets` to slice it into Tickets.')
+		.say('Created the Epic **offline**.')
 		.end('Created offline.')
-		.prompt()
-		.say('Slicing the Brief into Tickets, in dependency order.');
+		.prompt();
+	chat.entries.push({ gate: 'opened' });
+	chat.say('Slicing the Brief into Tickets, in dependency order.');
 	tickets.forEach((ticket, index) => {
 		const number = String(index + 1);
 		const body = join(root, `ticket-${number}.md`);
@@ -70,15 +72,17 @@ function conversation(root: string) {
 		.end('Ready to Run.');
 }
 
-test('grill, spec and tickets build an Epic', async ({ browser, baseURL }) => {
+test('grill and create-epic build an Epic', async ({ browser, baseURL }) => {
 	test.setTimeout(240_000);
 	const root = process.env.STAMPEDE_E2E_ROOT!;
 	project(root, 'tidepool');
 	const fixture = join(root, 'grill.jsonl');
+	const gates = join(root, 'gates');
+	mkdirSync(gates);
 	conversation(root).write(fixture);
 
 	const desktop = await (await browser.newContext({ baseURL, viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2, colorScheme: 'dark' })).newPage();
-	await configure(desktop, root, [{ name: 'Claude', fixture, shortcut: 'c' }]);
+	await configure(desktop, root, [{ name: 'Claude', fixture, shortcut: 'c', gates }]);
 	await desktop.goto('/');
 	await desktop.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Open Project' }).click();
 	await desktop.getByRole('option', { name: /\/tidepool$/ }).click();
@@ -90,7 +94,7 @@ test('grill, spec and tickets build an Epic', async ({ browser, baseURL }) => {
 	await expect(epics).toContainText('No Epics yet');
 	await desktop.getByRole('button', { name: 'New Tab' }).first().click();
 	await desktop.getByRole('menuitem', { name: 'Claude', exact: true }).click();
-	const tab = desktop.getByRole('tab', { name: /^Claude/ });
+	const tab = await pinned(desktop.getByRole('tab', { name: /^Claude/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const panel = desktop.getByRole('tabpanel').filter({ has: desktop.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
@@ -117,19 +121,18 @@ test('grill, spec and tickets build an Epic', async ({ browser, baseURL }) => {
 	await expect(question).toBeVisible({ timeout: 30_000 });
 	await director.focus('desktop', 'question', question);
 	await director.hold(0.6);
-	await director.click('desktop', question.getByRole('button', { name: /^Newest edit/ }), 0.5);
-	await director.click('desktop', question.getByRole('button', { name: 'Next', exact: true }), 0.4);
-	await director.click('desktop', question.getByRole('button', { name: /^Banner with/ }), 0.5);
-	await director.click('desktop', question.getByRole('button', { name: 'Submit', exact: true }), 0.4);
+	await director.click('desktop', question.getByRole('radio', { name: /^Newest edit/ }), 0.5);
+	await director.click('desktop', question.getByRole('radio', { name: /^Banner with/ }), 0.5);
+	await director.click('desktop', question.getByRole('button', { name: 'Send answers', exact: true }), 0.4);
 	director.mark('desktop', 'answered');
 	await director.rest('desktop', desktop, 900, 300);
 	await desktop.mouse.wheel(0, 6000);
 	await expect(tab.getByTitle('done')).toBeVisible({ timeout: 30_000 });
 
 	director.mark('desktop', 'spec');
-	await director.type('desktop', composer, '/spec');
+	await director.type('desktop', composer, '/create-epic');
 	await composer.press('Enter');
-	await expect(composer).toHaveValue('/spec ');
+	await expect(composer).toHaveValue('/create-epic ');
 	await director.click('desktop', panel.getByRole('button', { name: 'Send' }), 0.5);
 	director.mark('desktop', 'specced');
 	await director.rest('desktop', desktop, 900, 300);
@@ -137,7 +140,7 @@ test('grill, spec and tickets build an Epic', async ({ browser, baseURL }) => {
 	await expect(card).toBeVisible({ timeout: 30_000 });
 	await director.focus('desktop', 'card', card);
 	director.mark('desktop', 'created');
-	await expect(tab.getByTitle('done')).toBeVisible({ timeout: 30_000 });
+	await expect.poll(() => existsSync(join(gates, 'opened')), { timeout: 30_000 }).toBe(true);
 	director.mark('desktop', 'specified');
 	await director.hold(0.3);
 	await director.click('desktop', card, 0.6);
@@ -154,18 +157,15 @@ test('grill, spec and tickets build an Epic', async ({ browser, baseURL }) => {
 	const [x, y] = [divider.x + divider.width / 2, divider.y + divider.height / 2];
 	await desktop.mouse.move(x, y);
 	await desktop.mouse.down();
-	director.events.push({ t: Date.now() / 1000, device: 'desktop', type: 'click' }, { t: Date.now() / 1000 + 0.05, device: 'desktop', type: 'move', x: x - 240, y });
+	director.events.push({ t: Date.now() / 1000, device: 'desktop', type: 'click' }, { t: Date.now() / 1000 + 0.05, device: 'desktop', type: 'move', x: x - 140, y });
 	for (let step = 1; step <= 20; step++) {
-		await desktop.mouse.move(x - 240 * (1 - (1 - step / 20) ** 2), y);
+		await desktop.mouse.move(x - 140 * (1 - (1 - step / 20) ** 2), y);
 		await desktop.waitForTimeout(35);
 	}
 	await desktop.mouse.up();
 	director.mark('desktop', 'split');
-
-	await director.type('desktop', composer, '/tickets');
-	await composer.press('Enter');
-	await expect(composer).toHaveValue('/tickets ');
-	await director.click('desktop', panel.getByRole('button', { name: 'Send' }), 0.5);
+	await director.hold(0.4);
+	rmSync(join(gates, 'opened'));
 	director.mark('desktop', 'ticketing');
 	await director.rest('desktop', desktop, 1000, 300);
 	const rows = epic.getByRole('region', { name: 'Tickets' });
@@ -177,8 +177,8 @@ test('grill, spec and tickets build an Epic', async ({ browser, baseURL }) => {
 	await expect(confirm).toBeVisible({ timeout: 30_000 });
 	await director.focus('desktop', 'setup', confirm);
 	await director.hold(0.5);
-	await director.click('desktop', confirm.getByRole('button', { name: /^Record it/ }), 0.5);
-	await director.click('desktop', confirm.getByRole('button', { name: 'Submit', exact: true }), 0.4);
+	await director.click('desktop', confirm.getByRole('radio', { name: /^Record it/ }), 0.5);
+	await director.click('desktop', confirm.getByRole('button', { name: 'Send answer', exact: true }), 0.4);
 	director.mark('desktop', 'confirmed');
 	await director.rest('desktop', desktop, 1000, 300);
 	const run = epic.getByRole('region', { name: 'Run', exact: true });

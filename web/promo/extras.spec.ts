@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { expect, test } from '../e2e/fixtures.ts';
+import { pinned } from '../e2e/shell.ts';
 import { Chat } from './chat.ts';
 import { Director } from './record.ts';
 import { configure, project, seed } from './stage.ts';
@@ -94,7 +95,7 @@ test('the rest of the toolkit', async ({ browser, baseURL }) => {
 	if (!(await sidebar.isVisible())) await desktop.getByRole('button', { name: 'Sidebar' }).click();
 	await desktop.getByRole('button', { name: 'New Tab' }).click();
 	await desktop.getByRole('menuitem', { name: 'Claude', exact: true }).click();
-	const tab = desktop.getByRole('tab', { name: /^Claude/ });
+	const tab = await pinned(desktop.getByRole('tab', { name: /^Claude/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const panel = desktop.getByRole('tabpanel').filter({ has: desktop.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
@@ -144,7 +145,8 @@ test('the rest of the toolkit', async ({ browser, baseURL }) => {
 	await director.hold(0.6);
 
 	director.mark('desktop', 'rewind');
-	await director.click('desktop', message.getByRole('button', { name: 'Rewind from message 2', exact: true }), 0.6);
+	await director.click('desktop', message.getByRole('button', { name: 'Actions for message 2', exact: true }), 0.6);
+	await director.click('desktop', desktop.getByRole('menuitem', { name: 'Rewind…', exact: true }), 0.4);
 	const rewind = desktop.getByRole('dialog', { name: 'Rewind before message 2?' });
 	await expect(rewind).toBeVisible();
 	await director.focus('desktop', 'rewind', rewind);
@@ -181,8 +183,8 @@ test('the rest of the toolkit', async ({ browser, baseURL }) => {
 	await director.hold(0.4);
 
 	director.mark('desktop', 'search');
-	await director.click('desktop', sidebar.getByRole('button', { name: 'Search', exact: true }), 0.5);
-	const search = sidebar.getByRole('textbox', { name: 'Search', exact: true });
+	const search = sidebar.getByRole('textbox', { name: 'Search in files' });
+	await director.click('desktop', search, 0.5);
 	await director.type('desktop', search, 'searchNotes');
 	await expect(sidebar.locator('.results')).toContainText('notes.test.ts');
 	await director.focus('desktop', 'search', sidebar);
@@ -216,10 +218,9 @@ test('the rest of the toolkit', async ({ browser, baseURL }) => {
 	const usage = sidebar.getByRole('region', { name: 'Usage windows' });
 	await expect(usage.getByRole('meter', { name: 'Claude · 5h' })).toBeVisible();
 	await director.focus('desktop', 'usage', usage);
-	await director.point('desktop', usage.getByRole('meter', { name: 'Claude · 5h' }), 0.6);
-	await director.hold(0.8);
-	await director.point('desktop', usage.getByRole('meter', { name: 'Codex · week' }), 0.6);
-	await director.hold(1.2);
+	await director.hover('desktop', usage.getByRole('button', { name: 'Usage details' }), 0.6);
+	await expect(desktop.getByRole('tooltip')).toBeVisible();
+	await director.hold(2.6);
 	director.mark('desktop', 'usage-end');
 	await director.finish();
 	server.close();

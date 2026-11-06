@@ -51,9 +51,9 @@ export const Grill = () => {
 		<AbsoluteFill>
 			<Screen scene="grill" frames={desktop as Frames} events={events} t={t} shots={shots} rest={{ x: 640, y: 400 }} />
 			<Lower from={0} to={at(spec)}>/grill interviews you about the plan.</Lower>
-			<Lower from={at(spec)} to={at(specified)}>/spec writes the Brief and creates the Epic.</Lower>
+			<Lower from={at(spec)} to={at(specified)}>/create-epic writes the Brief and creates the Epic.</Lower>
 			<Lower from={at(specified)} to={at(ticketing)}>Open the Epic beside the Chat.</Lower>
-			<Lower from={at(ticketing)} to={at(setup.t)}>/tickets slices it into Tickets with Blockers.</Lower>
+			<Lower from={at(ticketing)} to={at(setup.t)}>Then it slices the Brief into Tickets with Blockers.</Lower>
 			<Lower from={at(setup.t)} to={seconds(length('grill'))}>Confirm the Setup Command, and it is ready to Run.</Lower>
 		</AbsoluteFill>
 	);

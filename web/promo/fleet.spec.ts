@@ -90,7 +90,7 @@ test('every project and agent in one place', async ({ browser, baseURL }) => {
 	const sidebar = desktop.getByRole('complementary', { name: 'Sidebar' });
 	if (!(await sidebar.isVisible())) await desktop.getByRole('button', { name: 'Sidebar' }).click();
 	await sidebar.getByRole('button', { name: 'README.md', exact: true }).click();
-	await desktop.getByRole('button', { name: 'Preview', exact: true }).click();
+	await desktop.getByRole('radio', { name: 'Preview', exact: true }).click();
 
 	await desktop.keyboard.press('Control+Backquote');
 	const drawer = desktop.getByRole('region', { name: 'Drawer' });

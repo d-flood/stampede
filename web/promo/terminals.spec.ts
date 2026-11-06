@@ -2,22 +2,21 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '../e2e/fixtures.ts';
+import { pinned } from '../e2e/shell.ts';
 import { Chat } from './chat.ts';
 import { Director } from './record.ts';
 import { configure, project } from './stage.ts';
 
-// Project Terminals start $SHELL from the server's environment, which is set when the fixture spawns the server.
+// Project Terminals start the server's $SHELL, which the fixture sets from this variable when it spawns the server.
 const shell = join(process.env.STAMPEDE_E2E_ROOT!, 'promo-shell');
 mkdirSync(shell, { recursive: true });
 writeFileSync(join(shell, 'bash'), `#!/bin/sh
-printf '\\033]0;%s\\007' "\${PWD##*/}"
-exec env -i HOME="\${PWD%/projects/*}" PATH=/usr/bin:/bin TERM=xterm-256color GIT_PAGER=cat PS1='\\W $ ' bash --norc --noprofile
+exec env -i HOME="\${PWD%/projects/*}" PATH=/usr/bin:/bin TERM=xterm-256color GIT_PAGER=cat PS1='\\W $ ' PROMPT_COMMAND='printf "\\033]0;%s\\007" "\${PWD##*/}"' bash --norc --noprofile
 `);
 chmodSync(join(shell, 'bash'), 0o755);
-const previous = process.env.SHELL;
-process.env.SHELL = join(shell, 'bash');
+process.env.STAMPEDE_E2E_SHELL = join(shell, 'bash');
 test.afterAll(() => {
-	process.env.SHELL = previous;
+	delete process.env.STAMPEDE_E2E_SHELL;
 });
 
 const prompt = 'Push the tags commit.';
@@ -59,7 +58,7 @@ test('an agent stages a command for review', async ({ browser, baseURL }) => {
 	await expect(sidebar).toBeHidden();
 	await desktop.getByRole('button', { name: 'New Tab' }).click();
 	await desktop.getByRole('menuitem', { name: 'Claude', exact: true }).click();
-	const tab = desktop.getByRole('tab', { name: /^Claude/ });
+	const tab = await pinned(desktop.getByRole('tab', { name: /^Claude/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const chatId = (await tab.getAttribute('data-tab'))!;
 	const chat = desktop.getByRole('tabpanel').filter({ has: desktop.getByRole('textbox', { name: 'Composer' }) }).filter({ has: desktop.getByRole('button', { name: 'Send' }) });

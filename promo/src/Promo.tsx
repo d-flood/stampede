@@ -130,7 +130,7 @@ const side = { left: 200, top: 400, width: 820, fontSize: 92, fontWeight: 800, l
 
 const reviewing = { keys: reviewKeys(chat), events: on(chat, 'desktop') };
 const clicks = chat.filter((event) => event.type === 'click' && event.t > mark(chat, 'desktop', 'review'));
-const [, , draft, commit] = clicks.map((event) => event.t);
+const [, , , draft, commit] = clicks.map((event) => event.t);
 const message = focus(chat, 'message');
 const reviewShots = [
 	zoom(mark(chat, 'desktop', 'review'), 1),
@@ -138,7 +138,7 @@ const reviewShots = [
 	zoom(draft - 0.3, 1),
 	zoom(message.t, 1.6, message),
 	zoom(commit + 0.4, 1.6, message),
-	zoom(commit + 1.2, 1.3, { ...message, box: { x: 40, y: 80, width: 240, height: 400 } })
+	zoom(commit + 1.2, 1.3, focus(chat, 'history'))
 ];
 
 export const Reviewing = () => {

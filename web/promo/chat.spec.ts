@@ -2,7 +2,7 @@ import { devices } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '../e2e/fixtures.ts';
-import { showScreen } from '../e2e/shell.ts';
+import { pinned, showScreen } from '../e2e/shell.ts';
 import { Chat, type Question } from './chat.ts';
 import { Director, footage } from './record.ts';
 import { configure, project, seed } from './stage.ts';
@@ -160,7 +160,7 @@ test('chat, phone approval, review and themes', async ({ browser, baseURL }) => 
 	for (const name of ['src', 'lib']) await sidebar.getByRole('button', { name, exact: true }).click();
 	await sidebar.getByRole('button', { name: 'notes.ts', exact: true }).click();
 	await expect(desktop.getByRole('tab', { name: 'notes.ts' })).toHaveAttribute('aria-selected', 'true');
-	await sidebar.getByRole('button', { name: 'Changes', exact: true }).click();
+	await sidebar.getByRole('button', { name: 'Git', exact: true }).click();
 
 	await phone.goto('/');
 	await showScreen(phone, 'projects');
@@ -175,7 +175,7 @@ test('chat, phone approval, review and themes', async ({ browser, baseURL }) => 
 	director.mark('desktop', 'start');
 	await director.click('desktop', desktop.getByRole('button', { name: 'New Tab' }));
 	await director.click('desktop', desktop.getByRole('menuitem', { name: 'Claude', exact: true }), 0.5);
-	const tab = desktop.getByRole('tab', { name: /^Claude/ });
+	const tab = await pinned(desktop.getByRole('tab', { name: /^Claude/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const panel = desktop.getByRole('tabpanel').filter({ has: desktop.getByRole('textbox', { name: 'Composer' }) });
 	await director.hold(0.4);
@@ -183,10 +183,10 @@ test('chat, phone approval, review and themes', async ({ browser, baseURL }) => 
 	await director.click('desktop', panel.getByRole('button', { name: 'Send' }), 0.5);
 	director.mark('desktop', 'sent');
 	await director.rest('desktop', desktop, 1000, 330);
-	const scout = panel.getByRole('region', { name: 'Subagents' });
-	await expect(scout.getByRole('button', { name: /^Map note storage/ })).toBeVisible({ timeout: 30_000 });
+	const scout = panel.getByRole('button', { name: /Map note storage/ });
+	await expect(scout).toBeVisible({ timeout: 30_000 });
 	await director.focus('desktop', 'subagent', scout);
-	await expect(panel.getByRole('button', { name: /^1 Subagent · done/ })).toBeVisible({ timeout: 30_000 });
+	await expect(panel.getByRole('region', { name: 'Subagents' }).getByRole('button', { name: 'Subagents: 1 done' })).toBeVisible({ timeout: 30_000 });
 	director.mark('desktop', 'scouted');
 
 	const html = panel.getByRole('region', { name: 'Tag chips' });
@@ -197,9 +197,9 @@ test('chat, phone approval, review and themes', async ({ browser, baseURL }) => 
 	await expect(question).toBeVisible({ timeout: 30_000 });
 	await director.focus('desktop', 'question', question);
 	await director.hold(1.2);
-	await director.click('desktop', question.getByRole('button', { name: /^Sidebar chips/ }), 0.6);
+	await director.click('desktop', question.getByRole('radio', { name: /^Sidebar chips/ }), 0.6);
 	await director.hold(0.5);
-	await director.click('desktop', question.getByRole('button', { name: 'Submit', exact: true }), 0.5);
+	await director.click('desktop', question.getByRole('button', { name: 'Send answer', exact: true }), 0.5);
 	director.mark('desktop', 'answered');
 	await director.rest('desktop', desktop, 1000, 330);
 	await desktop.mouse.wheel(0, 6000);
@@ -218,7 +218,7 @@ test('chat, phone approval, review and themes', async ({ browser, baseURL }) => 
 	await director.hold(1.6);
 	await director.tap('phone', phoneCard.getByRole('button', { name: 'Allow', exact: true }), 0.6);
 	await expect(phoneCard).toHaveCount(0);
-	await expect(phone.getByRole('tab', { name: /^Claude/ }).getByTitle('done')).toBeVisible({ timeout: 30_000 });
+	await expect(phone.locator('.phone > header h1').getByTitle('done')).toBeVisible({ timeout: 30_000 });
 	await director.hold(2.5);
 	director.mark('phone', 'end');
 
@@ -229,6 +229,7 @@ test('chat, phone approval, review and themes', async ({ browser, baseURL }) => 
 	await expect(diff.locator('.cm-merge-b .cm-changedLine').first()).toBeVisible();
 	await director.focus('desktop', 'diff', diff);
 	await director.hold(2.2);
+	await director.click('desktop', tab, 0.5);
 	await director.click('desktop', sidebar.getByRole('button', { name: 'Stage All Changes' }));
 	await expect(sidebar.getByRole('list', { name: 'Staged Changes' })).toBeVisible();
 	await director.hold(0.4);
@@ -240,8 +241,10 @@ test('chat, phone approval, review and themes', async ({ browser, baseURL }) => 
 	await director.click('desktop', sidebar.getByRole('button', { name: 'Commit', exact: true }), 0.5);
 	await expect(sidebar.getByRole('list', { name: 'Staged Changes' })).toHaveCount(0);
 	await director.hold(0.4);
-	await director.click('desktop', sidebar.getByRole('button', { name: 'History', exact: true }), 0.5);
-	await expect(sidebar.getByRole('list', { name: 'Commits' })).toContainText('Add tags to notes');
+	const commits = sidebar.getByRole('list', { name: 'Commits' });
+	await expect(commits).toContainText('Add tags to notes');
+	await director.focus('desktop', 'history', commits);
+	await director.hover('desktop', commits.getByText('Add tags to notes'), 0.5);
 	await director.hold(1.6);
 	director.mark('desktop', 'reviewed');
 

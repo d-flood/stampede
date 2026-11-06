@@ -30,7 +30,9 @@ test('branches, LazyGit keys, stash and publish', async ({ browser, baseURL }) =
 	await expect(desktop.getByRole('dialog')).toBeHidden();
 	const sidebar = desktop.getByRole('complementary', { name: 'Sidebar' });
 	if (!(await sidebar.isVisible())) await desktop.getByRole('button', { name: 'Sidebar' }).click();
-	await sidebar.getByRole('button', { name: 'Changes', exact: true }).click();
+	await sidebar.getByRole('button', { name: 'README.md', exact: true }).click();
+	await desktop.getByRole('radio', { name: 'Preview', exact: true }).click();
+	await sidebar.getByRole('button', { name: 'Git', exact: true }).click();
 	const changes = sidebar.getByRole('list', { name: 'Changes', exact: true });
 	await expect(changes.getByRole('button', { name: 'NoteList.svelte', exact: true })).toBeVisible();
 	await expect(sidebar.getByText('origin/main')).toBeVisible();
@@ -58,6 +60,8 @@ test('branches, LazyGit keys, stash and publish', async ({ browser, baseURL }) =
 	await director.click('desktop', row);
 	const diff = desktop.locator('.diff:not([hidden])').filter({ has: desktop.locator('.sides') });
 	await expect(diff.locator('.cm-merge-b .cm-changedLine').first()).toBeVisible();
+	await director.hold(1);
+	await director.click('desktop', desktop.getByRole('tab', { name: 'README.md' }), 0.5);
 	await row.focus();
 	await director.rest('desktop', desktop, 900, 500);
 	await director.hold(0.8);
@@ -95,10 +99,9 @@ test('branches, LazyGit keys, stash and publish', async ({ browser, baseURL }) =
 	expect(execFileSync('git', ['-C', origin, 'log', '-1', '--format=%s', 'note-times'], { encoding: 'utf8' }).trim()).toBe('Show when each note changed');
 	director.mark('desktop', 'published');
 	await director.hold(0.8);
-	await director.click('desktop', sidebar.getByRole('button', { name: 'History', exact: true }), 0.5);
 	const commits = sidebar.getByRole('list', { name: 'Commits' });
 	await expect(commits).toContainText('Show when each note changed');
-	await director.rest('desktop', desktop, 900, 500);
+	await director.hover('desktop', commits.getByText('Show when each note changed'), 0.5);
 	await director.hold(1.8);
 	director.mark('desktop', 'end');
 	await director.finish();

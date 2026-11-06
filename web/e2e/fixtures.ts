@@ -53,7 +53,7 @@ export const test = base.extend<{ starterRigs: boolean }, { projectTemplate: str
 			], { env: {
 				...process.env,
 				CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: undefined,
-				SHELL: shell,
+				SHELL: process.env.STAMPEDE_E2E_SHELL ?? shell,
 				PATH: `${fakes}:${process.env.PATH}`,
 				...(starterRigs ? { STAMPEDE_FAKE_FIXTURE: 'simple-turn', CLAUDE_CONFIG_DIR: join(root, 'claude'), CODEX_HOME: join(root, 'codex') } : {})
 			}, stdio: ['ignore', output, output] });

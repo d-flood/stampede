@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { expect, test } from '../e2e/fixtures.ts';
+import { pinned } from '../e2e/shell.ts';
 import { Chat } from './chat.ts';
 import { Director } from './record.ts';
 import { configure, project, seed } from './stage.ts';
@@ -30,8 +31,9 @@ test('a worktree is a Project of its own', async ({ browser, baseURL }) => {
 	const sidebar = desktop.getByRole('complementary', { name: 'Sidebar' });
 	if (!(await sidebar.isVisible())) await desktop.getByRole('button', { name: 'Sidebar' }).click();
 	await sidebar.getByRole('button', { name: 'README.md', exact: true }).click();
-	await desktop.getByRole('button', { name: 'Preview', exact: true }).click();
+	await desktop.getByRole('radio', { name: 'Preview', exact: true }).click();
 	await desktop.mouse.move(700, 420);
+	await desktop.addStyleTag({ content: '.launchpad .where { visibility: hidden }' });
 
 	const director = new Director('worktrees');
 	await director.record('desktop', desktop);
@@ -62,12 +64,12 @@ test('a worktree is a Project of its own', async ({ browser, baseURL }) => {
 	director.keys('desktop', 'Ctrl + Shift + 1');
 	await desktop.keyboard.press('Control+Shift+1');
 	await director.hold(0.5);
+	const tab = await pinned(desktop.getByRole('tab', { name: /^Claude/ }));
 	const panel = desktop.getByRole('tabpanel').filter({ has: desktop.getByRole('textbox', { name: 'Composer' }) });
 	await director.type('desktop', panel.getByRole('textbox', { name: 'Composer' }), 'Try a darker palette');
 	await director.click('desktop', panel.getByRole('button', { name: 'Send' }), 0.4);
 	director.mark('desktop', 'sent');
 	await director.rest('desktop', desktop, 900, 330);
-	const tab = desktop.getByRole('tab', { name: /^Claude/ });
 	await expect(tab.getByTitle('done')).toBeVisible({ timeout: 30_000 });
 	await director.focus('desktop', 'chat', panel);
 	await director.hold(1.2);

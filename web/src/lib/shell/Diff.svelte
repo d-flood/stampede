@@ -467,7 +467,11 @@
 				get original() {
 					return view.a.state.doc;
 				},
-				setOriginal: (content) => view.a.dispatch({ changes: { from: 0, to: view.a.state.doc.length, insert: content } }),
+				setOriginal(content) {
+					view.a.dispatch({ changes: { from: 0, to: view.a.state.doc.length, insert: content } });
+					// Folds are only computed when configured, so without this the two sides keep disagreeing ones.
+					view.reconfigure({ collapseUnchanged: {} });
+				},
 				destroy: () => view.destroy()
 			});
 		} else {

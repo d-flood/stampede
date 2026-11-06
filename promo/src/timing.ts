@@ -84,7 +84,7 @@ export function cues(timelines: Timelines): Cue[] {
 	const review = reviewKeys(chat);
 	const epics = epicKeys(epic);
 	const fleets = fleetKeys(fleet);
-	const commit = clicks(chat, mark(chat, 'desktop', 'review'), mark(chat, 'desktop', 'reviewed')).at(-2)!;
+	const commit = clicks(chat, mark(chat, 'desktop', 'review'), mark(chat, 'desktop', 'reviewed')).at(-1)!;
 	return [
 		at('chat', chatting, focus(chat, 'desktop', 'mockup'), 'sparkle'),
 		at('chat', chatting, mark(chat, 'desktop', 'answered'), 'tick'),

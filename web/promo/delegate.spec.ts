@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '../e2e/fixtures.ts';
+import { pinned } from '../e2e/shell.ts';
 import { Chat } from './chat.ts';
 import { Codex } from './codex.ts';
 import { Director } from './record.ts';
@@ -67,7 +68,7 @@ test('Claude hands a review to Codex', async ({ browser, baseURL }) => {
 	await expect(sidebar).toBeHidden();
 	await desktop.getByRole('button', { name: 'New Tab' }).click();
 	await desktop.getByRole('menuitem', { name: 'Claude', exact: true }).click();
-	const tab = desktop.getByRole('tab', { name: /^Claude/ });
+	const tab = await pinned(desktop.getByRole('tab', { name: /^Claude/ }));
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 	const panel = desktop.locator('.panel[role="tabpanel"]:visible');
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
@@ -82,15 +83,14 @@ test('Claude hands a review to Codex', async ({ browser, baseURL }) => {
 	await director.click('desktop', panel.getByRole('button', { name: 'Send' }), 0.5);
 	director.mark('desktop', 'sent');
 	await director.rest('desktop', desktop, 900, 300);
-	const dock = panel.getByRole('region', { name: 'Subagents' });
-	const pill = dock.getByRole('button', { name: /^Review the tags change/ });
-	await expect(pill).toBeVisible({ timeout: 30_000 });
-	await director.focus('desktop', 'dock', dock);
+	const line = panel.getByRole('button', { name: /Review the tags change/ });
+	await expect(line).toBeVisible({ timeout: 30_000 });
+	await director.focus('desktop', 'dock', line);
 	await director.hold(1.2);
-	await director.click('desktop', pill, 0.6);
+	await director.click('desktop', line, 0.6);
 	director.mark('desktop', 'opened');
 	const header = panel.locator('header').filter({ has: desktop.getByRole('navigation', { name: 'Breadcrumb' }) });
-	await expect(header.getByTitle('Type')).toHaveText('Codex');
+	await expect(header.getByRole('img', { name: 'Codex' })).toBeVisible();
 	await director.focus('desktop', 'header', header);
 	await director.rest('desktop', desktop, 1180, 420);
 	const reported = panel.getByRole('region', { name: 'Report' });

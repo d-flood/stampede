@@ -169,7 +169,7 @@ test('one small server behind all of it', async ({ browser, baseURL }) => {
 	await desktop.waitForTimeout(500);
 	await desktop.keyboard.press('Control+Backquote');
 	await expect.poll(() => drawer.evaluate((element) => getComputedStyle(element).transform)).not.toBe('none');
-	await expect(panel.getByText(/tool calls/)).toBeVisible({ timeout: 30_000 });
+	await expect(panel.getByRole('button', { name: /read \d+ files/ }).first()).toBeVisible({ timeout: 30_000 });
 	await desktop.mouse.move(700, 420);
 
 	const data = join(root, 'data');

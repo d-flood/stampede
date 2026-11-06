@@ -177,6 +177,30 @@ test('a staged file diffs HEAD with the index and an unstaged one the index with
 	await expect(diff.locator('.cm-merge-b .cm-changedLine', { hasText: 'value = 3' })).toBeVisible();
 });
 
+test('both sides of an open Diff fold alike when staging changes the index', { tag: '@desktop' }, async ({ page }) => {
+	const { root, git } = repository('folds');
+	const lines = Array.from({ length: 60 }, (_, at) => `export const value${at} = ${at};`);
+	writeFileSync(`${root}/file.ts`, `${lines.join('\n')}\n`);
+	git('add', '.');
+	git('commit', '-qm', 'Initial commit');
+	lines[19] = 'export const edited = true;';
+	writeFileSync(`${root}/file.ts`, `${lines.join('\n')}\n`);
+	const sidebar = await changesPanel(page, 'folds');
+	const diff = page.locator('.diff:not([hidden])');
+	const folds = async (expected: string[]) => {
+		for (const side of ['a', 'b']) await expect(diff.locator(`.cm-merge-${side} .cm-collapsedLines`)).toHaveText(expected);
+	};
+
+	await sidebar.getByRole('list', { name: 'Changes', exact: true }).getByRole('button', { name: 'file.ts', exact: true }).click();
+	await folds(['16 unchanged lines', '38 unchanged lines']);
+	await sidebar.getByRole('button', { name: 'Stage All Changes' }).click();
+	await folds(['61 unchanged lines']);
+	await expect(diff.locator('.cm-line')).toHaveCount(0);
+	await sidebar.getByRole('button', { name: 'Unstage All Staged Changes' }).click();
+	await folds(['16 unchanged lines', '38 unchanged lines']);
+	await expect(diff.locator('.cm-merge-b .cm-changedLine', { hasText: 'edited' })).toBeVisible();
+});
+
 test('the commit Rig drafts a message for the staged changes', { tag: '@desktop' }, async ({ page }) => {
 	const { root, git } = repository('draft');
 	git('commit', '-q', '--allow-empty', '-m', 'Initial commit');
