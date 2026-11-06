@@ -25,6 +25,7 @@
 	let { text, agent, settings, capabilities, choices, working, replace: replaceText, onrun }: Props = $props();
 	let browsing = $state<string>();
 	const query = $derived(browsing === text ? '/' : text);
+	const typed = $derived(query.match(/^\/(\S*)$/)?.[1]);
 
 	function replace(next: string) {
 		browsing = undefined;
@@ -56,7 +57,6 @@
 			}));
 			return [{ heading: `/${setting}`, rows }];
 		}
-		const typed = query.match(/^\/(\S*)$/)?.[1];
 		if (typed === undefined) return [];
 		const model = choices.model.find((choice) => choice.value === settings.model);
 		const stampede: Row[] = [
@@ -80,16 +80,22 @@
 			detail: command.hint || command.description,
 			choose: () => replace(`/${command.name} `)
 		}));
-		const matches = (row: Row) => row.label.startsWith(`/${typed}`);
+		const matching = (rows: Row[]) => {
+			const prefixed = rows.filter((row) => row.label.startsWith(`/${typed}`));
+			return [...prefixed, ...rows.filter((row) => !prefixed.includes(row) && row.label.includes(typed))];
+		};
 		return [
-			{ heading: 'Stampede', rows: stampede.filter(matches) },
-			{ heading: `From ${agentNames[agent]}`, rows: own.filter(matches) }
+			{ heading: 'Stampede', rows: matching(stampede) },
+			{ heading: `From ${agentNames[agent]}`, rows: matching(own) }
 		].filter((group) => group.rows.length);
 	});
 
 	const rows: Row[] = $derived(groups.flatMap((group) => group.rows));
 	let highlighted = $state<string>();
-	const highlight = $derived(Math.max(0, rows.findIndex((row) => row.label === highlighted)));
+	const highlight = $derived.by(() => {
+		const hovered = rows.findIndex((row) => row.label === highlighted);
+		return hovered >= 0 ? hovered : Math.max(0, rows.findIndex((row) => row.label.startsWith(`/${typed}`)));
+	});
 	let dismissed = $state<string>();
 	const open = $derived(rows.length > 0 && dismissed !== text);
 

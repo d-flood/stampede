@@ -298,6 +298,24 @@ test('/clear is not offered and is refused when typed', { tag: '@desktop' }, asy
 	await expect(panel.locator('.transcript:visible').getByText('/clear', { exact: true })).toHaveCount(0);
 });
 
+test('the slash menu matches any part of a command name and prefers prefix matches', { tag: '@desktop' }, async ({ page }, { project }) => {
+	const name = `slash-search-${project.name}`;
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
+	await openProject(page, name);
+	await newTab(page, 'Fake Claude');
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	const menu = panel.getByRole('region', { name: 'Commands' });
+	await expect(panel.getByRole('button', { name: 'Model: opus xhigh', exact: true })).toBeVisible();
+	await composer.fill('/review');
+	await expect(menu.getByRole('button', { name: /^\/code-review/ })).toBeVisible();
+	await composer.fill('/in');
+	await expect(menu.getByRole('button', { name: /^\/rewind/ })).toBeVisible();
+	await expect(menu.getByRole('button', { name: /^\/init/ })).toBeVisible();
+	await composer.press('Enter');
+	await expect(composer).toHaveValue('/init ');
+});
+
 test('speed and Ultracode change from the slash menu and show on the model control only once chosen', async ({ page }, { project }) => {
 	const name = `speed-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });
