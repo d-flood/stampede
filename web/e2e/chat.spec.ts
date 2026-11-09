@@ -473,7 +473,7 @@ for (const agent of ['Claude', 'Codex']) {
 	});
 }
 
-test('a file link in a Chat opens the file at its line', async ({ page }, { project }) => {
+test('a file link in a Chat previews on hover and opens the file at its line', async ({ page }, { project }) => {
 	const name = `chat-file-link-${project.name}`;
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(`${root}/src`, { recursive: true });
@@ -484,7 +484,17 @@ test('a file link in a Chat opens the file at its line', async ({ page }, { proj
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await panel.getByRole('textbox', { name: 'Composer' }).fill(`See [row 240](${root}/src/rows.txt:240)`);
 	await panel.getByRole('button', { name: 'Send' }).click();
-	await panel.getByRole('region', { name: 'User message 1' }).getByRole('link', { name: 'row 240' }).click();
+	const link = panel.getByRole('region', { name: 'User message 1' }).getByRole('link', { name: 'row 240' });
+	await expect(link.locator('svg')).toBeVisible();
+	if (project.name === 'desktop') {
+		await link.hover();
+		const preview = page.getByRole('tooltip').filter({ hasText: 'src/rows.txt:240' });
+		await expect(preview.locator('.line')).toHaveText(Array.from({ length: 10 }, (_, index) => `${236 + index} row ${236 + index}`));
+		await expect(preview.locator('.target')).toHaveText('240 row 240');
+		await page.mouse.move(0, 0);
+		await expect(preview).toHaveCount(0);
+	}
+	await link.click();
 	const editor = page.locator('.editor:not([hidden])');
 	await expect(editor.locator('.path')).toHaveText('src/rows.txt');
 	await expect(editor.locator('.cm-line', { hasText: /^row 240$/ })).toBeInViewport();

@@ -210,6 +210,13 @@
 		color: var(--accent);
 	}
 
+	.text :global(a.file svg) {
+		width: 1em;
+		height: 1em;
+		margin-right: 0.15em;
+		vertical-align: -0.125em;
+	}
+
 	.streaming > :global(:last-child)::after {
 		content: '';
 		display: inline-block;

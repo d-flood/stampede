@@ -29,7 +29,6 @@
 	import { deleteWorktree, status, type Change, type Git, type Trunk, type Update } from '#lib/git.ts';
 	import type { PrReview } from '#lib/pr-reviews.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
-	import { relative } from '#lib/links.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
 	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
@@ -1391,13 +1390,11 @@
 								active={showing(chat.id)}
 								focused={chat.id === activeTab}
 								project={projectLabels.get(chat.projectId)}
+								root={projects.find(({ id }) => id === chat.projectId)?.path}
 								branch={git.get(chat.projectId)?.branch}
 								{codexResets}
 								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}
-								onfile={(path, cursor) => {
-									const inside = relative(path, projects.find(({ id }) => id === chat.projectId)!.path);
-									if (inside) openFile(chat.projectId, inside, cursor);
-								}}
+								onfile={(path, cursor) => openFile(chat.projectId, path, cursor)}
 								oncanvas={(canvas) => openCanvas(chat.projectId, canvas, chat.id)}
 							/>
 						{/await}

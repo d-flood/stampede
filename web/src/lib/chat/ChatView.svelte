@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ChatComposer from '#lib/chat/ChatComposer.svelte';
 	import EmptyChat from '#lib/chat/EmptyChat.svelte';
+	import FilePreview from '#lib/chat/FilePreview.svelte';
 	import Activity from '#lib/chat/Activity.svelte';
 	import { same, subagents as flatten } from '#lib/chat/agents.ts';
 	import Button from '#lib/ui/Button.svelte';
@@ -23,14 +24,14 @@
 	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ResetCredits, ServerMessage } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { fileLink } from '#lib/links.ts';
+	import { fileLink, relative } from '#lib/links.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import { onMount, tick } from 'svelte';
 	import { on } from 'svelte/events';
 	import GitBranch from '~icons/ph/git-branch';
 	import GitFork from '~icons/ph/git-fork';
 
-	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, branch, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; branch?: string; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
+	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
 		$props();
 
 	const subagents = $derived(flatten(items));
@@ -59,6 +60,7 @@
 	const live = $derived(device.connection === 'connected');
 	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
 	let rewinding = $state(false);
+	let preview = $state<{ path: string; line?: number; anchor: DOMRect }>();
 	let rewindTarget = $state<number>();
 	let scroller = $state<HTMLElement>();
 	let messageNavHeight = $state(0);
@@ -159,12 +161,46 @@
 		void composer?.attach(files);
 	}
 
-	function link(event: MouseEvent) {
-		const href = (event.target as Element).closest('.text a')?.getAttribute('href');
-		const file = href && fileLink(href);
-		if (!file) return;
-		event.preventDefault();
-		onfile(file.path, file.cursor);
+	function links(panel: HTMLElement) {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const linked = (event: Event) => {
+			const anchor = (event.target as Element).closest<HTMLElement>('.text a.file');
+			const file = anchor && fileLink(anchor.getAttribute('href')!);
+			return file && { anchor, path: root && relative(file.path, root), cursor: file.cursor };
+		};
+		const hide = () => {
+			clearTimeout(timer);
+			preview = undefined;
+		};
+		const show = (event: PointerEvent | FocusEvent, delay: number) => {
+			const link = linked(event);
+			const path = link?.path;
+			if (!path || link.anchor.contains(event.relatedTarget as Node)) return;
+			clearTimeout(timer);
+			timer = setTimeout(() => (preview = { path, line: link.cursor?.line, anchor: link.anchor.getBoundingClientRect() }), delay);
+		};
+		const leave = (event: PointerEvent | FocusEvent) => {
+			const link = linked(event);
+			if (link && !link.anchor.contains(event.relatedTarget as Node)) hide();
+		};
+		const offs = [
+			on(panel, 'click', (event) => {
+				const link = linked(event);
+				if (!link) return;
+				event.preventDefault();
+				hide();
+				if (link.path) onfile(link.path, link.cursor);
+			}),
+			on(panel, 'pointerover', (event) => event.pointerType === 'mouse' && show(event, 400)),
+			on(panel, 'pointerout', leave),
+			on(panel, 'focusin', (event) => (event.target as Element).matches(':focus-visible') && show(event, 0)),
+			on(panel, 'focusout', leave),
+			on(panel, 'scroll', hide, { capture: true })
+		];
+		return () => {
+			hide();
+			for (const off of offs) off();
+		};
 	}
 
 	function follow(scroller: HTMLElement) {
@@ -201,7 +237,7 @@
 </script>
 
 <!-- svelte-ignore a11y_interactive_supports_focus (Dropped images have the Attach image button as their keyboard path.) -->
-<div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active} ondragover={dragover} ondrop={drop} {@attach (panel) => on(panel, 'click', link)}>
+<div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active} ondragover={dragover} ondrop={drop} {@attach links}>
 	{#if !selected}
 		{#if source || handoffs.length}
 			<div class="handoffs" aria-label="Chat handoffs">
@@ -254,6 +290,7 @@
 		{/if}
 	</div>
 </div>
+{#if preview && active}<FilePreview projectId={chat.projectId} {...preview} />{/if}
 <Handoff bind:this={handoff} {device} {chat} available={attached && items.some((item) => item.kind === 'user')} />
 <MoveToWorktree bind:this={mover} {device} {chat} />
 <Rewind bind:open={rewinding} bind:target={rewindTarget} {chat} {items} {capabilities} unavailable={rewindUnavailable} onrewind={(index) => device.send({ type: 'chat.run', chatId: chat.id, command: 'rewind', value: index })} />
