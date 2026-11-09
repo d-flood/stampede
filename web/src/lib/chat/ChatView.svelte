@@ -21,14 +21,16 @@
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import { modes } from '#lib/config.svelte.ts';
 	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ResetCredits, ServerMessage } from '#lib/device.svelte.ts';
+	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { fileLink } from '#lib/links.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import { onMount, tick } from 'svelte';
 	import { on } from 'svelte/events';
 	import GitBranch from '~icons/ph/git-branch';
 	import GitFork from '~icons/ph/git-fork';
 
-	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, branch, codexResets = null, ondiff, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; branch?: string; codexResets?: ResetCredits | null; ondiff(path: string): void; oncanvas(canvas: string): void } =
+	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, branch, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; branch?: string; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
 		$props();
 
 	const subagents = $derived(flatten(items));
@@ -157,6 +159,14 @@
 		void composer?.attach(files);
 	}
 
+	function link(event: MouseEvent) {
+		const href = (event.target as Element).closest('.text a')?.getAttribute('href');
+		const file = href && fileLink(href);
+		if (!file) return;
+		event.preventDefault();
+		onfile(file.path, file.cursor);
+	}
+
 	function follow(scroller: HTMLElement) {
 		let pinned = true;
 		let top = 0;
@@ -191,7 +201,7 @@
 </script>
 
 <!-- svelte-ignore a11y_interactive_supports_focus (Dropped images have the Attach image button as their keyboard path.) -->
-<div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active} ondragover={dragover} ondrop={drop}>
+<div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active} ondragover={dragover} ondrop={drop} {@attach (panel) => on(panel, 'click', link)}>
 	{#if !selected}
 		{#if source || handoffs.length}
 			<div class="handoffs" aria-label="Chat handoffs">

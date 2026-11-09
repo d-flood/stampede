@@ -473,6 +473,24 @@ for (const agent of ['Claude', 'Codex']) {
 	});
 }
 
+test('a file link in a Chat opens the file at its line', async ({ page }, { project }) => {
+	const name = `chat-file-link-${project.name}`;
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+	mkdirSync(`${root}/src`, { recursive: true });
+	writeFileSync(`${root}/src/rows.txt`, Array.from({ length: 300 }, (_, index) => `row ${index + 1}`).join('\n'));
+	await openProject(page, name);
+	await newTab(page, 'Fake Claude');
+	await expectSelected(await pinned(page.getByRole('tab', { name: /^Fake Claude/ })));
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await panel.getByRole('textbox', { name: 'Composer' }).fill(`See [row 240](${root}/src/rows.txt:240)`);
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await panel.getByRole('region', { name: 'User message 1' }).getByRole('link', { name: 'row 240' }).click();
+	const editor = page.locator('.editor:not([hidden])');
+	await expect(editor.locator('.path')).toHaveText('src/rows.txt');
+	await expect(editor.locator('.cm-line', { hasText: /^row 240$/ })).toBeInViewport();
+	expect(page.context().pages()).toHaveLength(1);
+});
+
 test('a Chat that finishes unseen needs attention and opens from the Attention list or a notification', async ({ page }, { project }) => {
 	const name = `attention-${project.name}`;
 	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`, { recursive: true });

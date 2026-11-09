@@ -5,6 +5,7 @@ import { OSC8LinkProvider, type ILink, type Terminal } from 'ghostty-web';
 const URLS = /https?:\/\/[\w\-.~:/?#@!$&*+,;=%\[\]]+/g;
 const TRAILING = /[.,;!?)\]]+$/;
 const PATHS = /([./~]?[\w@.-]+(?:\/[\w@.-]+)*\.\w+)(?::(\d+)(?::(\d+))?)?/g;
+const FILE_LINK = /^(.+?)(?:(?::|#L)(\d+)(?:[:C](\d+))?)?$/;
 const FRESH_MS = 10_000;
 
 const checks = new Map<string, { at: number; exists: Promise<boolean> }>();
@@ -22,9 +23,19 @@ function exists(projectId: string, path: string): Promise<boolean> {
 	return found;
 }
 
-function relative(path: string, root: string): string | undefined {
+export function relative(path: string, root: string): string | undefined {
 	if (!path.startsWith('/')) return path;
 	if (path.startsWith(`${root}/`)) return path.slice(root.length + 1);
+}
+
+export function fileLink(href: string): { path: string; cursor?: Cursor } | undefined {
+	if (/^([a-z][a-z0-9+-]*:|\/\/|#)/i.test(href)) return;
+	let decoded = href;
+	try {
+		decoded = decodeURI(href);
+	} catch {}
+	const [, path, line, column] = decoded.match(FILE_LINK)!;
+	return { path, cursor: line ? { line: Number(line), column: Number(column ?? 1) } : undefined };
 }
 
 export function linkify(view: Terminal, project: () => Project | undefined, onopen: (path: string, cursor?: Cursor) => void, onbrowse?: (url: string) => void) {
