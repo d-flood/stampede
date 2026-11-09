@@ -1,15 +1,19 @@
 <script lang="ts">
-	import { serverLanguage, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
+	import { serverLanguages, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
 
 	type Props = { servers: LanguageServers; projectId: string; path: string };
 
 	let { servers, projectId, path }: Props = $props();
 
-	const language = $derived(serverLanguage(path));
+	const languages = $derived(serverLanguages(path));
 	const on = $derived(servers.switches[projectId] ?? false);
-	const running = $derived(language && servers.states[`lsp:${projectId}:${language}`]);
-	const state = $derived(!on ? 'off' : !language ? 'on' : !running || running === 'off' ? 'starting' : running);
-	const log = $derived(`/api/lsp/log?${new URLSearchParams({ projectId, language: language ?? '' })}`);
+	const states = $derived(languages.map((language) => servers.states[`lsp:${projectId}:${language}`]));
+	const failed = $derived(languages.find((_, index) => states[index] === 'error'));
+	const running = $derived(states[0]);
+	const state = $derived(
+		!on ? 'off' : !languages.length ? 'on' : failed ? 'error' : !running || running === 'off' ? 'starting' : running
+	);
+	const log = $derived(`/api/lsp/log?${new URLSearchParams({ projectId, language: failed ?? languages[0] ?? '' })}`);
 </script>
 
 <button

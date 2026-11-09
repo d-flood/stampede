@@ -38,7 +38,7 @@ use crate::{AppState, device::{Outgoing, send}};
 const LOG_LINES: usize = 1000;
 const GRACE: Duration = Duration::from_secs(60);
 
-const LANGUAGES: [&str; 3] = ["typescript", "svelte", "python"];
+const LANGUAGES: [&str; 5] = ["typescript", "svelte", "python", "ruff", "eslint"];
 
 static PINS: LazyLock<HashMap<String, Pin>> =
     LazyLock::new(|| toml::from_str(include_str!("../language-servers.toml")).expect("invalid language-servers.toml"));
@@ -47,6 +47,11 @@ const SVELTE: [(&str, &str); 2] = [
     ("package.json", include_str!("../language-servers/svelte/package.json")),
     ("package-lock.json", include_str!("../language-servers/svelte/package-lock.json")),
 ];
+
+const ESLINT: &str = include_str!("../language-servers/eslint.cjs");
+
+const ESLINT_CONFIGS: [&str; 6] =
+    ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", "eslint.config.mts", "eslint.config.cts"];
 
 static SVELTE_VERSION: LazyLock<String> = LazyLock::new(|| {
     let lock: Value = serde_json::from_str(SVELTE[1].1).expect("invalid svelte package-lock.json");
@@ -71,6 +76,22 @@ struct Download {
 
 pub fn parse(channel: &str) -> Option<(&str, &str)> {
     channel.strip_prefix("lsp:")?.split_once(':')
+}
+
+pub fn configured(language: &str, root: &Path) -> bool {
+    match language {
+        "ruff" => {
+            ["ruff.toml", ".ruff.toml"].iter().any(|name| root.join(name).is_file())
+                || fs::read_to_string(root.join("pyproject.toml"))
+                    .ok()
+                    .and_then(|text| text.parse::<toml::Table>().ok())
+                    .is_some_and(|pyproject| pyproject.get("tool").and_then(|tool| tool.get("ruff")).is_some())
+        }
+        "eslint" => {
+            ESLINT_CONFIGS.iter().any(|name| root.join(name).is_file()) && root.join("node_modules/eslint").is_dir()
+        }
+        _ => true,
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -240,6 +261,8 @@ impl LanguageServers {
                 (node.join("bin/node"), vec![server.into(), "--stdio".into()])
             }
             "python" => (install("ty").await?.join("ty"), vec!["server".into()]),
+            "ruff" => (install("ruff").await?.join("ruff"), vec!["server".into()]),
+            "eslint" => (install("node").await?.join("bin/node"), vec![self.eslint()?.into()]),
             _ => return Err(format!("stampede: no language server for {language}")),
         };
         Command::new(&program)
@@ -252,6 +275,19 @@ impl LanguageServers {
             .kill_on_drop(true)
             .spawn()
             .map_err(|error| format!("stampede: cannot start {}: {error}", program.display()))
+    }
+
+    fn eslint(&self) -> Result<PathBuf, String> {
+        let path = self.dir.join("eslint").join(format!("{}.cjs", &hex(&Sha256::digest(ESLINT))[..16]));
+        if path.is_file() {
+            return Ok(path);
+        }
+        let tmp = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
+        fs::create_dir_all(path.parent().unwrap())
+            .and_then(|()| fs::write(&tmp, ESLINT))
+            .and_then(|()| fs::rename(&tmp, &path))
+            .map_err(|error| format!("stampede: cannot write {}: {error}", path.display()))?;
+        Ok(path)
     }
 
     async fn install(self: Arc<Self>, name: &'static str, version: Option<String>) -> Result<PathBuf, String> {

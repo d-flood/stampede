@@ -49,18 +49,18 @@ async fn a_server_starts_only_for_its_language_and_stops_after_the_grace() {
     switch(&mut socket, &project_id, true).await;
     control(&mut socket, json!({ "type": "lsp.open", "channel": format!("lsp:{project_id}:markdown") })).await;
     sleep(Duration::from_millis(500)).await;
-    assert!(!running(&server), "a server started without an editor showing its language");
+    assert!(!running(&server, "typescript"), "a server started without an editor showing its language");
 
     control(&mut socket, json!({ "type": "lsp.open", "channel": channel })).await;
     assert_eq!(state(&mut socket, &channel).await, "starting");
     assert_eq!(state(&mut socket, &channel).await, "on");
-    assert!(running(&server));
+    assert!(running(&server, "typescript"));
 
     control(&mut socket, json!({ "type": "lsp.close", "channel": channel })).await;
     sleep(GRACE / 2).await;
     control(&mut socket, json!({ "type": "lsp.open", "channel": channel })).await;
     sleep(GRACE).await;
-    assert!(running(&server), "the server stopped though an editor reopened within the grace");
+    assert!(running(&server, "typescript"), "the server stopped though an editor reopened within the grace");
 
     control(&mut socket, json!({ "type": "lsp.close", "channel": channel })).await;
     let closed = Instant::now();
@@ -83,6 +83,80 @@ async fn a_server_starts_only_for_its_language_and_stops_after_the_grace() {
     assert_eq!(state(&mut socket, &channel).await, "off");
     stopped(&server).await;
 }
+
+#[tokio::test]
+async fn ruff_lints_only_a_project_that_configures_it() {
+    let (server, project) = start("lsp-ruff").await;
+    let (mut socket, project_id) = open(&server, &project).await;
+    let channel = format!("lsp:{project_id}:ruff");
+    switch(&mut socket, &project_id, true).await;
+    control(&mut socket, json!({ "type": "lsp.open", "channel": channel })).await;
+    sleep(Duration::from_millis(500)).await;
+    assert!(!running(&server, "ruff"), "ruff started without a Ruff config");
+
+    fs::write(project.join("pyproject.toml"), "[tool.ruff.lint]\nselect = [\"F401\"]\n").unwrap();
+    control(&mut socket, json!({ "type": "lsp.open", "channel": channel })).await;
+    assert_eq!(state(&mut socket, &channel).await, "starting");
+    assert_eq!(state(&mut socket, &channel).await, "on");
+
+    let root = format!("file://{}", project.display());
+    let initialize = json!({ "processId": null, "rootUri": root, "capabilities": { "textDocument": { "diagnostic": {} } } });
+    request(&mut socket, &channel, 1, "initialize", initialize).await;
+    notify(&mut socket, &channel, "initialized", json!({})).await;
+    let document = json!({ "uri": format!("{root}/unused.py"), "languageId": "python", "version": 0, "text": "import os\n" });
+    notify(&mut socket, &channel, "textDocument/didOpen", json!({ "textDocument": document })).await;
+    let report =
+        request(&mut socket, &channel, 2, "textDocument/diagnostic", json!({ "textDocument": { "uri": format!("{root}/unused.py") } }))
+            .await;
+
+    let codes: Vec<_> = report["items"].as_array().unwrap().iter().map(|item| &item["code"]).collect();
+    assert_eq!(codes, ["F401"]);
+}
+
+#[tokio::test]
+async fn eslint_lints_with_the_projects_own_eslint_once_configured() {
+    let (server, project) = start("lsp-eslint").await;
+    let (mut socket, project_id) = open(&server, &project).await;
+    let channel = format!("lsp:{project_id}:eslint");
+    switch(&mut socket, &project_id, true).await;
+    fs::write(project.join("eslint.config.js"), "export default [];\n").unwrap();
+    control(&mut socket, json!({ "type": "lsp.open", "channel": channel })).await;
+    sleep(Duration::from_millis(500)).await;
+    assert!(!running(&server, "eslint"), "eslint started without the project's ESLint installed");
+
+    let eslint = project.join("node_modules/eslint");
+    fs::create_dir_all(&eslint).unwrap();
+    fs::write(eslint.join("package.json"), r#"{ "name": "eslint", "main": "api.js" }"#).unwrap();
+    fs::write(eslint.join("api.js"), FAKE_ESLINT).unwrap();
+    control(&mut socket, json!({ "type": "lsp.open", "channel": channel })).await;
+    assert_eq!(state(&mut socket, &channel).await, "starting");
+    assert_eq!(state(&mut socket, &channel).await, "on");
+
+    let root = format!("file://{}", project.display());
+    let initialize = json!({ "processId": null, "rootUri": root, "capabilities": { "textDocument": { "diagnostic": {} } } });
+    request(&mut socket, &channel, 1, "initialize", initialize).await;
+    notify(&mut socket, &channel, "initialized", json!({})).await;
+    let document = json!({ "uri": format!("{root}/broken.ts"), "languageId": "typescript", "version": 0, "text": BROKEN });
+    notify(&mut socket, &channel, "textDocument/didOpen", json!({ "textDocument": document })).await;
+    let report =
+        request(&mut socket, &channel, 2, "textDocument/diagnostic", json!({ "textDocument": { "uri": format!("{root}/broken.ts") } }))
+            .await;
+
+    let range = json!({ "start": { "line": 0, "character": 6 }, "end": { "line": 0, "character": 7 } });
+    let expected = json!([{ "range": range, "severity": 1, "source": "ESLint", "code": "no-unused-vars", "message": "23 chars in broken.ts" }]);
+    assert_eq!(report["items"], expected);
+}
+
+const FAKE_ESLINT: &str = r#"
+const { relative } = require('node:path');
+exports.ESLint = class {
+    constructor({ cwd }) { this.cwd = cwd; }
+    async lintText(text, { filePath }) {
+        const message = `${text.length} chars in ${relative(this.cwd, filePath)}`;
+        return [{ messages: [{ ruleId: 'no-unused-vars', severity: 2, message, line: 1, column: 7, endLine: 1, endColumn: 8 }] }];
+    }
+};
+"#;
 
 const BROKEN: &str = "const n: number = \"x\";\n";
 
@@ -159,14 +233,14 @@ async fn next(socket: &mut Socket, wanted: impl Fn(&Value) -> bool) -> Value {
     }
 }
 
-fn running(server: &Server) -> bool {
-    let program = server.root.path().join("data/language-servers/typescript");
+fn running(server: &Server, name: &str) -> bool {
+    let program = server.root.path().join("data/language-servers").join(name);
     Command::new("pgrep").arg("-f").arg(program).output().unwrap().status.success()
 }
 
 async fn stopped(server: &Server) {
     let deadline = Instant::now() + Duration::from_secs(5);
-    while running(server) {
+    while running(server, "typescript") {
         assert!(Instant::now() < deadline, "the server is still running");
         sleep(Duration::from_millis(50)).await;
     }
