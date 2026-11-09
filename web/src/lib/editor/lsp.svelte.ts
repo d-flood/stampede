@@ -17,6 +17,7 @@ const languages: Record<string, [servers: string[], languageId: string]> = {
 	cjs: [['typescript', 'eslint'], 'javascript'],
 	jsx: [['typescript', 'eslint'], 'javascriptreact'],
 	svelte: [['svelte', 'eslint'], 'svelte'],
+	astro: [['astro', 'eslint'], 'astro'],
 	py: [['python', 'ruff'], 'python']
 };
 

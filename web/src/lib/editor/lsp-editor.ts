@@ -140,9 +140,16 @@ export class Session {
 	}
 
 	changed(changes: { uri: string; type: number }[]) {
-		if (!this.#client) return;
-		this.#client.notification('workspace/didChangeWatchedFiles', { changes });
-		this.refresh();
+		if (this.#client) {
+			this.#client.notification('workspace/didChangeWatchedFiles', { changes });
+			this.refresh();
+			return;
+		}
+		const state = this.servers.states[this.channel];
+		// The server skips unconfigured linters, so a change may be the config or dependency it waits for.
+		if (this.shown && this.servers.switches[this.projectId] && (!state || state === 'off')) {
+			this.servers.send({ type: 'lsp.open', channel: this.channel });
+		}
 	}
 
 	refresh() {

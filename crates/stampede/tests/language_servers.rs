@@ -147,6 +147,31 @@ async fn eslint_lints_with_the_projects_own_eslint_once_configured() {
     assert_eq!(report["items"], expected);
 }
 
+#[tokio::test]
+async fn astro_reports_a_type_error_in_frontmatter() {
+    let (server, project) = start("lsp-astro").await;
+    let (mut socket, project_id) = open(&server, &project).await;
+    let channel = format!("lsp:{project_id}:astro");
+    switch(&mut socket, &project_id, true).await;
+    control(&mut socket, json!({ "type": "lsp.open", "channel": channel })).await;
+    assert_eq!(state(&mut socket, &channel).await, "starting");
+    assert_eq!(state(&mut socket, &channel).await, "on");
+
+    let root = format!("file://{}", project.display());
+    let initialize = json!({ "processId": null, "rootUri": root, "capabilities": { "textDocument": { "diagnostic": {} } } });
+    request(&mut socket, &channel, 1, "initialize", initialize).await;
+    notify(&mut socket, &channel, "initialized", json!({})).await;
+    let text = format!("---\n{BROKEN}---\n<p>{{n}}</p>\n");
+    let document = json!({ "uri": format!("{root}/broken.astro"), "languageId": "astro", "version": 0, "text": text });
+    notify(&mut socket, &channel, "textDocument/didOpen", json!({ "textDocument": document })).await;
+    let report =
+        request(&mut socket, &channel, 2, "textDocument/diagnostic", json!({ "textDocument": { "uri": format!("{root}/broken.astro") } }))
+            .await;
+
+    let messages: Vec<_> = report["items"].as_array().unwrap().iter().map(|item| &item["message"]).collect();
+    assert!(messages.contains(&&json!("Type 'string' is not assignable to type 'number'.")), "{report}");
+}
+
 const FAKE_ESLINT: &str = r#"
 const { relative } = require('node:path');
 exports.ESLint = class {

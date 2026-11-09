@@ -71,6 +71,7 @@ const loaders: Record<string, Load> = {
 	diff,
 	patch: diff,
 	svelte: async () => (await import('@replit/codemirror-lang-svelte')).svelte(),
+	astro: async () => (await import('./astro.ts')).astro(),
 	vue: async () => (await import('@codemirror/lang-vue')).vue()
 };
 

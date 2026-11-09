@@ -38,26 +38,44 @@ use crate::{AppState, device::{Outgoing, send}};
 const LOG_LINES: usize = 1000;
 const GRACE: Duration = Duration::from_secs(60);
 
-const LANGUAGES: [&str; 5] = ["typescript", "svelte", "python", "ruff", "eslint"];
+const LANGUAGES: [&str; 6] = ["typescript", "svelte", "astro", "python", "ruff", "eslint"];
 
 static PINS: LazyLock<HashMap<String, Pin>> =
     LazyLock::new(|| toml::from_str(include_str!("../language-servers.toml")).expect("invalid language-servers.toml"));
 
-const SVELTE: [(&str, &str); 2] = [
-    ("package.json", include_str!("../language-servers/svelte/package.json")),
-    ("package-lock.json", include_str!("../language-servers/svelte/package-lock.json")),
-];
+struct Npm {
+    name: &'static str,
+    package: &'static str,
+    manifest: &'static str,
+    lock: &'static str,
+}
+
+impl Npm {
+    fn version(&self) -> String {
+        let lock: Value = serde_json::from_str(self.lock).expect("invalid pinned package-lock.json");
+        let version = lock["packages"][format!("node_modules/{}", self.package)]["version"].as_str();
+        version.expect("pinned package-lock.json lacks its language server").to_owned()
+    }
+}
+
+const SVELTE: Npm = Npm {
+    name: "svelte",
+    package: "svelte-language-server",
+    manifest: include_str!("../language-servers/svelte/package.json"),
+    lock: include_str!("../language-servers/svelte/package-lock.json"),
+};
+
+const ASTRO: Npm = Npm {
+    name: "astro",
+    package: "@astrojs/language-server",
+    manifest: include_str!("../language-servers/astro/package.json"),
+    lock: include_str!("../language-servers/astro/package-lock.json"),
+};
 
 const ESLINT: &str = include_str!("../language-servers/eslint.cjs");
 
 const ESLINT_CONFIGS: [&str; 6] =
     ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", "eslint.config.mts", "eslint.config.cts"];
-
-static SVELTE_VERSION: LazyLock<String> = LazyLock::new(|| {
-    let lock: Value = serde_json::from_str(SVELTE[1].1).expect("invalid svelte package-lock.json");
-    let version = lock["packages"]["node_modules/svelte-language-server"]["version"].as_str();
-    version.expect("svelte package-lock.json has no svelte-language-server").to_owned()
-});
 
 #[derive(Deserialize)]
 struct Pin {
@@ -202,8 +220,8 @@ impl LanguageServers {
     ) {
         let state = |state: &str| send(&outgoing, json!({ "type": "lsp.state", "channel": channel, "state": state }));
         state("starting");
-        let mut child = match self.spawn(&language, &pins, &root).await {
-            Ok(child) => child,
+        let (mut child, mut options) = match self.spawn(&language, &pins, &root).await {
+            Ok(spawned) => spawned,
             Err(error) => {
                 self.log(&channel, error);
                 return state("error");
@@ -217,7 +235,11 @@ impl LanguageServers {
         loop {
             tokio::select! {
                 Some(input) = input.recv() => match input {
-                    Input::Message(message) => {
+                    Input::Message(mut message) => {
+                        if let Some(injected) = options.as_ref().and_then(|options| initialize(&message, options)) {
+                            message = injected;
+                            options = None;
+                        }
                         let frame = format!("Content-Length: {}\r\n\r\n{message}", message.len());
                         let _ = stdin.write_all(frame.as_bytes()).await;
                     }
@@ -250,15 +272,27 @@ impl LanguageServers {
         state("error");
     }
 
-    async fn spawn(self: &Arc<Self>, language: &str, pins: &BTreeMap<String, String>, root: &Path) -> Result<Child, String> {
+    async fn spawn(
+        self: &Arc<Self>,
+        language: &str,
+        pins: &BTreeMap<String, String>,
+        root: &Path,
+    ) -> Result<(Child, Option<Value>), String> {
         let install = |name| detached(Arc::clone(self).install(name, pins.get(name).cloned()));
+        let mut options = None;
         let (program, args): (_, Vec<OsString>) = match language {
             "typescript" => (install("typescript").await?.join("lib/tsc"), vec!["--lsp".into(), "--stdio".into()]),
-            "svelte" => {
+            "svelte" | "astro" => {
+                let (npm, server) = match language {
+                    "svelte" => (&SVELTE, "svelte-language-server/bin/server.js"),
+                    _ => (&ASTRO, "@astrojs/language-server/bin/nodeServer.js"),
+                };
                 let node = install("node").await?;
-                let svelte = detached(Arc::clone(self).install_svelte(node.clone(), pins.get("svelte").cloned())).await?;
-                let server = svelte.join("node_modules/svelte-language-server/bin/server.js");
-                (node.join("bin/node"), vec![server.into(), "--stdio".into()])
+                let dir = detached(Arc::clone(self).install_npm(npm, node.clone(), pins.get(npm.name).cloned())).await?;
+                if language == "astro" {
+                    options = Some(json!({ "typescript": { "tsdk": dir.join("node_modules/typescript/lib") } }));
+                }
+                (node.join("bin/node"), vec![dir.join("node_modules").join(server).into(), "--stdio".into()])
             }
             "python" => (install("ty").await?.join("ty"), vec!["server".into()]),
             "ruff" => (install("ruff").await?.join("ruff"), vec!["server".into()]),
@@ -274,6 +308,7 @@ impl LanguageServers {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
+            .map(|child| (child, options))
             .map_err(|error| format!("stampede: cannot start {}: {error}", program.display()))
     }
 
@@ -342,16 +377,17 @@ impl LanguageServers {
         Ok(dir)
     }
 
-    async fn install_svelte(self: Arc<Self>, node: PathBuf, version: Option<String>) -> Result<PathBuf, String> {
-        let version = version.unwrap_or_else(|| SVELTE_VERSION.clone());
+    async fn install_npm(self: Arc<Self>, npm: &'static Npm, node: PathBuf, version: Option<String>) -> Result<PathBuf, String> {
+        let pinned = npm.version();
+        let version = version.unwrap_or_else(|| pinned.clone());
         let core = version.split(['-', '+']).next().unwrap_or_default().split('.').collect::<Vec<_>>();
         let valid = core.len() == 3
             && core.iter().all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
             && version.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte));
         if !valid {
-            return Err("stampede: the Svelte pin must be an exact version".to_owned());
+            return Err(format!("stampede: the {} pin must be an exact version", npm.name));
         }
-        let dir = self.dir.join("svelte").join(&version);
+        let dir = self.dir.join(npm.name).join(&version);
         if dir.is_dir() {
             return Ok(dir);
         }
@@ -359,15 +395,16 @@ impl LanguageServers {
         if dir.is_dir() {
             return Ok(dir);
         }
-        let tmp = self.dir.join("svelte").join(format!(".{}", Uuid::new_v4()));
+        let tmp = self.dir.join(npm.name).join(format!(".{}", Uuid::new_v4()));
         let scratch = tmp.with_extension("npm");
         let installed = async {
             let written = fs::create_dir_all(&tmp)
-                .and_then(|()| SVELTE.iter().try_for_each(|(name, text)| fs::write(tmp.join(name), text)));
+                .and_then(|()| fs::write(tmp.join("package.json"), npm.manifest))
+                .and_then(|()| fs::write(tmp.join("package-lock.json"), npm.lock));
             written.map_err(|error| format!("stampede: cannot write {}: {error}", tmp.display()))?;
-            if version != *SVELTE_VERSION {
-                let mut manifest: Value = serde_json::from_str(SVELTE[0].1).map_err(|error| error.to_string())?;
-                manifest["dependencies"]["svelte-language-server"] = json!(version);
+            if version != pinned {
+                let mut manifest: Value = serde_json::from_str(npm.manifest).map_err(|error| error.to_string())?;
+                manifest["dependencies"][npm.package] = json!(version);
                 fs::write(tmp.join("package.json"), serde_json::to_vec(&manifest).map_err(|error| error.to_string())?)
                     .map_err(|error| error.to_string())?;
                 let output = Command::new(node.join("bin/node"))
@@ -380,9 +417,10 @@ impl LanguageServers {
                     .stdin(Stdio::null())
                     .output()
                     .await
-                    .map_err(|error| format!("stampede: cannot resolve Svelte pin: {error}"))?;
+                    .map_err(|error| format!("stampede: cannot resolve the {} pin: {error}", npm.name))?;
                 if !output.status.success() {
-                    return Err(format!("stampede: cannot resolve Svelte pin: {}", String::from_utf8_lossy(&output.stderr)));
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(format!("stampede: cannot resolve the {} pin: {stderr}", npm.name));
                 }
             }
             let output = Command::new(node.join("bin/node"))
@@ -456,6 +494,15 @@ fn unpack(tarball: &[u8], dir: &Path) -> io::Result<()> {
     };
     fs::remove_dir_all(&tmp)?;
     renamed
+}
+
+fn initialize(message: &str, options: &Value) -> Option<String> {
+    let mut request: Value = serde_json::from_str(message).ok()?;
+    if request["method"] != "initialize" {
+        return None;
+    }
+    request["params"]["initializationOptions"] = options.clone();
+    Some(request.to_string())
 }
 
 fn hex(bytes: &[u8]) -> String {
