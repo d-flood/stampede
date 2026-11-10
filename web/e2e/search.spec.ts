@@ -77,3 +77,17 @@ test('Search results replace the file tree until the search is cleared', async (
 	await sidebar.getByRole('button', { name: 'Hide ignored files' }).click();
 	await expect(tree.getByRole('button', { name: 'ignored', exact: true })).toHaveCount(0);
 });
+
+test('Ctrl+Shift+F opens the Sidebar on Search with its query selected', { tag: '@desktop' }, async ({ page }) => {
+	await openProject(page, 'alpha');
+	const sidebar = await showSidebar(page);
+	const box = sidebar.getByRole('textbox', { name: 'Search in files' });
+	await box.fill('needle');
+	await sidebar.getByRole('group', { name: 'Sections' }).getByRole('button', { name: 'Git', exact: true }).click();
+	await page.getByRole('button', { name: 'Sidebar' }).click();
+	await expect(sidebar).toBeHidden();
+	await page.keyboard.press('Control+Shift+F');
+	await expect(sidebar).toBeVisible();
+	await expect(box).toBeFocused();
+	await expect.poll(() => box.evaluate((input: HTMLInputElement) => [input.selectionStart, input.selectionEnd])).toEqual([0, 6]);
+});

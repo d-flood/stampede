@@ -40,6 +40,7 @@
 	let pasting = $state(false);
 	let pasteError = $state('');
 	let renamer: Rename;
+	let search: Search;
 	let treeElement = $state<HTMLDivElement>();
 	let focused: Entry | undefined;
 	const expanded = new SvelteSet<string>();
@@ -69,6 +70,10 @@
 			throw error;
 		});
 		listings = { ...listings, [path]: entries };
+	}
+
+	export function focusSearch() {
+		search.focus();
 	}
 
 	function toggle(path: string) {
@@ -263,7 +268,7 @@
 {/snippet}
 
 <section aria-label="Files" {hidden}>
-	<Search {projectId} {device} bind:query {includeIgnored} onignored={showIgnored} {onopen} />
+	<Search bind:this={search} {projectId} {device} bind:query {includeIgnored} onignored={showIgnored} {onopen} />
 	{#if !query}
 		<Menu context items={creationItems('')}>
 			{#snippet trigger(props)}

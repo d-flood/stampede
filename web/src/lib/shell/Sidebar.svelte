@@ -92,6 +92,7 @@
 	}: Props = $props();
 
 	let switching = $state(false);
+	let files = $state<Files>();
 	const Picker = $derived(picker());
 	const shown = $derived(available(git));
 	const current = $derived(showing(section, git).id);
@@ -103,6 +104,10 @@
 	const minimum = $derived(Math.min(160, maximum));
 	const size = $derived(Math.min(maximum, Math.max(minimum, width)));
 	const direction = $derived(sidebarPosition.side === 'right' ? -1 : 1);
+
+	export function focusSearch() {
+		files?.focusSearch();
+	}
 
 	function resize(value: number) {
 		width = Math.min(maximum, Math.max(minimum, value));
@@ -154,7 +159,7 @@
 					{/each}
 				</div>
 				{#key project.id}
-					<Files projectId={project.id} {device} changes={git?.changes ?? []} hidden={current !== 'files'} {onopen} {onrename} />
+					<Files bind:this={files} projectId={project.id} {device} changes={git?.changes ?? []} hidden={current !== 'files'} {onopen} {onrename} />
 				{/key}
 				{#if current === 'git'}
 					{#key project.id}

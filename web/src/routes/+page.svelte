@@ -56,7 +56,7 @@
 	import Menu from '#lib/ui/Menu.svelte';
 	import Tab, { marks } from '#lib/ui/Tab.svelte';
 	import TooltipGroup from '#lib/ui/TooltipGroup.svelte';
-	import { onMount, untrack } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { on } from 'svelte/events';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import CaretDown from '~icons/ph/caret-down';
@@ -107,6 +107,7 @@
 	let sidebar = $state(restored.sidebar?.open ?? form() === 'desktop');
 	let handoff = false;
 	let section = $state<Section>(savedSection(restored.sidebar?.section));
+	let sidebarView = $state<Sidebar>();
 	let rail = $state(restored.rail?.open ?? false);
 	let markdownMode = $state(restored.markdownMode);
 	let comparisons = $state<Record<string, Selection | Reviewing>>(restored.compare);
@@ -1047,6 +1048,15 @@
 		slide('sidebar');
 	}
 
+	async function openSearch() {
+		if (!focused) return;
+		section = 'files';
+		sidebar = true;
+		slide('sidebar');
+		await tick();
+		sidebarView?.focusSearch();
+	}
+
 	function showDiff(file: OpenFile, disk: string, buffer: string) {
 		openTab(new OpenDiff(file.projectId, file.path, 'disk')).snapshot = { disk, buffer };
 	}
@@ -1099,6 +1109,7 @@
 
 {#snippet sidebarPanel()}
 	<Sidebar
+		bind:this={sidebarView}
 		open={phone || sidebar}
 		project={focused}
 		{label}
@@ -1609,6 +1620,7 @@
 	onnew={openTabPicker}
 	onterminal={openTerminal}
 	onfiles={() => focused && openPalette('files')}
+	onsearch={openSearch}
 	onclose={closeActiveTab}
 	onpalette={() => openPalette('all')}
 	onrig={launch}

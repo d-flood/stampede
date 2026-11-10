@@ -119,6 +119,11 @@
 		timer = setTimeout(run, 250);
 	}
 
+	export function focus() {
+		input?.focus({ preventScroll: true });
+		input?.select();
+	}
+
 	function globs(text: string) {
 		return text
 			.split(',')
