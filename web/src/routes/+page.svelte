@@ -1608,6 +1608,7 @@
 	ontab={jump}
 	onnew={openTabPicker}
 	onterminal={openTerminal}
+	onfiles={() => focused && openPalette('files')}
 	onclose={closeActiveTab}
 	onpalette={() => openPalette('all')}
 	onrig={launch}

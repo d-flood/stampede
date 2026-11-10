@@ -34,7 +34,7 @@ export function tabItems(rigs: Rig[], sessions: Session[], actions: Actions): Ta
 		tools: [
 			{ label: 'Terminal', hint: 'Ctrl+Shift+T', icon: TerminalWindow, onselect: actions.terminal },
 			{ label: 'Browser', icon: Globe, onselect: actions.browser },
-			{ label: 'Open file', icon: FileCode, onselect: actions.files }
+			{ label: 'Open file', hint: 'Ctrl+Shift+O', icon: FileCode, onselect: actions.files }
 		],
 		sessions: recent.map((session) => ({ label: session.title, icon: logos[session.agent], hint: ago(session.updatedAt), onselect: () => actions.reopen(session) })),
 		search: recent.length ? { label: 'Search sessions…', onselect: actions.search } : undefined

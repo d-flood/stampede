@@ -1,4 +1,4 @@
-- Other agents edit this checkout concurrently. Never `git stash`/`checkout`/`reset`; stage only your own paths; unrelated diffs or compile errors aren't yours.
+- Other agents edit this checkout concurrently. Never `git stash`/`checkout`/`reset`; unrelated diffs or compile errors aren't yours. Commit on `main` without branching; others' work may already be staged, so `git add` only new files and commit with `git commit -- <your paths>`.
 - To test whether a failure predates you: `git worktree add --detach /tmp/base HEAD`, then `./check e2e <spec>:<line> --repeat-each 5` there. Full-run single failures are often flakes.
 - Run tests only via `./check`: `./check e2e <spec> [playwright args]`, `./check rust --test integration <module>::`. Never raw `cargo test`/`playwright`. A run waits while another worktree holds the lock. `./check` ≈8 min, desktop E2E only; `./check all` adds phone and perf. Background them.
 - E2E failure artifacts: `web/test-results/<test>-<desktop|pixel>/` (`error-context.md`, `server.log`, PNGs). The next run wipes them. "Logged preview failure" from browser.spec.ts is expected.
@@ -6,3 +6,13 @@
 - E2E projects (alpha/beta) and "Fake …" rigs: `scripts/check_fixtures.sh`. Fake agents `crates/stampede/tests/fake/*` replay `tests/fixtures/chats/<agent>/$STAMPEDE_FAKE_FIXTURE.*.jsonl`.
 - Wiring: REST routes in `crates/stampede/src/lib.rs` `fn router`; WebSocket `device.rs` `enum Control` ↔ `web/src/lib/device.svelte.ts` `ClientMessage`/`ServerMessage`, dispatched in `+page.svelte` `function message`. `protocol.rs` is holder IPC; no `server.rs`.
 - Read GLOSSARY.md before grepping for a UI term. Frontend lives in `web/` (`pnpm -C web …`).
+
+## Maintainer standards
+
+- Tests must be load-bearing: each guards an invariant a plausible regression would break and nothing else catches. Default to zero or one per change; extend an existing test before adding one; never test Svelte, Playwright, or library behavior. `./check` time is a budget: prefer Vitest (`./check components`), reserve E2E for Host/provider wiring, persistence, and navigation, and tag form-factor-independent E2E `@desktop`.
+- Reuse before building. Controls come from `web/src/lib/ui/` (`Button`, `IconButton`, `Menu`, `Dialog`, `Select`, `Segmented`, `Toggle`, `TextField`, `Tab`, `Tooltip`, …). If none fits, extend one or add a primitive there and adopt it at existing look-alikes; never style a raw element to resemble one.
+- Style only with `web/src/lib/tokens.css` (spacing, radii, font sizes, surfaces, borders, durations); no literal colors or one-off sizes. Colors derive from the Ghostty palette (ADR 0007): no per-theme overrides or Tailwind.
+- A change on one surface carries to its siblings: a rename reaches the Tab, its context menu, and F2; a moved panel brings its toggle. Use the GLOSSARY term in code and labels alike.
+- Stay lightweight. Heavy features (language servers, Node processes, watchers) are lazy and opt-in; hidden Tabs and Terminals do no work; prefer events to polling; use `$state.raw` for large or streamed data; release caches on close. When touching Terminal rendering, Chat streaming, or Tab switching, run `./check perf`.
+- The bar is more polished than ChatGPT and Claude Desktop. New UI matches its neighbors' spacing, alignment, sizing, and motion, and keeps existing affordances unless asked. Before claiming done, screenshot it (zz- spec) on desktop and phone, light and dark, and in a Split; fix overflow, wrapping, overlap, and anything illegible at small sizes.
+- Check claims about Claude Code, Codex, or other tools against their source or docs before stating them.
