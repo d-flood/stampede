@@ -2,6 +2,7 @@
 	import type { Capabilities, Chat, Item } from '#lib/device.svelte.ts';
 	import { agentNames } from '#lib/config.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Card from '#lib/ui/Card.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 
 	let { open = $bindable(false), target = $bindable<number>(), chat, items, capabilities, unavailable, onrewind }: {
@@ -35,7 +36,7 @@
 		<p>Choose the first user message to remove. That message and everything after it will be removed. Review the details before confirming.</p>
 		<div class="messages">
 			{#each messages as message, index (message.index)}
-				<button onclick={() => (target = message.index)}><span>Message {index + 1}</span>{message.item.text || `${message.item.images} attached images`}</button>
+				<Card onclick={() => (target = message.index)}><span class="from">Message {index + 1}</span><span class="text">{message.item.text || `${message.item.images} attached images`}</span></Card>
 			{/each}
 			{#if !messages.length}<p>No user messages to rewind.</p>{/if}
 		</div>
@@ -65,13 +66,11 @@
 	p { margin: 0 0 var(--space-3); color: var(--muted-fg); }
 	.boundary { color: var(--color-fg); }
 	blockquote { max-height: 9rem; margin: 0 0 var(--space-4); padding: var(--space-3); overflow-y: auto; border-left: 2px solid var(--ansi-1); background: var(--surface-2); white-space: pre-wrap; overflow-wrap: anywhere; }
-	blockquote span, .messages span { display: block; margin-bottom: var(--space-1); color: var(--muted-fg); font-size: var(--font-size-sm); }
+	blockquote span, .messages .from { display: block; margin-bottom: var(--space-1); color: var(--muted-fg); font-size: var(--font-size-sm); }
 	dl { margin: 0 0 var(--space-3); }
 	dl div { margin-bottom: var(--space-3); }
 	dt { font-weight: 600; }
 	dd { margin: var(--space-1) 0 0; color: var(--muted-fg); }
 	.messages { display: flex; flex-direction: column; gap: var(--space-2); max-height: 55dvh; overflow-y: auto; }
-	.messages button { min-height: var(--target-min); padding: var(--space-3); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); color: var(--color-fg); font: inherit; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
-	.messages button:hover { background: var(--hover); }
-	.messages button:focus-visible { outline: var(--border-width) solid var(--accent); }
+	.text { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

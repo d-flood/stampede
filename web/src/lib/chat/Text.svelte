@@ -149,7 +149,8 @@
 	}
 
 	.text :global(.copy:focus-visible) {
-		outline: var(--border-width) solid var(--accent);
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	.text :global(.copy[data-copied]) {

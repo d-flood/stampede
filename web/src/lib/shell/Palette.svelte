@@ -10,6 +10,8 @@
 	import type { Project, Session } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { split } from '#lib/git.ts';
+	import ListItem from '#lib/ui/ListItem.svelte';
+	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
@@ -120,14 +122,14 @@
 							<Command.Group>
 								<Command.GroupHeading>
 									{#snippet child({ props })}
-										<div {...props} class="heading">{heading}</div>
+										<ListLabel {...props}>{heading}</ListLabel>
 									{/snippet}
 								</Command.GroupHeading>
 								<Command.GroupItems>
 									{#each entries as { value, label, parent, icon: Icon, hint, onselect } (value)}
 										<Command.Item {value} onSelect={onselect}>
 											{#snippet child({ props })}
-												<div {...props} class="item">
+												<ListItem {...props}>
 													{#if Icon}<Icon />{/if}
 													{#if parent === undefined}
 														<span class="label">{label}</span>
@@ -135,7 +137,7 @@
 													{:else}
 														<span class="path"><span class="parent">{parent}</span><span class="name">{label}</span></span>
 													{/if}
-												</div>
+												</ListItem>
 											{/snippet}
 										</Command.Item>
 									{/each}
@@ -144,7 +146,7 @@
 						{/if}
 					{/each}
 					{#if !reading && groups.every(({ entries }) => !entries.length)}
-						<p class="empty">{query ? 'No matches' : scope === 'sessions' ? 'No past sessions' : 'Type to find a file'}</p>
+						<ListLabel element="p">{query ? 'No matches' : scope === 'sessions' ? 'No past sessions' : 'Type to find a file'}</ListLabel>
 					{/if}
 				</Command.Viewport>
 			</div>
@@ -163,45 +165,20 @@
 		margin-top: var(--space-2);
 	}
 
-	.heading {
-		display: flex;
-		align-items: center;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-	}
-
-	.item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		white-space: nowrap;
-	}
-
-	.item :global(svg) {
-		flex: none;
-	}
 
 	.label {
 		flex: 1;
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.hint {
 		flex: none;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
-	}
-
-	.item[data-selected] {
-		background: var(--hover);
+		white-space: nowrap;
 	}
 
 	.path {
@@ -209,6 +186,7 @@
 		min-width: 0;
 		overflow: hidden;
 		font-family: var(--font-mono);
+		white-space: nowrap;
 	}
 
 	.parent {
@@ -221,9 +199,4 @@
 		flex: none;
 	}
 
-	.empty {
-		margin: 0;
-		padding: var(--space-2);
-		color: var(--muted-fg);
-	}
 </style>

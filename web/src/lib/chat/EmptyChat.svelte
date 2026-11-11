@@ -2,6 +2,7 @@
 	import { logos } from '#lib/chat/sessions.ts';
 	import type { Agent } from '#lib/config.svelte.ts';
 	import type { Choice, Setting, Settings } from '#lib/device.svelte.ts';
+	import Kbd from '#lib/ui/Kbd.svelte';
 	import GitBranch from '~icons/ph/git-branch';
 
 	let { rig, agent, settings, choices, project, branch }: { rig: string; agent: Agent; settings: Settings; choices: Record<Setting, Choice[]>; project?: string; branch?: string } = $props();
@@ -31,7 +32,7 @@
 		</p>
 	{/if}
 	<ul class="hints" aria-label="Input hints">
-		{#each hints as [key, label] (key)}<li><kbd>{key}</kbd>{label}</li>{/each}
+		{#each hints as [key, label] (key)}<li><Kbd>{key}</Kbd>{label}</li>{/each}
 	</ul>
 </section>
 
@@ -94,13 +95,10 @@
 		list-style: none;
 	}
 
-	kbd {
-		margin-right: var(--space-1);
-		padding: 1px 6px;
-		border: var(--border-width) solid var(--border);
-		border-bottom-width: 2px;
-		border-radius: var(--radius-sm);
-		background: var(--color-bg);
-		font: var(--font-size-sm) var(--font-mono);
+	.hints li {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-1);
 	}
+
 </style>

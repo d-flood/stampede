@@ -4,7 +4,7 @@
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
 	import { answered, answerText, normalized } from '#lib/chat/questions.ts';
 	import type { AnsweredQuestions, QuestionResponse } from '#lib/device.svelte.ts';
-	import CaretRight from '~icons/ph/caret-right';
+	import Caret from '#lib/ui/Caret.svelte';
 	import Check from '~icons/ph/check';
 
 	let { record }: { record: AnsweredQuestions } = $props();
@@ -33,7 +33,7 @@
 </script>
 
 <details aria-label={count ? 'Answered questions' : 'Unanswered questions'}>
-	<summary><span class="caret"><CaretRight /></span><span class="count">{title}</span><span class="line">{line}</span></summary>
+	<summary><Caret /><span class="count">{title}</span><span class="line">{line}</span></summary>
 	<div class="questions">
 		{#each entries as { item, response }}
 			<section>
@@ -64,8 +64,6 @@
 	summary { display: flex; align-items: center; gap: var(--space-2); min-height: var(--target-min); color: var(--muted-fg); font-size: var(--font-size-sm); list-style: none; cursor: pointer; }
 	summary::-webkit-details-marker { display: none; }
 	summary:hover { color: var(--color-fg); }
-	.caret { display: inline-flex; flex: none; width: 1em; transition: transform var(--dur-med) var(--ease-out); }
-	details[open] > summary > .caret { transform: rotate(90deg); }
 	.count { flex: none; color: var(--color-fg); font-weight: 600; }
 	.line { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 	details[open] .line { display: none; }

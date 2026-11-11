@@ -42,7 +42,9 @@
 	import Files from '#lib/shell/Files.svelte';
 	import History from '#lib/shell/History.svelte';
 	import Usage from '#lib/shell/Usage.svelte';
+	import Chip from '#lib/ui/Chip.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import Segmented from '#lib/ui/Segmented.svelte';
 	import type { Snippet } from 'svelte';
 	import CaretUpDown from '~icons/ph/caret-up-down';
 	import GitBranch from '~icons/ph/git-branch';
@@ -146,17 +148,17 @@
 				{#if git?.branch && project.worktree}
 					<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>
 				{:else if git?.branch}
-					<button class="branch" title="Switch branch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => ((switching = true), warmUp())}>
-						<GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span><CaretUpDown />
-					</button>
+					<div class="switch">
+						<Chip variant="ghost" mono title="Switch branch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => ((switching = true), warmUp())}>
+							<GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span><CaretUpDown />
+						</Chip>
+					</div>
 					<Dialog bind:open={switching} full={form() === 'phone'} title="Switch branch" description="Uncommitted changes come along unless they clash with the branch.">
 						{#if Picker}<Picker projectId={project.id} current={git.branch} origin={!!git.origin} onswitch={() => (switching = false)} />{/if}
 					</Dialog>
 				{/if}
-				<div class="sections" role="group" aria-label="Sections">
-					{#each shown as { id, label } (id)}
-						<button aria-pressed={current === id} onclick={() => (section = id)}>{label}</button>
-					{/each}
+				<div class="sections">
+					<Segmented aria-label="Sections" options={shown.map(({ id, label }) => ({ value: id, label }))} bind:value={() => current, (id) => (section = id)} />
 				</div>
 				{#key project.id}
 					<Files bind:this={files} projectId={project.id} {device} changes={git?.changes ?? []} hidden={current !== 'files'} {onopen} {onrename} />
@@ -344,77 +346,23 @@
 		font-size: var(--font-size-sm);
 	}
 
-	button.branch {
-		align-self: start;
-		max-width: calc(100% - 2 * var(--space-2));
-		min-height: var(--target-min);
-		margin: 0 var(--space-2);
-		padding: 0 var(--space-2);
-		border: none;
-		border-radius: calc(var(--target-min) / 2);
-		background: none;
-		cursor: pointer;
-	}
-
-	button.branch:hover {
-		background: var(--hover);
-		color: var(--color-fg);
-	}
-
-	button.branch:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-	}
-
 	.branch :global(svg) {
 		flex: none;
 	}
 
-	.branch span {
+	.switch {
+		display: flex;
+		padding: 0 var(--space-2);
+	}
+
+	.branch span,
+	.switch span {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.sections {
-		display: flex;
-		flex-wrap: wrap;
 		margin: 0 var(--space-2);
-		padding: var(--space-1);
-		border-radius: calc(var(--radius-md) + var(--space-1));
-		background: var(--surface-2);
-		box-shadow: inset 0 0 0 var(--border-width) var(--border);
-	}
-
-	.sections button {
-		flex: 1 0 auto;
-		min-height: var(--target-min);
-		border: none;
-		border-radius: var(--radius-md);
-		background: none;
-		color: var(--muted-fg);
-		font: inherit;
-		font-size: var(--font-size-sm);
-		cursor: pointer;
-		transition:
-			background var(--dur-fast),
-			color var(--dur-fast);
-	}
-
-	.sections button:hover:not(:disabled) {
-		color: var(--color-fg);
-	}
-
-	.sections button:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-
-	.sections [aria-pressed='true'] {
-		background: var(--color-bg);
-		box-shadow:
-			var(--shadow-lift),
-			0 0 0 var(--border-width) var(--border);
-		color: var(--color-fg);
-		font-weight: 600;
 	}
 </style>

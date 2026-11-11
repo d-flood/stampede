@@ -3,6 +3,7 @@
 	import { form } from '#lib/form.ts';
 	import { closeThemeBar, type ThemeChoice } from '#lib/themes.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import FloatingBar from '#lib/ui/FloatingBar.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
@@ -30,58 +31,41 @@
 	}
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions (Arrow keys cycle themes from any control in the bar.) -->
-<section class="bar" class:docked={form() === 'phone'} aria-label="Theme preview" onkeydown={keydown}>
-	<div class="schemes" role="group" aria-label="Color scheme">
-		{#each schemes as { scheme, label, Icon } (scheme)}
-			<IconButton {label} title={label} aria-pressed={choice.scheme === scheme} disabled={choice.saving} onclick={() => choice.pick(scheme)}><Icon /></IconButton>
-		{/each}
-	</div>
-	<div class="cycler">
-		<IconButton label="Previous theme" disabled={choice.saving} onclick={() => choice.cycle(-1)}><CaretLeft /></IconButton>
-		<div class="name" role="status" aria-live="polite">
-			<strong>{choice.candidate ?? 'Default'}</strong>
-			<span>{choice.loading || choice.pending ? 'Loading…' : index < 0 ? `${choice.matches.length} themes` : `${index + 1} of ${choice.matches.length}`}</span>
+<FloatingBar role="region" aria-label="Theme preview" docked={form() === 'phone'} belowDialogs>
+	<!-- svelte-ignore a11y_no_static_element_interactions (Arrow keys cycle themes from any control in the bar.) -->
+	<div class="content" class:docked={form() === 'phone'} onkeydown={keydown}>
+		<div class="schemes" role="group" aria-label="Color scheme">
+			{#each schemes as { scheme, label, Icon } (scheme)}
+				<IconButton {label} title={label} pressed={choice.scheme === scheme} disabled={choice.saving} onclick={() => choice.pick(scheme)}><Icon /></IconButton>
+			{/each}
 		</div>
-		<IconButton label="Next theme" disabled={choice.saving} onclick={() => choice.cycle(1)} {@attach (element) => element.focus()}><CaretRight /></IconButton>
+		<div class="cycler">
+			<IconButton label="Previous theme" disabled={choice.saving} onclick={() => choice.cycle(-1)}><CaretLeft /></IconButton>
+			<div class="name" role="status" aria-live="polite">
+				<strong>{choice.candidate ?? 'Default'}</strong>
+				<span>{choice.loading || choice.pending ? 'Loading…' : index < 0 ? `${choice.matches.length} themes` : `${index + 1} of ${choice.matches.length}`}</span>
+			</div>
+			<IconButton label="Next theme" disabled={choice.saving} onclick={() => choice.cycle(1)} {@attach (element) => element.focus()}><CaretRight /></IconButton>
+		</div>
+		<div class="actions">
+			<Button variant="ghost" onclick={closeThemeBar}>Cancel</Button>
+			<Button variant="primary" disabled={!choice.ready || choice.spec === selectedTheme.name} onclick={apply}>Apply</Button>
+		</div>
+		{#if choice.error}<p role="alert">{choice.error}</p>{/if}
 	</div>
-	<div class="actions">
-		<Button variant="ghost" onclick={closeThemeBar}>Cancel</Button>
-		<Button variant="primary" disabled={!choice.ready || choice.spec === selectedTheme.name} onclick={apply}>Apply</Button>
-	</div>
-	{#if choice.error}<p role="alert">{choice.error}</p>{/if}
-</section>
+</FloatingBar>
 
 <style>
-	.bar {
-		position: fixed;
-		bottom: var(--space-6);
-		left: 50%;
-		z-index: 45;
+	.content {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--space-1) var(--space-2);
-		box-sizing: border-box;
-		width: min(38rem, calc(100vw - 2 * var(--space-4)));
-		padding: var(--space-1) var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--surface-2);
-		box-shadow: var(--shadow-float);
-		color: var(--color-fg);
-		font-family: var(--font-ui);
-		translate: -50%;
+		width: min(36rem, 100vw - 4 * var(--space-4));
 	}
 
-	.docked {
-		position: static;
-		flex: none;
-		width: auto;
-		border-width: var(--border-width) 0 0;
-		border-radius: 0;
-		box-shadow: none;
-		translate: none;
+	.content.docked {
+		width: 100%;
 	}
 
 	.schemes,
@@ -89,11 +73,6 @@
 		display: flex;
 		flex: none;
 		gap: var(--space-1);
-	}
-
-	.schemes :global([aria-pressed='true']) {
-		background: var(--border);
-		color: var(--color-fg);
 	}
 
 	.cycler {

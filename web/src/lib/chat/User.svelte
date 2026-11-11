@@ -1,9 +1,9 @@
 <script lang="ts">
 	import Text from '#lib/chat/Text.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
-	import CaretRight from '~icons/ph/caret-right';
 	import ArrowCounterClockwise from '~icons/ph/arrow-counter-clockwise';
 	import DotsThree from '~icons/ph/dots-three-bold';
+	import Caret from '#lib/ui/Caret.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 
 	let { item, first, index, number, onrewind }: { item: Extract<Item, { kind: 'user' }>; first: boolean; index: number; number: number; onrewind?(index: number): void } = $props();
@@ -33,7 +33,7 @@
 							{#if first}<span class="label">First prompt</span>{' · '}{/if}{lines[0]}
 						</span>
 						<span class="label">{lines.length} lines</span>
-						<span class="caret"><CaretRight /></span>
+						<Caret />
 					</summary>
 					<div class="body"><Text item={markdown(item.text)} /></div>
 				</details>
@@ -66,7 +66,7 @@
 	.more { position: absolute; bottom: 0; left: 0; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: var(--border-width) solid var(--border); border-radius: 50%; background: var(--surface-1); color: var(--muted-fg); font-size: var(--font-size-sm); cursor: pointer; transform: translate(-50%, 50%); }
 	.more::before { content: ''; position: absolute; inset: calc((24px - var(--target-min)) / 2); border-radius: 50%; }
 	.more:hover, .more[aria-expanded='true'] { background: var(--hover); color: var(--color-fg); }
-	.more:focus-visible { outline: var(--border-width) solid var(--accent); }
+	.more:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }
 	@media (hover: hover) {
 		.more { opacity: 0; transition: opacity var(--dur-med) var(--ease-out); }
 		.message:hover .more, .message:focus-within .more, .more[aria-expanded='true'] { opacity: 1; }
@@ -101,17 +101,7 @@
 		display: none;
 	}
 
-	.caret {
-		display: inline-flex;
-		flex: none;
-		width: 1em;
-		color: var(--muted-fg);
-		transition: transform var(--dur-fast);
-	}
 
-	details[open] > summary > .caret {
-		transform: rotate(90deg);
-	}
 
 	.first {
 		flex: 1;

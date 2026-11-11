@@ -9,6 +9,7 @@
 	import QuestionForm from '#lib/chat/QuestionForm.svelte';
 
 	let { request, agent, asker, disabled, onanswer }: { request: Request; agent: string; asker?: string; disabled: boolean; onanswer(answer: Answer): void } = $props();
+	const size = $derived(form() === 'phone' ? ('lg' as const) : undefined);
 	let card: HTMLElement;
 	let picking = $state(false);
 	let scope = $state<'chat' | 'always'>('chat');
@@ -45,8 +46,8 @@
 	{:else if request.kind === 'plan'}
 		<div class="code"><Text item={{ kind: 'text', text: request.plan, streaming: false, phase: 'final' }} /></div>
 		<div class="actions">
-			<Button variant="primary" {disabled} onclick={() => onanswer({ allow: true })}>Approve</Button>
-			<Button {disabled} onclick={() => onanswer({ allow: false })}>Keep planning</Button>
+			<Button variant="primary" {size} {disabled} onclick={() => onanswer({ allow: true })}>Approve</Button>
+			<Button {size} {disabled} onclick={() => onanswer({ allow: false })}>Keep planning</Button>
 		</div>
 	{:else}
 		{#if request.kind === 'command'}
@@ -72,13 +73,13 @@
 		{/if}
 		<div class="actions">
 			{#if picking}
-				<Button variant="primary" {disabled} onclick={allowRules}>Allow rule{request.kind === 'command' && request.words.length > 1 ? 's' : ''}</Button>
-				<Button {disabled} onclick={() => (picking = false)}>Back</Button>
+				<Button variant="primary" {size} {disabled} onclick={allowRules}>Allow rule{request.kind === 'command' && request.words.length > 1 ? 's' : ''}</Button>
+				<Button {size} {disabled} onclick={() => (picking = false)}>Back</Button>
 			{:else}
-				<Button variant="primary" {disabled} onclick={() => onanswer({ allow: true })}>Allow</Button>
-				{#if request.kind === 'command' && request.allowRules !== false}<Button {disabled} onclick={() => (picking = true)}>Always allow</Button>{/if}
+				<Button variant="primary" {size} {disabled} onclick={() => onanswer({ allow: true })}>Allow</Button>
+				{#if request.kind === 'command' && request.allowRules !== false}<Button {size} {disabled} onclick={() => (picking = true)}>Always allow</Button>{/if}
 			{/if}
-			<Button variant="danger" {disabled} onclick={() => onanswer({ allow: false })}>Deny</Button>
+			<Button variant="danger" {size} {disabled} onclick={() => onanswer({ allow: false })}>Deny</Button>
 		</div>
 	{/if}
 </section>
@@ -176,12 +177,9 @@
 
 	.phone .actions > :global(button) {
 		flex: 1;
-		min-height: 44px;
-		font-size: var(--font-size-lg);
 	}
 
 	.phone .actions > :global(button:first-child) {
 		flex-basis: 100%;
-		min-height: 46px;
 	}
 </style>

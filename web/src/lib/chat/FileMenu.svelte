@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { listing } from '#lib/files.svelte.ts';
 	import { split } from '#lib/git.ts';
+	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
+	import ListItem from '#lib/ui/ListItem.svelte';
+	import Suggestions from '#lib/ui/Suggestions.svelte';
 	import fuzzysort from 'fuzzysort';
 
 	type Props = {
@@ -56,67 +59,39 @@
 </script>
 
 {#if open}
-	<section aria-label="Files" class="menu">
+	<Suggestions label="Files">
 		{#each paths as path, index (path)}
 			{@const { name, dir } = split(path)}
-			<button
-				class="row"
+			<ListItem
+				element="button"
 				aria-label={path}
-				class:highlighted={index === highlight}
+				highlighted={index === highlight}
 				onpointerenter={() => (highlighted = path)}
 				onmousedown={(event) => event.preventDefault()}
 				onclick={() => choose(path)}
 			>
-				<span class="parent">{dir}</span><span class="name">{name}</span>
-			</button>
+				<span class="path"><span class="parent">{dir}</span><span class="name">{name}</span></span>
+			</ListItem>
 		{:else}
 			{#if files.snapshot}
-				<p class="empty">{query ? 'No matches' : 'Type to find a file'}</p>
+				<ListLabel element="p">{query ? 'No matches' : 'Type to find a file'}</ListLabel>
 			{:else if files.failed}
-				<p class="empty" role="alert">Could not read files</p>
+				<ListLabel element="p" role="alert">Could not read files</ListLabel>
 			{:else}
-				<div class="empty"><Loading label="Reading files…" /></div>
+				<ListLabel><Loading label="Reading files…" /></ListLabel>
 			{/if}
 		{/each}
-	</section>
+	</Suggestions>
 {/if}
 
 <style>
-	.menu {
-		position: absolute;
-		right: var(--space-2);
-		bottom: calc(100% + var(--space-1));
-		left: var(--space-2);
-		z-index: 1;
-		display: flex;
-		flex-direction: column;
-		max-height: min(24rem, 50vh);
-		padding: var(--space-1) 0;
-		overflow-y: auto;
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--surface-2);
-		box-shadow: var(--shadow-float);
-	}
 
-	.row {
+	.path {
 		display: flex;
-		flex: none;
-		align-items: center;
-		min-height: var(--target-min);
-		padding: var(--space-1) var(--space-4);
-		border: 0;
-		background: transparent;
-		color: var(--color-fg);
+		min-width: 0;
 		font-family: var(--font-mono);
 		font-size: var(--font-size-md);
-		text-align: left;
 		white-space: nowrap;
-		cursor: pointer;
-	}
-
-	.row.highlighted {
-		background: var(--hover);
 	}
 
 	.parent {
@@ -129,9 +104,4 @@
 		flex: none;
 	}
 
-	.empty {
-		margin: 0;
-		padding: var(--space-2) var(--space-4);
-		color: var(--muted-fg);
-	}
 </style>

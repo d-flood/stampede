@@ -247,8 +247,8 @@
 
 	.project:focus-visible,
 	.worktree:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-		outline-offset: var(--border-width);
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	.project.dragging {

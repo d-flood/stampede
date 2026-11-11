@@ -4,10 +4,12 @@
 	import Shells from '#lib/chat/Shells.svelte';
 	import { commands } from '#lib/chat/shells.ts';
 	import SubagentDot from '#lib/chat/SubagentDot.svelte';
-	import SubagentMenu from '#lib/chat/SubagentMenu.svelte';
+	import SubagentRow from '#lib/chat/SubagentRow.svelte';
 	import SubagentSheet from '#lib/chat/SubagentSheet.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import Chip from '#lib/ui/Chip.svelte';
+	import Menu from '#lib/ui/Menu.svelte';
 	import { untrack } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
@@ -47,6 +49,7 @@
 	const waiting = $derived(running.filter(({ subagent }) => subagent.status === 'waiting'));
 	const groups = $derived([{ heading: 'Running', entries: running }, { heading: 'Finished', entries: finished }].filter(({ entries }) => entries.length));
 	const shown = $derived([...running, ...finished]);
+	const menuGroups = $derived(groups.map(({ heading, entries }) => ({ heading, items: entries.map((entry) => ({ label: entry.subagent.task, data: entry, onselect: () => select(entry.path) })) })));
 	const summary = $derived(
 		[
 			[running.length - waiting.length, 'running'],
@@ -56,7 +59,6 @@
 			.map(([count, label]) => `${count} ${label}`)
 			.join(', ')
 	);
-	let menu = $state(false);
 	let sheet = $state(false);
 
 	function ended({ subagent }: Placed) {
@@ -70,28 +72,33 @@
 	}
 </script>
 
+{#snippet subagentRow(data: unknown)}
+	{@const { path, subagent } = data as Placed}
+	<SubagentRow {subagent} color={color(items, path)} />
+{/snippet}
+
 {#snippet trigger(props: Record<string, unknown>)}
-	<button {...props} class="open" aria-label={['Subagents', summary].filter(Boolean).join(': ')}>
+	<Chip {...props} aria-label={['Subagents', summary].filter(Boolean).join(': ')}>
 		<span class="dots">
 			{#each shown.slice(0, DOTS) as { path, subagent } (path.join('/'))}<SubagentDot color={color(items, path)} pulse={subagent.status !== 'done'} />{/each}
 		</span>
 		{#if shown.length > DOTS}<span class="more">+{shown.length - DOTS}</span>{/if}
 		{#if summary}<span>{summary}</span>{/if}
-	</button>
+	</Chip>
 {/snippet}
 
 {#if subagents.length || shells.length || canvases.length}
 	<section class="tray" aria-label="Tray">
 		{#if subagents.length}
-			<section class="chip subagents" aria-label="Subagents">
+			<section class="subagents" aria-label="Subagents">
 				{#if form() === 'phone'}
 					{@render trigger({ onclick: () => (sheet = true) })}
 					<SubagentSheet title="Subagents" {groups} bind:open={sheet} main={items} {onopen} {onattend} />
 				{:else}
-					<SubagentMenu {groups} main={items} bind:open={menu} {trigger} onselect={select} side="top" align="start" />
+					<Menu items={menuGroups} row={subagentRow} {trigger} side="top" />
 				{/if}
 				{#if waiting.length}
-					<button class="waiting" onclick={() => onattend(waiting[0].subagent.id)}>{waiting.length} waiting</button>
+					<Chip onclick={() => onattend(waiting[0].subagent.id)}><span class="waiting">{waiting.length} waiting</span></Chip>
 				{/if}
 			</section>
 		{/if}
@@ -102,10 +109,8 @@
 
 <style>
 	.tray { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; font-size: var(--font-size-sm); }
-	.chip { display: inline-flex; flex: none; align-items: stretch; min-height: var(--target-min); border: var(--border-width) solid var(--border); border-radius: calc(var(--target-min) / 2); background: var(--surface-1); overflow: hidden; white-space: nowrap; }
-	.chip button { display: inline-flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-2); border: none; background: none; color: var(--color-fg); font: inherit; cursor: pointer; }
-	.chip button:hover { background: var(--hover); }
-	.dots { display: inline-flex; gap: 3px; }
-	.more { margin-inline-start: calc(-1 * var(--space-1)); color: var(--muted-fg); font-variant-numeric: tabular-nums; }
-	.chip .waiting { border-inline-start: var(--border-width) solid var(--border); color: var(--status-waiting); }
+	.subagents { display: flex; flex: none; gap: var(--space-1); }
+	.dots { display: inline-flex; gap: 3px; margin-inline-end: var(--space-1); }
+	.more { color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+	.waiting { color: var(--status-waiting); }
 </style>

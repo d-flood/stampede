@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { agentNames, templates, type Agent } from '#lib/config.svelte.ts';
 	import { chosen, type Builtin, type Capabilities, type Choice, type Setting, type Settings } from '#lib/device.svelte.ts';
+	import ListItem from '#lib/ui/ListItem.svelte';
+	import ListLabel from '#lib/ui/ListLabel.svelte';
+	import Suggestions from '#lib/ui/Suggestions.svelte';
 
 	type Props = {
 		text: string;
@@ -127,13 +130,14 @@
 </script>
 
 {#if open}
-	<section aria-label="Commands" class="menu">
-		{#each groups as group (group.heading)}
-			<div class="heading">{group.heading}</div>
+	<Suggestions label="Commands">
+		{#each groups as group, index (group.heading)}
+			{#if index}<div class="separator"></div>{/if}
+			<ListLabel>{group.heading}</ListLabel>
 			{#each group.rows as row}
-				<button
-					class="row"
-					class:highlighted={rows.indexOf(row) === highlight}
+				<ListItem
+					element="button"
+					highlighted={rows.indexOf(row) === highlight}
 					disabled={row.disabled}
 					onpointerenter={() => (highlighted = row.label)}
 					onmousedown={(event) => event.preventDefault()}
@@ -150,66 +154,17 @@
 							{row.detail}
 						{/if}
 					</span>
-				</button>
+				</ListItem>
 			{/each}
 		{/each}
-	</section>
+	</Suggestions>
 {/if}
 
 <style>
-	.menu {
-		position: absolute;
-		right: var(--space-2);
-		bottom: calc(100% + var(--space-1));
-		left: var(--space-2);
-		z-index: 1;
-		display: flex;
-		flex-direction: column;
-		max-height: min(24rem, 50vh);
-		padding: var(--space-1) 0;
-		overflow-y: auto;
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--surface-2);
-		box-shadow: var(--shadow-float);
-	}
 
-	.heading {
-		padding: var(--space-2) var(--space-4) var(--space-1);
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-	}
-
-	.heading:not(:first-child) {
-		margin-top: var(--space-1);
+	.separator {
+		margin: var(--space-1) 0;
 		border-top: var(--border-width) solid var(--border);
-	}
-
-	.row {
-		display: flex;
-		flex: none;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-4);
-		min-height: var(--target-min);
-		padding: var(--space-1) var(--space-4);
-		border: 0;
-		background: transparent;
-		color: var(--color-fg);
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-	}
-
-	.row.highlighted {
-		background: var(--hover);
-	}
-
-	.row:disabled {
-		color: var(--muted-fg);
-		cursor: default;
 	}
 
 	.label {
@@ -220,6 +175,8 @@
 
 	.detail {
 		min-width: 0;
+		margin-left: auto;
+		padding-left: var(--space-2);
 		overflow: hidden;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);

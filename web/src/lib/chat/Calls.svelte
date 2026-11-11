@@ -5,10 +5,12 @@
 	import Command from '#lib/chat/Command.svelte';
 	import Edit from '#lib/chat/Edit.svelte';
 	import { icon, icons } from '#lib/chat/icons.ts';
-	import { chips, summarize, type Chip } from '#lib/chat/summary.ts';
+	import { chips, summarize, type Chip as Edited } from '#lib/chat/summary.ts';
 	import Thinking from '#lib/chat/Thinking.svelte';
 	import type { Item, ToolCall } from '#lib/device.svelte.ts';
-	import CaretRight from '~icons/ph/caret-right';
+	import Button from '#lib/ui/Button.svelte';
+	import Caret from '#lib/ui/Caret.svelte';
+	import Chip from '#lib/ui/Chip.svelte';
 
 	let { items, activity, open = false, ondiff, oncanvas, onexpand }: { items: Item[]; activity?: string | null; open?: boolean; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(item: Item): void } = $props();
 
@@ -27,7 +29,7 @@
 	}
 </script>
 
-{#snippet chip(chip: Chip)}
+{#snippet chip(chip: Edited)}
 	<span class="name">{chip.canvas ? canvasName(chip.path) : chip.path.split('/').at(-1)}</span><span class="added">+{chip.added}</span><span class="removed">−{chip.removed}</span>
 {/snippet}
 
@@ -37,17 +39,17 @@
 
 <div class="calls">
 	<button class="summary" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
-		<span class="caret"><CaretRight /></span><span class="text"><span class="segments">{#each segments as segment, index (index)}{#if index}{', '}{/if}<span class="segment">{segment}</span>{/each}</span>{#if activity}<span class="live" title={activity}>{#if running}{' · Running '}<code><Code code={brief(running).slice(0, ROW_CHARACTERS)} path="command.sh" /></code>{:else}{` · ${brief(activity)}`}{/if}</span>{/if}</span>
+		<Caret /><span class="text"><span class="segments">{#each segments as segment, index (index)}{#if index}{', '}{/if}<span class="segment">{segment}</span>{/each}</span>{#if activity}<span class="live" title={activity}>{#if running}{' · Running '}<code><Code code={brief(running).slice(0, ROW_CHARACTERS)} path="command.sh" /></code>{:else}{` · ${brief(activity)}`}{/if}</span>{/if}</span>
 	</button>
 	{#if edits.length}
 		<div class="chips">
 			{#each edits as edit (`${edit.canvas}:${edit.path}`)}
 				{#if edit.canvas}
-					<button class="chip" title={edit.path} onclick={() => oncanvas(edit.path)}>{@render chip(edit)}</button>
+					<Chip mono title={edit.path} onclick={() => oncanvas(edit.path)}>{@render chip(edit)}</Chip>
 				{:else if edit.path.startsWith('/')}
-					<span class="chip" title={edit.path}>{@render chip(edit)}</span>
+					<Chip element="span" mono title={edit.path}>{@render chip(edit)}</Chip>
 				{:else}
-					<button class="chip" title={edit.path} onclick={() => ondiff(edit.path)}>{@render chip(edit)}</button>
+					<Chip mono title={edit.path} onclick={() => ondiff(edit.path)}>{@render chip(edit)}</Chip>
 				{/if}
 			{/each}
 		</div>
@@ -72,7 +74,7 @@
 						{:else if item.kind === 'edit'}
 							<Edit {item} {ondiff} />
 						{:else if item.kind === 'canvas'}
-							<div class="call"><span class="verb">Edited canvas</span> <span class="detail">{canvasName(item.canvas)}</span><span class="added">+{item.added}</span><span class="removed">−{item.removed}</span><button class="open" onclick={() => oncanvas(item.canvas)}>Open</button></div>
+							<div class="call"><span class="verb">Edited canvas</span> <span class="detail">{canvasName(item.canvas)}</span><span class="added">+{item.added}</span><span class="removed">−{item.removed}</span><Button variant="link" onclick={() => oncanvas(item.canvas)}>Open</Button></div>
 						{/if}
 					</div>
 				{/if}
@@ -109,16 +111,7 @@
 		color: var(--color-fg);
 	}
 
-	.caret {
-		display: inline-flex;
-		flex: none;
-		width: 1em;
-		transition: transform var(--dur-fast);
-	}
 
-	[aria-expanded='true'] > .caret {
-		transform: rotate(90deg);
-	}
 
 	.text {
 		display: flex;
@@ -151,31 +144,7 @@
 		gap: var(--space-2);
 	}
 
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-2);
-		min-width: 0;
-		max-width: 100%;
-		min-height: var(--target-min);
-		padding: 0 var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-	}
-
-	button.chip {
-		cursor: pointer;
-	}
-
-	button.chip:hover {
-		background: var(--surface-1);
-	}
-
-	.chip .name {
+	.name {
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -190,20 +159,8 @@
 		color: var(--git-deleted);
 	}
 
-	.open {
-		flex: none;
-		min-height: var(--target-min);
+	.call > :global(button) {
 		margin-left: auto;
-		padding: 0;
-		border: 0;
-		background: none;
-		color: var(--accent);
-		font: inherit;
-		cursor: pointer;
-	}
-
-	.open:hover {
-		text-decoration: underline;
 	}
 
 	.rail {

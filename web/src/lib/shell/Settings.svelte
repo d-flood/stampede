@@ -24,9 +24,12 @@
 	import ThemeCards from '#lib/shell/ThemeCards.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
 	import { defaultSizes, selectTextSize, typography } from '#lib/typography.svelte.ts';
+	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import ListItem from '#lib/ui/ListItem.svelte';
+	import NavList from '#lib/ui/NavList.svelte';
 	import Segmented from '#lib/ui/Segmented.svelte';
 	import Select from '#lib/ui/Select.svelte';
 	import TextArea from '#lib/ui/TextArea.svelte';
@@ -160,8 +163,10 @@
 </script>
 
 {#snippet scope(everywhere: boolean)}
-	<span class="scope" title={everywhere ? 'Saved on every device' : 'Saved in this browser'}>
-		{#if everywhere}<Devices /> All devices{:else}<Browser /> This browser{/if}
+	<span class="scope">
+		<Badge tone="outline" title={everywhere ? 'Saved on every device' : 'Saved in this browser'}>
+			{#if everywhere}<Devices /> All devices{:else}<Browser /> This browser{/if}
+		</Badge>
 	</span>
 {/snippet}
 
@@ -171,19 +176,21 @@
 <Dialog bind:open full={phone} wide title="Settings" oncloseautofocus={dock}>
 	<div class="settings" class:phone>
 		{#if !phone || !current}
-			<nav aria-label="Settings sections">
-				{#each pages as { id, label, icon: Icon, summary } (id)}
-					<button aria-current={current === id ? 'page' : undefined} onclick={() => (chosen = id)}>
-						<span class="icon"><Icon /></span>
-						<span class="title">{label}{#if phone}<small>{summary()}</small>{/if}</span>
-						{#if phone}<CaretRight />{/if}
-					</button>
-				{/each}
-			</nav>
+			<div class="sections">
+				<NavList aria-label="Settings sections">
+					{#each pages as { id, label, icon: Icon, summary } (id)}
+						<ListItem element="button" size="md" aria-current={current === id ? 'page' : undefined} onclick={() => (chosen = id)}>
+							<span class="icon" class:current={current === id}><Icon /></span>
+							<span class="title">{label}{#if phone}<small>{summary()}</small>{/if}</span>
+							{#if phone}<span class="chevron"><CaretRight /></span>{/if}
+						</ListItem>
+					{/each}
+				</NavList>
+			</div>
 		{/if}
 		{#if current}
 			<div class="pane">
-				{#if phone && !editingRig}<button class="back" aria-label="All settings" onclick={() => (chosen = undefined)}><CaretLeft /> Settings</button>{/if}
+				{#if phone && !editingRig}<Button variant="link" aria-label="All settings" onclick={() => (chosen = undefined)}><CaretLeft /> Settings</Button>{/if}
 				{#if current === 'general'}
 					<h3>General</h3>
 					{#if update}
@@ -369,52 +376,16 @@
 		min-height: 0;
 	}
 
-	nav {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
+	.sections {
 		padding: var(--space-3) var(--space-2);
 		overflow: auto;
 		border-right: var(--border-width) solid var(--border);
-	}
-
-	nav button {
-		display: flex;
-		align-items: center;
-		gap: var(--space-3);
-		min-height: calc(var(--target-min) + 6px);
-		padding: 0 var(--space-3);
-		border: none;
-		border-radius: var(--radius-md);
-		background: none;
 		color: var(--muted-fg);
-		font: inherit;
-		text-align: start;
-		cursor: pointer;
-		transition:
-			background var(--dur-fast),
-			color var(--dur-fast);
 	}
 
-	nav button:hover {
-		background: var(--hover);
-		color: var(--color-fg);
-	}
 
-	nav button:focus-visible,
-	.back:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
-		outline-offset: -2px;
-	}
 
-	nav [aria-current='page'] {
-		background: var(--color-bg);
-		box-shadow:
-			var(--shadow-lift),
-			0 0 0 var(--border-width) var(--border);
-		color: var(--color-fg);
-		font-weight: 600;
-	}
+
 
 	.icon {
 		display: inline-flex;
@@ -422,7 +393,7 @@
 		font-size: var(--font-size-lg);
 	}
 
-	[aria-current='page'] .icon {
+	.icon.current {
 		color: var(--accent);
 	}
 
@@ -536,19 +507,7 @@
 	}
 
 	.scope {
-		display: inline-flex;
-		align-items: center;
-		gap: 3px;
 		margin-left: var(--space-2);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: 999px;
-		color: var(--muted-fg);
-		font-size: calc(var(--font-size-sm) - 1px);
-		font-weight: normal;
-		line-height: 1.6;
-		vertical-align: 1px;
-		white-space: nowrap;
 	}
 
 	.control {
@@ -609,7 +568,7 @@
 		min-height: var(--target-min);
 		padding: 0 var(--space-3);
 		border: var(--border-width) solid var(--border-strong);
-		border-radius: 999px;
+		border-radius: var(--radius-pill);
 		color: var(--muted-fg);
 		cursor: pointer;
 		transition:
@@ -636,8 +595,8 @@
 	}
 
 	.mode:has(input:checked) {
-		border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
-		background: color-mix(in oklab, var(--accent) 14%, transparent);
+		border-color: var(--selected-border);
+		background: var(--selected-bg);
 		color: var(--color-fg);
 	}
 
@@ -656,8 +615,8 @@
 	}
 
 	.mode:has(input:focus-visible) {
-		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
-		outline-offset: 1px;
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	.preview {
@@ -686,28 +645,15 @@
 		flex-direction: column;
 	}
 
-	.phone nav {
+	.phone .sections {
 		flex: 1;
-		gap: 0;
 		padding: var(--space-2) var(--space-4);
 		border: none;
-	}
-
-	.phone nav button {
-		gap: var(--space-4);
-		min-height: calc(var(--target-min) + 16px);
-		padding: var(--space-2) 0;
-		border-radius: 0;
 		color: var(--color-fg);
 	}
 
-	.phone nav button + button {
-		border-top: var(--border-width) solid var(--border);
-	}
 
-	.phone nav button:hover {
-		background: none;
-	}
+
 
 	.phone .icon {
 		display: grid;
@@ -719,29 +665,14 @@
 		color: var(--accent);
 	}
 
-	.phone nav > button > :global(svg) {
-		flex: none;
+	.chevron {
+		display: inline-flex;
 		color: var(--muted-fg);
 	}
 
 	.phone .pane {
 		flex: 1;
 		padding: 0 var(--space-4) var(--space-6);
-	}
-
-	.back {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-1);
-		min-height: var(--target-min);
-		margin-left: calc(-1 * var(--space-2));
-		padding: 0 var(--space-2);
-		border: none;
-		border-radius: var(--radius-md);
-		background: none;
-		color: var(--accent);
-		font: inherit;
-		cursor: pointer;
 	}
 
 	.phone .control {

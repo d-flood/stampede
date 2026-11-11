@@ -5,6 +5,7 @@
 	import { agentNames, logos } from '#lib/chat/sessions.ts';
 	import type { Item, Subagent } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import Badge from '#lib/ui/Badge.svelte';
 	import { SubagentMark, WaitingMark } from '#lib/ui/spinners.ts';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CheckBold from '~icons/ph/check-bold';
@@ -28,9 +29,9 @@
 		<span class="current" aria-current="page"><SubagentDot color={color(main, path)} /><strong>{subagent.task}</strong></span>
 	</nav>
 	{#if subagent.agent}{@const Logo = logos[subagent.agent]}<span class="logo" role="img" aria-label={agentNames[subagent.agent]} title={agentNames[subagent.agent]}><Logo aria-hidden="true" /></span>{/if}
-	{#if subagent.name}<span class="chip" title="Name">{subagent.name}</span>{/if}
+	{#if subagent.name}<Badge tone="outline" title="Name">{subagent.name}</Badge>{/if}
 	{#if subagent.role}<span class="role" title="Role">{subagent.role}</span>{/if}
-	{#if subagent.model}<span class="chip" title="Model">{subagent.model}</span>{/if}
+	{#if subagent.model}<Badge tone="outline" title="Model">{subagent.model}</Badge>{/if}
 	<span class="status {subagent.status}" class:ended>
 		<span class="mark" title={ended ?? subagent.status}><Mark /></span>
 		{#if subagent.status !== 'done'}
@@ -52,7 +53,6 @@
 	.current { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
 	.current :global(svg) { flex: none; }
 	.current strong { min-width: 0; overflow-wrap: anywhere; }
-	.chip { min-width: 0; padding: 0 var(--space-2); border: var(--border-width) solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--muted-fg); overflow-wrap: anywhere; }
 	.logo { display: inline-flex; flex: none; }
 	.role { color: var(--muted-fg); }
 	.status { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-left: auto; color: var(--muted-fg); font-variant-numeric: tabular-nums; }

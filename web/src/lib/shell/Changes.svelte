@@ -30,10 +30,13 @@
 	} from '#lib/git.ts';
 	import { treeRows } from '#lib/shell/tree.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Caret from '#lib/ui/Caret.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import Eyebrow from '#lib/ui/Eyebrow.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import TextArea from '#lib/ui/TextArea.svelte';
+	import TreeRow from '#lib/ui/TreeRow.svelte';
 	import { onMount, tick, type Snippet } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import Archive from '~icons/ph/archive';
@@ -42,7 +45,6 @@
 	import ArrowUUpLeft from '~icons/ph/arrow-u-up-left';
 	import ArrowUp from '~icons/ph/arrow-up';
 	import ArrowsClockwise from '~icons/ph/arrows-clockwise';
-	import CaretRight from '~icons/ph/caret-right';
 	import Check from '~icons/ph/check';
 	import CheckCircle from '~icons/ph/check-circle';
 	import CloudArrowUp from '~icons/ph/cloud-arrow-up';
@@ -303,12 +305,12 @@
 		{#if git.upstream}
 			<span class="upstream" title="Upstream branch">{git.upstream}</span>
 			<IconButton label="Fetch" title="Fetch (f)" disabled={busy} onclick={() => remote('fetch')}><ArrowsClockwise /></IconButton>
-			<button class="sync" aria-label="Pull" title={`Pull ${git.behind} from ${git.upstream} (p)`} disabled={busy} onclick={() => remote('pull')}>
+			<Button variant="ghost" size="sm" aria-label="Pull" title={`Pull ${git.behind} from ${git.upstream} (p)`} disabled={busy} onclick={() => remote('pull')}>
 				<ArrowDown />{git.behind}
-			</button>
-			<button class="sync" aria-label="Push" title={`Push ${git.ahead} to ${git.upstream} (P)`} disabled={busy || !git.ahead} onclick={push}>
+			</Button>
+			<Button variant="ghost" size="sm" aria-label="Push" title={`Push ${git.ahead} to ${git.upstream} (P)`} disabled={busy || !git.ahead} onclick={push}>
 				<ArrowUp />{git.ahead}
-			</button>
+			</Button>
 		{:else if publishable}
 			<span class="upstream">Not on origin</span>
 			<Button title="Publish Branch (P)" disabled={busy} onclick={push}><CloudArrowUp /> Publish Branch</Button>
@@ -359,8 +361,8 @@
 				{@const open = !collapsed.has(section)}
 				<div class="row heading">
 					<button data-key={section} class="entry" aria-expanded={open} onclick={() => toggle(section)}>
-						<span class="caret" class:open><CaretRight /></span>
-						<span class="name">{label}</span>
+						<Caret />
+						<span class="name"><Eyebrow>{label}</Eyebrow></span>
 						<span class="count">{changes.length}</span>
 					</button>
 					{@render controls(targets.get(section))}
@@ -370,24 +372,18 @@
 						{#each rows as row (row.key)}
 							<li class="row">
 								{#if row.kind === 'folder'}
-									<button data-key={row.key} class="entry" style:--depth={row.depth} aria-expanded={row.open} title={row.folder.path} onclick={() => toggle(row.key, row.changes.length > LARGE ? opened : collapsed)}>
-										<span class="caret" class:open={row.open}><CaretRight /></span>
-										<span class="name">{row.folder.name}</span>
-									</button>
+									<TreeRow data-key={row.key} name={row.folder.name} depth={row.depth + 1} open={row.open} title={row.folder.path} onclick={() => toggle(row.key, row.changes.length > LARGE ? opened : collapsed)} />
 								{:else}
 									{@const { change } = row}
-									<button
+									<TreeRow
 										data-key={row.key}
-										class="entry file"
-										class:deleted={change.kind === 'deleted'}
-										style:--depth={row.depth}
-										style:--git="var(--git-{change.kind})"
+										name={split(change.path).name}
+										depth={row.depth + 1}
+										git={change.kind}
+										letter={letters[change.kind]}
 										title={change.from ? `${change.from} → ${change.path}` : change.path}
 										onclick={() => openRow(targets.get(row.key)!)}
-									>
-										<span class="name">{split(change.path).name}</span>
-										<span class="letter" aria-hidden="true">{letters[change.kind]}</span>
-									</button>
+									/>
 								{/if}
 								{@render controls(targets.get(row.key))}
 							</li>
@@ -401,8 +397,8 @@
 				{@const open = !collapsed.has('stashes')}
 				<div class="row heading">
 					<button class="entry" aria-expanded={open} onclick={() => toggle('stashes')}>
-						<span class="caret" class:open><CaretRight /></span>
-						<span class="name">Stashes</span>
+						<Caret />
+						<span class="name"><Eyebrow>Stashes</Eyebrow></span>
 						<span class="count">{saved.length}</span>
 					</button>
 				</div>
@@ -486,34 +482,9 @@
 		white-space: nowrap;
 	}
 
-	.sync {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-1);
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: none;
-		border-radius: var(--radius-sm);
-		background: none;
-		color: var(--muted-fg);
-		font: inherit;
-		font-size: var(--font-size-sm);
-		cursor: pointer;
-	}
 
-	.sync:hover:not(:disabled) {
-		background: var(--hover);
-		color: var(--color-fg);
-	}
 
-	.sync:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-	}
 
-	.sync:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
 
 	.scroller {
 		flex: 1;
@@ -557,7 +528,7 @@
 
 	ul {
 		margin: 0;
-		padding: 0;
+		padding: 0 var(--space-2);
 		list-style: none;
 	}
 
@@ -569,6 +540,10 @@
 
 	.row:hover {
 		background: var(--hover);
+	}
+
+	li.row {
+		border-radius: var(--radius-md);
 	}
 
 	.heading {
@@ -583,13 +558,6 @@
 		border-top: none;
 	}
 
-	.heading .name {
-		font-size: var(--font-size-sm);
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
 	.entry {
 		display: flex;
 		flex: 1;
@@ -597,7 +565,7 @@
 		gap: var(--space-1);
 		min-width: 0;
 		min-height: var(--target-min);
-		padding: 0 var(--space-2) 0 calc(var(--space-2) + (var(--depth, -1) + 1) * var(--space-4));
+		padding: 0 var(--space-2);
 		border: none;
 		background: none;
 		color: var(--color-fg);
@@ -607,25 +575,11 @@
 	}
 
 	.entry:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-		outline-offset: calc(-1 * var(--border-width));
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-inset);
 	}
 
-	.file {
-		padding-left: calc(var(--space-2) + (var(--depth) + 1) * var(--space-4) + 1em);
-	}
 
-	.caret {
-		display: inline-flex;
-		flex: none;
-		width: 1em;
-		color: var(--muted-fg);
-		transition: transform var(--dur-fast);
-	}
-
-	.caret.open {
-		transform: rotate(90deg);
-	}
 
 	.name {
 		flex: 1;
@@ -635,33 +589,11 @@
 		white-space: nowrap;
 	}
 
-	ul .entry .name {
-		font-family: var(--font-mono);
-		font-size: var(--font-size-code);
-	}
-
-	.file .name {
-		color: var(--git);
-	}
-
-	.deleted .name {
-		text-decoration: line-through;
-	}
-
-	.letter,
 	.count {
 		flex: none;
+		color: var(--muted-fg);
 		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
-	}
-
-	.letter {
-		color: var(--git);
-		font-weight: 700;
-	}
-
-	.count {
-		color: var(--muted-fg);
 	}
 
 	.actions {

@@ -22,7 +22,7 @@
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Segmented from '#lib/ui/Segmented.svelte';
-	import Toggle from '#lib/ui/Toggle.svelte';
+	import Toolbar from '#lib/ui/Toolbar.svelte';
 	import { Compartment, EditorState } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
 	import { basicSetup } from 'codemirror';
@@ -206,9 +206,7 @@
 </script>
 
 <div class="editor" role="tabpanel" hidden={!active}>
-	<div class="toolbar" class:previewable>
-		<span class="path" title={file.path}>{file.path}</span>
-		{#if file.deleted}<span class="deleted">deleted on disk</span>{/if}
+	<Toolbar path={file.path} deleted={file.deleted} wrap={previewable}>
 		{#if svg}
 			<Segmented aria-label="View" options={[{ value: true, label: 'Rendered' }, { value: false, label: 'Source' }]} bind:value={rendered} />
 		{:else if markdown}
@@ -218,13 +216,13 @@
 		{/if}
 		{#if !rendered}<ServerSwitch {servers} projectId={file.projectId} path={file.path} />{/if}
 		{#if view && !rendered}
-			<Toggle label="Line wrapping" pressed={wrap} onclick={toggleWrap}><ArrowUDownLeft /></Toggle>
-			{#if prose}<Toggle label="Spell check" pressed={spell} onclick={toggleSpell}><span class="squiggle">abc</span></Toggle>{/if}
+			<IconButton label="Line wrapping" title="Line wrapping" pressed={wrap} onclick={toggleWrap}><ArrowUDownLeft /></IconButton>
+			{#if prose}<IconButton label="Spell check" title="Spell check" pressed={spell} onclick={toggleSpell}><span class="squiggle">abc</span></IconButton>{/if}
 		{/if}
 		{#if (form() === 'phone' || rendered) && view}
 			<IconButton label="Save" title="Save" onclick={() => sync.write()} disabled={!file.dirty}><FloppyDisk /></IconButton>
 		{/if}
-	</div>
+	</Toolbar>
 	<Conflict {sync} onshowdiff={(disk) => view && onshowdiff(disk, view.state.doc.toString())} />
 	{#if file instanceof OpenConfig && file.invalid}
 		{@const { line, message } = file.invalid}
@@ -259,44 +257,15 @@
 		display: none;
 	}
 
-	.toolbar {
-		display: flex;
-		flex: none;
-		align-items: center;
-		gap: var(--space-2);
-		min-height: var(--target-min);
-		padding: 0 var(--space-1) 0 var(--space-3);
-		border-bottom: var(--border-width) solid var(--border);
-	}
 
-	.path {
-		flex: 1;
-		overflow: hidden;
-		color: var(--muted-fg);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
 
-	.toolbar.previewable {
-		flex-wrap: wrap;
-	}
 
-	.toolbar.previewable .path {
-		flex-basis: 8rem;
-	}
 
 	.squiggle {
 		text-decoration: underline wavy var(--ansi-1);
 		text-underline-offset: 2px;
 	}
 
-	.deleted {
-		flex: none;
-		color: var(--status-waiting);
-		font-size: var(--font-size-sm);
-	}
 
 	.invalid {
 		display: flex;

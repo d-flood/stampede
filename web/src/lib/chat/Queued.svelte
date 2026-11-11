@@ -1,4 +1,5 @@
 <script lang="ts">
+	import IconButton from '#lib/ui/IconButton.svelte';
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { fly } from 'svelte/transition';
 	import X from '~icons/ph/x';
@@ -9,7 +10,7 @@
 {#if queued.length}
 	<ol aria-label="Queued">
 		{#each queued as text, index (index)}
-			<li in:fly|global={{ y: prefersReducedMotion.current ? 0 : 12, duration: 250 }}><button type="button" aria-label="Cancel queued message" title="Return to composer" {disabled} onclick={() => oncancel(index)}><X /></button>{text}</li>
+			<li in:fly|global={{ y: prefersReducedMotion.current ? 0 : 12, duration: 250 }}><span class="remove"><IconButton type="button" label="Cancel queued message" title="Return to composer" {disabled} onclick={() => oncancel(index)}><X /></IconButton></span>{text}</li>
 		{/each}
 	</ol>
 {/if}
@@ -44,23 +45,10 @@
 		font-size: var(--font-size-sm);
 	}
 
-	button {
+	.remove {
 		position: absolute;
 		top: 0;
 		right: 0;
-		display: grid;
-		place-items: center;
-		width: var(--target-min);
-		height: var(--target-min);
-		padding: 0;
-		border: 0;
-		border-radius: var(--radius-lg);
-		background: transparent;
-		color: inherit;
-		cursor: pointer;
+		display: flex;
 	}
-
-	button:hover:not(:disabled) { background: var(--hover); }
-	button:focus-visible { outline: var(--border-width) solid var(--accent); }
-	button:disabled { cursor: default; }
 </style>

@@ -9,7 +9,7 @@
 	import { form } from '#lib/form.ts';
 	import type { ThemeChoice } from '#lib/themes.svelte.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
-	import CaretRight from '~icons/ph/caret-right';
+	import SelectTrigger from '#lib/ui/SelectTrigger.svelte';
 
 	let { onpreview }: { onpreview(choice: ThemeChoice): void } = $props();
 
@@ -25,19 +25,13 @@
 	}
 </script>
 
-<button
-	class="swatch"
-	title="Theme: {themeLabel()}"
-	aria-haspopup="dialog"
-	aria-expanded={open}
-	onclick={() => ((open = true), warmUp())}
->
-	<span class="colors" aria-hidden="true">
-		{#each [1, 2, 3, 4, 5, 6] as color (color)}<span style:background="var(--ansi-{color})"></span>{/each}
-	</span>
-	<span class="name">More Ghostty themes</span>
-	<CaretRight />
-</button>
+<SelectTrigger value="More Ghostty themes" caret="right" title="Theme: {themeLabel()}" aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), warmUp())}>
+	{#snippet leading()}
+		<span class="colors" aria-hidden="true">
+			{#each [1, 2, 3, 4, 5, 6] as color (color)}<span style:background="var(--ansi-{color})"></span>{/each}
+		</span>
+	{/snippet}
+</SelectTrigger>
 <Dialog
 	bind:open
 	full={form() === 'phone'}
@@ -49,31 +43,8 @@
 </Dialog>
 
 <style>
-	.swatch {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-2);
-		box-sizing: border-box;
-		width: 100%;
-		min-height: var(--target-min);
-		padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
-		border: var(--border-width) solid var(--border-strong);
-		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font: inherit;
-		cursor: pointer;
-		transition: border-color var(--dur-fast);
-	}
 
-	.swatch:hover {
-		border-color: color-mix(in oklab, var(--accent) 60%, var(--border-strong));
-	}
 
-	.swatch:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
-		outline-offset: 1px;
-	}
 
 	.colors {
 		display: grid;
@@ -90,17 +61,5 @@
 		border-radius: 2px;
 	}
 
-	.name {
-		flex: 1;
-		min-width: 0;
-		text-align: start;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
 
-	.swatch > :global(svg) {
-		flex: none;
-		color: var(--muted-fg);
-	}
 </style>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Code from '#lib/chat/Code.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
+	import Button from '#lib/ui/Button.svelte';
 	import { form } from '#lib/form.ts';
 
 	let { item, ondiff }: { item: Extract<Item, { kind: 'edit' }>; ondiff(path: string): void } = $props();
@@ -17,7 +18,7 @@
 		</div>
 	{/if}
 	{#if !item.path.startsWith('/')}
-		<button class="open" onclick={() => ondiff(item.path)}>Open diff</button>
+		<Button variant="link" onclick={() => ondiff(item.path)}>Open diff</Button>
 	{/if}
 </details>
 
@@ -66,20 +67,9 @@
 		color: var(--git-deleted);
 	}
 
-	.open {
-		display: block;
-		min-height: var(--target-min);
+	.edit > :global(button) {
+		display: flex;
 		margin-left: auto;
-		padding: 0;
-		border: 0;
-		background: none;
-		color: var(--accent);
-		font: inherit;
-		cursor: pointer;
-	}
-
-	.open:hover {
-		text-decoration: underline;
 	}
 
 	.diff {

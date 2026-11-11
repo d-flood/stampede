@@ -3,7 +3,10 @@
 	import type { TabItem, TabItems } from '#lib/shell/new-tab.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import ListItem from '#lib/ui/ListItem.svelte';
+	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
+	import NavList from '#lib/ui/NavList.svelte';
 	import { marks, tabIcon, type Status, type Variant } from '#lib/ui/Tab.svelte';
 	import { untrack } from 'svelte';
 	import X from '~icons/ph/x';
@@ -40,58 +43,65 @@
 {#snippet item(entry: TabItem, index: string, detail?: string)}
 	{@const Icon = entry.icon}
 	<li>
-		<button class="row" aria-labelledby="{id}-{index}" aria-describedby={detail && `${id}-${index}-detail`} onclick={() => start(entry)}>
+		<ListItem element="button" size="md" aria-labelledby="{id}-{index}" aria-describedby={detail && `${id}-${index}-detail`} onclick={() => start(entry)}>
 			<span class="icon">{#if Icon}<Icon />{/if}</span>
 			<span class="label" id="{id}-{index}">{entry.label}</span>
 			{#if detail}<span class="detail" id="{id}-{index}-detail">{detail}</span>{/if}
-		</button>
+		</ListItem>
 	</li>
 {/snippet}
 
 <Dialog bind:open full title="Tabs" oncloseautofocus={(event) => started && (event.preventDefault(), (started = false))}>
-	<ul class="list" aria-label="Open Tabs" {@attach () => untrack(onread)}>
-		{#each tabs as tab, index (tab.id)}
-			{@const Icon = tabIcon(tab.variant, tab.agent)}
-			{@const Mark = tab.status && marks[tab.status]}
-			<li class="tab {tab.status ?? ''}" class:current={tab.id === current}>
-				<button
-					class="row"
-					data-tab={tab.id}
-					aria-current={tab.id === current || undefined}
-					aria-labelledby="{id}-tab-{index}"
-					aria-describedby={Mark && `${id}-mark-${index}`}
-					onclick={() => choose(tab.id)}
-				>
-					<span class="icon"><Icon /></span>
-					<span class="label" class:mono={tab.variant === 'terminal'} id="{id}-tab-{index}">{tab.label}</span>
-					{#if Mark}<span class="mark" role="img" aria-label={tab.status} id="{id}-mark-{index}"><Mark /></span>{/if}
-					{#if tab.dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
-				</button>
-				<IconButton label="Close {tab.label}" onclick={() => ((open = false), onclose(tab.id))}><X /></IconButton>
-			</li>
-		{/each}
-	</ul>
+	<div class="list">
+		<NavList element="ul" aria-label="Open Tabs" {@attach () => untrack(onread)}>
+			{#each tabs as tab, index (tab.id)}
+				{@const Icon = tabIcon(tab.variant, tab.agent)}
+				{@const Mark = tab.status && marks[tab.status]}
+				<li class="tab {tab.status ?? ''}">
+					<ListItem
+						element="button"
+						size="md"
+						data-tab={tab.id}
+						aria-current={tab.id === current || undefined}
+						aria-labelledby="{id}-tab-{index}"
+						aria-describedby={Mark && `${id}-mark-${index}`}
+						onclick={() => choose(tab.id)}
+					>
+						<span class="icon"><Icon /></span>
+						<span class="label" class:mono={tab.variant === 'terminal'} id="{id}-tab-{index}">{tab.label}</span>
+						{#if Mark}<span class="mark" role="img" aria-label={tab.status} id="{id}-mark-{index}"><Mark /></span>{/if}
+						{#if tab.dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
+					</ListItem>
+					<IconButton label="Close {tab.label}" onclick={() => ((open = false), onclose(tab.id))}><X /></IconButton>
+				</li>
+			{/each}
+		</NavList>
+	</div>
 	<section aria-labelledby="{id}-new">
-		<h3 id="{id}-new">New Tab</h3>
-		<ul class="list">
-			{#each items.rigs as rig, index (rig.label)}
-				{@render item(rig, `rig-${index}`, rig.model)}
-			{/each}
-			{#each items.tools as tool, index (tool.label)}
-				{@render item(tool, `tool-${index}`)}
-			{/each}
-		</ul>
+		<ListLabel element="h3" id="{id}-new">New Tab</ListLabel>
+		<div class="list">
+			<NavList element="ul">
+				{#each items.rigs as rig, index (rig.label)}
+					{@render item(rig, `rig-${index}`, rig.model)}
+				{/each}
+				{#each items.tools as tool, index (tool.label)}
+					{@render item(tool, `tool-${index}`)}
+				{/each}
+			</NavList>
+		</div>
 	</section>
 	{#if reading || items.sessions.length}
 		<section aria-labelledby="{id}-recent">
-			<h3 id="{id}-recent">Recent sessions</h3>
+			<ListLabel element="h3" id="{id}-recent">Recent sessions</ListLabel>
 			{#if reading}<Loading label="Reading sessions…" />{/if}
-			<ul class="list">
-				{#each items.sessions as session, index (index)}
-					{@render item(session, `session-${index}`, session.hint)}
-				{/each}
-				{#if items.search}{@render item(items.search, 'search')}{/if}
-			</ul>
+			<div class="list">
+				<NavList element="ul">
+					{#each items.sessions as session, index (index)}
+						{@render item(session, `session-${index}`, session.hint)}
+					{/each}
+					{#if items.search}{@render item(items.search, 'search')}{/if}
+				</NavList>
+			</div>
 		</section>
 	{/if}
 </Dialog>
@@ -99,51 +109,19 @@
 <style>
 	.list {
 		margin: 0 0 var(--space-4);
-		padding: 0;
-		list-style: none;
-	}
-
-	h3 {
-		display: flex;
-		align-items: center;
-		min-height: var(--target-min);
-		margin: 0;
-		padding: 0 var(--space-2);
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-		font-weight: normal;
 	}
 
 	li {
 		display: flex;
 		align-items: center;
-		border-radius: var(--radius-md);
 	}
 
-	.current {
-		background: var(--hover);
-	}
-
-	.row {
-		display: flex;
+	li > :global(.item) {
 		flex: 1;
-		align-items: center;
-		gap: var(--space-3);
-		min-width: 0;
-		min-height: max(48px, var(--target-min));
-		padding: 0 var(--space-2);
-		border: none;
-		border-radius: inherit;
-		background: none;
-		color: inherit;
-		font: inherit;
-		text-align: start;
-		cursor: pointer;
+		width: auto;
 	}
 
-	.row:hover {
-		background: var(--hover);
-	}
+
 
 	.icon {
 		display: inline-grid;
@@ -161,9 +139,6 @@
 		white-space: nowrap;
 	}
 
-	.current .label {
-		font-weight: 600;
-	}
 
 	.mono {
 		font-family: var(--font-mono);

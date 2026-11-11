@@ -4,6 +4,7 @@
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import Kbd from '#lib/ui/Kbd.svelte';
 	import Select from '#lib/ui/Select.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import CaretLeft from '~icons/ph/caret-left';
@@ -250,7 +251,7 @@
 
 {#if phone && selected !== undefined}
 	<div class="page">
-		<button class="back" aria-label="All Rigs" onclick={close}><CaretLeft /> Rigs</button>
+		<Button variant="link" aria-label="All Rigs" onclick={close}><CaretLeft /> Rigs</Button>
 		<h3>{selected || 'New Rig'}</h3>
 		{@render feedback()}
 		{@render editor()}
@@ -289,7 +290,7 @@
 							<span class="name" id="rig-{index}-name">{rig.name}</span>
 							<span class="detail" id="rig-{index}-detail">{summary(rig)}{#if index < 9}<span class="sr">, Ctrl+Shift+{index + 1}</span>{/if}</span>
 						</span>
-						{#if phone}<CaretRight />{:else if index < 9}<kbd aria-hidden="true">Ctrl+Shift+{index + 1}</kbd>{/if}
+						{#if phone}<CaretRight />{:else if index < 9}<Kbd aria-hidden="true">Ctrl+Shift+{index + 1}</Kbd>{/if}
 					</button>
 				</div>
 				{#if selected === rig.name && !phone}{@render editor()}{/if}
@@ -379,7 +380,7 @@
 		align-items: center;
 		gap: var(--space-3);
 		min-width: 0;
-		min-height: 52px;
+		min-height: calc(var(--target-min) + var(--space-2));
 		padding: var(--space-2) var(--space-3) var(--space-2) var(--space-1);
 		border: none;
 		background: none;
@@ -399,10 +400,9 @@
 		}
 	}
 
-	.item:focus-visible,
-	.back:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
-		outline-offset: -2px;
+	.item:focus-visible {
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-inset);
 	}
 
 	.logo {
@@ -438,18 +438,8 @@
 		white-space: nowrap;
 	}
 
-	kbd {
-		flex: none;
-		padding: 0 var(--space-1);
-		border: var(--border-width) solid var(--border-strong);
-		border-radius: var(--radius-sm);
-		color: var(--muted-fg);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-	}
 
 	.phone .item {
-		min-height: 60px;
 		padding-left: var(--space-3);
 	}
 
@@ -537,21 +527,6 @@
 
 	.footer [role='alert'] {
 		color: var(--ansi-1);
-	}
-
-	.back {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-1);
-		min-height: var(--target-min);
-		margin-left: calc(-1 * var(--space-2));
-		padding: 0 var(--space-2);
-		border: none;
-		border-radius: var(--radius-md);
-		background: none;
-		color: var(--accent);
-		font: inherit;
-		cursor: pointer;
 	}
 
 	h3 {

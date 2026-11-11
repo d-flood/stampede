@@ -9,6 +9,7 @@
 	import { label, marks, onFrontier, record, resolved, toggle, tones, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Chip from '#lib/ui/Chip.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import ChatCircle from '~icons/ph/chat-circle';
@@ -143,10 +144,10 @@
 		<div class="chips">
 			{#each blockedBy as other (other.number)}
 				{@const Other = marks[other.status]}
-				<button class="chip" onclick={() => onselect(other.number)}><span class="mark" style:color={tones[other.status]}><Other /></span>after {other.number}</button>
+				<Chip onclick={() => onselect(other.number)}><span class="mark" style:color={tones[other.status]}><Other /></span>after {other.number}</Chip>
 			{/each}
 			{#each blocks as other (other.number)}
-				<button class="chip" onclick={() => onselect(other.number)}>blocks {other.number}</button>
+				<Chip onclick={() => onselect(other.number)}>blocks {other.number}</Chip>
 			{/each}
 		</div>
 	{/if}
@@ -184,7 +185,7 @@
 				<section class="prop" aria-label="Blockers">
 					<div class="heading">
 						<h3>Blocked by</h3>
-						<button class="link" aria-expanded={changing} onclick={() => (changing = !changing)}>{changing ? 'Done' : 'Change'}</button>
+						<Button variant="link" size="sm" aria-expanded={changing} onclick={() => (changing = !changing)}>{changing ? 'Done' : 'Change'}</Button>
 					</div>
 					{#if changing}
 						<Blockers tickets={others} blockers={ticket.blockers} ontoggle={block} />
@@ -345,16 +346,6 @@
 		justify-content: space-between;
 	}
 
-	.link {
-		padding: 0;
-		border: none;
-		background: none;
-		color: var(--accent);
-		font: inherit;
-		font-size: var(--font-size-sm);
-		cursor: pointer;
-	}
-
 	.ref {
 		display: flex;
 		align-items: center;
@@ -402,21 +393,6 @@
 		gap: var(--space-2);
 	}
 
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-1);
-		min-height: var(--target-min);
-		padding: 0 var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: 999px;
-		background: none;
-		color: var(--muted-fg);
-		font: inherit;
-		font-size: var(--font-size-sm);
-		cursor: pointer;
-	}
-
 	.note {
 		padding-left: var(--space-3);
 		border-left: 2px solid var(--border);
@@ -441,10 +417,9 @@
 		font-size: var(--font-size-sm);
 	}
 
-	.link:focus-visible,
-	.ref:focus-visible,
-	.chip:focus-visible {
-		outline: var(--border-width) solid var(--accent);
+	.ref:focus-visible {
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	.bottom {

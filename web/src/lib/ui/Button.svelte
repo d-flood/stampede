@@ -3,12 +3,13 @@
 	import { mergeProps } from 'bits-ui';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	let { variant = 'default', tip, children: content, ...rest }: HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'ghost' | 'danger'; tip?: string } =
-		$props();
+	type Props = HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'ghost' | 'danger' | 'link'; size?: 'sm' | 'lg'; tip?: string };
+
+	let { variant = 'default', size, tip, children: content, ...rest }: Props = $props();
 </script>
 
 {#snippet button(props: HTMLButtonAttributes)}
-	<button class={variant} {...props}>{@render content?.()}</button>
+	<button class={[variant, size]} {...props}>{@render content?.()}</button>
 {/snippet}
 
 {#if tip}
@@ -60,8 +61,8 @@
 	}
 
 	button:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
-		outline-offset: 1px;
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	button:disabled {
@@ -116,5 +117,40 @@
 
 	.danger:hover:not(:disabled) {
 		background: color-mix(in oklab, var(--ansi-1) 14%, var(--surface-2));
+	}
+
+	.sm {
+		gap: var(--space-1);
+		padding: 0 var(--space-2);
+		border-radius: var(--radius-sm);
+		font-size: var(--font-size-sm);
+	}
+
+	.lg {
+		padding: 0 var(--space-4);
+		font-size: var(--font-size-lg);
+	}
+
+	.link {
+		padding: 0;
+		border-color: transparent;
+		background: none;
+		box-shadow: none;
+		color: var(--accent);
+		font-weight: inherit;
+	}
+
+	.link:hover:not(:disabled) {
+		background: none;
+		text-decoration: underline;
+	}
+
+	.link:active:not(:disabled) {
+		box-shadow: none;
+	}
+
+	.link:disabled {
+		border-color: transparent;
+		background: none;
 	}
 </style>

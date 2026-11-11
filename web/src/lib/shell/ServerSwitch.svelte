@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { serverLanguages, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
+	import Button from '#lib/ui/Button.svelte';
 
 	type Props = { servers: LanguageServers; projectId: string; path: string };
 
@@ -16,47 +17,29 @@
 	const log = $derived(`/api/lsp/log?${new URLSearchParams({ projectId, language: failed ?? languages[0] ?? '' })}`);
 </script>
 
-<button
-	class={state}
+<Button
+	variant="ghost"
+	size="sm"
 	role="switch"
 	aria-checked={on}
 	aria-label="Language server"
 	title="Language server: {state}"
 	onclick={() => servers.toggle(projectId)}
 >
-	<span class="dot"></span>LSP {state}
-</button>
+	<span class="state {state}"><span class="dot"></span>LSP {state}</span>
+</Button>
 {#if state === 'error'}
 	<a href={log} target="_blank" rel="noopener">view log</a>
 {/if}
 
 <style>
-	button {
+
+
+
+	.state {
 		display: inline-flex;
-		flex: none;
 		align-items: center;
 		gap: var(--space-2);
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: none;
-		border-radius: var(--radius-sm);
-		background: none;
-		color: var(--muted-fg);
-		font: inherit;
-		font-size: var(--font-size-sm);
-		cursor: pointer;
-		transition:
-			background var(--dur-fast),
-			color var(--dur-fast);
-	}
-
-	button:hover {
-		background: var(--hover);
-		color: var(--color-fg);
-	}
-
-	button:focus-visible {
-		outline: var(--border-width) solid var(--accent);
 	}
 
 	.dot {

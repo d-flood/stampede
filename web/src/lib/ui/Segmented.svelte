@@ -16,14 +16,15 @@
 		isolation: isolate;
 		display: flex;
 		flex: none;
-		padding: 0 2px;
+		flex-wrap: wrap;
+		padding: 0 var(--space-1);
 	}
 
 	.segmented::before {
 		position: absolute;
 		z-index: -1;
-		inset: calc((var(--target-min) - var(--control-min)) / 2 - 2px) 0;
-		border-radius: calc(var(--radius-sm) + 2px);
+		inset: calc((var(--target-min) - var(--control-min)) / 2 - var(--space-1)) 0;
+		border-radius: calc(var(--radius-md) + var(--space-1));
 		background: var(--surface-2);
 		box-shadow: inset 0 0 0 var(--border-width) var(--border);
 		content: '';
@@ -48,7 +49,7 @@
 		justify-content: center;
 		height: var(--control-min);
 		padding: 0 var(--space-3);
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-md);
 		white-space: nowrap;
 	}
 
@@ -61,8 +62,8 @@
 	}
 
 	button:focus-visible span {
-		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
-		outline-offset: -2px;
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-inset);
 	}
 
 	[aria-checked='true'] {

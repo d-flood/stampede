@@ -63,9 +63,9 @@ test('Search results replace the file tree until the search is cleared', async (
 	await expect(status).toHaveText('1 result in 1 file');
 	await expect(filters).toBeDisabled();
 
-	await sidebar.getByRole('button', { name: 'Git', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Git', exact: true }).click();
 	await expect(box).toBeHidden();
-	await sidebar.getByRole('button', { name: 'Files', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Files', exact: true }).click();
 	await expect(box).toHaveValue('needle');
 	await expect(status).toHaveText('1 result in 1 file');
 
@@ -83,7 +83,7 @@ test('Ctrl+Shift+F opens the Sidebar on Search with its query selected', { tag: 
 	const sidebar = await showSidebar(page);
 	const box = sidebar.getByRole('textbox', { name: 'Search in files' });
 	await box.fill('needle');
-	await sidebar.getByRole('group', { name: 'Sections' }).getByRole('button', { name: 'Git', exact: true }).click();
+	await sidebar.getByRole('radiogroup', { name: 'Sections' }).getByRole('radio', { name: 'Git', exact: true }).click();
 	await page.getByRole('button', { name: 'Sidebar' }).click();
 	await expect(sidebar).toBeHidden();
 	await page.keyboard.press('Control+Shift+F');

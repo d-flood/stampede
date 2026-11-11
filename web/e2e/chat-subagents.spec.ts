@@ -173,7 +173,7 @@ test('the Tray counts Subagents with colored dots, surfaces waiting ones and kee
 	await expect(subagents.locator('.dot')).toHaveCount(3);
 	await expect(chip('2 running, 2 done')).toContainText('+2');
 	await expect(attention).toHaveText('1 waiting');
-	await expect.poll(() => attention.evaluate((element) => {
+	await expect.poll(() => attention.getByText('1 waiting', { exact: true }).evaluate((element) => {
 		const probe = element.appendChild(document.createElement('span'));
 		probe.style.color = 'var(--status-waiting)';
 		const yellow = getComputedStyle(probe).color;

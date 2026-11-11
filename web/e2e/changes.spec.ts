@@ -18,7 +18,7 @@ function repository(name: string) {
 async function changesPanel(page: Page, name: string) {
 	await openProject(page, name);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Git', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Git', exact: true }).click();
 	return sidebar;
 }
 
@@ -447,7 +447,7 @@ test('History rewords and squashes earlier commits and copies their hashes', { t
 	await openProject(page, 'history');
 	const sidebar = await showSidebar(page);
 	const commits = sidebar.getByRole('list', { name: 'Commits' });
-	await sidebar.getByRole('button', { name: 'Git', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Git', exact: true }).click();
 	await sidebar.getByRole('button', { name: `Actions for ${head}` }).click();
 	await expect(page.getByRole('menuitem', { name: 'Edit Message…' })).toBeVisible();
 	await expect(page.getByRole('menuitem', { name: /Squash/ })).toHaveCount(0);
@@ -501,7 +501,7 @@ test('History squashes pushed commits after a warning', { tag: '@desktop' }, asy
 	git('push', '-qu', 'origin', 'main');
 	await openProject(page, 'pushed');
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Git', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Git', exact: true }).click();
 	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD~1')}` }).click();
 	await page.getByRole('menuitem', { name: 'Squash Newer Commits Into This…' }).click();
 	const squash = page.getByRole('dialog', { name: 'Squash 2 commits' });

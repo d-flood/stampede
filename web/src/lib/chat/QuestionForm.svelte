@@ -8,12 +8,13 @@
 	import type { Answer, Question, QuestionResponse } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Caret from '#lib/ui/Caret.svelte';
+	import Checkbox from '#lib/ui/Checkbox.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Media from '#lib/chat/Media.svelte';
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
 	import CaretDown from '~icons/ph/caret-down';
-	import CaretRight from '~icons/ph/caret-right';
 
 	let { id, questions, disabled, onanswer }: { id: string; questions: Question[]; disabled: boolean; onanswer(answer: Answer): void } = $props();
 	const items = $derived(questions.map(normalized));
@@ -147,7 +148,7 @@
 			{#each item.options as option, index}
 				<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (The input inside handles keys; this only tells a pointer pick apart from an arrow key.) -->
 				<label class="option" onclick={(event) => clicked(item, event)}>
-					<input type={item.type === 'multiple' ? 'checkbox' : 'radio'} name="{id}/{item.id}" checked={!!response?.selected.includes(option.id!)} {disabled} aria-label={option.recommended ? `${option.label}, recommended` : option.label} onchange={() => choose(item, option.id!)} />
+					<Checkbox type={item.type === 'multiple' ? 'checkbox' : 'radio'} tone="waiting" name="{id}/{item.id}" checked={!!response?.selected.includes(option.id!)} {disabled} aria-label={option.recommended ? `${option.label}, recommended` : option.label} onchange={() => choose(item, option.id!)} />
 					<div class="details"><QuestionOption {option} /></div>
 					{#if !phone && !tiles && index < 9}<span class="key" aria-hidden="true">{index + 1}</span>{/if}
 				</label>
@@ -156,7 +157,7 @@
 	{/if}
 	<div class="note" class:aligned={item.options.length && !tiles}>
 		<textarea rows={item.options.length ? 1 : 2} maxlength={16384} value={response?.text ?? ''} {disabled} placeholder={item.options.length ? 'Add a note or your own answer' : 'Your answer'} aria-label={item.options.length ? 'Add a note or your own answer' : 'Your answer'} oninput={(event) => update(item, { text: event.currentTarget.value })}></textarea>
-		{#if !one && answered(response)}<button type="button" class="quiet" {disabled} onclick={() => clear(item)}>Clear answer</button>{/if}
+		{#if !one && answered(response)}<Button type="button" variant="ghost" size="sm" {disabled} onclick={() => clear(item)}>Clear answer</Button>{/if}
 	</div>
 {/snippet}
 
@@ -165,7 +166,7 @@
 	<header>
 		<h2>{one ? items[0].header || 'Question' : `${items.length} questions`}</h2>
 		{#if !one && !(phone && armed)}<span class="progress">{phone ? `${done} answered` : `${done} of ${items.length} answered`}</span>{/if}
-		<button type="button" class="quiet" class:armed {disabled} onclick={dismiss}>{armed ? (done === 1 ? 'Discard 1 answer?' : `Discard ${done} answers?`) : 'Dismiss'}</button>
+		<Button type="button" variant={armed ? 'danger' : 'ghost'} size="sm" {disabled} onclick={dismiss}>{armed ? (done === 1 ? 'Discard 1 answer?' : `Discard ${done} answers?`) : 'Dismiss'}</Button>
 		<IconButton label={shut ? 'Show questions' : 'Hide questions'} aria-expanded={!shut} onclick={() => shut = !shut}><span class="chevron" class:shut><CaretDown /></span></IconButton>
 	</header>
 	{#if !shut}
@@ -179,7 +180,7 @@
 							{@const response = responses.get(item.id)}
 							<li class:open={index === open}>
 								<button type="button" class="row" aria-expanded={index === open} onclick={() => show(index === open ? -1 : index)}>
-									<span class="caret"><CaretRight /></span>
+									<Caret />
 									<span class="title">{item.header}</span>
 									{#if index !== open}<span class="value" class:none={!answered(response)}>{response && answered(response) ? answerText(item, response) : 'Not answered'}</span>{/if}
 								</button>
@@ -192,8 +193,8 @@
 				{/if}
 			</div>
 			<footer>
-				{#if !one && open >= 0 && following(open) >= 0}<Button variant="ghost" {disabled} onclick={advance}>Next question</Button>{/if}
-				<Button variant="primary" data-send disabled={disabled || !done} onclick={send}>{sendLabel}</Button>
+				{#if !one && open >= 0 && following(open) >= 0}<Button variant="ghost" size={phone ? 'lg' : undefined} {disabled} onclick={advance}>Next question</Button>{/if}
+				<Button variant="primary" size={phone ? 'lg' : undefined} data-send disabled={disabled || !done} onclick={send}>{sendLabel}</Button>
 			</footer>
 		</div>
 	{/if}
@@ -204,9 +205,6 @@
 	header { flex: none; display: flex; align-items: center; gap: var(--space-2); min-height: calc(var(--target-min) + var(--space-4)); padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4); }
 	h2 { flex: 1; min-width: 0; margin: 0; color: var(--status-waiting); font-size: var(--font-size-md); font-weight: 600; overflow-wrap: anywhere; }
 	.progress { flex: none; color: var(--muted-fg); font-size: var(--font-size-sm); }
-	.quiet { flex: none; min-height: var(--target-min); padding: 0 var(--space-2); border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted-fg); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
-	.quiet:hover:not(:disabled) { background: var(--hover); color: var(--color-fg); }
-	.quiet.armed { color: var(--color-fg); text-decoration: underline; }
 	.chevron { display: inline-flex; transition: transform var(--dur-med) var(--ease-out); }
 	.chevron.shut { transform: rotate(180deg); }
 	.content { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
@@ -229,9 +227,7 @@
 	li + li { border-top: var(--border-width) solid var(--border); }
 	.row { display: grid; grid-template-columns: 1em 8.5rem minmax(0, 1fr); align-items: center; column-gap: var(--space-3); width: 100%; min-height: var(--target-min); padding: var(--space-3) var(--space-4); border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 	.row:hover { background: var(--hover); }
-	.row:focus-visible, .quiet:focus-visible { outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent); outline-offset: -2px; }
-	.caret { display: inline-flex; color: var(--muted-fg); transition: transform var(--dur-med) var(--ease-out); }
-	li.open .caret { transform: rotate(90deg); }
+	.row:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-inset); }
 	li.open .row { grid-template-columns: 1em minmax(0, 1fr); }
 	.title { font-weight: 600; overflow-wrap: anywhere; }
 	.value { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -254,16 +250,8 @@
 	.tiles :global(figcaption) { position: absolute; top: var(--space-1); right: var(--space-1); padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--surface-2); }
 	.tiles :global(figcaption > span) { display: none; }
 	.tiles :global(figure img) { width: 100%; object-position: center; }
-	.tiles .option:has(input:checked) :global(figure) { outline: 2px solid var(--status-waiting); outline-offset: -2px; }
-	input { appearance: none; display: grid; place-content: center; flex: none; width: 16px; height: 16px; margin: 0.2em 0 0; border: 1.5px solid var(--muted-fg); background: none; cursor: pointer; transition: border-color var(--dur-fast), background var(--dur-fast); }
-	input[type='radio'] { border-radius: 50%; }
-	input[type='checkbox'] { border-radius: 4px; }
-	input:checked { border-color: var(--status-waiting); }
-	input[type='radio']:checked { background: radial-gradient(circle, var(--status-waiting) 42%, transparent 48%); }
-	input[type='checkbox']:checked { background: var(--status-waiting); }
-	input[type='checkbox']:checked::before { content: ''; width: 10px; height: 10px; background: var(--color-bg); clip-path: polygon(14% 44%, 0 65%, 40% 100%, 100% 16%, 82% 0, 38% 65%); }
-	input:focus-visible { outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent); outline-offset: 2px; }
-	input:disabled { opacity: 0.5; cursor: default; }
+	.tiles .option:has(:global(input:checked)) :global(figure) { outline: 2px solid var(--status-waiting); outline-offset: -2px; }
+	.option > :global(input) { margin-top: 0.2em; }
 	.key { min-width: 1ch; color: var(--muted-fg); font-family: var(--font-mono); font-size: var(--font-size-sm); opacity: 0; transition: opacity var(--dur-fast); }
 	.form:focus-within .key { opacity: 1; }
 	.note { display: flex; align-items: flex-end; gap: var(--space-2); }
@@ -276,9 +264,7 @@
 	.phone .value { grid-column: 2; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
 	.phone .panel { padding-left: var(--space-4); }
 	.phone .option { padding-block: var(--space-3); }
-	.phone .quiet { min-height: 44px; }
-	.phone header :global(button) { min-width: 44px; min-height: 44px; }
 	.phone textarea { min-height: 44px; padding-block: var(--space-3); font-size: var(--font-size-lg); }
-	.phone footer > :global(button) { flex: 1; min-height: 44px; font-size: var(--font-size-lg); }
+	.phone footer > :global(button) { flex: 1; }
 	.phone footer > :global(button:last-child) { margin-left: 0; }
 </style>

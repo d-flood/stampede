@@ -3,7 +3,9 @@
 	import { other, ThemeChoice, themeBar, type Slot } from '#lib/themes.svelte.ts';
 	import { onDestroy, tick } from 'svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import Checkbox from '#lib/ui/Checkbox.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import ListItem from '#lib/ui/ListItem.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
 	import Check from '~icons/ph/check';
@@ -68,10 +70,10 @@
 					{#each choice.matches as name (name)}
 						<Command.Item value={name} disabled={choice.saving} onSelect={() => choice.choose(name)}>
 						{#snippet child({ props })}
-							<div {...props} class="item">
-								<span>{name}</span>
+							<ListItem {...props}>
+								<span class="name">{name}</span>
 								{#if name === selectedTheme[choice.scheme]}<Check aria-label="Current theme" />{/if}
-							</div>
+							</ListItem>
 						{/snippet}
 						</Command.Item>
 					{:else}
@@ -82,7 +84,7 @@
 		{/snippet}
 	</Command.List>
 </Command.Root>
-<label class="all"><input type="checkbox" bind:checked={choice.all} disabled={choice.saving} /> Show all themes</label>
+<label class="all"><Checkbox bind:checked={choice.all} disabled={choice.saving} /> Show all themes</label>
 <div class="actions">
 	<Button variant="ghost" disabled={choice.saving} onclick={dock}>Preview in app</Button>
 	<Button onclick={onselect}>Cancel</Button>
@@ -124,13 +126,13 @@
 	}
 
 	.schemes button:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-		outline-offset: var(--border-width);
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	.schemes button[aria-pressed='true'] {
-		border-color: var(--accent);
-		background: var(--border);
+		border-color: var(--selected-border);
+		background: var(--selected-bg);
 		color: var(--color-fg);
 	}
 
@@ -200,28 +202,9 @@
 		cursor: pointer;
 	}
 
-	.item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-2);
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-	}
-
-	.item span {
+	.name {
+		flex: 1;
 		overflow-wrap: anywhere;
-	}
-
-	.item[data-selected] {
-		background: var(--hover);
-	}
-
-	.item[data-disabled] {
-		opacity: 0.5;
-		cursor: wait;
 	}
 
 	.error {

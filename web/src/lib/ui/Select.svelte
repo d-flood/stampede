@@ -22,8 +22,8 @@
 	}
 
 	select:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
-		outline-offset: 1px;
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	select:disabled {

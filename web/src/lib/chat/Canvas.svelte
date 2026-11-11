@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { canvasName } from '#lib/canvas.svelte.ts';
 	import type { Item } from '#lib/device.svelte.ts';
+	import Button from '#lib/ui/Button.svelte';
 	import Browsers from '~icons/ph/browsers';
 
 	let { item, oncanvas }: { item: Extract<Item, { kind: 'canvas' }>; oncanvas(canvas: string): void } = $props();
@@ -12,7 +13,7 @@
 	{#if !item.write}
 		<span class="counts"><span class="added">+{item.added}</span> <span class="removed">−{item.removed}</span></span>
 	{/if}
-	<button class="open" onclick={() => oncanvas(item.canvas)}>Open</button>
+	<Button variant="link" onclick={() => oncanvas(item.canvas)}>Open</Button>
 </div>
 
 <style>
@@ -58,20 +59,5 @@
 
 	.counts .removed {
 		color: var(--git-deleted);
-	}
-
-	.open {
-		flex-shrink: 0;
-		min-height: var(--target-min);
-		padding: 0;
-		border: 0;
-		background: none;
-		color: var(--accent);
-		font: inherit;
-		cursor: pointer;
-	}
-
-	.open:hover {
-		text-decoration: underline;
 	}
 </style>

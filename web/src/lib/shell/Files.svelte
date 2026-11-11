@@ -9,9 +9,9 @@
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
+	import TreeRow from '#lib/ui/TreeRow.svelte';
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import CaretRight from '~icons/ph/caret-right';
 	import Clipboard from '~icons/ph/clipboard';
 	import Copy from '~icons/ph/copy';
 	import DotsThree from '~icons/ph/dots-three';
@@ -228,15 +228,15 @@
 				<div class="row" onfocusin={() => (focused = entry)}>
 					<Menu context {items}>
 						{#snippet trigger(props)}
-							<button
+							<TreeRow
 								{...props}
 								tabindex={0}
-								class="entry"
-								class:ignored={entry.ignored}
-								class:changed={changed}
-								style:--depth={depth}
-								style:--git={changed && `var(--git-${changed})`}
-								aria-expanded={entry.dir ? open : undefined}
+								name={entry.name}
+								{depth}
+								open={entry.dir ? open : undefined}
+								git={changed}
+								letter={kind ? letters[kind] : changed ? '•' : undefined}
+								muted={entry.ignored}
 								title={kind ? `${entry.path} (${kind})` : entry.path}
 								onclick={(event) => {
 									if (event.currentTarget.dataset.state !== 'open') {
@@ -244,15 +244,7 @@
 										else onopen(entry.path);
 									}
 								}}
-							>
-								<span class="caret" class:open>{#if entry.dir}<CaretRight />{/if}</span>
-								<span class="name">{entry.name}</span>
-								{#if kind}
-									<span class="mark" aria-hidden="true">{letters[kind]}</span>
-								{:else if entry.dir && marked.has(entry.path)}
-									<span class="mark" aria-hidden="true">•</span>
-								{/if}
-							</button>
+							/>
 						{/snippet}
 					</Menu>
 					<Menu {items}>
@@ -348,62 +340,11 @@
 		background: var(--hover);
 	}
 
-	.entry {
-		display: flex;
-		flex: 1;
-		align-items: center;
-		gap: var(--space-1);
-		min-width: 0;
-		min-height: var(--target-min);
-		padding: 0 var(--space-3) 0 calc(var(--space-2) + var(--depth) * var(--space-4));
-		border: none;
-		border-radius: inherit;
-		background: none;
-		color: var(--color-fg);
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-	}
 
-	.entry:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-		outline-offset: calc(-1 * var(--border-width));
-	}
 
-	.ignored {
-		color: var(--muted-fg);
-	}
 
-	.caret {
-		display: inline-flex;
-		flex: none;
-		width: 1em;
-		color: var(--muted-fg);
-		transition: transform var(--dur-fast);
-	}
 
-	.caret.open {
-		transform: rotate(90deg);
-	}
 
-	.name {
-		flex: 1;
-		overflow: hidden;
-		font-family: var(--font-mono);
-		font-size: var(--font-size-code);
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
 
-	.changed .name {
-		color: var(--git);
-	}
 
-	.mark {
-		flex: none;
-		color: var(--git, var(--muted-fg));
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-		font-weight: 700;
-	}
 </style>

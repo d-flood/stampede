@@ -23,6 +23,7 @@
 </script>
 
 <script lang="ts">
+	import IconButton from '#lib/ui/IconButton.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 	import { mergeProps } from 'bits-ui';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
@@ -108,17 +109,18 @@
 		{@render select(rest)}
 	{/if}
 	{#if active && onclose}
-		<button
-			class="close"
-			type="button"
-			aria-label="Close {label}"
-			title="Close {label} (Ctrl/Cmd+W)"
-			onpointerdown={(event) => event.stopPropagation()}
-			onclick={(event) => {
-				event.stopPropagation();
-				onclose?.();
-			}}
-		><X /></button>
+		<span class="close">
+			<IconButton
+				type="button"
+				label="Close {label}"
+				title="Close {label} (Ctrl/Cmd+W)"
+				onpointerdown={(event) => event.stopPropagation()}
+				onclick={(event) => {
+					event.stopPropagation();
+					onclose?.();
+				}}
+			><X /></IconButton>
+		</span>
 	{/if}
 </div>
 
@@ -177,27 +179,8 @@
 		position: absolute;
 		top: 50%;
 		right: var(--space-1);
-		display: inline-grid;
-		place-items: center;
-		width: var(--target-min);
-		height: var(--target-min);
-		padding: 0;
-		border: none;
-		border-radius: var(--radius-sm);
-		background: none;
-		color: var(--muted-fg);
-		font-size: var(--font-size-lg);
-		cursor: pointer;
+		display: inline-flex;
 		transform: translateY(-50%);
-	}
-
-	.close:hover {
-		background: var(--hover);
-		color: var(--color-fg);
-	}
-
-	.close:focus-visible {
-		outline: var(--border-width) solid var(--accent);
 	}
 
 	.label {

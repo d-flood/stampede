@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { createBranch, refs, switchBranch, sync, type Refs } from '#lib/git.ts';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import ListItem from '#lib/ui/ListItem.svelte';
+	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command, computeCommandScore } from 'bits-ui';
@@ -93,17 +95,17 @@
 							<Command.Group>
 								<Command.GroupHeading>
 									{#snippet child({ props })}
-										<div {...props} class="heading">{heading}</div>
+										<ListLabel {...props}>{heading}</ListLabel>
 									{/snippet}
 								</Command.GroupHeading>
 								<Command.GroupItems>
 									{#each names as name (name)}
 										<Command.Item value={`${heading}:${name}`} disabled={busy} onSelect={() => choose(name)}>
 											{#snippet child({ props })}
-												<div {...props} class="item">
+												<ListItem {...props}>
 													<span class="name">{name}</span>
 													{#if name === current}<Check role="img" aria-label={onpick ? 'Chosen branch' : 'Current branch'} />{/if}
-												</div>
+												</ListItem>
 											{/snippet}
 										</Command.Item>
 									{/each}
@@ -114,15 +116,15 @@
 					{#if creatable}
 						<Command.Item value="create" disabled={busy} onSelect={create}>
 							{#snippet child({ props })}
-								<div {...props} class="item">
+								<ListItem {...props}>
 									<Plus aria-hidden="true" />
-									<span>Create branch</span>
+									<span class="create">Create branch</span>
 									<span class="name">{name}</span>
-								</div>
+								</ListItem>
 							{/snippet}
 						</Command.Item>
 					{:else if listed && groups.every(({ names }) => !names.length)}
-						<p class="empty">{query ? 'No matching branch' : 'No branches yet'}</p>
+						<ListLabel element="p">{query ? 'No matching branch' : 'No branches yet'}</ListLabel>
 					{/if}
 				</Command.Viewport>
 			</div>
@@ -155,36 +157,9 @@
 		overflow-y: auto;
 	}
 
-	.heading {
-		display: flex;
-		align-items: center;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-	}
 
-	.item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
+	.create {
 		white-space: nowrap;
-	}
-
-	.item[data-selected] {
-		background: var(--hover);
-	}
-
-	.item[data-disabled] {
-		cursor: default;
-	}
-
-	.item :global(svg) {
-		flex: none;
 	}
 
 	.name {
@@ -193,11 +168,7 @@
 		overflow: hidden;
 		font-family: var(--font-mono);
 		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.empty {
-		margin: 0;
-		padding: var(--space-2);
-		color: var(--muted-fg);
-	}
 </style>

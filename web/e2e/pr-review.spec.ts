@@ -52,7 +52,7 @@ function repository() {
 
 async function comparePanel(page: Page) {
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Compare', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Compare', exact: true }).click();
 	return sidebar.getByRole('region', { name: 'Compare' });
 }
 

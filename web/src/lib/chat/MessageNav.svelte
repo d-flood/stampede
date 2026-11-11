@@ -110,13 +110,13 @@
 	.row { display: flex; align-items: center; gap: var(--space-1); max-width: 760px; margin: 0 auto; padding: 0 var(--space-4); }
 	.current { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--target-min); padding: 0 var(--space-2); border: none; border-radius: var(--radius-md); background: none; color: var(--color-fg); font: inherit; text-align: left; cursor: pointer; }
 	.current:hover, .current[data-state='open'] { background: var(--hover); }
-	.current:focus-visible { outline: var(--border-width) solid var(--accent); }
+	.current:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-inset); }
 	.current :global(svg) { flex: none; color: var(--muted-fg); }
 	.count { flex: none; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 	.summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	nav.phone { top: var(--space-2); right: calc(var(--gutter) + var(--space-2)); left: auto; border: var(--border-width) solid var(--border); border-radius: calc(var(--target-min) / 2); background: var(--color-bg); font-size: var(--font-size-md); transform: translateY(calc(-1 * var(--space-2))); }
+	nav.phone { top: var(--space-2); right: calc(var(--gutter) + var(--space-2)); left: auto; border: var(--border-width) solid var(--border); border-radius: var(--radius-pill); background: var(--color-bg); font-size: var(--font-size-md); transform: translateY(calc(-1 * var(--space-2))); }
 	nav.phone.shown { transform: none; }
 	.phone .row { gap: 0; padding: 0; }
 	.phone .current { flex: none; justify-content: center; min-width: var(--target-min); padding: 0 var(--space-1); border-radius: 0; }
-	.phone :global(button) { border-radius: calc(var(--target-min) / 2); }
+	.phone :global(button) { border-radius: var(--radius-pill); }
 </style>

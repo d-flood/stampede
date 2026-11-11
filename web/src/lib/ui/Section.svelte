@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Eyebrow from '#lib/ui/Eyebrow.svelte';
 	import type { Snippet } from 'svelte';
 
 	let { title, actions, children }: { title: string; actions?: Snippet; children: Snippet } = $props();
@@ -6,7 +7,7 @@
 
 <section>
 	<header>
-		<h2>{title}</h2>
+		<Eyebrow element="h2">{title}</Eyebrow>
 		{@render actions?.()}
 	</header>
 	<div>{@render children()}</div>
@@ -31,14 +32,8 @@
 		border-bottom: var(--border-width) solid var(--border);
 	}
 
-	h2 {
+	header > :global(h2) {
 		flex: 1;
-		margin: 0;
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
 	}
 
 	div {

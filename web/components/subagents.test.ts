@@ -1,10 +1,9 @@
 import { subagents } from '#lib/chat/agents.ts';
 import SubagentHeader from '#lib/chat/SubagentHeader.svelte';
-import SubagentMenu from '#lib/chat/SubagentMenu.svelte';
 import SubagentRow from '#lib/chat/SubagentRow.svelte';
 import Transcript from '#lib/chat/Transcript.svelte';
+import Tray from '#lib/chat/Tray.svelte';
 import type { Item, Subagent } from '#lib/device.svelte.ts';
-import { createRawSnippet } from 'svelte';
 import { expect, test, vi } from 'vitest';
 import { page, type Locator } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
@@ -53,9 +52,12 @@ test('a Subagent keeps its spawn-order color on its transcript line, menu row an
 	expect(dot(top.getByRole('button', { name: /Find the file/ }).element())).toBe('var(--subagent-1)');
 	expect(dot(top.getByRole('button', { name: /Review the diff/ }).element())).toBe('var(--subagent-3)');
 
-	const trigger = createRawSnippet(() => ({ render: () => '<button>Subagents</button>' }));
-	await render(SubagentMenu, { groups: [{ heading: 'Subagents', entries: subagents(main) }], main, open: true, trigger, onselect: vi.fn() });
-	expect(dot(page.getByRole('menuitem', { name: /Search deeper/ }).element())).toBe('var(--subagent-2)');
+	const tray = await render(Tray, { items: main, ...callbacks() });
+	await tray.getByRole('button', { name: /^Subagents/ }).click();
+	const phone = document.body.classList.contains('phone');
+	const row = phone ? page.getByRole('dialog').getByRole('button', { name: /Search deeper/ }) : page.getByRole('menuitem', { name: /Search deeper/ });
+	await expect.element(row).toBeVisible();
+	expect(dot(row.element())).toBe('var(--subagent-2)');
 
 	const header = await render(SubagentHeader, { subagent: nested, path: ['parent', 'nested'], trail: subagents(main).slice(0, 1), main, onopen: vi.fn() });
 	const breadcrumb = header.getByRole('navigation', { name: 'Breadcrumb' });

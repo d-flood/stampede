@@ -2,6 +2,7 @@
 	import { beginFontPreview, defaultFonts, fontVariables, fonts, selectFont, type FontRole } from '#lib/config.svelte.ts';
 	import { onDestroy, tick, untrack } from 'svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import ListItem from '#lib/ui/ListItem.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
 	import Check from '~icons/ph/check';
@@ -87,20 +88,20 @@
 					{#if 'default'.includes(needle)}
 						<Command.Item value="Default" disabled={saving} onSelect={() => choose(null)}>
 							{#snippet child({ props })}
-								<div {...props} class="item">
-									<span>Default <small>{defaultFonts[role]}</small></span>
+								<ListItem {...props}>
+									<span class="name">Default <small>{defaultFonts[role]}</small></span>
 									{#if fonts[role] === null}<Check aria-label="Current font" />{/if}
-								</div>
+								</ListItem>
 							{/snippet}
 						</Command.Item>
 					{/if}
 					{#each matches as family (family)}
 						<Command.Item value={family} disabled={saving} onSelect={() => choose(family)}>
 							{#snippet child({ props })}
-								<div {...props} class="item">
-									<span>{family}</span>
+								<ListItem {...props}>
+									<span class="name">{family}</span>
 									{#if family === fonts[role]}<Check aria-label="Current font" />{/if}
-								</div>
+								</ListItem>
 							{/snippet}
 						</Command.Item>
 					{:else}
@@ -159,28 +160,9 @@
 		overflow-y: auto;
 	}
 
-	.item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-2);
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-	}
-
-	.item span {
+	.name {
+		flex: 1;
 		overflow-wrap: anywhere;
-	}
-
-	.item[data-selected] {
-		background: var(--hover);
-	}
-
-	.item[data-disabled] {
-		opacity: 0.5;
-		cursor: wait;
 	}
 
 	.error {

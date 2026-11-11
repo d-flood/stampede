@@ -19,7 +19,7 @@
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
-	import Toggle from '#lib/ui/Toggle.svelte';
+	import Toolbar from '#lib/ui/Toolbar.svelte';
 	import { getOriginalDoc, MergeView, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
 	import { setDiagnostics } from '@codemirror/lint';
 	import { ChangeSet, Compartment, EditorState, Prec, type Extension, type Text } from '@codemirror/state';
@@ -518,8 +518,7 @@
 
 <!-- svelte-ignore a11y_interactive_supports_focus (Alt-arrows walk a Comparison from anywhere in its tab.) -->
 <div class="diff" role="tabpanel" hidden={!active} onkeydown={stepKey}>
-	<div class="toolbar">
-		<span class="path" title={diff.path}>{diff.from ? `${diff.from} → ${diff.path}` : diff.path}</span>
+	<Toolbar path={diff.from ? `${diff.from} → ${diff.path}` : diff.path} title={diff.path} deleted={diff.deleted}>
 		{#if diff.against === 'disk'}
 			<span class="sides">disk ↔ unsaved edits</span>
 		{:else if diff.against === 'index'}
@@ -534,15 +533,14 @@
 		{:else if diff.against !== 'HEAD'}
 			<span class="sides" title={diff.against.subject}>{diff.against.short}^ ↔ {diff.against.short}</span>
 		{/if}
-		{#if diff.deleted}<span class="deleted">deleted on disk</span>{/if}
-		{#if compared?.error}<span class="deleted">{compared.error.message}</span>{/if}
+		{#if compared?.error}<span class="error">{compared.error.message}</span>{/if}
 		{#if compared}
 			<IconButton label="Previous file" title="Previous file (Alt+↑)" disabled={at <= 0} onclick={() => step(-1)}><ArrowUp /></IconButton>
 			<IconButton label="Next file" title="Next file (Alt+↓)" disabled={at >= walk.length - 1} onclick={() => step(1)}><ArrowDown /></IconButton>
 		{/if}
 		{#if review}
 			{#if mark === 'changed'}
-				<Toggle label="Since viewed" pressed={sinceViewed} onclick={() => (sinceViewed = !sinceViewed)}>Since viewed</Toggle>
+				<IconButton label="Since viewed" title="Since viewed" pressed={sinceViewed} onclick={() => (sinceViewed = !sinceViewed)}>Since viewed</IconButton>
 			{/if}
 			{#if form() === 'phone'}
 				<IconButton label="Viewed & next" title="Mark Viewed, then the next file" disabled={marking || at < 0} onclick={viewedAndNext}><CheckSquare /></IconButton>
@@ -561,7 +559,7 @@
 				<Button onclick={() => sync.write()} disabled={!diff.dirty}><FloppyDisk /> Save</Button>
 			{/if}
 		{/if}
-	</div>
+	</Toolbar>
 	{#if replacing}
 		<div class="replacing" role="status">
 			<span class="prompt">Choose a line to re-place <q>{replacing.body.trim().split('\n')[0]}</q></span>
@@ -586,25 +584,7 @@
 		display: none;
 	}
 
-	.toolbar {
-		display: flex;
-		flex: none;
-		align-items: center;
-		gap: var(--space-2);
-		min-height: var(--target-min);
-		padding: 0 var(--space-1) 0 var(--space-3);
-		border-bottom: var(--border-width) solid var(--border);
-	}
 
-	.path {
-		flex: 1;
-		overflow: hidden;
-		color: var(--muted-fg);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
 
 	.sides {
 		flex: none;
@@ -620,7 +600,7 @@
 		white-space: nowrap;
 	}
 
-	.deleted {
+	.error {
 		flex: none;
 		color: var(--status-waiting);
 		font-size: var(--font-size-sm);

@@ -9,16 +9,19 @@
 	import PrPicker from '#lib/shell/PrPicker.svelte';
 	import SendReview from '#lib/shell/SendReview.svelte';
 	import { treeRows } from '#lib/shell/tree.ts';
+	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import Checkbox from '#lib/ui/Checkbox.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import Eyebrow from '#lib/ui/Eyebrow.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
+	import TreeRow from '#lib/ui/TreeRow.svelte';
 	import { mergeProps } from 'bits-ui';
 	import { onMount, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import ArrowSquareOut from '~icons/ph/arrow-square-out';
 	import ArrowsClockwise from '~icons/ph/arrows-clockwise';
-	import CaretRight from '~icons/ph/caret-right';
 	import CaretUpDown from '~icons/ph/caret-up-down';
 	import FolderOpen from '~icons/ph/folder-open';
 	import GitPullRequest from '~icons/ph/git-pull-request';
@@ -155,7 +158,7 @@
 
 {#snippet draftList(label: string, drafts: DraftComment[])}
 	<div class="heading">
-		<span class="name">{label}</span>
+		<span class="name"><Eyebrow>{label}</Eyebrow></span>
 		<span class="count">{drafts.length}</span>
 	</div>
 	<ul class="drafts" aria-label={label}>
@@ -244,7 +247,7 @@
 		{#if review?.state === 'open'}
 			<div class="send">
 				<Button variant="primary" disabled={!!displaced.length || !!suggested.length} onclick={() => (sending = true)}>
-					Send review… <span class="badge">{review.drafts.length}</span>
+					Send review… <Badge tone="soft">{review.drafts.length}</Badge>
 				</Button>
 				{#if displaced.length}
 					<p class="reason">Re-place or delete {displaced.length === 1 ? 'the Displaced draft' : `the ${displaced.length} Displaced drafts`} to send.</p>
@@ -274,7 +277,7 @@
 		</div>
 		{#if reviews?.length}
 			<div class="heading">
-				<span class="name">PR reviews in progress</span>
+				<span class="name"><Eyebrow>PR reviews in progress</Eyebrow></span>
 			</div>
 			<ul class="reviews" aria-label="PR reviews in progress">
 				{#each reviews as listedReview (listedReview.number)}
@@ -295,7 +298,7 @@
 		<p class="note" role="status">No changes</p>
 	{:else if files}
 		<div class="heading">
-			<span class="name">Changed files</span>
+			<span class="name"><Eyebrow>Changed files</Eyebrow></span>
 			{#if review}
 				<span class="count">{viewedCount}/{files.length} viewed</span>
 			{:else}
@@ -306,29 +309,24 @@
 			{#each rows as row (row.key)}
 				<li class="row">
 					{#if row.kind === 'folder'}
-						<button class="entry" style:--depth={row.depth} aria-expanded={row.open} title={row.folder.path} onclick={() => toggle(row.key)}>
-							<span class="caret" class:open={row.open}><CaretRight /></span>
-							<span class="name">{row.folder.name}</span>
-						</button>
+						<TreeRow name={row.folder.name} depth={row.depth} open={row.open} title={row.folder.path} onclick={() => toggle(row.key)} />
 					{:else}
 						{@const { change } = row}
 						{@const mark = review && viewedState(review, change)}
-						<button
-							class="entry file"
-							class:deleted={change.kind === 'deleted'}
-							style:--depth={row.depth}
-							style:--git="var(--git-{change.kind})"
+						<TreeRow
+							name={split(change.path).name}
+							depth={row.depth}
+							git={change.kind}
+							letter={letters[change.kind]}
+							faded={mark === 'viewed'}
 							title={change.from ? `${change.from} → ${change.path}` : change.path}
 							onclick={() => against && onopen(change, against)}
 						>
-							<span class="name" class:viewed={mark === 'viewed'}>{split(change.path).name}</span>
 							{#if mark === 'changed'}<span class="since" role="img" aria-label="Changed since viewed" title="Changed since viewed"></span>{/if}
-							<span class="letter" aria-hidden="true">{letters[change.kind]}</span>
-						</button>
+						</TreeRow>
 						{#if review}
 							<label class="viewed-box" title="Viewed">
-								<input
-									type="checkbox"
+								<Checkbox
 									aria-label="Viewed"
 									checked={mark === 'viewed'}
 									disabled={acting}
@@ -383,7 +381,7 @@
 		min-height: var(--target-min);
 		padding: 0 var(--space-2);
 		border: none;
-		border-radius: calc(var(--target-min) / 2);
+		border-radius: var(--radius-pill);
 		background: none;
 		color: var(--muted-fg);
 		font: inherit;
@@ -398,7 +396,8 @@
 	}
 
 	.ref:focus-visible {
-		outline: var(--border-width) solid var(--accent);
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	.ref :global(svg) {
@@ -452,18 +451,11 @@
 		background: var(--surface-2);
 	}
 
-	.heading .name {
-		font-size: var(--font-size-sm);
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
 	.list {
 		flex: 1;
 		margin: 0;
 		overflow: auto;
-		padding: 0 0 var(--space-3);
+		padding: 0 var(--space-2) var(--space-3);
 		list-style: none;
 	}
 
@@ -471,6 +463,7 @@
 		display: flex;
 		align-items: center;
 		min-height: var(--target-min);
+		border-radius: var(--radius-md);
 	}
 
 	.row:hover {
@@ -494,25 +487,11 @@
 	}
 
 	.entry:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-		outline-offset: calc(-1 * var(--border-width));
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-inset);
 	}
 
-	.file {
-		padding-left: calc(var(--space-2) + var(--depth) * var(--space-4) + 1em + var(--space-1));
-	}
 
-	.caret {
-		display: inline-flex;
-		flex: none;
-		width: 1em;
-		color: var(--muted-fg);
-		transition: transform var(--dur-fast);
-	}
-
-	.caret.open {
-		transform: rotate(90deg);
-	}
 
 	.name {
 		flex: 1;
@@ -525,18 +504,6 @@
 	.entry .name {
 		font-family: var(--font-mono);
 		font-size: var(--font-size-code);
-	}
-
-	.file .name {
-		color: var(--git);
-	}
-
-	.deleted .name {
-		text-decoration: line-through;
-	}
-
-	.file .name.viewed {
-		opacity: 0.55;
 	}
 
 	.since {
@@ -556,26 +523,11 @@
 		cursor: pointer;
 	}
 
-	.viewed-box input {
-		margin: 0;
-		accent-color: var(--accent);
-		cursor: inherit;
-	}
-
-	.letter,
 	.count {
 		flex: none;
+		color: var(--muted-fg);
 		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
-	}
-
-	.letter {
-		color: var(--git);
-		font-weight: 700;
-	}
-
-	.count {
-		color: var(--muted-fg);
 	}
 
 	.ref[aria-disabled='true'] {
@@ -659,7 +611,7 @@
 
 	.reviews {
 		margin: 0;
-		padding: 0 0 var(--space-2);
+		padding: 0 var(--space-2) var(--space-2);
 		list-style: none;
 	}
 
@@ -731,15 +683,6 @@
 		display: grid;
 		gap: var(--space-1);
 		padding: var(--space-2);
-	}
-
-	.badge {
-		min-width: 1.5em;
-		padding: 0 var(--space-1);
-		border-radius: 999px;
-		background: color-mix(in oklab, currentColor 18%, transparent);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
 	}
 
 	.state {

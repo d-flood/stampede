@@ -52,6 +52,7 @@
 	import { arrange, neighbor, type Side, type Split } from '#lib/split.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import FloatingBar from '#lib/ui/FloatingBar.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import Tab, { marks } from '#lib/ui/Tab.svelte';
@@ -1607,12 +1608,12 @@
 {/if}
 
 {#if device.connection === 'reconnecting'}
-	<div class="reconnecting" role="status"><WifiSlash /> Reconnecting…</div>
+	<FloatingBar edge="top" tone="waiting" passive role="status"><span class="reconnecting"><WifiSlash /> Reconnecting…</span></FloatingBar>
 {:else if updateAvailable}
-	<div class="update" role="status">
+	<FloatingBar edge="top" tone="waiting" role="status">
 		<span>{dirty ? 'Save your edits to reload the update.' : 'Stampede updated.'}</span>
 		<Button disabled={dirty} onclick={async () => { await putLayout(deviceLayout); location.reload(); }}>Reload</Button>
-	</div>
+	</FloatingBar>
 {/if}
 
 <Leader
@@ -2079,28 +2080,11 @@
 		font: 500 1.875rem/1.15 var(--font-chat);
 	}
 
-	.reconnecting,
-	.update {
-		position: fixed;
-		top: var(--space-2);
-		left: 50%;
-		z-index: 55;
+	.reconnecting {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-		padding: var(--space-2) var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: color-mix(in srgb, var(--status-waiting) 16%, var(--color-bg));
-		box-shadow: var(--shadow-float);
-		translate: -50%;
-		max-width: calc(100vw - 2 * var(--space-2));
-		box-sizing: border-box;
-	}
-
-	.reconnecting {
 		white-space: nowrap;
-		pointer-events: none;
 	}
 
 	.reconnecting :global(svg) {

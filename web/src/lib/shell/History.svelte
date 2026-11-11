@@ -5,7 +5,9 @@
 	import { restoreMessage } from '#lib/shell/Changes.svelte';
 	import CopyMode from '#lib/shell/CopyMode.svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import Caret from '#lib/ui/Caret.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import Eyebrow from '#lib/ui/Eyebrow.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import TextArea from '#lib/ui/TextArea.svelte';
@@ -14,7 +16,6 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import ArrowDown from '~icons/ph/arrow-down';
 	import ArrowUUpLeft from '~icons/ph/arrow-u-up-left';
-	import CaretRight from '~icons/ph/caret-right';
 	import Copy from '~icons/ph/copy';
 	import DotsThree from '~icons/ph/dots-three';
 	import GitMerge from '~icons/ph/git-merge';
@@ -175,8 +176,8 @@
 <span class="anchor" bind:this={anchor}></span>
 <div class="row heading" class:pinned {@attach track}>
 	<button class="entry" aria-expanded={!collapsed} title={pinned ? 'Jump to History' : undefined} onclick={activate}>
-		<span class="caret" class:open={!collapsed}><CaretRight /></span>
-		<span class="title">History</span>
+		<Caret />
+		<span class="title"><Eyebrow>History</Eyebrow></span>
 		{#if pinned}<span class="jump">Jump<ArrowDown /></span>{/if}
 	</button>
 </div>
@@ -208,7 +209,7 @@
 										if (event.currentTarget.dataset.state !== 'open') toggle(commit.sha);
 									}}
 								>
-									<span class="caret" class:open><CaretRight /></span>
+									<Caret />
 									<span class="text">
 										<span class="subject">{commit.subject}</span>
 										<span class="meta"><span class="sha">{commit.short}</span> · {commit.author} · {commit.date}</span>
@@ -333,10 +334,6 @@
 
 	.title {
 		flex: 1;
-		font-size: var(--font-size-sm);
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
 	}
 
 	.jump {
@@ -349,7 +346,7 @@
 	}
 
 	.list {
-		padding-bottom: var(--space-3);
+		padding: 0 var(--space-2) var(--space-3);
 	}
 
 	ul {
@@ -377,8 +374,8 @@
 	}
 
 	button:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-		outline-offset: calc(-1 * var(--border-width));
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-inset);
 	}
 
 	.row {
@@ -388,6 +385,11 @@
 
 	.row:hover {
 		background: var(--hover);
+	}
+
+	li > .row,
+	.file {
+		border-radius: var(--radius-md);
 	}
 
 	.row button:hover {
@@ -412,17 +414,7 @@
 		padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
 	}
 
-	.caret {
-		display: inline-flex;
-		flex: none;
-		width: 1em;
-		color: var(--muted-fg);
-		transition: transform var(--dur-fast);
-	}
 
-	.caret.open {
-		transform: rotate(90deg);
-	}
 
 	.text {
 		display: flex;

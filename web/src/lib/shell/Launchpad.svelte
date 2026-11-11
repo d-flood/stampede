@@ -3,6 +3,10 @@
 	import { form } from '#lib/form.ts';
 	import { openSettings } from '#lib/shell/Settings.svelte';
 	import type { TabItems } from '#lib/shell/new-tab.ts';
+	import Button from '#lib/ui/Button.svelte';
+	import Card from '#lib/ui/Card.svelte';
+	import Kbd from '#lib/ui/Kbd.svelte';
+	import ListItem from '#lib/ui/ListItem.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import { untrack } from 'svelte';
 	import Plus from '~icons/ph/plus';
@@ -31,22 +35,26 @@
 		<p class="where">{where}</p>
 		<div class="rigs">
 			{#each items.rigs as { label, icon: Icon, model, hint, onselect }, index (label)}
-				<button class="rig" class:primary={index === 0} aria-labelledby="{id}-rig-{index}" aria-describedby="{id}-model-{index}" onclick={onselect}>
-					{#if Icon}<span class="logo"><Icon /></span>{/if}
-					<span class="meta">
-						<span class="label" id="{id}-rig-{index}">{label}</span>
-						<span class="model" id="{id}-model-{index}">{model}</span>
+				<Card primary={index === 0} aria-labelledby="{id}-rig-{index}" aria-describedby="{id}-model-{index}" onclick={onselect}>
+					<span class="rig">
+						{#if Icon}<span class="logo"><Icon /></span>{/if}
+						<span class="meta">
+							<span class="label" id="{id}-rig-{index}">{label}</span>
+							<span class="model" id="{id}-model-{index}">{model}</span>
+						</span>
+						{#if hint && !phone}<Kbd aria-hidden="true">{hint}</Kbd>{/if}
 					</span>
-					{#if hint && !phone}<kbd aria-hidden="true">{hint}</kbd>{/if}
-				</button>
+				</Card>
 			{:else}
-				<button class="rig primary" aria-labelledby="{id}-create" aria-describedby="{id}-create-help" onclick={() => openSettings('rigs')}>
-					<span class="logo"><Plus /></span>
-					<span class="meta">
-						<span class="label" id="{id}-create">Create a Rig</span>
-						<span class="model" id="{id}-create-help">Pick an Agent, model and mode</span>
+				<Card primary aria-labelledby="{id}-create" aria-describedby="{id}-create-help" onclick={() => openSettings('rigs')}>
+					<span class="rig">
+						<span class="logo"><Plus /></span>
+						<span class="meta">
+							<span class="label" id="{id}-create">Create a Rig</span>
+							<span class="model" id="{id}-create-help">Pick an Agent, model and mode</span>
+						</span>
 					</span>
-				</button>
+				</Card>
 			{/each}
 		</div>
 		<div class="tools">
@@ -54,7 +62,7 @@
 				<button class="tool" onclick={onselect}>
 					{#if Icon}<Icon />{/if}
 					<span class="label">{label}</span>
-					{#if hint && !phone}<kbd aria-hidden="true">{hint}</kbd>{/if}
+					{#if hint && !phone}<Kbd aria-hidden="true">{hint}</Kbd>{/if}
 				</button>
 			{/each}
 		</div>
@@ -62,14 +70,16 @@
 			<div class="recent">
 				<h3>Recent sessions</h3>
 				{#if reading}<Loading label="Reading sessions…" />{/if}
-				{#each items.sessions as { label, icon: Icon, hint, onselect }, index (index)}
-					<button class="session" onclick={onselect}>
-						{#if Icon}<Icon />{/if}
-						<span class="label">{label}</span>
-						{#if hint}<span class="ago" aria-hidden="true">{hint}</span>{/if}
-					</button>
-				{/each}
-				{#if items.search}<button class="search" onclick={items.search.onselect}>{items.search.label}</button>{/if}
+				<div class="sessions">
+					{#each items.sessions as { label, icon: Icon, hint, onselect }, index (index)}
+						<ListItem element="button" size="md" onclick={onselect}>
+							{#if Icon}<Icon />{/if}
+							<span class="title">{label}</span>
+							{#if hint}<span class="ago" aria-hidden="true">{hint}</span>{/if}
+						</ListItem>
+					{/each}
+				</div>
+				{#if items.search}<Button variant="link" onclick={items.search.onselect}>{items.search.label}</Button>{/if}
 			</div>
 		{/if}
 	</div>
@@ -126,20 +136,7 @@
 		flex-direction: column;
 		align-items: flex-start;
 		gap: var(--space-3);
-		padding: var(--space-4);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--surface-1);
-	}
-
-	.rig:hover {
-		border-color: var(--border-strong);
-		background: var(--hover);
-	}
-
-	.rig.primary {
-		border-color: var(--accent);
-		box-shadow: inset 0 0 0 1px var(--accent);
+		height: 100%;
 	}
 
 	.logo {
@@ -164,18 +161,8 @@
 		font-size: var(--font-size-sm);
 	}
 
-	kbd {
-		padding: 1px var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-bottom-width: 2px;
-		border-radius: var(--radius-sm);
-		background: var(--color-bg);
-		color: var(--muted-fg);
-		font: 0.75rem var(--font-mono);
-		white-space: nowrap;
-	}
 
-	.rig kbd {
+	.rig > :global(kbd) {
 		margin-top: auto;
 	}
 
@@ -196,8 +183,7 @@
 		border-radius: var(--radius-md);
 	}
 
-	.tool:hover,
-	.session:hover {
+	.tool:hover {
 		background: var(--hover);
 	}
 
@@ -211,18 +197,11 @@
 		font: 500 var(--font-size-sm) var(--font-ui);
 	}
 
-	.session {
-		display: flex;
-		align-items: center;
-		gap: var(--space-3);
-		width: calc(100% + 2 * var(--space-2));
-		min-height: 2.375rem;
-		margin-left: calc(-1 * var(--space-2));
-		padding: 0 var(--space-2);
-		border-radius: var(--radius-md);
+	.sessions {
+		margin: 0 calc(-1 * var(--space-3));
 	}
 
-	.session .label {
+	.title {
 		flex: 1;
 		min-width: 0;
 		overflow: hidden;
@@ -230,19 +209,9 @@
 		white-space: nowrap;
 	}
 
-	.search {
-		min-height: var(--target-min);
-		padding: 0;
-		color: var(--accent);
-	}
-
-	.search:hover {
-		text-decoration: underline;
-	}
-
 	button:focus-visible {
-		outline: 2px solid var(--accent);
-		outline-offset: 2px;
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	.phone {
@@ -262,8 +231,6 @@
 	.phone .rig {
 		flex-direction: row;
 		align-items: center;
-		min-height: 3.5rem;
-		padding: 0 var(--space-4);
 	}
 
 	.phone .tools {
@@ -277,8 +244,4 @@
 		padding: 0 var(--space-2);
 	}
 
-	.phone .session,
-	.phone .search {
-		min-height: 48px;
-	}
 </style>

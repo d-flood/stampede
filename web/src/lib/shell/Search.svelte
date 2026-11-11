@@ -6,7 +6,6 @@
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
-	import Toggle from '#lib/ui/Toggle.svelte';
 	import { onMount } from 'svelte';
 	import Eye from '~icons/ph/eye';
 	import EyeSlash from '~icons/ph/eye-slash';
@@ -137,7 +136,7 @@
 </script>
 
 {#snippet eye()}
-	<IconButton type="button" label={includeIgnored ? 'Hide ignored files' : 'Show ignored files'} aria-pressed={includeIgnored} onclick={flipIgnored}>
+	<IconButton type="button" label={includeIgnored ? 'Hide ignored files' : 'Show ignored files'} pressed={includeIgnored} onclick={flipIgnored}>
 		{#if includeIgnored}<Eye />{:else}<EyeSlash />{/if}
 	</IconButton>
 {/snippet}
@@ -169,10 +168,10 @@
 	</div>
 	{#if query}
 		<div class="options">
-			<Toggle label="Match case" pressed={toggles.caseSensitive} onclick={() => flip('caseSensitive')}>Aa</Toggle>
-			<Toggle label="Match whole word" pressed={toggles.wholeWord} onclick={() => flip('wholeWord')}><u>ab</u></Toggle>
-			<Toggle label="Use regular expression" pressed={toggles.regex} onclick={() => flip('regex')}>.*</Toggle>
-			<Toggle label="Include and exclude files" pressed={filtering} disabled={!!include || !!exclude} onclick={() => (filtering = !filtering)}><SlidersHorizontal /></Toggle>
+			<IconButton type="button" label="Match case" title="Match case" pressed={toggles.caseSensitive} onclick={() => flip('caseSensitive')}>Aa</IconButton>
+			<IconButton type="button" label="Match whole word" title="Match whole word" pressed={toggles.wholeWord} onclick={() => flip('wholeWord')}><u>ab</u></IconButton>
+			<IconButton type="button" label="Use regular expression" title="Use regular expression" pressed={toggles.regex} onclick={() => flip('regex')}>.*</IconButton>
+			<IconButton type="button" label="Include and exclude files" title="Include and exclude files" pressed={filtering} disabled={!!include || !!exclude} onclick={() => (filtering = !filtering)}><SlidersHorizontal /></IconButton>
 			{@render eye()}
 			{#if done?.error}
 				<p class="error" role="alert">{done.error}</p>
@@ -304,7 +303,7 @@
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
-		padding-bottom: var(--space-3);
+		padding: 0 var(--space-2) var(--space-3);
 	}
 
 	.more {
@@ -349,6 +348,7 @@
 		min-height: var(--target-min);
 		padding: 0 var(--space-3) 0 var(--space-6);
 		border: none;
+		border-radius: var(--radius-md);
 		background: none;
 		color: var(--color-fg);
 		font: inherit;
@@ -362,8 +362,8 @@
 	}
 
 	.results button:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-		outline-offset: calc(-1 * var(--border-width));
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-inset);
 	}
 
 	.line {

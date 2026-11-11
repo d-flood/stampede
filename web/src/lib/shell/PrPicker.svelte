@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { openReview, prs, type Pr, type PrReview } from '#lib/pr-reviews.ts';
+	import ListItem from '#lib/ui/ListItem.svelte';
+	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command, computeCommandScore } from 'bits-ui';
@@ -61,29 +63,31 @@
 					{#if direct !== undefined}
 						<Command.Item value="direct" disabled={busy} onSelect={() => choose(direct)}>
 							{#snippet child({ props })}
-								<div {...props} class="item">
+								<ListItem {...props}>
 									<GitPullRequest aria-hidden="true" />
 									<span class="title">Open {number === undefined ? direct : `#${number}`}</span>
-								</div>
+								</ListItem>
 							{/snippet}
 						</Command.Item>
 					{/if}
 					{#each shown as pr (pr.number)}
 						<Command.Item value={String(pr.number)} disabled={busy} onSelect={() => choose(pr.number)}>
 							{#snippet child({ props })}
-								<div {...props} class="item pr">
-									<span class="number">#{pr.number}</span>
-									<span class="title">{pr.title}</span>
-									<span class="meta">
-										{pr.author}{#if pr.isDraft}<span> · draft</span>{/if}
-										{#if pr.requested}<span class="requested">Review requested</span>{/if}
+								<ListItem {...props}>
+									<span class="pr">
+										<span class="number">#{pr.number}</span>
+										<span class="title">{pr.title}</span>
+										<span class="meta">
+											{pr.author}{#if pr.isDraft}<span> · draft</span>{/if}
+											{#if pr.requested}<span class="requested">Review requested</span>{/if}
+										</span>
 									</span>
-								</div>
+								</ListItem>
 							{/snippet}
 						</Command.Item>
 					{/each}
 					{#if listed && !shown.length && direct === undefined}
-						<p class="empty">{query ? 'No matching pull request' : 'No open pull requests'}</p>
+						<ListLabel element="p">{query ? 'No matching pull request' : 'No open pull requests'}</ListLabel>
 					{/if}
 				</Command.Viewport>
 			</div>
@@ -110,34 +114,12 @@
 		overflow-y: auto;
 	}
 
-	.item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		min-height: var(--target-min);
-		padding: var(--space-1) var(--space-2);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-	}
-
-	.item.pr {
+	.pr {
 		display: grid;
+		flex: 1;
 		grid-template-columns: auto 1fr;
 		column-gap: var(--space-2);
-		row-gap: 0;
-	}
-
-	.item[data-selected] {
-		background: var(--hover);
-	}
-
-	.item[data-disabled] {
-		cursor: default;
-		opacity: 0.6;
-	}
-
-	.item :global(svg) {
-		flex: none;
+		min-width: 0;
 	}
 
 	.number {
@@ -170,9 +152,4 @@
 		color: var(--color-fg);
 	}
 
-	.empty {
-		margin: 0;
-		padding: var(--space-2);
-		color: var(--muted-fg);
-	}
 </style>

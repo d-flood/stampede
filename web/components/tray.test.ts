@@ -39,7 +39,7 @@ test('the Tray stays one row with three Subagent dots, +N, and a visible waiting
 	expect(subagents.element().querySelectorAll('.dot')).toHaveLength(3);
 	await expect.element(subagents.getByText('+3', { exact: true })).toBeVisible();
 	const waiting = subagents.getByRole('button', { name: '1 waiting', exact: true });
-	await expect.element(waiting).toHaveStyle({ color: token('--status-waiting') });
+	await expect.element(waiting.getByText('1 waiting', { exact: true })).toHaveStyle({ color: token('--status-waiting') });
 	await expect.element(tray.getByRole('region', { name: 'Shells' }).getByRole('button', { name: '1 shell' })).toBeVisible();
 	await expect.element(tray.getByRole('region', { name: 'Canvases' }).getByRole('button', { name: /report/ })).toBeVisible();
 	expect(oneRow(tray.element())).toBe(true);
@@ -60,7 +60,7 @@ test('five Subagents show three dots then +2, and the chip opens them grouped Ru
 	expect(oneRow(view.getByRole('region', { name: 'Tray' }).element())).toBe(true);
 	await chip.click();
 	const phone = document.body.classList.contains('phone');
-	await expect.poll(() => [...document.querySelectorAll('[role="menu"] .heading, [role="dialog"] h3')].map((heading) => heading.textContent!.trim())).toEqual(['Running', 'Finished']);
+	await expect.poll(() => [...document.querySelectorAll('[role="menu"] [role="group"] > :first-child, [role="dialog"] h3')].map((heading) => heading.textContent!.trim())).toEqual(['Running', 'Finished']);
 	await (phone ? page.getByRole('dialog').getByRole('button', { name: /^Task d/ }) : page.getByRole('menuitem', { name: /^Task d/ })).click();
 	expect(onopen).toHaveBeenCalledWith(['d']);
 });

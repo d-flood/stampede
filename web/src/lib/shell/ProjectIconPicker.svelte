@@ -3,6 +3,7 @@
 	import { image, list, type Entry } from '#lib/files.svelte.ts';
 	import { monogram } from '#lib/projects.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Card from '#lib/ui/Card.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import Folder from '~icons/ph/folder';
 
@@ -133,16 +134,18 @@
 			</div>
 			<div class="files">
 				{#each entries as entry (entry.path)}
-					<button class="file" disabled={busy} title={entry.path} onclick={() => {
+					<Card disabled={busy} title={entry.path} onclick={() => {
 						if (entry.dir) browse(entry.path);
 						else run(async () => {
 							const result = await response(await fetch(`/api/projects/${project.id}/image?${new URLSearchParams({ path: entry.path })}`));
 							await select(await result.blob());
 						});
 					}}>
-						{#if entry.dir}<Folder />{:else}<img src="/api/projects/{project.id}/image?{new URLSearchParams({ path: entry.path })}" alt="" loading="lazy" />{/if}
-						<span>{entry.name}</span>
-					</button>
+						<span class="file">
+							{#if entry.dir}<Folder />{:else}<img src="/api/projects/{project.id}/image?{new URLSearchParams({ path: entry.path })}" alt="" loading="lazy" />{/if}
+							<span>{entry.name}</span>
+						</span>
+					</Card>
 				{/each}
 				{#if !entries.length}<p>No images or folders here.</p>{/if}
 			</div>
@@ -181,16 +184,7 @@
 		align-items: center;
 		gap: var(--space-1);
 		min-width: 0;
-		padding: var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-2);
-		color: var(--color-fg);
-		font: inherit;
-		cursor: pointer;
 	}
-	.file:hover { background: var(--hover); }
-	.file:focus-visible { outline: var(--border-width) solid var(--accent); }
 	.file span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); }
 	.file img, .file :global(svg) { width: 3rem; height: 3rem; object-fit: contain; }
 	p { margin: 0; color: var(--muted-fg); }

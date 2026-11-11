@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { leader, rigs, type Rig } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import FloatingBar from '#lib/ui/FloatingBar.svelte';
+	import Kbd from '#lib/ui/Kbd.svelte';
 
 	type Props = { ontab(index: number): void; onnew(): void; onterminal(): void; onfiles(): void; onsearch(): void; onclose(): void; onpalette(): void; onrig(rig: Rig): void; onsplit(): void };
 
@@ -70,61 +72,27 @@
 <svelte:window onkeydowncapture={keydown} onblur={() => (pending = undefined)} />
 
 {#if pending}
-	<div class="hint" role="status">
+	<FloatingBar role="status">
 		{#if pending === 'leader'}
-			<span><kbd>1</kbd>–<kbd>9</kbd> Tab</span>
-			<span><kbd>p</kbd> Palette</span>
-			{#if form() === 'desktop'}<span><kbd>s</kbd> Split</span>{/if}
-			{#if shortcuts.length}<span><kbd>r</kbd> Rig</span>{/if}
+			<span><Kbd>1</Kbd>–<Kbd>9</Kbd> Tab</span>
+			<span><Kbd>p</Kbd> Palette</span>
+			{#if form() === 'desktop'}<span><Kbd>s</Kbd> Split</span>{/if}
+			{#if shortcuts.length}<span><Kbd>r</Kbd> Rig</span>{/if}
 		{:else}
 			{#each shortcuts as rig (rig.name)}
-				<span><kbd>{rig.shortcut}</kbd> {rig.name}</span>
+				<span><Kbd>{rig.shortcut}</Kbd> {rig.name}</span>
 			{/each}
 		{/if}
-		<span><kbd>Esc</kbd> Cancel</span>
-	</div>
+		<span><Kbd>Esc</Kbd> Cancel</span>
+	</FloatingBar>
 {/if}
 
 <style>
-	.hint {
-		position: fixed;
-		bottom: var(--space-6);
-		left: 50%;
-		z-index: 60;
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: center;
-		gap: var(--space-2) var(--space-4);
-		box-sizing: border-box;
-		max-width: calc(100vw - 2 * var(--space-4));
-		padding: var(--space-2) var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-2);
-		box-shadow: var(--shadow-float);
-		color: var(--muted-fg);
-		font-family: var(--font-ui);
-		font-size: var(--font-size-md);
-		transform: translateX(-50%);
-	}
-
 	span {
 		display: inline-flex;
 		align-items: center;
 		gap: var(--space-1);
+		color: var(--muted-fg);
 		white-space: nowrap;
-	}
-
-	kbd {
-		min-width: 1.4em;
-		padding: 0 var(--space-1);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg);
-		color: var(--color-fg);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
-		line-height: 1.6;
-		text-align: center;
 	}
 </style>

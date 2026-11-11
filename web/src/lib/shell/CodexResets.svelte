@@ -18,6 +18,7 @@
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 
 	let { credits, now, label }: { credits: ResetCredits; now: number; label?: string } = $props();
+	const size = $derived(label ? undefined : ('sm' as const));
 	let confirming = $state(false);
 	let busy = $state(false);
 	let error = $state('');
@@ -65,13 +66,13 @@
 			</Tooltip>
 		{/if}
 	</div>
-	<Button disabled={!credits.availableCount || busy || confirming} onclick={() => { confirming = true; message = ''; }}>Use a reset</Button>
+	<Button {size} disabled={!credits.availableCount || busy || confirming} onclick={() => { confirming = true; message = ''; }}>Use a reset</Button>
 	{/if}
 	{#if confirming}
 		<div class="confirmation">
 			<span>Use 1 reset?</span>
-			<Button variant="ghost" disabled={busy} onclick={() => { confirming = false; error = ''; }}>Cancel</Button>
-			<Button variant="primary" disabled={busy} onclick={redeem}>{busy ? 'Using…' : attempt ? 'Retry' : 'Confirm'}</Button>
+			<Button variant="ghost" {size} disabled={busy} onclick={() => { confirming = false; error = ''; }}>Cancel</Button>
+			<Button variant="primary" {size} disabled={busy} onclick={redeem}>{busy ? 'Using…' : attempt ? 'Retry' : 'Confirm'}</Button>
 		</div>
 	{/if}
 	{#if error}<div class="error" role="alert">{error}</div>{/if}
@@ -106,11 +107,6 @@
 	.summary > span:first-child,
 	time {
 		white-space: nowrap;
-	}
-
-	.resets:not(.action) :global(button) {
-		padding: 0 var(--space-2);
-		font-size: var(--font-size-sm);
 	}
 
 	.confirmation {

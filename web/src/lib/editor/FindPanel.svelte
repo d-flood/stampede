@@ -2,7 +2,6 @@
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
-	import Toggle from '#lib/ui/Toggle.svelte';
 	import {
 		closeSearchPanel,
 		findNext,
@@ -77,9 +76,9 @@
 		/>
 		<div class="tools">
 			<div class="group">
-				<Toggle label="Match case" pressed={spec.caseSensitive} onclick={() => flip('caseSensitive')}>Aa</Toggle>
-				<Toggle label="Match whole word" pressed={spec.wholeWord} onclick={() => flip('wholeWord')}><u>ab</u></Toggle>
-				<Toggle label="Use regular expression" pressed={spec.regexp} onclick={() => flip('regexp')}>.*</Toggle>
+				<IconButton label="Match case" title="Match case" pressed={spec.caseSensitive} onclick={() => flip('caseSensitive')}>Aa</IconButton>
+				<IconButton label="Match whole word" title="Match whole word" pressed={spec.wholeWord} onclick={() => flip('wholeWord')}><u>ab</u></IconButton>
+				<IconButton label="Use regular expression" title="Use regular expression" pressed={spec.regexp} onclick={() => flip('regexp')}>.*</IconButton>
 			</div>
 			<div class="group">
 				<IconButton label="Previous match" onclick={() => findPrevious(view)}><ArrowUp /></IconButton>

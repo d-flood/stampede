@@ -12,16 +12,18 @@
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Caret from '#lib/ui/Caret.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import ListItem from '#lib/ui/ListItem.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import NavList from '#lib/ui/NavList.svelte';
+	import Popover from '#lib/ui/Popover.svelte';
 	import Select from '#lib/ui/Select.svelte';
+	import SelectTrigger from '#lib/ui/SelectTrigger.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
-	import { Popover } from 'bits-ui';
 	import { onMount, type Component } from 'svelte';
-	import CaretDown from '~icons/ph/caret-down';
 	import CaretLeft from '~icons/ph/caret-left';
-	import CaretRight from '~icons/ph/caret-right';
 	import FileText from '~icons/ph/file-text';
 	import GitBranch from '~icons/ph/git-branch';
 	import Minus from '~icons/ph/minus';
@@ -257,7 +259,7 @@
 	<header class="top">
 		<IconButton label="Back to {open.slug}" onclick={() => show()}><CaretLeft /></IconButton>
 		<h2>{title}</h2>
-		{#if action}<button class="link" onclick={action.onclick}>{action.label}</button>{/if}
+		{#if action}<Button variant="link" onclick={action.onclick}>{action.label}</Button>{/if}
 	</header>
 {/snippet}
 
@@ -318,14 +320,13 @@
 	</span>
 	<span class="setting">
 		<span aria-hidden="true">Reviewers</span>
-		<Menu items={choices.map((choice) => ({ label: choice.name, checked: reviewers.includes(choice.name), keepOpen: true, onselect: () => toggleReviewer(choice.name) }))}>
-			{#snippet trigger(props)}
-				<button class="picker" {...props} disabled={reviewing || !choices.length} aria-label="Reviewers: {reviewers.join(', ') || 'none'}">
-					<span>{reviewers.join(', ') || 'None'}</span>
-					<CaretDown />
-				</button>
-			{/snippet}
-		</Menu>
+		<span class="field">
+			<Menu items={choices.map((choice) => ({ label: choice.name, checked: reviewers.includes(choice.name), keepOpen: true, onselect: () => toggleReviewer(choice.name) }))}>
+				{#snippet trigger(props)}
+					<SelectTrigger {...props} value={reviewers.join(', ') || 'None'} disabled={reviewing || !choices.length} aria-label="Reviewers: {reviewers.join(', ') || 'none'}" />
+				{/snippet}
+			</Menu>
+		</span>
 	</span>
 	{#if reviewers.length}
 		<label class="setting">
@@ -360,23 +361,12 @@
 	<section class="run" aria-label="Run">
 		<div class="controls">
 			{#if live}{@render liveLabel(live)}{/if}
-			<Popover.Root bind:open={open.showRun}>
-				<Popover.Trigger>
-					{#snippet child({ props })}
-						<button class="picker" {...props} aria-label="Run settings, {summary}">
-							<span>{summary}</span>
-							<CaretDown />
-						</button>
-					{/snippet}
-				</Popover.Trigger>
-				<Popover.Content sideOffset={6} align="end" collisionPadding={8}>
-					{#snippet child({ wrapperProps, props })}
-						<div {...wrapperProps}>
-							<div {...props} class="popover" role="dialog" aria-label="Run settings">{@render settings(epic)}</div>
-						</div>
-					{/snippet}
-				</Popover.Content>
-			</Popover.Root>
+			<Popover bind:open={open.showRun} label="Run settings" align="end" portal={false}>
+				{#snippet trigger(props)}
+					<span class="run-trigger"><SelectTrigger {...props} value={summary} aria-label="Run settings, {summary}" /></span>
+				{/snippet}
+				<div class="run-settings">{@render settings(epic)}</div>
+			</Popover>
 			{#if live}
 				{#if live.paused}
 					<IconButton label="Resume" onclick={() => run({ kind: 'run.resumed' })}><Play /></IconButton>
@@ -487,7 +477,7 @@
 						<span class="rig">{reviewer.rig}</span>
 						<span class="state" class:flagged={!!reviewer.failed}>{reviewerState(reviewer)}</span>
 						{#if reviewer.chat && chats.some((chat) => chat.id === reviewer.chat)}
-							<button class="link" onclick={() => reviewer.chat && onchat(reviewer.chat)}>Open</button>
+							<Button variant="link" size="sm" onclick={() => reviewer.chat && onchat(reviewer.chat)}>Open</Button>
 						{/if}
 						{#if reviewer.failed}<p class="why">{reviewer.failed}</p>{/if}
 					</li>
@@ -499,7 +489,7 @@
 						<span class="rig">{remediator.rig}</span>
 						<span class="state" class:flagged={!!remediator.failed}>{remediatorState(remediator)}</span>
 						{#if remediator.chat && chats.some((chat) => chat.id === remediator.chat)}
-							<button class="link" onclick={() => remediator.chat && onchat(remediator.chat)}>Open</button>
+							<Button variant="link" size="sm" onclick={() => remediator.chat && onchat(remediator.chat)}>Open</Button>
 						{/if}
 						{#if remediator.failed}<p class="why">{remediator.failed}</p>{/if}
 					</li>
@@ -553,45 +543,47 @@
 {/snippet}
 
 {#snippet pageItem(target: Page, Icon: Component, name: string, meta: string, mono = false)}
-	<button class="item" aria-current={page === target ? 'page' : undefined} onclick={() => show(target)}>
-		<Icon />
-		<span class="title">{name}</span>
-		<span class="meta" class:mono>{meta}</span>
-	</button>
+	<ListItem element="button" size="md" aria-current={page === target ? 'page' : undefined} onclick={() => show(target)}>
+		<span class="icon"><Icon /></span>
+		<span class="row-title">{name}</span>
+		<span class="row-meta" class:mono>{meta}</span>
+	</ListItem>
 {/snippet}
 
 {#snippet row(ticket: Ticket)}
 	{@const Mark = marks[ticket.status]}
 	{@const chat = chatOf(ticket)}
 	{@const after = pending(ticket)}
-	<button class="item" class:resolved={resolved(ticket.status)} aria-current={!phone && open.ticket === ticket.number ? 'true' : undefined} onclick={() => select(ticket.number)}>
+	<ListItem element="button" size="md" aria-current={!phone && open.ticket === ticket.number ? 'true' : undefined} onclick={() => select(ticket.number)}>
 		<span class="mark" style:color={tones[ticket.status]}><Mark /></span>
 		<span class="number">{ticket.number}</span>
-		<span class="title">{ticket.title}</span>
+		<span class="row-title" class:resolved={resolved(ticket.status)}>{ticket.title}</span>
 		<span class="label" class:shown={ticket.status === 'merging'} style:color={tones[ticket.status]}>{label(ticket.status)}</span>
 		{#if ticket.attention}
-			<span class="meta flagged">needs attention</span>
+			<span class="row-meta flagged">needs attention</span>
 		{:else if ticket.status === 'in-progress'}
-			<span class="meta">
+			<span class="row-meta">
 				{ticket.claim?.rig}{#if ticket.claim?.edited}{' '}· edited{/if}
 				<span class="dot" style:background={chat ? `var(--status-${chat.status})` : 'var(--muted-fg)'} title={ticket.releasing ? 'stopping' : (chat?.status ?? 'closed')}></span>
 			</span>
 		{:else if ticket.status === 'not-started' && (after.length || ticket.rig)}
-			<span class="meta">{after.length ? `after ${after.join(', ')}` : ticket.rig}</span>
+			<span class="row-meta">{after.length ? `after ${after.join(', ')}` : ticket.rig}</span>
 		{/if}
-	</button>
+	</ListItem>
 {/snippet}
 
 {#snippet list(epic: Epic)}
 	{@const setupText = epic.setup === null ? 'Not set yet' : epic.setup || 'Nothing to run'}
-	<nav class="pages" aria-label="Epic">
-		{@render pageItem('brief', FileText, 'Brief', `${lines} ${lines === 1 ? 'line' : 'lines'}`)}
-		{@render pageItem('setup', TerminalWindow, phone ? 'Setup' : 'Setup Command', setupText, !!epic.setup)}
-		{@render pageItem('worktree', GitBranch, phone ? 'Worktree' : 'Integration Worktree', epic.landed ? 'Landed' : epic.integration ? `${merges} ${merges === 1 ? 'merge' : 'merges'}` : 'Not cut yet')}
-		{#if review || findings.length}
-			{@render pageItem('review', SealCheck, 'Review', review ? reviewState(review, findings) : `${findings.length} ${findings.length === 1 ? 'Finding' : 'Findings'}`)}
-		{/if}
-	</nav>
+	<div class="pages">
+		<NavList aria-label="Epic">
+			{@render pageItem('brief', FileText, 'Brief', `${lines} ${lines === 1 ? 'line' : 'lines'}`)}
+			{@render pageItem('setup', TerminalWindow, phone ? 'Setup' : 'Setup Command', setupText, !!epic.setup)}
+			{@render pageItem('worktree', GitBranch, phone ? 'Worktree' : 'Integration Worktree', epic.landed ? 'Landed' : epic.integration ? `${merges} ${merges === 1 ? 'merge' : 'merges'}` : 'Not cut yet')}
+			{#if review || findings.length}
+				{@render pageItem('review', SealCheck, 'Review', review ? reviewState(review, findings) : `${findings.length} ${findings.length === 1 ? 'Finding' : 'Findings'}`)}
+			{/if}
+		</NavList>
+	</div>
 	<section aria-label="Tickets" class="tickets">
 		{#each groups as group (group.name)}
 			{#if group.tickets.length}
@@ -601,7 +593,7 @@
 		{/each}
 		{#if settled.length}
 			<button class="group fold" aria-expanded={open.showResolved} onclick={() => (open.showResolved = !open.showResolved)}>
-				<CaretRight />Resolved<span class="count">{settled.length}</span>
+				<Caret />Resolved<span class="count">{settled.length}</span>
 			</button>
 			{#if open.showResolved}
 				{#each settled as ticket (ticket.number)}{@render row(ticket)}{/each}
@@ -786,7 +778,7 @@
 		flex: none;
 		align-items: center;
 		gap: var(--space-1);
-		padding: var(--space-1);
+		padding: var(--space-1) var(--space-4) var(--space-1) var(--space-1);
 		border-bottom: var(--border-width) solid var(--border);
 	}
 
@@ -804,12 +796,6 @@
 	header.editing {
 		gap: var(--space-2);
 		padding-left: var(--space-3);
-	}
-
-	header.top .link {
-		align-self: stretch;
-		padding: 0 var(--space-3);
-		font-size: var(--font-size-md);
 	}
 
 	.error {
@@ -965,20 +951,17 @@
 		color: var(--ansi-1);
 	}
 
-	.popover {
-		z-index: 50;
+	.run-trigger,
+	.field {
+		display: flex;
+		min-width: 0;
+		max-width: 20rem;
+	}
+
+	.run-settings {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
-		padding: var(--space-4);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--surface-2);
-		box-shadow: var(--shadow-float);
-		color: var(--color-fg);
-		font-family: var(--font-ui);
-		font-size: var(--font-size-md);
-		outline: none;
 	}
 
 	.setting {
@@ -993,8 +976,8 @@
 		min-width: 7rem;
 	}
 
-	.popover .setting > :global(select),
-	.popover .picker {
+	.run-settings .setting > :global(select),
+	.run-settings .field {
 		width: 12rem;
 		max-width: none;
 		justify-content: space-between;
@@ -1007,41 +990,10 @@
 		text-align: center;
 	}
 
-	.picker {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		max-width: 20rem;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-1);
-		color: var(--color-fg);
-		font: inherit;
-		font-size: var(--font-size-sm);
-		cursor: pointer;
-	}
 
-	.picker span {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
 
-	.picker :global(svg) {
-		flex: none;
-		color: var(--muted-fg);
-	}
 
-	.picker:disabled {
-		color: var(--muted-fg);
-		cursor: default;
-	}
 
-	.picker:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-	}
 
 	.split {
 		display: grid;
@@ -1068,11 +1020,10 @@
 		container-type: inline-size;
 	}
 
-	.pages,
 	.tickets {
 		display: flex;
 		flex-direction: column;
-		gap: 1px;
+		gap: var(--space-1);
 	}
 
 	.pages {
@@ -1081,39 +1032,14 @@
 		border-bottom: var(--border-width) solid var(--border);
 	}
 
-	.item {
-		position: relative;
-		display: flex;
-		align-items: center;
-		gap: var(--space-3);
-		width: 100%;
-		min-height: calc(var(--target-min) + var(--space-2));
-		padding: 0 var(--space-3);
-		border: none;
-		border-radius: var(--radius-md);
-		background: none;
-		color: var(--color-fg);
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-	}
-
-	.item:hover {
-		background: var(--hover);
-	}
-
-	.item[aria-current] {
-		background: var(--surface-2);
-	}
-
-	.item > :global(svg),
+	.icon,
 	.mark {
 		display: flex;
 		flex: none;
 		color: var(--muted-fg);
 	}
 
-	.item .title {
+	.row-title {
 		flex: 1;
 		min-width: 0;
 		overflow: hidden;
@@ -1121,7 +1047,7 @@
 		white-space: nowrap;
 	}
 
-	.item.resolved {
+	.row-title.resolved {
 		color: var(--muted-fg);
 	}
 
@@ -1136,8 +1062,9 @@
 		color: var(--muted-fg);
 	}
 
-	.item .meta {
+	.row-meta {
 		display: flex;
+		color: var(--muted-fg);
 		flex: none;
 		align-items: center;
 		gap: var(--space-2);
@@ -1204,13 +1131,7 @@
 		cursor: pointer;
 	}
 
-	.fold :global(svg) {
-		transition: rotate var(--dur-fast);
-	}
 
-	.fold[aria-expanded='true'] :global(svg) {
-		rotate: 90deg;
-	}
 
 	.tickets > .unset {
 		padding: var(--space-3);
@@ -1252,13 +1173,11 @@
 		background: var(--hover);
 	}
 
-	.item:focus-visible,
 	.fold:focus-visible,
 	.add:focus-visible,
-	.archive:focus-visible,
-	.link:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-		outline-offset: calc(-1 * var(--border-width));
+	.archive:focus-visible {
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-inset);
 	}
 
 	.page {
@@ -1314,7 +1233,7 @@
 		color: var(--status-waiting);
 	}
 
-	.crew .link {
+	.crew li > :global(button) {
 		margin-left: auto;
 	}
 
@@ -1344,7 +1263,8 @@
 	}
 
 	.finding summary:focus-visible {
-		outline: var(--border-width) solid var(--accent);
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	.finding summary .number {
@@ -1424,16 +1344,6 @@
 		overflow-wrap: anywhere;
 	}
 
-	.link {
-		padding: 0;
-		border: none;
-		background: none;
-		color: var(--accent);
-		font: inherit;
-		font-size: var(--font-size-sm);
-		cursor: pointer;
-	}
-
 	code {
 		align-self: flex-start;
 		max-width: 100%;
@@ -1494,42 +1404,16 @@
 	}
 
 	.strip .setting > :global(select),
-	.strip .picker {
+	.strip .field {
 		flex: 2;
 		max-width: none;
 		justify-content: space-between;
 	}
 
-	.phone .pages {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
-		gap: var(--space-2);
-		margin-bottom: var(--space-1);
-		padding-bottom: var(--space-3);
-	}
 
-	.phone .pages .item {
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 2px;
-		padding: var(--space-2) var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-	}
 
-	.phone .pages .title {
-		flex: none;
-		width: 100%;
-	}
 
-	.phone .pages .item .meta {
-		max-width: 100%;
-		font-size: calc(var(--font-size-sm) - 1px);
-	}
 
-	.phone .item {
-		padding: 0 var(--space-1);
-	}
 
 	.phone .group {
 		padding-left: var(--space-1);

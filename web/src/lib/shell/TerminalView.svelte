@@ -16,6 +16,7 @@
 	import KeyBar, { control } from '#lib/shell/KeyBar.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import Toolbar from '#lib/ui/Toolbar.svelte';
 	import { FitAddon, Terminal } from 'ghostty-web';
 	import { onMount, type Snippet } from 'svelte';
 	import ArrowElbowDownLeft from '~icons/ph/arrow-elbow-down-left';
@@ -392,19 +393,19 @@
 <svelte:document onvisibilitychange={() => (hidden = document.hidden)} />
 
 <div class="panel" role="tabpanel" hidden={!active}>
-	<div class="toolbar">
+	<Toolbar>
 		{#if !ended}
 			<IconButton label="Paste" title="Paste" disabled={!live} onclick={pasteClipboard}><Clipboard /></IconButton>
 			<IconButton label="Newline" title="Insert newline (Shift+Enter)" disabled={!live} onclick={newline}>
 				<ArrowElbowDownLeft />
 			</IconButton>
-			<IconButton label="Composer" aria-pressed={composing} onclick={() => (composing = !composing)}>
+			<IconButton label="Composer" pressed={composing} onclick={() => (composing = !composing)}>
 				<NotePencil />
 			</IconButton>
 		{:else}
 			<IconButton label="Copy mode" onclick={copy}><Copy /></IconButton>
 		{/if}
-	</div>
+	</Toolbar>
 	{@render children?.()}
 	<div class="view">
 		<div class="terminal" class:resizing title="Copy selection (Ctrl+Shift+C or Cmd+C)" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
@@ -451,18 +452,6 @@
 		display: none;
 	}
 
-	.toolbar {
-		display: flex;
-		flex: none;
-		justify-content: flex-end;
-		padding: 0 var(--space-1);
-		border-bottom: var(--border-width) solid var(--border);
-	}
-
-	.toolbar :global([aria-pressed='true']) {
-		background: var(--hover);
-		color: var(--color-fg);
-	}
 
 	.view {
 		display: flex;

@@ -3,8 +3,9 @@
 	import type { Reading, ResetCredits } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import CodexResets, { expiry } from '#lib/shell/CodexResets.svelte';
+	import Popover from '#lib/ui/Popover.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
-	import { mergeProps, Popover } from 'bits-ui';
+	import { mergeProps } from 'bits-ui';
 	import { onMount } from 'svelte';
 	import ResetIcon from '~icons/ph/arrow-counter-clockwise-bold';
 
@@ -128,7 +129,7 @@
 {/snippet}
 
 {#snippet detail(popover: boolean)}
-	<div class="detail">
+	<div class="detail" class:popover>
 		{#each visibleAgents as { agent, label, Logo } (agent)}
 			{@const updated = Math.max(0, ...readings.filter((reading) => reading.agent === agent).map((reading) => reading.readAt))}
 			<div class="agent-detail {agent}">
@@ -173,26 +174,23 @@
 {/snippet}
 
 <section aria-label="Usage windows" class:phone={form() === 'phone'} hidden={!visibleAgents.length}>
-	<Popover.Root bind:open={() => open, (value) => { open = value; if (value) tip = false; }}>
-		<Tooltip delayDuration={0} ignoreNonKeyboardFocus bind:open={() => tip, (value) => (tip = value && !open)} content={tooltipDetail}>
-			{#snippet children(tooltip)}
-				<Popover.Trigger>
-					{#snippet child({ props })}
-						<button {...mergeProps(tooltip, props)} class="trigger" aria-label="Usage details"></button>
-					{/snippet}
-				</Popover.Trigger>
-			{/snippet}
-		</Tooltip>
-		<Popover.Portal>
-			<Popover.Content side={form() === 'phone' ? 'bottom' : 'top'} align="start" sideOffset={4} collisionPadding={8} onOpenAutoFocus={(event) => { event.preventDefault(); popover?.focus(); }}>
-				{#snippet child({ wrapperProps, props })}
-					<div {...wrapperProps}>
-						<div {...props} bind:this={popover} tabindex="-1" class="popover" role="dialog" aria-label="Usage details">{@render detail(true)}</div>
-					</div>
+	<Popover
+		bind:open={() => open, (value) => { open = value; if (value) tip = false; }}
+		bind:ref={popover}
+		label="Usage details"
+		side={form() === 'phone' ? 'bottom' : 'top'}
+		width="24rem"
+		onopenautofocus={(event) => { event.preventDefault(); popover?.focus(); }}
+	>
+		{#snippet trigger(props)}
+			<Tooltip delayDuration={0} ignoreNonKeyboardFocus bind:open={() => tip, (value) => (tip = value && !open)} content={tooltipDetail}>
+				{#snippet children(tooltip)}
+					<button {...mergeProps(props, tooltip)} class="trigger" aria-label="Usage details"></button>
 				{/snippet}
-			</Popover.Content>
-		</Popover.Portal>
-	</Popover.Root>
+			</Tooltip>
+		{/snippet}
+		{@render detail(true)}
+	</Popover>
 	<div class="row" class:crowded>
 		{#each visibleAgents as { agent, label, Logo } (agent)}
 			<div class="agent {agent}" role="group" aria-label={label}>
@@ -262,8 +260,8 @@
 	}
 
 	.trigger:focus-visible {
-		outline: 2px solid var(--accent);
-		outline-offset: -2px;
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-inset);
 	}
 
 	.row {
@@ -492,23 +490,10 @@
 		}
 	}
 
-	.popover {
-		box-sizing: border-box;
-		width: min(24rem, 100vw - 2 * var(--space-4));
-		padding: var(--space-2) var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-2);
-		box-shadow: var(--shadow-float);
-		color: var(--color-fg);
-		font-family: var(--font-ui);
-		font-size: var(--font-size-sm);
-		outline: none;
-	}
-
 	.detail {
 		display: grid;
 		gap: var(--space-2);
+		font-size: var(--font-size-sm);
 		min-width: 15rem;
 		white-space: normal;
 	}

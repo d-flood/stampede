@@ -1,4 +1,6 @@
 <script lang="ts">
+	import ListItem from '#lib/ui/ListItem.svelte';
+	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command, computeCommandScore } from 'bits-ui';
 
@@ -51,7 +53,7 @@
 					{#if typed}
 						<Command.Item value={`open:${typed}`} onSelect={() => open(typed)}>
 							{#snippet child({ props })}
-								<div {...props} class="item">Open <span class="path">{typed}</span></div>
+								<ListItem {...props}>Open <span class="path">{typed}</span></ListItem>
 							{/snippet}
 						</Command.Item>
 					{/if}
@@ -59,14 +61,14 @@
 						{@const cut = path.lastIndexOf('/') + 1}
 						<Command.Item value={path} onSelect={() => open(path)}>
 							{#snippet child({ props })}
-								<div {...props} class="item">
+								<ListItem {...props}>
 									<span class="path"><span class="parent">{path.slice(0, cut)}</span>{path.slice(cut)}</span>
-								</div>
+								</ListItem>
 							{/snippet}
 						</Command.Item>
 					{/each}
 					{#if !typed && matches.length === 0}
-						<p class="empty">{directories.length ? 'No matching folder' : 'No folders under the configured roots'}</p>
+						<ListLabel element="p">{directories.length ? 'No matching folder' : 'No folders under the configured roots'}</ListLabel>
 					{/if}
 				</Command.Viewport>
 			</div>
@@ -87,34 +89,15 @@
 		overflow-y: auto;
 	}
 
-	.item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-1);
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		white-space: nowrap;
-	}
-
-	.item[data-selected] {
-		background: var(--hover);
-	}
-
 	.path {
 		overflow: hidden;
 		font-family: var(--font-mono);
 		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.parent {
 		color: var(--muted-fg);
 	}
 
-	.empty {
-		margin: 0;
-		padding: var(--space-2);
-		color: var(--muted-fg);
-	}
 </style>

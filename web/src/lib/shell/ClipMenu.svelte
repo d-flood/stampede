@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { clips, type Clip } from '#lib/config.svelte.ts';
+	import ListItem from '#lib/ui/ListItem.svelte';
+	import Suggestions from '#lib/ui/Suggestions.svelte';
 
 	type Props = {
 		text: string;
@@ -38,60 +40,30 @@
 </script>
 
 {#if open}
-	<section aria-label="Clips" class="menu">
+	<Suggestions label="Clips">
 		{#each matches as clip, index (clip.name)}
-			<button
-				class="row"
+			<ListItem
+				element="button"
 				aria-label={`;${clip.name}`}
 				title={clip.text}
-				class:highlighted={index === highlight}
+				highlighted={index === highlight}
 				onpointerenter={() => (highlighted = clip.name)}
 				onmousedown={(event) => event.preventDefault()}
 				onclick={() => choose(clip)}
 			>
 				<span class="name">;{clip.name}</span><span class="text">{clip.text}</span>
-			</button>
+			</ListItem>
 		{/each}
-	</section>
+	</Suggestions>
 {/if}
 
 <style>
-	.menu {
-		position: absolute;
-		right: var(--space-2);
-		bottom: calc(100% + var(--space-1));
-		left: var(--space-2);
-		z-index: 1;
-		display: flex;
-		flex-direction: column;
-		max-height: min(24rem, 50vh);
-		padding: var(--space-1) 0;
-		overflow-y: auto;
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--surface-2);
-		box-shadow: var(--shadow-float);
-	}
 
-	.row {
-		display: flex;
-		flex: none;
-		align-items: center;
-		gap: var(--space-3);
-		min-height: var(--target-min);
-		padding: var(--space-1) var(--space-4);
-		border: 0;
-		background: transparent;
-		color: var(--color-fg);
+	.name,
+	.text {
 		font-family: var(--font-mono);
 		font-size: var(--font-size-md);
-		text-align: left;
 		white-space: nowrap;
-		cursor: pointer;
-	}
-
-	.row.highlighted {
-		background: var(--hover);
 	}
 
 	.name {

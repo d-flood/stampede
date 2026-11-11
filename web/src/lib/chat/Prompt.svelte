@@ -1,5 +1,5 @@
 <script lang="ts">
-	import CaretRight from '~icons/ph/caret-right';
+	import Caret from '#lib/ui/Caret.svelte';
 
 	let { prompt }: { prompt: string } = $props();
 
@@ -19,7 +19,7 @@
 	<span class="label">Prompt</span>
 	<div class="text" class:open {@attach measure}>{prompt}</div>
 	{#if long}
-		<button class="toggle" aria-expanded={open} onclick={() => (open = !open)}><span class="caret"><CaretRight /></span>{open ? 'Show less' : 'Show more'}</button>
+		<button class="toggle" aria-expanded={open} onclick={() => (open = !open)}><Caret />{open ? 'Show less' : 'Show more'}</button>
 	{/if}
 </section>
 
@@ -30,6 +30,4 @@
 	.text.open { display: block; }
 	.toggle { display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--target-min); padding: 0; border: none; background: none; color: var(--muted-fg); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
 	.toggle:hover { color: var(--color-fg); }
-	.caret { display: inline-flex; transition: transform var(--dur-fast); }
-	[aria-expanded='true'] .caret { transform: rotate(90deg); }
 </style>

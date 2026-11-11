@@ -67,6 +67,11 @@
 	--hover: color-mix(in lab, var(--color-bg) 90%, var(--color-fg));
 
 	--accent: var(--ansi-4);
+	--selected-bg: color-mix(in oklab, var(--accent) 14%, transparent);
+	--selected-border: color-mix(in oklab, var(--accent) 55%, var(--border));
+	--focus-ring: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
+	--focus-offset: 1px;
+	--focus-inset: -2px;
 	--status-working: var(--ansi-4);
 	--status-waiting: var(--ansi-3);
 	--status-done: var(--ansi-2);
@@ -94,6 +99,7 @@
 	--radius-lg: 12px;
 	--radius-xl: 16px;
 	--radius-tile: 11px;
+	--radius-pill: 999px;
 	--space-1: 3px;
 	--space-2: 6px;
 	--space-3: 9px;

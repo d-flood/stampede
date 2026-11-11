@@ -89,7 +89,7 @@ test('phone chrome is one header whose title switches Tabs', { tag: '@phone' }, 
 	await expect(switcher.locator('[aria-current="true"]')).toHaveCount(1);
 	await expect(switcher.getByRole('region', { name: 'New Tab' }).getByRole('button', { name: 'Fake Claude', exact: true })).toBeVisible();
 	await expect(switcher.getByRole('region', { name: 'New Tab' }).getByRole('button', { name: 'Terminal', exact: true })).toBeVisible();
-	await expect.poll(() => switcher.locator('.row').evaluateAll((rows) => Math.min(...rows.map((row) => row.getBoundingClientRect().height)))).toBeGreaterThanOrEqual(48);
+	await expect.poll(() => switcher.locator('.item').evaluateAll((rows) => Math.min(...rows.map((row) => row.getBoundingClientRect().height)))).toBeGreaterThanOrEqual(48);
 	await switcher.getByRole('button', { name: 'greeting.ts', exact: true }).click();
 	await expect(switcher).toBeHidden();
 	await expect(title).toHaveText(/^greeting\.ts/);

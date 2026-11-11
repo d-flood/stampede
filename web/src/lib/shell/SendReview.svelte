@@ -3,7 +3,9 @@
 	import { form } from '#lib/form.ts';
 	import { sendReview, type PrReview, type ReviewEvent } from '#lib/pr-reviews.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Checkbox from '#lib/ui/Checkbox.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import Eyebrow from '#lib/ui/Eyebrow.svelte';
 
 	type Props = { projectId: string; review: PrReview; open: boolean };
 
@@ -44,7 +46,7 @@
 		<div class="body">
 			<section aria-labelledby="send-drafts">
 				<h3 id="send-drafts">
-					Draft comments <span class="count">{review.drafts.length}</span>
+					<Eyebrow>Draft comments</Eyebrow> <span class="count">{review.drafts.length}</span>
 				</h3>
 				{#if review.drafts.length}
 					<ul aria-label="Draft comments to send">
@@ -61,14 +63,14 @@
 				{/if}
 			</section>
 			<section class="summary">
-				<h3>Summary</h3>
+				<h3><Eyebrow>Summary</Eyebrow></h3>
 				<MarkdownEditor bind:text={summary} label="Review summary" />
 			</section>
 			<fieldset>
-				<legend>Review as</legend>
+				<legend><Eyebrow>Review as</Eyebrow></legend>
 				{#each offered as choice (choice.event)}
 					<label class="choice">
-						<input type="radio" name="event" value={choice.event} bind:group={event} disabled={pending} />
+						<Checkbox type="radio" name="event" value={choice.event} checked={event === choice.event} onchange={() => (event = choice.event)} disabled={pending} />
 						<span class="label">{choice.label}</span>
 						<span class="hint">{choice.hint}</span>
 					</label>
@@ -101,9 +103,6 @@
 		padding: 0;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
 	}
 
 	.count {
@@ -191,14 +190,12 @@
 		background: var(--hover);
 	}
 
-	.choice:has(input:checked) {
-		background: color-mix(in oklab, var(--accent) 10%, transparent);
+	.choice:has(:global(input:checked)) {
+		background: var(--selected-bg);
 	}
 
-	.choice input {
+	.choice > :global(input) {
 		grid-row: span 2;
-		margin: 0;
-		accent-color: var(--accent);
 	}
 
 	.label {

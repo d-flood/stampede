@@ -18,7 +18,7 @@ test('an Epic made through the CLI shows live in the Epics section, its Tab and 
 
 	await openProject(page, slug);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Epics', exact: true }).click();
 	const section = sidebar.getByRole('region', { name: 'Epics' });
 	await expect(section).toContainText('No Epics yet');
 
@@ -81,8 +81,8 @@ test('an Epic made through the CLI shows live in the Epics section, its Tab and 
 
 // A new Device starts from the last closed Device's layout, so other specs expect the Files section.
 async function showFiles(sidebar: Locator) {
-	await sidebar.getByRole('button', { name: 'Files', exact: true }).click();
-	await expect(sidebar.getByRole('button', { name: 'Files', exact: true })).toHaveAttribute('aria-pressed', 'true');
+	await sidebar.getByRole('radio', { name: 'Files', exact: true }).click();
+	await expect(sidebar.getByRole('radio', { name: 'Files', exact: true })).toHaveAttribute('aria-checked', 'true');
 }
 
 async function epicTab(page: Page, slug: string, ...tickets: [string, string, ...string[]][]) {
@@ -98,7 +98,7 @@ async function epicTab(page: Page, slug: string, ...tickets: [string, string, ..
 	}
 	await openProject(page, slug);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Epics', exact: true }).click();
 	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
 	return page.getByRole('tabpanel', { name: `Epic ${slug}` });
 }
@@ -322,7 +322,7 @@ test('Start on a Frontier Ticket works it with a fake Agent until it is merged',
 
 	await openProject(page, slug);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Epics', exact: true }).click();
 	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
 	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
 	const tickets = panel.getByRole('region', { name: 'Tickets' });
@@ -381,7 +381,7 @@ test('a merged Ticket moved back to not started is worked again on the Epic bran
 
 	await openProject(page, slug);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Epics', exact: true }).click();
 	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
 	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
 	const row = panel.getByRole('region', { name: 'Tickets' }).getByRole('button', { name: /^1\s*The work/ });
@@ -448,7 +448,7 @@ test('a Run started from the Epic tab works the Epic through and calls from the 
 
 	await openProject(page, slug);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Epics', exact: true }).click();
 	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
 	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
 	const run = panel.getByRole('region', { name: 'Run', exact: true });
@@ -537,7 +537,7 @@ test('a Run with a Reviewer reviews the Epic once its Tickets are done, and its 
 
 	await openProject(page, slug);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Epics', exact: true }).click();
 	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
 	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
 	const run = panel.getByRole('region', { name: 'Run', exact: true });
@@ -593,7 +593,7 @@ test('a paused Run starts nothing until it is resumed, and stopping it gives its
 
 	await openProject(page, slug);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Epics', exact: true }).click();
 	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
 	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
 	const run = panel.getByRole('region', { name: 'Run', exact: true });
@@ -652,7 +652,7 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 
 	await openProject(page, slug);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Epics', exact: true }).click();
 	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
 	const run = page.getByRole('tabpanel', { name: `Epic ${slug}` }).getByRole('region', { name: 'Run', exact: true });
 	if (!phone) await run.getByRole('button', { name: /^Run settings/ }).click();
@@ -681,7 +681,7 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/2`);
 	const worktree = await showSidebar(page);
 	await expect(worktree.getByText(`stampede/${slug}/2`, { exact: true })).toBeVisible();
-	await worktree.getByRole('button', { name: 'Git', exact: true }).click();
+	await worktree.getByRole('radio', { name: 'Git', exact: true }).click();
 	await expect(worktree.getByRole('region', { name: 'Git' }).getByRole('button', { name: 'work.txt', exact: true })).toBeVisible();
 
 	if (phone) {

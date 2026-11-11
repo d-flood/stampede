@@ -23,15 +23,15 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', { tag
 	await expect(resizer).toHaveAttribute('aria-valuenow', '424');
 	await page.keyboard.press('Home');
 	await expect(resizer).toHaveAttribute('aria-valuenow', '160');
-	const sections = sidebar.getByRole('group', { name: 'Sections' });
+	const sections = sidebar.getByRole('radiogroup', { name: 'Sections' });
 	await expect.poll(() => sections.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
 		const buttons = [...element.querySelectorAll('button')].map((button) => button.getBoundingClientRect());
 		return buttons.every((button) => button.left >= bounds.left && button.right <= bounds.right)
 			&& buttons.at(-1)!.top > buttons[0].top;
 	})).toBe(true);
-	await sections.getByRole('button', { name: 'Epics', exact: true }).click();
-	await expect(sections.getByRole('button', { name: 'Epics', exact: true })).toHaveAttribute('aria-pressed', 'true');
+	await sections.getByRole('radio', { name: 'Epics', exact: true }).click();
+	await expect(sections.getByRole('radio', { name: 'Epics', exact: true })).toHaveAttribute('aria-checked', 'true');
 	const usage = sidebar.getByRole('region', { name: 'Usage windows' });
 	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(60);
 	for (const name of ['Claude', 'Codex']) {
@@ -98,8 +98,8 @@ test('the sidebar toggle moves between the panel and tab strip while preserving 
 
 test('A saved Changes, History or Search section reopens where it moved', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'alpha');
-	const sections = (await showSidebar(page)).getByRole('group', { name: 'Sections' });
-	await sections.getByRole('button', { name: 'Compare', exact: true }).click();
+	const sections = (await showSidebar(page)).getByRole('radiogroup', { name: 'Sections' });
+	await sections.getByRole('radio', { name: 'Compare', exact: true }).click();
 	let saved = '';
 	await page.route('**/api/devices/*/layout', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback();
@@ -109,6 +109,6 @@ test('A saved Changes, History or Search section reopens where it moved', { tag:
 	for (const [old, moved] of [['changes', 'Git'], ['history', 'Git'], ['search', 'Files']]) {
 		saved = old;
 		await page.reload();
-		await expect(sections.getByRole('button', { name: moved, exact: true })).toHaveAttribute('aria-pressed', 'true');
+		await expect(sections.getByRole('radio', { name: moved, exact: true })).toHaveAttribute('aria-checked', 'true');
 	}
 });

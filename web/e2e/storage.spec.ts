@@ -24,7 +24,7 @@ test('low storage pauses new Tickets and reports the reason', { tag: '@desktop' 
 	}).toContain('min_free_gib = 1000000');
 	await openProject(page, slug);
 	const sidebar = await showSidebar(page);
-	await sidebar.getByRole('button', { name: 'Epics', exact: true }).click();
+	await sidebar.getByRole('radio', { name: 'Epics', exact: true }).click();
 	await sidebar.getByRole('region', { name: 'Epics' }).getByRole('button', { name: new RegExp(`^${slug}`) }).click();
 	const panel = page.getByRole('tabpanel', { name: `Epic ${slug}` });
 	const run = panel.getByRole('region', { name: 'Run', exact: true });

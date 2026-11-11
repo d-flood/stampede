@@ -2,6 +2,8 @@
 	import type { Epic } from '#lib/device.svelte.ts';
 	import Progress from '#lib/epics/Progress.svelte';
 	import { counts } from '#lib/epics.svelte.ts';
+	import Card from '#lib/ui/Card.svelte';
+	import Checkbox from '#lib/ui/Checkbox.svelte';
 
 	let { epics, onopen }: { epics: Epic[]; onopen(slug: string): void } = $props();
 	let showArchived = $state(false);
@@ -12,28 +14,30 @@
 <section aria-label="Epics">
 	<header>
 		<h2>Epics</h2>
-		<label><input type="checkbox" bind:checked={showArchived} /> Show archived</label>
+		<label><Checkbox bind:checked={showArchived} /> Show archived</label>
 	</header>
 	{#if listed.length}
 		<ul>
 			{#each listed as epic (epic.slug)}
 				{@const tally = counts(epic)}
 				<li>
-					<button onclick={() => onopen(epic.slug)}>
-						<span class="line">
-							<span class="slug">{epic.slug}</span>
-							{#if epic.archived}<span class="archived">Archived</span>{/if}
-							{#if epic.run}<span class="live" class:paused={!!epic.run.paused}>{epic.run.paused ? 'Run paused' : 'Run live'}</span>{/if}
-						</span>
-						<span class="title">{epic.title}</span>
-						<Progress {epic} />
-						<span class="line summary">
-							<span>
-								{tally.merged + tally.skipped} of {epic.tickets.length} resolved{#if tally['in-progress']}{' '}· {tally['in-progress']} in progress{/if}
+					<Card onclick={() => onopen(epic.slug)}>
+						<span class="epic">
+							<span class="line">
+								<span class="slug">{epic.slug}</span>
+								{#if epic.archived}<span class="archived">Archived</span>{/if}
+								{#if epic.run}<span class="live" class:paused={!!epic.run.paused}>{epic.run.paused ? 'Run paused' : 'Run live'}</span>{/if}
 							</span>
-							{#if epic.run}<span>{epic.run.rig} · ×{epic.run.parallel}</span>{/if}
+							<span class="title">{epic.title}</span>
+							<Progress {epic} />
+							<span class="line summary">
+								<span>
+									{tally.merged + tally.skipped} of {epic.tickets.length} resolved{#if tally['in-progress']}{' '}· {tally['in-progress']} in progress{/if}
+								</span>
+								{#if epic.run}<span>{epic.run.rig} · ×{epic.run.parallel}</span>{/if}
+							</span>
 						</span>
-					</button>
+					</Card>
 				</li>
 			{/each}
 		</ul>
@@ -81,10 +85,6 @@
 		cursor: pointer;
 	}
 
-	input {
-		accent-color: var(--accent);
-	}
-
 	ul {
 		display: flex;
 		flex: 1;
@@ -96,29 +96,13 @@
 		list-style: none;
 	}
 
-	button {
+	.epic {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
-		width: 100%;
-		padding: var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
-		background: none;
-		color: var(--color-fg);
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
 	}
 
-	button:hover {
-		background: var(--hover);
-	}
 
-	button:focus-visible {
-		outline: var(--border-width) solid var(--accent);
-		outline-offset: calc(-1 * var(--border-width));
-	}
 
 	.line {
 		display: flex;

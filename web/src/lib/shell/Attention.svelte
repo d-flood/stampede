@@ -1,9 +1,3 @@
-<script lang="ts" module>
-	import { lazy, warmUp } from '#lib/paint.svelte.ts';
-
-	const dropdown = lazy(() => import('#lib/shell/AttentionMenu.svelte'));
-</script>
-
 <script lang="ts">
 	import { logos } from '#lib/chat/sessions.ts';
 	import { tabOf, type Attention, type Chat } from '#lib/device.svelte.ts';
@@ -13,6 +7,9 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import ListItem from '#lib/ui/ListItem.svelte';
+	import ListLabel from '#lib/ui/ListLabel.svelte';
+	import Menu from '#lib/ui/Menu.svelte';
 	import { WaitingMark, WorkingMark } from '#lib/ui/spinners.ts';
 	import Article from '~icons/ph/article';
 	import Bell from '~icons/ph/bell';
@@ -37,9 +34,11 @@
 	let failed = $state(false);
 	const pushDisabled = $derived(pending || push === 'blocked');
 	const pushLabel = $derived(failed ? `Retry ${push === 'on' ? 'disabling' : 'enabling'} notifications` : push === 'unsupported' ? '' : labels[push]);
+	const menu = $derived([
+		{ heading: 'Needs attention', empty: 'Nothing needs attention', items: items.map((item) => ({ label: item.label, data: item, onselect: () => onselect(item) })) },
+		...(push === 'unsupported' ? [] : [{ label: pushLabel, disabled: pushDisabled, onselect: notify }])
+	]);
 	let sheet = $state(false);
-	let open = $state(false);
-	const Dropdown = $derived(dropdown());
 	notifications().then((state) => (push = state));
 
 	async function notify() {
@@ -63,7 +62,8 @@
 	</span>
 {/snippet}
 
-{#snippet entry(item: Attention)}
+{#snippet entry(data: unknown)}
+	{@const item = data as Attention}
 	{@const Icon = icon(item)}
 	{@const Mark = marks[item.status]}
 	<span class="icon">{#if Icon}<Icon />{/if}</span>
@@ -80,27 +80,18 @@
 		<ul class="sheet">
 			{#each items as item (tabOf(item))}
 				<li>
-					<button class="item" onclick={() => ((sheet = false), onselect(item))}>{@render entry(item)}</button>
+					<ListItem element="button" onclick={() => ((sheet = false), onselect(item))}>{@render entry(item)}</ListItem>
 				</li>
 			{:else}
-				<li class="empty">Nothing needs attention</li>
+				<ListLabel element="li">Nothing needs attention</ListLabel>
 			{/each}
 		</ul>
 		{#if push !== 'unsupported'}
 			<Button disabled={pushDisabled} onclick={notify}>{pushLabel}</Button>
 		{/if}
 	</Dialog>
-{:else if Dropdown}
-	<Dropdown
-		{items}
-		push={push === 'unsupported' ? undefined : { label: pushLabel, disabled: pushDisabled, onselect: notify }}
-		bind:open
-		{trigger}
-		{entry}
-		{onselect}
-	/>
 {:else}
-	{@render trigger({ onclick: () => ((open = true), warmUp()) })}
+	<Menu items={menu} row={entry} {trigger} side="right" align="end" />
 {/if}
 
 <style>
@@ -116,44 +107,11 @@
 		pointer-events: none;
 	}
 
-	.empty {
-		display: flex;
-		align-items: center;
-		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-	}
-
-	.item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-3);
-		min-height: var(--target-min);
-		padding: var(--space-1) var(--space-2);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		outline: none;
-	}
 
 	.sheet {
 		margin: 0 0 var(--space-4);
 		padding: 0;
 		list-style: none;
-	}
-
-	.sheet .item {
-		box-sizing: border-box;
-		width: 100%;
-		border: none;
-		background: none;
-		color: inherit;
-		font: inherit;
-		text-align: start;
-	}
-
-	.sheet .item:hover {
-		background: var(--hover);
 	}
 
 	.label {
