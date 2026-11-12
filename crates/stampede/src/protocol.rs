@@ -34,6 +34,9 @@ pub struct Hello {
 pub struct Title {
     pub title: Option<String>,
     pub cwd: PathBuf,
+    /// The command lines of the shell's children: a command, a TUI, or a background job.
+    #[serde(default)]
+    pub running: Vec<String>,
 }
 
 #[derive(Debug)]

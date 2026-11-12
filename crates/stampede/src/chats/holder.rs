@@ -18,7 +18,7 @@ use std::{
 
 use futures_util::StreamExt;
 use nix::{
-    sys::signal::{Signal, killpg},
+    sys::signal::Signal,
     unistd::{ForkResult, Pid, fork, setsid},
 };
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
@@ -78,6 +78,7 @@ enum Event {
 }
 
 fn run(listener: UnixListener, cwd: &Path, command: &[String], record: &Path) -> Result<(), Box<dyn Error>> {
+    crate::holder::adopt_orphans();
     let mut child = Command::new(&command[0])
         .args(&command[1..])
         .current_dir(cwd)
@@ -86,7 +87,7 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String], record: &Path) ->
         .stderr(Stdio::null())
         .process_group(0)
         .spawn()?;
-    let group = Pid::from_raw(child.id() as i32);
+    let agent = Pid::from_raw(child.id() as i32);
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
 
@@ -128,6 +129,11 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String], record: &Path) ->
     let mut next_id = 0;
     let mut buffer = Vec::new();
     let mut deadline = None;
+    let mut exited = false;
+    let close = |deadline: &mut Option<Instant>| {
+        crate::holder::signal_descendants(Some(Signal::SIGTERM));
+        deadline.get_or_insert(Instant::now() + CLOSING);
+    };
     for event in received {
         match event {
             Event::Line(line) => {
@@ -137,14 +143,18 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String], record: &Path) ->
                 }
                 buffer.push(frame);
             }
-            Event::Exited => break,
+            Event::Exited if deadline.is_none() || !crate::holder::signal_descendants(None) => break,
+            Event::Exited => exited = true,
             Event::Tick => {
-                if !record.exists() || !crate::holder::test_owner_alive() {
-                    let _ = killpg(group, Signal::SIGTERM);
-                    break;
+                crate::holder::reap(Some(agent));
+                if deadline.is_none() && (!record.exists() || !crate::holder::test_owner_alive()) {
+                    close(&mut deadline);
                 }
-                if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                    let _ = killpg(group, Signal::SIGKILL);
+                if let Some(deadline) = deadline
+                    && !crate::holder::signal_descendants((Instant::now() >= deadline).then_some(Signal::SIGKILL))
+                    && exited
+                {
+                    break;
                 }
             }
             Event::Connected(stream) => {
@@ -158,10 +168,7 @@ fn run(listener: UnixListener, cwd: &Path, command: &[String], record: &Path) ->
                 let _ = input.send(line);
             }
             Event::Received(Message::Forget) => buffer.clear(),
-            Event::Received(Message::Hangup) => {
-                let _ = killpg(group, Signal::SIGTERM);
-                deadline.get_or_insert(Instant::now() + CLOSING);
-            }
+            Event::Received(Message::Hangup) => close(&mut deadline),
             Event::Received(_) => {}
             Event::Closed(id) => {
                 conns.remove(&id);

@@ -2,6 +2,7 @@
 	import type { Device, ServerMessage, Terminal } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { warm } from '#lib/paint.svelte.ts';
+	import CloseTerminal, { running } from '#lib/shell/CloseTerminal.svelte';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -17,6 +18,7 @@
 	let panel: HTMLElement;
 	let terminals = $state<Terminal[]>([]);
 	let chosen = $state<string>();
+	let closing = $state<Terminal>();
 	const views: Record<string, TerminalView> = {};
 	let returnTo: HTMLElement | undefined;
 
@@ -79,7 +81,13 @@
 		toggle();
 	}
 
-	function closeTab(terminalId: string) {
+	function closeTab(terminalId: string, confirmed = false) {
+		const terminal = terminals.find((terminal) => terminal.id === terminalId);
+		if (!confirmed && terminal && running(terminal)) {
+			closing = terminal;
+			return;
+		}
+		closing = undefined;
 		if (terminalId === active?.id) {
 			const index = terminals.findIndex((terminal) => terminal.id === terminalId);
 			const neighbor = terminals.slice(index + 1).find(selectable) ?? terminals.slice(0, index).findLast(selectable);
@@ -147,6 +155,8 @@
 		{/if}
 	</div>
 </section>
+
+<CloseTerminal bind:terminal={closing} onclose={(terminal) => closeTab(terminal.id, true)} />
 
 <style>
 	section {

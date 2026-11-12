@@ -20,7 +20,11 @@ use libghostty_vt::{
     terminal::Mode,
 };
 use nix::{
-    sys::signal::{Signal, killpg},
+    sys::{
+        prctl,
+        signal::{Signal, kill},
+        wait::{Id, WaitPidFlag, waitid, waitpid},
+    },
     unistd::{ForkResult, Pid, fork, setsid},
 };
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -95,6 +99,53 @@ pub fn test_owner_alive() -> bool {
             !fields.starts_with('Z') && fields.split_whitespace().nth(19) == Some(started)
         })
     })
+}
+
+/// Makes processes orphaned beneath this holder its children rather than init's, so closing still reaches them.
+pub fn adopt_orphans() {
+    let _ = prctl::set_child_subreaper(true);
+}
+
+/// Reaps adopted orphans that have exited, leaving `child` to its own waiter.
+pub fn reap(child: Option<Pid>) {
+    while let Ok(status) = waitid(Id::All, WaitPidFlag::WEXITED | WaitPidFlag::WNOHANG | WaitPidFlag::WNOWAIT) {
+        let Some(pid) = status.pid().filter(|pid| Some(*pid) != child) else { break };
+        let _ = waitpid(pid, Some(WaitPidFlag::WNOHANG));
+    }
+}
+
+/// Sends `signal` to every live process descended from this one, returning whether any remain.
+pub fn signal_descendants(signal: Option<Signal>) -> bool {
+    let mut children: HashMap<i32, Vec<i32>> = HashMap::new();
+    for entry in fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|name| name.parse().ok()) else { continue };
+        let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else { continue };
+        let Some((_, fields)) = stat.rsplit_once(") ") else { continue };
+        let mut fields = fields.split(' ');
+        if let (Some(state), Some(Ok(parent))) = (fields.next(), fields.next().map(str::parse)) && state != "Z" {
+            children.entry(parent).or_default().push(pid);
+        }
+    }
+    let mut parents = vec![std::process::id() as i32];
+    let mut found = false;
+    while let Some(parent) = parents.pop() {
+        for &pid in children.get(&parent).into_iter().flatten() {
+            let _ = kill(Pid::from_raw(pid), signal);
+            parents.push(pid);
+            found = true;
+        }
+    }
+    found
+}
+
+fn running(shell: Option<u32>) -> Vec<String> {
+    let Some(shell) = shell else { return Vec::new() };
+    let children = fs::read_to_string(format!("/proc/{shell}/task/{shell}/children")).unwrap_or_default();
+    children.split_whitespace().filter_map(|child| {
+        let command = String::from_utf8_lossy(&fs::read(format!("/proc/{child}/cmdline")).ok()?).replace('\0', " ");
+        let command: String = command.trim().chars().take(200).collect();
+        (!command.is_empty()).then_some(command)
+    }).collect()
 }
 
 struct Files {
@@ -190,6 +241,7 @@ fn run(
     command.cwd(&record.cwd);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
+    adopt_orphans();
     let mut child = pty.slave.spawn_command(command)?;
     let pid = child.process_id();
     drop(pty.slave);
@@ -257,6 +309,7 @@ fn run(
         current: Title {
             title: None,
             cwd: record.cwd.clone(),
+            running: Vec::new(),
         },
     };
     let mut reported = titles.current.clone();
@@ -265,6 +318,7 @@ fn run(
     let mut changed = false;
     let mut saved = Instant::now();
     let mut deadline = None;
+    let mut exited = false;
     for event in received {
         match event {
             Event::Output(bytes) => {
@@ -276,7 +330,8 @@ fn run(
                 let frame = protocol::encode(&Message::Output(bytes));
                 conns.retain(|_, conn| !conn.attached || conn.send(frame.clone()));
             }
-            Event::Exited => break,
+            Event::Exited if deadline.is_none() || !signal_descendants(None) => break,
+            Event::Exited => exited = true,
             Event::Connected(stream) => {
                 next_id += 1;
                 if let Ok(conn) = connect(next_id, stream, events.clone()) {
@@ -310,9 +365,7 @@ fn run(
                 changed = true;
             }
             Event::Received(_, Message::Hangup) => {
-                // portable-pty starts the child with setsid, so its pid names its process group.
-                let Some(pid) = pid else { break };
-                let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGHUP);
+                signal_descendants(Some(Signal::SIGHUP));
                 if deadline.is_none() {
                     deadline = Some(Instant::now() + CLOSING);
                     record.closing = true;
@@ -324,14 +377,16 @@ fn run(
                 conns.remove(&id);
             }
             Event::Tick => {
-                if !files.record.exists() || !test_owner_alive() {
-                    if let Some(pid) = pid {
-                        let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGHUP);
-                    }
-                    break;
+                reap(pid.map(|pid| Pid::from_raw(pid as i32)));
+                if deadline.is_none() && (!files.record.exists() || !test_owner_alive()) {
+                    signal_descendants(Some(Signal::SIGHUP));
+                    deadline = Some(Instant::now() + CLOSING);
                 }
-                if let (Some(pid), Some(deadline)) = (pid, deadline) && Instant::now() >= deadline {
-                    let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+                if let Some(deadline) = deadline
+                    && !signal_descendants((Instant::now() >= deadline).then_some(Signal::SIGKILL))
+                    && exited
+                {
+                    break;
                 }
                 if changed && saved.elapsed() >= SAVE_INTERVAL {
                     changed = false;
@@ -340,8 +395,10 @@ fn run(
                         let _ = files.write_scrollback(&bytes);
                     }
                 }
-                let Some(leader) = pty.master.process_group_leader() else { continue };
-                titles.foreground(leader);
+                if let Some(leader) = pty.master.process_group_leader() {
+                    titles.foreground(leader);
+                }
+                titles.current.running = running(pid);
             }
         }
         if titles.current != reported {

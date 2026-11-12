@@ -1099,9 +1099,14 @@ fn agent_prompt(entry: &Value) -> Option<&str> {
 }
 
 fn replay_agent(subagent: &mut Subagent, transcript: &mut Transcript, history: &Path, path: &Path) {
+    let meta: Value = fs::read(path.with_extension("meta.json")).ok().and_then(|meta| serde_json::from_slice(&meta).ok()).unwrap_or_default();
+    // A fork's file opens with the parent's call that spawned it; replaying that call would replay the fork inside itself.
+    let spawning = |entry: &Value| meta["toolUseId"].as_str().is_some_and(|tool| {
+        entry["message"]["content"].as_array().into_iter().flatten().any(|block| block["type"] == "tool_use" && block["id"] == tool)
+    });
     transcript.history = Some(history.to_owned());
     transcript.fed = true;
-    for entry in File::open(path).into_iter().flat_map(lines).filter_map(|line| entry(&line)) {
+    for entry in File::open(path).into_iter().flat_map(lines).filter_map(|line| entry(&line)).filter(|entry| !spawning(entry)) {
         if subagent.prompt.is_none() { subagent.prompt = agent_prompt(&entry).map(str::to_owned); }
         agent_model(subagent, &entry);
         transcript.saw(&entry);
@@ -2896,7 +2901,11 @@ mod subagent_tests {
         assert_agent(outer.first(), "inner", "inner", Some(Outcome::Completed));
 
         fs::write(files.agents.join("agent-innertask.meta.json"), json!({ "toolUseId": "inner", "parentAgentId": "outertask" }).to_string()).unwrap();
+        fs::write(files.agents.join("agent-outertask.meta.json"), json!({ "toolUseId": "outer", "isFork": true }).to_string()).unwrap();
         fs::write(files.agents.join("agent-outertask.jsonl"), lines_of(&[
+            json!({ "type": "fork-context-ref", "agentId": "outertask" }),
+            json!({ "type": "assistant", "parentUuid": null, "message": { "id": "o", "content": [{ "type": "tool_use", "id": "outer", "name": "Agent", "input": { "description": "outer", "subagent_type": "fork" } }] } }),
+            json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "outer", "content": [{ "type": "text", "text": "Fork started — that fork is you." }] }] } }),
             json!({ "type": "user", "message": { "content": "Outer prompt" } }),
             json!({ "type": "assistant", "message": { "id": "a", "content": [{ "type": "tool_use", "id": "inner", "name": "Agent", "input": { "description": "inner", "prompt": "Do the thing" } }] } }),
             json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "inner", "content": [{ "type": "text", "text": "All done." }] }] } }),

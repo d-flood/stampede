@@ -157,6 +157,7 @@ pub struct View {
     socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
     pub terminal_id: String,
     pub label: String,
+    pub running: Vec<String>,
     channel: u32,
     pub terminal: Terminal<'static, 'static>,
 }
@@ -194,6 +195,7 @@ impl View {
             socket,
             terminal_id: attached["terminalId"].as_str().unwrap().to_owned(),
             label: listed["label"].as_str().unwrap().to_owned(),
+            running: running(&listed),
             channel: attached["channel"].as_u64().unwrap() as u32,
             terminal,
         }
@@ -204,6 +206,10 @@ impl View {
         frame.extend_from_slice(&self.channel.to_be_bytes());
         frame.extend_from_slice(text.as_bytes());
         self.socket.send(Message::Binary(frame.into())).await.unwrap();
+    }
+
+    pub async fn close(&mut self) {
+        control(&mut self.socket, json!({ "type": "terminal.close", "terminalId": self.terminal_id })).await;
     }
 
     pub fn text(&self) -> String {
@@ -238,6 +244,10 @@ impl View {
                         self.terminal.resize(cols, rows, 0, 0).unwrap();
                     } else if message["type"] == "terminal.title" && message["terminalId"] == *self.terminal_id {
                         self.label = message["label"].as_str().unwrap().to_owned();
+                    } else if message["type"] == "terminals.changed"
+                        && let Some(listed) = message["terminals"].as_array().unwrap().iter().find(|terminal| terminal["id"] == *self.terminal_id)
+                    {
+                        self.running = running(listed);
                     }
                 }
                 Ok(Some(Ok(_))) => {}
@@ -247,6 +257,10 @@ impl View {
             }
         }
     }
+}
+
+fn running(terminal: &Value) -> Vec<String> {
+    terminal["running"].as_array().into_iter().flatten().map(|command| command.as_str().unwrap().to_owned()).collect()
 }
 
 pub async fn control(socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, message: Value) {

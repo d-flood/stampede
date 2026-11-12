@@ -773,9 +773,11 @@ pub struct Chat {
     pub closing: bool,
     #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub activity: Option<String>,
-    /// A shell is still running, so a done Chat will pick up again when it finishes.
+    /// A shell or Subagent is still running, so a done Chat will pick up again when it finishes.
     #[serde(default, skip_deserializing, skip_serializing_if = "std::ops::Not::not")]
     pub background: bool,
+    #[serde(default, skip_deserializing, skip_serializing_if = "Vec::is_empty")]
+    pub running: Vec<Running>,
     pub viewed_since_done: bool,
     #[serde(default)]
     pub context: Option<Context>,
@@ -851,11 +853,19 @@ pub async fn sessions(cwd: &Path, claude: &Rig, codex: &Rig, copilot: &Rig) -> V
     sessions
 }
 
+/// What closing a Chat stops besides its Agent.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "label", rename_all = "lowercase")]
+pub enum Running {
+    Command(String),
+    Subagent(String),
+}
+
 #[derive(Clone)]
 pub enum Change {
     Chats(String),
     Status(String, Status),
-    Background(String, bool),
+    Background(String, Vec<Running>),
     Activity(String, Option<String>),
     Queued(String, Vec<String>, u64),
     Truncated(String),
@@ -1032,6 +1042,7 @@ impl Chats {
             closing: false,
             activity: None,
             background: false,
+            running: Vec::new(),
             viewed_since_done: true,
             context: None,
             tokens: None,
@@ -1841,17 +1852,22 @@ impl Chats {
     }
 
     fn background(self: &Arc<Self>, entry: &Arc<Entry>, transcript: &Transcript) {
-        let background = shelling(&transcript.items);
+        let running = running(&transcript.items);
         let mut chat = entry.chat.lock().unwrap();
-        if chat.background == background {
+        if chat.running == running {
             return;
         }
-        chat.background = background;
+        let background = !running.is_empty();
+        let changed = chat.background != background;
+        (chat.background, chat.running) = (background, running.clone());
         let id = chat.id.clone();
-        let finished = chat.status == Status::Done && !background;
+        let finished = changed && chat.status == Status::Done && !background;
         if finished { chat.viewed_since_done |= self.shown(&id); }
         drop(chat);
-        let _ = self.changed.send(Change::Background(id, background));
+        let _ = self.changed.send(Change::Background(id, running));
+        if !changed {
+            return;
+        }
         self.refresh_attention();
         if finished {
             let (chats, entry, turns) = (self.clone(), entry.clone(), transcript.turns);
@@ -1914,12 +1930,22 @@ impl Chat {
     }
 }
 
-fn shelling(items: &[Item]) -> bool {
-    items.iter().any(|item| match item {
-        Item::Command { status: CommandStatus::Running, .. } => true,
-        Item::Subagent { items, .. } => shelling(items),
-        _ => false,
-    })
+fn running(items: &[Item]) -> Vec<Running> {
+    items.iter().flat_map(|item| match item {
+        Item::Command { command, status: CommandStatus::Running, .. } => vec![Running::Command(first_line(command))],
+        Item::Subagent { task, name, status, items, .. } => {
+            let own = (*status != Status::Done).then(|| Running::Subagent(first_line(if task.is_empty() { name.as_deref().unwrap_or("Subagent") } else { task })));
+            own.into_iter().chain(running(items)).collect()
+        }
+        _ => Vec::new(),
+    }).collect()
+}
+
+fn first_line(text: &str) -> String {
+    let text = text.trim();
+    let mut line: String = text.lines().next().unwrap_or_default().chars().take(200).collect();
+    if line.len() < text.len() { line.push('…'); }
+    line
 }
 
 fn record_path(data_dir: &Path, id: &str) -> PathBuf {

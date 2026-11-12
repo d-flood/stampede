@@ -44,6 +44,7 @@ mod memory;
 mod pr_reviews;
 mod project_icons;
 mod terminal_after_rebuild;
+mod terminal_close;
 mod terminal_reconnect;
 mod terminal_survives_restart;
 mod terminal_title;

@@ -36,6 +36,8 @@
 	import SchemeToggle from '#lib/shell/SchemeToggle.svelte';
 	import ThemeBar from '#lib/shell/ThemeBar.svelte';
 	import Settings from '#lib/shell/Settings.svelte';
+	import CloseTerminal, { running } from '#lib/shell/CloseTerminal.svelte';
+	import Stopping, { type Stopped } from '#lib/shell/Stopping.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Launchpad from '#lib/shell/Launchpad.svelte';
 	import TabIcons from '#lib/shell/TabIcons.svelte';
@@ -118,9 +120,11 @@
 	let closing = $state<OpenFile>();
 	let closingProject = $state<string>();
 	let closingChat = $state<Chat>();
+	let closingTerminal = $state<Terminal>();
 	let deletion = $state<{ projectId: string; unmerged?: string; error?: string }>();
 	let deleting = $state(false);
 	const closingTicket = $derived(closingChat && heldBy(epics[closingChat.projectId] ?? [], closingChat.id));
+	const closingWork = $derived(closingChat && { working: 'Its Agent is working. ', waiting: 'Its Agent is waiting on you. ', background: '', done: '' }[chatStatus(closingChat)]);
 	let picking = $state(false);
 	let iconProject = $state<Project>();
 	let branching = $state<Project>();
@@ -342,7 +346,9 @@
 				break;
 			case 'chat.background':
 				for (const chat of Object.values(chats).flat()) {
-					if (chat.id === message.chatId) chat.background = message.background;
+					if (chat.id !== message.chatId) continue;
+					chat.background = message.background;
+					chat.running = message.running;
 				}
 				break;
 			case 'chat.activity':
@@ -719,9 +725,15 @@
 		device.send({ type: 'project.reorder', order });
 	}
 
+	function stopping(projectId: string): Stopped[] {
+		const owned = (id: string) => id === projectId || projects.some((project) => project.id === id && project.worktree?.parent === projectId);
+		const busy = allChats.filter((chat) => owned(chat.projectId) && chatStatus(chat) !== 'done');
+		const commands = Object.entries(terminals).flatMap(([id, open]) => (owned(id) ? open.filter(running).flatMap((terminal) => terminal.running ?? []) : []));
+		return [...busy.map((chat) => ({ kind: 'chat' as const, label: chat.title ?? chat.rig, agent: chat.agent })), ...commands.map((label) => ({ kind: 'command' as const, label }))];
+	}
+
 	function closeProject(projectId: string, confirmed = false) {
-		const agents = allChats.filter((chat) => chat.projectId === projectId || projects.some(({ id, worktree }) => id === chat.projectId && worktree?.parent === projectId));
-		if (!confirmed && agents.some((agent) => agent.status === 'working')) {
+		if (!confirmed && stopping(projectId).length) {
 			closingProject = projectId;
 			return;
 		}
@@ -859,7 +871,13 @@
 		else if (next) show(projectId, next);
 	}
 
-	function closeTab(projectId: string, terminalId: string) {
+	function closeTab(projectId: string, terminalId: string, confirmed = false) {
+		const terminal = terminals[projectId]?.find((terminal) => terminal.id === terminalId);
+		if (!confirmed && terminal && running(terminal)) {
+			closingTerminal = terminal;
+			return;
+		}
+		closingTerminal = undefined;
 		leave(projectId, terminalId);
 		device.send({ type: 'terminal.close', terminalId });
 	}
@@ -921,7 +939,7 @@
 	}
 
 	function closeChat(chat: Chat, confirmed = false) {
-		if (!confirmed && (chat.status === 'working' || heldBy(epics[chat.projectId] ?? [], chat.id))) {
+		if (!confirmed && (chatStatus(chat) !== 'done' || heldBy(epics[chat.projectId] ?? [], chat.id))) {
 			closingChat = chat;
 			return;
 		}
@@ -1707,8 +1725,9 @@
 	title="Close {closingChat?.rig}?"
 	description={closingTicket
 		? `It holds ${closingTicket}. Closing the Chat stops its Agent and gives ${closingTicket} back to not started, keeping its worktree and session.`
-		: 'Its Agent is working. Closing the Chat stops it.'}
+		: `${closingWork}Closing the Chat stops its Agent and everything it started.`}
 >
+	<Stopping items={closingChat?.running ?? []} />
 	{#snippet actions()}
 		<Button onclick={() => (closingChat = undefined)}>Cancel</Button>
 		<Button variant="primary" onclick={() => closingChat && closeChat(closingChat, true)}>Close</Button>
@@ -1718,13 +1737,16 @@
 <Dialog
 	bind:open={() => !!closingProject, (open) => !open && (closingProject = undefined)}
 	title="Close {closingProject && projectLabels.get(closingProject)}?"
-	description="An Agent is working in this Project. Closing it ends its Terminals."
+	description="Closing it stops these and everything they started."
 >
+	<Stopping items={closingProject ? stopping(closingProject) : []} />
 	{#snippet actions()}
 		<Button onclick={() => (closingProject = undefined)}>Cancel</Button>
 		<Button variant="primary" onclick={() => closingProject && closeProject(closingProject, true)}>Close</Button>
 	{/snippet}
 </Dialog>
+
+<CloseTerminal bind:terminal={closingTerminal} onclose={(terminal) => terminal.owner !== 'drawer' && closeTab(terminal.owner.project, terminal.id, true)} />
 
 <Dialog
 	bind:open={() => !!deletion, (open) => !open && (deletion = undefined)}

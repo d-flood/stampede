@@ -42,6 +42,8 @@ pub struct Terminal {
     pub owner: Owner,
     pub label: String,
     pub state: State,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub running: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending: Option<String>,
     #[serde(skip)]
@@ -256,6 +258,7 @@ impl Terminals {
         if let Some(initial) = initial {
             title = initial;
             terminal.label = label(&shell, &title);
+            terminal.running = title.running.clone();
         }
         let entry = Arc::new(Entry {
             terminal: Mutex::new(terminal.clone()),
@@ -280,9 +283,13 @@ impl Terminals {
                     frame = frames.next() => {
                         let Some(Ok(frame)) = frame else { break };
                         match protocol::decode(&frame) {
-                            Ok(Some(Message::TitleChanged(title))) => {
+                            Ok(Some(Message::TitleChanged(mut title))) => {
+                                let running = std::mem::take(&mut title.running);
                                 if let Some(label) = entry.retitle(title) {
                                     let _ = terminals.titles.send((id.clone(), label));
+                                }
+                                if entry.running(running) {
+                                    let _ = terminals.changed.send(owner.clone());
                                 }
                             }
                             _ => {}
@@ -453,6 +460,16 @@ impl Entry {
         })
     }
 
+    /// Whether `running` changed the Terminal.
+    fn running(&self, running: Vec<String>) -> bool {
+        let mut terminal = self.terminal.lock().unwrap();
+        if terminal.running == running {
+            return false;
+        }
+        terminal.running = running;
+        true
+    }
+
     fn apply(&self, size: Size) {
         if size.cols > 0 && size.rows > 0 && *self.size.borrow() != size {
             let _ = self.control.send(Message::Resize(size));
@@ -467,12 +484,14 @@ fn describe(record: Record) -> (Terminal, String, Title) {
     let title = Title {
         title: None,
         cwd: record.cwd,
+        running: Vec::new(),
     };
     let terminal = Terminal {
         id: record.id,
         owner: record.owner,
         label: label(&shell, &title),
         state: if record.closing { State::Closing } else { State::Live },
+        running: Vec::new(),
         pending: None,
         chat_id: None,
     };

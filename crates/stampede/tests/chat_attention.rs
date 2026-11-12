@@ -67,14 +67,15 @@ async fn a_done_chat_with_a_running_shell_waits_for_the_shell_before_it_needs_at
     let chat_id = start(&mut socket, &project_id, false).await;
 
     let seen = settled(&mut socket, &chat_id).await;
-    assert!(seen.contains(&json!(["chat.background", true])), "the shell is running when the turn ends: {seen:?}");
+    let running = json!(["chat.background", [{ "kind": "command", "label": "pnpm test" }]]);
+    assert!(seen.contains(&running), "the shell is running when the turn ends: {seen:?}");
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(pushes.try_recv().is_err(), "a done Chat with a running shell was pushed");
 
     let gate = gates.path().join("shell");
     timeout(Duration::from_secs(10), async { while !gate.exists() { tokio::time::sleep(Duration::from_millis(20)).await; } }).await.unwrap();
     fs::remove_file(&gate).unwrap();
-    assert_eq!(settled(&mut socket, &chat_id).await, [json!(["chat.background", false]), json!(["chat.status", "working"]), json!(["chat.status", "done"])]);
+    assert_eq!(settled(&mut socket, &chat_id).await, [json!(["chat.background", []]), json!(["chat.status", "working"]), json!(["chat.status", "done"])]);
     let item = json!({ "projectId": project_id, "chatId": chat_id, "label": "claude", "status": "done" });
     assert_eq!(pushed(&mut pushes).await, ("away".into(), item));
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -106,7 +107,7 @@ async fn a_shell_that_finishes_without_the_agent_resuming_announces_the_chat_onc
     assert!(pushes.try_recv().is_err(), "the Chat was announced twice");
 }
 
-/// The Chat's status and background changes until it is next done.
+/// The Chat's status and running changes until it is next done.
 async fn settled(socket: &mut Socket, chat_id: &str) -> Vec<Value> {
     let mut seen = Vec::new();
     timeout(Duration::from_secs(10), async {
@@ -114,7 +115,7 @@ async fn settled(socket: &mut Socket, chat_id: &str) -> Vec<Value> {
             let Message::Text(text) = socket.next().await.unwrap().unwrap() else { continue };
             let message: Value = serde_json::from_str(&text).unwrap();
             if message["chatId"] == chat_id && matches!(message["type"].as_str(), Some("chat.status" | "chat.background")) {
-                seen.push(json!([message["type"], message.get("status").or(message.get("background"))]));
+                seen.push(json!([message["type"], message.get("status").or(message.get("running"))]));
             }
         }
     }).await.expect("the Chat never finished");

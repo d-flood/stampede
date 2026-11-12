@@ -15,6 +15,7 @@ export type Terminal = {
 	owner: { project: string } | 'drawer';
 	label: string;
 	state: 'live' | 'closing' | 'ended';
+	running?: string[];
 	pending?: string;
 };
 
@@ -98,6 +99,8 @@ export type Capabilities = {
 
 export type Builtin = Setting | 'compact' | 'rewind';
 
+export type Running = { kind: 'command' | 'subagent'; label: string };
+
 export type Chat = {
 	id: string;
 	projectId: string;
@@ -109,6 +112,7 @@ export type Chat = {
 	title?: string;
 	activity?: string | null;
 	background?: boolean;
+	running?: Running[];
 	context: Context | null;
 	tokens: Tokens | null;
 	queued: string[];
@@ -221,7 +225,7 @@ export type ServerMessage =
 	| { type: 'chat.item'; chatId: string; index: number; item: Item }
 	| { type: 'chat.append'; chatId: string; index: number; text: string }
 	| { type: 'chat.status'; chatId: string; status: Status }
-	| { type: 'chat.background'; chatId: string; background: boolean }
+	| { type: 'chat.background'; chatId: string; background: boolean; running?: Running[] }
 	| { type: 'chat.activity'; chatId: string; activity: string | null }
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
 	| { type: 'sessions.listed'; projectId: string; sessions: Session[] }
