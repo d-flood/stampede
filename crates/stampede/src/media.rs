@@ -57,7 +57,7 @@ pub fn cache_images(data_dir: &Path, item: &mut Item) {
     }
 }
 
-fn cache_image(data_dir: &Path, source: &str) -> io::Result<String> {
+pub fn cache_image(data_dir: &Path, source: &str) -> io::Result<String> {
     if let Some(asset) = source.strip_prefix("/api/media/") && mime(asset).is_some() { return Ok(source.to_owned()); }
     let (media_type, data) = source.strip_prefix("data:").and_then(|source| source.split_once(";base64,"))
         .ok_or_else(|| io::Error::other("Expected an image data URL."))?;

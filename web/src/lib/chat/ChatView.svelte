@@ -124,7 +124,8 @@
 	}
 
 	function answer(request: Request, answer: Answer) {
-		device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer });
+		const images = 'responses' in answer && !('images' in answer) ? composer?.take() : undefined;
+		device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer: images?.length ? { ...answer, images } : answer });
 	}
 
 	function expand(path: string[], list = items) {
@@ -280,7 +281,7 @@
 		<Tray {items} {canvases} onopen={open} onattend={attend} {oncanvas} />
 		{#if request}
 			{#key request.id}
-				<RequestCard bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} />
+				<RequestCard bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} onattach={(files) => composer?.attach(files)} />
 			{/key}
 		{/if}
 		{#if !selected}

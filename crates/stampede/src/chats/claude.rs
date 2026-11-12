@@ -357,7 +357,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                         let original = transcript.inputs.remove(&id).unwrap_or_default();
                         transcript.unblock(&id);
                         let response = match answer {
-                            Answer::Responses(_) | Answer::Redirect { .. } => continue,
+                            Answer::Responses { .. } | Answer::Redirect { .. } => continue,
                             Answer::Allow => json!({ "behavior": "allow" }),
                             Answer::Rules(rules) => {
                                 let parts = words(original["input"]["command"].as_str().unwrap_or_default());
@@ -2351,7 +2351,7 @@ impl Transcript {
                 let answers = questions.iter().map(|question| {
                     recorded_answers(question, result["answers"][&question.question].as_str().unwrap_or_default())
                 }).collect();
-                let record = AnsweredQuestions { source: Some(id.to_owned()), after: self.len, questions, answers, responses: Default::default(), cancelled: false, instruction: None };
+                let record = AnsweredQuestions { source: Some(id.to_owned()), after: self.len, questions, answers, responses: Default::default(), cancelled: false, instruction: None, images: Vec::new() };
                 let _ = self.events.send(Event::QuestionsRecovered(record));
             }
             self.activity.finish(id, &self.events);

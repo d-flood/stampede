@@ -499,8 +499,8 @@ pub enum Answer {
     Allow,
     Rules(Vec<Rule>),
     Answers(Vec<Vec<String>>),
-    Responses(HashMap<String, questions::Response>),
-    Redirect { responses: HashMap<String, questions::Response>, instead: String },
+    Responses { responses: HashMap<String, questions::Response>, images: Vec<Image> },
+    Redirect { responses: HashMap<String, questions::Response>, instead: String, images: Vec<Image> },
     Deny { instead: Option<String> },
 }
 
@@ -514,14 +514,16 @@ struct Decision {
     responses: Option<HashMap<String, questions::Response>>,
     #[serde(default)]
     instead: Option<String>,
+    #[serde(default)]
+    images: Vec<Image>,
 }
 
 impl From<Decision> for Answer {
-    fn from(Decision { allow, instead, rule, answers, responses }: Decision) -> Self {
+    fn from(Decision { allow, instead, rule, answers, responses, images }: Decision) -> Self {
         if let Some(responses) = responses {
             match instead {
-                Some(instead) => Answer::Redirect { responses, instead },
-                None => Answer::Responses(responses),
+                Some(instead) => Answer::Redirect { responses, instead, images },
+                None => Answer::Responses { responses, images },
             }
         }
         else if let Some(answers) = answers { Answer::Answers(answers) }
@@ -575,6 +577,8 @@ pub struct AnsweredQuestions {
     pub cancelled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<questions::Image>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -587,7 +591,7 @@ pub struct Rule {
 #[serde(rename_all = "lowercase")]
 pub enum Scope { Chat, Always }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Image {
     pub media_type: String,
@@ -599,6 +603,10 @@ impl Image {
         matches!(self.media_type.as_str(), "image/png" | "image/jpeg" | "image/gif" | "image/webp")
             && self.data.len() <= 5 * 1024 * 1024 * 4 / 3 + 4
             && Base64::decode_vec(&self.data).is_ok_and(|data| !data.is_empty() && data.len() <= 5 * 1024 * 1024)
+    }
+
+    fn all_valid(images: &[Image]) -> bool {
+        images.iter().map(|image| image.data.len()).sum::<usize>() <= 20 * 1024 * 1024 * 4 / 3 + 4 && images.len() <= 20 && images.iter().all(Image::valid)
     }
 }
 
@@ -1602,7 +1610,7 @@ impl Chats {
 
     /// Sends `text` now, or with `queue` holds it until the running turn ends.
     pub fn send(&self, id: &str, text: &str, queue: bool, images: &[Image]) {
-        if images.iter().map(|image| image.data.len()).sum::<usize>() > 20 * 1024 * 1024 * 4 / 3 + 4 || images.len() > 20 || !images.iter().all(Image::valid) || (text.trim().is_empty() && images.is_empty()) { return; }
+        if !Image::all_valid(images) || (text.trim().is_empty() && images.is_empty()) { return; }
         let Some(entry) = self.get(id) else { return };
         let mut transcript = entry.transcript.lock().unwrap();
         let mut chat = entry.chat.lock().unwrap();
@@ -1702,11 +1710,11 @@ impl Chats {
                 }) { return; }
             }
             (Answer::Rules(_), _) => return,
-            (Answer::Responses(responses), RequestKind::Question { questions, .. })
-                if transcript.questions.contains_key(request_id) && questions::valid_responses(questions, responses) => {},
-            (Answer::Responses(_), _) => return,
-            (Answer::Redirect { responses, .. }, RequestKind::Question { questions, .. })
-                if transcript.questions.contains_key(request_id) && questions::valid_partial(questions, responses) => {},
+            (Answer::Responses { responses, images }, RequestKind::Question { questions, .. })
+                if transcript.questions.contains_key(request_id) && Image::all_valid(images) && questions::valid_responses(questions, responses) => {},
+            (Answer::Responses { .. }, _) => return,
+            (Answer::Redirect { responses, images, .. }, RequestKind::Question { questions, .. })
+                if transcript.questions.contains_key(request_id) && Image::all_valid(images) && questions::valid_partial(questions, responses) => {},
             (Answer::Redirect { .. }, _) => return,
             (_, RequestKind::Question { .. }) if transcript.questions.contains_key(request_id)
                 && !matches!(answer, Answer::Deny { .. }) => return,
@@ -1721,7 +1729,7 @@ impl Chats {
                 _ => vec![Vec::new(); questions.len()],
             };
             let responses = match &answer {
-                Answer::Responses(responses) | Answer::Redirect { responses, .. } => responses.clone(),
+                Answer::Responses { responses, .. } | Answer::Redirect { responses, .. } => responses.clone(),
                 _ => HashMap::new(),
             };
             let (cancelled, instruction) = match &answer {
@@ -1729,7 +1737,11 @@ impl Chats {
                 Answer::Deny { instead } => (true, instead.clone()),
                 _ => (false, None),
             };
-            Some(AnsweredQuestions { source: None, after: transcript.items.len(), questions: questions.clone(), answers, responses, cancelled, instruction })
+            let images = match &answer {
+                Answer::Responses { images, .. } | Answer::Redirect { images, .. } => questions::saved(&self.data_dir, images),
+                _ => Vec::new(),
+            };
+            Some(AnsweredQuestions { source: None, after: transcript.items.len(), questions: questions.clone(), answers, responses, cancelled, instruction, images })
         } else { None };
         let pending = transcript.questions.remove(request_id);
         if self.resolve(&mut transcript, id, request_id) {
@@ -1742,9 +1754,9 @@ impl Chats {
             }
             if let Some(pending) = pending {
                 let reply = match answer {
-                    Answer::Responses(answers) => questions::Reply { answers, cancelled: false, instruction: None },
-                    Answer::Redirect { responses, instead } => questions::Reply { answers: responses, cancelled: true, instruction: Some(instead) },
-                    Answer::Deny { instead } => questions::Reply { answers: HashMap::new(), cancelled: true, instruction: instead },
+                    Answer::Responses { responses, images } => questions::Reply { answers: responses, cancelled: false, instruction: None, images },
+                    Answer::Redirect { responses, instead, images } => questions::Reply { answers: responses, cancelled: true, instruction: Some(instead), images },
+                    Answer::Deny { instead } => questions::Reply { answers: HashMap::new(), cancelled: true, instruction: instead, images: Vec::new() },
                     _ => unreachable!(),
                 };
                 let _ = pending.send(reply);

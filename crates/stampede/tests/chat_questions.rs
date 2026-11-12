@@ -2,6 +2,7 @@ use crate::common;
 
 use std::{env, fs, process::Stdio, time::Duration};
 
+use base64ct::{Base64, Encoding};
 use common::{Server, close_chat, control, next, next_control};
 use serde_json::{Value, json};
 use tokio::{io::AsyncWriteExt, net::TcpStream, process::Command, time::{sleep, timeout}};
@@ -44,15 +45,25 @@ async fn answers(agent: &str) {
         next_control(&mut socket, "chat.items").await;
         assert_eq!(next_control(&mut socket, "chat.request").await["request"]["id"], request["id"]);
     }
-    control(&mut socket, json!({ "type": "chat.answer", "chatId": chat["id"], "requestId": request["id"], "answer": { "responses": responses } })).await;
+    let screenshot = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    control(&mut socket, json!({ "type": "chat.answer", "chatId": chat["id"], "requestId": request["id"],
+        "answer": { "responses": responses, "images": [{ "mediaType": "image/svg+xml", "data": screenshot }] } })).await;
+    control(&mut socket, json!({ "type": "chat.attach", "chatId": chat["id"] })).await;
+    next_control(&mut socket, "chat.items").await;
+    assert_eq!(next_control(&mut socket, "chat.request").await["request"]["id"], request["id"]);
+    control(&mut socket, json!({ "type": "chat.answer", "chatId": chat["id"], "requestId": request["id"],
+        "answer": { "responses": responses, "images": [{ "mediaType": "image/png", "data": screenshot }] } })).await;
     done(&mut socket, &chat).await;
     let result = result(&server);
     assert_eq!(result["isError"], false);
     assert_eq!(result["structuredContent"], json!({ "answers": responses, "cancelled": false }));
+    assert_eq!(result["content"][1], json!({ "type": "image", "data": screenshot, "mimeType": "image/png" }));
     control(&mut socket, json!({ "type": "chat.answer", "chatId": chat["id"], "requestId": request["id"], "answer": { "allow": false } })).await;
     let saved: Value = serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{}.json", chat["id"].as_str().unwrap()))).unwrap()).unwrap();
     assert_eq!(saved["answeredQuestions"].as_array().unwrap().len(), 1);
     assert_eq!(saved["answeredQuestions"][0]["responses"], responses);
+    let kept = saved["answeredQuestions"][0]["images"][0]["asset"].as_str().unwrap();
+    assert_eq!(fs::read(server.root.path().join("data/media").join(kept)).unwrap(), Base64::decode_vec(screenshot).unwrap());
     close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
 }
 

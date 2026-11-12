@@ -8,7 +8,7 @@
 	import Text from '#lib/chat/Text.svelte';
 	import QuestionForm from '#lib/chat/QuestionForm.svelte';
 
-	let { request, agent, asker, disabled, onanswer }: { request: Request; agent: string; asker?: string; disabled: boolean; onanswer(answer: Answer): void } = $props();
+	let { request, agent, asker, disabled, onanswer, onattach }: { request: Request; agent: string; asker?: string; disabled: boolean; onanswer(answer: Answer): void; onattach?(files: File[]): void } = $props();
 	const size = $derived(form() === 'phone' ? ('lg' as const) : undefined);
 	let card: HTMLElement;
 	let picking = $state(false);
@@ -42,7 +42,7 @@
 	{#if asker}<div class="asker"><icons.subagent />Asked by {asker}</div>{/if}
 	{#if request.kind !== 'question'}<h2>{title}</h2>{/if}
 	{#if request.kind === 'question'}
-		<QuestionForm bind:this={questionForm} id={request.id} questions={request.questions} {disabled} {onanswer} />
+		<QuestionForm bind:this={questionForm} id={request.id} questions={request.questions} {disabled} {onanswer} {onattach} />
 	{:else if request.kind === 'plan'}
 		<div class="code"><Text item={{ kind: 'text', text: request.plan, streaming: false, phase: 'final' }} /></div>
 		<div class="actions">

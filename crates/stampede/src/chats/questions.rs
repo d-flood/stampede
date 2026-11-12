@@ -35,10 +35,12 @@ pub struct Reply {
     pub cancelled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,
+    #[serde(skip)]
+    pub images: Vec<super::Image>,
 }
 
 impl Reply {
-    fn cancelled() -> Self { Self { answers: HashMap::new(), cancelled: true, instruction: None } }
+    fn cancelled() -> Self { Self { answers: HashMap::new(), cancelled: true, instruction: None, images: Vec::new() } }
 }
 
 #[derive(Deserialize)]
@@ -136,6 +138,13 @@ fn parse(arguments: Value) -> Result<Input, String> {
     Ok(input)
 }
 
+pub fn saved(data_dir: &std::path::Path, images: &[super::Image]) -> Vec<Image> {
+    images.iter().enumerate().filter_map(|(index, image)| {
+        let url = crate::media::cache_image(data_dir, &format!("data:{};base64,{}", image.media_type, image.data)).ok()?;
+        Some(Image { title: format!("Attached image {}", index + 1), asset: url.strip_prefix("/api/media/")?.to_owned() })
+    }).collect()
+}
+
 fn image(chats: &Chats, input: Option<ImageInput>) -> Result<Option<Image>, String> {
     let Some(input) = input else { return Ok(None) };
     let result = crate::media::call(&chats.data_dir, &json!({ "path": input.path, "title": input.title }));
@@ -220,5 +229,7 @@ pub async fn ask(chats: &Chats, chat_id: Option<String>, arguments: Value, reade
         let mut transcript = entry.transcript.lock().unwrap();
         if chats.resolve(&mut transcript, &chat_id, &id) { chats.settle(&entry, &transcript); }
     }
-    json!({ "content": [{ "type": "text", "text": serde_json::to_string(&result).unwrap() }], "structuredContent": result, "isError": false })
+    let mut content = vec![json!({ "type": "text", "text": serde_json::to_string(&result).unwrap() })];
+    content.extend(result.images.iter().map(|image| json!({ "type": "image", "data": image.data, "mimeType": image.media_type })));
+    json!({ "content": content, "structuredContent": result, "isError": false })
 }

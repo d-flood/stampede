@@ -4,6 +4,7 @@
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { slide } from 'svelte/transition';
+	import { pastedImages } from '#lib/chat/images.ts';
 	import { answered, answerText, loadDraft, normalized, saveDraft } from '#lib/chat/questions.ts';
 	import type { Answer, Question, QuestionResponse } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -16,7 +17,7 @@
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
 	import CaretDown from '~icons/ph/caret-down';
 
-	let { id, questions, disabled, onanswer }: { id: string; questions: Question[]; disabled: boolean; onanswer(answer: Answer): void } = $props();
+	let { id, questions, disabled, onanswer, onattach }: { id: string; questions: Question[]; disabled: boolean; onanswer(answer: Answer): void; onattach?(files: File[]): void } = $props();
 	const items = $derived(questions.map(normalized));
 	const responses = new SvelteMap<string, QuestionResponse>(Object.entries(untrack(() => loadDraft(id))));
 	const isDone = (item: Question) => answered(responses.get(item.id));
@@ -114,6 +115,13 @@
 		}
 	}
 
+	function paste(event: ClipboardEvent) {
+		const files = pastedImages(event);
+		if (!files.length || !questions[0].type || !onattach) return;
+		event.preventDefault();
+		onattach(files);
+	}
+
 	function dismiss() {
 		if (done && !armed) {
 			armed = true;
@@ -156,7 +164,7 @@
 		</div>
 	{/if}
 	<div class="note" class:aligned={item.options.length && !tiles}>
-		<textarea rows={item.options.length ? 1 : 2} maxlength={16384} value={response?.text ?? ''} {disabled} placeholder={item.options.length ? 'Add a note or your own answer' : 'Your answer'} aria-label={item.options.length ? 'Add a note or your own answer' : 'Your answer'} oninput={(event) => update(item, { text: event.currentTarget.value })}></textarea>
+		<textarea rows={item.options.length ? 1 : 2} maxlength={16384} value={response?.text ?? ''} {disabled} placeholder={item.options.length ? 'Add a note or your own answer' : 'Your answer'} aria-label={item.options.length ? 'Add a note or your own answer' : 'Your answer'} oninput={(event) => update(item, { text: event.currentTarget.value })} onpaste={paste}></textarea>
 		{#if !one && answered(response)}<Button type="button" variant="ghost" size="sm" {disabled} onclick={() => clear(item)}>Clear answer</Button>{/if}
 	</div>
 {/snippet}

@@ -5,6 +5,7 @@
 	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import { count } from '#lib/chat/count.ts';
 	import FileMenu from '#lib/chat/FileMenu.svelte';
+	import { pastedImages } from '#lib/chat/images.ts';
 	import { redirect } from '#lib/chat/questions.ts';
 	import { ago } from '#lib/chat/sessions.ts';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
@@ -52,6 +53,7 @@
 	let reading = $state(false);
 	let launching = $state(false);
 	let confirming = $state<{ text: string; queue: boolean; probably: boolean }>();
+	const imageable = $derived(!request || (request.kind === 'question' && !!request.questions[0]?.type));
 
 	function choose() {
 		const files = [...(picker.files ?? [])];
@@ -60,17 +62,14 @@
 	}
 
 	function paste(event: ClipboardEvent) {
-		const files = [...(event.clipboardData?.items ?? [])]
-			.filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-			.map((item) => item.getAsFile())
-			.filter((file) => file !== null);
+		const files = pastedImages(event);
 		if (!files.length) return;
 		event.preventDefault();
 		void attach(files);
 	}
 
 	export async function attach(files: File[]) {
-		if (!live || reading || request || !files.length) return;
+		if (!live || reading || !imageable || !files.length) return;
 		error = '';
 		if (files.length + images.length > 20) { error = 'Attach up to 20 images.'; return; }
 		if (files.some((file) => !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type))) { error = 'Choose PNG, JPEG, GIF or WebP images.'; return; }
@@ -106,8 +105,9 @@
 			return true;
 		}
 		if (request) {
-			if (images.length) { error = 'Remove images before answering a request.'; return false; }
-			device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer: redirect(request, text) });
+			if (images.length && !imageable) { error = 'Remove images before answering a request.'; return false; }
+			device.send({ type: 'chat.answer', chatId: chat.id, requestId: request.id, answer: { ...redirect(request, text), ...(images.length && { images: take() }) } });
+			error = '';
 			return true;
 		}
 		const typed = text.trim().match(/^\/(\w+)/)?.[1];
@@ -148,6 +148,12 @@
 	function interrupt() {
 		composer.prepend(chat.queued);
 		device.send({ type: 'chat.interrupt', chatId: chat.id });
+	}
+
+	export function take() {
+		const taken = images.map(({ mediaType, data }) => ({ mediaType, data }));
+		images = [];
+		return taken;
 	}
 
 	export function restore(text: string, attachments: Image[]) {
@@ -197,7 +203,7 @@
 		<Chips agent={chat.agent} settings={chat.settings} {choices} {onrun}>
 			{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
 		</Chips>
-		<Button variant="ghost" aria-label="Attach image" tip="Attach image" disabled={!live || reading || !!request} onclick={() => picker.click()}><Paperclip /></Button>
+		<Button variant="ghost" aria-label="Attach image" tip="Attach image" disabled={!live || reading || !imageable} onclick={() => picker.click()}><Paperclip /></Button>
 		<Menu items={[{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]}>
 			{#snippet trigger(props)}
 				<Button {...props} variant="ghost" aria-label="More" tip="More"><DotsThree /></Button>

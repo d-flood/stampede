@@ -57,6 +57,7 @@
 		{/each}
 	</div>
 </details>
+{#each record.images ?? [] as image}<Media item={{ kind: 'media', ...image }} />{/each}
 {#if record.instruction}<div class="instruction"><Text item={{ kind: 'text', text: record.instruction, streaming: false, phase: 'final' }} /></div>{/if}
 
 <style>
