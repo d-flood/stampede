@@ -5,6 +5,11 @@
 	import { onMount } from 'svelte';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
+	import Desktop from '~icons/ph/desktop';
+	import ArrowsIn from '~icons/ph/arrows-in';
+	import ArrowsOut from '~icons/ph/arrows-out';
+
+	const desktopWidth = 1280;
 
 	let { canvas }: { canvas: OpenCanvas } = $props();
 	let frame = $state<HTMLIFrameElement>();
@@ -13,6 +18,12 @@
 	const srcdoc = $derived(canvas.html === undefined ? undefined : sandboxed(canvas.html, `addEventListener('load', () => scrollTo(${scroll.x}, ${scroll.y}));
 addEventListener('scroll', () => parent.postMessage({ type: 'stampede-canvas-scroll', x: scrollX, y: scrollY }, '*'), { passive: true });`));
 	let width = $state(0);
+	let stageWidth = $state(0);
+	let stageHeight = $state(0);
+	let section = $state<HTMLElement>();
+	let desktop = $state(false);
+	let fullscreen = $state(false);
+	const scale = $derived(desktop ? Math.min(1, stageWidth / desktopWidth) : 1);
 	let applied: string | undefined;
 	// Hold new HTML while hidden: a frame loaded without layout measures everything as zero.
 	const loaded = $derived.by(() => (width ? (applied = srcdoc) : applied));
@@ -27,6 +38,16 @@ addEventListener('scroll', () => parent.postMessage({ type: 'stampede-canvas-scr
 		if (Number.isFinite(x) && Number.isFinite(y)) Object.assign(scroll, { x, y });
 	}
 
+	async function toggleFullscreen() {
+		if (document.fullscreenElement) return document.exitFullscreen();
+		try {
+			await section?.requestFullscreen();
+			await screen.orientation.lock('landscape');
+		} catch {
+			// Fullscreen can be refused and orientation lock is unsupported on desktop.
+		}
+	}
+
 	function step(by: number) {
 		const version = shown + by;
 		canvas.load(version < canvas.versions ? version : undefined);
@@ -34,8 +55,9 @@ addEventListener('scroll', () => parent.postMessage({ type: 'stampede-canvas-scr
 </script>
 
 <svelte:window onmessage={scrolled} />
+<svelte:document onfullscreenchange={() => (fullscreen = document.fullscreenElement === section)} />
 
-<section class="canvas" aria-label={canvas.name} bind:clientWidth={width}>
+<section class="canvas" aria-label={canvas.name} bind:this={section} bind:clientWidth={width}>
 	<div class="heading">
 		<div class="title">{canvas.name}</div>
 		{#if canvas.versions > 1}
@@ -43,11 +65,28 @@ addEventListener('scroll', () => parent.postMessage({ type: 'stampede-canvas-scr
 			<span class="version" class:past={canvas.version !== undefined}>v{shown} of {canvas.versions}</span>
 			<IconButton label="Next version" disabled={canvas.version === undefined} onclick={() => step(1)}><CaretRight /></IconButton>
 		{/if}
+		<IconButton label="Desktop view" title="Desktop view" pressed={desktop} onclick={() => (desktop = !desktop)}><Desktop /></IconButton>
+		{#if document.fullscreenEnabled}
+			<IconButton label={fullscreen ? 'Exit full screen' : 'Full screen'} title={fullscreen ? 'Exit full screen' : 'Full screen'} onclick={toggleFullscreen}>
+				{#if fullscreen}<ArrowsIn />{:else}<ArrowsOut />{/if}
+			</IconButton>
+		{/if}
 	</div>
 	{#if canvas.missing}
 		<p class="missing">This canvas is no longer on disk.</p>
 	{:else if srcdoc}
-		<iframe bind:this={frame} title={canvas.name} srcdoc={loaded} sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
+		<div class="stage" bind:clientWidth={stageWidth} bind:clientHeight={stageHeight}>
+			<iframe
+				bind:this={frame}
+				title={canvas.name}
+				srcdoc={loaded}
+				sandbox="allow-scripts"
+				referrerpolicy="no-referrer"
+				style:width={scale < 1 ? `${desktopWidth}px` : undefined}
+				style:height={scale < 1 ? `${stageHeight / scale}px` : undefined}
+				style:transform={scale < 1 ? `scale(${scale})` : undefined}
+			></iframe>
+		</div>
 	{/if}
 </section>
 
@@ -57,6 +96,10 @@ addEventListener('scroll', () => parent.postMessage({ type: 'stampede-canvas-scr
 		flex-direction: column;
 		height: 100%;
 		min-width: 0;
+	}
+
+	.canvas:fullscreen {
+		background: var(--surface-1);
 	}
 
 	.heading {
@@ -89,11 +132,18 @@ addEventListener('scroll', () => parent.postMessage({ type: 'stampede-canvas-scr
 		color: var(--status-waiting);
 	}
 
-	iframe {
+	.stage {
 		flex: 1;
 		min-height: 0;
+		overflow: hidden;
+	}
+
+	iframe {
+		display: block;
 		width: 100%;
+		height: 100%;
 		border: 0;
+		transform-origin: 0 0;
 		background: var(--surface-1);
 	}
 
