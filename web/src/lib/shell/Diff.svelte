@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Device, ServerMessage } from '#lib/device.svelte.ts';
+	import { diffConfig } from '#lib/editor/changes.ts';
 	import { find } from '#lib/editor/find.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { languageServer } from '#lib/editor/lsp-editor.ts';
@@ -455,7 +456,8 @@
 				b: { doc: b, extensions: [working, commenting('source', false)] },
 				revertControls: editable ? 'a-to-b' : undefined,
 				highlightChanges: !whole,
-				collapseUnchanged: {}
+				collapseUnchanged: {},
+				diffConfig
 			});
 			return (shown = {
 				b: view.b,
@@ -481,7 +483,7 @@
 				extensions: [
 					working,
 					commenting('source', true),
-					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {} })
+					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {}, diffConfig })
 				]
 			});
 			return (shown = {

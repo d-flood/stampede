@@ -16,7 +16,7 @@ type Kind = 'added' | 'modified' | 'deleted';
 type Changes = { baseline: Text | null; chunks: readonly Chunk[]; open: number | null };
 
 const DEBOUNCE = 250;
-const diffConfig = { scanLimit: 500 };
+export const diffConfig = { scanLimit: 10_000, timeout: 20 };
 
 export const setBaseline = StateEffect.define<Text | null>();
 const recompute = StateEffect.define<null>();
