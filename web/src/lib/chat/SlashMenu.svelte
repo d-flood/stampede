@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { builtins, describe, offered } from '#lib/chat/commands.ts';
 	import { agentNames, templates, type Agent } from '#lib/config.svelte.ts';
 	import { chosen, type Builtin, type Capabilities, type Choice, type Setting, type Settings } from '#lib/device.svelte.ts';
 	import ListItem from '#lib/ui/ListItem.svelte';
@@ -35,15 +36,13 @@
 		replaceText(next);
 	}
 
-	const builtins = ['effort', 'model', 'speed', 'ultracode', 'mode', 'compact', 'rewind'];
-
 	function run(command: Builtin, value?: string | number) {
 		onrun(command, value);
 		replace('');
 	}
 
-	function now(command: 'compact' | 'rewind', detail: string): Row {
-		const later = working ? 'after this turn' : detail;
+	function now(command: 'compact' | 'rewind'): Row {
+		const later = working ? 'after this turn' : describe(command, capabilities);
 		return { label: `/${command}`, detail: later, disabled: working, choose: () => run(command) };
 	}
 
@@ -65,15 +64,15 @@
 		const stampede: Row[] = [
 			{ label: '/effort', choices: choices.effort, current: settings.effort, choose: () => replace('/effort ') },
 			{ label: '/model', detail: model?.label ?? settings.model ?? '', choose: () => replace('/model ') },
-			...(['speed', 'ultracode'] as const).filter((setting) => choices[setting].length).map((setting) => ({
+			...(['speed', 'ultracode'] as const).filter((setting) => offered(setting, choices)).map((setting) => ({
 				label: `/${setting}`,
 				choices: choices[setting],
 				current: chosen(setting, settings, choices),
 				choose: () => replace(`/${setting} `)
 			})),
 			{ label: '/mode', choices: choices.mode, current: settings.mode, choose: () => replace('/mode ') },
-			now('compact', 'free up context'),
-			now('rewind', capabilities.rewindsFiles ? 'conversation and tracked files' : 'conversation only; files unchanged'),
+			now('compact'),
+			now('rewind'),
 			...templates().map(({ name, description }) => ({ label: `/${name}`, detail: description, choose: () => replace(`/${name} `) }))
 		];
 		const taken = [...builtins, ...templates().map((template) => template.name)];

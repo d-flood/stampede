@@ -2,6 +2,7 @@
 	import { agentNames } from '#lib/config.svelte.ts';
 	import { cold, warmth } from '#lib/chat/cache.ts';
 	import Chips from '#lib/chat/Chips.svelte';
+	import { recognize } from '#lib/chat/commands.ts';
 	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import { count } from '#lib/chat/count.ts';
 	import FileMenu from '#lib/chat/FileMenu.svelte';
@@ -18,6 +19,7 @@
 	import Menu from '#lib/ui/Menu.svelte';
 	import type { Component } from 'svelte';
 	import { prefersReducedMotion } from 'svelte/motion';
+	import { fade, fly } from 'svelte/transition';
 	import ArrowBendUpRight from '~icons/ph/arrow-bend-up-right';
 	import At from '~icons/ph/at';
 	import BookmarkSimple from '~icons/ph/bookmark-simple';
@@ -25,6 +27,7 @@
 	import ListPlus from '~icons/ph/list-plus';
 	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Paperclip from '~icons/ph/paperclip';
+	import Play from '~icons/ph/play';
 	import Stop from '~icons/ph/stop-fill';
 	import Terminal from '~icons/ph/terminal';
 	import X from '~icons/ph/x';
@@ -91,6 +94,7 @@
 	const working = $derived(chat.status !== 'done' && !request);
 	const stoppable = $derived(working || shelling);
 	const agent = $derived(chat.agent === 'claude-code' ? 'Claude' : agentNames[chat.agent]);
+	const command = (text: string) => recognize(text, capabilities, choices);
 
 	function send(text: string, queue: boolean, confirmed = false) {
 		if (!live || reading || (!text.trim() && !images.length)) return false;
@@ -185,9 +189,17 @@
 	</div>
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
-	{#snippet border()}
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} mark={(text) => command(text)?.token.length ?? 0} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
+	{#snippet border(text: string)}
+		{@const known = chat.status === 'done' && !shell && !slash?.isOpen() && !files?.isOpen() ? command(text) : undefined}
 		<TurnRing status={chat.status} activity={chat.activity} {shell} />
+		{#if known}
+			<span class="frame" aria-hidden="true" transition:fade={{ duration: 150 }}></span>
+			<span class="legend" in:fly={{ y: prefersReducedMotion.current ? 0 : 4, duration: 200 }} out:fade={{ duration: 150 }}>
+				<span class="name">{known.token}</span>
+				{#if known.detail}<span class="detail">· {known.detail}</span>{/if}
+			</span>
+		{/if}
 	{/snippet}
 	{#snippet menu(text, replace, caret)}
 		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
@@ -218,6 +230,10 @@
 			{#if text.trimStart().startsWith('!')}
 				<Button variant="primary" disabled={!text.trim().slice(1).trim() || !live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
 					<Terminal /> Run
+				</Button>
+			{:else if !request && !images.length && command(text)?.builtin}
+				<Button variant="primary" disabled={!live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
+					<Play /> Run
 				</Button>
 			{:else if working && !launching}
 				<Button aria-label={form() === 'phone' ? 'Queue' : undefined} disabled={(!text.trim() && !images.length) || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
@@ -294,5 +310,44 @@
 
 	.turn {
 		display: contents;
+	}
+
+	.frame {
+		position: absolute;
+		inset: 0;
+		border: var(--border-width) solid var(--selected-border);
+		border-radius: var(--radius-xl);
+		box-shadow: 0 0 0 var(--border-width) var(--selected-border);
+		pointer-events: none;
+	}
+
+	.legend {
+		position: absolute;
+		top: calc(var(--border-width) / 2);
+		left: var(--radius-xl);
+		z-index: 1;
+		display: flex;
+		gap: var(--space-1);
+		max-width: calc(100% - 2 * var(--radius-xl));
+		padding: 0 var(--space-2);
+		translate: 0 -50%;
+		background: linear-gradient(var(--color-bg) 50%, var(--surface-1) 0);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		line-height: 1.4;
+		white-space: nowrap;
+		pointer-events: none;
+	}
+
+	.name {
+		flex: none;
+		color: var(--accent);
+		font-family: var(--font-mono);
+	}
+
+	.detail {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 </style>

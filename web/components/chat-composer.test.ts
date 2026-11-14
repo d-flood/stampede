@@ -118,3 +118,19 @@ test('a cold prompt cache confirms before re-reading a large context', async () 
 	await expect.element(composer).toHaveValue('');
 	expect(send).toHaveBeenCalledExactlyOnceWith({ type: 'chat.send', chatId: chat.id, text: 'Anything else?', queue: false, images: [] });
 });
+
+test('a recognized leading command is marked exactly over its text', async () => {
+	const { view, composer } = await mount();
+	await composer.fill('/frobnicate the parser');
+	await expect.element(view.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
+	expect(view.container.querySelector('mark')).toBeNull();
+	await composer.fill('/compact ');
+	await expect.element(view.getByText(/free up context/)).toBeVisible();
+	const mark = view.container.querySelector('mark')!;
+	const [pill, box, field, pad] = [mark.getBoundingClientRect(), composer.element().getBoundingClientRect(), getComputedStyle(composer.element()), parseFloat(getComputedStyle(mark).paddingLeft)];
+	const measure = document.createElement('canvas').getContext('2d')!;
+	measure.font = field.font;
+	expect(Math.abs(pill.left + pad - (box.left + parseFloat(field.borderLeftWidth) + parseFloat(field.paddingLeft)))).toBeLessThan(1);
+	expect(Math.abs(pill.width - 2 * pad - measure.measureText('/compact').width)).toBeLessThan(1);
+	expect(Math.abs((pill.top + pill.bottom) / 2 - (box.top + box.bottom) / 2)).toBeLessThan(1);
+});

@@ -15,22 +15,26 @@
 		draft?: string;
 		code?: boolean | ((text: string) => boolean);
 		history?: string[];
+		/** Returns how many leading characters to mark as a recognized command. */
+		mark?: (text: string) => number;
 		menu?: Snippet<[text: string, replace: (text: string, caret?: number) => void, caret: number]>;
 		onkeydown?: (event: KeyboardEvent) => void;
 		onpaste?: (event: ClipboardEvent) => void;
 		onsend?(text: string, enter: boolean): boolean;
 		/** Replaces Insert and Send, and boxes the Composer in a Chat's column. */
 		actions?: Snippet<[text: string, clear: () => void]>;
-		border?: Snippet;
+		border?: Snippet<[text: string]>;
 	};
 
-	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], onsend, actions, border, menu, onkeydown, onpaste }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], mark, onsend, actions, border, menu, onkeydown, onpaste }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
 	let box: HTMLTextAreaElement;
 	let caret = $state(0);
 	const coded = $derived(typeof code === 'function' ? code(text) : code);
+	const marked = $derived(coded ? 0 : (mark?.(text) ?? 0));
+	let mirror = $state<HTMLDivElement>();
 	let clipMenu = $state<ClipMenu>();
 	let clipping = $state(false);
 	const phone = $derived(form() === 'phone');
@@ -117,6 +121,7 @@
 			onkeyup={track}
 			onpointerup={track}
 			onfocus={track}
+			onscroll={() => mirror && (mirror.scrollTop = box.scrollTop)}
 			{onpaste}
 			aria-label="Composer"
 			class:code={coded}
@@ -126,7 +131,11 @@
 			autocapitalize={coded ? 'off' : 'sentences'}
 			spellcheck={!coded}
 		></textarea>
-		{@render border?.()}
+		{#if marked}
+			<!-- Trails a space so a final newline still adds a line, as it does in the textarea. -->
+			<div bind:this={mirror} class="mirror" aria-hidden="true" {@attach (node) => { node.scrollTop = box.scrollTop; }}><mark>{text.slice(0, marked)}</mark>{`${text.slice(marked)} `}</div>
+		{/if}
+		{@render border?.(text)}
 	</div>
 	<div class="actions">
 		{#if !actions && text.trim()}
@@ -170,8 +179,11 @@
 		display: grid;
 	}
 
-	textarea {
+	textarea, .mirror {
 		padding: var(--space-2) var(--space-3);
+	}
+
+	textarea {
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-md);
 		background: var(--color-bg);
@@ -182,6 +194,25 @@
 
 	textarea:focus-visible {
 		outline: var(--border-width) solid var(--border-strong);
+	}
+
+	.mirror {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		border: var(--border-width) solid transparent;
+		color: transparent;
+		white-space: pre-wrap;
+		overflow-wrap: break-word;
+		pointer-events: none;
+	}
+
+	mark {
+		margin: 0 calc(-1 * var(--space-1));
+		padding: 0 var(--space-1);
+		border-radius: var(--radius-sm);
+		background: var(--selected-bg);
+		color: transparent;
 	}
 
 	textarea.code {
@@ -201,17 +232,20 @@
 		background: none;
 	}
 
+	.boxed textarea, .boxed .mirror {
+		padding: var(--space-3) var(--space-4);
+		align-content: safe center;
+	}
+
 	.boxed textarea {
 		min-height: 2lh;
 		max-height: 40vh;
-		padding: var(--space-3) var(--space-4);
 		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-xl);
 		background: var(--surface-1);
 		box-shadow: var(--shadow-lift);
 		outline: none;
 		field-sizing: content;
-		align-content: safe center;
 	}
 
 	.boxed .actions {
@@ -231,6 +265,9 @@
 	.boxed.phone textarea {
 		min-height: var(--target-min);
 		box-shadow: none;
+	}
+
+	.boxed.phone textarea, .boxed.phone .mirror {
 		font-size: var(--font-size-lg);
 	}
 </style>
