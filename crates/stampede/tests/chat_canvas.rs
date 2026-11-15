@@ -19,12 +19,15 @@ fn instructions(data_dir: &Path, chat_id: Option<&str>) -> String {
 }
 
 #[test]
-fn chat_instructions_point_each_chat_at_its_canvas_directory() {
+fn chat_instructions_point_to_the_canvas_directory_and_cli_server() {
     let root = tempfile::tempdir().unwrap();
     let described = instructions(root.path(), Some("0123abcd"));
     assert!(described.contains(&format!(" in {}; ", root.path().join("canvases/0123abcd").display())), "{described}");
     let general = instructions(root.path(), None);
     assert!(!general.contains("canvases") && !general.contains("{canvas}"), "{general}");
+    for text in [&described, &general] {
+        assert!(text.contains(&format!("--data-dir {}", root.path().display())), "{text}");
+    }
 }
 
 #[tokio::test]

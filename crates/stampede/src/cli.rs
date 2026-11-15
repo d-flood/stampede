@@ -28,12 +28,12 @@ pub const CLAUDE_TOOL: &str = "mcp__stampede_chat__epic";
 
 #[derive(Subcommand)]
 pub enum CliCommand {
-    /// Create an Epic, or replace its Brief or Setup Command.
+    /// List, create, or edit Epics.
     ///
     /// An Epic is a bounded body of work in one Project: a Brief, and the Tickets that carry it out. Its slug, such as chat-ui, names it in every command, and its Tickets are referenced as <slug>/<n>, such as chat-ui/4.
     #[command(subcommand)]
     Epic(EpicCommand),
-    /// Print a Ticket, or add a Ticket or replace its body.
+    /// Print, add, or edit a Ticket.
     ///
     /// Given a reference such as chat-ui/4, prints that Ticket: its title, its status, its Blockers with their statuses, its body, and its Notes in the order they were added.
     Ticket(TicketArgs),
@@ -174,6 +174,13 @@ pub enum FindingCommand {
 
 #[derive(Subcommand)]
 pub enum EpicCommand {
+    /// List the current Project's non-archived Epics, with their slugs and titles.
+    ///
+    /// Run inside the repository or any of its worktrees. Briefs and Tickets are not printed.
+    List {
+        #[command(flatten)]
+        connection: Connection,
+    },
     /// Create an Epic from its Brief.
     ///
     /// The Epic belongs to the Project of the current directory, which Stampede records by its git common directory, so run this inside the repository the Epic will change. A git worktree belongs to the same Project as its main checkout. Once the Epic exists, add its Tickets with `stampede ticket add`.
@@ -186,6 +193,14 @@ pub enum EpicCommand {
         /// A Markdown file holding the Brief, the document every Ticket of the Epic answers to. Pass - to read the Brief from standard input instead.
         #[arg(long, value_name = "FILE")]
         brief: PathBuf,
+        #[command(flatten)]
+        connection: Connection,
+    },
+    /// Replace an Epic's title, preserving its slug.
+    SetTitle {
+        epic: String,
+        /// The new title, on one line.
+        title: String,
         #[command(flatten)]
         connection: Connection,
     },
@@ -252,6 +267,26 @@ pub enum TicketCommand {
         #[command(flatten)]
         connection: Connection,
     },
+    /// Replace a Ticket's title, preserving its number.
+    SetTitle {
+        #[arg(value_name = "EPIC/N")]
+        reference: Reference,
+        /// The new title, on one line.
+        title: String,
+        #[command(flatten)]
+        connection: Connection,
+    },
+    /// Replace a Ticket's Blockers; omit the list to clear them.
+    ///
+    /// Every Blocker must exist in the Epic. Self-blocking and cycles are refused.
+    SetBlockers {
+        #[arg(value_name = "EPIC/N")]
+        reference: Reference,
+        #[arg(value_name = "N,...", value_delimiter = ',', value_parser = clap::value_parser!(u32).range(1..))]
+        blockers: Vec<u32>,
+        #[command(flatten)]
+        connection: Connection,
+    },
     /// Replace a Ticket's body.
     ///
     /// The new body replaces the old one whole; there is no partial edit.
@@ -303,8 +338,12 @@ impl FromStr for Reference {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 enum Request {
+    #[serde(rename = "epic.list")]
+    ListEpics { cwd: PathBuf },
     #[serde(rename = "epic.add")]
     AddEpic { slug: String, title: String, brief: String, cwd: PathBuf },
+    #[serde(rename = "epic.set-title")]
+    SetEpicTitle { epic: String, title: String },
     #[serde(rename = "epic.set-brief")]
     SetBrief { epic: String, brief: String },
     #[serde(rename = "epic.set-setup")]
@@ -313,6 +352,10 @@ enum Request {
     AddTicket { epic: String, ticket: u32, title: String, blockers: Vec<u32>, body: String, #[serde(default)] tags: Vec<Tag> },
     #[serde(rename = "ticket")]
     Ticket { epic: String, ticket: u32 },
+    #[serde(rename = "ticket.set-title")]
+    SetTicketTitle { epic: String, ticket: u32, title: String },
+    #[serde(rename = "ticket.set-blockers")]
+    SetBlockers { epic: String, ticket: u32, blockers: Vec<u32> },
     #[serde(rename = "ticket.set-body")]
     SetBody { epic: String, ticket: u32, body: String },
     #[serde(rename = "ticket.set-tags")]
@@ -453,9 +496,11 @@ fn cwd() -> Result<PathBuf, String> {
 
 fn request(command: CliCommand) -> Result<(Connection, Request), String> {
     Ok(match command {
+        CliCommand::Epic(EpicCommand::List { connection }) => (connection, Request::ListEpics { cwd: cwd()? }),
         CliCommand::Epic(EpicCommand::Add { slug, title, brief, connection }) => {
             (connection, Request::AddEpic { slug, title, brief: read(&brief, "Brief")?, cwd: cwd()? })
         }
+        CliCommand::Epic(EpicCommand::SetTitle { epic, title, connection }) => (connection, Request::SetEpicTitle { epic, title }),
         CliCommand::Epic(EpicCommand::SetBrief { epic, brief, connection }) => {
             (connection, Request::SetBrief { epic, brief: read(&brief, "Brief")? })
         }
@@ -463,6 +508,14 @@ fn request(command: CliCommand) -> Result<(Connection, Request), String> {
         CliCommand::Ticket(TicketArgs { command: Some(TicketCommand::Add { epic, number, title, blocked_by, tags, body, connection }), .. }) => {
             let body = read(&body, "body")?;
             (connection, Request::AddTicket { epic, ticket: number, title, blockers: blocked_by, tags, body })
+        }
+        CliCommand::Ticket(TicketArgs { command: Some(TicketCommand::SetTitle { reference, title, connection }), .. }) => {
+            let Reference { epic, ticket } = reference;
+            (connection, Request::SetTicketTitle { epic, ticket, title })
+        }
+        CliCommand::Ticket(TicketArgs { command: Some(TicketCommand::SetBlockers { reference, blockers, connection }), .. }) => {
+            let Reference { epic, ticket } = reference;
+            (connection, Request::SetBlockers { epic, ticket, blockers })
         }
         CliCommand::Ticket(TicketArgs { command: Some(TicketCommand::SetBody { reference, body, connection }), .. }) => {
             let Reference { epic, ticket } = reference;
@@ -557,12 +610,24 @@ async fn respond(stream: tokio::net::UnixStream, epics: Arc<Epics>, runs: Arc<Ru
 
 async fn handle(epics: &Epics, runs: &Runs, reviews: &PrReviews, request: Request) -> Result<String, String> {
     match request {
+        Request::ListEpics { cwd } => {
+            let project = git::common_dir(&cwd)
+                .await
+                .ok_or_else(|| format!("{} is not inside a git repository, so it names no Project", cwd.display()))?;
+            let lines: Vec<_> = epics.list(&project).iter().filter(|epic| !epic.archived)
+                .map(|epic| format!("{} {}", epic.slug, epic.title)).collect();
+            Ok(if lines.is_empty() { "No non-archived Epics in this Project.".to_owned() } else { lines.join("\n") })
+        }
         Request::AddEpic { slug, title, brief, cwd } => {
             let project = git::common_dir(&cwd)
                 .await
                 .ok_or_else(|| format!("{} is not inside a git repository, so it names no Project", cwd.display()))?;
             epics.add(&slug, &title, &brief, &project)?;
             Ok(format!("Added Epic {slug} to the Project at {}.", project.display()))
+        }
+        Request::SetEpicTitle { epic, title } => {
+            epics.record(&epic, Event::EpicTitleSet { title })?;
+            Ok(format!("Replaced the title of {epic}."))
         }
         Request::SetBrief { epic, brief } => {
             epics.record(&epic, Event::BriefSet { brief })?;
@@ -577,6 +642,14 @@ async fn handle(epics: &Epics, runs: &Runs, reviews: &PrReviews, request: Reques
             Ok(format!("Added {epic}/{ticket}."))
         }
         Request::Ticket { epic, ticket } => show(&epics.get(&epic)?, ticket),
+        Request::SetTicketTitle { epic, ticket, title } => {
+            epics.record(&epic, Event::TicketTitleSet { ticket, title })?;
+            Ok(format!("Replaced the title of {epic}/{ticket}."))
+        }
+        Request::SetBlockers { epic, ticket, blockers } => {
+            epics.record(&epic, Event::BlockersSet { ticket, blockers })?;
+            Ok(format!("Replaced the Blockers of {epic}/{ticket}."))
+        }
         Request::SetBody { epic, ticket, body } => {
             epics.record(&epic, Event::BodySet { ticket, body })?;
             Ok(format!("Replaced the body of {epic}/{ticket}."))

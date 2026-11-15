@@ -71,7 +71,8 @@ async fn the_cli_publishes_and_reads_an_epic_through_the_server() {
     assert_eq!(cli.ok(&repo, &["frontier", "loop"], ""), "loop/1 The store\nloop/2 The tab\n");
 
     let other = init(&root, "other");
-    let refusals: [(&Path, &[&str], &str, &str); 9] = [
+    let refusals: [(&Path, &[&str], &str, &str); 10] = [
+        (&root, &["epic", "list"], "", "is not inside a git repository"),
         (&other, &["epic", "add", "loop", "--title", "Again", "--brief", "-"], "Brief", "Epic loop already exists in"),
         (&root, &["epic", "add", "plain", "--title", "Plain", "--brief", "-"], "Brief", "is not inside a git repository"),
         (&repo, &["epic", "add", "Not A Slug", "--title", "T", "--brief", "-"], "Brief", "is not a valid slug"),
@@ -106,4 +107,45 @@ async fn the_cli_publishes_and_reads_an_epic_through_the_server() {
     assert_eq!(cli.ok(&repo, &["frontier", "loop"], ""), "loop/1 The store\nloop/2 The tab\n");
     cli.ok(&other, &["epic", "add", "other", "--title", "Other", "--brief", "-"], "Brief");
     assert_eq!(cli.ok(&other, &["frontier", "other"], ""), "Nothing in other is on the Frontier.\n");
+    cli.ok(&repo, &["epic", "add", "archived", "--title", "Archived", "--brief", "-"], "Old brief");
+    reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/api/epics/archived", server.port))
+        .header("Content-Type", "application/json")
+        .body(r#"{"kind":"epic.archived"}"#)
+        .send().await.unwrap().error_for_status().unwrap();
+    cli.ok(&repo, &["epic", "add", "another", "--title", "Another Epic", "--brief", "-"], "Another brief");
+    let listed = "another Another Epic\nloop The loop\n";
+    assert_eq!(cli.ok(&repo, &["epic", "list"], ""), listed);
+    assert_eq!(cli.ok(&worktree.join("sub"), &["epic", "list"], ""), listed);
+    assert_eq!(cli.ok(&other, &["epic", "list"], ""), "other Other\n");
+    let empty = init(&root, "empty");
+    assert_eq!(cli.ok(&empty, &["epic", "list"], ""), "No non-archived Epics in this Project.\n");
+
+    cli.ok(&repo, &["epic", "set-title", "loop", "Revised loop"], "");
+    cli.ok(&repo, &["ticket", "set-title", "loop/1", "Store foundation"], "");
+    cli.ok(&repo, &["ticket", "set-blockers", "loop/3", "2"], "");
+    assert!(cli.ok(&repo, &["ticket", "loop/3"], "").contains("Blocked by: loop/2 (not started)\n"));
+    cli.ok(&repo, &["ticket", "set-blockers", "loop/3"], "");
+    assert_eq!(cli.ok(&repo, &["frontier", "loop"], ""), "loop/1 Store foundation\nloop/2 The tab\nloop/3 Runs\n");
+    cli.ok(&repo, &["ticket", "set-blockers", "loop/3", "1,2"], "");
+    let refusals: [(&[&str], &str); 10] = [
+        (&["epic", "set-title", "loop", " "], "the title is empty"),
+        (&["epic", "set-title", "loop", "Two\nlines"], "the title must be one line"),
+        (&["ticket", "set-title", "loop/1", " "], "the title is empty"),
+        (&["ticket", "set-title", "loop/1", "Two\nlines"], "the title must be one line"),
+        (&["epic", "set-title", "missing", "Title"], "there is no Epic missing"),
+        (&["ticket", "set-title", "loop/9", "Title"], "loop has no Ticket 9"),
+        (&["ticket", "set-blockers", "loop/9", "1"], "loop has no Ticket 9"),
+        (&["ticket", "set-blockers", "loop/1", "1"], "loop/1 cannot block itself"),
+        (&["ticket", "set-blockers", "loop/1", "9"], "loop has no Ticket 9 to block loop/1"),
+        (&["ticket", "set-blockers", "loop/1", "3"], "those Blockers would make a cycle"),
+    ];
+    for (args, expected) in refusals {
+        assert!(cli.refused(&repo, args, "").contains(expected), "{args:?}");
+    }
+    server.restart().await;
+    assert_eq!(cli.ok(&repo, &["epic", "list"], ""), "another Another Epic\nloop Revised loop\n");
+    assert_eq!(cli.ok(&repo, &["ticket", "loop/1"], ""), "# loop/1: Store foundation\n\nStatus: not started\nBlocked by: nothing\n\nBuild the store first.\n");
+    assert!(cli.ok(&repo, &["ticket", "loop/3"], "").contains("Blocked by: loop/1 (not started), loop/2 (not started)\n"));
+    assert_eq!(cli.ok(&repo, &["frontier", "loop"], ""), "loop/1 Store foundation\nloop/2 The tab\n");
 }

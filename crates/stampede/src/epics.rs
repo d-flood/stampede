@@ -18,6 +18,8 @@ use crate::{config::Agent, usage::Window};
 pub enum Event {
     #[serde(rename = "epic.added")]
     EpicAdded { slug: String, title: String, brief: String, project: PathBuf },
+    #[serde(rename = "epic.title.set")]
+    EpicTitleSet { title: String },
     #[serde(rename = "brief.set")]
     BriefSet { brief: String },
     #[serde(rename = "setup.set")]
@@ -28,6 +30,8 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tags: Vec<Tag>,
     },
+    #[serde(rename = "ticket.title.set")]
+    TicketTitleSet { ticket: u32, title: String },
     #[serde(rename = "ticket.tags.set")]
     TagsSet { ticket: u32, tags: Vec<Tag> },
     #[serde(rename = "ticket.rig.set")]
@@ -464,6 +468,7 @@ impl Epic {
 
     fn apply(&mut self, entry: &Entry) {
         match &entry.event {
+            Event::EpicTitleSet { title } => self.title = title.clone(),
             Event::BriefSet { brief } => self.brief = brief.clone(),
             Event::SetupSet { command } => self.setup = Some(command.clone()),
             Event::TicketAdded { ticket, title, body, blockers, tags } => {
@@ -483,6 +488,11 @@ impl Epic {
                     releasing: false,
                     kept: None,
                 });
+            }
+            Event::TicketTitleSet { ticket, title } => {
+                if let Some(ticket) = self.tickets.get_mut(ticket) {
+                    ticket.title = title.clone();
+                }
             }
             Event::TagsSet { ticket, tags } => {
                 if let Some(ticket) = self.tickets.get_mut(ticket) {
@@ -803,6 +813,7 @@ impl Epic {
     pub fn check(&self, event: &Event) -> Result<(), String> {
         let slug = &self.slug;
         match event {
+            Event::EpicTitleSet { title } => one_line(title),
             Event::BriefSet { brief } => filled(brief, "Brief"),
             Event::TicketAdded { ticket, title, body, blockers, tags } => {
                 if self.tickets.contains_key(ticket) {
@@ -818,6 +829,10 @@ impl Epic {
                     Some(missing) => Err(format!("{slug} has no Ticket {missing} to block {slug}/{ticket}; add Tickets in dependency order")),
                     None => Ok(()),
                 }
+            }
+            Event::TicketTitleSet { ticket, title } => {
+                self.ticket(*ticket)?;
+                one_line(title)
             }
             Event::TagsSet { ticket, tags } => {
                 self.ticket(*ticket)?;

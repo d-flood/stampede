@@ -35,6 +35,8 @@ EOF
 
 Leave out `--blocked-by` when nothing blocks the Ticket, and `--tags` when none apply; the tags above are an example, not defaults. Quote the heredoc's delimiter, as above, so that the shell leaves the body's backticks and dollar signs alone. Once every Ticket is added, `stampede frontier <epic>` should list exactly the Tickets that nothing blocks. To revise a published Ticket, pipe its whole new body to `stampede ticket set-body <epic>/<n> -`, which replaces the old one. Replace its tags with `stampede ticket set-tags <epic>/<n> routine,frontend-design`, or omit the tags to clear them.
 
+Change a Ticket's title with `stampede ticket set-title <epic>/<n> "<new title>"`. Replace its Blockers with `stampede ticket set-blockers <epic>/<n> 1,3`, or omit the list to clear them.
+
 Write each Ticket for an implementer less capable than you. The Chat that works it is given the Ticket's body and can read the Brief, and nothing else of this conversation. Assume it will not re-derive context, will follow instructions literally, and will creep in scope unless fenced. Carry every decision you have already made into the Ticket, as constraints and contracts, not prescriptive diffs.
 
 ## 5. Record the Setup Command

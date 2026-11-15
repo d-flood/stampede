@@ -69,7 +69,7 @@ impl Template {
 }
 
 /// The CLI only finds a server on a non-default data directory when told it.
-fn data_dir_sentence(data_dir: &Path) -> Option<String> {
+pub fn data_dir_sentence(data_dir: &Path) -> Option<String> {
     (data_dir != crate::data_dir()).then(|| {
         let dir = data_dir.display();
         format!("This Stampede server keeps its data in {dir}, so pass `--data-dir {dir}` to every `stampede` command.")

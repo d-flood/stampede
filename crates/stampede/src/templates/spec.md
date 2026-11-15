@@ -13,6 +13,7 @@ Synthesize this conversation and your understanding of the codebase into a spec,
    The slug names the Epic in every reference, such as `<slug>/4` for its fourth Ticket, so keep it short: lowercase letters, digits and hyphens, such as `chat-ui`. No other Epic in any Project may already use it; if it is refused, choose another. Quote the heredoc's delimiter, as above, so that the shell leaves the Brief's backticks and dollar signs alone.
 
 To revise the Brief afterwards, pipe the whole new Brief to `stampede epic set-brief <slug> -`, which replaces the old one.
+Change its title with `stampede epic set-title <slug> "<new title>"`; its slug stays the same.
 
 <brief-template>
 

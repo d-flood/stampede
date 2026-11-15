@@ -49,10 +49,14 @@ fn record(args: &ChatToolsArgs) -> Option<super::Chat> {
 
 pub fn instructions(data_dir: &Path, chat_id: Option<&str>) -> String {
     let text = crate::templates::STAMPEDE.lines().filter(|line| chat_id.is_some() || !line.contains("{canvas}")).collect::<Vec<_>>().join("\n");
-    match chat_id {
+    let mut text = match chat_id {
         Some(chat_id) => text.replace("{canvas}", &crate::canvas::dir(data_dir, chat_id).display().to_string()),
         None => text,
+    };
+    if let Some(sentence) = crate::templates::data_dir_sentence(data_dir) {
+        text.push_str(&format!("\n\n{sentence}"));
     }
+    text
 }
 
 fn can_delegate(args: &ChatToolsArgs) -> bool {
