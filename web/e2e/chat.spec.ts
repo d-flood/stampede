@@ -783,7 +783,8 @@ for (const agent of ['claude', 'codex']) {
 			if (stage !== 'thinking') {
 				const calls = panel.locator('.calls > .summary').last();
 				await expect(calls).toContainText(/^[A-Z][a-z]+ \d/);
-				await expect(calls.locator('.live')).toHaveText(`· ${await activity.locator('.label').innerText()}`);
+				if (stage === 'command') await expect(panel.locator('.current-command .command-code pre')).toHaveText('wc -l notes.txt');
+				else await expect(calls.locator('.live')).toHaveText(`· ${await activity.locator('.label').innerText()}`);
 				await expect(panel.locator('.calls > .summary[aria-expanded="true"]')).toHaveCount(0);
 			}
 			unlinkSync(`${gates}/${stage}`);

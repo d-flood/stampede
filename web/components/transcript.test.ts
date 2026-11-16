@@ -146,18 +146,50 @@ ${Array.from({ length: 40 }, (_, index) => `curl -sf -o /dev/null http://127.0.0
 const handlers = { onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() };
 const highlighted = (element: Element) => element.querySelectorAll('.syntax span[class]').length;
 
-test('a long running command stays on one highlighted line with its full text in the tooltip', async () => {
-	const view = await render(Transcript, { ...handlers, items: [{ kind: 'command', command: 'wc', status: 'running', output: '' }], activity: 'Running wc' });
-	const summary = summaries(view.container)[0];
-	const resting = summary.getBoundingClientRect().height;
-	await view.rerender({ ...handlers, items: [{ kind: 'command', command: script, status: 'running', output: '' }], activity: `Running ${script}` });
-	const live = summary.querySelector<HTMLElement>('.live')!;
-	await expect.poll(() => highlighted(live)).toBeGreaterThan(0);
-	await expect.poll(() => summary.getBoundingClientRect().height).toBe(resting);
-	expect(live.scrollWidth).toBeGreaterThan(live.clientWidth);
-	expect(live.textContent!.length).toBeLessThan(600);
-	expect(live.title).toBe(`Running ${script}`);
-	expect(view.container.scrollWidth).toBeLessThanOrEqual(view.container.clientWidth);
+test('current commands appear after one second, linger until replaced, and stay formatted in history', async () => {
+	vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+	const command = `cd web && rg -n 'a|b' src | sort`;
+	const formatted = `cd web &&\n  rg -n 'a|b' src |\n  sort`;
+	const items: Item[] = [{ kind: 'command', command: 'wc', status: 'running', output: '', startedAt: Date.now() }];
+	const view = await render(Transcript, { ...handlers, items: [...items], activity: 'Running wc' });
+	await vi.advanceTimersByTimeAsync(500);
+	items[0] = { ...items[0], status: 'ok' } as Item;
+	items.push({ kind: 'command', command, status: 'running', output: '', startedAt: Date.now() });
+	await view.rerender({ items: [...items], activity: `Running ${command}` });
+	await vi.advanceTimersByTimeAsync(999);
+	expect(view.container.querySelector('.current-command')).toBeNull();
+	await vi.advanceTimersByTimeAsync(1);
+	const current = view.container.querySelector('.current-command')!;
+	await expect.poll(() => current.querySelector('pre')?.textContent).toBe(formatted);
+	await expect.poll(() => highlighted(current)).toBeGreaterThan(0);
+	await view.getByRole('button', { name: 'Copy original', exact: true }).click();
+	expect(await navigator.clipboard.readText()).toBe(command);
+	await view.getByRole('button', { name: 'Show original', exact: true }).click();
+	expect(current.querySelector('pre')?.textContent).toBe(command);
+	await view.getByRole('button', { name: 'Show formatted', exact: true }).click();
+	items[1] = { ...items[1], status: 'ok', output: 'a.ts' } as Item;
+	await view.rerender({ items: [...items], activity: null });
+	await vi.advanceTimersByTimeAsync(2000);
+	expect(view.container.querySelector('.current-command .outcome')?.textContent?.trim()).toBe('✓');
+	expect(current.querySelector('details')?.open).toBe(false);
+	await page.elementLocator(summaries(view.container)[0]).click();
+	expect(view.container.querySelectorAll('.rail .entry')).toHaveLength(1);
+	items.push({ kind: 'command', command: 'sleep 2', status: 'running', output: '', startedAt: Date.now() });
+	await view.rerender({ items: [...items], activity: 'Running sleep 2' });
+	expect(view.container.querySelector('.current-command')).toBeNull();
+	expect(summaries(view.container)[0].getAttribute('aria-expanded')).toBe('true');
+	await vi.advanceTimersByTimeAsync(999);
+	expect(view.container.querySelector('.current-command')).toBeNull();
+	await vi.advanceTimersByTimeAsync(1);
+	expect(view.container.querySelector('.current-command pre')?.textContent).toBe('sleep 2');
+	const completed = view.container.querySelectorAll('.rail details')[1];
+	await page.elementLocator(completed.querySelector('summary')!).click();
+	expect(completed.querySelector('.command-code pre')?.textContent).toBe(formatted);
+	await expect.element(view.getByText('a.ts', { exact: true })).toBeVisible();
+	items.push({ kind: 'text', text: 'Done.', phase: 'final', streaming: false });
+	await view.rerender({ items: [...items], activity: null });
+	expect(view.container.querySelector('.current-command')).toBeNull();
+	await expect.poll(() => view.container.scrollWidth <= view.container.clientWidth).toBe(true);
 });
 
 test('every summary segment stays readable beside a long Activity on a narrow screen', async () => {

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Code from '#lib/chat/Code.svelte';
+	import CommandCode from '#lib/chat/CommandCode.svelte';
 	import { icons } from '#lib/chat/icons.ts';
 	import type { Answer, Request } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -51,7 +52,7 @@
 		</div>
 	{:else}
 		{#if request.kind === 'command'}
-			<pre class="code"><Code code={request.words.map((words) => words.map(quote).join(' ')).join('\n')} path="command.sh" /></pre>
+			<CommandCode code={request.words.map((words) => words.map(quote).join(' ')).join('\n')} />
 			{#if picking}
 				<label>Rule scope <Select aria-label="Rule scope" bind:value={scope} {disabled}><option value="chat">This Chat</option><option value="always">Always</option></Select></label>
 				{#if scope === 'always' && !request.sessionPrefixes && request.words.length > 1}<div class="progress">Additional compound rules take effect after Codex restarts.</div>{/if}

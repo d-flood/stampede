@@ -11,14 +11,30 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Caret from '#lib/ui/Caret.svelte';
 	import Chip from '#lib/ui/Chip.svelte';
+	import { untrack } from 'svelte';
 
-	let { items, activity, open = false, ondiff, oncanvas, onexpand }: { items: Item[]; activity?: string | null; open?: boolean; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(item: Item): void } = $props();
+	let { items, activity, active = true, open = false, ondiff, oncanvas, onexpand }: { items: Item[]; activity?: string | null; active?: boolean; open?: boolean; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(item: Item): void } = $props();
 
 	let expanded = $derived(open);
 	let shown = $state<Record<number, boolean>>({});
 	const segments = $derived(summarize(items));
 	const edits = $derived(chips(items));
 	const running = $derived(items.flatMap((item) => (item.kind === 'command' && activity === `Running ${item.command}` ? [item.command] : []))[0]);
+	const current = $derived(items.at(-1));
+	const currentKey = $derived(current?.kind === 'command' ? `${items.length - 1}:${current.command}` : undefined);
+	const commanding = $derived(current?.kind === 'command' && activity === `Running ${current.command}`);
+	const startedAt = $derived(current?.kind === 'command' ? current.startedAt : undefined);
+	const status = $derived(current?.kind === 'command' ? current.status : undefined);
+	let featured = $state<string>();
+	const full = $derived(active && currentKey !== undefined && featured === currentKey && (commanding || !activity));
+
+	$effect(() => {
+		const key = currentKey;
+		if (activity && !commanding) featured = undefined;
+		if (!active || !commanding || !key || status !== 'running' || untrack(() => featured === key)) return;
+		const timer = setTimeout(() => (featured = key), Math.max(0, 1000 - (Date.now() - (startedAt ?? Date.now()))));
+		return () => clearTimeout(timer);
+	});
 	const verbs: Partial<Record<ToolCall['kind'], string>> = { read: 'Read', search: 'Search', fetch: 'Fetch', web: 'Web search' };
 	const ROW_CHARACTERS = 500;
 
@@ -39,7 +55,7 @@
 
 <div class="calls">
 	<button class="summary" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
-		<Caret /><span class="text"><span class="segments">{#each segments as segment, index (index)}{#if index}{', '}{/if}<span class="segment">{segment}</span>{/each}</span>{#if activity}<span class="live" title={activity}>{#if running}{' · Running '}<code><Code code={brief(running).slice(0, ROW_CHARACTERS)} path="command.sh" /></code>{:else}{` · ${brief(activity)}`}{/if}</span>{/if}</span>
+		<Caret /><span class="text"><span class="segments">{#each segments as segment, index (index)}{#if index}{', '}{/if}<span class="segment">{segment}</span>{/each}</span>{#if activity && !full}<span class="live" title={activity}>{#if running}{' · Running '}<code><Code code={brief(running).slice(0, ROW_CHARACTERS)} path="command.sh" /></code>{:else}{` · ${brief(activity)}`}{/if}</span>{/if}</span>
 	</button>
 	{#if edits.length}
 		<div class="chips">
@@ -56,7 +72,7 @@
 	{/if}
 	{#if expanded}
 		<div class="rail">
-			{#each items as item, index (index)}
+			{#each (full ? items.slice(0, -1) : items) as item, index (index)}
 				{#if item.kind === 'tools'}
 					{#each item.calls as call, number (number)}
 						<div class="step" data-dot="done">
@@ -79,6 +95,11 @@
 					</div>
 				{/if}
 			{/each}
+		</div>
+	{/if}
+	{#if full && current?.kind === 'command'}
+		<div class="current-command">
+			<Command item={current} full bind:open={() => shown[items.length - 1] ?? false, (value) => (shown[items.length - 1] = value)} onexpand={onexpand && (() => onexpand(current))} />
 		</div>
 	{/if}
 </div>
