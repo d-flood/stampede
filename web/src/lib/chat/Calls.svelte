@@ -7,6 +7,7 @@
 	import { icon, icons } from '#lib/chat/icons.ts';
 	import { chips, summarize, type Chip as Edited } from '#lib/chat/summary.ts';
 	import Thinking from '#lib/chat/Thinking.svelte';
+	import Tool from '#lib/chat/Tool.svelte';
 	import type { Item, ToolCall } from '#lib/device.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Caret from '#lib/ui/Caret.svelte';
@@ -17,6 +18,7 @@
 
 	let expanded = $derived(open);
 	let shown = $state<Record<number, boolean>>({});
+	let shownTools = $state<Record<string, boolean>>({});
 	const segments = $derived(summarize(items));
 	const edits = $derived(chips(items));
 	const running = $derived(items.flatMap((item) => (item.kind === 'command' && activity === `Running ${item.command}` ? [item.command] : []))[0]);
@@ -77,7 +79,11 @@
 					{#each item.calls as call, number (number)}
 						<div class="step" data-dot="done">
 							{@render marker(icons[call.kind])}
-							<div class="call"><span class="verb">{verbs[call.kind] ?? call.name}</span> <span class="detail" title={call.detail}>{#if verbs[call.kind]}{call.detail}{:else}<Code code={call.detail} path="arguments.json" />{/if}</span></div>
+							{#if call.kind === 'mcp' || call.kind === 'other'}
+								<Tool {call} bind:open={() => shownTools[`${index}:${number}`] ?? false, (value) => (shownTools[`${index}:${number}`] = value)} />
+							{:else}
+								<div class="call"><span class="verb">{verbs[call.kind] ?? call.name}</span> <span class="detail" title={call.detail}>{call.detail}</span></div>
+							{/if}
 						</div>
 					{/each}
 				{:else}

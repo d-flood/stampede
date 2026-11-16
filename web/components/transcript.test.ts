@@ -87,6 +87,49 @@ test('opening an elided command requests its original item index', async () => {
 	await expect.element(view.getByText('Full command output', { exact: true })).toBeVisible();
 });
 
+test('tool arguments expand faithfully, copy their source, and retain expansion as Activity updates', async () => {
+	const detail = String.raw`{"id":9007199254740993,"enabled":true,"nested":{"tags":["a","b"],"empty":{}},"text":"a \"quote\"; \\ path","enabled":false}`;
+	const formatted = String.raw`{
+  "id": 9007199254740993,
+  "enabled": true,
+  "nested": {
+    "tags": [
+      "a",
+      "b"
+    ],
+    "empty": {}
+  },
+  "text": "a \"quote\"; \\ path",
+  "enabled": false
+}`;
+	const plain = 'Arguments without JSON\n<img src=x onerror=alert(1)>';
+	const calls = [{ kind: 'mcp', name: 'mcp__documents__read_document', detail }, { kind: 'other', name: 'Custom', detail: plain }] as const;
+	const view = await render(Transcript, { items: [{ kind: 'tools', calls: [...calls] }], onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
+	const tools = () => [...view.container.querySelectorAll<HTMLDetailsElement>('.tool')];
+	await page.elementLocator(summaries(view.container)[0]).click();
+	expect(tools().map((tool) => tool.open)).toEqual([false, false]);
+	expect(view.container.querySelector('pre')).toBeNull();
+	await page.elementLocator(tools()[0].querySelector('summary')!).click();
+	expect(tools()[0].querySelector('pre')?.textContent).toBe(formatted);
+	await expect.poll(() => tools()[0].querySelectorAll('.wrap > span[class]').length).toBeGreaterThan(0);
+	await page.elementLocator(tools()[0]).getByRole('button', { name: 'Copy original', exact: true }).click();
+	expect(await navigator.clipboard.readText()).toBe(detail);
+	await page.elementLocator(tools()[0]).getByRole('button', { name: 'Show original', exact: true }).click();
+	expect(tools()[0].querySelector('pre')?.textContent).toBe(detail);
+	await page.elementLocator(tools()[0]).getByRole('button', { name: 'Show formatted', exact: true }).click();
+	await page.elementLocator(summaries(view.container)[0]).click();
+	await page.elementLocator(summaries(view.container)[0]).click();
+	expect(tools().map((tool) => tool.open)).toEqual([true, false]);
+	await view.rerender({ items: [{ kind: 'tools', calls: [...calls, { kind: 'read', name: 'Read', detail: 'notes.txt' }] }] });
+	expect(tools()[0].open).toBe(true);
+	expect(tools()[0].querySelector('pre')?.textContent).toBe(formatted);
+	await page.elementLocator(tools()[1].querySelector('summary')!).click();
+	expect(tools()[1].querySelector('pre')?.textContent).toBe(plain);
+	expect(tools()[1].querySelector('img')).toBeNull();
+	expect(tools()[1].querySelectorAll('.wrap > span[class]')).toHaveLength(0);
+	await expect.poll(() => view.container.scrollWidth <= view.container.clientWidth).toBe(true);
+});
+
 test('turns are spaced further apart than the entries within them', async () => {
 	const items: Item[] = [
 		{ kind: 'user', text: 'Debounce the watcher.', images: 0 },
