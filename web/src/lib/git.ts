@@ -37,6 +37,12 @@ export type Commit = { sha: string; short: string; subject: string; author: stri
 
 export type Log = { commits: Commit[]; cursor?: string };
 
+export type Merged = { kind: 'side'; commits: Commit[]; more: number } | { kind: 'sync'; count: number; onto: string; foldable: boolean };
+
+export type Regroupee = Commit & { message: string; pushed: boolean; merge?: Merged };
+
+export type Regroupable = { head: string; trunk?: string; commits: Regroupee[] };
+
 export const kinds: { kind: Kind; letter: string; label: string }[] = [
 	{ kind: 'modified', letter: 'M', label: 'Modified' },
 	{ kind: 'renamed', letter: 'R', label: 'Renamed' },
@@ -86,6 +92,14 @@ export async function reword(projectId: string, sha: string, message: string): P
 
 export async function squash(projectId: string, sha: string, head: string, message: string, force: boolean): Promise<void> {
 	await post(projectId, 'squash', { sha, head, message, force });
+}
+
+export async function regroupable(projectId: string, sha: string): Promise<Regroupable> {
+	return json(await fetch(`/api/projects/${projectId}/git/regroup?${new URLSearchParams({ sha })}`));
+}
+
+export async function regroup(projectId: string, head: string, oldest: string, groups: { newest: string; message?: string }[], force: boolean): Promise<void> {
+	await post(projectId, 'regroup', { head, oldest, groups, force });
 }
 
 export async function draft(projectId: string): Promise<string> {

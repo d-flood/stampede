@@ -240,6 +240,70 @@ async fn unpushed_commits_squash_into_one_without_touching_the_work() {
 }
 
 #[tokio::test]
+async fn commits_regroup_into_runs_absorbing_side_merges_and_folding_trunk_merges_only_from_the_start() {
+    let server = Server::start("git-regroup").await;
+    let origin = server.root.path().join("origin.git");
+    git(server.root.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    let repo = repository(&server, "regroup");
+    git(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    let commit = |name: &str| {
+        fs::write(repo.join(format!("{name}.txt")), format!("{name}\n")).unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", name]);
+    };
+    commit("base");
+    git(&repo, &["push", "-qu", "origin", "main"]);
+    git(&repo, &["checkout", "-qb", "feature"]);
+    commit("a");
+    commit("b");
+    git(&repo, &["checkout", "-q", "main"]);
+    commit("upstream");
+    git(&repo, &["push", "-q", "origin", "main"]);
+    git(&repo, &["checkout", "-q", "feature"]);
+    git(&repo, &["merge", "-q", "--no-ff", "origin/main", "-m", "Sync"]);
+    commit("c");
+    git(&repo, &["checkout", "-qb", "side"]);
+    commit("s1");
+    commit("s2");
+    git(&repo, &["checkout", "-q", "feature"]);
+    commit("d");
+    git(&repo, &["merge", "-q", "--no-ff", "side", "-m", "Merge side"]);
+    commit("e");
+    let [head, tree, base, upstream] = ["HEAD", "HEAD^{tree}", "main~1", "main"].map(|rev| rev_parse(&repo, rev));
+    let [e, side, d, c, sync, b, a] = ["HEAD", "HEAD~1", "HEAD~2", "HEAD~3", "HEAD~4", "HEAD~5", "HEAD~6"].map(|rev| rev_parse(&repo, rev));
+    let id = open(server.port, &repo).await;
+    let regroup = format!("/api/projects/{id}/git/regroup");
+
+    let listed = get(server.port, &format!("{regroup}?sha={}", rev_parse(&repo, "side"))).await;
+    assert_eq!(listed["commits"].as_array().unwrap().len(), 2, "a side commit reaches back to the merge that brought it in");
+    let listed = get(server.port, &format!("{regroup}?sha={a}")).await;
+    assert_eq!(listed["trunk"], "origin/main");
+    let shas: Vec<&str> = listed["commits"].as_array().unwrap().iter().map(|commit| commit["sha"].as_str().unwrap()).collect();
+    assert_eq!(shas, [&e, &side, &d, &c, &sync, &b, &a]);
+    let subjects: Vec<&str> = listed["commits"][1]["merge"]["commits"].as_array().unwrap().iter().map(|commit| commit["subject"].as_str().unwrap()).collect();
+    assert_eq!((listed["commits"][1]["merge"]["kind"].as_str(), subjects), (Some("side"), vec!["s2", "s1"]));
+    assert_eq!(listed["commits"][4]["merge"]["kind"], "sync");
+    assert_eq!(listed["commits"][4]["merge"]["foldable"], true);
+
+    let crossing = json!({ "head": head, "oldest": a, "groups": [{ "newest": e, "message": "Too much" }, { "newest": a }] });
+    let (status, body) = post(server.port, &regroup, crossing).await;
+    assert_eq!((status, body.as_str()), (409, "A run with a sync merge must reach the oldest commit."));
+
+    let groups = json!([{ "newest": e, "message": "Later" }, { "newest": c }, { "newest": sync }, { "newest": b, "message": "Earlier" }]);
+    assert_eq!(post(server.port, &regroup, json!({ "head": head, "oldest": a, "groups": groups })).await.0, 204);
+    assert_eq!(rev_parse(&repo, "HEAD^{tree}"), tree);
+    assert_eq!((log_message(&repo, "HEAD"), rev_parse(&repo, "HEAD^@")), ("Later".to_owned(), rev_parse(&repo, "HEAD~1")));
+    assert_eq!(log_message(&repo, "HEAD~1"), "c");
+    assert_eq!((log_message(&repo, "HEAD~2"), rev_parse(&repo, "HEAD~2^2")), ("Sync".to_owned(), upstream.clone()));
+    assert_eq!((log_message(&repo, "HEAD~3"), rev_parse(&repo, "HEAD~3^@")), ("Earlier".to_owned(), base));
+
+    let [head, oldest] = ["HEAD", "HEAD~3"].map(|rev| rev_parse(&repo, rev));
+    let everything = json!({ "head": head, "oldest": oldest, "groups": [{ "newest": head, "message": "Everything" }] });
+    assert_eq!(post(server.port, &regroup, everything).await.0, 204);
+    assert_eq!((rev_parse(&repo, "HEAD^{tree}"), rev_parse(&repo, "HEAD^@")), (tree, upstream));
+}
+
+#[tokio::test]
 async fn conflicts_must_be_resolved_before_anything_risky() {
     let server = Server::start("git-conflict").await;
     let repo = repository(&server, "conflict");

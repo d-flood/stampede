@@ -7,8 +7,20 @@ A self-hosted IDE for directing AI coding agents, served from the development ma
 ### Structure
 
 **Host**:
-The development machine that runs Stampede, its Projects, and their Terminals.
+A development machine that runs Stampede, its Projects, and their Terminals.
 _Avoid_: server, box, machine
+
+**Home Host**:
+The one Host that Devices open, showing its own Projects and those of its Linked Hosts as a single Stampede.
+_Avoid_: main Host, hub, primary
+
+**Linked Host**:
+A Host whose Projects appear through its Home Host; opened directly, it shows only its own.
+_Avoid_: paired Host, peer, satellite, remote host
+
+**Toolkit**:
+The programs every Host needs for Stampede to work: Stampede itself, the Agent CLIs, and gh.
+_Avoid_: tools, dependencies, toolchain, requirements, prerequisites
 
 **Host name**:
 The name a Host goes by wherever it identifies itself, such as its installed app, so that several Hosts can be told apart; "Stampede" unless set.
@@ -35,7 +47,7 @@ Exclusive use of a Desktop held by one authorized Chat for its current turn, inc
 _Avoid_: lease, lock, desktop access
 
 **Project**:
-A directory on the Host, usually a git repository root, that owns its Terminals, open files, git view, and language servers. A git worktree is opened as its own Project.
+A directory on one Host, usually a git repository root, that owns its Terminals, open files, git view, and language servers; clones of one repository on two Hosts are two Projects. A git worktree is opened as its own Project.
 _Avoid_: workspace, repo, folder
 
 **Focused Project**:
@@ -47,11 +59,11 @@ A persistent shell belonging to a Project or to the Drawer that keeps running re
 _Avoid_: session, pty, pane
 
 **Ended Terminal**:
-A Terminal lost to a Host reboot, kept as a read-only record of its last output until dismissed.
+A Terminal lost to a Host reboot or to its worktree moving to another Host, kept as a read-only record of its last output until dismissed.
 _Avoid_: dead terminal, zombie
 
 **Drawer**:
-A slide-in panel of Terminals that belong to no Project, for quick commands.
+A slide-in panel of Terminals that belong to no Project, each on a Host of David's choosing, for quick commands.
 _Avoid_: global terminal, quake terminal, scratch terminal
 
 ### Agents
@@ -132,6 +144,9 @@ One of _Routine_ (predictable implementation), _Judgment_ (autonomous decisions)
 **Ticket Rig**:
 An optional saved Rig choice for a Ticket, overriding the Run's default when its Chat starts. Clearing it restores the default; it can be changed while the Ticket is not started.
 
+**Ticket Host**:
+An optional saved Host choice for a Ticket, overriding the Run's default Host when its Chat starts. Clearing it restores the default; it can be changed while the Ticket is not started.
+
 **Blocker**:
 A Ticket that must be merged into its Epic's branch, or skipped, before another Ticket may be taken.
 _Avoid_: dependency, prerequisite, parent
@@ -177,7 +192,7 @@ The git worktree one Ticket is worked in, cut from its Epic's branch.
 _Avoid_: workspace, sandbox, checkout
 
 **Integration Worktree**:
-The one worktree on an Epic's branch, into which finished Tickets merge one at a time and which David inspects before Landing.
+The one worktree on an Epic's branch, on its Project's Host, into which finished Tickets merge one at a time and which David inspects before Landing.
 _Avoid_: main worktree, staging
 
 **Resolver**:
@@ -213,6 +228,14 @@ _Avoid_: unstaged changes, working changes
 **Change marker**:
 An indication beside a line in the editor that it differs from the most recent commit.
 _Avoid_: git decoration, dirty marker
+
+**Regroup**:
+Squashing runs of consecutive commits on the current branch, each run chosen by David, into one commit apiece, keeping their order and the branch's final tree.
+_Avoid_: interactive rebase, autosquash
+
+**Sync merge**:
+A merge that brought the trunk's newer commits into a branch, such as one from origin/main; Regroup keeps it between runs unless one run squashes it with every commit below.
+_Avoid_: upstream merge, back-merge
 
 **Comparison**:
 The changes a Source branch has made since it split off a Target branch; what the Compare section lists.
@@ -251,7 +274,7 @@ _Avoid_: reviewed, seen, read
 ### Layout
 
 **Project rail**:
-The column of open Projects used to hop between them, collapsed to icons or expanded to show each one's path, each marked when something inside needs attention or a Run is live; its worktree Projects, an Epic's or made by hand, are counted on the Project they belong to and listed under it until deleted.
+The column of open Projects, grouped by Host, used to hop between them, collapsed to icons or expanded to show each one's path, each marked when something inside needs attention or a Run is live; its worktree Projects, an Epic's or made by hand, are counted on the Project they belong to and listed under it until deleted.
 _Avoid_: project list, project sidebar
 
 **Tab**:

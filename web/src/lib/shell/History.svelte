@@ -1,9 +1,10 @@
 <script lang="ts">
 	import type { Device } from '#lib/device.svelte.ts';
 	import { RequestError } from '#lib/files.svelte.ts';
-	import { commitFiles, letters, log, message, reword, split, squash, undo, type Change, type Commit } from '#lib/git.ts';
+	import { commitFiles, letters, log, message, regroupable, reword, split, squash, undo, type Change, type Commit, type Regroupable } from '#lib/git.ts';
 	import { restoreMessage } from '#lib/shell/Changes.svelte';
 	import CopyMode from '#lib/shell/CopyMode.svelte';
+	import Regroup from '#lib/shell/Regroup.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Caret from '#lib/ui/Caret.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
@@ -20,6 +21,7 @@
 	import DotsThree from '~icons/ph/dots-three';
 	import GitMerge from '~icons/ph/git-merge';
 	import PencilSimple from '~icons/ph/pencil-simple';
+	import Stack from '~icons/ph/stack';
 
 	type Props = { projectId: string; device: Device; onopen(change: Change, commit: Commit): void };
 
@@ -36,6 +38,7 @@
 	let pushed = $state(false);
 	let failure = $state<string>();
 	let copying = $state<string>();
+	let regrouping = $state<Regroupable>();
 	let refreshes = 0;
 	let requested: string | undefined;
 	let collapsed = $state(false);
@@ -136,6 +139,15 @@
 		}
 	}
 
+	async function regroupFrom(commit: Commit) {
+		failure = undefined;
+		try {
+			regrouping = await regroupable(projectId, commit.sha);
+		} catch (error) {
+			failure = error instanceof Error ? error.message : String(error);
+		}
+	}
+
 	async function undoCommit() {
 		failure = undefined;
 		try {
@@ -162,6 +174,7 @@
 			ArrowUp: () => rows[Math.max(0, at - 1)]?.focus(),
 			r: () => commit && edit([commit]),
 			q: () => commit && squashInto(commit),
+			g: () => commit && at > 0 && regroupFrom(commit),
 			y: () => commit && copy(commit.short),
 			Y: () => commit && copy(commit.sha),
 			z: undoCommit
@@ -191,6 +204,7 @@
 				{@const items = [
 					{ label: 'Edit Message…', icon: PencilSimple, hint: 'r', onselect: () => edit([commit]) },
 					...(index > 0 ? [{ label: 'Squash Newer Commits Into This…', icon: GitMerge, hint: 'q', onselect: () => squashInto(commit) }] : []),
+					...(index > 0 ? [{ label: 'Regroup From Here…', icon: Stack, hint: 'g', onselect: () => regroupFrom(commit) }] : []),
 					{ label: 'Copy Short Hash', icon: Copy, hint: 'y', onselect: () => copy(commit.short) },
 					{ label: 'Copy Full Hash', icon: Copy, hint: 'Y', onselect: () => copy(commit.sha) },
 					...(index === 0 ? [{ label: 'Undo Last Commit', icon: ArrowUUpLeft, hint: 'z', onselect: undoCommit }] : [])
@@ -253,6 +267,8 @@
 {/if}
 
 <CopyMode bind:text={copying} />
+
+{#if regrouping}<Regroup {projectId} data={regrouping} onclose={() => (regrouping = undefined)} />{/if}
 
 <Dialog
 	bind:open={() => !!editing, (open) => !open && (editing = undefined)}

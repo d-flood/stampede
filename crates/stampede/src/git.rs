@@ -165,11 +165,21 @@ pub async fn refs(State(state): State<AppState>, Param(id): Param<String>) -> Re
             refs.remote.push(remote.to_owned());
         }
     }
-    refs.default = match crate::origin::default_branch(&dir).await.map(|branch| format!("origin/{branch}")) {
-        Some(remote) if refs.remote.contains(&remote) => Some(remote),
-        _ => ["main", "master"].into_iter().find(|name| refs.local.iter().any(|local| local == name)).map(str::to_owned),
-    };
+    refs.default = trunk(&dir).await;
     Ok(Json(refs))
+}
+
+/// The branch work merges into: origin's default branch, else a local main or master.
+pub(crate) async fn trunk(dir: &Path) -> Option<String> {
+    let remote = crate::origin::default_branch(dir).await.map(|branch| format!("origin/{branch}"));
+    let local = ["main", "master"].map(str::to_owned);
+    for name in remote.into_iter().chain(local) {
+        let full = if name.starts_with("origin/") { format!("refs/remotes/{name}") } else { format!("refs/heads/{name}") };
+        if run(dir, &["rev-parse", "--verify", "--quiet", &full]).await.is_ok() {
+            return Some(name);
+        }
+    }
+    None
 }
 
 /// What `source` changed since it split off `target`, both named as branches rather than revisions.

@@ -190,6 +190,7 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/git/undo", post(git::actions::undo))
         .route("/api/projects/{id}/git/reword", post(git::actions::reword))
         .route("/api/projects/{id}/git/squash", post(git::actions::squash))
+        .route("/api/projects/{id}/git/regroup", get(git::actions::regroupable).post(git::actions::regroup))
         .route("/api/projects/{id}/git/draft", post(git::actions::draft))
         .route("/api/projects/{id}/git/fetch", post(git::actions::fetch))
         .route("/api/projects/{id}/git/pull", post(git::actions::pull))

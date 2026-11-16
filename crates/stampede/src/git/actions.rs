@@ -1,18 +1,18 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     process::Stdio,
 };
 
 use axum::{
     Json,
-    extract::{Path as Param, State},
+    extract::{Path as Param, Query, State},
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, process::Command};
 
-use super::{Kind, Operation, Status, inside, read, sha};
+use super::{Commit, Kind, Operation, Status, inside, read, sha, trunk};
 use crate::{
     AppState,
     files::{Failure, root},
@@ -20,6 +20,8 @@ use crate::{
 };
 
 const DIFF_LIMIT: usize = 60_000;
+const REGROUP_LIMIT: usize = 200;
+const SIDE_LIMIT: usize = 50;
 
 #[derive(Deserialize)]
 pub struct Paths {
@@ -44,6 +46,53 @@ pub struct Squash {
     message: String,
     #[serde(default)]
     force: bool,
+}
+
+#[derive(Deserialize)]
+pub struct RegroupQuery {
+    sha: String,
+}
+
+#[derive(Serialize)]
+pub struct Regroupable {
+    head: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trunk: Option<String>,
+    commits: Vec<Regroupee>,
+}
+
+#[derive(Serialize)]
+pub struct Regroupee {
+    #[serde(flatten)]
+    commit: Commit,
+    message: String,
+    pushed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merge: Option<Merged>,
+}
+
+/// What a merge brought in: a side branch's own commits, or the trunk's.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Merged {
+    Side { commits: Vec<Commit>, more: usize },
+    #[serde(rename_all = "camelCase")]
+    Sync { count: usize, onto: String, foldable: bool },
+}
+
+#[derive(Deserialize)]
+pub struct Regroup {
+    head: String,
+    oldest: String,
+    groups: Vec<Group>,
+    #[serde(default)]
+    force: bool,
+}
+
+#[derive(Deserialize)]
+pub struct Group {
+    newest: String,
+    message: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -164,6 +213,197 @@ pub async fn squash(State(state): State<AppState>, Param(id): Param<String>, Jso
     let tip = squashed(&dir, &commit, &head, message).await.map_err(|output| (StatusCode::BAD_REQUEST, output))?;
     let reason = format!("squash: {}", message.lines().next().unwrap_or_default());
     change(&state, &id, &dir, &["update-ref", "-m", &reason, "HEAD", &tip, &head]).await
+}
+
+/// The commits from one on this branch to its tip along first parents, newest first, with what each merge brought in.
+pub async fn regroupable(State(state): State<AppState>, Param(id): Param<String>, Query(query): Query<RegroupQuery>) -> Result<Json<Regroupable>, Failure> {
+    let (dir, _) = open(&state, &id).await?;
+    let (picked, head) = on_branch(&dir, &query.sha).await?;
+    let format = "--format=%H%x00%h%x00%s%x00%an%x00%ar%x00%P%x00%B";
+    let raw = output(&dir, &["log", "--first-parent", "-z", format, &format!("--max-count={}", REGROUP_LIMIT + 1), &head], None).await.map_err(bad)?;
+    let text = String::from_utf8_lossy(&raw);
+    let mut fields = text.split('\0');
+    let mut listed = Vec::new();
+    while let (Some(sha), Some(short), Some(subject), Some(author), Some(date), Some(parents), Some(message)) =
+        (fields.next(), fields.next(), fields.next(), fields.next(), fields.next(), fields.next(), fields.next())
+    {
+        let parents: Vec<String> = parents.split(' ').filter(|parent| !parent.is_empty()).map(str::to_owned).collect();
+        let commit = Commit { sha: sha.to_owned(), short: short.to_owned(), subject: subject.to_owned(), author: author.to_owned(), date: date.to_owned() };
+        listed.push((commit, parents, message.trim_end().to_owned()));
+    }
+    let shas: Vec<&str> = listed.iter().map(|(commit, ..)| commit.sha.as_str()).collect();
+    let end = reach(&dir, &picked, &head, &shas).await?;
+    listed.truncate(end + 1);
+    let unpushed = exec(&dir, &["rev-list", "--first-parent", &format!("--max-count={}", end + 1), &head, "--not", "--remotes"]).await.unwrap_or_default();
+    let unpushed: HashSet<&str> = unpushed.lines().collect();
+    let base = listed.last().and_then(|(_, parents, _)| parents.first().cloned());
+    let trunk = trunk(&dir).await;
+    let mut commits = Vec::new();
+    for (commit, parents, message) in listed {
+        let merge = match parents.split_first() {
+            Some((first, others)) if !others.is_empty() => Some(merged(&dir, &commit.sha, first, others, trunk.as_deref(), base.as_deref()).await),
+            _ => None,
+        };
+        let pushed = !unpushed.contains(commit.sha.as_str());
+        commits.push(Regroupee { commit, message, pushed, merge });
+    }
+    Ok(Json(Regroupable { head, trunk, commits }))
+}
+
+/// Rewrites the commits from `oldest` to the tip into the given runs of consecutive first-parent commits, newest first.
+/// A run of several becomes one commit with its newest tree, so nothing replays and the work is untouched; a lone commit keeps its parents.
+pub async fn regroup(State(state): State<AppState>, Param(id): Param<String>, Json(request): Json<Regroup>) -> Result<StatusCode, Failure> {
+    let (dir, status) = open(&state, &id).await?;
+    settled(&status)?;
+    let (oldest, head) = on_branch(&dir, &request.oldest).await?;
+    if head != request.head {
+        return Err(refuse("The branch has new commits. Look them over and regroup again."));
+    }
+    let listed = exec(&dir, &["log", "--first-parent", "--format=%H %P", &format!("--max-count={}", REGROUP_LIMIT + 1), &head]).await.map_err(bad)?;
+    let lines: Vec<Vec<&str>> = listed.lines().map(|line| line.split(' ').collect()).collect();
+    let shas: Vec<&str> = lines.iter().map(|line| line[0]).collect();
+    let end = reach(&dir, &oldest, &head, &shas).await?;
+    if shas[end] != oldest {
+        return Err((StatusCode::BAD_REQUEST, format!("{oldest} is not on this branch's first-parent line")));
+    }
+    let mut runs = Vec::new();
+    let mut at = 0;
+    for (index, group) in request.groups.iter().enumerate() {
+        let next = request.groups.get(index + 1).map(|next| shas[..=end].iter().position(|sha| *sha == next.newest));
+        let stop = match next {
+            Some(Some(stop)) => stop,
+            Some(None) => return Err((StatusCode::BAD_REQUEST, format!("{} is not among the commits", request.groups[index + 1].newest))),
+            None => end + 1,
+        };
+        if shas.get(at) != Some(&group.newest.as_str()) || stop <= at {
+            return Err((StatusCode::BAD_REQUEST, "Groups must cover every commit, newest first.".to_owned()));
+        }
+        runs.push((at..stop, group.message.as_deref()));
+        at = stop;
+    }
+    if at != end + 1 {
+        return Err((StatusCode::BAD_REQUEST, "Groups must cover every commit, newest first.".to_owned()));
+    }
+    let base = lines[end].get(1).map(|parent| (*parent).to_owned());
+    let trunk = trunk(&dir).await;
+    let mut parent = base.clone();
+    let mut kept = true;
+    for (index, (run, message)) in runs.iter().enumerate().rev() {
+        let message = message.map(written).transpose()?;
+        let (newest, last) = (shas[run.start], shas[run.end - 1]);
+        if run.len() == 1 && kept && message.is_none() {
+            parent = Some(newest.to_owned());
+            continue;
+        }
+        if kept && !request.force {
+            unpushed(&dir, last).await.map_err(|(_, reason)| (StatusCode::PRECONDITION_REQUIRED, reason))?;
+        }
+        kept = false;
+        let raw = output(&dir, &["cat-file", "commit", last], None).await.map_err(bad)?;
+        let object = if run.len() == 1 {
+            let original = lines[run.start].get(1).map(|parent| (*parent).to_owned());
+            let rewritten = original.zip(parent.clone()).into_iter().collect();
+            recommit(&raw, &rewritten, None, message)
+        } else {
+            let message = message.ok_or_else(|| (StatusCode::BAD_REQUEST, "Write a message for each run of commits.".to_owned()))?;
+            let mut onto = parent.clone();
+            for line in &lines[run.clone()] {
+                let Some((first, others)) = line[1..].split_first().filter(|(_, others)| !others.is_empty()) else { continue };
+                let others: Vec<String> = others.iter().map(|other| (*other).to_owned()).collect();
+                if let Merged::Sync { foldable, .. } = merged(&dir, line[0], first, &others, trunk.as_deref(), base.as_deref()).await {
+                    if index != runs.len() - 1 || !foldable {
+                        return Err(refuse("A run with a sync merge must reach the oldest commit."));
+                    }
+                    if onto == parent {
+                        onto = others.first().cloned();
+                    }
+                }
+            }
+            let tree = exec(&dir, &["rev-parse", &format!("{newest}^{{tree}}")]).await.map_err(bad)?;
+            squashed_onto(&raw, onto.as_deref(), &tree, message)
+        };
+        parent = Some(store(&dir, &object).await.map_err(bad)?);
+    }
+    if kept {
+        return Err(refuse("Group some commits first."));
+    }
+    let tip = parent.expect("a rewritten group leaves a commit");
+    let reason = format!("regroup: {} commits into {}", end + 1, runs.len());
+    change(&state, &id, &dir, &["update-ref", "-m", &reason, "HEAD", &tip, &head]).await
+}
+
+/// Where along the first-parent `line` from the tip the commit containing `picked` sits.
+async fn reach(dir: &Path, picked: &str, head: &str, line: &[&str]) -> Result<usize, Failure> {
+    let end = match line.iter().position(|sha| *sha == picked) {
+        Some(end) => end,
+        None => {
+            let descendants = exec(dir, &["rev-list", "--ancestry-path", &format!("{picked}..{head}")]).await.map_err(bad)?;
+            let descendants: HashSet<&str> = descendants.lines().collect();
+            line.iter().take_while(|sha| descendants.contains(**sha)).count().saturating_sub(1)
+        }
+    };
+    if end >= REGROUP_LIMIT {
+        return Err(refuse(format!("Regroup takes up to {REGROUP_LIMIT} commits. Start from a newer one.")));
+    }
+    if end == 0 {
+        return Err(refuse("There are no newer commits to regroup."));
+    }
+    Ok(end)
+}
+
+/// Classifies a merge: a sync brought in commits already on the trunk; anything else is a side branch.
+async fn merged(dir: &Path, merge: &str, first: &str, others: &[String], trunk: Option<&str>, base: Option<&str>) -> Merged {
+    let ancestor = async |older: &str, newer: &str| exec(dir, &["merge-base", "--is-ancestor", older, newer]).await.is_ok();
+    let brought: Vec<&str> = others.iter().map(String::as_str).chain(["--not", first]).collect();
+    let count = async || exec(dir, &[&["rev-list", "--count"][..], &brought].concat()).await.ok().and_then(|count| count.parse::<usize>().ok()).unwrap_or(0);
+    let onto = &others[0];
+    if let Some(trunk) = trunk
+        && !ancestor(merge, trunk).await
+        && ancestor(onto, trunk).await
+    {
+        let foldable = match base {
+            Some(base) => ancestor(base, onto).await,
+            None => true,
+        };
+        let short = exec(dir, &["rev-parse", "--short", onto]).await.unwrap_or_else(|_| onto.clone());
+        return Merged::Sync { count: count().await, onto: short, foldable };
+    }
+    let limit = format!("--max-count={}", SIDE_LIMIT + 1);
+    let args = [&["log", "-z", "--format=%H%x00%h%x00%s%x00%an%x00%ar", &limit][..], &brought].concat();
+    let raw = output(dir, &args, None).await.unwrap_or_default();
+    let text = String::from_utf8_lossy(&raw);
+    let mut fields = text.split('\0');
+    let mut commits = Vec::new();
+    while let (Some(sha), Some(short), Some(subject), Some(author), Some(date)) = (fields.next(), fields.next(), fields.next(), fields.next(), fields.next()) {
+        commits.push(Commit { sha: sha.to_owned(), short: short.to_owned(), subject: subject.to_owned(), author: author.to_owned(), date: date.to_owned() });
+    }
+    let more = if commits.len() > SIDE_LIMIT { count().await - SIDE_LIMIT } else { 0 };
+    commits.truncate(SIDE_LIMIT);
+    Merged::Side { commits, more }
+}
+
+/// A commit with `raw`'s author and committer on a single parent, or none, so merged-in history flattens.
+fn squashed_onto(raw: &[u8], parent: Option<&str>, tree: &str, message: &str) -> Vec<u8> {
+    let split = raw.windows(2).position(|pair| pair == b"\n\n").map_or(raw.len(), |end| end + 1);
+    let mut object = format!("tree {tree}\n").into_bytes();
+    if let Some(parent) = parent {
+        object.extend_from_slice(format!("parent {parent}\n").as_bytes());
+    }
+    let mut skipping = false;
+    for line in raw[..split].split_inclusive(|&byte| byte == b'\n') {
+        if !line.starts_with(b" ") {
+            skipping = [&b"tree "[..], b"parent ", b"gpgsig ", b"gpgsig-sha256 ", b"mergetag "].iter().any(|header| line.starts_with(header));
+        }
+        if !skipping {
+            object.extend_from_slice(line);
+        }
+    }
+    object.extend_from_slice(format!("\n{message}\n").as_bytes());
+    object
+}
+
+fn bad(output: String) -> Failure {
+    (StatusCode::BAD_REQUEST, output)
 }
 
 /// Asks the commit Rig to draft a message for the staged changes.

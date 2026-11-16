@@ -486,6 +486,18 @@ test('History rewords and squashes earlier commits and copies their hashes', { t
 	await commits.getByRole('button', { name: /Second and third/ }).focus();
 	await page.keyboard.press('Shift+Y');
 	await expect.poll(clipboard).toBe(git('rev-parse', 'HEAD'));
+
+	await sidebar.getByRole('button', { name: `Actions for ${git('rev-parse', '--short', 'HEAD~1')}` }).click();
+	await page.getByRole('menuitem', { name: 'Regroup From Here…' }).click();
+	const regroup = page.getByRole('dialog', { name: 'Regroup commits' });
+	await regroup.getByRole('button', { name: /^First, reworded/ }).click();
+	await regroup.getByRole('button', { name: /^Second and third/ }).click({ modifiers: ['Shift'] });
+	await regroup.getByRole('button', { name: 'Squash Into One' }).click();
+	await regroup.getByRole('textbox', { name: 'Message' }).fill('All of it');
+	await regroup.getByRole('button', { name: 'Regroup', exact: true }).click();
+	await expect(regroup).toBeHidden();
+	expect(git('log', '--format=%s')).toBe('All of it');
+	expect(git('ls-files')).toBe('First.txt\nSecond.txt\nThird.txt');
 });
 
 test('History squashes pushed commits after a warning', { tag: '@desktop' }, async ({ page }) => {
