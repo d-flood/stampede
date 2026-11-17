@@ -9,17 +9,19 @@
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
 	import { draftComments, draftPosition, openPlacement, openPosition, setDrafts, setReplacing, type Render } from '#lib/editor/drafts.ts';
 	import { comparison } from '#lib/compare.svelte.ts';
-	import { branches, comparing, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
+	import { branches, comparing, image, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
-	import { baseline, index, show, type Git } from '#lib/git.ts';
+	import { baseline, index, indexUrl, show, showUrl, type Git } from '#lib/git.ts';
 	import { acceptDraft, createDraft, deleteDraft, editDraft, hunks, setViewed, viewedState, type Hunks, type Placement, type PrReview, type Side } from '#lib/pr-reviews.ts';
 	import DraftBox from '#lib/shell/DraftBox.svelte';
+	import ImageDiff, { type ImageSide } from '#lib/shell/ImageDiff.svelte';
 	import Conflict from '#lib/shell/Conflict.svelte';
 	import { ordered } from '#lib/shell/tree.ts';
 	import ServerSwitch from '#lib/shell/ServerSwitch.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
+	import Segmented from '#lib/ui/Segmented.svelte';
 	import Toolbar from '#lib/ui/Toolbar.svelte';
 	import { getOriginalDoc, MergeView, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
 	import { setDiagnostics } from '@codemirror/lint';
@@ -79,6 +81,29 @@
 	const since = $derived(sinceViewed && mark === 'changed' ? review?.viewed[diff.path]?.commit : undefined);
 	const replacing = $derived(review?.drafts.find((draft) => draft.id === diff.replacing && draft.displaced && draft.path === diff.path));
 	let replaceError = $state<string>();
+	const svg = $derived(/\.svg$/i.test(diff.path));
+	const raster = $derived(image(diff.path) && !svg);
+	let rendered = $state(true);
+	const pictures = $derived.by((): ImageSide[] | undefined => {
+		if (!raster && !(svg && rendered)) return;
+		const { projectId, path, against } = diff;
+		const disk: ImageSide = { label: 'disk', url: `/api/projects/${projectId}/image?${new URLSearchParams({ path })}`, live: 'disk' };
+		const staged: ImageSide = { label: 'index', url: indexUrl(projectId, path), live: 'index' };
+		const committed: ImageSide = { label: 'HEAD', url: head && showUrl(projectId, head, from ?? path) };
+		if (against === 'HEAD') return loaded ? [committed, disk] : undefined;
+		if (against === 'index') return [staged, disk];
+		if (against === 'staged') return loaded ? [committed, staged] : undefined;
+		if (against === 'disk') return;
+		if (!comparing(against)) return [{ label: `${against.short}^`, url: showUrl(projectId, `${against.sha}^`, diff.from ?? path) }, { label: against.short, url: showUrl(projectId, against.sha, path) }];
+		const result = compared?.result;
+		if (!result) return;
+		const renamed = result.files.find((change) => change.path === path)?.from;
+		const { target, source } = 'pr' in against ? { target: 'target', source: 'source' } : against;
+		return [
+			since ? { label: 'viewed', url: showUrl(projectId, since, path) } : { label: target, url: showUrl(projectId, result.mergeBase, renamed ?? path) },
+			{ label: source, url: showUrl(projectId, result.source, path) }
+		];
+	});
 
 	onMount(() => {
 		let disposed = false;
@@ -96,6 +121,7 @@
 				shown?.destroy();
 			};
 		}
+		if (raster) return;
 		Promise.all([language(diff.path), sides()]).then(
 			([extension, sides]) => {
 				if (disposed) return;
@@ -120,6 +146,7 @@
 		if (!versusHead || !loaded) return;
 		const [path, commit] = [from ?? diff.path, head];
 		diff.from = from;
+		if (raster) return;
 		let stale = false;
 		baseline(diff.projectId, commit, path).then(
 			(content) => {
@@ -143,6 +170,12 @@
 		const [path, viewed] = [diff.path, since];
 		const from = result.files.find((change) => change.path === path)?.from;
 		diff.from = from;
+		if (raster) {
+			untrack(() => shown?.destroy());
+			shown = undefined;
+			note = undefined;
+			return;
+		}
 		let stale = false;
 		const left = viewed ? show(diff.projectId, viewed, path) : show(diff.projectId, result.mergeBase, from ?? path);
 		const lines = pr === undefined || viewed ? undefined : hunks(diff.projectId, pr, path).catch(() => undefined);
@@ -191,7 +224,7 @@
 
 	$effect(() => {
 		const current = shown?.b;
-		if (current) servers.displayed(current, displayed);
+		if (current) servers.displayed(current, displayed && !pictures);
 	});
 
 	$effect(() => {
@@ -222,7 +255,7 @@
 	});
 
 	$effect(() => {
-		if (focused && shown && form() === 'desktop') shown.b.focus();
+		if (focused && shown && !pictures && form() === 'desktop') shown.b.focus();
 	});
 
 	/** Both sides, but HEAD's, which follows the status. */
@@ -520,7 +553,7 @@
 
 <!-- svelte-ignore a11y_interactive_supports_focus (Alt-arrows walk a Comparison from anywhere in its tab.) -->
 <div class="diff" role="tabpanel" hidden={!active} onkeydown={stepKey}>
-	<Toolbar path={diff.from ? `${diff.from} → ${diff.path}` : diff.path} title={diff.path} deleted={diff.deleted}>
+	<Toolbar path={diff.from ? `${diff.from} → ${diff.path}` : diff.path} title={diff.path} deleted={diff.deleted} wrap={svg}>
 		{#if diff.against === 'disk'}
 			<span class="sides">disk ↔ unsaved edits</span>
 		{:else if diff.against === 'index'}
@@ -550,14 +583,17 @@
 				<Button title="Mark Viewed, then the next file" disabled={marking || at < 0} onclick={viewedAndNext}><CheckSquare /> Viewed &amp; next</Button>
 			{/if}
 		{/if}
-		{#if analyzed}<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} />{/if}
-		{#if shown}
+		{#if svg}
+			<Segmented aria-label="View" options={[{ value: true, label: 'Rendered' }, { value: false, label: 'Source' }]} bind:value={rendered} />
+		{/if}
+		{#if analyzed && !pictures}<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} />{/if}
+		{#if shown || pictures}
 			{#if diff.layout === 'split'}
 				<IconButton label="Single column" title="Single column" onclick={toggle}><Rows /></IconButton>
 			{:else}
 				<IconButton label="Side by side" title="Side by side" onclick={toggle}><Columns /></IconButton>
 			{/if}
-			{#if form() === 'phone' && editable}
+			{#if shown && !pictures && form() === 'phone' && editable}
 				<Button onclick={() => sync.write()} disabled={!diff.dirty}><FloppyDisk /> Save</Button>
 			{/if}
 		{/if}
@@ -570,9 +606,12 @@
 		</div>
 	{/if}
 	<Conflict {sync} onshowdiff={(disk) => shown && onshowdiff(disk, shown.b.state.doc.toString())} />
-	<div class="content" bind:this={container}>
+	<div class="content" bind:this={container} hidden={!!pictures}>
 		{#if note}<p>{note}</p>{/if}
 	</div>
+	{#if pictures}
+		<div class="content"><ImageDiff {diff} sides={pictures} {device} {active} /></div>
+	{/if}
 </div>
 
 <style>

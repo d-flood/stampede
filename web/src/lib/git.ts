@@ -58,8 +58,12 @@ export async function status(projectId: string): Promise<Git> {
 	return json(await fetch(`/api/projects/${projectId}/git`));
 }
 
+export function indexUrl(projectId: string, path: string): string {
+	return `/api/projects/${projectId}/git/index?${new URLSearchParams({ path })}`;
+}
+
 export async function index(projectId: string, path: string): Promise<string> {
-	return text(await fetch(`/api/projects/${projectId}/git/index?${new URLSearchParams({ path })}`));
+	return text(await fetch(indexUrl(projectId, path)));
 }
 
 export async function message(projectId: string, sha: string): Promise<string> {
@@ -146,8 +150,12 @@ export async function commitFiles(projectId: string, sha: string): Promise<Chang
 	return json(await fetch(`/api/projects/${projectId}/git/commit/${sha}`));
 }
 
+export function showUrl(projectId: string, sha: string, path: string): string {
+	return `/api/projects/${projectId}/git/show?${new URLSearchParams({ sha, path })}`;
+}
+
 export async function show(projectId: string, sha: string, path: string): Promise<string> {
-	return text(await fetch(`/api/projects/${projectId}/git/show?${new URLSearchParams({ sha, path })}`));
+	return text(await fetch(showUrl(projectId, sha, path)));
 }
 
 export async function compare(projectId: string, target: string, source: string): Promise<Comparison> {
