@@ -783,10 +783,24 @@ impl Transcript {
         true
     }
 
+    fn presented(&mut self) {
+        for index in (0..self.items.len()).rev() {
+            match &mut self.items[index] {
+                Item::Text { phase, .. } => *phase = Phase::Final,
+                Item::Thinking { .. } => continue,
+                _ => break,
+            }
+            self.changed(index);
+        }
+    }
+
     fn tool_start(&mut self, data: &Value, started_at: u64) {
         self.finish_thinking();
         let Some(id) = data["toolCallId"].as_str() else { return };
         if self.tools.contains_key(id) { return; }
+        if data["mcpServerName"].as_str().zip(data["mcpToolName"].as_str()).is_some_and(|(server, tool)| super::presents(server, tool)) {
+            self.presented();
+        }
         if data["mcpServerName"] == html::SERVER && data["mcpToolName"] == super::questions::TOOL { return; }
         let name = data["toolName"].as_str().unwrap_or("tool");
         let args = &data["arguments"];

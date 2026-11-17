@@ -173,6 +173,11 @@ pub enum Phase {
     Final,
 }
 
+/// Text just before a call to one of these tools addresses the user.
+fn presents(server: &str, tool: &str) -> bool {
+    server == html::SERVER && [questions::TOOL, html::TOOL, crate::media::TOOL, terminal_tools::STAGE].contains(&tool)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CommandStatus {
@@ -342,11 +347,9 @@ impl Subagent {
 
     fn item(&self) -> Item {
         let done = self.status == Status::Done;
-        let report = self.items.iter().rev().find_map(|item| match item {
-            Item::Text { text, phase: Phase::Final, .. } if done => Some(text.clone()),
-            _ => None,
-        });
-        let items: Vec<Item> = self.items.iter().filter(|item| !done || !matches!(item, Item::Text { phase: Phase::Final, .. })).cloned().collect();
+        let last = self.items.iter().rposition(|item| matches!(item, Item::Text { phase: Phase::Final, .. })).filter(|_| done);
+        let report = last.and_then(|index| match &self.items[index] { Item::Text { text, .. } => Some(text.clone()), _ => None });
+        let items: Vec<Item> = self.items.iter().enumerate().filter(|(index, _)| Some(*index) != last).map(|(_, item)| item.clone()).collect();
         let totals = done.then(|| Totals {
             duration_ms: self.duration.unwrap_or(self.finished_at.saturating_sub(self.started_at)),
             tools: self.tools.unwrap_or_else(|| items.iter().map(|item| match item {

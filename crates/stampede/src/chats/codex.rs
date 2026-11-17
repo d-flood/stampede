@@ -764,6 +764,7 @@ struct Transcript {
     starting: Option<u64>,
     turn: Option<String>,
     streaming: HashMap<String, (usize, String, Phase)>,
+    said: Option<(usize, String)>,
     thinking: HashMap<String, (usize, BTreeMap<u64, String>)>,
     tools: Option<(usize, Vec<ToolCall>)>,
     activity: super::Activity,
@@ -879,6 +880,7 @@ impl Transcript {
             starting: None,
             turn: None,
             streaming: HashMap::new(),
+            said: None,
             thinking: HashMap::new(),
             tools: None,
             activity: super::Activity::default(),
@@ -1014,8 +1016,16 @@ impl Transcript {
         let index = self.len;
         self.len += 1;
         self.tools = None;
+        self.said = None;
         let _ = self.events.send(Event::Item(index, item));
         index
+    }
+
+    fn presented(&mut self, call: &Value) {
+        let said = self.said.take();
+        if let Some((index, text)) = said.filter(|_| super::presents(call["server"].as_str().unwrap_or_default(), call["tool"].as_str().unwrap_or_default())) {
+            let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false, phase: Phase::Final }));
+        }
     }
 
     fn stream(&mut self, id: &str, text: &str, phase: Phase) {
@@ -1030,6 +1040,7 @@ impl Transcript {
         self.tools = None;
         self.starting = None;
         self.streaming.clear();
+        self.said = None;
         self.thinking.clear();
         self.commands.clear();
         self.subagents.clear();
@@ -1395,6 +1406,7 @@ impl Transcript {
             Some("item/started") if item["type"] == "commandExecution" => {
                 self.command(item);
             }
+            Some("item/started") if item["type"] == "mcpToolCall" => self.presented(item),
             Some("item/commandExecution/outputDelta") => {
                 if let Some((index, item, _)) = params["itemId"].as_str().and_then(|id| self.commands.get_mut(id)) {
                     if let Item::Command { output, .. } | Item::Shell { output, .. } = item {
@@ -1428,14 +1440,14 @@ impl Transcript {
                     let plan = text("text").replace("<proposed_plan>", "").replace("</proposed_plan>", "").trim().to_owned();
                     self.plan = Some((format!("plan:{}", text("id")), plan));
                 }
-                match item["id"].as_str().and_then(|id| self.streaming.remove(id)) {
-                Some((index, ..)) => {
-                    let _ = self.events.send(Event::Item(index, agent(item)));
-                }
-                None => {
-                    self.push(agent(item));
-                }
-                }
+                let index = match item["id"].as_str().and_then(|id| self.streaming.remove(id)) {
+                    Some((index, ..)) => {
+                        let _ = self.events.send(Event::Item(index, agent(item)));
+                        index
+                    }
+                    None => self.push(agent(item)),
+                };
+                self.said = (phase(item) == Phase::Commentary).then(|| (index, text("text")));
             }
             Some("plan") => {
                 if self.settings.chosen.mode.as_deref() == Some("plan") {
@@ -1480,6 +1492,7 @@ impl Transcript {
                 }
             }
             Some("mcpToolCall") => {
+                self.presented(item);
                 if item["server"] == html::SERVER && item["tool"] == super::questions::TOOL { return; }
                 if item["server"] == html::SERVER && item["tool"] == super::delegation::TOOL {
                     if let Some(delegated) = super::delegation::item(&item["result"], self.data_dir.as_deref()) {

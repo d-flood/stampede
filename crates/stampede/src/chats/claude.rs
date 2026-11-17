@@ -2219,9 +2219,11 @@ impl Transcript {
                     }
                 }
                 Some("tool_use") => {
-                    self.phase = Phase::Commentary;
-                    for (index, text) in self.said.drain(..) {
-                        let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false, phase: Phase::Commentary }));
+                    if !presents(block["name"].as_str().unwrap_or_default()) {
+                        self.phase = Phase::Commentary;
+                        for (index, text) in self.said.drain(..) {
+                            let _ = self.events.send(Event::Item(index, Item::Text { text, streaming: false, phase: Phase::Commentary }));
+                        }
                     }
                     self.tool(block, &message["timestamp"]);
                 }
@@ -2552,6 +2554,10 @@ impl Transcript {
             _ => {}
         }
     }
+}
+
+fn presents(name: &str) -> bool {
+    name == "ExitPlanMode" || name.strip_prefix("mcp__").and_then(|name| name.split_once("__")).is_some_and(|(server, tool)| super::presents(server, tool))
 }
 
 fn hunk(hunk: &Value) -> String {
@@ -3547,10 +3553,11 @@ mod phase_tests {
     use super::*;
 
     #[test]
-    fn text_turns_to_commentary_once_its_message_calls_a_tool_live_and_from_history() {
+    fn text_turns_to_commentary_once_its_message_calls_a_working_tool_live_and_from_history() {
         let entry = |id: &str, block: Value| json!({ "type": "assistant", "message": { "id": id, "content": [block] } });
         let text = |text: &str| json!({ "type": "text", "text": text });
         let tool = json!({ "type": "tool_use", "id": "read", "name": "Read", "input": { "file_path": "/project/notes.txt" } });
+        let ask = json!({ "type": "tool_use", "id": "ask", "name": super::super::questions::CLAUDE_TOOL, "input": { "questions": [] } });
         let streamed = |id: &str, text: &str| {
             [
                 json!({ "type": "message_start", "message": { "id": id } }),
@@ -3564,11 +3571,12 @@ mod phase_tests {
             let (events, mut received) = mpsc::unbounded_channel();
             let mut transcript = Transcript::new(events, Path::new("/project"));
             if recorded {
-                for message in [entry("working", text("Reading.")), entry("working", tool.clone()), entry("answer", text("Done."))] {
+                for message in [entry("working", text("Reading.")), entry("working", tool.clone()), entry("asking", text("Pick one.")), entry("asking", ask.clone()), entry("answer", text("Done."))] {
                     transcript.recorded(&message);
                 }
             } else {
-                let messages = streamed("working", "Reading.").into_iter().chain([entry("working", tool.clone())]).chain(streamed("answer", "Done."));
+                let messages = streamed("working", "Reading.").into_iter().chain([entry("working", tool.clone())])
+                    .chain(streamed("asking", "Pick one.")).chain([entry("asking", ask.clone())]).chain(streamed("answer", "Done."));
                 for message in messages {
                     transcript.read(&message);
                 }
@@ -3583,7 +3591,8 @@ mod phase_tests {
                 Item::Text { text, phase, .. } => Some((text, phase)),
                 _ => None,
             }).collect();
-            assert_eq!(texts, [("Reading.".to_owned(), Phase::Commentary), ("Done.".to_owned(), Phase::Final)], "recorded: {recorded}");
+            let expected = [("Reading.", Phase::Commentary), ("Pick one.", Phase::Final), ("Done.", Phase::Final)].map(|(text, phase)| (text.to_owned(), phase));
+            assert_eq!(texts, expected, "recorded: {recorded}");
         }
     }
 }
