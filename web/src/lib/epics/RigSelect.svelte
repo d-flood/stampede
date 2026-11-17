@@ -43,16 +43,12 @@
 <style>
 	div {
 		min-width: 0;
-	}
-
-	div > :global(select) {
 		font-size: var(--font-size-sm);
 	}
 
 	p {
 		margin: var(--space-1) 0 0;
 		color: var(--ansi-1);
-		font-size: var(--font-size-sm);
 		overflow-wrap: anywhere;
 	}
 </style>

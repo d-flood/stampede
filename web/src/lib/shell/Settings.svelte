@@ -527,7 +527,7 @@
 		gap: var(--space-2);
 	}
 
-	.font > :global(select) {
+	.font > :global(.select) {
 		flex: none;
 		width: auto;
 	}

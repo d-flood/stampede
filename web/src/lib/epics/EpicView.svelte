@@ -320,7 +320,7 @@
 	</span>
 	<span class="setting">
 		<span aria-hidden="true">Reviewers</span>
-		<span class="field">
+		<span class="picker">
 			<Menu items={choices.map((choice) => ({ label: choice.name, checked: reviewers.includes(choice.name), keepOpen: true, onselect: () => toggleReviewer(choice.name) }))}>
 				{#snippet trigger(props)}
 					<SelectTrigger {...props} value={reviewers.join(', ') || 'None'} disabled={reviewing || !choices.length} aria-label="Reviewers: {reviewers.join(', ') || 'none'}" />
@@ -952,7 +952,7 @@
 	}
 
 	.run-trigger,
-	.field {
+	.picker {
 		display: flex;
 		min-width: 0;
 		max-width: 20rem;
@@ -976,8 +976,8 @@
 		min-width: 7rem;
 	}
 
-	.run-settings .setting > :global(select),
-	.run-settings .field {
+	.run-settings .setting > :global(.select),
+	.run-settings .picker {
 		width: 12rem;
 		max-width: none;
 		justify-content: space-between;
@@ -1403,8 +1403,8 @@
 		gap: var(--space-2);
 	}
 
-	.strip .setting > :global(select),
-	.strip .field {
+	.strip .setting > :global(.select),
+	.strip .picker {
 		flex: 2;
 		max-width: none;
 		justify-content: space-between;

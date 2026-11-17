@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
-	import CaretDown from '~icons/ph/caret-down';
-	import CaretRight from '~icons/ph/caret-right';
+	import CaretDown from '~icons/ph/caret-down-bold';
+	import CaretRight from '~icons/ph/caret-right-bold';
 
 	type Props = HTMLButtonAttributes & { value: string; leading?: Snippet; caret?: 'down' | 'right' };
 

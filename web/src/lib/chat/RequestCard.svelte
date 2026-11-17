@@ -95,7 +95,7 @@
 	.words { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 	label { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 	label > :global(input) { flex: 1; }
-	label > :global(select) { width: auto; }
+	label > :global(.select) { width: auto; }
 	output { font-family: var(--font-mono); overflow-wrap: anywhere; }
 	.card.question { max-height: 65dvh; gap: 0; padding: 0; overflow: hidden; }
 	.question .asker { padding: var(--space-3) var(--space-4) 0; }
