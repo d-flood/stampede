@@ -2,8 +2,11 @@
 	import { canvasName } from '#lib/canvas.svelte.ts';
 	import { brief } from '#lib/chat/brief.ts';
 	import Code from '#lib/chat/Code.svelte';
+	import CodeBlock from '#lib/chat/CodeBlock.svelte';
 	import Command from '#lib/chat/Command.svelte';
 	import Edit from '#lib/chat/Edit.svelte';
+	import Elapsed from '#lib/chat/Elapsed.svelte';
+	import { formatJson } from '#lib/chat/format-json.ts';
 	import { icon, icons } from '#lib/chat/icons.ts';
 	import { chips, summarize, type Chip as Edited } from '#lib/chat/summary.ts';
 	import Thinking from '#lib/chat/Thinking.svelte';
@@ -12,33 +15,30 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Caret from '#lib/ui/Caret.svelte';
 	import Chip from '#lib/ui/Chip.svelte';
-	import { untrack } from 'svelte';
 
-	let { items, activity, active = true, open = false, ondiff, oncanvas, onexpand }: { items: Item[]; activity?: string | null; active?: boolean; open?: boolean; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(item: Item): void } = $props();
+	let { items, activity, open = false, ondiff, oncanvas, onexpand }: { items: Item[]; activity?: string | null; open?: boolean; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(item: Item): void } = $props();
 
 	let expanded = $derived(open);
+	let watching = $state(false);
 	let shown = $state<Record<number, boolean>>({});
 	let shownTools = $state<Record<string, boolean>>({});
 	const segments = $derived(summarize(items));
 	const edits = $derived(chips(items));
 	const running = $derived(items.flatMap((item) => (item.kind === 'command' && activity === `Running ${item.command}` ? [item.command] : []))[0]);
 	const current = $derived(items.at(-1));
-	const currentKey = $derived(current?.kind === 'command' ? `${items.length - 1}:${current.command}` : undefined);
-	const commanding = $derived(current?.kind === 'command' && activity === `Running ${current.command}`);
-	const startedAt = $derived(current?.kind === 'command' ? current.startedAt : undefined);
-	const status = $derived(current?.kind === 'command' ? current.status : undefined);
-	let featured = $state<string>();
-	const full = $derived(active && currentKey !== undefined && featured === currentKey && (commanding || !activity));
-
-	$effect(() => {
-		const key = currentKey;
-		if (activity && !commanding) featured = undefined;
-		if (!active || !commanding || !key || status !== 'running' || untrack(() => featured === key)) return;
-		const timer = setTimeout(() => (featured = key), Math.max(0, 1000 - (Date.now() - (startedAt ?? Date.now()))));
-		return () => clearTimeout(timer);
-	});
+	const command = $derived(current?.kind === 'command' && activity === `Running ${current.command}` ? current : undefined);
+	const tool = $derived(current?.kind === 'tools' && activity === `Using ${current.calls.at(-1)?.name}` ? current.calls.at(-1) : undefined);
+	const args = $derived(watching && tool ? formatJson(tool.detail) : undefined);
+	const rail = $derived(watching && command ? items.slice(0, -1) : items);
 	const verbs: Partial<Record<ToolCall['kind'], string>> = { read: 'Read', search: 'Search', fetch: 'Fetch', web: 'Web search' };
 	const ROW_CHARACTERS = 500;
+
+	function toggle() {
+		expanded = !expanded;
+		const commands = rail.flatMap((item, index) => (item.kind === 'command' ? [index] : []));
+		const index = rail.findLastIndex((item) => item.kind === 'command' && item.status === 'running');
+		if (expanded && (index >= 0 || commands.length === 1)) shown[index >= 0 ? index : commands[0]] = true;
+	}
 
 	function dot(item: Item) {
 		if (item.kind === 'thinking') return 'said';
@@ -56,9 +56,16 @@
 {/snippet}
 
 <div class="calls">
-	<button class="summary" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
-		<Caret /><span class="text"><span class="segments">{#each segments as segment, index (index)}{#if index}{', '}{/if}<span class="segment">{segment}</span>{/each}</span>{#if activity && !full}<span class="live" title={activity}>{#if running}{' · Running '}<code><Code code={brief(running).slice(0, ROW_CHARACTERS)} path="command.sh" /></code>{:else}{` · ${brief(activity)}`}{/if}</span>{/if}</span>
-	</button>
+	<div class="head">
+		<button class="summary" aria-expanded={expanded} onclick={toggle}>
+			<Caret /><span class="text"><span class="segments">{#each segments as segment, index (index)}{#if index}{', '}{/if}<span class="segment">{segment}</span>{/each}</span>{#if activity && !command && !tool}<span class="live" title={activity}>{#if running}{' · Running '}<code><Code code={brief(running).slice(0, ROW_CHARACTERS)} path="command.sh" /></code>{:else}{` · ${brief(activity)}`}{/if}</span>{/if}</span>
+		</button>
+		{#if activity && (command || tool)}
+			<button class="live" aria-expanded={watching} title={activity} onclick={() => (watching = !watching)}>
+				<span class="label">{#if command && !watching}{' · Running '}<code><Code code={brief(command.command).slice(0, ROW_CHARACTERS)} path="command.sh" /></code>{:else}{` · ${command ? 'Running' : brief(activity)}`}{/if}</span>{#if command?.startedAt && !watching}<Elapsed startedAt={command.startedAt} />{/if}<Caret />
+			</button>
+		{/if}
+	</div>
 	{#if edits.length}
 		<div class="chips">
 			{#each edits as edit (`${edit.canvas}:${edit.path}`)}
@@ -74,9 +81,9 @@
 	{/if}
 	{#if expanded}
 		<div class="rail">
-			{#each (full ? items.slice(0, -1) : items) as item, index (index)}
+			{#each rail as item, index (index)}
 				{#if item.kind === 'tools'}
-					{#each item.calls as call, number (number)}
+					{#each (watching && tool && index === items.length - 1 ? item.calls.slice(0, -1) : item.calls) as call, number (number)}
 						<div class="step" data-dot="done">
 							{@render marker(icons[call.kind])}
 							{#if call.kind === 'mcp' || call.kind === 'other'}
@@ -103,9 +110,13 @@
 			{/each}
 		</div>
 	{/if}
-	{#if full && current?.kind === 'command'}
+	{#if watching && command}
 		<div class="current-command">
-			<Command item={current} full bind:open={() => shown[items.length - 1] ?? false, (value) => (shown[items.length - 1] = value)} onexpand={onexpand && (() => onexpand(current))} />
+			<Command item={command} full bind:open={() => shown[items.length - 1] ?? false, (value) => (shown[items.length - 1] = value)} onexpand={onexpand && (() => onexpand(command))} />
+		</div>
+	{:else if watching && tool}
+		<div class="current-tool">
+			<CodeBlock code={tool.detail} formatted={args ?? tool.detail} path={args === undefined ? 'arguments.txt' : 'arguments.json'} />
 		</div>
 	{/if}
 </div>
@@ -118,7 +129,19 @@
 		font-family: var(--font-ui);
 	}
 
-	.summary {
+	/* Hang the Caret in the padding so a wrapped live button aligns with the segments. */
+	.head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		column-gap: var(--space-1);
+		min-width: 0;
+		padding-left: calc(1em + var(--space-2));
+		font-size: var(--font-size-sm);
+	}
+
+	.summary,
+	button.live {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
@@ -129,16 +152,23 @@
 		background: none;
 		color: var(--muted-fg);
 		font: inherit;
-		font-size: var(--font-size-sm);
 		text-align: start;
 		cursor: pointer;
 	}
 
-	.summary:hover {
-		color: var(--color-fg);
+	.summary {
+		flex: 0 1 auto;
+		margin-left: calc(-1em - var(--space-2));
 	}
 
+	.summary:only-child {
+		flex: 1;
+	}
 
+	.summary:hover,
+	button.live:hover {
+		color: var(--color-fg);
+	}
 
 	.text {
 		display: flex;
@@ -155,8 +185,13 @@
 	.live {
 		flex: 1 1 12rem;
 		min-width: 0;
-		overflow: hidden;
 		color: var(--muted-fg);
+	}
+
+	span.live,
+	.label {
+		min-width: 0;
+		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}

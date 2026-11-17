@@ -70,7 +70,7 @@ test('running shells restore after reload and background updates reach project t
 	await expect(tile.getByTitle('background')).toBeVisible();
 	route!.send(JSON.stringify({ type: 'chat.background', chatId: chatId!, background: false }));
 	await expect(tile.getByTitle('background')).toHaveCount(0);
-	await panel.locator('.calls > .summary').click();
-	await expect(panel.locator('.transcript .command')).toContainText(command);
+	await panel.locator('.calls .summary').click();
+	await expect(panel.locator('.transcript .command-code')).toContainText(command);
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });

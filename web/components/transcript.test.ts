@@ -4,7 +4,7 @@ import { expect, onTestFinished, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 
-const summaries = (container: HTMLElement) => [...container.querySelectorAll<HTMLButtonElement>('.calls > .summary')];
+const summaries = (container: HTMLElement) => [...container.querySelectorAll<HTMLButtonElement>('.calls .summary')];
 
 test('messages stay visible while Activity groups update and retain their open state', async () => {
 	const items: Item[] = [
@@ -26,7 +26,6 @@ test('messages stay visible while Activity groups update and retain their open s
 	items.push({ kind: 'text', text: 'The file has three lines.', phase: 'final', streaming: false });
 	await view.rerender({ items: [...items], activity: null });
 	expect(summaries(view.container).map((element) => element.getAttribute('aria-expanded'))).toEqual(['false', 'true']);
-	await page.elementLocator(view.container.querySelectorAll('.command')[0].closest('summary')!).click();
 	await expect.element(view.getByText('3 notes.txt', { exact: true })).toBeVisible();
 	await expect.element(view.getByText('The file has three lines.', { exact: true })).toBeVisible();
 	await page.elementLocator(summaries(view.container)[1]).click();
@@ -81,7 +80,6 @@ test('opening an elided command requests its original item index', async () => {
 	const items: Item[] = [{ kind: 'text', text: 'Output follows.', phase: 'final', streaming: false }, { kind: 'command', command: 'cat notes.txt', status: 'ok', output: '', elided: true }];
 	const view = await render(Transcript, { items, onexpand, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
 	await page.elementLocator(summaries(view.container)[0]).click();
-	await page.elementLocator(view.container.querySelector('.command')!.closest('summary')!).click();
 	await expect.poll(() => onexpand.mock.calls).toEqual([[1]]);
 	await view.rerender({ items: [items[0], { kind: 'command', command: 'cat notes.txt', status: 'ok', output: 'Full command output' }] });
 	await expect.element(view.getByText('Full command output', { exact: true })).toBeVisible();
@@ -189,19 +187,14 @@ ${Array.from({ length: 40 }, (_, index) => `curl -sf -o /dev/null http://127.0.0
 const handlers = { onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() };
 const highlighted = (element: Element) => element.querySelectorAll('.syntax span[class]').length;
 
-test('current commands appear after one second, linger until replaced, and stay formatted in history', async () => {
-	vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+test('the live Activity reveals the current command or tool arguments on demand and follows later ones', async () => {
 	const command = `cd web && rg -n 'a|b' src | sort`;
 	const formatted = `cd web &&\n  rg -n 'a|b' src |\n  sort`;
-	const items: Item[] = [{ kind: 'command', command: 'wc', status: 'running', output: '', startedAt: Date.now() }];
-	const view = await render(Transcript, { ...handlers, items: [...items], activity: 'Running wc' });
-	await vi.advanceTimersByTimeAsync(500);
-	items[0] = { ...items[0], status: 'ok' } as Item;
-	items.push({ kind: 'command', command, status: 'running', output: '', startedAt: Date.now() });
-	await view.rerender({ items: [...items], activity: `Running ${command}` });
-	await vi.advanceTimersByTimeAsync(999);
+	const items: Item[] = [{ kind: 'command', command, status: 'running', output: '', startedAt: Date.now() }];
+	const view = await render(Transcript, { ...handlers, items: [...items], activity: `Running ${command}` });
+	const live = () => view.container.querySelector<HTMLButtonElement>('.calls button.live')!;
 	expect(view.container.querySelector('.current-command')).toBeNull();
-	await vi.advanceTimersByTimeAsync(1);
+	await page.elementLocator(live()).click();
 	const current = view.container.querySelector('.current-command')!;
 	await expect.poll(() => current.querySelector('pre')?.textContent).toBe(formatted);
 	await expect.poll(() => highlighted(current)).toBeGreaterThan(0);
@@ -210,28 +203,22 @@ test('current commands appear after one second, linger until replaced, and stay 
 	await view.getByRole('button', { name: 'Show original', exact: true }).click();
 	expect(current.querySelector('pre')?.textContent).toBe(command);
 	await view.getByRole('button', { name: 'Show formatted', exact: true }).click();
-	items[1] = { ...items[1], status: 'ok', output: 'a.ts' } as Item;
-	await view.rerender({ items: [...items], activity: null });
-	await vi.advanceTimersByTimeAsync(2000);
-	expect(view.container.querySelector('.current-command .outcome')?.textContent?.trim()).toBe('✓');
-	expect(current.querySelector('details')?.open).toBe(false);
-	await page.elementLocator(summaries(view.container)[0]).click();
-	expect(view.container.querySelectorAll('.rail .entry')).toHaveLength(1);
+	items[0] = { ...items[0], status: 'ok', output: 'a.ts' } as Item;
 	items.push({ kind: 'command', command: 'sleep 2', status: 'running', output: '', startedAt: Date.now() });
 	await view.rerender({ items: [...items], activity: 'Running sleep 2' });
-	expect(view.container.querySelector('.current-command')).toBeNull();
-	expect(summaries(view.container)[0].getAttribute('aria-expanded')).toBe('true');
-	await vi.advanceTimersByTimeAsync(999);
-	expect(view.container.querySelector('.current-command')).toBeNull();
-	await vi.advanceTimersByTimeAsync(1);
 	expect(view.container.querySelector('.current-command pre')?.textContent).toBe('sleep 2');
-	const completed = view.container.querySelectorAll('.rail details')[1];
-	await page.elementLocator(completed.querySelector('summary')!).click();
+	await page.elementLocator(summaries(view.container)[0]).click();
+	const completed = view.container.querySelector<HTMLDetailsElement>('.rail details')!;
+	expect(completed.open).toBe(true);
 	expect(completed.querySelector('.command-code pre')?.textContent).toBe(formatted);
 	await expect.element(view.getByText('a.ts', { exact: true })).toBeVisible();
-	items.push({ kind: 'text', text: 'Done.', phase: 'final', streaming: false });
-	await view.rerender({ items: [...items], activity: null });
-	expect(view.container.querySelector('.current-command')).toBeNull();
+	items.push({ kind: 'tools', calls: [{ kind: 'mcp', name: 'mcp__docs__read', detail: '{"id":1}' }] });
+	await view.rerender({ items: [...items], activity: 'Using mcp__docs__read' });
+	expect(view.container.querySelector('.current-tool pre')?.textContent).toBe('{\n  "id": 1\n}');
+	expect(view.container.querySelector('.rail .tool')).toBeNull();
+	await page.elementLocator(live()).click();
+	expect(view.container.querySelector('.current-tool')).toBeNull();
+	expect(view.container.querySelector('.rail .tool')).not.toBeNull();
 	await expect.poll(() => view.container.scrollWidth <= view.container.clientWidth).toBe(true);
 });
 
@@ -246,9 +233,9 @@ test('every summary segment stays readable beside a long Activity on a narrow sc
 	];
 	const view = await render(Transcript, { ...handlers, items, activity: `Running ${script}` });
 	const summary = summaries(view.container)[0];
-	const live = summary.querySelector<HTMLElement>('.live')!;
+	const live = view.container.querySelector<HTMLElement>('.calls .live')!;
 	await expect.poll(() => summary.getBoundingClientRect().right).toBeLessThanOrEqual(360);
-	const row = summary.getBoundingClientRect();
+	const row = summary.parentElement!.getBoundingClientRect();
 	for (const segment of summary.querySelectorAll('.segment')) {
 		const box = segment.getBoundingClientRect();
 		expect(box.left).toBeGreaterThanOrEqual(row.left);
@@ -256,14 +243,14 @@ test('every summary segment stays readable beside a long Activity on a narrow sc
 		expect(box.bottom).toBeLessThanOrEqual(row.bottom);
 	}
 	expect([...summary.querySelectorAll('.segment')].at(-1)!.textContent).toBe('1 failed');
-	expect(live.getBoundingClientRect().height).toBeLessThan(summary.querySelector('.segments')!.getBoundingClientRect().height);
+	expect(live.querySelector('.label')!.getBoundingClientRect().height).toBeLessThan(summary.querySelector('.segments')!.getBoundingClientRect().height);
 	expect(live.getBoundingClientRect().right).toBeLessThanOrEqual(row.right);
 });
 
 test('only the label of a command in this group is highlighted', async () => {
 	const items: Item[] = [{ kind: 'command', command: 'cargo test', status: 'running', output: '' }];
 	const view = await render(Transcript, { ...handlers, items, activity: 'Running the tests' });
-	const live = () => summaries(view.container)[0].querySelector('.live')!;
+	const live = () => view.container.querySelector('.calls .live')!;
 	expect(live().textContent).toBe(' · Running the tests');
 	expect(live().querySelector('.syntax')).toBeNull();
 	await view.rerender({ ...handlers, items, activity: 'Thinking…' });

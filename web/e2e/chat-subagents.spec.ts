@@ -67,7 +67,7 @@ for (const agent of ['claude', 'codex']) {
 		await expect(panel.locator('header').getByTitle('Name')).toHaveText(agent === 'claude' ? 'Explore' : 'Heisenberg');
 		await expect(panel.getByText('First finding', { exact: true })).toBeVisible();
 		const calls = panel.locator('.transcript:visible .calls');
-		await expect(calls.locator('> .summary')).toHaveAttribute('aria-expanded', 'true');
+		await expect(calls.locator('> .head > .summary')).toHaveAttribute('aria-expanded', 'true');
 		await expect(calls).toContainText(agent === 'claude' ? 'Read notes.txt' : 'cat notes.txt todo.txt');
 		await expect(panel.getByText('Checking the relevant code.', { exact: true })).toBeVisible();
 		unlinkSync(`${gates}/stream`);
@@ -186,9 +186,9 @@ test('the Tray counts Subagents with colored dots, surfaces waiting ones and kee
 	await expect(tab.getByTitle('working')).toBeVisible();
 
 	const line = (task: string) => panel.locator('button.spawn:visible', { hasText: task });
-	await expect(panel.locator('.calls > .summary, button.spawn')).toHaveText(['Ran 1 command', /^\s*Explore\s*Old task\s*finished in 1m 12s, 14 tools$/, /^\s*Reviewer\s*Find the file\s*1:\d\d$/, /^\s*Review\s*Review the file\s*waiting for you$/, 'Ran 1 command', /^\s*Plan\s*Broken task\s*failed$/]);
+	await expect(panel.locator('.calls .summary, button.spawn')).toHaveText(['Ran 1 command', /^\s*Explore\s*Old task\s*finished in 1m 12s, 14 tools$/, /^\s*Reviewer\s*Find the file\s*1:\d\d$/, /^\s*Review\s*Review the file\s*waiting for you$/, 'Ran 1 command', /^\s*Plan\s*Broken task\s*failed$/]);
 	await expect(line('Find the file').getByRole('img', { name: 'Codex' })).toBeVisible();
-	const group = panel.locator('.calls > .summary').first();
+	const group = panel.locator('.calls .summary').first();
 	await group.click();
 	await expect(group).toHaveAttribute('aria-expanded', 'true');
 	await group.click();
@@ -209,7 +209,7 @@ test('the Tray counts Subagents with colored dots, surfaces waiting ones and kee
 	send({ type: 'chat.item', chatId: chatId!, index: 2, item: items[2] });
 	await expect(panel.getByText('First finding', { exact: true })).toBeVisible();
 	const calls = panel.locator('.transcript:visible .calls');
-	await expect(calls.locator('> .summary')).toHaveAttribute('aria-expanded', 'true');
+	await expect(calls.locator('> .head > .summary')).toHaveAttribute('aria-expanded', 'true');
 	await expect(calls).toContainText('Read codex.rs');
 	await expect(panel.getByText('Checking the relevant code.', { exact: true })).toBeVisible();
 	await calls.locator('details.running > summary').click();

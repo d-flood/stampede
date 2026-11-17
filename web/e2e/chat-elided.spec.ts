@@ -42,10 +42,8 @@ test('a finished subagent and a long command output arrive in brief and load whe
 	await expect(panel.getByRole('textbox', { name: 'Composer' })).toBeVisible();
 	route!.send(JSON.stringify({ type: 'chat.items', chatId: chatId!, items } satisfies ServerMessage));
 
-	await panel.locator('.calls > .summary').click();
+	await panel.locator('.calls .summary').click();
 	const command = panel.locator('details.ok');
-	await expect(command.locator('pre')).toHaveCount(0);
-	await command.locator('summary').click();
 	await expect(command.locator('.output')).toContainText('a line of build output');
 	expect(expanded).toEqual([0]);
 

@@ -84,7 +84,7 @@
 					{#if block.kind === 'spawn'}
 						<Spawn subagents={block.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} main={main ?? items} {onopen} {onattend} />
 					{:else if block.kind === 'rail'}
-						<Calls items={block.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={block === turns.at(-1)!.at(-1) ? activity : null} active={active && block === turns.at(-1)!.at(-1)} open={path.length > 0} {ondiff} {oncanvas} onexpand={onexpand && ((item) => onexpand(items.indexOf(item)))} />
+						<Calls items={block.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={block === turns.at(-1)!.at(-1) ? activity : null} open={path.length > 0} {ondiff} {oncanvas} onexpand={onexpand && ((item) => onexpand(items.indexOf(item)))} />
 					{:else}
 						{@render entry(entries[block.indices[0]], block.indices[0])}
 					{/if}
