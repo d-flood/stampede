@@ -152,9 +152,12 @@ test('the prompt’s ⋯ menu opens Rewind without reserving layout space', asyn
 	const items: Item[] = [
 		{ kind: 'text', text: 'Earlier context.', phase: 'final', streaming: false },
 		{ kind: 'user', text: 'Short prompt.', images: 0 },
-		{ kind: 'user', text: Array.from({ length: 20 }, (_, index) => `Line ${index + 1}`).join('\n'), images: 0 }
+		{ kind: 'user', text: Array.from({ length: 20 }, (_, index) => `Line ${index + 1}`).join('\n'), images: 0 },
+		{ kind: 'user', text: '/create-epic', template: 'create-epic', images: 0 }
 	];
 	const view = await render(Transcript, { items, onrewind, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
+	const templated = view.getByRole('region', { name: 'User message 3', exact: true }).element();
+	expect(templated.querySelector('.template')!.getBoundingClientRect().bottom).toBeLessThan(templated.querySelector('.user')!.getBoundingClientRect().bottom);
 	const message = view.getByRole('region', { name: 'User message 1', exact: true });
 	const bubble = message.element().querySelector('.user')!;
 	const height = () => message.element().getBoundingClientRect().height;

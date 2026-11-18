@@ -43,7 +43,7 @@
 					<div class="body"><Text item={markdown(item.text)} /></div>
 				</details>
 			{:else if item.template}
-				<div class="user"><span class="template">/{item.template}</span>{' '}<Text item={markdown(item.text.slice(item.template.length + 1))} /></div>
+				<div class="user templated"><span class="template">/{item.template}</span>{' '}<Text item={markdown(item.text.slice(item.template.length + 1))} /></div>
 			{:else}
 				<div class="user"><Text item={markdown(item.text)} /></div>
 			{/if}
@@ -118,6 +118,10 @@
 
 	.label {
 		color: var(--muted-fg);
+	}
+
+	.templated {
+		display: flow-root;
 	}
 
 	.template {
