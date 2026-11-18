@@ -1,6 +1,6 @@
 import type { Reading, ResetCredits, ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
-import { showScreen } from './shell.ts';
+import { showLevel } from './shell.ts';
 
 test('Codex resets show in the Usage row and retry a redemption safely from its popover', async ({ page }, { project }) => {
 	const now = Date.now();
@@ -30,8 +30,7 @@ test('Codex resets show in the Usage row and retry a redemption safely from its 
 	await page.goto('/');
 	let usage = page.getByRole('region', { name: 'Usage windows' });
 	if (project.name === 'pixel') {
-		await showScreen(page, 'projects');
-		await expect.poll(() => page.locator('.screens').evaluate((element) => Math.abs(element.scrollLeft) < 1 && !element.children[0].hasAttribute('inert'))).toBe(true);
+		await showLevel(page, 'projects');
 	} else {
 		const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
 		await expect(sidebar).toBeVisible();

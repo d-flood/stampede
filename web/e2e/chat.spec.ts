@@ -4,7 +4,7 @@ import type { Locator, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { closePinned, closeProject, expectCurrent, expectSelected, expectShown, newTab, openProject, pinned, openSwitcher, showScreen, showSidebar, showTab, tabCount } from './shell.ts';
+import { closePinned, closeProject, expectCurrent, expectSelected, expectShown, newTab, openProject, pinned, openNewTab, showLevel, showSidebar, showTab, tabCount } from './shell.ts';
 
 test('a Claude Code Chat streams its reply, shows done, and asks before closing while working', async ({ page }, { project }) => {
 	const name = `chat-${project.name}`;
@@ -37,6 +37,7 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await composer.fill('Anything else?');
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(tab.getByTitle('working')).toBeVisible();
+	if (project.name === 'pixel') await showLevel(page, 'projects');
 	await expect(square.getByTitle('working')).toBeVisible();
 	await closePinned(tab);
 	const confirm = page.getByRole('dialog', { name: 'Close Fake Claude?' });
@@ -550,7 +551,7 @@ test('four Usage window meters show their readings and warn from 80%', async ({ 
 	await page.goto('/');
 	let usage = page.getByRole('region', { name: 'Usage windows' });
 	if (project.name === 'pixel') {
-		await showScreen(page, 'projects');
+		await showLevel(page, 'projects');
 		await expect(page.getByRole('navigation', { name: 'Projects' })).toBeInViewport();
 	} else {
 		await expect(page.getByRole('button', { name: 'Sidebar' })).toBeVisible();
@@ -594,7 +595,7 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 	await openProject(page, name);
 	const phone = project.name === 'pixel';
 	const chats = (count: number) => phone ? expect.poll(() => tabCount(page)).toBe(count) : expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(count);
-	const menu = phone ? (await openSwitcher(page)).locator('section') : page.getByRole('menu');
+	const menu = phone ? page.getByRole('region', { name, exact: true }) : page.getByRole('menu');
 	if (!phone) await page.getByRole('button', { name: 'New Tab' }).click();
 	const item = phone ? 'button' : 'menuitem';
 	await expect(menu.getByRole(item, { name: 'Fake Claude', exact: true })).toHaveCount(1);
@@ -636,7 +637,8 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 
 	const phone = project.name === 'pixel';
 	const sessionItems = async () => {
-		if (phone) return (await openSwitcher(page)).getByRole('region', { name: 'Recent sessions' }).getByRole('button');
+		if (phone && (await tabCount(page))) return (await openNewTab(page)).getByRole('region', { name: 'Recent sessions' }).getByRole('button');
+		if (phone) return page.getByRole('region', { name, exact: true }).locator('.recent').getByRole('button');
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		return page.getByRole('group', { name: 'Sessions' }).getByRole('menuitem');
 	};

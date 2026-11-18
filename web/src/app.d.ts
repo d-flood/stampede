@@ -3,7 +3,12 @@
 import type { Terminal } from 'ghostty-web';
 
 declare global {
-	namespace App {}
+	namespace App {
+		interface PageState {
+			level?: import('#lib/phone.svelte.ts').Level;
+			depth?: number;
+		}
+	}
 
 	interface Window {
 		terminal?: Terminal;

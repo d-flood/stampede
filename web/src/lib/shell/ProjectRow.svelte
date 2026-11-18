@@ -3,7 +3,7 @@
 	import Progress from '#lib/epics/Progress.svelte';
 	import { counts } from '#lib/epics.svelte.ts';
 	import type { Trunk } from '#lib/git.ts';
-	import type { Tile } from '#lib/projects.ts';
+	import { hue, type Tile } from '#lib/projects.ts';
 	import ShellMark from '#lib/ui/ShellMark.svelte';
 	import { WorkingMark } from '#lib/ui/spinners.ts';
 	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
@@ -38,7 +38,7 @@
 	const runs = $derived(epics.filter((epic) => epic.run && !epic.archived));
 	const active = $derived(project.id === focused || tiles.some((tile) => tile.id === focused));
 	const listed = $derived(tiles.length > 0 && (!compact || active));
-	const hue = $derived(([...project.path].reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % 6) + 1);
+	const tint = $derived(hue(project.path));
 
 	function select(event: MouseEvent & { currentTarget: HTMLElement }, id: string) {
 		// A long-press opens the menu on a timer, and its release still clicks.
@@ -59,7 +59,7 @@
 				class="project squircle"
 				class:focused={project.id === focused}
 				class:dragging
-				style:--hue="var(--ansi-{hue})"
+				style:--hue="var(--ansi-{tint})"
 				aria-label={label}
 				aria-current={project.id === focused}
 				title={compact ? label : undefined}

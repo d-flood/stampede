@@ -313,6 +313,10 @@ _Avoid_: tile, pane
 What a Project's main window shows when it has no Tabs: the ways to open one, such as its Rigs and recent sessions.
 _Avoid_: start screen, new tab page, empty state
 
+**Project overview**:
+On a phone, the page between the Projects and a single Tab that lists a Project's open Tabs and leads to its Sidebar sections.
+_Avoid_: hub, home, dashboard, switcher
+
 **Sidebar**:
 The collapsible panel beside the main window, showing one section at a time: Files, Git, Compare, or Epics.
 _Avoid_: explorer, wing, panel; never call its sections "tabs"

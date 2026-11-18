@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures.ts';
-import { expectShown, newTab, openProject, screen, showScreen } from './shell.ts';
+import { expectShown, newTab, openProject, screen, showLevel } from './shell.ts';
 import { existsSync, writeFileSync } from 'node:fs';
 
 test('a hidden Terminal displays output received while another Tab was active', { tag: '@desktop' }, async ({ page }) => {
@@ -39,7 +39,7 @@ test('a Terminal runs echo hi and a deep link reveals its Tab', async ({ page },
 	await expect.poll(() => target).toBeDefined();
 	await expectShown(page, target!.id);
 	if (project.name === 'pixel') {
-		await showScreen(page, 'projects');
+		await showLevel(page, 'projects');
 		await page.getByRole('button', { name: 'Drawer', exact: true }).click();
 	} else await page.keyboard.press('Control+Backquote');
 	const drawer = page.getByRole('region', { name: 'Drawer', includeHidden: true });

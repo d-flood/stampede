@@ -11,9 +11,11 @@ async function compact(page: Page) {
 	return (await page.locator('.phone > header').count()) > 0;
 }
 
-/** The phone Tabs screen's title: the current Tab's name and status mark. */
+type Level = 'projects' | 'overview' | 'section' | 'tab';
+
+/** The phone Tab's title: the current Tab's name and status mark. */
 async function tabsHeading(page: Page) {
-	await showScreen(page, 'tabs');
+	await showLevel(page, 'tab');
 	return page.locator('.phone > header h1');
 }
 
@@ -28,53 +30,53 @@ export async function pinned(tab: Locator) {
 
 export async function openProject(page: Page, name: string) {
 	await page.goto('/');
-	if (phone()) {
-		await showScreen(page, 'projects');
-	}
+	if (phone()) await showLevel(page, 'projects');
 	await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Open Project' }).click();
 	await page.getByRole('option', { name: new RegExp(`/${name}$`) }).click();
 	await expect(page.getByRole('dialog')).toBeHidden();
-	if (phone()) await settled(page, 'tabs');
+	if (phone()) await expect(page.locator('[data-level="overview"]')).toBeVisible();
 }
 
 export async function showSidebar(page: Page) {
 	const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
-	if (phone()) {
-		await showScreen(page, 'sidebar');
-	}
+	if (phone()) await showLevel(page, 'section');
 	else if (!(await sidebar.isVisible())) await page.getByRole('button', { name: 'Sidebar' }).click();
 	return sidebar;
 }
 
-/** Navigates as a person would: the header's left button where it leads, a focused Project for Tabs, and a swipe otherwise. */
-export async function showScreen(page: Page, name: 'projects' | 'tabs' | 'sidebar') {
-	const screens = page.locator('.screens');
-	await expect(screens.locator('.screen')).toHaveCount(3);
-	const names = await screens.locator('.screen').evaluateAll((elements) => elements.map((element) => (element as HTMLElement).dataset.screen!));
-	const active = async () => (await screens.locator('.screen:not([inert])').getAttribute('data-screen'))!;
-	let current = await active();
-	await settled(page, current);
-	for (let step = 0; current !== name; step++) {
-		expect(step, `reach the ${name} screen`).toBeLessThan(3);
-		const index = names.indexOf(current);
-		const back = current === 'tabs' ? 'projects' : names[index - 1] ?? names[index + 1];
-		const focused = page.getByRole('navigation', { name: 'Projects' }).locator('[aria-current="true"]').first();
-		if (back !== name && name === 'tabs' && current === 'projects' && (await focused.count())) await focused.click();
-		else if (back !== name && current === 'tabs') await swipe(page, names[index + 1] === name ? -1 : 1);
-		else await page.locator('.phone > header > button').first().click();
-		const previous = current;
-		await expect.poll(active).not.toBe(previous);
-		current = await active();
-		await settled(page, current);
+async function shownLevel(page: Page) {
+	await expect(page.locator('.levels')).toHaveAttribute('aria-busy', 'false');
+	const level = page.locator('.levels > .level:not([hidden])');
+	await expect(level).toHaveCount(1);
+	return (await level.getAttribute('data-level')) as Level;
+}
+
+/** Navigates as a person would: the header's Projects and Project buttons going up, and a Project, Tab or Browse row going down. */
+export async function showLevel(page: Page, name: Level) {
+	const header = page.locator('.phone > header');
+	const current = await shownLevel(page);
+	if (current === name) return;
+	if (name === 'projects') await header.getByRole('button', { name: 'Projects', exact: true }).click();
+	else if (name === 'overview' && current === 'projects') await page.getByRole('navigation', { name: 'Projects' }).locator('[aria-current="true"]').first().click();
+	else if (name === 'overview') await header.getByRole('button', { name: (await header.locator('h1 .project').textContent())!, exact: true }).click();
+	else {
+		await showLevel(page, 'overview');
+		const overview = page.locator('[data-level="overview"]');
+		if (name === 'tab') {
+			const row = overview.getByRole('list', { name: 'Open Tabs' }).locator('[aria-current="true"]');
+			const opened = page.locator('[data-level="tab"]');
+			await expect.poll(async () => (await row.isVisible()) || (await opened.isVisible())).toBe(true);
+			if (await row.isVisible()) await row.click();
+		} else {
+			const checked = page.locator('aside[aria-label="Sidebar"] [role="radio"][aria-checked="true"]');
+			const section = (await checked.count()) ? (await checked.textContent())!.trim() : 'Files';
+			await overview.getByRole('button', { name: new RegExp(`^${section}\\b`) }).click();
+		}
 	}
+	await expect(page.locator(`[data-level="${name}"]`)).toBeVisible();
 }
 
-async function swipe(page: Page, direction: -1 | 1) {
-	const box = (await page.locator('.phone > header').first().boundingBox())!;
-	const x = direction === -1 ? page.viewportSize()!.width - 20 : 20;
-	await touchSwipe(page, x, box.y + box.height + 8, direction * 200);
-}
-
+/** Swipes a phone row or Tab body sideways with touch, as a thumb would. */
 export async function touchSwipe(page: Page, x: number, y: number, distance: number) {
 	const session = await page.context().newCDPSession(page);
 	try {
@@ -86,42 +88,52 @@ export async function touchSwipe(page: Page, x: number, y: number, distance: num
 	}
 }
 
-/** Opens the phone Tab switcher from the header title. */
-export async function openSwitcher(page: Page) {
-	await (await tabsHeading(page)).getByRole('button').click();
-	const switcher = page.getByRole('dialog', { name: 'Tabs', exact: true });
-	await expect(switcher).toBeVisible();
-	return switcher;
+/** Opens the phone New Tab sheet from the Project overview. */
+export async function openNewTab(page: Page) {
+	await showLevel(page, 'overview');
+	await page.locator('[data-level="overview"]').getByRole('button', { name: 'New Tab', exact: true }).click();
+	const sheet = page.getByRole('dialog', { name: 'New Tab', exact: true });
+	await expect(sheet).toBeVisible();
+	return sheet;
 }
 
-/** Starts a New Tab item from the desktop menu or the phone Tab switcher. */
+/** The phone Project overview's row for an open Tab. */
+async function overviewRow(page: Page, tab: Locator) {
+	await showLevel(page, 'overview');
+	return page.getByRole('list', { name: 'Open Tabs' }).getByRole('listitem').filter({ has: tab });
+}
+
+/** Swipes a phone overview row away, closing its Tab. */
+export async function swipeClosed(row: Locator) {
+	const box = (await row.boundingBox())!;
+	await touchSwipe(row.page(), box.x + box.width - 20, box.y + box.height / 2, -box.width * 0.7);
+}
+
+/** Starts a New Tab item from the desktop menu, or on phone from the Launchpad of a Project without Tabs or else the New Tab sheet. */
 export async function newTab(page: Page, item: string) {
 	if (await compact(page)) {
-		await (await openSwitcher(page)).getByRole('button', { name: item, exact: true }).click();
+		await showLevel(page, 'overview');
+		const launchpad = page.locator('[data-level="overview"] .launchpad');
+		await ((await launchpad.count()) ? launchpad : await openNewTab(page)).getByRole('button', { name: item, exact: true }).click();
+		await expect(page.locator('[data-level="tab"]')).toBeVisible();
 		return;
 	}
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await page.getByRole('menuitem', { name: item, exact: true }).click();
 }
 
-/** Shows an open Tab from the desktop strip or the phone Tab switcher. */
+/** Shows an open Tab from the desktop strip or the phone Project overview. */
 export async function chooseTab(page: Page, name: string | RegExp) {
 	if (await compact(page)) {
-		await (await openSwitcher(page)).getByRole('list', { name: 'Open Tabs' }).getByRole('button', { name }).first().click();
+		await showLevel(page, 'overview');
+		await page.getByRole('list', { name: 'Open Tabs' }).getByRole('button', { name }).first().click();
 		return;
 	}
 	await page.getByRole('tab', { name }).click();
 }
 
-async function settled(page: Page, name: string) {
-	await expect.poll(() => page.locator('.screens').evaluate((element, name) => {
-		const screen = element.querySelector<HTMLElement>(`[data-screen="${name}"]`)!;
-		return !screen.inert && Math.abs(element.scrollLeft - screen.offsetLeft) < 1 && element instanceof HTMLElement && !element.style.scrollSnapType;
-	}, name)).toBe(true);
-}
-
 export async function openSettings(page: Page, section: 'General' | 'Appearance' | 'Agents' | 'Rigs' | 'Clips') {
-	if (await compact(page)) await showScreen(page, 'projects');
+	if (await compact(page)) await showLevel(page, 'projects');
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 	await settings.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: new RegExp(`^${section}`) }).click();
@@ -157,6 +169,7 @@ export async function closeProject(page: Page, name: string) {
 /** Asserts whether a Tab is the one shown: selected in the desktop strip, or titling the phone header. */
 export async function expectCurrent(page: Page, name: string, current = true) {
 	if (await compact(page)) {
+		if (!current && !(await tabCount(page))) return;
 		const title = (await tabsHeading(page)).locator('.name');
 		if (current) await expect(title).toHaveText(name);
 		else await expect(title).not.toHaveText(name);
@@ -165,10 +178,10 @@ export async function expectCurrent(page: Page, name: string, current = true) {
 	await expect(page.getByRole('tab', { name }).first()).toHaveAttribute('aria-selected', String(current));
 }
 
-/** Closes a Tab from its close button, which on phone sits in the Tab switcher. */
+/** Closes a Tab from its close button, or on phone by swiping its Project overview row away. */
 export async function closeTab(page: Page, name: string) {
-	const scope = (await compact(page)) ? await openSwitcher(page) : page;
-	await scope.getByRole('button', { name: `Close ${name}`, exact: true }).click();
+	if (await compact(page)) return swipeClosed(await overviewRow(page, page.getByRole('button', { name, exact: true })));
+	await page.getByRole('button', { name: `Close ${name}`, exact: true }).click();
 }
 
 /** The shown Tab: selected in the desktop strip, or the phone header's title. */
@@ -176,13 +189,18 @@ export async function currentTab(page: Page) {
 	return (await compact(page)) ? tabsHeading(page) : page.getByRole('tab', { selected: true });
 }
 
-/** Counts open Tabs from the desktop strip, or from the phone header's position, which a lone Tab doesn't show. */
+/** Counts open Tabs from the desktop strip, the phone header's position on a Tab, or else the phone Project overview before returning to where it was. */
 export async function tabCount(page: Page) {
 	if (!(await compact(page))) return page.getByRole('tab').count();
-	const title = await tabsHeading(page);
-	const position = title.locator('.position');
-	if (await position.count()) return Number((await position.textContent())?.split('/')[1]);
-	return (await title.getAttribute('data-current-tab')) ? 1 : 0;
+	const was = await shownLevel(page);
+	if (was === 'tab') {
+		const position = page.locator('.phone > header h1 .position');
+		return (await position.count()) ? Number((await position.textContent())?.split('/')[1]) : 1;
+	}
+	await showLevel(page, 'overview');
+	const count = await page.getByRole('list', { name: 'Open Tabs' }).getByRole('listitem').count();
+	if (was !== 'overview') await showLevel(page, was);
+	return count;
 }
 
 /** Asserts whether the Tab with this id is shown, from the desktop strip or the phone header. */
@@ -196,10 +214,10 @@ export async function expectShown(page: Page, id: string, shown = true) {
 	else await expect(title).not.toHaveAttribute('data-current-tab', id);
 }
 
-/** Shows the Tab with this id from the desktop strip or the phone Tab switcher. */
+/** Shows the Tab with this id from the desktop strip or the phone Project overview. */
 export async function showTab(page: Page, id: string) {
-	const scope = (await compact(page)) ? await openSwitcher(page) : page;
-	await scope.locator(`[data-tab="${id}"]`).click();
+	if (await compact(page)) await showLevel(page, 'overview');
+	await page.locator(`[data-tab="${id}"]`).click();
 }
 
 /** Asserts a pinned Tab is shown; on phone, pinned resolves to the header, which always shows the current Tab. */
@@ -208,7 +226,7 @@ export async function expectSelected(tab: Locator) {
 	else await expect(tab).toHaveAttribute('aria-selected', 'true');
 }
 
-/** Closes a pinned Tab from its context menu, or on phone from the Tab switcher. */
+/** Closes a pinned Tab from its context menu, or on phone by swiping its Project overview row away. */
 export async function closePinned(tab: Locator) {
 	const page = tab.page();
 	if (!(await compact(page))) {
@@ -216,6 +234,7 @@ export async function closePinned(tab: Locator) {
 		await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
 		return;
 	}
+	await showLevel(page, 'tab');
 	const id = await tab.getAttribute('data-current-tab');
-	await (await openSwitcher(page)).getByRole('listitem').filter({ has: page.locator(`[data-tab="${id}"]`) }).getByRole('button', { name: /^Close / }).click();
+	await swipeClosed(await overviewRow(page, page.locator(`[data-tab="${id}"]`)));
 }

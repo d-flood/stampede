@@ -24,6 +24,11 @@ export function labels(projects: Project[]): Map<string, string> {
 	);
 }
 
+/** The ANSI color, 1–6, a Project's monogram is tinted with. */
+export function hue(path: string): number {
+	return ([...path].reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % 6) + 1;
+}
+
 export function monogram(path: string): string {
 	const name = basename(path);
 	const words = name.split(/[-_.\s]+/).filter(Boolean);

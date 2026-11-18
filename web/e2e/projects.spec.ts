@@ -26,7 +26,7 @@ test('the project picker focuses its input and opens a path chosen with arrow ke
 	await expect(page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'beta', exact: true })).toHaveAttribute('aria-current', 'true');
 });
 
-test('with no Project open, one click on a folder in the inline picker opens it', async ({ page }) => {
+test('with no Project open, one click on a folder in the inline picker opens it', { tag: '@desktop' }, async ({ page }) => {
 	await page.goto('/');
 	const picker = page.getByRole('main').getByRole('option', { name: /\/beta$/ });
 	await picker.click();

@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures.ts';
-import { closeTab, expectCurrent, openProject, openSwitcher } from './shell.ts';
+import { closeTab, expectCurrent, openProject } from './shell.ts';
 
 test.use({ starterRigs: true });
 
@@ -22,7 +22,7 @@ test('New Tab shows session loading and fits the loaded sessions', async ({ page
 	});
 	await openProject(page, 'alpha');
 	if (!phone) await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	const menu = phone ? await openSwitcher(page) : page.getByRole('menu');
+	const menu = phone ? page.getByRole('region', { name: 'alpha', exact: true }) : page.getByRole('menu');
 	await expect(menu.getByRole('status')).toHaveText('Reading sessions…');
 	await expect(menu.getByRole(item, { name: 'Terminal', exact: true })).toBeEnabled();
 	await expect.poll(() => release !== undefined).toBe(true);
@@ -66,11 +66,13 @@ test('the Launchpad offers the New Tab items and comes back focused when the las
 	for (const [index, label] of offered.entries()) await expect(launchpad.getByRole('button').nth(index)).toHaveAccessibleName(label);
 	await expect(launchpad.getByRole('button', { name: 'Claude Code', exact: true })).toHaveAccessibleDescription('Default model');
 
-	if (!phone) await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	const items = phone ? (await openSwitcher(page)).locator('section').getByRole('button') : page.getByRole('menu').getByRole('menuitem');
-	await expect(items).toHaveCount(offered.length);
-	for (const [index, label] of offered.entries()) await expect(items.nth(index)).toHaveAccessibleName(label);
-	await page.keyboard.press('Escape');
+	if (!phone) {
+		await page.getByRole('button', { name: 'New Tab', exact: true }).click();
+		const items = page.getByRole('menu').getByRole('menuitem');
+		await expect(items).toHaveCount(offered.length);
+		for (const [index, label] of offered.entries()) await expect(items.nth(index)).toHaveAccessibleName(label);
+		await page.keyboard.press('Escape');
+	}
 
 	const primary = launchpad.getByRole('button', { name: 'Claude Code', exact: true });
 	await primary.click();
@@ -78,10 +80,8 @@ test('the Launchpad offers the New Tab items and comes back focused when the las
 	await expect(launchpad).toHaveCount(0);
 	await closeTab(page, 'Claude Code');
 	await expect(page.getByRole('tab', { name: /^Claude Code/ })).toHaveCount(0);
-	if (phone) {
-		await page.keyboard.press('Escape');
-		await primary.click();
-	} else {
+	if (phone) await primary.click();
+	else {
 		await expect(primary).toBeFocused();
 		await page.keyboard.press('Enter');
 	}

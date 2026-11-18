@@ -30,6 +30,7 @@
 	import type { PrReview } from '#lib/pr-reviews.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
+	import { depth, navigate, level as phoneLevel, seed, seeded, type Level } from '#lib/phone.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
 	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
@@ -40,8 +41,10 @@
 	import Stopping, { type Stopped } from '#lib/shell/Stopping.svelte';
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Launchpad from '#lib/shell/Launchpad.svelte';
-	import TabIcons from '#lib/shell/TabIcons.svelte';
-	import TabSwitcher, { type SwitcherTab } from '#lib/shell/TabSwitcher.svelte';
+	import NewTab from '#lib/shell/NewTab.svelte';
+	import Overview, { type TabEntry } from '#lib/shell/Overview.svelte';
+	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
+	import TabDots from '#lib/shell/TabDots.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
 	import { menuItems, tabItems } from '#lib/shell/new-tab.ts';
 	import type { Action, Scope } from '#lib/shell/Palette.svelte';
@@ -52,18 +55,18 @@
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import Usage from '#lib/shell/Usage.svelte';
 	import { arrange, neighbor, type Side, type Split } from '#lib/split.ts';
+	import { settleInto, swipe } from '#lib/swipe.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import FloatingBar from '#lib/ui/FloatingBar.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
-	import Tab, { marks } from '#lib/ui/Tab.svelte';
+	import Tab from '#lib/ui/Tab.svelte';
+	import TabMarks from '#lib/ui/TabMarks.svelte';
 	import TooltipGroup from '#lib/ui/TooltipGroup.svelte';
-	import { onMount, tick, untrack } from 'svelte';
-	import { on } from 'svelte/events';
+	import { onMount, tick } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import CaretDown from '~icons/ph/caret-down';
-	import Cards from '~icons/ph/cards';
+	import CaretRight from '~icons/ph/caret-right';
 	import Folders from '~icons/ph/folders';
 	import Plus from '~icons/ph/plus';
 	import Power from '~icons/ph/power';
@@ -134,15 +137,13 @@
 	let unfocused = $state(false);
 	let directories = $state<string[]>([]);
 	let listed = $state(false);
-	type Screen = 'projects' | 'tabs' | 'sidebar';
-	let screen = $state<Screen>('tabs');
-	const order: Screen[] = $derived(sidebarPosition.side === 'left' ? ['projects', 'sidebar', 'tabs'] : ['projects', 'tabs', 'sidebar']);
-	const screenIndex = $derived(order.indexOf(screen));
-	let sliding = false;
-	let animationFrame = 0;
-	let screens: HTMLElement | undefined;
-	let held = $state(false);
-	let titleDrag = $state(0);
+	const level = $derived(phoneLevel());
+	let levels = $state<HTMLElement>();
+	let tabLevel = $state<HTMLElement>();
+	let tabDrag = $state(0);
+	let closingMany = $state<string[]>();
+	const manyLosses = $derived(closingMany && losses(closingMany));
+	let starting = $state(false);
 	let drawer: Drawer;
 	let renamer = $state<Rename>();
 	let drawerOpen = $state(false);
@@ -190,7 +191,7 @@
 	const split = $derived(form() === 'desktop' ? layout : undefined);
 	const groups = $derived(split ? [split.left, split.right] : [whole]);
 	const phone = $derived(form() === 'phone');
-	const foreground = $derived(visible && (!phone || (screen === 'tabs' && !drawerOpen)));
+	const foreground = $derived(visible && (!phone || (level === 'tab' && !drawerOpen)));
 	const shownChats = $derived(foreground ? chatTabs.filter((chat) => showing(chat.id)).map((chat) => chat.id) : []);
 	const shownEpics = $derived(foreground ? openEpics.filter((epic) => showing(epic.id)).map((epic) => epic.slug) : []);
 	const label = $derived(focused && projectLabels.get(focused.id));
@@ -212,20 +213,30 @@
 			}));
 		});
 	});
-	const openTabs = $derived(tabIds.filter((id) => !closingTabs.has(id)).flatMap((id) => tabRow(id) ?? []));
+	const openTabs = $derived(tabIds.filter((id) => !closingTabs.has(id)).flatMap((id) => tabEntry(id) ?? []));
 	const current = $derived(openTabs.find(({ id }) => id === activeTab));
 	const currentIndex = $derived(openTabs.findIndex(({ id }) => id === activeTab));
-	const CurrentMark = $derived(current?.status && marks[current.status]);
+	const focusedGit = $derived(focused && git.get(focused.id));
 	const titles = $derived({
 		projects: { title: 'Projects', sub: hostName() ?? undefined },
-		tabs: {
-			title: current?.label ?? label ?? 'Tabs',
-			sub: label
-		},
-		sidebar: { title: sectionShowing(section, focused && git.get(focused.id)).label, sub: label }
+		overview: { title: label ?? 'Project', sub: focusedGit?.branch },
+		section: { title: sectionShowing(section, focusedGit).label, sub: label },
+		tab: { title: current?.label ?? label ?? 'Tabs', sub: label }
 	});
-	const back = $derived(screen === 'tabs' ? 'projects' : (order[screenIndex - 1] ?? order[screenIndex + 1]));
-	let switching = $state(false);
+	let shownDepth: number | undefined;
+
+	$effect(() => {
+		if (!phone || !listed) return;
+		if (!seeded()) seed(!focused ? 'projects' : activeTab ? 'tab' : 'overview');
+		else if (level === 'tab' && !activeTab) visit('overview');
+	});
+
+	$effect(() => {
+		const before = shownDepth;
+		shownDepth = depth();
+		if (before === undefined || before === shownDepth || !levels) return;
+		settleInto(levels.querySelector(`[data-level="${level}"]`), [{ transform: `translateX(${Math.sign(shownDepth - before) * 24}px)`, opacity: 0.5 }, { transform: 'none', opacity: 1 }]);
+	});
 	const deviceLayout = $derived(
 		capture({
 			chosen,
@@ -305,7 +316,7 @@
 					if (staged) {
 						place(message.projectId, staged.id);
 						choose(message.projectId, staged.id);
-						if (message.projectId === focused?.id) slide('tabs');
+						if (message.projectId === focused?.id) visit('tab');
 					}
 				}
 				break;
@@ -317,7 +328,7 @@
 					if (!owned.some((terminal) => terminal.id === id)) owned.push(message.terminal);
 					place(owner.project, id);
 					choose(owner.project, id);
-					if (owner.project === focused?.id) slide('tabs');
+					if (owner.project === focused?.id) visit('tab');
 				}
 				break;
 			}
@@ -403,15 +414,16 @@
 				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
 				place(message.chat.projectId, message.chat.id);
 				choose(message.chat.projectId, message.chat.id);
-				if (message.chat.projectId === focused?.id) slide('tabs');
+				if (message.chat.projectId === focused?.id) visit('tab');
 				break;
 			}
 			case 'chat.moved': {
 				chats[message.chat.projectId] ??= [];
 				const owned = chats[message.chat.projectId];
 				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
-				focus(message.chat.projectId);
+				chosen = message.chat.projectId;
 				choose(message.chat.projectId, message.chat.id);
+				visit('tab');
 				break;
 			}
 			case 'sessions.listed':
@@ -429,7 +441,10 @@
 				const opened = message.projects.filter((project) => !projects.some((other) => other.id === project.id));
 				projects = message.projects;
 				listed = true;
-				if (!projects.length) device.send({ type: 'picker.list' });
+				if (!projects.length) {
+					device.send({ type: 'picker.list' });
+					visit('projects');
+				}
 				for (const project of opened) staleGit.add(project.id);
 				if (left?.worktree && !projects.some((project) => project.id === left.id)) {
 					const { parent } = left.worktree;
@@ -538,167 +553,42 @@
 
 	function attend(projectId: string, tabId: string) {
 		if (drawerOpen) drawer.toggle();
-		focus(projectId);
+		chosen = projectId;
 		const [kind, , slug] = tabId.split(':');
 		if (kind === 'epic' && slug) openEpic(projectId, slug);
 		else choose(projectId, tabId);
+		visit('tab');
 	}
 
 	function focus(projectId: string) {
 		chosen = projectId;
-		slide('tabs');
+		visit('overview');
 	}
 
-	function stopSlide() {
-		cancelAnimationFrame(animationFrame);
-		sliding = false;
-		screens?.style.removeProperty('scroll-snap-type');
+	function visit(target: Level) {
+		return phone ? navigate(target) : undefined;
 	}
 
-	function slide(target: Screen) {
-		const from = screens?.scrollLeft ?? 0;
-		stopSlide();
-		screen = target;
-		if (!screens) return;
-		const element = screens;
-		const to = order.indexOf(target) * element.clientWidth;
-		if (matchMedia('(prefers-reduced-motion: reduce)').matches || Math.abs(to - from) < 1) {
-			element.scrollTo({ left: to, behavior: 'instant' });
-			return;
+	const swipesTabs = swipe({
+		share: 0.2,
+		allow: (event) => openTabs.length > 1 && !scrolls(event.target, event.currentTarget as HTMLElement),
+		drag: (dx) => (tabDrag = openTabs[currentIndex - Math.sign(dx)] ? dx : dx / 4),
+		release: (dx, committed) => {
+			const next = committed ? openTabs[currentIndex - Math.sign(dx)] : undefined;
+			if (next && focused) {
+				choose(focused.id, next.id);
+				settleInto(tabLevel, [{ transform: `translateX(${-Math.sign(dx) * 40}px)`, opacity: 0.4 }, { transform: 'none', opacity: 1 }]);
+			} else settleInto(tabLevel, [{ transform: `translateX(${tabDrag}px)` }, { transform: 'none' }]);
+			tabDrag = 0;
 		}
-		sliding = true;
-		element.style.scrollSnapType = 'none';
-		const started = performance.now();
-		animationFrame = requestAnimationFrame(animate);
-		function animate(now: number) {
-			const progress = Math.min(1, Math.max(0, (now - started) / 160));
-			element.scrollLeft = from + (to - from) * (1 - (1 - progress) ** 3);
-			if (progress < 1) animationFrame = requestAnimationFrame(animate);
-			else stopSlide();
+	});
+
+	/** Whether a touch began in something that scrolls sideways, which keeps the swipe for itself. */
+	function scrolls(target: EventTarget | null, within: HTMLElement) {
+		for (let element = target as Element | null; element && element !== within; element = element.parentElement) {
+			if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) return true;
 		}
-	}
-
-	function swipeable(element: HTMLElement, sequence: Screen[]) {
-		screens = element;
-		// Positioning waits for the frame, so it reuses that frame's layout instead of forcing one mid-render.
-		const positioned = requestAnimationFrame(() => element.scrollTo({ left: sequence.indexOf(untrack(() => screen)) * element.clientWidth, behavior: 'instant' }));
-		let gesture: { x: number; y: number; left: number; time: number; horizontal: boolean } | undefined;
-		const start = (event: TouchEvent) => {
-			if (gesture?.horizontal) slide(screen);
-			gesture = undefined;
-			hold(event);
-			if (held || event.touches.length !== 1) return;
-			const { clientX: x, clientY: y } = event.touches[0];
-			gesture = { x, y, left: element.scrollLeft, time: performance.now(), horizontal: false };
-		};
-		const move = (event: TouchEvent) => {
-			if (!gesture) return;
-			const dx = event.touches[0].clientX - gesture.x;
-			const dy = event.touches[0].clientY - gesture.y;
-			if (!gesture.horizontal) {
-				if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
-				if (Math.abs(dy) >= Math.abs(dx) || !event.cancelable) {
-					gesture = undefined;
-					return;
-				}
-				stopSlide();
-				gesture.horizontal = true;
-				sliding = true;
-				element.style.scrollSnapType = 'none';
-			}
-			event.preventDefault();
-			element.scrollLeft = gesture.left - dx;
-		};
-		const release = (event: TouchEvent) => {
-			held = false;
-			if (gesture?.horizontal) {
-				const dx = event.changedTouches[0].clientX - gesture.x;
-				const distance = Math.abs(dx);
-				const advance = event.type !== 'touchcancel' && (distance > element.clientWidth * 0.2 || distance / (performance.now() - gesture.time) > 0.5);
-				const index = Math.round(gesture.left / element.clientWidth) + (advance ? -Math.sign(dx) : 0);
-				slide(sequence[Math.max(0, Math.min(sequence.length - 1, index))]);
-			}
-			gesture = undefined;
-		};
-		const off = [
-			on(element, 'touchstart', start, { passive: true }),
-			on(element, 'touchmove', move, { passive: false }),
-			on(element, 'touchend', release),
-			on(element, 'touchcancel', release)
-		];
-		return () => {
-			cancelAnimationFrame(positioned);
-			stopSlide();
-			off.forEach((listener) => listener());
-			screens = undefined;
-		};
-	}
-
-	function settleInto(element: Element | null, keyframes: Keyframe[]) {
-		if (!matchMedia('(prefers-reduced-motion: reduce)').matches) element?.animate(keyframes, { duration: 160, easing: 'cubic-bezier(0.2, 0.8, 0.3, 1)' });
-	}
-
-	function swipesTabs(element: HTMLElement) {
-		let gesture: { x: number; y: number; time: number; horizontal: boolean } | undefined;
-		const start = ({ touches }: TouchEvent) => {
-			gesture = touches.length === 1 && openTabs.length > 1 ? { x: touches[0].clientX, y: touches[0].clientY, time: performance.now(), horizontal: false } : undefined;
-		};
-		const move = (event: TouchEvent) => {
-			if (!gesture) return;
-			const dx = event.touches[0].clientX - gesture.x;
-			const dy = event.touches[0].clientY - gesture.y;
-			if (!gesture.horizontal) {
-				if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
-				if (Math.abs(dy) >= Math.abs(dx) || !event.cancelable) {
-					gesture = undefined;
-					return;
-				}
-				gesture.horizontal = true;
-			}
-			event.preventDefault();
-			titleDrag = openTabs[currentIndex - Math.sign(dx)] ? dx : dx / 4;
-		};
-		const release = (event: TouchEvent) => {
-			if (gesture?.horizontal) {
-				const dx = event.changedTouches[0].clientX - gesture.x;
-				const distance = Math.abs(dx);
-				const advance = event.type !== 'touchcancel' && (distance > element.clientWidth * 0.2 || distance / (performance.now() - gesture.time) > 0.5);
-				const next = advance ? openTabs[currentIndex - Math.sign(dx)] : undefined;
-				const title = element.querySelector('.title');
-				if (next && focused) {
-					choose(focused.id, next.id);
-					settleInto(title, [{ transform: `translateX(${-Math.sign(dx) * 40}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }]);
-					settleInto(main, [{ transform: `translateX(${-Math.sign(dx) * 24}px)`, opacity: 0.5 }, { transform: 'none', opacity: 1 }]);
-				} else {
-					settleInto(title, [{ transform: `translateX(${titleDrag}px)` }, { transform: 'none' }]);
-				}
-				titleDrag = 0;
-			}
-			gesture = undefined;
-		};
-		const off = [
-			on(element, 'touchstart', start, { passive: true }),
-			on(element, 'touchmove', move, { passive: false }),
-			on(element, 'touchend', release),
-			on(element, 'touchcancel', release)
-		];
-		return () => {
-			off.forEach((listener) => listener());
-			titleDrag = 0;
-		};
-	}
-
-	function hold({ target }: TouchEvent) {
-		for (let element = target as Element | null; element && element !== screens; element = element.parentElement) {
-			if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) {
-				held = true;
-				return;
-			}
-		}
-	}
-
-	function landed() {
-		if (screens && !sliding) screen = order[Math.round(screens.scrollLeft / screens.clientWidth)];
+		return false;
 	}
 
 	async function freshen(projectId: string) {
@@ -725,11 +615,17 @@
 		device.send({ type: 'project.reorder', order });
 	}
 
-	function stopping(projectId: string): Stopped[] {
+	function stopping(projectId: string) {
 		const owned = (id: string) => id === projectId || projects.some((project) => project.id === id && project.worktree?.parent === projectId);
-		const busy = allChats.filter((chat) => owned(chat.projectId) && chatStatus(chat) !== 'done');
-		const commands = Object.entries(terminals).flatMap(([id, open]) => (owned(id) ? open.filter(running).flatMap((terminal) => terminal.running ?? []) : []));
-		return [...busy.map((chat) => ({ kind: 'chat' as const, label: chat.title ?? chat.rig, agent: chat.agent })), ...commands.map((label) => ({ kind: 'command' as const, label }))];
+		return stoppedBy(allChats.filter((chat) => owned(chat.projectId)), Object.entries(terminals).flatMap(([id, open]) => (owned(id) ? open : [])));
+	}
+
+	/** What closing these would stop: busy Chats, then commands still running in Terminals. */
+	function stoppedBy(chats: Chat[], shells: Terminal[]): Stopped[] {
+		return [
+			...chats.filter((chat) => chatStatus(chat) !== 'done').map((chat) => ({ kind: 'chat' as const, label: chat.title ?? chat.rig, agent: chat.agent })),
+			...shells.filter(running).flatMap((terminal) => terminal.running ?? []).map((label) => ({ kind: 'command' as const, label }))
+		];
 	}
 
 	function closeProject(projectId: string, confirmed = false) {
@@ -907,35 +803,70 @@
 		if (activeTab) closeAny(activeTab);
 	}
 
-	function closeAny(tabId: string) {
+	function closeAny(tabId: string, confirmed = false) {
 		if (!focused) return;
 		const file = fileTabs.find((file) => file.id === tabId);
 		const browser = browserTabs.find((browser) => browser.id === tabId);
 		const canvas = canvasTabs.find((canvas) => canvas.id === tabId);
 		const epic = openEpics.find((epic) => epic.id === tabId);
 		const chat = chatTabs.find((chat) => chat.id === tabId);
-		if (file) closeFile(file);
+		if (file) closeFile(file, confirmed);
 		else if (browser) closeBrowser(browser);
 		else if (canvas) closeCanvas(canvas);
 		else if (epic) closeEpic(epic);
-		else if (chat) closeChat(chat);
-		else closeTab(focused.id, tabId);
+		else if (chat) closeChat(chat, confirmed);
+		else closeTab(focused.id, tabId, confirmed);
 	}
 
-	function tabRow(id: string): SwitcherTab | undefined {
+	/** Closes Tabs, asking once first when any would stop work or discard edits; returns whether they closed without asking. */
+	function closeMany(ids: string[], confirmed = false) {
+		const losing = losses(ids);
+		const asks = !confirmed && !!(losing.stopped.length || losing.unsaved.length || losing.held);
+		if (ids.length === 1) closeAny(ids[0], confirmed);
+		else if (asks) closingMany = ids;
+		else {
+			closingMany = undefined;
+			for (const id of ids) closeAny(id, true);
+		}
+		return !asks;
+	}
+
+	function losses(ids: string[]) {
+		const picked = chatTabs.filter((chat) => ids.includes(chat.id));
+		const stopped = stoppedBy(picked, tabs.filter((tab) => ids.includes(tab.id)));
+		const unsaved = fileTabs.filter((file) => ids.includes(file.id) && file.dirty).map((file) => file.name);
+		const held = picked.some((chat) => heldBy(epics[chat.projectId] ?? [], chat.id));
+		return { stopped, unsaved, held };
+	}
+
+	const statusLabels = { working: 'Working', waiting: 'Waiting', background: 'Background', done: 'Done' };
+
+	function tabEntry(id: string): TabEntry | undefined {
 		const tab = tabs.find((tab) => tab.id === id);
-		if (tab) return { id, variant: 'terminal', label: tab.label };
+		if (tab) return { id, variant: 'terminal', label: tab.label, detail: tab.state === 'ended' ? 'Ended' : tab.running?.join(', ') };
 		const chat = chatTabs.find((chat) => chat.id === id);
-		if (chat) return { id, variant: 'agent', agent: chat.agent, label: chat.title ?? chat.rig, status: chatStatus(chat) };
+		if (chat) {
+			const status = chatStatus(chat);
+			return { id, variant: 'agent', agent: chat.agent, label: chat.title ?? chat.rig, status, detail: [statusLabels[status], chat.activity].filter(Boolean).join(' · ') };
+		}
 		const browser = browserTabs.find((browser) => browser.id === id);
-		if (browser) return { id, variant: 'browser', label: browser.name };
+		if (browser) return { id, variant: 'browser', label: browser.name, detail: browser.url || undefined };
 		const canvas = canvasTabs.find((canvas) => canvas.id === id);
 		if (canvas) return { id, variant: 'canvas', label: canvas.name };
 		const epic = openEpics.find((epic) => epic.id === id);
 		if (epic) return { id, variant: 'epic', label: epic.name };
 		const file = fileTabs.find((file) => file.id === id);
-		if (file instanceof OpenDiff) return { id, variant: 'diff', label: `${file.name} ↔ ${file.versus}` };
-		if (file) return { id, variant: 'editor', label: file.name, dirty: file.dirty };
+		const where = file && file.path !== file.name ? file.path : undefined;
+		if (file instanceof OpenDiff) return { id, variant: 'diff', label: `${file.name} ↔ ${file.versus}`, detail: where };
+		if (file) return { id, variant: 'editor', label: file.name, detail: where, dirty: file.dirty };
+	}
+
+	function tabMenu(id: string) {
+		const terminal = tabs.find((tab) => tab.id === id);
+		const file = fileTabs.find((file) => file.id === id);
+		const close = { label: terminal && terminal.state !== 'live' ? 'Dismiss' : 'Close', onselect: () => closeAny(id) };
+		if (!file || file instanceof OpenDiff || file instanceof OpenConfig) return [close];
+		return [close, { label: 'Rename', onselect: () => renamer?.start(file.path, false) }];
 	}
 
 	function closeChat(chat: Chat, confirmed = false) {
@@ -948,11 +879,6 @@
 		device.send({ type: 'chat.close', chatId: chat.id });
 	}
 
-	function tabMenu(projectId: string, tab: Terminal) {
-		const close = () => closeTab(projectId, tab.id);
-		return [{ label: tab.state === 'live' ? 'Close' : 'Dismiss', onselect: close }];
-	}
-
 	function openTab<T extends OpenFile>(tab: T): T {
 		files[tab.projectId] ??= [];
 		const open = files[tab.projectId];
@@ -962,7 +888,7 @@
 			place(tab.projectId, tab.id);
 		}
 		choose(tab.projectId, tab.id);
-		slide('tabs');
+		visit('tab');
 		return existing ?? tab;
 	}
 
@@ -982,7 +908,7 @@
 			place(projectId, browser.id);
 		}
 		choose(projectId, browser.id);
-		slide('tabs');
+		visit('tab');
 	}
 
 	function closeBrowser(browser: OpenBrowser) {
@@ -1006,7 +932,7 @@
 		}
 		if (offer) return;
 		choose(projectId, canvas.id);
-		slide('tabs');
+		visit('tab');
 	}
 
 	function closeCanvas(canvas: OpenCanvas) {
@@ -1024,7 +950,7 @@
 			place(projectId, epic.id);
 		}
 		choose(projectId, epic.id);
-		slide('tabs');
+		visit('tab');
 	}
 
 	function closeEpic(epic: OpenEpic) {
@@ -1064,14 +990,14 @@
 		compare(projectId, selection);
 		section = 'compare';
 		sidebar = true;
-		slide('sidebar');
+		visit('section');
 	}
 
 	async function openSearch() {
 		if (!focused) return;
 		section = 'files';
 		sidebar = true;
-		slide('sidebar');
+		await visit('section');
 		await tick();
 		sidebarView?.focusSearch();
 	}
@@ -1099,12 +1025,6 @@
 		}
 	}
 
-	function fileMenu(file: OpenFile) {
-		const close = { label: 'Close', onselect: () => closeFile(file) };
-		if (file instanceof OpenDiff || file instanceof OpenConfig) return [close];
-		return [close, { label: 'Rename', onselect: () => renamer?.start(file.path, false) }];
-	}
-
 	function closeFile(file: OpenFile, discard = false) {
 		if (file.dirty && !discard) {
 			closing = file;
@@ -1124,6 +1044,19 @@
 	<SchemeToggle />
 	<Settings {update} />
 	<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
+{/snippet}
+
+{#snippet launchpad(project: Project)}
+	{#key project.id}
+		<Launchpad
+			name={projectLabels.get(project.id) ?? project.path}
+			path={project.path}
+			git={git.get(project.id)}
+			items={newTab(project.id)}
+			reading={!!readingSessions[project.id]}
+			onread={() => readSessions(project.id)}
+		/>
+	{/key}
 {/snippet}
 
 {#snippet sidebarPanel()}
@@ -1208,7 +1141,7 @@
 								{:else if chat?.closing}
 									<Tab variant="agent" agent={chat.agent} label={chat.title ?? chat.rig} closing />
 								{:else if tab}
-									<Menu context items={tabMenu(projectId, tab)}>
+									<Menu context items={tabMenu(id)}>
 										{#snippet trigger(props)}
 											<Tab
 												{...props}
@@ -1225,7 +1158,7 @@
 										{/snippet}
 									</Menu>
 								{:else if chat}
-									<Menu context items={[{ label: 'Close', onselect: () => closeChat(chat) }]}>
+									<Menu context items={tabMenu(id)}>
 										{#snippet trigger(props)}
 											<Tab
 												{...props}
@@ -1244,21 +1177,21 @@
 										{/snippet}
 									</Menu>
 								{:else if browser}
-									<Menu context items={[{ label: 'Close', onselect: () => closeBrowser(browser) }]}>
+									<Menu context items={tabMenu(id)}>
 										{#snippet trigger(props)}
 											<Tab {...props} data-tab={id} variant="browser" label={browser.name} active={id === group.active}
 												onclose={() => closeBrowser(browser)} onclick={() => { if (!dragged) choose(projectId, id); }} />
 										{/snippet}
 									</Menu>
 								{:else if canvas}
-									<Menu context items={[{ label: 'Close', onselect: () => closeCanvas(canvas) }]}>
+									<Menu context items={tabMenu(id)}>
 										{#snippet trigger(props)}
 											<Tab {...props} data-tab={id} variant="canvas" label={canvas.name} active={id === group.active}
 												onclose={() => closeCanvas(canvas)} onclick={() => { if (!dragged) choose(projectId, id); }} />
 										{/snippet}
 									</Menu>
 								{:else if epic}
-									<Menu context items={[{ label: 'Close', onselect: () => closeEpic(epic) }]}>
+									<Menu context items={tabMenu(id)}>
 										{#snippet trigger(props)}
 											<Tab
 												{...props}
@@ -1274,7 +1207,7 @@
 										{/snippet}
 									</Menu>
 								{:else if file}
-									<Menu context items={fileMenu(file)}>
+									<Menu context items={tabMenu(id)}>
 										{#snippet trigger(props)}
 											<Tab
 												{...props}
@@ -1412,7 +1345,7 @@
 								{device}
 								{chat}
 								chats={allChats}
-								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); slide('tabs'); }}
+								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); visit('tab'); }}
 								items={chatItems[chat.id] ?? []}
 								saved={[...saved].filter((canvas) => canvas.startsWith(`${chat.id}/`))}
 								opened={openSubagents[chat.id] ?? []}
@@ -1476,23 +1409,13 @@
 					<div class="zone" class:over={dragging.over === 'right'} style:flex-grow={1 - ratio}></div>
 				</div>
 			{/if}
-			{#if focused && tabIds.every((id) => closingTabs.has(id))}
-				{@const projectId = focused.id}
-				{#key projectId}
-					<Launchpad
-						name={label ?? focused.path}
-						path={focused.path}
-						git={git.get(projectId)}
-						items={newTab(projectId)}
-						reading={!!readingSessions[projectId]}
-						onread={() => readSessions(projectId)}
-					/>
-				{/key}
-			{:else if !focused && listed && !picking}
-				<div class="empty" class:top={phone}>
+			{#if focused && !phone && tabIds.every((id) => closingTabs.has(id))}
+				{@render launchpad(focused)}
+			{:else if !focused && !phone && listed && !picking}
+				<div class="empty">
 					<h2>Open a Project</h2>
 					{#await import('#lib/shell/Picker.svelte') then { default: Picker }}
-						<Picker {directories} onopen={open} autofocus={!phone} />
+						<Picker {directories} onopen={open} />
 					{/await}
 				</div>
 			{/if}
@@ -1501,70 +1424,88 @@
 {/snippet}
 
 {#if phone}
-	{@const { title, sub } = titles[screen]}
+	{@const { title, sub } = titles[level]}
 	<div class="phone">
 		<header>
-			<IconButton label={back === 'tabs' ? 'Tabs' : titles[back].title} onclick={() => slide(back)}>
-				{#if back === 'projects'}<Folders />{:else if back === 'tabs'}<Cards />{:else}<SidebarSimple style={sidebarPosition.side === 'right' ? 'transform: scaleX(-1)' : undefined} />{/if}
-			</IconButton>
-			{#if screen === 'tabs' && focused}
-				<h1 data-current-tab={current?.id} {@attach swipesTabs}>
-					<button class="switch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => (switching = true)}>
-						<span class="title" style:transform={titleDrag ? `translateX(${titleDrag}px)` : undefined}>
-							<span class="name">{title}</span>
-							{#if CurrentMark}<span class="mark {current?.status}" title={current?.status}><CurrentMark /></span>{/if}
-							{#if current?.dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
-							<CaretDown />
-						</span>
-						<span class="count">
-							<span class="project">{sub}</span>
-							{#if openTabs.length > 1}
-								<TabIcons tabs={openTabs} current={activeTab} />
-								<span class="position">{currentIndex + 1}/{openTabs.length}</span>
-							{/if}
-						</span>
-					</button>
-				</h1>
-			{:else}
-				<h1>{title}{#if sub}{' '}<span class="sub">{sub}</span>{/if}</h1>
+			{#if level !== 'projects' && focused}
+				<IconButton label="Projects" onclick={() => visit('projects')}><Folders /></IconButton>
+				<CaretRight class="separator" aria-hidden="true" />
+				<IconButton label={label ?? focused.path} aria-current={level === 'overview' ? 'page' : undefined} onclick={() => visit('overview')}>
+					<span class="mark-tile squircle"><ProjectIcon project={focused} /></span>
+				</IconButton>
+				{#if level !== 'overview'}<CaretRight class="separator" aria-hidden="true" />{/if}
 			{/if}
-			<div class="tools" hidden={screen !== 'projects'}>
+			<h1 data-current-tab={level === 'tab' ? current?.id : undefined}>
+				<span class="title">
+					<span class="name">{title}</span>
+					{#if level === 'tab'}<TabMarks status={current?.status} dirty={current?.dirty} />{/if}
+				</span>
+				{#if sub || (level === 'tab' && openTabs.length > 1)}
+					{' '}<span class="count">
+						{#if sub}<span class="project">{sub}</span>{/if}
+						{#if level === 'tab' && openTabs.length > 1}
+							<TabDots tabs={openTabs} current={activeTab} />
+							<span class="position">{currentIndex + 1}/{openTabs.length}</span>
+						{/if}
+					</span>
+				{/if}
+			</h1>
+			<div class="tools" hidden={level !== 'projects'}>
 				<Settings {update} />
 				<IconButton label="Drawer" onclick={() => drawer.toggle()}><TerminalWindow /></IconButton>
 			</div>
 			<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
 		</header>
-		<div class="screens" class:held {@attach (element) => swipeable(element, order)} onscrollend={landed}>
-			{#each order as name (name)}
-				<div class="screen" data-screen={name} inert={screen !== name}>
-					{#if name === 'projects' && (name === screen || warm())}
-						<Usage readings={usage} {codexResets} />
-						<Projects
-							projects={ownProjects}
-							labels={projectLabels}
-							worktrees={nested}
-							{epics}
-							{roots}
-							{working}
-							{background}
-							focused={focused?.id}
-							onfocus={focus}
-							onclose={(projectId) => closeProject(projectId)}
-							ondelete={(projectId) => removeWorktree(projectId)}
-							onworktree={(project) => (branching = project)}
-							onmenu={freshen}
-							onpick={pick}
-							onicon={(project) => (iconProject = project)}
-							{needs}
-							{trunks}
-						/>
-					{:else if name === 'tabs'}
-						{@render workspace()}
-					{:else if name === 'sidebar' && (name === screen || warm())}
-						{@render sidebarPanel()}
-					{/if}
+		<div class="levels" aria-busy={!seeded()} bind:this={levels}>
+			{#if level === 'projects' || warm()}
+				<div class="level" data-level="projects" hidden={level !== 'projects'}>
+					<Usage readings={usage} {codexResets} />
+					<Projects
+						projects={ownProjects}
+						labels={projectLabels}
+						worktrees={nested}
+						{epics}
+						{roots}
+						{working}
+						{background}
+						focused={focused?.id}
+						onfocus={focus}
+						onclose={(projectId) => closeProject(projectId)}
+						ondelete={(projectId) => removeWorktree(projectId)}
+						onworktree={(project) => (branching = project)}
+						onmenu={freshen}
+						onpick={pick}
+						onicon={(project) => (iconProject = project)}
+						{needs}
+						{trunks}
+					/>
 				</div>
-			{/each}
+			{/if}
+			{#if focused && (level === 'overview' || warm())}
+				{@const projectId = focused.id}
+				<div class="level" data-level="overview" hidden={level !== 'overview'}>
+					<Overview
+						tabs={openTabs}
+						current={activeTab}
+						git={focusedGit}
+						menu={tabMenu}
+						onchoose={(tabId) => (choose(projectId, tabId), visit('tab'))}
+						onclose={closeMany}
+						onsection={(id) => ((section = id), visit('section'))}
+						onnew={() => (starting = true)}
+					>
+						{#snippet empty()}
+							{@render launchpad(focused)}
+						{/snippet}
+					</Overview>
+				</div>
+			{/if}
+			{#if level === 'section' || warm()}
+				<div class="level" data-level="section" hidden={level !== 'section'}>{@render sidebarPanel()}</div>
+			{/if}
+			<div class="level" data-level="tab" hidden={level !== 'tab'} style:translate={tabDrag ? `${tabDrag}px` : undefined} bind:this={tabLevel} {@attach swipesTabs}>
+				{@render workspace()}
+			</div>
 		</div>
 		{#if themeBar.choice}<ThemeBar choice={themeBar.choice} />{/if}
 	</div>
@@ -1602,16 +1543,7 @@
 
 {#if phone && focused}
 	{@const projectId = focused.id}
-	<TabSwitcher
-		bind:open={switching}
-		tabs={openTabs}
-		current={activeTab}
-		items={newTab(projectId)}
-		reading={!!readingSessions[projectId]}
-		onread={() => readSessions(projectId)}
-		onchoose={(tabId) => choose(projectId, tabId)}
-		onclose={closeAny}
-	/>
+	<NewTab bind:open={starting} items={newTab(projectId)} reading={!!readingSessions[projectId]} onread={() => readSessions(projectId)} />
 {/if}
 
 {#if focused}
@@ -1735,6 +1667,25 @@
 </Dialog>
 
 <Dialog
+	bind:open={() => !!closingMany, (open) => !open && (closingMany = undefined)}
+	title="Close {closingMany?.length} Tabs?"
+	description={manyLosses &&
+		[
+			manyLosses.stopped.length && 'Closing them stops these and everything they started.',
+			manyLosses.held && 'Tickets their Chats hold go back to not started.',
+			manyLosses.unsaved.length && `Unsaved changes in ${manyLosses.unsaved.join(', ')} are discarded.`
+		]
+			.filter(Boolean)
+			.join(' ')}
+>
+	<Stopping items={manyLosses?.stopped ?? []} />
+	{#snippet actions()}
+		<Button onclick={() => (closingMany = undefined)}>Cancel</Button>
+		<Button variant="primary" onclick={() => closingMany && closeMany(closingMany, true)}>Close</Button>
+	{/snippet}
+</Dialog>
+
+<Dialog
 	bind:open={() => !!closingProject, (open) => !open && (closingProject = undefined)}
 	title="Close {closingProject && projectLabels.get(closingProject)}?"
 	description="Closing it stops these and everything they started."
@@ -1810,44 +1761,32 @@
 		padding: var(--space-1);
 	}
 
-	h1 {
-		flex: 1;
-		min-width: 0;
-		margin: 0;
-		overflow: hidden;
-		font-size: var(--font-size-lg);
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.sub {
-		margin-left: var(--space-1);
+	header > :global(.separator) {
+		flex: none;
+		margin-inline: calc(-1 * var(--space-1));
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
-		font-weight: 400;
 	}
 
-	.switch {
+	.mark-tile {
+		display: grid;
+		width: var(--control-min);
+		height: var(--control-min);
+		border-radius: var(--radius-md);
+		font-family: var(--font-ui);
+		overflow: hidden;
+	}
+
+	h1 {
 		display: flex;
+		flex: 1;
 		flex-direction: column;
 		justify-content: center;
-		box-sizing: border-box;
-		width: 100%;
+		min-width: 0;
 		min-height: var(--target-min);
-		padding: 0 var(--space-2);
-		border: none;
-		border-radius: var(--radius-md);
-		background: none;
-		color: inherit;
-		font: inherit;
-		text-align: start;
-		cursor: pointer;
-	}
-
-	.switch:hover,
-	.switch[aria-expanded='true'] {
-		background: var(--hover);
+		margin: 0;
+		padding-left: var(--space-2);
+		font-size: var(--font-size-lg);
 	}
 
 	.title {
@@ -1856,12 +1795,6 @@
 		gap: var(--space-1);
 		min-width: 0;
 		line-height: 1.2;
-	}
-
-	.title > :global(svg) {
-		flex: none;
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
 	}
 
 	.name,
@@ -1874,7 +1807,7 @@
 	.count {
 		display: flex;
 		align-items: center;
-		gap: var(--space-1);
+		gap: var(--space-2);
 		min-width: 0;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
@@ -1884,7 +1817,7 @@
 	}
 
 	.project:not(:only-child) {
-		flex: none;
+		flex: 0 1 auto;
 		max-width: 45%;
 	}
 
@@ -1894,64 +1827,26 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	.mark {
-		display: inline-flex;
-		color: var(--mark);
-	}
-
-	.mark.working {
-		--mark: var(--status-working);
-	}
-
-	.mark.waiting {
-		--mark: var(--status-waiting);
-	}
-
-	.mark.background {
-		--mark: var(--status-background);
-	}
-
-	.mark.done {
-		--mark: var(--status-done);
-	}
-
-	.dirty {
-		flex: none;
-		width: 0.5em;
-		height: 0.5em;
-		border-radius: 50%;
-		background: currentColor;
-	}
-
 	.tools:not([hidden]) {
 		display: flex;
 	}
 
-	.screens {
+	.levels {
 		display: flex;
 		flex: 1;
+		flex-direction: column;
 		min-height: 0;
 		border-top: var(--border-width) solid var(--border);
 		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 		background: var(--color-bg);
-		overflow-x: auto;
-		overflow-y: hidden;
-		overscroll-behavior-x: contain;
-		scroll-snap-type: x mandatory;
-		scrollbar-width: none;
+		overflow: hidden;
 	}
 
-	.held {
-		overflow-x: hidden;
-	}
-
-	.screen {
+	.level:not([hidden]) {
 		display: flex;
-		flex: none;
+		flex: 1;
 		flex-direction: column;
-		width: 100%;
-		scroll-snap-align: start;
-		scroll-snap-stop: always;
+		min-height: 0;
 	}
 
 	main {
@@ -2090,11 +1985,6 @@
 		padding: var(--space-6);
 		box-sizing: border-box;
 		overflow: hidden auto;
-	}
-
-	.empty.top {
-		align-self: start;
-		padding: var(--space-6) 1rem;
 	}
 
 	.empty h2 {

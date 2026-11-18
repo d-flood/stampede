@@ -1,29 +1,7 @@
-<script lang="ts" module>
-	import type { Agent } from '#lib/config.svelte.ts';
-	import { logos } from '#lib/chat/sessions.ts';
-	import ShellMark from '#lib/ui/ShellMark.svelte';
-	import { WaitingMark, WorkingMark } from '#lib/ui/spinners.ts';
-	import Article from '~icons/ph/article';
-	import Browsers from '~icons/ph/browsers';
-	import CheckBold from '~icons/ph/check-bold';
-	import FileCode from '~icons/ph/file-code';
-	import Globe from '~icons/ph/globe';
-	import GitDiff from '~icons/ph/git-diff';
-	import TerminalWindow from '~icons/ph/terminal-window';
-
-	export type Variant = 'agent' | 'terminal' | 'editor' | 'diff' | 'browser' | 'canvas' | 'epic';
-	export type Status = 'working' | 'waiting' | 'background' | 'done';
-
-	const icons = { terminal: TerminalWindow, editor: FileCode, diff: GitDiff, browser: Globe, canvas: Browsers, epic: Article };
-	export const marks = { working: WorkingMark, waiting: WaitingMark, background: ShellMark, done: CheckBold };
-
-	export function tabIcon(variant: Variant, agent: Agent = 'claude-code') {
-		return variant === 'agent' ? logos[agent] : icons[variant];
-	}
-</script>
-
 <script lang="ts">
-	import FileIcon from '#lib/ui/FileIcon.svelte';
+	import type { Agent } from '#lib/config.svelte.ts';
+	import TabIcon, { type Variant } from '#lib/ui/TabIcon.svelte';
+	import TabMarks, { type Status } from '#lib/ui/TabMarks.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 	import { mergeProps } from 'bits-ui';
@@ -61,8 +39,6 @@
 		...rest
 	}: Props = $props();
 
-	const Icon = $derived(tabIcon(variant, agent));
-	const Mark = $derived(status && marks[status]);
 
 	// Measuring waits for the frame, so it reuses that frame's layout instead of forcing one mid-update.
 	function reveal(tab: HTMLElement) {
@@ -91,11 +67,10 @@
 		class:closing
 		{...props}
 	>
-		{#if variant === 'editor'}<FileIcon path={label} />{:else}<Icon />{/if}
+		<TabIcon {variant} {agent} {label} />
 		<span class="label">{label}</span>
 		{#if variant === 'diff'}<span class="vs">↔ {against}</span>{/if}
-		{#if Mark}<span class="mark" title={status}><Mark /></span>{/if}
-		{#if dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
+		<TabMarks {status} {dirty} />
 	</button>
 {/snippet}
 
@@ -229,33 +204,7 @@
 		font-weight: 400;
 	}
 
-	.working {
-		--mark: var(--status-working);
-	}
-
 	.waiting {
-		--mark: var(--status-waiting);
 		background: color-mix(in oklab, var(--status-waiting) 16%, transparent);
-	}
-
-	.background {
-		--mark: var(--status-background);
-	}
-
-	.done {
-		--mark: var(--status-done);
-	}
-
-	.dirty {
-		flex: none;
-		width: 0.5em;
-		height: 0.5em;
-		border-radius: 50%;
-		background: currentColor;
-	}
-
-	.mark {
-		display: inline-flex;
-		color: var(--mark);
 	}
 </style>

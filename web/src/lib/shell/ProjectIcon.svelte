@@ -1,13 +1,13 @@
 <script lang="ts">
 	import type { Project } from '#lib/device.svelte.ts';
-	import { monogram } from '#lib/projects.ts';
+	import { hue, monogram } from '#lib/projects.ts';
 
 	let { project }: { project: Project } = $props();
 	let failed = $state<string>();
 	const image = $derived(!!project.icon && failed !== project.icon);
 </script>
 
-<span class="icon squircle" class:monogram={!image} aria-hidden="true">
+<span class="icon squircle" class:monogram={!image} style:--hue="var(--ansi-{hue(project.path)})" aria-hidden="true">
 	{#if image}
 		<img class="squircle" src="/api/project-icons/{project.icon}" alt="" onerror={() => (failed = project.icon)} />
 	{:else}

@@ -4,7 +4,7 @@
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command, computeCommandScore } from 'bits-ui';
 
-	let { directories, onopen, autofocus = true }: { directories: string[]; onopen(path: string): Promise<string | undefined>; autofocus?: boolean } =
+	let { directories, onopen }: { directories: string[]; onopen(path: string): Promise<string | undefined> } =
 		$props();
 
 	let query = $state('');
@@ -40,7 +40,7 @@
 		spellcheck={false}
 	>
 		{#snippet child({ props })}
-			<TextField {...props} mono bind:value={query} {@attach (element) => { if (autofocus) element.focus(); }} />
+			<TextField {...props} mono bind:value={query} {@attach (element) => element.focus()} />
 		{/snippet}
 	</Command.Input>
 	{#if error}

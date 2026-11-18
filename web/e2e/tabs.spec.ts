@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { closeProject, expectCurrent, newTab, openProject, openSwitcher, showSidebar } from './shell.ts';
+import { closeProject, closeTab, expectCurrent, newTab, openProject, showSidebar } from './shell.ts';
 
 async function chooseNewTab(page: Page, label: string) {
 	await page.keyboard.press('Control+T');
@@ -22,29 +22,24 @@ test('active tabs expose a close button and preserve unsaved edits', async ({ pa
 	}
 	const file = `${project.name}.txt`;
 	await sidebar.getByRole('button', { name: file, exact: true }).click();
-	if (project.name === 'pixel') {
-		await expect.poll(() => page.locator('.screens').evaluate((element) =>
-			Math.abs(element.scrollLeft - element.querySelector<HTMLElement>('[data-screen="tabs"]')!.offsetLeft) < 1
-		)).toBe(true);
-	}
 	const phone = project.name === 'pixel';
+	if (phone) await expect(page.locator('[data-level="tab"]')).toBeVisible();
 	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true });
-	const closer = async () => (phone ? await openSwitcher(page) : tabs).getByRole('button', { name: `Close ${file}`, exact: true });
-	const close = await closer();
-	await expect(close).toBeVisible();
-	await expect.poll(async () => {
-		const box = await close.boundingBox();
-		return box && box.width >= (phone ? 48 : 26) && box.height >= (phone ? 48 : 26);
-	}).toBe(true);
-	if (phone) await page.keyboard.press('Escape');
+	const close = tabs.getByRole('button', { name: `Close ${file}`, exact: true });
+	if (!phone) {
+		await expect(close).toBeVisible();
+		await expect.poll(async () => {
+			const box = await close.boundingBox();
+			return box && box.width >= 26 && box.height >= 26;
+		}).toBe(true);
+	}
 	await page.locator('.editor:not([hidden]) .cm-content').click();
 	await page.keyboard.type('unsaved');
-	if (phone) await (await closer()).tap();
+	if (phone) await closeTab(page, file);
 	else await close.click();
 	const dialog = page.getByRole('dialog', { name: 'Discard unsaved changes?' });
 	await expect(dialog).toBeVisible();
 	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-	if (phone) await page.keyboard.press('Escape');
 	await expectCurrent(page, file);
 	await page.locator('.editor:not([hidden]) .cm-content').click();
 	await page.keyboard.press('Control+W');

@@ -2,7 +2,7 @@ import type { Item, ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { newTab, openProject } from './shell.ts';
+import { newTab, openProject, showLevel } from './shell.ts';
 
 test('running shells restore after reload and background updates reach project tiles', async ({ page }, { project }) => {
 	let route: WebSocketRoute;
@@ -66,10 +66,12 @@ test('running shells restore after reload and background updates reach project t
 	await expect(chip).toHaveCount(0);
 	await expect(panel.locator('.elapsed')).toHaveCount(0);
 	const tile = page.locator(`nav[aria-label="Projects"] button[aria-label="${name}"]`);
+	if (phone) await showLevel(page, 'projects');
 	route!.send(JSON.stringify({ type: 'chat.background', chatId: chatId!, background: true }));
 	await expect(tile.getByTitle('background')).toBeVisible();
 	route!.send(JSON.stringify({ type: 'chat.background', chatId: chatId!, background: false }));
 	await expect(tile.getByTitle('background')).toHaveCount(0);
+	if (phone) await showLevel(page, 'tab');
 	await panel.locator('.calls .summary').click();
 	await expect(panel.locator('.transcript .command-code')).toContainText(command);
 	await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);

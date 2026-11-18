@@ -1,4 +1,4 @@
-import { openSettings, showScreen } from './shell.ts';
+import { openSettings, showLevel } from './shell.ts';
 import { expect, test } from './fixtures.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -15,9 +15,9 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 
 	await page.goto('/');
 	if (phone) {
-		await showScreen(page, 'projects');
+		await showLevel(page, 'projects');
 		await expect(heading).toHaveText('Projects');
-		await expect(heading.locator('.sub')).toHaveCount(0);
+		await expect(heading.locator('.count')).toHaveCount(0);
 	}
 	await expect(page).toHaveTitle('Stampede');
 
@@ -60,7 +60,7 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 	await done();
 	if (phone) {
 		await expect(heading).toHaveText('Projects');
-		await expect(heading.locator('.sub')).toHaveCount(0);
+		await expect(heading.locator('.count')).toHaveCount(0);
 	}
 	await expect(other).toHaveTitle('Stampede');
 });
