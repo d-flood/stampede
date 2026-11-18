@@ -4,6 +4,7 @@
 	import { split } from '#lib/git.ts';
 	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount } from 'svelte';
@@ -208,6 +209,7 @@
 		{@const { name, dir } = split(file)}
 		<li>
 			<div class="file" title={file}>
+				<FileIcon path={name} />
 				<span class="name">{name}</span>
 				<span class="dir">{dir}</span>
 				<Badge>{matches.length}</Badge>
@@ -322,6 +324,11 @@
 
 	.name {
 		font-size: var(--font-size-code);
+	}
+
+	.file > :global(svg) {
+		flex: none;
+		color: var(--muted-fg);
 	}
 
 	.file .name {

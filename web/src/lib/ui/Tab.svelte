@@ -23,6 +23,7 @@
 </script>
 
 <script lang="ts">
+	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 	import { mergeProps } from 'bits-ui';
@@ -90,7 +91,7 @@
 		class:closing
 		{...props}
 	>
-		<Icon />
+		{#if variant === 'editor'}<FileIcon path={label} />{:else}<Icon />{/if}
 		<span class="label">{label}</span>
 		{#if variant === 'diff'}<span class="vs">↔ {against}</span>{/if}
 		{#if Mark}<span class="mark" title={status}><Mark /></span>{/if}

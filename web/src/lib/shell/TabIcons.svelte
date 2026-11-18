@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { SwitcherTab } from '#lib/shell/TabSwitcher.svelte';
+	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import { tabIcon } from '#lib/ui/Tab.svelte';
 
 	let { tabs, current }: { tabs: SwitcherTab[]; current?: string } = $props();
@@ -10,7 +11,7 @@
 	<span class="row">
 		{#each tabs as tab (tab.id)}
 			{@const Icon = tabIcon(tab.variant, tab.agent)}
-			<span class="icon" class:now={tab.id === current} style:--mark={tab.status && `var(--status-${tab.status})`}><Icon /></span>
+			<span class="icon" class:now={tab.id === current} style:--mark={tab.status && `var(--status-${tab.status})`}>{#if tab.variant === 'editor'}<FileIcon path={tab.label} />{:else}<Icon />{/if}</span>
 		{/each}
 	</span>
 </span>

@@ -1,11 +1,11 @@
 import { codeLines, fenceParser } from '#lib/chat/highlight.ts';
 import { highlight } from '#lib/editor/theme.ts';
+import { fileIcon } from '#lib/editor/languages.ts';
 import { fileLink } from '#lib/links.ts';
 import MarkdownIt from 'markdown-it';
 import { StyleModule } from 'style-mod';
 import Check from '~icons/ph/check?raw';
 import Copy from '~icons/ph/copy?raw';
-import FileCode from '~icons/ph/file-code?raw';
 
 const markdown = new MarkdownIt({ breaks: true, linkify: true, highlight: highlighted });
 const rules = markdown.renderer.rules;
@@ -31,7 +31,7 @@ rules.link_open = (tokens, index, options, env, self) => {
 	token.attrSet('rel', 'noreferrer');
 	const file = env.files && fileLink(token.attrGet('href')!);
 	if (file) token.attrJoin('class', 'file');
-	return self.renderToken(tokens, index, options) + (file ? FileCode : '');
+	return self.renderToken(tokens, index, options) + (file ? fileIcon(file.path) : '');
 };
 
 for (const name of ['fence', 'code_block'] as const) {

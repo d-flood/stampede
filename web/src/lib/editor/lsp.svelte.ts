@@ -7,28 +7,6 @@ export type State = 'off' | 'starting' | 'on' | 'error';
 
 export type Attached = { view: EditorView; compartment: Compartment; path: string; languageId: string; editor: boolean; shown: boolean };
 
-const languages: Record<string, [servers: string[], languageId: string]> = {
-	ts: [['typescript', 'eslint'], 'typescript'],
-	mts: [['typescript', 'eslint'], 'typescript'],
-	cts: [['typescript', 'eslint'], 'typescript'],
-	tsx: [['typescript', 'eslint'], 'typescriptreact'],
-	js: [['typescript', 'eslint'], 'javascript'],
-	mjs: [['typescript', 'eslint'], 'javascript'],
-	cjs: [['typescript', 'eslint'], 'javascript'],
-	jsx: [['typescript', 'eslint'], 'javascriptreact'],
-	svelte: [['svelte', 'eslint'], 'svelte'],
-	astro: [['astro', 'eslint'], 'astro'],
-	py: [['python', 'ruff'], 'python']
-};
-
-export function language(path: string) {
-	return languages[path.match(/\.([^./]+)$/)?.[1].toLowerCase() ?? ''];
-}
-
-export function serverLanguages(path: string): string[] {
-	return language(path)?.[0] ?? [];
-}
-
 export function uri(path: string) {
 	return `file://${path.split('/').map(encodeURIComponent).join('/')}`;
 }

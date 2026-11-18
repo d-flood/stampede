@@ -2,6 +2,7 @@
 	import type { Agent } from '#lib/config.svelte.ts';
 	import type { TabItem, TabItems } from '#lib/shell/new-tab.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
@@ -67,7 +68,7 @@
 						aria-describedby={Mark && `${id}-mark-${index}`}
 						onclick={() => choose(tab.id)}
 					>
-						<span class="icon"><Icon /></span>
+						<span class="icon">{#if tab.variant === 'editor'}<FileIcon path={tab.label} />{:else}<Icon />{/if}</span>
 						<span class="label" class:mono={tab.variant === 'terminal'} id="{id}-tab-{index}">{tab.label}</span>
 						{#if Mark}<span class="mark" role="img" aria-label={tab.status} id="{id}-mark-{index}"><Mark /></span>{/if}
 						{#if tab.dirty}<span class="dirty" title="Unsaved changes"></span>{/if}

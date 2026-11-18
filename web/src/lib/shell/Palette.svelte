@@ -10,6 +10,7 @@
 	import type { Project, Session } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { split } from '#lib/git.ts';
+	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
@@ -135,6 +136,7 @@
 														<span class="label">{label}</span>
 														{#if hint}<span class="hint" aria-hidden="true">{hint}</span>{/if}
 													{:else}
+														<FileIcon path={label} />
 														<span class="path"><span class="parent">{parent}</span><span class="name">{label}</span></span>
 													{/if}
 												</ListItem>

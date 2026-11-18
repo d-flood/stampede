@@ -1,13 +1,36 @@
+import { image } from '#lib/files.svelte.ts';
 import { LanguageDescription, LanguageSupport, StreamLanguage, type StreamParser } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
+import File from '~icons/ph/file?raw';
+import FileImage from '~icons/ph/file-image?raw';
+import FilePdf from '~icons/ph/file-pdf?raw';
+import GitDiff from '~icons/ph/git-diff?raw';
+import Astro from '~icons/simple-icons/astro?raw';
+import Css from '~icons/simple-icons/css?raw';
+import Docker from '~icons/simple-icons/docker?raw';
+import Bash from '~icons/simple-icons/gnubash?raw';
+import Html from '~icons/simple-icons/html5?raw';
+import JavaScript from '~icons/simple-icons/javascript?raw';
+import Json from '~icons/simple-icons/json?raw';
+import Markdown from '~icons/simple-icons/markdown?raw';
+import Python from '~icons/simple-icons/python?raw';
+import React from '~icons/simple-icons/react?raw';
+import Rust from '~icons/simple-icons/rust?raw';
+import Svelte from '~icons/simple-icons/svelte?raw';
+import Svg from '~icons/simple-icons/svg?raw';
+import Toml from '~icons/simple-icons/toml?raw';
+import TypeScript from '~icons/simple-icons/typescript?raw';
+import Vue from '~icons/simple-icons/vuedotjs?raw';
+import Xml from '~icons/simple-icons/xml?raw';
+import Yaml from '~icons/simple-icons/yaml?raw';
 
 type Load = () => Promise<LanguageSupport>;
+type Language = { extensions: string[]; filenames?: string[]; icon: string; load: Load; servers?: string[] };
 
 const stream = <T>(parser: StreamParser<T>) => new LanguageSupport(StreamLanguage.define(parser));
 
-const typescript: Load = async () => (await import('@codemirror/lang-javascript')).javascript({ typescript: true });
-const javascript: Load = async () => (await import('@codemirror/lang-javascript')).javascript();
-const python: Load = async () => (await import('@codemirror/lang-python')).python();
+const javascript = (options: { typescript?: boolean; jsx?: boolean }): Load => async () =>
+	(await import('@codemirror/lang-javascript')).javascript(options);
 const markdown: Load = async () => {
 	const [{ markdown, markdownLanguage }, { yamlFrontmatter }, { footnotes }] = await Promise.all([
 		import('@codemirror/lang-markdown'),
@@ -16,10 +39,7 @@ const markdown: Load = async () => {
 	]);
 	return yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages, extensions: [footnotes] }) });
 };
-const yaml: Load = async () => (await import('@codemirror/lang-yaml')).yaml();
-const json: Load = async () => (await import('@codemirror/lang-json')).json();
 const xml: Load = async () => stream((await import('@codemirror/legacy-modes/mode/xml')).xml);
-const diff: Load = async () => stream((await import('@codemirror/legacy-modes/mode/diff')).diff);
 const shell: Load = async () => {
 	const { shell } = await import('@codemirror/legacy-modes/mode/shell');
 	return stream({
@@ -38,64 +58,70 @@ const shell: Load = async () => {
 	});
 };
 
-const loaders: Record<string, Load> = {
-	ts: typescript,
-	mts: typescript,
-	cts: typescript,
-	tsx: async () => (await import('@codemirror/lang-javascript')).javascript({ typescript: true, jsx: true }),
-	js: javascript,
-	mjs: javascript,
-	cjs: javascript,
-	jsx: async () => (await import('@codemirror/lang-javascript')).javascript({ jsx: true }),
-	py: python,
-	pyi: python,
-	css: async () => (await import('@codemirror/lang-css')).css(),
-	html: async () => (await import('@codemirror/lang-html')).html(),
-	svg: xml,
-	xml,
-	json,
-	jsonc: json,
-	jsonl: json,
-	jsonld: json,
-	webmanifest: json,
-	md: markdown,
-	markdown,
-	rs: async () => (await import('@codemirror/lang-rust')).rust(),
-	yaml,
-	yml: yaml,
-	sh: shell,
-	bash: shell,
-	zsh: shell,
-	toml: async () => stream((await import('@codemirror/legacy-modes/mode/toml')).toml),
-	dockerfile: async () => stream((await import('@codemirror/legacy-modes/mode/dockerfile')).dockerFile),
-	diff,
-	patch: diff,
-	svelte: async () => (await import('@replit/codemirror-lang-svelte')).svelte(),
-	astro: async () => (await import('./astro.ts')).astro(),
-	vue: async () => (await import('@codemirror/lang-vue')).vue()
+// Keys double as LSP language IDs for entries with servers.
+const languages: Record<string, Language> = {
+	typescript: { extensions: ['ts', 'mts', 'cts'], icon: TypeScript, load: javascript({ typescript: true }), servers: ['typescript', 'eslint'] },
+	typescriptreact: { extensions: ['tsx'], icon: React, load: javascript({ typescript: true, jsx: true }), servers: ['typescript', 'eslint'] },
+	javascript: { extensions: ['js', 'mjs', 'cjs'], icon: JavaScript, load: javascript({}), servers: ['typescript', 'eslint'] },
+	javascriptreact: { extensions: ['jsx'], icon: React, load: javascript({ jsx: true }), servers: ['typescript', 'eslint'] },
+	python: { extensions: ['py', 'pyi'], icon: Python, load: async () => (await import('@codemirror/lang-python')).python(), servers: ['python', 'ruff'] },
+	css: { extensions: ['css'], icon: Css, load: async () => (await import('@codemirror/lang-css')).css() },
+	html: { extensions: ['html'], icon: Html, load: async () => (await import('@codemirror/lang-html')).html() },
+	svg: { extensions: ['svg'], icon: Svg, load: xml },
+	xml: { extensions: ['xml'], icon: Xml, load: xml },
+	json: { extensions: ['json', 'jsonc', 'jsonl', 'jsonld', 'webmanifest'], icon: Json, load: async () => (await import('@codemirror/lang-json')).json() },
+	markdown: { extensions: ['md', 'markdown'], icon: Markdown, load: markdown },
+	rust: { extensions: ['rs'], icon: Rust, load: async () => (await import('@codemirror/lang-rust')).rust() },
+	yaml: { extensions: ['yaml', 'yml'], icon: Yaml, load: async () => (await import('@codemirror/lang-yaml')).yaml() },
+	shell: { extensions: ['sh', 'bash', 'zsh'], icon: Bash, load: shell },
+	toml: { extensions: ['toml'], icon: Toml, load: async () => stream((await import('@codemirror/legacy-modes/mode/toml')).toml) },
+	dockerfile: {
+		extensions: ['dockerfile'],
+		filenames: ['Dockerfile'],
+		icon: Docker,
+		load: async () => stream((await import('@codemirror/legacy-modes/mode/dockerfile')).dockerFile)
+	},
+	diff: { extensions: ['diff', 'patch'], icon: GitDiff, load: async () => stream((await import('@codemirror/legacy-modes/mode/diff')).diff) },
+	svelte: { extensions: ['svelte'], icon: Svelte, load: async () => (await import('@replit/codemirror-lang-svelte')).svelte(), servers: ['svelte', 'eslint'] },
+	astro: { extensions: ['astro'], icon: Astro, load: async () => (await import('./astro.ts')).astro(), servers: ['astro', 'eslint'] },
+	vue: { extensions: ['vue'], icon: Vue, load: async () => (await import('@codemirror/lang-vue')).vue() }
 };
 
-const fenceNames: Record<string, string[]> = {
-	ts: ['typescript'],
-	js: ['javascript'],
-	py: ['python'],
-	rs: ['rust'],
-	sh: ['shell']
-};
-
-const codeLanguages = Object.entries(loaders).map(([name, load]) =>
-	LanguageDescription.of({ name, alias: fenceNames[name], load })
+const lookup = new Map(
+	Object.entries(languages).flatMap(([name, { extensions, filenames = [] }]) => [
+		...extensions.map((extension) => [`.${extension}`, name] as const),
+		...filenames.map((filename) => [filename, name] as const)
+	])
 );
 
-export function extension(path: string): string {
-	if (/(?:^|\/)Dockerfile$/.test(path)) return 'dockerfile';
-	return path.match(/\.([^./]+)$/)?.[1].toLowerCase() ?? '';
+const codeLanguages = Object.entries(languages).map(([name, { extensions, load }]) => LanguageDescription.of({ name, alias: extensions, load }));
+
+export function languageOf(path: string): string | undefined {
+	const name = path.slice(path.lastIndexOf('/') + 1);
+	return lookup.get(name) ?? lookup.get(name.match(/\.[^.]+$/)?.[0].toLowerCase() ?? '');
 }
 
-export function fenceExtension(info: string): string | undefined {
+export function fenceLanguage(info: string): string | undefined {
 	return LanguageDescription.matchLanguageName(codeLanguages, info)?.name;
 }
 
+export function syntax(name: string | undefined): Promise<Extension> {
+	return name ? languages[name].load() : Promise.resolve([]);
+}
+
 export function language(path: string): Promise<Extension> {
-	return loaders[extension(path)]?.() ?? Promise.resolve([]);
+	return syntax(languageOf(path));
+}
+
+export function languageServers(path: string): [servers: string[], languageId: string] | undefined {
+	const name = languageOf(path);
+	const servers = name && languages[name].servers;
+	return name && servers ? [servers, name] : undefined;
+}
+
+export function fileIcon(path: string): string {
+	const name = languageOf(path);
+	if (name) return languages[name].icon;
+	if (image(path)) return FileImage;
+	return /\.pdf$/i.test(path) ? FilePdf : File;
 }

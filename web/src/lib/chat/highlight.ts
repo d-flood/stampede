@@ -1,4 +1,4 @@
-import { extension, fenceExtension, language as loadLanguage } from '#lib/editor/languages.ts';
+import { fenceLanguage, languageOf, syntax } from '#lib/editor/languages.ts';
 import { highlight } from '#lib/editor/theme.ts';
 import { language, type Language } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
@@ -9,24 +9,27 @@ type Parser = Language['parser'];
 type Token = { text: string; classes: string };
 type Line = { kind: string; prefix: string; tokens: Token[] };
 
-const parsers = new Map<string, Promise<Parser | undefined>>();
-const loaded = new SvelteMap<string, Parser | undefined>();
+const parsers = new Map<string | undefined, Promise<Parser | undefined>>();
+const loaded = new SvelteMap<string | undefined, Parser | undefined>();
 
-export function parser(path: string): Promise<Parser | undefined> {
-	const key = extension(path);
-	let found = parsers.get(key);
+function load(name: string | undefined): Promise<Parser | undefined> {
+	let found = parsers.get(name);
 	if (!found) {
-		found = loadLanguage(path).then((extensions) => EditorState.create({ extensions }).facet(language)?.parser);
-		found.then((parser) => loaded.set(key, parser), () => loaded.set(key, undefined));
-		parsers.set(key, found);
+		found = syntax(name).then((extensions) => EditorState.create({ extensions }).facet(language)?.parser);
+		found.then((parser) => loaded.set(name, parser), () => loaded.set(name, undefined));
+		parsers.set(name, found);
 	}
 	return found;
 }
 
+export function parser(path: string): Promise<Parser | undefined> {
+	return load(languageOf(path));
+}
+
 export function fenceParser(info: string): Parser | undefined | 'loading' {
-	const name = fenceExtension(info);
+	const name = fenceLanguage(info);
 	if (!name) return undefined;
-	parser(`fence.${name}`);
+	load(name);
 	return loaded.has(name) ? loaded.get(name) : 'loading';
 }
 

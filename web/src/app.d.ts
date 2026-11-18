@@ -10,11 +10,6 @@ declare global {
 	}
 }
 
-declare module '~icons/*?raw' {
-	const svg: string;
-	export default svg;
-}
-
 declare module 'svelte/elements' {
 	interface HTMLTextareaAttributes {
 		autocorrect?: 'on' | 'off' | null;

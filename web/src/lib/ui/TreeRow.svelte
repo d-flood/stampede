@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Kind } from '#lib/git.ts';
 	import Caret from '#lib/ui/Caret.svelte';
+	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import type { Snippet } from 'svelte';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
@@ -19,7 +20,7 @@
 	aria-expanded={open}
 	{...rest}
 >
-	{#if open === undefined}<span class="spacer"></span>{:else}<Caret />{/if}
+	{#if open === undefined}<span class="icon" aria-hidden="true"><FileIcon path={name} /></span>{:else}<Caret />{/if}
 	<span class="name" class:faded>{name}</span>
 	{@render children?.()}
 	{#if letter}<span class="letter" aria-hidden="true">{letter}</span>{/if}
@@ -48,9 +49,16 @@
 		outline-offset: var(--focus-inset);
 	}
 
-	.spacer {
+	.icon {
+		display: inline-flex;
 		flex: none;
 		width: 1em;
+		color: var(--muted-fg);
+	}
+
+	.icon > :global(svg) {
+		width: 1em;
+		height: 1em;
 	}
 
 	.muted {

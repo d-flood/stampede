@@ -1,4 +1,5 @@
-import { language, uri, type Attached, type LanguageServers, type State } from '#lib/editor/lsp.svelte.ts';
+import { languageServers } from '#lib/editor/languages.ts';
+import { uri, type Attached, type LanguageServers, type State } from '#lib/editor/lsp.svelte.ts';
 import { forEachDiagnostic, setDiagnostics, type Diagnostic } from '@codemirror/lint';
 import {
 	hoverTooltips,
@@ -37,7 +38,7 @@ function offset(doc: Text, { line, character }: Position) {
 }
 
 export function languageServer(servers: LanguageServers, projectId: string, path: string, editor: boolean): Extension {
-	const found = language(path);
+	const found = languageServers(path);
 	const root = servers.root(projectId);
 	if (!found || !root) return [];
 	const [names, languageId] = found;

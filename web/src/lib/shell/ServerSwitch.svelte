@@ -1,12 +1,13 @@
 <script lang="ts">
-	import { serverLanguages, type LanguageServers } from '#lib/editor/lsp.svelte.ts';
+	import { languageServers } from '#lib/editor/languages.ts';
+	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 
 	type Props = { servers: LanguageServers; projectId: string; path: string };
 
 	let { servers, projectId, path }: Props = $props();
 
-	const languages = $derived(serverLanguages(path));
+	const languages = $derived(languageServers(path)?.[0] ?? []);
 	const on = $derived(servers.switches[projectId] ?? false);
 	const states = $derived(languages.map((language) => servers.states[`lsp:${projectId}:${language}`]));
 	const failed = $derived(languages.find((_, index) => states[index] === 'error'));
