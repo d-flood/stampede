@@ -649,6 +649,8 @@ pub trait Driver: Send + Sync {
     fn close(&self);
     fn delegated(&self, item: Item);
     fn shell(&self, command: &str);
+    /// Answers with the Agent's own id for the user message at `index`, before which a fork ends.
+    fn checkpoint(&self, index: usize, reply: oneshot::Sender<Option<String>>);
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -802,6 +804,11 @@ pub struct Chat {
     pub answered_questions: Vec<AnsweredQuestions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handoff_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<String>,
+    /// Claude Code copies `agent_session` up to `resume_at` into a session of the fork's own only once it sends.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forking: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1057,6 +1064,8 @@ impl Chats {
             todos: Vec::new(),
             answered_questions: Vec::new(),
             handoff_from,
+            forked_from: None,
+            forking: false,
             parent,
             duty,
             draft,
@@ -1198,8 +1207,81 @@ impl Chats {
     pub async fn reopen(self: &Arc<Self>, chat: Chat, rigs: &[Rig]) -> io::Result<Chat> {
         let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
         let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, &chat.cwd, &env).await?;
+        self.open(chat, storage).await
+    }
+
+    /// Starts a Chat that continues `id`'s conversation from before its user message at `index`, with that message in its Composer.
+    pub async fn fork(self: &Arc<Self>, id: &str, index: usize, rigs: &[Rig]) -> io::Result<Chat> {
+        let entry = self.get(id).ok_or_else(|| io::Error::other("The Chat is no longer open."))?;
+        let (index, text) = {
+            let transcript = entry.transcript.lock().unwrap();
+            let start = match transcript.items.get(index) {
+                Some(Item::User { rewind_from, .. }) => rewind_from.unwrap_or(index),
+                _ => return Err(io::Error::other("Choose a user message to fork from.")),
+            };
+            let Some(Item::User { text, .. }) = transcript.items.get(start) else { return Err(io::Error::other("Choose a user message to fork from.")) };
+            (start, text.clone())
+        };
+        let (reply, answer) = oneshot::channel();
+        entry.driver.checkpoint(index, reply);
+        let checkpoint = answer.await.ok().flatten()
+            .ok_or_else(|| io::Error::other("This message has no checkpoint to fork from. Choose another user message."))?;
+        let source = entry.chat.lock().unwrap().clone();
+        let session = source.agent_session.clone().ok_or_else(|| io::Error::other("The Chat has no conversation to fork yet."))?;
+        let env = rigs.iter().find(|rig| rig.name == source.rig).map(|rig| rig.env.clone()).unwrap_or_default();
+        let mut chat = Chat {
+            id: format!("{:016x}", Uuid::new_v4().as_u64_pair().1),
+            created: SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_nanos(),
+            agent_session: None,
+            resume_at: None,
+            plan_resolved: None,
+            status: Status::Done,
+            closing: false,
+            activity: None,
+            background: false,
+            running: Vec::new(),
+            viewed_since_done: true,
+            context: None,
+            tokens: None,
+            settings: Settings { chosen: source.settings.chosen.clone(), pending: Vec::new() },
+            queued: Vec::new(),
+            queue_revision: 0,
+            queued_images: Vec::new(),
+            create_epic: None,
+            todos: Vec::new(),
+            answered_questions: source.answered_questions.iter().filter(|record| record.after <= index).cloned().collect(),
+            handoff_from: None,
+            forked_from: Some(source.id.clone()),
+            forking: false,
+            parent: None,
+            duty: None,
+            draft: Some(text),
+            shell_context: Vec::new(),
+            ..source
+        };
+        let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, &chat.cwd, &env).await?;
+        match chat.agent {
+            Agent::ClaudeCode => {
+                if let Some(parent) = claude::parent(&storage.env, &session, &checkpoint).await? {
+                    (chat.agent_session, chat.resume_at, chat.forking) = (Some(session), Some(parent), true);
+                }
+            }
+            Agent::Codex => chat.agent_session = codex::fork(&self.data_dir, &chat, &storage.env, &session, &checkpoint).await?,
+            Agent::Copilot => chat.agent_session = Some(copilot::fork(&chat.cwd, &storage.env, &session, &checkpoint).await?),
+        }
+        self.open(chat, storage).await
+    }
+
+    async fn open(self: &Arc<Self>, chat: Chat, storage: crate::storage::Session) -> io::Result<Chat> {
         write_record(&self.data_dir, &chat)?;
-        let (driver, events) = self.resume(&chat, &storage.env).await.inspect_err(|_| {
+        let started = match chat.agent {
+            // A Codex fork of a conversation's first turn has no thread to resume, while any other Codex Chat without one lost it.
+            Agent::Codex if chat.agent_session.is_none() && chat.forked_from.is_some() => codex::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen)
+                .await
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+            _ => self.resume(&chat, &storage.env).await,
+        };
+        let (driver, events) = started.inspect_err(|_| {
             let _ = fs::remove_file(record_path(&self.data_dir, &chat.id));
         })?;
         let _ = self.adopt(chat.clone(), driver, events, storage).await;
@@ -1287,8 +1369,9 @@ impl Chats {
                 Event::Session(session) => {
                     let mut chat = entry.chat.lock().unwrap();
                     if chat.agent_session.as_ref() != Some(&session) {
-                        if chat.agent_session.is_some() { chat.answered_questions.clear(); }
+                        if chat.agent_session.is_some() && !chat.forking { chat.answered_questions.clear(); }
                         chat.agent_session = Some(session.clone());
+                        chat.forking = false;
                         let project_id = chat.project_id.clone();
                         self.save(&entry, chat);
                         let _ = self.changed.send(Change::Chats(project_id));

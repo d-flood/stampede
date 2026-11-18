@@ -79,6 +79,8 @@ enum Control {
     HandoffChat { chat_id: String, rig: String, #[serde(default)] focus: String },
     #[serde(rename = "chat.move")]
     MoveChat { chat_id: String, branch: String },
+    #[serde(rename = "chat.fork")]
+    ForkChat { chat_id: String, index: usize },
     #[serde(rename = "chat.resume")]
     ResumeChat { project_id: String, agent: Agent, session_id: String },
     #[serde(rename = "sessions.list")]
@@ -550,6 +552,17 @@ impl Device {
                     match runs.move_chat(&chat_id, branch.trim()).await {
                         Ok(chat) => send(&outgoing, json!({ "type": "chat.moved", "chatId": chat_id, "chat": chat })),
                         Err(error) => send(&outgoing, json!({ "type": "chat.move.error", "chatId": chat_id, "error": error })),
+                    }
+                });
+            }
+            Control::ForkChat { chat_id, index } => {
+                let chats = Arc::clone(&self.chats);
+                let rigs = self.config.borrow().rigs.clone();
+                let outgoing = self.outgoing.clone();
+                tokio::spawn(async move {
+                    match chats.fork(&chat_id, index, &rigs).await {
+                        Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat })),
+                        Err(error) => send(&outgoing, json!({ "type": "chat.fork.error", "chatId": chat_id, "error": error.to_string() })),
                     }
                 });
             }

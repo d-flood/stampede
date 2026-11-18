@@ -79,6 +79,7 @@ enum Command {
     Close,
     Delegated(Item),
     Shell(String),
+    Checkpoint(usize, oneshot::Sender<Option<String>>),
 }
 
 impl Driver for Claude {
@@ -112,6 +113,10 @@ impl Driver for Claude {
 
     fn shell(&self, command: &str) {
         let _ = self.commands.send(Command::Shell(command.to_owned()));
+    }
+
+    fn checkpoint(&self, index: usize, reply: oneshot::Sender<Option<String>>) {
+        let _ = self.commands.send(Command::Checkpoint(index, reply));
     }
 }
 
@@ -171,7 +176,7 @@ pub async fn start(
     settings: &AgentSettings,
     session: Option<&str>,
 ) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
-    let (frames, writer, transcript, received) = launch(data_dir, id, cwd, env, settings, session, None, None).await?;
+    let (frames, writer, transcript, received) = launch(data_dir, id, cwd, env, settings, session, None, false, None).await?;
     Ok((drive(frames, writer, transcript), received))
 }
 
@@ -183,7 +188,7 @@ pub async fn resume(
     let _ = fs::remove_file(holder::socket_path(data_dir, &chat.id));
     let session = chat.agent_session.as_deref();
     let (frames, writer, mut transcript, received) =
-        launch(data_dir, &chat.id, &chat.cwd, env, &chat.settings.chosen, session, chat.resume_at.as_deref(), None).await?;
+        launch(data_dir, &chat.id, &chat.cwd, env, &chat.settings.chosen, session, chat.resume_at.as_deref(), chat.forking, None).await?;
     transcript.window = chat.context.map(|context| context.window);
     if chat.status != Status::Done {
         if chat.status == Status::Working { let _ = transcript.events.send(Event::Recoverable); }
@@ -202,6 +207,7 @@ async fn launch(
     settings: &AgentSettings,
     session: Option<&str>,
     at: Option<&str>,
+    fork: bool,
     sender: Option<UnboundedSender<Event>>,
 ) -> io::Result<(Frames, OwnedWriteHalf, Transcript, UnboundedReceiver<Event>)> {
     let variables = [("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"), ("CLAUDE_CODE_ARTIFACT", "1")].into_iter()
@@ -218,12 +224,14 @@ async fn launch(
     let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.claude_flags()).chain(tools);
     let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
     let rewind = at.into_iter().flat_map(|at| ["--resume-session-at".to_owned(), at.to_owned()]);
-    holder::spawn(data_dir, id, cwd, variables, command.chain(resume).chain(rewind)).await?;
+    let fork = (fork && session.is_some()).then(|| "--fork-session".to_owned());
+    holder::spawn(data_dir, id, cwd, variables, command.chain(resume).chain(rewind).chain(fork.clone())).await?;
     let (frames, mut writer, _) = holder::connect(data_dir, id).await?;
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(sender.unwrap_or(events), cwd);
     transcript.location = Some(Location { data_dir: data_dir.to_owned(), id: id.to_owned(), env: env.clone() });
     transcript.session = session.map(str::to_owned);
+    transcript.forking = fork.is_some();
     if let Some(session) = session {
         transcript = transcript.replay(env, session, at, true).await?;
         transcript.stop_commands();
@@ -257,6 +265,7 @@ pub async fn reattach(
     let mut transcript = Transcript::new(events, &chat.cwd);
     transcript.location = Some(Location { data_dir: data_dir.to_owned(), id: chat.id.clone(), env: env.clone() });
     transcript.session = chat.agent_session.clone();
+    transcript.forking = chat.forking;
     transcript.replaying = true;
     transcript.window = chat.context.map(|context| context.window);
     transcript.settings.chosen = chat.settings.chosen.clone();
@@ -318,6 +327,7 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
                     }
                     Some(Command::Shell(command)) => transcript.run_shell(command, &progress),
                     Some(Command::Delegated(item)) => transcript.delegated(item),
+                    Some(Command::Checkpoint(index, reply)) => { let _ = reply.send(transcript.checkpoints.get(&index).cloned()); }
                     Some(Command::Retry) => {
                         if let Some(content) = transcript.last_input.clone() {
                             let message = json!({ "type": "user", "message": { "role": "user", "content": content },
@@ -448,13 +458,7 @@ async fn rewind(
     let checkpoint = transcript.checkpoints.get(&index).cloned().ok_or_else(|| io::Error::other("This message has no rewind checkpoint. Choose another user message."))?;
     let Some(location) = transcript.location.clone() else { return Ok(None) };
     let Some(session) = transcript.session.clone() else { return Ok(None) };
-    let path = session_file(&location.env, &session).ok_or_else(|| io::Error::other("The session history is unavailable"))?;
-    let selected = checkpoint.clone();
-    let parent = tokio::task::spawn_blocking(move || {
-        lines(File::open(path)?).filter_map(|line| serde_json::from_str::<Link>(&line).ok())
-            .find(|link| link.uuid.as_deref() == Some(&selected)).and_then(|link| link.parent)
-            .ok_or_else(|| io::Error::other("The message's conversation boundary is unavailable"))
-    }).await.map_err(io::Error::other)??;
+    let parent = parent(&location.env, &session, &checkpoint).await?;
     transcript.report(Status::Working);
     let id = Uuid::new_v4().to_string();
     let request = json!({ "type": "control_request", "request_id": id,
@@ -485,11 +489,22 @@ async fn rewind(
     let _ = events.send(Event::Reset);
     let _ = events.send(Event::ShellContext(Vec::new()));
     let (frames, writer, mut fresh, _) = launch(&location.data_dir, &location.id, &transcript.cwd,
-        &location.env, &transcript.settings.chosen, parent.as_ref().map(|_| session.as_str()), parent.as_deref(), Some(events)).await?;
+        &location.env, &transcript.settings.chosen, parent.as_ref().map(|_| session.as_str()), parent.as_deref(), transcript.forking, Some(events)).await?;
     let _ = fresh.events.send(Event::ResumeAt(parent));
     fresh.push(Item::Notice { notice: Notice::Rewound, text: "Selected message and everything after it removed; tracked edits restored. Changes made through Bash or subagents may remain. External actions are not undone.".to_owned() });
     fresh.report(Status::Done);
     Ok(Some((frames, writer, fresh)))
+}
+
+/// The entry `session` ends at when resumed before `message`, or `None` when `message` begins it.
+pub async fn parent(env: &BTreeMap<String, String>, session: &str, message: &str) -> io::Result<Option<String>> {
+    let path = session_file(env, session).ok_or_else(|| io::Error::other("The session history is unavailable"))?;
+    let message = message.to_owned();
+    tokio::task::spawn_blocking(move || {
+        lines(File::open(path)?).filter_map(|line| serde_json::from_str::<Link>(&line).ok())
+            .find(|link| link.uuid.as_deref() == Some(&message)).and_then(|link| link.parent)
+            .ok_or_else(|| io::Error::other("The message's conversation boundary is unavailable"))
+    }).await.map_err(io::Error::other)?
 }
 
 /// Asks a fresh `claude` for the plan's windows with the `get_usage` control request, which makes no model call.
@@ -985,6 +1000,7 @@ struct Transcript {
     last_input: Option<Value>,
     location: Option<Location>,
     session: Option<String>,
+    forking: bool,
     checkpoints: HashMap<usize, String>,
     events: UnboundedSender<Event>,
     cwd: PathBuf,
@@ -1156,6 +1172,7 @@ impl Transcript {
             last_input: None,
             location: None,
             session: None,
+            forking: false,
             checkpoints: HashMap::new(),
             events,
             cwd: cwd.to_owned(),
@@ -1939,6 +1956,7 @@ impl Transcript {
                     && let Some(session) = message["session_id"].as_str()
                 {
                     self.session = Some(session.to_owned());
+                    self.forking = false;
                     let _ = self.events.send(Event::Session(session.to_owned()));
                 }
                 if message["subtype"] == "init" && !self.replaying {

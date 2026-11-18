@@ -121,6 +121,7 @@ export type Chat = {
 	answeredQuestions: AnsweredQuestions[];
 	settings: Settings;
 	handoffFrom?: string;
+	forkedFrom?: string;
 	draft?: string;
 };
 
@@ -218,6 +219,7 @@ export type ServerMessage =
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
 	| { type: 'chat.created'; chat: Chat }
 	| { type: 'chat.handoff.error'; chatId: string; error: string }
+	| { type: 'chat.fork.error'; chatId: string; error: string }
 	| { type: 'chat.moved'; chatId: string; chat: Chat }
 	| { type: 'chat.move.error'; chatId: string; error: string }
 	| { type: 'chats.changed'; projectId: string; chats: Chat[] }
@@ -273,6 +275,7 @@ export type ClientMessage =
 	| { type: 'chat.create'; projectId: string; rig: string }
 	| { type: 'chat.handoff'; chatId: string; rig: string; focus: string }
 	| { type: 'chat.move'; chatId: string; branch: string }
+	| { type: 'chat.fork'; chatId: string; index: number }
 	| { type: 'chat.resume'; projectId: string; agent: Agent; sessionId: string }
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }

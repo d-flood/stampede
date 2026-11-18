@@ -2,20 +2,25 @@
 	import Text from '#lib/chat/Text.svelte';
 	import type { Item } from '#lib/device.svelte.ts';
 	import ArrowCounterClockwise from '~icons/ph/arrow-counter-clockwise';
+	import ArrowsSplit from '~icons/ph/arrows-split';
 	import DotsThree from '~icons/ph/dots-three-bold';
 	import Caret from '#lib/ui/Caret.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 
-	let { item, first, index, number, onrewind }: { item: Extract<Item, { kind: 'user' }>; first: boolean; index: number; number: number; onrewind?(index: number): void } = $props();
+	let { item, first, index, number, onrewind, onfork }: { item: Extract<Item, { kind: 'user' }>; first: boolean; index: number; number: number; onrewind?(index: number): void; onfork?(index: number): void } = $props();
 
 	const lines = $derived(item.text.split('\n'));
+	const actions = $derived([
+		...(onrewind ? [{ label: 'Rewind…', icon: ArrowCounterClockwise, onselect: () => onrewind(index) }] : []),
+		...(onfork ? [{ label: 'Fork from here', icon: ArrowsSplit, onselect: () => onfork(index) }] : [])
+	]);
 
 	const markdown = (text: string) => ({ kind: 'text', text, streaming: false, phase: 'final' }) as const;
 </script>
 
 {#snippet more()}
-	{#if onrewind}
-		<Menu items={[{ label: 'Rewind…', icon: ArrowCounterClockwise, onselect: () => onrewind(index) }]}>
+	{#if actions.length}
+		<Menu items={actions}>
 			{#snippet trigger(props)}
 				<button {...props} class="more" aria-label="Actions for message {number}"><DotsThree aria-hidden="true" /></button>
 			{/snippet}

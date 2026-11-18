@@ -5,6 +5,7 @@
 	import Activity from '#lib/chat/Activity.svelte';
 	import { same, subagents as flatten } from '#lib/chat/agents.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Dialog from '#lib/ui/Dialog.svelte';
 	import Queued from '#lib/chat/Queued.svelte';
 	import Rewind from '#lib/chat/Rewind.svelte';
 	import MessageNav from '#lib/chat/MessageNav.svelte';
@@ -39,8 +40,11 @@
 	const shell = $derived(chat.background ? commands(items).findLast(({ item }) => item.status === 'running')?.item.command : undefined);
 	const selected = $derived(subagents.find(({ path }) => same(path, opened))?.subagent);
 	const trail = $derived(subagents.filter(({ path }) => path.length < opened.length && same(path, opened.slice(0, path.length))));
-	const source = $derived(chats.find(({ id }) => id === chat.handoffFrom));
+	const source = $derived(chats.find(({ id }) => id === (chat.handoffFrom ?? chat.forkedFrom)));
 	const handoffs = $derived(chats.filter(({ handoffFrom }) => handoffFrom === chat.id));
+	const forks = $derived(chats.filter(({ forkedFrom }) => forkedFrom === chat.id));
+	let forkError = $state('');
+	let forkFailed = $state(false);
 	let requests = $state<Request[]>([]);
 	let attached = $state(false);
 	let attending = $state<string>();
@@ -119,6 +123,11 @@
 				break;
 			case 'chat.unqueued':
 				if (message.chatId === chat.id) composer?.restore(message.text, message.images);
+				break;
+			case 'chat.fork.error':
+				if (message.chatId !== chat.id) break;
+				forkError = message.error;
+				forkFailed = true;
 				break;
 		}
 	}
@@ -240,10 +249,11 @@
 <!-- svelte-ignore a11y_interactive_supports_focus (Dropped images have the Attach image button as their keyboard path.) -->
 <div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active} ondragover={dragover} ondrop={drop} {@attach links}>
 	{#if !selected}
-		{#if source || handoffs.length}
-			<div class="handoffs" aria-label="Chat handoffs">
+		{#if source || handoffs.length || forks.length}
+			<div class="handoffs" aria-label="Related Chats">
 				{#if source}<Button onclick={() => onchat(source)}>Source Chat · {source.rig}</Button>{/if}
 				{#each handoffs as target (target.id)}<Button onclick={() => onchat(target)}>New Chat · {target.rig}</Button>{/each}
+				{#each forks as target (target.id)}<Button onclick={() => onchat(target)}>Fork · {target.rig}</Button>{/each}
 			</div>
 		{/if}
 		<Todos todos={chat.todos} />
@@ -254,7 +264,7 @@
 		<div class="transcript" bind:this={scroller} style:padding-top="max(var(--space-6), {form() === 'phone' ? 0 : messageNavHeight}px)" {@attach follow}>
 			<div class="column">
 				{#if attached && !items.length && !chat.queued.length}<EmptyChat rig={chat.rig} agent={chat.agent} settings={chat.settings} {choices} {project} {branch} />{/if}
-				<Transcript {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={(index) => run('rewind', index)} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
+				<Transcript {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={(index) => run('rewind', index)} onfork={live && attached ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
 			</div>
 		</div>
@@ -294,12 +304,17 @@
 {#if preview && active}<FilePreview projectId={chat.projectId} {...preview} />{/if}
 <Handoff bind:this={handoff} {device} {chat} available={attached && items.some((item) => item.kind === 'user')} />
 <MoveToWorktree bind:this={mover} {device} {chat} />
+<Dialog bind:open={forkFailed} title="Could not fork">
+	<p class="failure" role="alert">{forkError}</p>
+	{#snippet actions()}<Button onclick={() => (forkFailed = false)}>Close</Button>{/snippet}
+</Dialog>
 <Rewind bind:open={rewinding} bind:target={rewindTarget} {chat} {items} {capabilities} unavailable={rewindUnavailable} onrewind={(index) => device.send({ type: 'chat.run', chatId: chat.id, command: 'rewind', value: index })} />
 
 <style>
 	.handoffs { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: var(--border-width) solid var(--border); font-size: var(--font-size-sm); }
 	.subagent { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); }
-	.subagent span, .report .label { color: var(--muted-fg); }
+	.subagent span, .report .label, .failure { color: var(--muted-fg); }
+	.failure { margin: 0; overflow-wrap: anywhere; }
 	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }
 	.report .label { font-size: var(--font-size-sm); }
 	.conversation { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }

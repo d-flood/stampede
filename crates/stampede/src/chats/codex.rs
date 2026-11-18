@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tokio::{
     io::Join,
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    sync::{mpsc::{self, UnboundedReceiver, UnboundedSender}, oneshot},
     time::{Instant, interval, sleep, timeout},
 };
 use tokio_tungstenite::{
@@ -50,6 +50,7 @@ enum Request {
     Close,
     Delegated(Item),
     Shell(String),
+    Checkpoint(usize, oneshot::Sender<Option<String>>),
 }
 
 impl Driver for Codex {
@@ -84,6 +85,10 @@ impl Driver for Codex {
     fn shell(&self, command: &str) {
         let _ = self.requests.send(Request::Shell(command.to_owned()));
     }
+
+    fn checkpoint(&self, index: usize, reply: oneshot::Sender<Option<String>>) {
+        let _ = self.requests.send(Request::Checkpoint(index, reply));
+    }
 }
 
 pub async fn start(
@@ -116,6 +121,20 @@ pub async fn resume(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>
     transcript.plan_resolved = chat.plan_resolved.clone();
     let (connection, proxy) = rejoin(data_dir, &chat.cwd, env, &mut transcript).await?;
     Ok((run(connection, proxy, transcript, data_dir, &chat.cwd, env), received))
+}
+
+/// Copies `thread` through the turn before `turn` into a thread for `chat`, or gives `None` when `turn` is the first.
+pub async fn fork(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>, thread: &str, turn: &str) -> io::Result<Option<String>> {
+    let (mut connection, _proxy) = connect(&chat.cwd, env).await?;
+    let listed = json!({ "threadId": thread, "sortDirection": "asc", "itemsView": "notLoaded" });
+    let turns = connection.pages("thread/turns/list", listed, &mut Vec::new()).await?;
+    let position = turns.iter().position(|listed| listed["id"] == turn).ok_or_else(|| io::Error::other("The message's turn is no longer in the thread."))?;
+    let Some(last) = position.checked_sub(1).map(|previous| &turns[previous]["id"]) else { return Ok(None) };
+    let params = json!({ "threadId": thread, "lastTurnId": last, "cwd": chat.cwd, "config": tool_config(data_dir, &chat.id, env), "excludeTurns": true });
+    let forked = connection.call("thread/fork", params).await?;
+    let id = forked["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/fork gave no thread"))?.to_owned();
+    let _ = connection.call("thread/unsubscribe", json!({ "threadId": id })).await;
+    Ok(Some(id))
 }
 
 async fn rejoin(
@@ -345,6 +364,7 @@ fn run(
                         let _ = connection.send(&mut transcript, Value::Array(input)).await;
                     }
                     Some(Request::Delegated(item)) => transcript.delegated(item),
+                    Some(Request::Checkpoint(index, reply)) => { let _ = reply.send(transcript.checkpoints.get(&index).cloned()); }
                     Some(Request::Shell(command)) => {
                         let _ = connection.request("thread/shellCommand", json!({ "threadId": transcript.thread, "command": command })).await;
                     }

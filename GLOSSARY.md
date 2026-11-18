@@ -88,6 +88,10 @@ _Avoid_: agent, agent terminal
 An Agent that Stampede drives directly and shows in its own interface; it keeps running when Devices disconnect or Stampede restarts, stops when its Tab is closed.
 _Avoid_: conversation, thread, session, native agent
 
+**Fork**:
+A new Chat that continues another Chat's conversation from before one of its user messages, which waits in the new Chat's Composer; the original Chat is unchanged.
+_Avoid_: branch, clone, copy
+
 **Activity**:
 An Agent's reads, searches, commands and edits between its messages in a turn, summarized in one line.
 _Avoid_: tool calls, work log, steps

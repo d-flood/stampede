@@ -13,7 +13,7 @@ use github_copilot_sdk::{
     SessionConfig, SessionEvent, SessionId, SessionListFilter, SetModelOptions, SystemMessageConfig,
     handler::{PermissionHandler, PermissionResult, UserInputHandler, UserInputResponse},
     session::Session as CopilotSession,
-    rpc::{EventsReadDirection, ModelListRequest, SessionsReadPersistedEventsRequest},
+    rpc::{EventsReadDirection, ModelListRequest, SessionsForkRequest, SessionsReadPersistedEventsRequest},
     session_events::{AiCreditsStatus, ProviderMonthlyUsageScope, ProviderMonthlyUsageState, ProviderQuotaState, ProviderQuotaUnit, SessionQuotaObservationData, UsageGetMetricsResult},
 };
 use serde_json::{Value, json};
@@ -46,6 +46,7 @@ enum Action {
     Delegated(Item),
     Close,
     Shell(String),
+    Checkpoint(usize, oneshot::Sender<Option<String>>),
 }
 
 impl Driver for Copilot {
@@ -57,6 +58,7 @@ impl Driver for Copilot {
     fn delegated(&self, item: Item) { let _ = self.requests.send(Action::Delegated(item)); }
     fn close(&self) { let _ = self.requests.send(Action::Close); }
     fn shell(&self, command: &str) { let _ = self.requests.send(Action::Shell(command.to_owned())); }
+    fn checkpoint(&self, index: usize, reply: oneshot::Sender<Option<String>>) { let _ = self.requests.send(Action::Checkpoint(index, reply)); }
 }
 
 struct Connection {
@@ -304,6 +306,15 @@ async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: A
     }
 }
 
+/// Copies `session`'s history before `event` into a new session.
+pub async fn fork(cwd: &Path, env: &BTreeMap<String, String>, session: &str, event: &str) -> io::Result<String> {
+    let mut connection = Connection::open(cwd, env).await?;
+    let request = SessionsForkRequest { session_id: SessionId::new(session), to_event_id: Some(event.to_owned()), name: None };
+    let forked = rpc(connection.client.rpc().sessions().fork(request)).await;
+    connection.close().await;
+    Ok(forked?.session_id.to_string())
+}
+
 pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Copilot, UnboundedReceiver<Event>)> {
     let connection = Connection::open(&chat.cwd, env).await?;
     let (interactions, pending) = mpsc::unbounded_channel();
@@ -395,6 +406,7 @@ async fn drive(
                     result
                 }
                 Some(Action::Delegated(item)) => { transcript.delegated(item); Ok(()) }
+                Some(Action::Checkpoint(index, reply)) => { let _ = reply.send(transcript.user_events.get(&index).cloned()); Ok(()) }
                 Some(Action::Close) | None => {
                     pending.clear();
                     let _ = timeout(CLOSING, async {

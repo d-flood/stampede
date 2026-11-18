@@ -567,6 +567,30 @@ async fn claude_rewind_removes_the_selected_prompt_and_retains_its_parent_chain_
 }
 
 #[tokio::test]
+async fn claude_fork_resumes_a_copy_before_the_message_and_adopts_its_own_session_once_it_sends() {
+    let fixture = format!("{}/tests/fixtures/chats/claude-code/fork.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
+    let (server, mut socket, source, mut view) = launch_fixture("claude-code", Vec::new(), &fixture).await;
+    view.turn(&mut socket, &source, json!({ "type": "chat.send", "chatId": source, "text": "Keep this" })).await;
+    view.turn(&mut socket, &source, json!({ "type": "chat.send", "chatId": source, "text": "Fork here" })).await;
+    control(&mut socket, json!({ "type": "chat.fork", "chatId": source, "index": 2 })).await;
+    let fork = next_control(&mut socket, "chat.created").await["chat"].clone();
+    assert_eq!((&fork["forkedFrom"], &fork["draft"], &fork["resumeAt"]), (&json!(source), &json!("Fork here"), &json!("kept-reply")));
+    let id = fork["id"].as_str().unwrap().to_owned();
+    let mut forked = View::default();
+    control(&mut socket, json!({ "type": "chat.attach", "chatId": id })).await;
+    forked.follow(&mut socket, &id, |view| view.items.len() == 2).await;
+    assert_eq!((&forked.items[0]["text"], &forked.items[1]["text"]), (&json!("Keep this"), &json!("Kept reply")));
+
+    forked.turn(&mut socket, &id, json!({ "type": "chat.send", "chatId": id, "text": "Fork instead" })).await;
+    let saved = record(&server, &id);
+    assert_eq!(saved["agentSession"], "forked-session");
+    assert!(saved.get("forking").is_none() && saved.get("resumeAt").is_none(), "{saved}");
+    assert_eq!(record(&server, &source)["agentSession"], "source-session");
+    control(&mut socket, json!({ "type": "chat.close", "chatId": id })).await;
+    close_chat(&mut socket, server.root.path(), &source).await;
+}
+
+#[tokio::test]
 async fn rewind_cuts_the_conversation_and_uses_each_agents_restore_contract() {
     for agent in ["claude-code", "codex"] {
         let fixture = format!("{}/tests/fixtures/chats/{agent}/rewind.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
