@@ -326,8 +326,7 @@
 		font-size: var(--font-size-code);
 	}
 
-	.file > :global(svg) {
-		flex: none;
+	.file > :global(.file-icon) {
 		color: var(--muted-fg);
 	}
 

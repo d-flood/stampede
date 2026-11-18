@@ -30,8 +30,10 @@ rules.link_open = (tokens, index, options, env, self) => {
 	token.attrSet('target', '_blank');
 	token.attrSet('rel', 'noreferrer');
 	const file = env.files && fileLink(token.attrGet('href')!);
-	if (file) token.attrJoin('class', 'file');
-	return self.renderToken(tokens, index, options) + (file ? fileIcon(file.path) : '');
+	if (!file) return self.renderToken(tokens, index, options);
+	token.attrJoin('class', 'file');
+	const { svg, color = 'inherit' } = fileIcon(file.path);
+	return `${self.renderToken(tokens, index, options)}<span style="color: ${color}">${svg}</span>`;
 };
 
 for (const name of ['fence', 'code_block'] as const) {

@@ -25,9 +25,10 @@ import Xml from '~icons/simple-icons/xml?raw';
 import Yaml from '~icons/simple-icons/yaml?raw';
 
 type Load = () => Promise<LanguageSupport>;
-type Language = { extensions: string[]; filenames?: string[]; icon: string; load: Load; servers?: string[] };
+type Language = { extensions: string[]; filenames?: string[]; icon: string; color?: string; load: Load; servers?: string[] };
 
 const stream = <T>(parser: StreamParser<T>) => new LanguageSupport(StreamLanguage.define(parser));
+const [red, green, yellow, blue, magenta, cyan] = [1, 2, 3, 4, 5, 6].map((slot) => `var(--ansi-${slot})`);
 
 const javascript = (options: { typescript?: boolean; jsx?: boolean }): Load => async () =>
 	(await import('@codemirror/lang-javascript')).javascript(options);
@@ -60,31 +61,32 @@ const shell: Load = async () => {
 
 // Keys double as LSP language IDs for entries with servers.
 const languages: Record<string, Language> = {
-	typescript: { extensions: ['ts', 'mts', 'cts'], icon: TypeScript, load: javascript({ typescript: true }), servers: ['typescript', 'eslint'] },
-	typescriptreact: { extensions: ['tsx'], icon: React, load: javascript({ typescript: true, jsx: true }), servers: ['typescript', 'eslint'] },
-	javascript: { extensions: ['js', 'mjs', 'cjs'], icon: JavaScript, load: javascript({}), servers: ['typescript', 'eslint'] },
-	javascriptreact: { extensions: ['jsx'], icon: React, load: javascript({ jsx: true }), servers: ['typescript', 'eslint'] },
-	python: { extensions: ['py', 'pyi'], icon: Python, load: async () => (await import('@codemirror/lang-python')).python(), servers: ['python', 'ruff'] },
-	css: { extensions: ['css'], icon: Css, load: async () => (await import('@codemirror/lang-css')).css() },
-	html: { extensions: ['html'], icon: Html, load: async () => (await import('@codemirror/lang-html')).html() },
-	svg: { extensions: ['svg'], icon: Svg, load: xml },
-	xml: { extensions: ['xml'], icon: Xml, load: xml },
-	json: { extensions: ['json', 'jsonc', 'jsonl', 'jsonld', 'webmanifest'], icon: Json, load: async () => (await import('@codemirror/lang-json')).json() },
+	typescript: { extensions: ['ts', 'mts', 'cts'], icon: TypeScript, color: blue, load: javascript({ typescript: true }), servers: ['typescript', 'eslint'] },
+	typescriptreact: { extensions: ['tsx'], icon: React, color: cyan, load: javascript({ typescript: true, jsx: true }), servers: ['typescript', 'eslint'] },
+	javascript: { extensions: ['js', 'mjs', 'cjs'], icon: JavaScript, color: yellow, load: javascript({}), servers: ['typescript', 'eslint'] },
+	javascriptreact: { extensions: ['jsx'], icon: React, color: cyan, load: javascript({ jsx: true }), servers: ['typescript', 'eslint'] },
+	python: { extensions: ['py', 'pyi'], icon: Python, color: blue, load: async () => (await import('@codemirror/lang-python')).python(), servers: ['python', 'ruff'] },
+	css: { extensions: ['css'], icon: Css, color: magenta, load: async () => (await import('@codemirror/lang-css')).css() },
+	html: { extensions: ['html'], icon: Html, color: red, load: async () => (await import('@codemirror/lang-html')).html() },
+	svg: { extensions: ['svg'], icon: Svg, color: yellow, load: xml },
+	xml: { extensions: ['xml'], icon: Xml, color: blue, load: xml },
+	json: { extensions: ['json', 'jsonc', 'jsonl', 'jsonld', 'webmanifest'], icon: Json, color: yellow, load: async () => (await import('@codemirror/lang-json')).json() },
 	markdown: { extensions: ['md', 'markdown'], icon: Markdown, load: markdown },
 	rust: { extensions: ['rs'], icon: Rust, load: async () => (await import('@codemirror/lang-rust')).rust() },
-	yaml: { extensions: ['yaml', 'yml'], icon: Yaml, load: async () => (await import('@codemirror/lang-yaml')).yaml() },
-	shell: { extensions: ['sh', 'bash', 'zsh'], icon: Bash, load: shell },
-	toml: { extensions: ['toml'], icon: Toml, load: async () => stream((await import('@codemirror/legacy-modes/mode/toml')).toml) },
+	yaml: { extensions: ['yaml', 'yml'], icon: Yaml, color: red, load: async () => (await import('@codemirror/lang-yaml')).yaml() },
+	shell: { extensions: ['sh', 'bash', 'zsh'], icon: Bash, color: green, load: shell },
+	toml: { extensions: ['toml'], icon: Toml, color: red, load: async () => stream((await import('@codemirror/legacy-modes/mode/toml')).toml) },
 	dockerfile: {
 		extensions: ['dockerfile'],
 		filenames: ['Dockerfile'],
 		icon: Docker,
+		color: blue,
 		load: async () => stream((await import('@codemirror/legacy-modes/mode/dockerfile')).dockerFile)
 	},
 	diff: { extensions: ['diff', 'patch'], icon: GitDiff, load: async () => stream((await import('@codemirror/legacy-modes/mode/diff')).diff) },
-	svelte: { extensions: ['svelte'], icon: Svelte, load: async () => (await import('@replit/codemirror-lang-svelte')).svelte(), servers: ['svelte', 'eslint'] },
-	astro: { extensions: ['astro'], icon: Astro, load: async () => (await import('./astro.ts')).astro(), servers: ['astro', 'eslint'] },
-	vue: { extensions: ['vue'], icon: Vue, load: async () => (await import('@codemirror/lang-vue')).vue() }
+	svelte: { extensions: ['svelte'], icon: Svelte, color: red, load: async () => (await import('@replit/codemirror-lang-svelte')).svelte(), servers: ['svelte', 'eslint'] },
+	astro: { extensions: ['astro'], icon: Astro, color: magenta, load: async () => (await import('./astro.ts')).astro(), servers: ['astro', 'eslint'] },
+	vue: { extensions: ['vue'], icon: Vue, color: green, load: async () => (await import('@codemirror/lang-vue')).vue() }
 };
 
 const lookup = new Map(
@@ -119,9 +121,8 @@ export function languageServers(path: string): [servers: string[], languageId: s
 	return name && servers ? [servers, name] : undefined;
 }
 
-export function fileIcon(path: string): string {
+export function fileIcon(path: string): { svg: string; color?: string } {
 	const name = languageOf(path);
-	if (name) return languages[name].icon;
-	if (image(path)) return FileImage;
-	return /\.pdf$/i.test(path) ? FilePdf : File;
+	if (name) return { svg: languages[name].icon, color: languages[name].color };
+	return { svg: image(path) ? FileImage : /\.pdf$/i.test(path) ? FilePdf : File };
 }

@@ -52,13 +52,9 @@
 	.icon {
 		display: inline-flex;
 		flex: none;
+		justify-content: center;
 		width: 1em;
 		color: var(--muted-fg);
-	}
-
-	.icon > :global(svg) {
-		width: 1em;
-		height: 1em;
 	}
 
 	.muted {

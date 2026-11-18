@@ -212,8 +212,8 @@
 	}
 
 	.text :global(a.file svg) {
-		width: 1em;
-		height: 1em;
+		width: 0.85em;
+		height: 0.85em;
 		margin-right: 0.15em;
 		vertical-align: -0.125em;
 	}
