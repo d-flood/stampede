@@ -19,7 +19,7 @@ test('chat composer submits with Enter on desktop and keeps mobile Enter as a ne
 	await expect((await pinned(page.getByRole('tab', { name: /^Fake Claude/ }))).getByTitle('done')).toBeVisible();
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const composer = panel.getByRole('textbox', { name: 'Composer' });
-	await expect(composer).toBeFocused();
+	if (project.name !== 'pixel') await expect(composer).toBeFocused();
 	expect(errors).toEqual([]);
 	await composer.fill('/eff');
 	await composer.press('Enter');

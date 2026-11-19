@@ -20,6 +20,8 @@
 		deleted?: boolean;
 		ended?: boolean;
 		closing?: boolean;
+		/** Hangs from the content above, as on a phone's bottom strip, instead of rising into the content below. */
+		bottom?: boolean;
 		onclose?: () => void;
 	};
 
@@ -35,6 +37,7 @@
 		deleted = false,
 		ended = false,
 		closing = false,
+		bottom = false,
 		onclose,
 		...rest
 	}: Props = $props();
@@ -74,7 +77,7 @@
 	</button>
 {/snippet}
 
-<div class="tab {status ?? ''}" class:closable={active && !!onclose} {@attach active && reveal}>
+<div class="tab {status ?? ''}" class:bottom class:closable={active && !!onclose} {@attach active && reveal}>
 	{#if tooltip}
 		<Tooltip text={tooltip} delayDuration={300} ignoreNonKeyboardFocus>
 			{#snippet children(trigger)}
@@ -114,6 +117,10 @@
 		flex-shrink: 0;
 	}
 
+	.bottom {
+		border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+	}
+
 	.select {
 		position: relative;
 		display: inline-flex;
@@ -141,6 +148,17 @@
 	.select:not(.active, .closing):hover {
 		background: var(--hover);
 		color: var(--color-fg);
+	}
+
+	.bottom .select {
+		margin-top: calc(-1 * var(--border-width));
+		margin-bottom: 0;
+		border: var(--border-width) solid transparent;
+		border-top: none;
+	}
+
+	.bottom .active {
+		border-color: var(--border);
 	}
 
 	.closable .select {

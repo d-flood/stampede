@@ -1,13 +1,15 @@
 import { on } from 'svelte/events';
 
 type Swipe = {
-	/** Share of the element's width a slow swipe must cross to count. */
+	/** Share of the element's size along the swipe that a slow swipe must cross to count. */
 	share: number;
-	/** Only swipes toward this side count; -1 is left. */
+	/** Tracks up and down instead of sideways. */
+	vertical?: boolean;
+	/** Only swipes toward this end count; -1 is left, or up when vertical. */
 	direction?: -1 | 1;
 	allow?(event: TouchEvent): boolean;
-	drag(dx: number): void;
-	release(dx: number, committed: boolean): void;
+	drag(distance: number): void;
+	release(distance: number, committed: boolean): void;
 };
 
 /** Plays keyframes into an element's resting state, unless reduced motion is on. */
@@ -15,36 +17,38 @@ export function settleInto(element: Element | null | undefined, keyframes: Keyfr
 	if (!matchMedia('(prefers-reduced-motion: reduce)').matches) element?.animate(keyframes, { duration: 160, easing: 'cubic-bezier(0.2, 0.8, 0.3, 1)' });
 }
 
-/** Tracks one-finger sideways swipes, leaving vertical scrolling alone. */
+/** Tracks one-finger swipes along one axis, leaving scrolling along the other alone. */
 export function swipe(options: Swipe) {
 	return (element: HTMLElement) => {
-		let gesture: { x: number; y: number; time: number; horizontal: boolean } | undefined;
+		let gesture: { x: number; y: number; time: number; engaged: boolean } | undefined;
+		const along = (touch: Touch) => (options.vertical ? touch.clientY - gesture!.y : touch.clientX - gesture!.x);
 		const start = (event: TouchEvent) => {
 			const [touch] = event.touches;
-			gesture = event.touches.length === 1 && (options.allow?.(event) ?? true) ? { x: touch.clientX, y: touch.clientY, time: performance.now(), horizontal: false } : undefined;
+			gesture = event.touches.length === 1 && (options.allow?.(event) ?? true) ? { x: touch.clientX, y: touch.clientY, time: performance.now(), engaged: false } : undefined;
 		};
 		const move = (event: TouchEvent) => {
 			if (!gesture) return;
-			const dx = event.touches[0].clientX - gesture.x;
-			const dy = event.touches[0].clientY - gesture.y;
-			if (!gesture.horizontal) {
-				if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
-				if (Math.abs(dy) >= Math.abs(dx) || (options.direction && Math.sign(dx) !== options.direction) || !event.cancelable) {
+			const [touch] = event.touches;
+			const distance = along(touch);
+			if (!gesture.engaged) {
+				const across = options.vertical ? touch.clientX - gesture.x : touch.clientY - gesture.y;
+				if (Math.max(Math.abs(distance), Math.abs(across)) < 8) return;
+				if (Math.abs(across) >= Math.abs(distance) || (options.direction && Math.sign(distance) !== options.direction) || !event.cancelable) {
 					gesture = undefined;
 					return;
 				}
-				gesture.horizontal = true;
+				gesture.engaged = true;
 			}
 			event.preventDefault();
-			options.drag(dx);
+			options.drag(distance);
 		};
 		const release = (event: TouchEvent) => {
-			if (gesture?.horizontal) {
-				const dx = event.changedTouches[0].clientX - gesture.x;
-				const distance = Math.abs(dx);
-				const toward = !options.direction || Math.sign(dx) === options.direction;
-				const far = distance > element.clientWidth * options.share || distance / (performance.now() - gesture.time) > 0.5;
-				options.release(dx, event.type === 'touchend' && toward && far);
+			if (gesture?.engaged) {
+				const distance = along(event.changedTouches[0]);
+				const toward = !options.direction || Math.sign(distance) === options.direction;
+				const size = options.vertical ? element.clientHeight : element.clientWidth;
+				const far = Math.abs(distance) > size * options.share || Math.abs(distance) / (performance.now() - gesture.time) > 0.5;
+				options.release(distance, event.type === 'touchend' && toward && far);
 			}
 			gesture = undefined;
 		};
@@ -56,4 +60,13 @@ export function swipe(options: Swipe) {
 		];
 		return () => off.forEach((listener) => listener());
 	};
+}
+
+/** Whether a touch began in something that scrolls sideways, which keeps the swipe for itself. */
+export function scrolls(event: TouchEvent) {
+	const within = event.currentTarget as Element;
+	for (let element = event.target as Element | null; element && element !== within; element = element.parentElement) {
+		if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) return true;
+	}
+	return false;
 }

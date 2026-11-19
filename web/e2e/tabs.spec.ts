@@ -18,25 +18,24 @@ test('active tabs expose a close button and preserve unsaved edits', async ({ pa
 	const sidebar = await showSidebar(page);
 	if (project.name === 'pixel') {
 		await expect(page.getByRole('separator', { name: 'Resize sidebar' })).toHaveCount(0);
-		await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(page.viewportSize()!.width);
+		await expect.poll(async () => {
+			const box = await sidebar.boundingBox();
+			return box && Math.round(box.x + box.width);
+		}).toBe(page.viewportSize()!.width);
 	}
 	const file = `${project.name}.txt`;
 	await sidebar.getByRole('button', { name: file, exact: true }).click();
-	const phone = project.name === 'pixel';
-	if (phone) await expect(page.locator('[data-level="tab"]')).toBeVisible();
+	if (project.name === 'pixel') await expect(sidebar).toBeHidden();
 	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true });
 	const close = tabs.getByRole('button', { name: `Close ${file}`, exact: true });
-	if (!phone) {
-		await expect(close).toBeVisible();
-		await expect.poll(async () => {
-			const box = await close.boundingBox();
-			return box && box.width >= 26 && box.height >= 26;
-		}).toBe(true);
-	}
+	await expect(close).toBeVisible();
+	await expect.poll(async () => {
+		const box = await close.boundingBox();
+		return box && box.width >= 26 && box.height >= 26;
+	}).toBe(true);
 	await page.locator('.editor:not([hidden]) .cm-content').click();
 	await page.keyboard.type('unsaved');
-	if (phone) await closeTab(page, file);
-	else await close.click();
+	await close.click();
 	const dialog = page.getByRole('dialog', { name: 'Discard unsaved changes?' });
 	await expect(dialog).toBeVisible();
 	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -44,8 +43,7 @@ test('active tabs expose a close button and preserve unsaved edits', async ({ pa
 	await page.locator('.editor:not([hidden]) .cm-content').click();
 	await page.keyboard.press('Control+W');
 	await dialog.getByRole('button', { name: 'Discard', exact: true }).click();
-	if (phone) await expectCurrent(page, file, false);
-	else await expect(tabs.getByRole('tab', { name: file })).toHaveCount(0);
+	await expect(tabs.getByRole('tab', { name: file })).toHaveCount(0);
 });
 
 test('terminal and drawer tabs close directly on desktop and tablet', async ({ page }, { project }) => {

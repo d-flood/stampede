@@ -18,7 +18,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Toolbar from '#lib/ui/Toolbar.svelte';
 	import { FitAddon, Terminal } from 'ghostty-web';
-	import { onMount, type Snippet } from 'svelte';
+	import { onMount, tick, type Snippet } from 'svelte';
 	import ArrowElbowDownLeft from '~icons/ph/arrow-elbow-down-left';
 	import Clipboard from '~icons/ph/clipboard';
 	import Copy from '~icons/ph/copy';
@@ -123,6 +123,7 @@
 	$effect(() => {
 		if (!focused || !view) return;
 		window.terminal = view;
+		if (form() !== 'desktop') return;
 		if (composing || pending) composer?.focus();
 		// ghostty-web's focus() retries on a timer, which can steal focus from a Drawer opened in between.
 		else view.element?.focus();
@@ -341,9 +342,14 @@
 			}
 		} catch {
 			pasteFallback = true;
-			composing = true;
-			composer?.focus();
+			startComposing();
 		}
+	}
+
+	async function startComposing() {
+		composing = true;
+		await tick();
+		composer?.focus();
 	}
 
 	function newline() {
@@ -399,7 +405,7 @@
 			<IconButton label="Newline" title="Insert newline (Shift+Enter)" disabled={!live} onclick={newline}>
 				<ArrowElbowDownLeft />
 			</IconButton>
-			<IconButton label="Composer" pressed={composing} onclick={() => (composing = !composing)}>
+			<IconButton label="Composer" pressed={composing} onclick={() => (composing ? (composing = false) : startComposing())}>
 				<NotePencil />
 			</IconButton>
 		{:else}

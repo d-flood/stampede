@@ -1,4 +1,4 @@
-import { openSettings, showLevel } from './shell.ts';
+import { openSettings, showProjects } from './shell.ts';
 import { expect, test } from './fixtures.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -6,7 +6,7 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 	const phone = project.name === 'pixel';
 	const config = `${process.env.STAMPEDE_E2E_ROOT}/config.toml`;
 	const original = readFileSync(config, 'utf8');
-	const heading = page.getByRole('heading', { level: 1 });
+	const heading = page.getByRole('region', { name: 'Projects' }).getByRole('heading', { level: 2 });
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 	const section = settings.getByRole('region', { name: 'Host name', exact: true });
 	const field = section.getByRole('textbox', { name: 'Host name', exact: true });
@@ -15,9 +15,9 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 
 	await page.goto('/');
 	if (phone) {
-		await showLevel(page, 'projects');
+		await showProjects(page);
 		await expect(heading).toHaveText('Projects');
-		await expect(heading.locator('.count')).toHaveCount(0);
+		await expect(heading.locator('.host')).toHaveCount(0);
 	}
 	await expect(page).toHaveTitle('Stampede');
 
@@ -60,7 +60,7 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 	await done();
 	if (phone) {
 		await expect(heading).toHaveText('Projects');
-		await expect(heading.locator('.count')).toHaveCount(0);
+		await expect(heading.locator('.host')).toHaveCount(0);
 	}
 	await expect(other).toHaveTitle('Stampede');
 });

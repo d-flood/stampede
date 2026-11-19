@@ -2,13 +2,13 @@ import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { Page, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { newTab, openProject, pinned, showLevel, showSidebar } from './shell.ts';
+import { newTab, openProject, pinned, showProjects, showSidebar } from './shell.ts';
 
 const alpha = () => `${process.env.STAMPEDE_E2E_ROOT}/projects/alpha`;
 const git = (...args: string[]) => execFileSync('git', ['-C', alpha(), ...args], { encoding: 'utf8' }).trim();
 
 async function projectsScreen(page: Page) {
-	if (test.info().project.name === 'pixel') await showLevel(page, 'projects');
+	await showProjects(page);
 }
 
 async function mint(page: Page, branch: string, from?: string) {

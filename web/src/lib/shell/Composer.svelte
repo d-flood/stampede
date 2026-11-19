@@ -113,7 +113,7 @@
 	<ClipMenu bind:this={clipMenu} {text} {caret} {replace} />
 	<div class="field">
 		<textarea
-			{@attach (element) => { if (focused) element.focus(); }}
+			{@attach (element) => { if (focused && !phone) element.focus(); }}
 			bind:this={box}
 			bind:value={text}
 			oninput={(event) => { keep(); track(event); }}

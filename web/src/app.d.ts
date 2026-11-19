@@ -5,8 +5,7 @@ import type { Terminal } from 'ghostty-web';
 declare global {
 	namespace App {
 		interface PageState {
-			level?: import('#lib/phone.svelte.ts').Level;
-			depth?: number;
+			panel?: import('#lib/phone.svelte.ts').Panel;
 		}
 	}
 

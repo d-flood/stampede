@@ -1,7 +1,7 @@
 import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { closeProject, closeTab, expectCurrent, newTab, openProject, showLevel, tabCount } from './shell.ts';
+import { closeProject, closeTab, expectCurrent, newTab, openProject, tabCount } from './shell.ts';
 
 test('a chat canvas opens beside its chat, follows edits, and keeps versions', async ({ page }, { project, repeatEachIndex }) => {
 	let chatId = '';
@@ -60,7 +60,6 @@ test('a chat canvas opens beside its chat, follows edits, and keeps versions', a
 	await expect(content.getByRole('heading', { name: 'Fourth draft' })).toBeAttached();
 	await closeTab(page, 'report');
 	await expect(tab).not.toBeVisible();
-	if (project.name === 'pixel') await showLevel(page, 'tab');
 	await page.getByRole('region', { name: 'Canvases' }).getByRole('button', { name: 'report' }).click();
 	await expect(content.getByRole('heading', { name: 'Fourth draft' })).toBeAttached();
 	await expectCurrent(page, 'report');

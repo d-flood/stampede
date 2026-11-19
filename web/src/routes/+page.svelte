@@ -30,7 +30,7 @@
 	import type { PrReview } from '#lib/pr-reviews.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
-	import { depth, navigate, level as phoneLevel, seed, seeded, type Level } from '#lib/phone.svelte.ts';
+	import { closePanel, openPanel, panel as phonePanel } from '#lib/phone.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
 	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
@@ -42,31 +42,28 @@
 	import Drawer from '#lib/shell/Drawer.svelte';
 	import Launchpad from '#lib/shell/Launchpad.svelte';
 	import NewTab from '#lib/shell/NewTab.svelte';
-	import Overview, { type TabEntry } from '#lib/shell/Overview.svelte';
 	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
-	import TabDots from '#lib/shell/TabDots.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
 	import { menuItems, tabItems } from '#lib/shell/new-tab.ts';
 	import type { Action, Scope } from '#lib/shell/Palette.svelte';
 	import Projects from '#lib/shell/Projects.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
 	import Rename from '#lib/shell/Rename.svelte';
-	import Sidebar, { savedSection, showing as sectionShowing, type Section } from '#lib/shell/Sidebar.svelte';
+	import Sidebar, { savedSection, type Section } from '#lib/shell/Sidebar.svelte';
 	import TerminalView from '#lib/shell/TerminalView.svelte';
 	import Usage from '#lib/shell/Usage.svelte';
 	import { arrange, neighbor, type Side, type Split } from '#lib/split.ts';
-	import { settleInto, swipe } from '#lib/swipe.ts';
+	import { scrolls, settleInto, swipe } from '#lib/swipe.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import FloatingBar from '#lib/ui/FloatingBar.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import Sheet from '#lib/ui/Sheet.svelte';
 	import Tab from '#lib/ui/Tab.svelte';
-	import TabMarks from '#lib/ui/TabMarks.svelte';
 	import TooltipGroup from '#lib/ui/TooltipGroup.svelte';
 	import { onMount, tick } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import CaretRight from '~icons/ph/caret-right';
 	import Folders from '~icons/ph/folders';
 	import Plus from '~icons/ph/plus';
 	import Power from '~icons/ph/power';
@@ -137,12 +134,8 @@
 	let unfocused = $state(false);
 	let directories = $state<string[]>([]);
 	let listed = $state(false);
-	const level = $derived(phoneLevel());
-	let levels = $state<HTMLElement>();
-	let tabLevel = $state<HTMLElement>();
-	let tabDrag = $state(0);
-	let closingMany = $state<string[]>();
-	const manyLosses = $derived(closingMany && losses(closingMany));
+	const panel = $derived(phonePanel());
+	let pull = $state(0);
 	let starting = $state(false);
 	let drawer: Drawer;
 	let renamer = $state<Rename>();
@@ -191,7 +184,7 @@
 	const split = $derived(form() === 'desktop' ? layout : undefined);
 	const groups = $derived(split ? [split.left, split.right] : [whole]);
 	const phone = $derived(form() === 'phone');
-	const foreground = $derived(visible && (!phone || (level === 'tab' && !drawerOpen)));
+	const foreground = $derived(visible && !(phone && drawerOpen));
 	const shownChats = $derived(foreground ? chatTabs.filter((chat) => showing(chat.id)).map((chat) => chat.id) : []);
 	const shownEpics = $derived(foreground ? openEpics.filter((epic) => showing(epic.id)).map((epic) => epic.slug) : []);
 	const label = $derived(focused && projectLabels.get(focused.id));
@@ -213,30 +206,7 @@
 			}));
 		});
 	});
-	const openTabs = $derived(tabIds.filter((id) => !closingTabs.has(id)).flatMap((id) => tabEntry(id) ?? []));
-	const current = $derived(openTabs.find(({ id }) => id === activeTab));
-	const currentIndex = $derived(openTabs.findIndex(({ id }) => id === activeTab));
 	const focusedGit = $derived(focused && git.get(focused.id));
-	const titles = $derived({
-		projects: { title: 'Projects', sub: hostName() ?? undefined },
-		overview: { title: label ?? 'Project', sub: focusedGit?.branch },
-		section: { title: sectionShowing(section, focusedGit).label, sub: label },
-		tab: { title: current?.label ?? label ?? 'Tabs', sub: label }
-	});
-	let shownDepth: number | undefined;
-
-	$effect(() => {
-		if (!phone || !listed) return;
-		if (!seeded()) seed(!focused ? 'projects' : activeTab ? 'tab' : 'overview');
-		else if (level === 'tab' && !activeTab) visit('overview');
-	});
-
-	$effect(() => {
-		const before = shownDepth;
-		shownDepth = depth();
-		if (before === undefined || before === shownDepth || !levels) return;
-		settleInto(levels.querySelector(`[data-level="${level}"]`), [{ transform: `translateX(${Math.sign(shownDepth - before) * 24}px)`, opacity: 0.5 }, { transform: 'none', opacity: 1 }]);
-	});
 	const deviceLayout = $derived(
 		capture({
 			chosen,
@@ -316,7 +286,7 @@
 					if (staged) {
 						place(message.projectId, staged.id);
 						choose(message.projectId, staged.id);
-						if (message.projectId === focused?.id) visit('tab');
+						if (message.projectId === focused?.id) closePanel();
 					}
 				}
 				break;
@@ -328,7 +298,7 @@
 					if (!owned.some((terminal) => terminal.id === id)) owned.push(message.terminal);
 					place(owner.project, id);
 					choose(owner.project, id);
-					if (owner.project === focused?.id) visit('tab');
+					if (owner.project === focused?.id) closePanel();
 				}
 				break;
 			}
@@ -414,7 +384,7 @@
 				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
 				place(message.chat.projectId, message.chat.id);
 				choose(message.chat.projectId, message.chat.id);
-				if (message.chat.projectId === focused?.id) visit('tab');
+				if (message.chat.projectId === focused?.id) closePanel();
 				break;
 			}
 			case 'chat.moved': {
@@ -423,7 +393,7 @@
 				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
 				chosen = message.chat.projectId;
 				choose(message.chat.projectId, message.chat.id);
-				visit('tab');
+				closePanel();
 				break;
 			}
 			case 'sessions.listed':
@@ -441,10 +411,7 @@
 				const opened = message.projects.filter((project) => !projects.some((other) => other.id === project.id));
 				projects = message.projects;
 				listed = true;
-				if (!projects.length) {
-					device.send({ type: 'picker.list' });
-					visit('projects');
-				}
+				if (!projects.length) device.send({ type: 'picker.list' });
 				for (const project of opened) staleGit.add(project.id);
 				if (left?.worktree && !projects.some((project) => project.id === left.id)) {
 					const { parent } = left.worktree;
@@ -557,38 +524,48 @@
 		const [kind, , slug] = tabId.split(':');
 		if (kind === 'epic' && slug) openEpic(projectId, slug);
 		else choose(projectId, tabId);
-		visit('tab');
+		closePanel();
 	}
 
 	function focus(projectId: string) {
 		chosen = projectId;
-		visit('overview');
+		closePanel();
 	}
 
-	function visit(target: Level) {
-		return phone ? navigate(target) : undefined;
-	}
-
-	const swipesTabs = swipe({
-		share: 0.2,
-		allow: (event) => openTabs.length > 1 && !scrolls(event.target, event.currentTarget as HTMLElement),
-		drag: (dx) => (tabDrag = openTabs[currentIndex - Math.sign(dx)] ? dx : dx / 4),
-		release: (dx, committed) => {
-			const next = committed ? openTabs[currentIndex - Math.sign(dx)] : undefined;
-			if (next && focused) {
-				choose(focused.id, next.id);
-				settleInto(tabLevel, [{ transform: `translateX(${-Math.sign(dx) * 40}px)`, opacity: 0.4 }, { transform: 'none', opacity: 1 }]);
-			} else settleInto(tabLevel, [{ transform: `translateX(${tabDrag}px)` }, { transform: 'none' }]);
-			tabDrag = 0;
+	const pullsPanels = swipe({
+		share: 0.25,
+		allow: (event) => !panel && !scrolls(event),
+		drag: (distance) => (pull = focused || distance > 0 ? distance : 0),
+		release: async (distance, committed) => {
+			if (committed && pull) await openPanel(distance > 0 ? 'projects' : 'sidebar');
+			pull = 0;
 		}
 	});
 
-	/** Whether a touch began in something that scrolls sideways, which keeps the swipe for itself. */
-	function scrolls(target: EventTarget | null, within: HTMLElement) {
-		for (let element = target as Element | null; element && element !== within; element = element.parentElement) {
-			if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) return true;
-		}
-		return false;
+	/** Closes a phone Tab dragged up off the strip, or settles it back when it falls short or asks first. */
+	function liftsTabs(list: HTMLElement) {
+		let tab: HTMLElement | undefined;
+		let id: string | undefined;
+		return swipe({
+			share: 1,
+			vertical: true,
+			direction: -1,
+			allow: (event) => {
+				const button = (event.target as Element).closest<HTMLElement>('[data-tab]');
+				id = button?.dataset.tab;
+				tab = button?.closest<HTMLElement>('[role="tablist"] > *') ?? undefined;
+				return !!tab;
+			},
+			drag: (distance) => {
+				tab!.style.translate = `0 ${distance}px`;
+				tab!.style.opacity = String(Math.max(0.4, 1 + distance / (2 * list.clientHeight)));
+			},
+			release: (distance, committed) => {
+				if (committed && closeAny(id!)) return;
+				tab!.style.translate = tab!.style.opacity = '';
+				settleInto(tab, [{ translate: `0 ${distance}px` }, { translate: '0' }]);
+			}
+		})(list);
 	}
 
 	async function freshen(projectId: string) {
@@ -803,8 +780,9 @@
 		if (activeTab) closeAny(activeTab);
 	}
 
+	/** Closes a Tab, returning false when it asks to confirm first. */
 	function closeAny(tabId: string, confirmed = false) {
-		if (!focused) return;
+		if (!focused) return false;
 		const file = fileTabs.find((file) => file.id === tabId);
 		const browser = browserTabs.find((browser) => browser.id === tabId);
 		const canvas = canvasTabs.find((canvas) => canvas.id === tabId);
@@ -816,49 +794,7 @@
 		else if (epic) closeEpic(epic);
 		else if (chat) closeChat(chat, confirmed);
 		else closeTab(focused.id, tabId, confirmed);
-	}
-
-	/** Closes Tabs, asking once first when any would stop work or discard edits; returns whether they closed without asking. */
-	function closeMany(ids: string[], confirmed = false) {
-		const losing = losses(ids);
-		const asks = !confirmed && !!(losing.stopped.length || losing.unsaved.length || losing.held);
-		if (ids.length === 1) closeAny(ids[0], confirmed);
-		else if (asks) closingMany = ids;
-		else {
-			closingMany = undefined;
-			for (const id of ids) closeAny(id, true);
-		}
-		return !asks;
-	}
-
-	function losses(ids: string[]) {
-		const picked = chatTabs.filter((chat) => ids.includes(chat.id));
-		const stopped = stoppedBy(picked, tabs.filter((tab) => ids.includes(tab.id)));
-		const unsaved = fileTabs.filter((file) => ids.includes(file.id) && file.dirty).map((file) => file.name);
-		const held = picked.some((chat) => heldBy(epics[chat.projectId] ?? [], chat.id));
-		return { stopped, unsaved, held };
-	}
-
-	const statusLabels = { working: 'Working', waiting: 'Waiting', background: 'Background', done: 'Done' };
-
-	function tabEntry(id: string): TabEntry | undefined {
-		const tab = tabs.find((tab) => tab.id === id);
-		if (tab) return { id, variant: 'terminal', label: tab.label, detail: tab.state === 'ended' ? 'Ended' : tab.running?.join(', ') };
-		const chat = chatTabs.find((chat) => chat.id === id);
-		if (chat) {
-			const status = chatStatus(chat);
-			return { id, variant: 'agent', agent: chat.agent, label: chat.title ?? chat.rig, status, detail: [statusLabels[status], chat.activity].filter(Boolean).join(' · ') };
-		}
-		const browser = browserTabs.find((browser) => browser.id === id);
-		if (browser) return { id, variant: 'browser', label: browser.name, detail: browser.url || undefined };
-		const canvas = canvasTabs.find((canvas) => canvas.id === id);
-		if (canvas) return { id, variant: 'canvas', label: canvas.name };
-		const epic = openEpics.find((epic) => epic.id === id);
-		if (epic) return { id, variant: 'epic', label: epic.name };
-		const file = fileTabs.find((file) => file.id === id);
-		const where = file && file.path !== file.name ? file.path : undefined;
-		if (file instanceof OpenDiff) return { id, variant: 'diff', label: `${file.name} ↔ ${file.versus}`, detail: where };
-		if (file) return { id, variant: 'editor', label: file.name, detail: where, dirty: file.dirty };
+		return !(closing || closingChat || closingTerminal);
 	}
 
 	function tabMenu(id: string) {
@@ -888,7 +824,7 @@
 			place(tab.projectId, tab.id);
 		}
 		choose(tab.projectId, tab.id);
-		visit('tab');
+		closePanel();
 		return existing ?? tab;
 	}
 
@@ -908,7 +844,7 @@
 			place(projectId, browser.id);
 		}
 		choose(projectId, browser.id);
-		visit('tab');
+		closePanel();
 	}
 
 	function closeBrowser(browser: OpenBrowser) {
@@ -932,7 +868,7 @@
 		}
 		if (offer) return;
 		choose(projectId, canvas.id);
-		visit('tab');
+		closePanel();
 	}
 
 	function closeCanvas(canvas: OpenCanvas) {
@@ -950,7 +886,7 @@
 			place(projectId, epic.id);
 		}
 		choose(projectId, epic.id);
-		visit('tab');
+		closePanel();
 	}
 
 	function closeEpic(epic: OpenEpic) {
@@ -990,14 +926,14 @@
 		compare(projectId, selection);
 		section = 'compare';
 		sidebar = true;
-		visit('section');
+		if (phone) openPanel('sidebar');
 	}
 
 	async function openSearch() {
 		if (!focused) return;
 		section = 'files';
 		sidebar = true;
-		await visit('section');
+		if (phone) await openPanel('sidebar');
 		await tick();
 		sidebarView?.focusSearch();
 	}
@@ -1104,10 +1040,10 @@
 {#snippet workspace()}
 	<main
 		bind:this={main}
+		class:bottom={phone}
 		style:grid-template-columns={split &&
 			`minmax(0, ${split.ratio}fr) var(--border-width) minmax(0, ${1 - split.ratio}fr)`}
 	>
-		{#if !phone}
 		<TooltipGroup>
 			{#each groups as group, index (index)}
 				<div
@@ -1117,7 +1053,7 @@
 					onfocusin={() => focused && group.active && choose(focused.id, group.active)}
 					onpointerdown={grab}
 				>
-					{#if !sidebar && sidebarPosition.side === 'left' && index === 0}
+					{#if !phone && !sidebar && sidebarPosition.side === 'left' && index === 0}
 						{@render sidebarToggle(false)}
 					{/if}
 					<div
@@ -1126,6 +1062,7 @@
 						onwheel={(event) => {
 							if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
 						}}
+						{@attach phone && liftsTabs}
 					>
 						{#if focused}
 							{@const projectId = focused.id}
@@ -1137,15 +1074,16 @@
 								{@const canvas = canvasTabs.find((canvas) => canvas.id === id)}
 								{@const epic = openEpics.find((epic) => epic.id === id)}
 								{#if tab?.state === 'closing'}
-									<Tab variant="terminal" label={tab.label} closing />
+									<Tab variant="terminal" label={tab.label} bottom={phone} closing />
 								{:else if chat?.closing}
-									<Tab variant="agent" agent={chat.agent} label={chat.title ?? chat.rig} closing />
+									<Tab variant="agent" agent={chat.agent} label={chat.title ?? chat.rig} bottom={phone} closing />
 								{:else if tab}
 									<Menu context items={tabMenu(id)}>
 										{#snippet trigger(props)}
 											<Tab
 												{...props}
 												data-tab={id}
+												bottom={phone}
 												variant="terminal"
 												ended={tab.state === 'ended'}
 												label={tab.label}
@@ -1163,6 +1101,7 @@
 											<Tab
 												{...props}
 												data-tab={id}
+												bottom={phone}
 												variant="agent"
 												agent={chat.agent}
 												status={chatStatus(chat)}
@@ -1179,14 +1118,14 @@
 								{:else if browser}
 									<Menu context items={tabMenu(id)}>
 										{#snippet trigger(props)}
-											<Tab {...props} data-tab={id} variant="browser" label={browser.name} active={id === group.active}
+											<Tab {...props} data-tab={id} variant="browser" label={browser.name} bottom={phone} active={id === group.active}
 												onclose={() => closeBrowser(browser)} onclick={() => { if (!dragged) choose(projectId, id); }} />
 										{/snippet}
 									</Menu>
 								{:else if canvas}
 									<Menu context items={tabMenu(id)}>
 										{#snippet trigger(props)}
-											<Tab {...props} data-tab={id} variant="canvas" label={canvas.name} active={id === group.active}
+											<Tab {...props} data-tab={id} variant="canvas" label={canvas.name} bottom={phone} active={id === group.active}
 												onclose={() => closeCanvas(canvas)} onclick={() => { if (!dragged) choose(projectId, id); }} />
 										{/snippet}
 									</Menu>
@@ -1196,6 +1135,7 @@
 											<Tab
 												{...props}
 												data-tab={id}
+												bottom={phone}
 												variant="epic"
 												label={epic.name}
 												active={id === group.active}
@@ -1212,6 +1152,7 @@
 											<Tab
 												{...props}
 												data-tab={id}
+												bottom={phone}
 												variant={file instanceof OpenDiff ? 'diff' : 'editor'}
 												against={file instanceof OpenDiff ? file.versus : undefined}
 												label={file.name}
@@ -1230,7 +1171,9 @@
 							{/each}
 						{/if}
 					</div>
-					{#if focused}
+					{#if focused && phone}
+						<IconButton label="New Tab" onclick={() => (starting = true)}><Plus /></IconButton>
+					{:else if focused}
 						{@const projectId = focused.id}
 						<Menu items={menuItems(newTab(projectId))} resize loading={readingSessions[projectId] ? 'Reading sessions…' : undefined} onopen={() => readSessions(projectId)}>
 							{#snippet trigger(props)}
@@ -1238,13 +1181,12 @@
 							{/snippet}
 						</Menu>
 					{/if}
-					{#if !sidebar && sidebarPosition.side === 'right' && index === groups.length - 1}
+					{#if !phone && !sidebar && sidebarPosition.side === 'right' && index === groups.length - 1}
 						{@render sidebarToggle(false)}
 					{/if}
 				</div>
 			{/each}
 		</TooltipGroup>
-		{/if}
 		{#if split}
 			<div
 				class="divider"
@@ -1345,7 +1287,7 @@
 								{device}
 								{chat}
 								chats={allChats}
-								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); visit('tab'); }}
+								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); closePanel(); }}
 								items={chatItems[chat.id] ?? []}
 								saved={[...saved].filter((canvas) => canvas.startsWith(`${chat.id}/`))}
 								opened={openSubagents[chat.id] ?? []}
@@ -1409,13 +1351,13 @@
 					<div class="zone" class:over={dragging.over === 'right'} style:flex-grow={1 - ratio}></div>
 				</div>
 			{/if}
-			{#if focused && !phone && tabIds.every((id) => closingTabs.has(id))}
+			{#if focused && tabIds.every((id) => closingTabs.has(id))}
 				{@render launchpad(focused)}
-			{:else if !focused && !phone && listed && !picking}
+			{:else if !focused && listed && !picking}
 				<div class="empty">
 					<h2>Open a Project</h2>
 					{#await import('#lib/shell/Picker.svelte') then { default: Picker }}
-						<Picker {directories} onopen={open} />
+						<Picker {directories} onopen={open} autofocus={!phone} />
 					{/await}
 				</div>
 			{/if}
@@ -1424,91 +1366,61 @@
 {/snippet}
 
 {#if phone}
-	{@const { title, sub } = titles[level]}
 	<div class="phone">
 		<header>
-			{#if level !== 'projects' && focused}
-				<IconButton label="Projects" onclick={() => visit('projects')}><Folders /></IconButton>
-				<CaretRight class="separator" aria-hidden="true" />
-				<IconButton label={label ?? focused.path} aria-current={level === 'overview' ? 'page' : undefined} onclick={() => visit('overview')}>
-					<span class="mark-tile squircle"><ProjectIcon project={focused} /></span>
-				</IconButton>
-				{#if level !== 'overview'}<CaretRight class="separator" aria-hidden="true" />{/if}
-			{/if}
-			<h1 data-current-tab={level === 'tab' ? current?.id : undefined}>
-				<span class="title">
-					<span class="name">{title}</span>
-					{#if level === 'tab'}<TabMarks status={current?.status} dirty={current?.dirty} />{/if}
-				</span>
-				{#if sub || (level === 'tab' && openTabs.length > 1)}
-					{' '}<span class="count">
-						{#if sub}<span class="project">{sub}</span>{/if}
-						{#if level === 'tab' && openTabs.length > 1}
-							<TabDots tabs={openTabs} current={activeTab} />
-							<span class="position">{currentIndex + 1}/{openTabs.length}</span>
-						{/if}
-					</span>
-				{/if}
+			<IconButton label="Projects" aria-expanded={panel === 'projects'} onclick={() => openPanel('projects')}>
+				{#if focused}<span class="mark-tile squircle"><ProjectIcon project={focused} /></span>{:else}<Folders />{/if}
+			</IconButton>
+			<h1>
+				<span class="name">{label ?? hostName() ?? 'Stampede'}</span>
+				{#if focusedGit?.branch}<span class="branch">{focusedGit.branch}</span>{/if}
 			</h1>
-			<div class="tools" hidden={level !== 'projects'}>
-				<Settings {update} />
-				<IconButton label="Drawer" onclick={() => drawer.toggle()}><TerminalWindow /></IconButton>
-			</div>
 			<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
+			{#if focused}
+				<IconButton label="Sidebar" aria-expanded={panel === 'sidebar'} onclick={() => openPanel('sidebar')}>
+					<SidebarSimple style="transform: scaleX(-1)" />
+				</IconButton>
+			{/if}
 		</header>
-		<div class="levels" aria-busy={!seeded()} bind:this={levels}>
-			{#if level === 'projects' || warm()}
-				<div class="level" data-level="projects" hidden={level !== 'projects'}>
-					<Usage readings={usage} {codexResets} />
-					<Projects
-						projects={ownProjects}
-						labels={projectLabels}
-						worktrees={nested}
-						{epics}
-						{roots}
-						{working}
-						{background}
-						focused={focused?.id}
-						onfocus={focus}
-						onclose={(projectId) => closeProject(projectId)}
-						ondelete={(projectId) => removeWorktree(projectId)}
-						onworktree={(project) => (branching = project)}
-						onmenu={freshen}
-						onpick={pick}
-						onicon={(project) => (iconProject = project)}
-						{needs}
-						{trunks}
-					/>
-				</div>
-			{/if}
-			{#if focused && (level === 'overview' || warm())}
-				{@const projectId = focused.id}
-				<div class="level" data-level="overview" hidden={level !== 'overview'}>
-					<Overview
-						tabs={openTabs}
-						current={activeTab}
-						git={focusedGit}
-						menu={tabMenu}
-						onchoose={(tabId) => (choose(projectId, tabId), visit('tab'))}
-						onclose={closeMany}
-						onsection={(id) => ((section = id), visit('section'))}
-						onnew={() => (starting = true)}
-					>
-						{#snippet empty()}
-							{@render launchpad(focused)}
-						{/snippet}
-					</Overview>
-				</div>
-			{/if}
-			{#if level === 'section' || warm()}
-				<div class="level" data-level="section" hidden={level !== 'section'}>{@render sidebarPanel()}</div>
-			{/if}
-			<div class="level" data-level="tab" hidden={level !== 'tab'} style:translate={tabDrag ? `${tabDrag}px` : undefined} bind:this={tabLevel} {@attach swipesTabs}>
-				{@render workspace()}
-			</div>
+		<div class="page" {@attach pullsPanels}>
+			{@render workspace()}
 		</div>
 		{#if themeBar.choice}<ThemeBar choice={themeBar.choice} />{/if}
 	</div>
+	<Sheet label="Projects" side="left" open={panel === 'projects'} pull={Math.max(pull, 0)} onclose={closePanel}>
+		{#if panel === 'projects' || pull > 0 || warm()}
+			<div class="sheet-header">
+				<h2>Projects{#if hostName()}{' '}<span class="host">{hostName()}</span>{/if}</h2>
+				<Settings {update} />
+				<IconButton label="Drawer" onclick={() => drawer.toggle()}><TerminalWindow /></IconButton>
+			</div>
+			<Usage readings={usage} {codexResets} />
+			<Projects
+				projects={ownProjects}
+				labels={projectLabels}
+				worktrees={nested}
+				{epics}
+				{roots}
+				{working}
+				{background}
+				focused={focused?.id}
+				onfocus={focus}
+				onclose={(projectId) => closeProject(projectId)}
+				ondelete={(projectId) => removeWorktree(projectId)}
+				onworktree={(project) => (branching = project)}
+				onmenu={freshen}
+				onpick={pick}
+				onicon={(project) => (iconProject = project)}
+				{needs}
+				{trunks}
+			/>
+		{/if}
+	</Sheet>
+	{#if focused}
+		<Sheet label="Sidebar" side="right" open={panel === 'sidebar'} pull={Math.max(-pull, 0)} onclose={closePanel}>
+			{#if panel === 'sidebar' || pull < 0 || warm()}{@render sidebarPanel()}{/if}
+		</Sheet>
+	{/if}
 {:else}
 	<div class="shell">
 		<Rail
@@ -1667,25 +1579,6 @@
 </Dialog>
 
 <Dialog
-	bind:open={() => !!closingMany, (open) => !open && (closingMany = undefined)}
-	title="Close {closingMany?.length} Tabs?"
-	description={manyLosses &&
-		[
-			manyLosses.stopped.length && 'Closing them stops these and everything they started.',
-			manyLosses.held && 'Tickets their Chats hold go back to not started.',
-			manyLosses.unsaved.length && `Unsaved changes in ${manyLosses.unsaved.join(', ')} are discarded.`
-		]
-			.filter(Boolean)
-			.join(' ')}
->
-	<Stopping items={manyLosses?.stopped ?? []} />
-	{#snippet actions()}
-		<Button onclick={() => (closingMany = undefined)}>Cancel</Button>
-		<Button variant="primary" onclick={() => closingMany && closeMany(closingMany, true)}>Close</Button>
-	{/snippet}
-</Dialog>
-
-<Dialog
 	bind:open={() => !!closingProject, (open) => !open && (closingProject = undefined)}
 	title="Close {closingProject && projectLabels.get(closingProject)}?"
 	description="Closing it stops these and everything they started."
@@ -1761,13 +1654,6 @@
 		padding: var(--space-1);
 	}
 
-	header > :global(.separator) {
-		flex: none;
-		margin-inline: calc(-1 * var(--space-1));
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-	}
-
 	.mark-tile {
 		display: grid;
 		width: var(--control-min);
@@ -1785,53 +1671,27 @@
 		min-width: 0;
 		min-height: var(--target-min);
 		margin: 0;
-		padding-left: var(--space-2);
+		padding-left: var(--space-1);
 		font-size: var(--font-size-lg);
-	}
-
-	.title {
-		display: flex;
-		align-items: center;
-		gap: var(--space-1);
-		min-width: 0;
 		line-height: 1.2;
 	}
 
 	.name,
-	.project {
+	.branch,
+	.host {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.count {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		min-width: 0;
+	.branch,
+	.host {
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		font-weight: 400;
-		line-height: 1.2;
-		white-space: nowrap;
 	}
 
-	.project:not(:only-child) {
-		flex: 0 1 auto;
-		max-width: 45%;
-	}
-
-	.position {
-		flex: none;
-		font-family: var(--font-mono);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.tools:not([hidden]) {
-		display: flex;
-	}
-
-	.levels {
+	.page {
 		display: flex;
 		flex: 1;
 		flex-direction: column;
@@ -1842,11 +1702,22 @@
 		overflow: hidden;
 	}
 
-	.level:not([hidden]) {
+	.sheet-header {
+		display: flex;
+		flex: none;
+		align-items: center;
+		gap: var(--space-1);
+		padding: var(--space-2) var(--space-2) 0 var(--space-4);
+	}
+
+	.sheet-header h2 {
 		display: flex;
 		flex: 1;
-		flex-direction: column;
-		min-height: 0;
+		align-items: baseline;
+		gap: var(--space-2);
+		min-width: 0;
+		margin: 0;
+		font-size: var(--font-size-lg);
 	}
 
 	main {
@@ -1867,6 +1738,16 @@
 		border-bottom: var(--border-width) solid var(--border);
 		background: var(--surface-1);
 		user-select: none;
+	}
+
+	main.bottom {
+		grid-template-rows: minmax(0, 1fr) auto;
+	}
+
+	.bottom .strip {
+		grid-row: 2;
+		border-top: var(--border-width) solid var(--border);
+		border-bottom: none;
 	}
 
 	.divider {
@@ -1900,6 +1781,15 @@
 		overflow-x: auto;
 		overflow-y: hidden;
 		scrollbar-width: none;
+	}
+
+	.bottom [role='tablist'] {
+		align-items: flex-start;
+		margin-top: calc(-1 * var(--border-width));
+		margin-bottom: 0;
+		padding-top: var(--border-width);
+		padding-bottom: var(--space-2);
+		touch-action: pan-x;
 	}
 
 	@property --fade-start {
@@ -1942,6 +1832,10 @@
 		grid-column: 1 / -1;
 		grid-template-rows: minmax(0, 1fr);
 		grid-template-columns: subgrid;
+	}
+
+	.bottom .tabs {
+		grid-row: 1;
 	}
 
 	.view {

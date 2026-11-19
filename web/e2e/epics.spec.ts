@@ -3,7 +3,7 @@ import type { Locator, Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { expectCurrent, openProject, showSidebar, showLevel } from './shell.ts';
+import { expectCurrent, openProject, showProjects, showSidebar } from './shell.ts';
 
 const stampede = process.env.STAMPEDE_E2E_BINARY ?? fileURLToPath(new URL('../../target/debug/stampede', import.meta.url));
 
@@ -662,7 +662,7 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 	await run.getByRole('button', { name: 'Start Run' }).click();
 	await expect(run).toContainText('Run live');
 
-	if (phone) await showLevel(page, 'projects');
+	await showProjects(page);
 	const rail = page.getByRole('navigation', { name: 'Projects' });
 	const parent = rail.getByRole('button', { name: slug, exact: true });
 	const row = rail.getByRole('listitem').filter({ has: page.getByRole('button', { name: slug, exact: true }) });
@@ -676,10 +676,8 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 
 	await second.click();
 	if (!phone) await expect(second).toHaveAttribute('aria-current', 'true');
-	if (phone) {
-		await showLevel(page, 'tab');
-		await expect(page.locator('.phone > header h1 .count')).toHaveText(`${slug}/2`);
-	} else await expect(page.getByRole('complementary', { name: 'Sidebar' }).getByRole('heading', { level: 1 })).toHaveText(`${slug}/2`);
+	if (phone) await expect(page.locator('.phone > header h1 .name')).toHaveText(`${slug}/2`);
+	else await expect(page.getByRole('complementary', { name: 'Sidebar' }).getByRole('heading', { level: 1 })).toHaveText(`${slug}/2`);
 	const chat = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await expect(chat.locator('.user')).toContainText(`/ticket Your Ticket is ${slug}/2`);
 	const worktree = await showSidebar(page);
@@ -687,9 +685,7 @@ test('a Run’s worktree Projects sit beside their Project, open on a tap, and s
 	await worktree.getByRole('radio', { name: 'Git', exact: true }).click();
 	await expect(worktree.getByRole('region', { name: 'Git' }).getByRole('button', { name: 'work.txt', exact: true })).toBeVisible();
 
-	if (phone) {
-		await showLevel(page, 'projects');
-	}
+	await showProjects(page);
 	const integration = worktrees.getByRole('button', { name: `Integration ${slug}`, exact: true });
 	await expect.poll(() => (rmSync(gate, { force: true }), worktrees.getByRole('button').count()), { timeout: 20000 }).toBe(1);
 	await expect(integration).toBeVisible();

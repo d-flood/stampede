@@ -278,7 +278,7 @@ _Avoid_: reviewed, seen, read
 ### Layout
 
 **Project rail**:
-The column of open Projects, grouped by Host, used to hop between them, collapsed to icons or expanded to show each one's path, each marked when something inside needs attention or a Run is live; its worktree Projects, an Epic's or made by hand, are counted on the Project they belong to and listed under it until deleted.
+The column of open Projects, grouped by Host, used to hop between them, collapsed to icons or expanded to show each one's path, each marked when something inside needs attention or a Run is live; its worktree Projects, an Epic's or made by hand, are counted on the Project they belong to and listed under it until deleted. On a phone it slides in from the left over the current Tab.
 _Avoid_: project list, project sidebar
 
 **Tab**:
@@ -313,12 +313,8 @@ _Avoid_: tile, pane
 What a Project's main window shows when it has no Tabs: the ways to open one, such as its Rigs and recent sessions.
 _Avoid_: start screen, new tab page, empty state
 
-**Project overview**:
-On a phone, the page between the Projects and a single Tab that lists a Project's open Tabs and leads to its Sidebar sections.
-_Avoid_: hub, home, dashboard, switcher
-
 **Sidebar**:
-The collapsible panel beside the main window, showing one section at a time: Files, Git, Compare, or Epics.
+The collapsible panel beside the main window, showing one section at a time: Files, Git, Compare, or Epics. On a phone it slides in from the right over the current Tab.
 _Avoid_: explorer, wing, panel; never call its sections "tabs"
 
 **Needs attention**:

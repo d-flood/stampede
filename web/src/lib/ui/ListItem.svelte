@@ -2,7 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
 
-	type Props = Omit<HTMLAttributes<HTMLElement>, 'class'> & { element?: 'div' | 'button' | 'label'; size?: 'md'; highlighted?: boolean; disabled?: boolean; children: Snippet };
+	type Props = Omit<HTMLAttributes<HTMLElement>, 'class'> & { element?: 'div' | 'button'; size?: 'md'; highlighted?: boolean; disabled?: boolean; children: Snippet };
 
 	let { element = 'div', size, highlighted, children, ...rest }: Props = $props();
 </script>

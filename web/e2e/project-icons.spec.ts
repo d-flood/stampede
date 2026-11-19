@@ -2,15 +2,14 @@ import { expect, test } from './fixtures.ts';
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { Locator, Page } from '@playwright/test';
-import { closeProject, openProject, showLevel } from './shell.ts';
+import { closeProject, openProject, showProjects } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="#369"/></svg>';
 
 async function navigation(page: Page) {
-	if (test.info().project.name === 'pixel') await showLevel(page, 'projects');
-	return page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'alpha', exact: true });
+	return (await showProjects(page)).getByRole('button', { name: 'alpha', exact: true });
 }
 
 async function picker(page: Page, button: Locator) {

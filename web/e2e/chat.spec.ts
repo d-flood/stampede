@@ -4,7 +4,7 @@ import type { Locator, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { closePinned, closeProject, expectCurrent, expectSelected, expectShown, newTab, openProject, pinned, openNewTab, showLevel, showSidebar, showTab, tabCount } from './shell.ts';
+import { closePinned, closeProject, expectCurrent, expectSelected, expectShown, newTab, openProject, pinned, openNewTab, closeSheet, showProjects, showSidebar, showTab, tabCount } from './shell.ts';
 
 test('a Claude Code Chat streams its reply, shows done, and asks before closing while working', async ({ page }, { project }) => {
 	const name = `chat-${project.name}`;
@@ -37,8 +37,9 @@ test('a Claude Code Chat streams its reply, shows done, and asks before closing 
 	await composer.fill('Anything else?');
 	await panel.getByRole('button', { name: 'Send' }).click();
 	await expect(tab.getByTitle('working')).toBeVisible();
-	if (project.name === 'pixel') await showLevel(page, 'projects');
+	await showProjects(page);
 	await expect(square.getByTitle('working')).toBeVisible();
+	await closeSheet(page);
 	await closePinned(tab);
 	const confirm = page.getByRole('dialog', { name: 'Close Fake Claude?' });
 	await expect(confirm).toBeVisible();
@@ -551,8 +552,7 @@ test('four Usage window meters show their readings and warn from 80%', async ({ 
 	await page.goto('/');
 	let usage = page.getByRole('region', { name: 'Usage windows' });
 	if (project.name === 'pixel') {
-		await showLevel(page, 'projects');
-		await expect(page.getByRole('navigation', { name: 'Projects' })).toBeInViewport();
+		await expect(await showProjects(page)).toBeInViewport();
 	} else {
 		await expect(page.getByRole('button', { name: 'Sidebar' })).toBeVisible();
 		usage = (await showSidebar(page)).getByRole('region', { name: 'Usage windows' });
@@ -614,8 +614,7 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 	await expect(page.getByRole('status').filter({ hasText: 'Fake Claude' })).toBeVisible();
 	await page.keyboard.press('c');
 	await chats(3);
-	if (phone) await expectCurrent(page, 'Fake Claude');
-	else await expect(page.getByRole('tab', { name: /^Fake Claude/ }).last()).toHaveAttribute('aria-selected', 'true');
+	await expect(page.getByRole('tab', { name: /^Fake Claude/ }).last()).toHaveAttribute('aria-selected', 'true');
 	expect(created).toEqual(['chat.create', 'chat.create', 'chat.create']);
 	await expect(page.getByRole('button', { name: 'Open as TUI' })).toHaveCount(0);
 	await closeProject(page, name);
