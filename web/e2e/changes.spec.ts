@@ -277,7 +277,7 @@ test('a branch publishes to origin, then pushes and pulls by its counts', { tag:
 	expect(readFileSync(`${root}/remote.txt`, 'utf8')).toBe('remote\n');
 });
 
-test('a default branch origin has moved ahead marks its Project, and the Changes header off that branch', { tag: '@desktop' }, async ({ page }) => {
+test('a default branch origin has moved ahead marks its Project and pulls from the Changes header without switching', { tag: '@desktop' }, async ({ page }) => {
 	const origin = `${process.env.STAMPEDE_E2E_ROOT}/ahead.git`;
 	execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
 	const { git } = repository('ahead');
@@ -293,19 +293,17 @@ test('a default branch origin has moved ahead marks its Project, and the Changes
 	}
 	const sidebar = await changesPanel(page, 'ahead');
 	const badge = page.getByRole('navigation', { name: 'Projects' }).getByTitle('1 new on origin/main');
-	const chip = sidebar.getByTitle('1 new on origin/main');
+	const chip = sidebar.getByTitle('Pull 1 new from origin/main');
 	await expect(badge).toHaveCount(0);
 
 	await sidebar.getByRole('button', { name: 'Fetch' }).click();
 	await expect(badge).toBeVisible();
 	await expect(chip).toHaveText('main1');
 
-	git('switch', '-q', 'main');
-	await expect(sidebar.getByText('origin/main')).toBeVisible();
-	await expect(chip).toHaveCount(0);
-	await expect(badge).toBeVisible();
-	await sidebar.getByRole('button', { name: 'Pull' }).click();
+	await chip.click();
 	await expect(badge).toHaveCount(0);
+	await expect(chip).toHaveCount(0);
+	expect([git('branch', '--show-current'), git('rev-parse', 'main')]).toEqual(['feature', git('rev-parse', 'origin/main')]);
 });
 
 test('the sidebar branch switches to a local branch, or a fetched remote one tracked locally', { tag: '@desktop' }, async ({ page }) => {

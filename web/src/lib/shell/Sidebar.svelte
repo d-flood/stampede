@@ -32,6 +32,7 @@
 	import type { Device, Epic, Project, Reading, ResetCredits } from '#lib/device.svelte.ts';
 	import type { Cursor, Reviewing, Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { progress } from '#lib/git-busy.svelte.ts';
 	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
 	import type { Against } from '#lib/files.svelte.ts';
 	import type { Change } from '#lib/git.ts';
@@ -158,7 +159,7 @@
 					</Dialog>
 				{/if}
 				<div class="sections">
-					<Segmented aria-label="Sections" options={shown.map(({ id, label }) => ({ value: id, label }))} bind:value={() => current, (id) => (section = id)} />
+					<Segmented aria-label="Sections" options={shown.map(({ id, label }) => ({ value: id, label, busy: id === 'git' && current !== 'git' && !!progress[project.id] }))} bind:value={() => current, (id) => (section = id)} />
 				</div>
 				{#key project.id}
 					<Files bind:this={files} projectId={project.id} {device} changes={git?.changes ?? []} hidden={current !== 'files'} {onopen} {onrename} />

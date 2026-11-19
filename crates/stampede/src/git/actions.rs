@@ -1,22 +1,30 @@
 use std::{
     collections::{HashMap, HashSet},
+    convert::Infallible,
     path::{Path, PathBuf},
     process::Stdio,
 };
 
 use axum::{
     Json,
+    body::Body,
     extract::{Path as Param, Query, State},
-    http::StatusCode,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
-use tokio::{io::AsyncWriteExt, process::Command};
+use serde_json::json;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader},
+    process::Command,
+    sync::mpsc,
+};
 
-use super::{Commit, Kind, Operation, Status, inside, read, sha, trunk};
+use super::{Commit, Kind, Operation, Status, common_dir, inside, read, sha, trunk};
 use crate::{
     AppState,
     files::{Failure, root},
-    rigs, templates,
+    origin, rigs, templates,
 };
 
 const DIFF_LIMIT: usize = 60_000;
@@ -150,7 +158,8 @@ pub async fn discard(State(state): State<AppState>, Param(id): Param<String>, Js
     result.map(|_| StatusCode::NO_CONTENT).map_err(|output| (StatusCode::BAD_REQUEST, output))
 }
 
-pub async fn commit(State(state): State<AppState>, Param(id): Param<String>, Json(Message { message }): Json<Message>) -> Result<StatusCode, Failure> {
+/// Commits, streaming what git and its hooks print as JSON lines that end with whether it succeeded.
+pub async fn commit(State(state): State<AppState>, Param(id): Param<String>, Json(Message { message }): Json<Message>) -> Result<Response, Failure> {
     let (dir, status) = open(&state, &id).await?;
     if message.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "Write a commit message first.".to_owned()));
@@ -164,7 +173,9 @@ pub async fn commit(State(state): State<AppState>, Param(id): Param<String>, Jso
     if status.staged.is_empty() && status.operation.is_none() {
         return Err(refuse("Stage changes to commit first."));
     }
-    change(&state, &id, &dir, &["commit", "-q", "-m", &message]).await
+    let mut command = git(&dir, &["commit", "-q", "-m", &message]);
+    command.stdin(Stdio::null());
+    Ok(streamed(state, id, command))
 }
 
 /// Undoes the last commit, keeping its changes staged, and gives back its message.
@@ -500,6 +511,30 @@ pub async fn publish(State(state): State<AppState>, Param(id): Param<String>) ->
     change(&state, &id, &dir, &["push", "-q", "-u", "origin", branch]).await
 }
 
+/// Fast-forwards the default branch to origin's without leaving the current one, pulling wherever it is checked out.
+pub async fn pull_trunk(State(state): State<AppState>, Param(id): Param<String>) -> Result<StatusCode, Failure> {
+    let dir = root(&state, &id)?;
+    let branch = origin::default_branch(&dir).await.ok_or_else(|| refuse("origin has no default branch."))?;
+    let worktrees = exec(&dir, &["worktree", "list", "--porcelain"]).await.map_err(|output| (StatusCode::BAD_REQUEST, output))?;
+    let line = format!("branch refs/heads/{branch}");
+    let checkout = worktrees.split("\n\n").find(|block| block.lines().any(|entry| entry == line)).and_then(|block| block.lines().next()?.strip_prefix("worktree "));
+    let result = match checkout {
+        Some(checkout) => {
+            let checkout = Path::new(checkout);
+            settled(&read(checkout).await.unwrap_or_default())?;
+            exec(checkout, &["pull", "-q", "--no-rebase", "--ff-only", "origin", &branch]).await
+        }
+        None => exec(&dir, &["fetch", "-q", "origin", &format!("{branch}:{branch}")]).await,
+    };
+    let common = common_dir(&dir).await;
+    for project in state.projects.list().iter() {
+        if project.id == id || common_dir(Path::new(&project.path)).await == common {
+            changed(&state, &project.id);
+        }
+    }
+    result.map(|_| StatusCode::NO_CONTENT).map_err(|output| (StatusCode::BAD_REQUEST, output))
+}
+
 /// Checks out a local branch, or a remote one as the local branch of its name, tracking it when new.
 pub async fn switch(State(state): State<AppState>, Param(id): Param<String>, Json(Branch { branch }): Json<Branch>) -> Result<StatusCode, Failure> {
     let dir = movable(&state, &id).await?;
@@ -545,6 +580,39 @@ async fn change(state: &AppState, id: &str, dir: &Path, args: &[&str]) -> Result
     let result = exec(dir, args).await;
     changed(state, id);
     result.map(|_| StatusCode::NO_CONTENT).map_err(|output| (StatusCode::BAD_REQUEST, output))
+}
+
+/// Runs git to change the repository, streaming each line it prints, then has every Device refresh.
+fn streamed(state: AppState, id: String, mut command: Command) -> Response {
+    let (sender, receiver) = mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        let ok = match command.spawn() {
+            Ok(mut child) => {
+                let (stdout, stderr) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
+                tokio::join!(relay(stdout, &sender), relay(stderr, &sender));
+                child.wait().await.is_ok_and(|status| status.success())
+            }
+            Err(error) => {
+                let _ = sender.send(json!({ "output": format!("cannot run git: {error}") }).to_string());
+                false
+            }
+        };
+        changed(&state, &id);
+        let _ = sender.send(json!({ "ok": ok }).to_string());
+    });
+    let lines = futures_util::stream::unfold(receiver, |mut receiver| async move {
+        receiver.recv().await.map(|line| (Ok::<_, Infallible>(format!("{line}\n")), receiver))
+    });
+    ([(header::CONTENT_TYPE, "application/x-ndjson")], Body::from_stream(lines)).into_response()
+}
+
+async fn relay(reader: impl AsyncRead + Unpin, sender: &mpsc::UnboundedSender<String>) {
+    let mut reader = BufReader::new(reader);
+    let mut line = Vec::new();
+    while reader.read_until(b'\n', &mut line).await.is_ok_and(|read| read > 0) {
+        let _ = sender.send(json!({ "output": String::from_utf8_lossy(&line) }).to_string());
+        line.clear();
+    }
 }
 
 fn refuse(reason: impl Into<String>) -> Failure {
@@ -681,15 +749,13 @@ async fn exec(dir: &Path, args: &[&str]) -> Result<String, String> {
     output(dir, args, None).await.map(|stdout| String::from_utf8_lossy(&stdout).trim().to_owned())
 }
 
-/// Runs git, giving its stdout, or everything it printed when it failed.
-async fn output(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+fn git(dir: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
     command
         .arg("-C")
         .arg(dir)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -697,6 +763,13 @@ async fn output(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u
     unsafe {
         command.pre_exec(|| nix::unistd::setsid().map(drop).map_err(std::io::Error::from));
     }
+    command
+}
+
+/// Runs git, giving its stdout, or everything it printed when it failed.
+async fn output(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    let mut command = git(dir, args);
+    command.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
     let mut child = command.spawn().map_err(|error| format!("cannot run git: {error}"))?;
     if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
         stdin.write_all(input).await.map_err(|error| format!("cannot write to git: {error}"))?;

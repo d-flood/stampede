@@ -82,8 +82,21 @@ export async function discard(projectId: string, paths: string[]): Promise<void>
 	await post(projectId, 'discard', { paths });
 }
 
-export async function commit(projectId: string, message: string): Promise<void> {
-	await post(projectId, 'commit', { message });
+/** Commits, handing over what git and its hooks have printed so far as each line arrives. */
+export async function commit(projectId: string, message: string, onoutput: (output: string) => void): Promise<void> {
+	const response = await post(projectId, 'commit', { message });
+	const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+	let [buffered, output, ok] = ['', '', false];
+	for (let read = await reader.read(); !read.done; read = await reader.read()) {
+		const lines = (buffered + read.value).split('\n');
+		buffered = lines.pop()!;
+		for (const line of lines) {
+			const event: { output?: string; ok?: boolean } = JSON.parse(line);
+			if (event.output !== undefined) onoutput((output += event.output));
+			ok = event.ok ?? ok;
+		}
+	}
+	if (!ok) throw new RequestError(400, output.trim() || 'git commit failed');
 }
 
 export async function undo(projectId: string): Promise<string> {
@@ -112,6 +125,11 @@ export async function draft(projectId: string): Promise<string> {
 
 export async function sync(projectId: string, action: 'fetch' | 'pull' | 'push' | 'publish'): Promise<void> {
 	await post(projectId, action);
+}
+
+/** Fast-forwards the default branch to origin's without switching to it. */
+export async function pullTrunk(projectId: string): Promise<void> {
+	await post(projectId, 'trunk');
 }
 
 export async function switchBranch(projectId: string, branch: string): Promise<void> {

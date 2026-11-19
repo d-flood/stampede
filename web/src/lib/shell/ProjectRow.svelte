@@ -2,13 +2,15 @@
 	import type { Epic, Project } from '#lib/device.svelte.ts';
 	import Progress from '#lib/epics/Progress.svelte';
 	import { counts } from '#lib/epics.svelte.ts';
-	import type { Trunk } from '#lib/git.ts';
+	import { failures, perform, progress } from '#lib/git-busy.svelte.ts';
+	import { pullTrunk, type Trunk } from '#lib/git.ts';
 	import { hue, type Tile } from '#lib/projects.ts';
 	import ShellMark from '#lib/ui/ShellMark.svelte';
 	import { WorkingMark } from '#lib/ui/spinners.ts';
 	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
-	import ArrowDown from '~icons/ph/arrow-down-bold';
+	import ArrowDown from '~icons/ph/arrow-down';
+	import ArrowDownBold from '~icons/ph/arrow-down-bold';
 
 	type Props = {
 		project: Project;
@@ -39,6 +41,8 @@
 	const active = $derived(project.id === focused || tiles.some((tile) => tile.id === focused));
 	const listed = $derived(tiles.length > 0 && (!compact || active));
 	const tint = $derived(hue(project.path));
+	const pulling = $derived(progress[project.id]?.action === 'trunk');
+	const failed = $derived(failures[project.id]?.action === 'trunk' ? failures[project.id].text : undefined);
 
 	function select(event: MouseEvent & { currentTarget: HTMLElement }, id: string) {
 		// A long-press opens the menu on a timer, and its release still clicks.
@@ -49,6 +53,9 @@
 <li class={compact ? 'compact' : 'card'} class:tray={compact && listed}>
 	<Menu context items={[
 		{ label: 'Change project icon…', onselect: () => onicon(project) },
+		...(trunk
+			? [{ label: `Pull ${trunk.branch}`, icon: ArrowDown, hint: `${trunk.behind} new`, disabled: !!progress[project.id], onselect: () => perform(project.id, 'trunk', () => pullTrunk(project.id)) }]
+			: []),
 		...(root ? [{ label: 'New worktree…', onselect: () => onworktree(project) }] : []),
 		{ label: 'Close', onselect: () => onclose(project.id) }
 	]} onopen={() => onmenu(project.id)}>
@@ -69,7 +76,7 @@
 				<span class="square squircle">
 					<ProjectIcon {project} />
 					{#if needs}<span class="attention">{needs}</span>{/if}
-					{#if trunk}<span class="behind" title="{trunk.behind} new on origin/{trunk.branch}"><ArrowDown /></span>{/if}
+					{#if trunk}<span class="behind" class:pulling class:failed title={failed ?? `${trunk.behind} new on origin/${trunk.branch}`}><ArrowDownBold /></span>{/if}
 					{#if tiles.length}<span class="count" title="{tiles.length} {tiles.length === 1 ? 'worktree' : 'worktrees'}">{tiles.length}</span>{/if}
 					{#if working}<span class="spinner" title="working"><WorkingMark /></span>{:else if background}<span class="shell" title="background"><ShellMark /></span>{/if}
 				</span>
@@ -328,7 +335,35 @@
 	.behind {
 		top: calc(-1 * var(--space-1) - var(--border-width));
 		left: calc(-1 * var(--space-1) - var(--border-width));
+		overflow: hidden;
 		color: var(--muted-fg);
+	}
+
+	.behind.pulling {
+		color: var(--accent);
+	}
+
+	.pulling :global(svg) {
+		animation: drop 0.9s var(--ease-out) var(--pulse);
+	}
+
+	.behind.failed {
+		color: var(--git-deleted);
+	}
+
+	@keyframes drop {
+		from {
+			opacity: 0;
+			translate: 0 -60%;
+		}
+		35%,
+		70% {
+			opacity: 1;
+		}
+		to {
+			opacity: 0;
+			translate: 0 60%;
+		}
 	}
 
 	.count {

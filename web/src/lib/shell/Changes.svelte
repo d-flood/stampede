@@ -10,11 +10,13 @@
 <script lang="ts">
 	import { commitRig } from '#lib/config.svelte.ts';
 	import type { Device } from '#lib/device.svelte.ts';
+	import { failures, finished, perform, progress, type Action, type Progress } from '#lib/git-busy.svelte.ts';
 	import {
 		commit,
 		discard,
 		draft,
 		letters,
+		pullTrunk,
 		split,
 		stage,
 		stash,
@@ -31,14 +33,19 @@
 	import { treeRows } from '#lib/shell/tree.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Caret from '#lib/ui/Caret.svelte';
+	import Chip from '#lib/ui/Chip.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Eyebrow from '#lib/ui/Eyebrow.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import ProgressLine from '#lib/ui/ProgressLine.svelte';
+	import { LoadingMark } from '#lib/ui/spinners.ts';
 	import TextArea from '#lib/ui/TextArea.svelte';
 	import TreeRow from '#lib/ui/TreeRow.svelte';
-	import { onMount, tick, type Snippet } from 'svelte';
+	import { onMount, tick, type Component, type Snippet } from 'svelte';
+	import { prefersReducedMotion } from 'svelte/motion';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { fly } from 'svelte/transition';
 	import Archive from '~icons/ph/archive';
 	import ArrowCounterClockwise from '~icons/ph/arrow-counter-clockwise';
 	import ArrowDown from '~icons/ph/arrow-down';
@@ -73,11 +80,10 @@
 	const LARGE = 200;
 	const collapsed = new SvelteSet<string>();
 	const opened = new SvelteSet<string>();
-	let busy = $state(false);
-	let failure = $state<string>();
 	let drafting = $state(false);
+	let now = $state(Date.now());
 	let saved = $state.raw<Stash[]>([]);
-	let discarding = $state<{ label: string; paths: string[]; untracked: number }>();
+	let discarding = $state<{ label: string; changes: Change[]; untracked: number }>();
 	let dropping = $state<number>();
 	let list = $state<HTMLDivElement>();
 	let box = $state<HTMLTextAreaElement>();
@@ -107,6 +113,13 @@
 			])
 		)
 	);
+	const running = $derived(progress[projectId]);
+	const busy = $derived(!!running);
+	const failure = $derived(failures[projectId]);
+	const pending = $derived(new Set(running?.paths));
+	const committing = $derived(running?.action === 'commit');
+	const elapsed = $derived(committing ? Math.floor((now - running!.since) / 1000) : 0);
+	const roll = $derived({ y: prefersReducedMotion.current ? 0 : -6, duration: 200 });
 	const message = $derived(messages[projectId] ?? '');
 	const committable = $derived(
 		!busy && !!message.trim() && !git.conflicted.length && git.operation !== 'rebase' && (!!git.staged.length || !!git.operation)
@@ -126,6 +139,12 @@
 				if (message.type === 'hello' || (message.type === 'git.changed' && message.projectId === projectId)) load();
 			}
 		});
+	});
+
+	$effect(() => {
+		if (!committing) return;
+		const timer = setInterval(() => (now = Date.now()), 1000);
+		return () => clearInterval(timer);
 	});
 
 	$effect(() => {
@@ -150,18 +169,8 @@
 		if (!toggled.delete(key)) toggled.add(key);
 	}
 
-	async function run(action: () => Promise<unknown>) {
-		if (busy) return;
-		busy = true;
-		failure = undefined;
-		try {
-			await action();
-		} catch (error) {
-			cursor = undefined;
-			failure = error instanceof Error ? error.message : String(error);
-		} finally {
-			busy = false;
-		}
+	async function run(action: Action, task: (progress: Progress) => Promise<unknown>, changes: Change[] = []) {
+		if (!(await perform(projectId, action, task, changes.map(({ path }) => path)))) cursor = undefined;
 	}
 
 	function paths(changes: Change[]) {
@@ -169,23 +178,24 @@
 	}
 
 	function toggleStage({ section, changes }: Target) {
-		run(() => (section === 'staged' ? unstage(projectId, paths(changes)) : stage(projectId, paths(changes))));
+		if (section === 'staged') run('unstage', () => unstage(projectId, paths(changes)), changes);
+		else run('stage', () => stage(projectId, paths(changes)), changes);
 	}
 
 	function stageAll() {
-		if (git.unstaged.length) run(() => stage(projectId, paths(git.unstaged)));
-		else if (git.staged.length) run(() => unstage(projectId, paths(git.staged)));
+		if (git.unstaged.length) run('stage', () => stage(projectId, paths(git.unstaged)), git.unstaged);
+		else if (git.staged.length) run('unstage', () => unstage(projectId, paths(git.staged)), git.staged);
 	}
 
 	function askDiscard({ section, changes, label }: Target) {
 		if (section !== 'unstaged' || busy) return;
-		discarding = { label, paths: changes.map(({ path }) => path), untracked: changes.filter(({ kind }) => kind === 'untracked').length };
+		discarding = { label, changes, untracked: changes.filter(({ kind }) => kind === 'untracked').length };
 	}
 
 	function confirmDiscard() {
 		const chosen = discarding;
 		discarding = undefined;
-		if (chosen) run(() => discard(projectId, chosen.paths));
+		if (chosen) run('discard', () => discard(projectId, chosen.changes.map(({ path }) => path)), chosen.changes);
 	}
 
 	function openRow({ section, change }: Target) {
@@ -197,20 +207,24 @@
 	function commitStaged() {
 		if (!committable) return;
 		const id = projectId;
-		run(async () => {
-			await commit(id, message);
-			messages[id] = '';
-		});
+		run(
+			'commit',
+			async (progress) => {
+				await commit(id, message, (output) => (progress.output = output));
+				messages[id] = '';
+			},
+			git.staged
+		);
 	}
 
 	async function draftMessage() {
 		const id = projectId;
 		drafting = true;
-		failure = undefined;
+		delete failures[id];
 		try {
 			messages[id] = await draft(id);
 		} catch (error) {
-			failure = error instanceof Error ? error.message : String(error);
+			failures[id] = { action: 'draft', text: error instanceof Error ? error.message : String(error) };
 		} finally {
 			drafting = false;
 		}
@@ -218,11 +232,11 @@
 
 	function undoCommit() {
 		const id = projectId;
-		run(async () => restoreMessage(id, await undo(id)));
+		run('undo', async () => restoreMessage(id, await undo(id)));
 	}
 
 	function remote(action: 'fetch' | 'pull' | 'push' | 'publish') {
-		run(() => sync(projectId, action));
+		run(action, () => sync(projectId, action));
 	}
 
 	function push() {
@@ -233,7 +247,7 @@
 	function confirmDrop() {
 		const index = dropping;
 		dropping = undefined;
-		if (index !== undefined) run(() => unstash(projectId, index, 'drop'));
+		if (index !== undefined) run('unstash', () => unstash(projectId, index, 'drop'));
 	}
 
 	function move(from: HTMLElement | null, step: number) {
@@ -261,7 +275,7 @@
 			...rowActions,
 			a: stageAll,
 			c: () => box?.focus(),
-			s: () => run(() => stash(projectId)),
+			s: () => run('stash', () => stash(projectId)),
 			z: undoCommit,
 			f: () => remote('fetch'),
 			p: () => git.upstream && remote('pull'),
@@ -300,29 +314,52 @@
 	{/if}
 {/snippet}
 
+{#snippet motion(action: Action, Icon: Component)}
+	{@const done = finished[projectId] === action && action !== 'fetch'}
+	<span class={['motion', action, { active: running?.action === action, done }]}>
+		{#if done}<Check />{:else}<Icon />{/if}
+	</span>
+{/snippet}
+
+{#snippet count(value: number)}
+	{#key value}<span class="count-value" in:fly={roll}>{value}</span>{/key}
+{/snippet}
+
 <section aria-label="Git">
 	<header>
 		{#if git.upstream}
 			<span class="upstream" title="Upstream branch">{git.upstream}</span>
-			<IconButton label="Fetch" title="Fetch (f)" disabled={busy} onclick={() => remote('fetch')}><ArrowsClockwise /></IconButton>
-			<Button variant="ghost" size="sm" aria-label="Pull" title={`Pull ${git.behind} from ${git.upstream} (p)`} disabled={busy} onclick={() => remote('pull')}>
-				<ArrowDown />{git.behind}
+			<IconButton label="Fetch" title="Fetch (f)" disabled={busy && running?.action !== 'fetch'} aria-busy={running?.action === 'fetch'} onclick={() => remote('fetch')}>
+				{@render motion('fetch', ArrowsClockwise)}
+			</IconButton>
+			<Button variant="ghost" size="sm" aria-label="Pull" title={`Pull ${git.behind} from ${git.upstream} (p)`} disabled={busy && running?.action !== 'pull'} aria-busy={running?.action === 'pull'} onclick={() => remote('pull')}>
+				{@render motion('pull', ArrowDown)}{@render count(git.behind)}
 			</Button>
-			<Button variant="ghost" size="sm" aria-label="Push" title={`Push ${git.ahead} to ${git.upstream} (P)`} disabled={busy || !git.ahead} onclick={push}>
-				<ArrowUp />{git.ahead}
+			<Button variant="ghost" size="sm" aria-label="Push" title={`Push ${git.ahead} to ${git.upstream} (P)`} disabled={busy ? running?.action !== 'push' : !git.ahead && finished[projectId] !== 'push'} aria-busy={running?.action === 'push'} onclick={push}>
+				{@render motion('push', ArrowUp)}{@render count(git.ahead)}
 			</Button>
 		{:else if publishable}
 			<span class="upstream">Not on origin</span>
-			<Button title="Publish Branch (P)" disabled={busy} onclick={push}><CloudArrowUp /> Publish Branch</Button>
+			<Button title="Publish Branch (P)" disabled={busy && running?.action !== 'publish'} busy={running?.action === 'publish'} onclick={push}><CloudArrowUp /> Publish Branch</Button>
 		{:else}
 			<span class="upstream">{git.detached ? 'Detached HEAD' : 'Local branch'}</span>
 		{/if}
 		{#if trunk && trunk.branch !== git.branch}
-			<span class="trunk" title="{trunk.behind} new on origin/{trunk.branch}">{trunk.branch}<ArrowDown />{trunk.behind}</span>
+			<Chip
+				variant="ghost"
+				mono
+				aria-label="Pull {trunk.branch}"
+				title="Pull {trunk.behind} new from origin/{trunk.branch} into {trunk.branch} without switching"
+				disabled={busy && running?.action !== 'trunk'}
+				aria-busy={running?.action === 'trunk'}
+				onclick={() => run('trunk', () => pullTrunk(projectId))}
+			>
+				{trunk.branch}{@render motion('trunk', ArrowDown)}{trunk.behind}
+			</Chip>
 		{/if}
 		<Menu
 			items={[
-				{ label: 'Stash All Changes', icon: Archive, hint: 's', disabled: busy || !git.changes.length, onselect: () => run(() => stash(projectId)) },
+				{ label: 'Stash All Changes', icon: Archive, hint: 's', disabled: busy || !git.changes.length, onselect: () => run('stash', () => stash(projectId)) },
 				{ label: 'Undo Last Commit', icon: ArrowUUpLeft, hint: 'z', disabled: busy, onselect: undoCommit }
 			]}
 		>
@@ -330,8 +367,9 @@
 				<IconButton {...props} label="More Git actions"><DotsThree /></IconButton>
 			{/snippet}
 		</Menu>
+		<ProgressLine active={busy && !committing} />
 	</header>
-	{#if failure}<pre class="failure" role="alert">{failure}</pre>{/if}
+	{#if failure && failure.action !== 'commit'}<pre class="failure" role="alert">{failure.text}</pre>{/if}
 	<div class="scroller">
 		{#if git.changes.length || git.operation || message}
 			<div class="commit">
@@ -342,17 +380,24 @@
 					placeholder="Commit message"
 					rows={3}
 					spellcheck="true"
+					readonly={committing}
 					onkeydown={commitKey}
 				/>
 				<div class="buttons">
-					<Button title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || !git.staged.length} onclick={draftMessage}>
+					{#if elapsed >= 2}<span class="elapsed" title="Time spent committing">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}</span>{/if}
+					<Button title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || committing || !git.staged.length} onclick={draftMessage}>
 						<Sparkle />{drafting ? 'Drafting…' : 'Draft'}
 					</Button>
-					<Button variant="primary" title="Commit (Ctrl+Enter)" disabled={!committable} onclick={commitStaged}>
-						<Check />{git.operation === 'merge' ? 'Commit Merge' : 'Commit'}
+					<Button variant="primary" title="Commit (Ctrl+Enter)" disabled={!committable && !committing} busy={committing} onclick={commitStaged}>
+						{#if committing}<LoadingMark />Committing{:else}<Check />{git.operation === 'merge' ? 'Commit Merge' : 'Commit'}{/if}
 					</Button>
 				</div>
 			</div>
+		{/if}
+		{#if committing && running?.output}
+			<pre class="log">{running.output.trimEnd()}</pre>
+		{:else if failure?.action === 'commit'}
+			<pre class="log failure" role="alert">{failure.text}</pre>
 		{/if}
 		{#if operation}<p class="operation" role="status">{operation}</p>{/if}
 		<!-- svelte-ignore a11y_no_static_element_interactions (Keys act on the focused row.) -->
@@ -370,7 +415,8 @@
 				{#if open}
 					<ul aria-label={label}>
 						{#each rows as row (row.key)}
-							<li class="row">
+							{@const waiting = row.kind === 'file' ? pending.has(row.change.path) : row.changes.every(({ path }) => pending.has(path))}
+							<li class="row" class:pending={waiting} aria-busy={waiting || undefined}>
 								{#if row.kind === 'folder'}
 									<TreeRow data-key={row.key} name={row.folder.name} depth={row.depth + 1} open={row.open} title={row.folder.path} onclick={() => toggle(row.key, row.changes.length > LARGE ? opened : collapsed)} />
 								{:else}
@@ -380,10 +426,12 @@
 										name={split(change.path).name}
 										depth={row.depth + 1}
 										git={change.kind}
-										letter={letters[change.kind]}
+										letter={waiting ? undefined : letters[change.kind]}
 										title={change.from ? `${change.from} → ${change.path}` : change.path}
 										onclick={() => openRow(targets.get(row.key)!)}
-									/>
+									>
+										{#if waiting}<span class="waiting"><LoadingMark /></span>{/if}
+									</TreeRow>
 								{/if}
 								{@render controls(targets.get(row.key))}
 							</li>
@@ -409,8 +457,8 @@
 								<span class="name">{message}</span>
 								<span class="date">{date}</span>
 								<span class="actions">
-									<IconButton label={`Pop ${message}`} title="Pop" disabled={busy} onclick={() => run(() => unstash(projectId, index, 'pop'))}><TrayArrowUp /></IconButton>
-									<IconButton label={`Apply ${message}`} title="Apply" disabled={busy} onclick={() => run(() => unstash(projectId, index, 'apply'))}><Copy /></IconButton>
+									<IconButton label={`Pop ${message}`} title="Pop" disabled={busy} onclick={() => run('unstash', () => unstash(projectId, index, 'pop'))}><TrayArrowUp /></IconButton>
+									<IconButton label={`Apply ${message}`} title="Apply" disabled={busy} onclick={() => run('unstash', () => unstash(projectId, index, 'apply'))}><Copy /></IconButton>
 									<IconButton label={`Drop ${message}`} title="Drop" disabled={busy} onclick={() => (dropping = index)}><Trash /></IconButton>
 								</span>
 							</li>
@@ -456,6 +504,7 @@
 	}
 
 	header {
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: var(--space-1);
@@ -472,14 +521,80 @@
 		white-space: nowrap;
 	}
 
-	.trunk {
+	.motion {
 		display: inline-flex;
-		align-items: center;
-		gap: 2px;
-		padding: 0 var(--space-2);
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-		white-space: nowrap;
+		transition: color var(--dur-fast);
+	}
+
+	.motion.active {
+		color: var(--color-fg);
+	}
+
+	.fetch.active {
+		animation: spin 0.8s linear var(--pulse);
+	}
+
+	.push.active {
+		animation: lift 0.9s var(--ease-out) var(--pulse);
+	}
+
+	:is(.pull, .trunk).active {
+		animation: drop 0.9s var(--ease-out) var(--pulse);
+	}
+
+	.motion.done {
+		color: var(--status-done);
+		animation: pop var(--dur-med) var(--ease-out);
+	}
+
+	.count-value {
+		display: inline-block;
+		font-variant-numeric: tabular-nums;
+	}
+
+	@keyframes spin {
+		to {
+			rotate: 1turn;
+		}
+	}
+
+	@keyframes lift {
+		from {
+			opacity: 0;
+			translate: 0 40%;
+		}
+		35%,
+		70% {
+			opacity: 1;
+		}
+		to {
+			opacity: 0;
+			translate: 0 -40%;
+		}
+	}
+
+	@keyframes drop {
+		from {
+			opacity: 0;
+			translate: 0 -40%;
+		}
+		35%,
+		70% {
+			opacity: 1;
+		}
+		to {
+			opacity: 0;
+			translate: 0 40%;
+		}
+	}
+
+	@keyframes pop {
+		from {
+			scale: 0.5;
+		}
+		60% {
+			scale: 1.2;
+		}
 	}
 
 
@@ -500,11 +615,20 @@
 
 	.buttons {
 		display: flex;
+		align-items: center;
 		justify-content: flex-end;
 		gap: var(--space-2);
 	}
 
-	.failure {
+	.elapsed {
+		color: var(--muted-fg);
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.failure,
+	.log {
 		max-height: 12em;
 		margin: 0 var(--space-3) var(--space-2);
 		overflow: auto;
@@ -515,6 +639,18 @@
 		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		white-space: pre-wrap;
+	}
+
+	/* Column-reverse keeps the newest output in view as it streams in. */
+	.log {
+		display: flex;
+		flex-direction: column-reverse;
+	}
+
+	.log:not(.failure) {
+		max-height: 8em;
+		border-left-color: var(--accent);
+		color: var(--muted-fg);
 	}
 
 	.operation {
@@ -544,6 +680,17 @@
 
 	li.row {
 		border-radius: var(--radius-md);
+		transition: opacity var(--dur-med);
+	}
+
+	li.pending {
+		opacity: 0.55;
+	}
+
+	.waiting {
+		display: inline-flex;
+		flex: none;
+		color: var(--muted-fg);
 	}
 
 	.heading {

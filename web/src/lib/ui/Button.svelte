@@ -1,15 +1,19 @@
 <script lang="ts">
+	import ProgressLine from '#lib/ui/ProgressLine.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 	import { mergeProps } from 'bits-ui';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	type Props = HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'ghost' | 'danger' | 'link'; size?: 'sm' | 'lg'; tip?: string };
+	type Props = HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'ghost' | 'danger' | 'link'; size?: 'sm' | 'lg'; tip?: string; busy?: boolean };
 
-	let { variant = 'default', size, tip, children: content, ...rest }: Props = $props();
+	let { variant = 'default', size, tip, busy, children: content, ...rest }: Props = $props();
 </script>
 
 {#snippet button(props: HTMLButtonAttributes)}
-	<button class={[variant, size]} {...props}>{@render content?.()}</button>
+	<button class={[variant, size, { busy, progress: busy !== undefined }]} aria-busy={busy || undefined} {...props}>
+		{@render content?.()}
+		{#if busy !== undefined}<ProgressLine active={busy} />{/if}
+	</button>
 {/snippet}
 
 {#if tip}
@@ -108,6 +112,21 @@
 		border-color: transparent;
 		background: none;
 		opacity: 0.45;
+	}
+
+	.progress {
+		position: relative;
+		overflow: clip;
+	}
+
+	.busy {
+		cursor: progress;
+	}
+
+	.primary.busy,
+	.primary.busy:hover:not(:disabled) {
+		--fill: color-mix(in oklab, var(--accent) 22%, var(--surface-2));
+		color: var(--color-fg);
 	}
 
 	.danger:not(:disabled) {

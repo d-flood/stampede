@@ -103,7 +103,7 @@ async fn changes_are_staged_unstaged_discarded_committed_and_undone() {
 
     let commit = format!("/api/projects/{id}/git/commit");
     assert_eq!(post(server.port, &commit, json!({ "message": "  " })).await.0, 400);
-    assert_eq!(post(server.port, &commit, json!({ "message": "Add new\n\nWith a body" })).await.0, 204);
+    assert_eq!(post(server.port, &commit, json!({ "message": "Add new\n\nWith a body" })).await, (200, "{\"ok\":true}\n".to_owned()));
     assert_eq!(log_message(&repo, "HEAD"), "Add new\n\nWith a body");
     assert_eq!(status().await["staged"], json!([]));
     assert_eq!(post(server.port, &commit, json!({ "message": "Nothing" })).await.0, 409);
@@ -127,7 +127,8 @@ async fn a_failing_hook_reports_what_it_printed() {
     Command::new("chmod").arg("+x").arg(repo.join(".git/hooks/pre-commit")).status().unwrap();
     let id = open(server.port, &repo).await;
     let (status, body) = post(server.port, &format!("/api/projects/{id}/git/commit"), json!({ "message": "Add file" })).await;
-    assert_eq!((status, body.as_str()), (400, "lint: trailing whitespace in file.txt"));
+    let lines: Vec<Value> = body.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!((status, lines), (200, vec![json!({ "output": "lint: trailing whitespace in file.txt\n" }), json!({ "ok": false })]));
 }
 
 #[tokio::test]
@@ -336,7 +337,7 @@ async fn conflicts_must_be_resolved_before_anything_risky() {
 
     fs::write(repo.join("clash.txt"), "both\n").unwrap();
     assert_eq!(post(server.port, &action("stage"), json!({ "paths": ["clash.txt"] })).await.0, 204);
-    assert_eq!(post(server.port, &action("commit"), json!({ "message": "Merge other" })).await.0, 204);
+    assert_eq!(post(server.port, &action("commit"), json!({ "message": "Merge other" })).await, (200, "{\"ok\":true}\n".to_owned()));
     let status = get(server.port, &format!("/api/projects/{id}/git")).await;
     assert!(status.get("operation").is_none());
     assert_eq!(log_message(&repo, "HEAD"), "Merge other");
@@ -389,7 +390,7 @@ async fn branches_publish_push_fetch_and_fast_forward_against_origin() {
 }
 
 #[tokio::test]
-async fn devices_hear_when_origin_moves_the_default_branch_ahead_of_any_checkout() {
+async fn origin_moving_the_default_branch_ahead_is_heard_and_pulled_without_switching() {
     let mut server = Server::start("git-origin").await;
     let origin = server.root.path().join("origin.git");
     git(server.root.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
@@ -410,9 +411,17 @@ async fn devices_hear_when_origin_moves_the_default_branch_ahead_of_any_checkout
     let ahead = heard(&mut socket, |trunks| trunks.get(&id).is_some()).await;
     assert_eq!(ahead[&id], json!({ "branch": "main", "behind": 1 }));
 
-    git(&repo, &["switch", "-q", "main"]);
-    git(&repo, &["merge", "-q", "--ff-only", "origin/main"]);
+    let (head, trunk) = (rev_parse(&repo, "HEAD"), format!("/api/projects/{id}/git/trunk"));
+    assert_eq!(post(server.port, &trunk, json!(null)).await, (204, String::new()));
     heard(&mut socket, |trunks| trunks.as_object().unwrap().is_empty()).await;
+    assert_eq!((rev_parse(&repo, "main"), rev_parse(&repo, "HEAD")), (rev_parse(&other, "main"), head));
+
+    let checkout = server.root.path().join("checkout");
+    git(&repo, &["worktree", "add", "-q", checkout.to_str().unwrap(), "main"]);
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "Again"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+    assert_eq!(post(server.port, &trunk, json!(null)).await, (204, String::new()));
+    assert_eq!((rev_parse(&checkout, "HEAD"), fs::read_to_string(repo.join(".git/HEAD")).unwrap()), (rev_parse(&other, "main"), "ref: refs/heads/feature\n".to_owned()));
 }
 
 #[tokio::test]
