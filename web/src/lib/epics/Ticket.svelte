@@ -9,7 +9,6 @@
 	import { label, marks, onFrontier, record, resolved, toggle, tones, type OpenEpic } from '#lib/epics.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
-	import Chip from '#lib/ui/Chip.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import ChatCircle from '~icons/ph/chat-circle';
@@ -140,38 +139,7 @@
 	{#if startable && epic.setup === null}
 		<p class="hint">Record a Setup Command before starting a Ticket.</p>
 	{/if}
-	{#if phone && (blockedBy.length || blocks.length)}
-		<div class="chips">
-			{#each blockedBy as other (other.number)}
-				{@const Other = marks[other.status]}
-				<Chip onclick={() => onselect(other.number)}><span class="mark" style:color={tones[other.status]}><Other /></span>after {other.number}</Chip>
-			{/each}
-			{#each blocks as other (other.number)}
-				<Chip onclick={() => onselect(other.number)}>blocks {other.number}</Chip>
-			{/each}
-		</div>
-	{/if}
 	<div class="columns">
-		<div class="doc">
-			<section aria-label="Body">
-				<Text item={{ kind: 'text', text: ticket.body, streaming: false, phase: 'final' }} />
-			</section>
-			<section aria-label="Notes">
-				<h3>Notes</h3>
-				{#each ticket.notes as note, index (index)}
-					<div class="note">
-						<span class="meta">{authors[note.author]} · {ago(note.at)}</span>
-						<Text item={{ kind: 'text', text: note.text, streaming: false, phase: 'final' }} />
-					</div>
-				{:else}
-					<p>No Notes yet.</p>
-				{/each}
-				<form onsubmit={add}>
-					<TextField bind:value={draft} aria-label="Add a Note" placeholder="Add a Note…" enterkeyhint="send" autocomplete="off" readonly={adding} />
-				</form>
-				{#if unsaved}<p class="error" role="alert">{unsaved}</p>{/if}
-			</section>
-		</div>
 		<div class="props">
 			<div class="prop">
 				<h3>Rig</h3>
@@ -205,6 +173,26 @@
 				<h3>Tags</h3>
 				<Tags tags={ticket.tags ?? []} onchange={tag} disabled={tagging} />
 				{#if tagError}<p role="alert">{tagError}</p>{/if}
+			</section>
+		</div>
+		<div class="doc">
+			<section aria-label="Body">
+				<Text item={{ kind: 'text', text: ticket.body, streaming: false, phase: 'final' }} />
+			</section>
+			<section aria-label="Notes">
+				<h3>Notes</h3>
+				{#each ticket.notes as note, index (index)}
+					<div class="note">
+						<span class="meta">{authors[note.author]} · {ago(note.at)}</span>
+						<Text item={{ kind: 'text', text: note.text, streaming: false, phase: 'final' }} />
+					</div>
+				{:else}
+					<p>No Notes yet.</p>
+				{/each}
+				<form onsubmit={add}>
+					<TextField bind:value={draft} aria-label="Add a Note" placeholder="Add a Note…" enterkeyhint="send" autocomplete="off" readonly={adding} />
+				</form>
+				{#if unsaved}<p class="error" role="alert">{unsaved}</p>{/if}
 			</section>
 		</div>
 	</div>
@@ -307,6 +295,7 @@
 	.columns {
 		display: grid;
 		grid-template-columns: minmax(0, 68ch) minmax(11rem, 15rem);
+		grid-template-areas: 'doc props';
 		justify-content: space-between;
 		gap: var(--space-6) calc(2 * var(--space-6));
 		padding-top: var(--space-2);
@@ -315,7 +304,21 @@
 	@container (max-width: 44rem) {
 		.columns {
 			grid-template-columns: minmax(0, 1fr);
+			grid-template-areas: 'props' 'doc';
 		}
+
+		.props {
+			padding-bottom: var(--space-6);
+			border-bottom: var(--border-width) solid var(--border);
+		}
+	}
+
+	.doc {
+		grid-area: doc;
+	}
+
+	.props {
+		grid-area: props;
 	}
 
 	.doc,
@@ -387,12 +390,6 @@
 		font-size: var(--font-size-sm);
 	}
 
-	.chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-2);
-	}
-
 	.note {
 		padding-left: var(--space-3);
 		border-left: 2px solid var(--border);
@@ -451,5 +448,11 @@
 
 	.phone .columns {
 		grid-template-columns: minmax(0, 1fr);
+		grid-template-areas: 'props' 'doc';
+	}
+
+	.phone .props {
+		padding-bottom: var(--space-6);
+		border-bottom: var(--border-width) solid var(--border);
 	}
 </style>

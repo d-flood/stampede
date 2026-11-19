@@ -61,7 +61,10 @@ test('an Epic made through the CLI shows live in the Epics section, its Tab and 
 	if (phone) {
 		await expect(panel.getByRole('heading', { name: `${slug}/2` })).toBeVisible();
 		await expect(panel.getByRole('heading', { name: 'The tab' })).toBeVisible();
-		await expect(panel.getByText('after 1', { exact: true })).toBeVisible();
+		const blockers = panel.getByRole('region', { name: 'Blockers' });
+		await expect(blockers).toContainText('The section');
+		const [above, below] = await Promise.all([blockers, panel.getByRole('region', { name: 'Body' })].map((region) => region.boundingBox()));
+		expect(above!.y).toBeLessThan(below!.y);
 	} else {
 		await expect(row).toHaveAttribute('aria-current', 'true');
 	}
