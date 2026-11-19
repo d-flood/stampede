@@ -951,6 +951,9 @@ impl Transcript {
         });
         let capabilities = Capabilities {
             rewinds_files: false,
+            forks: true,
+            rewinds: true,
+            compacts: true,
             models: self.models.iter().filter_map(|model| model["model"].as_str()).map(str::to_owned).collect(),
             efforts: self.efforts(),
             speeds: self.listed().map(speeds).unwrap_or_default(),

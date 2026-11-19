@@ -227,17 +227,35 @@ async fn saved_rig_names_are_discoverable_and_can_be_used_for_delegation_after_r
 #[tokio::test]
 async fn delegation_discovers_rigs_and_rejects_invalid_tasks_without_starting_children() {
     let (server, mut socket, source, _fixtures) = launch("claude-code", "codex", false).await;
+    let client = reqwest::Client::new();
+    for (name, agent, disabled) in [("Antigravity", "antigravity", json!([])), ("Limited", "claude-code", json!(["render_html", "delegate_to_rig"]))] {
+        let response = client.put(format!("http://127.0.0.1:{}/api/rigs", server.port)).header("Content-Type", "application/json")
+            .body(json!({ "name": name, "agent": agent, "mode": "default", "disabled_tools": disabled }).to_string()).send().await.unwrap();
+        assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    }
     let rigs = call(&server, &source, "list_rigs", json!({})).await;
     let rigs: Value = serde_json::from_str(rigs["content"][0]["text"].as_str().unwrap()).unwrap();
-    assert_eq!(rigs[0]["name"], "source");
+    let names: Vec<_> = rigs.as_array().unwrap().iter().map(|rig| rig["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["source", "target", "Limited"]);
     assert_eq!(rigs[1]["agent"], "codex");
     assert!(rigs.as_array().unwrap().iter().all(|rig| rig.get("env").is_none()));
+    let refused = call(&server, &source, "delegate_to_rig", json!({ "rig": "Antigravity", "task": TASK })).await;
+    assert_eq!(refused["isError"], true);
+    assert_eq!(refused["content"][0]["text"], "Google's terms don't allow another Agent to drive Google Antigravity on a Google login.");
     for arguments in [json!({ "rig": "missing", "task": TASK }), json!({ "rig": "target", "task": " " }),
         json!({ "rig": "target", "task": TASK, "extra": true }), json!({ "rig": "target", "task": "x".repeat(65537) })]
     {
         assert_eq!(call(&server, &source, "delegate_to_rig", arguments).await["isError"], true);
     }
     assert_eq!(fs::read_dir(server.root.path().join("data/chats")).unwrap().filter(|entry| entry.as_ref().unwrap().path().extension().is_some_and(|extension| extension == "json")).count(), 1);
+    control(&mut socket, json!({ "type": "chat.create", "projectId": source["projectId"], "rig": "Limited" })).await;
+    let limited = next_control(&mut socket, "chat.created").await["chat"].clone();
+    let catalog = catalog(&server, &limited).await;
+    let names: Vec<_> = catalog["tools"].as_array().unwrap().iter().map(|tool| tool["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["ask_questions", "stage_command", "read_terminal", "render_media", "pr_review"]);
+    let refused = call(&server, &limited, "render_html", json!({ "title": "Flow", "html": "<svg></svg>" })).await;
+    assert_eq!((&refused["isError"], &refused["content"][0]["text"]), (&json!(true), &json!("This tool is turned off for this Rig.")));
+    control(&mut socket, json!({ "type": "chat.close", "chatId": limited["id"] })).await;
     close_chat(&mut socket, server.root.path(), source["id"].as_str().unwrap()).await;
 }
 

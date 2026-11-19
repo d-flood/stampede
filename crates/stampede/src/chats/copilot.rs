@@ -288,7 +288,7 @@ async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: A
     server["type"] = json!("stdio");
     server["timeout"] = json!(86400000);
     let servers = serde_json::from_value(json!({ html::SERVER: server }))?;
-    let stampede = SystemMessageConfig::new().with_content(html::instructions(data_dir, Some(&chat.id)));
+    let stampede = SystemMessageConfig::new().with_content(html::instructions(data_dir, Some(&chat.id), &chat.disabled_tools));
     if let Some(id) = &chat.agent_session {
         let mut config = ResumeSessionConfig::new(SessionId::new(id))
             .with_working_directory(&chat.cwd).with_streaming(true).with_mcp_servers(servers).with_system_message(stampede).with_excluded_tools(["ask_user"])
@@ -327,6 +327,9 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
     let mut transcript = Transcript::new(&chat.cwd, events, chat.settings.clone());
     transcript.data_dir = Some(data_dir.to_owned());
     transcript.capabilities.models = models.iter().filter_map(|model| model["id"].as_str().map(str::to_owned)).collect();
+    transcript.capabilities.forks = true;
+    transcript.capabilities.rewinds = true;
+    transcript.capabilities.compacts = true;
     transcript.capabilities.modes = Agent::Copilot.modes().iter().map(|mode| Choice::mode(mode)).collect();
     if let Ok(current) = rpc(session.rpc().model().get_current()).await {
         transcript.settings.chosen.model = current.model_id.or(transcript.settings.chosen.model);

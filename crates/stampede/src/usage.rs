@@ -43,12 +43,20 @@ pub struct Consumption {
     pub unit: Unit,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Group {
+    pub name: String,
+    pub short: String,
+}
+
 /// Times are milliseconds since the Unix epoch.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reading {
     pub agent: Agent,
     pub window: Window,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<Group>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub used: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,7 +77,7 @@ pub struct Reading {
 impl Reading {
     pub fn new(agent: Agent, window: Window, used: f64, resets_at: Option<u64>) -> Self {
         let read_at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64);
-        Self { agent, window, used: Some(used), consumption: None, chat_id: None, session_id: None, partial: false, starts_at: None, resets_at, read_at }
+        Self { agent, window, group: None, used: Some(used), consumption: None, chat_id: None, session_id: None, partial: false, starts_at: None, resets_at, read_at }
     }
 }
 
@@ -129,7 +137,7 @@ impl Usage {
 impl Snapshot {
     fn record(&mut self, readings: Vec<Reading>) {
         for mut reading in readings {
-            match self.readings.iter_mut().find(|old| old.agent == reading.agent && old.window == reading.window && old.session_id == reading.session_id) {
+            match self.readings.iter_mut().find(|old| old.agent == reading.agent && old.window == reading.window && old.group == reading.group && old.session_id == reading.session_id) {
                 Some(old) => {
                     if reading.window == Window::Session && old.consumption.as_ref().is_some_and(|old| old.unit == Unit::Credits && reading.consumption.as_ref().is_none_or(|new| new.unit != Unit::Credits || new.amount < old.amount)) {
                         continue;
@@ -198,7 +206,7 @@ pub fn spawn(usage: Arc<Usage>, config: watch::Receiver<Arc<Config>>, mut device
 
 fn read(usage: &Arc<Usage>, config: &watch::Receiver<Arc<Config>>) {
     let rigs = config.borrow().rigs.clone();
-    for agent in [Agent::ClaudeCode, Agent::Codex, Agent::Copilot] {
+    for agent in Agent::ALL {
         let Some(rig) = rigs.iter().find(|rig| rig.agent == agent).cloned() else { continue };
         let usage = Arc::clone(usage);
         tokio::spawn(async move {

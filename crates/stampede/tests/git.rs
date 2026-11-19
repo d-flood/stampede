@@ -542,6 +542,10 @@ async fn the_commit_rig_drafts_a_message_from_the_staged_diff() {
     fs::write(&fixture, bare.iter().map(|args| format!("{}\n", json!({ "args": args }))).collect::<String>() + &turn).unwrap();
     let config = format!(r#"
 [[rig]]
+name = "Antigravity"
+agent = "antigravity"
+
+[[rig]]
 name = "Coder"
 agent = "claude-code"
 env = {{ STAMPEDE_FAKE_FIXTURE = "simple-turn" }}
@@ -564,6 +568,7 @@ env = {{ STAMPEDE_FAKE_FIXTURE = "{}", STAMPEDE_FAKE_RECEIVED = "{}" }}
     let choose = |name: &str| put(server.port, "/api/commit-rig", json!(name));
     assert_eq!(get(server.port, "/api/commit-rig").await, "Coder");
     assert_eq!(choose("Nobody").await.0, 400);
+    assert_eq!(choose("Antigravity").await.0, 400);
     assert_eq!(choose("Writer").await.0, 200);
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while get(server.port, "/api/commit-rig").await != "Writer" { tokio::time::sleep(std::time::Duration::from_millis(20)).await; }
@@ -588,6 +593,11 @@ env = {{ STAMPEDE_FAKE_FIXTURE = "{}", STAMPEDE_FAKE_RECEIVED = "{}" }}
     assert_eq!(instructions(" ").await, (200, default.to_string()));
     settled(default).await.unwrap();
     assert!(!fs::read_to_string(server.root.path().join("config.toml")).unwrap().contains("commit_instructions"));
+    let config_path = server.root.path().join("config.toml");
+    fs::write(&config_path, format!("commit_rig = 'Antigravity'\n{config}")).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while get(server.port, "/api/commit-rig").await != "Coder" { tokio::time::sleep(std::time::Duration::from_millis(20)).await; }
+    }).await.unwrap();
 }
 
 #[tokio::test]

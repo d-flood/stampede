@@ -33,11 +33,11 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', { tag
 	await sections.getByRole('radio', { name: 'Epics', exact: true }).click();
 	await expect(sections.getByRole('radio', { name: 'Epics', exact: true })).toHaveAttribute('aria-checked', 'true');
 	const usage = sidebar.getByRole('region', { name: 'Usage windows' });
-	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(60);
+	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(106);
 	for (const name of ['Claude', 'Codex']) {
 		const agent = usage.getByRole('group', { name, exact: true });
 		await expect(agent.locator('.brand svg')).toBeVisible();
-		await expect(agent.getByRole('meter')).toHaveCount(1);
+		await expect(agent.getByRole('meter')).toHaveCount(2);
 	}
 	await expect(usage.locator('[title]')).toHaveCount(0);
 	const trigger = usage.getByRole('button', { name: 'Usage details' });

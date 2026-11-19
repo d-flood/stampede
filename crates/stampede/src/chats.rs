@@ -1,3 +1,4 @@
+pub(crate) mod antigravity;
 pub(crate) mod claude;
 pub(crate) mod codex;
 pub(crate) mod copilot;
@@ -657,6 +658,9 @@ pub trait Driver: Send + Sync {
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
     pub rewinds_files: bool,
+    pub forks: bool,
+    pub rewinds: bool,
+    pub compacts: bool,
     pub models: Vec<String>,
     pub efforts: Vec<String>,
     pub speeds: Vec<Choice>,
@@ -817,6 +821,8 @@ pub struct Chat {
     pub draft: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shell_context: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_tools: Vec<String>,
 }
 
 /// What a Run started a Chat to do, which decides the actions of its `epic` tool.
@@ -847,12 +853,13 @@ impl Session {
     }
 }
 
-pub async fn sessions(cwd: &Path, claude: &Rig, codex: &Rig, copilot: &Rig) -> Vec<Session> {
+pub async fn sessions(cwd: &Path, claude: &Rig, codex: &Rig, copilot: &Rig, antigravity: &Rig) -> Vec<Session> {
     let mut sessions = Vec::new();
     for (agent, listed) in [
         (Agent::ClaudeCode, claude::sessions(cwd, &claude.env)),
         (Agent::Codex, codex::sessions(cwd, &codex.env).await),
         (Agent::Copilot, copilot::sessions(cwd, &copilot.env).await),
+        (Agent::Antigravity, antigravity::sessions(cwd, &antigravity.env).await),
     ] {
         match listed {
             Ok(listed) => sessions.extend(listed),
@@ -1070,6 +1077,7 @@ impl Chats {
             duty,
             draft,
             shell_context: Vec::new(),
+            disabled_tools: rig.disabled_tools.clone(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, cwd, &rig.env).await?;
@@ -1086,6 +1094,8 @@ impl Chats {
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             Agent::Copilot => copilot::start(&self.data_dir, &chat, &storage.env)
                 .await
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+            Agent::Antigravity => Ok(antigravity::start(&self.data_dir, &chat, &storage.env).await)
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
         };
         let (driver, events) = started.inspect_err(|_| {
@@ -1155,6 +1165,8 @@ impl Chats {
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             Agent::Copilot => copilot::start(&self.data_dir, chat, env)
                 .await
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+            Agent::Antigravity => Ok(antigravity::start(&self.data_dir, chat, env).await)
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
         }
     }
@@ -1268,6 +1280,7 @@ impl Chats {
             }
             Agent::Codex => chat.agent_session = codex::fork(&self.data_dir, &chat, &storage.env, &session, &checkpoint).await?,
             Agent::Copilot => chat.agent_session = Some(copilot::fork(&chat.cwd, &storage.env, &session, &checkpoint).await?),
+            Agent::Antigravity => return Err(io::Error::other("Google Antigravity can't fork Chats.")),
         }
         self.open(chat, storage).await
     }
@@ -1994,6 +2007,7 @@ pub async fn usage(rig: &Rig) -> io::Result<Snapshot> {
         Agent::ClaudeCode => Ok(Snapshot { readings: claude::usage(&rig.env).await?, ..Snapshot::default() }),
         Agent::Codex => codex::usage(&rig.env).await,
         Agent::Copilot => Ok(Snapshot { readings: copilot::usage(&rig.env).await?, ..Snapshot::default() }),
+        Agent::Antigravity => Ok(Snapshot { readings: antigravity::usage(&rig.env).await?, ..Snapshot::default() }),
     }
 }
 

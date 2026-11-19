@@ -2,7 +2,7 @@
 	import { agentNames } from '#lib/config.svelte.ts';
 	import { cold, warmth } from '#lib/chat/cache.ts';
 	import Chips from '#lib/chat/Chips.svelte';
-	import { recognize } from '#lib/chat/commands.ts';
+	import { builtins, recognize } from '#lib/chat/commands.ts';
 	import ContextBar from '#lib/chat/ContextBar.svelte';
 	import { count } from '#lib/chat/count.ts';
 	import FileMenu from '#lib/chat/FileMenu.svelte';
@@ -120,7 +120,7 @@
 			return false;
 		}
 		const [, command, value] = text.trim().match(/^\/(\w+)(?: +(\S+))?$/) ?? [];
-		if (!images.length && (command === 'compact' || command === 'rewind')) {
+		if (!images.length && (command === 'compact' || command === 'rewind') && builtins(capabilities).includes(command)) {
 			if (chat.status !== 'done' || value) return false;
 			onrun(command);
 			return true;

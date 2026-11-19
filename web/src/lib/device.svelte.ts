@@ -89,6 +89,9 @@ export function chosen(setting: Setting, settings: Settings, choices: Record<Set
 
 export type Capabilities = {
 	rewindsFiles: boolean;
+	forks: boolean;
+	rewinds: boolean;
+	compacts: boolean;
 	models: string[];
 	efforts: string[];
 	speeds: Choice[];
@@ -125,7 +128,7 @@ export type Chat = {
 	draft?: string;
 };
 
-export type Reading = { agent: Agent; window: 'five-hour' | 'weekly' | 'monthly' | 'session'; used?: number; consumption?: { amount: number; unit: 'credits' | 'requests' | 'tokens' }; chatId?: string; sessionId?: string; partial?: boolean; startsAt?: number; resetsAt?: number; readAt: number };
+export type Reading = { agent: Agent; window: 'five-hour' | 'weekly' | 'monthly' | 'session'; group?: { name: string; short: string }; used?: number; consumption?: { amount: number; unit: 'credits' | 'requests' | 'tokens' }; chatId?: string; sessionId?: string; partial?: boolean; startsAt?: number; resetsAt?: number; readAt: number };
 
 export type ResetCredits = { availableCount: number; expiresAt?: number; creditId?: string };
 

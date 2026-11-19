@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{io::AsyncWriteExt, process::Command};
 
-use crate::{AppState, chats::{Choice, claude, codex, copilot}, config::{self, Agent, Rig}, files::Failure};
+use crate::{AppState, chats::{Choice, antigravity, claude, codex, copilot}, config::{self, Agent, Rig}, files::Failure};
 
 #[derive(Deserialize)]
 pub struct Selection {
@@ -26,6 +26,7 @@ pub async fn options(State(state): State<AppState>, Query(selection): Query<Sele
             Agent::ClaudeCode => claude::options(&cwd, &rig.env, &settings).await,
             Agent::Codex => codex::options(&cwd, &rig.env, &settings).await,
             Agent::Copilot => copilot::options(&cwd, &rig.env, &settings).await,
+            Agent::Antigravity => antigravity::options(&cwd, &rig.env, &settings).await,
         }
     }).await.map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Provider took too long to list models. Try again.".to_owned()))?
         .map_err(|error| (StatusCode::BAD_GATEWAY, error.to_string()))?;
@@ -44,6 +45,11 @@ pub async fn options(State(state): State<AppState>, Query(selection): Query<Sele
             Agent::Copilot => (
                 model["id"].as_str()?, model["name"].as_str().or(model["id"].as_str())?,
                 model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect(),
+                Vec::new(),
+            ),
+            Agent::Antigravity => (
+                model["value"].as_str()?, model["name"].as_str().or(model["value"].as_str())?,
+                model["efforts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect(),
                 Vec::new(),
             ),
         };
@@ -66,6 +72,8 @@ pub struct Save {
     speed: Option<String>,
     ultracode: Option<String>,
     mode: String,
+    #[serde(default)]
+    disabled_tools: Vec<String>,
 }
 
 pub async fn save(State(state): State<AppState>, Json(mut save): Json<Save>) -> Result<Json<Vec<Rig>>, Failure> {
@@ -74,7 +82,7 @@ pub async fn save(State(state): State<AppState>, Json(mut save): Json<Save>) -> 
     let original = save.original.clone();
     let name = save.name.clone();
     let rigs = tokio::task::spawn_blocking(move || {
-        let rig = Rig { name: save.name, agent: save.agent, env: Default::default(), shortcut: None, model: save.model, effort: save.effort, speed: save.speed, ultracode: save.ultracode, mode: Some(save.mode) };
+        let rig = Rig { name: save.name, agent: save.agent, env: Default::default(), shortcut: None, model: save.model, effort: save.effort, speed: save.speed, ultracode: save.ultracode, mode: Some(save.mode), disabled_tools: save.disabled_tools };
         config::write_rig(&state.config_path, save.original.as_deref(), rig)
     }).await.map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
@@ -132,6 +140,7 @@ pub async fn ask(cwd: &Path, rig: &Rig, prompt: &str) -> io::Result<String> {
             command.args(rig.effort.iter().flat_map(|effort| ["--reasoning-effort", effort]));
             once(command, &rig.env, cwd, prompt).await
         }
+        Agent::Antigravity => Err(io::Error::other("Google Antigravity can't draft commit messages. Choose another Rig.")),
     }.map_err(|error| io::Error::other(format!("{} failed: {error}", rig.name)))?;
     if answer.is_empty() {
         return Err(io::Error::other(format!("{} ended without an answer.", rig.name)));

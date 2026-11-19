@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+import uuid
+
+root = Path(os.environ.get('STAMPEDE_TEST_ROOT', os.environ.get('STAMPEDE_E2E_ROOT', '/tmp')))
+state = root / 'agy'
+stored = state / 'sessions'
+stored.mkdir(parents=True, exist_ok=True)
+fixture = os.environ.get('STAMPEDE_FAKE_FIXTURE', 'simple-turn')
+FIXTURES = Path(__file__).resolve().parent.parent / 'fixtures/chats/antigravity'
+UPDATED = '2026-11-19T05:42:19Z'
+RECORDED = ('user_message_chunk', 'agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update')
+asked = 0
+
+
+def quota():
+    reads = state / 'quota-reads'
+    later = reads.exists()
+    reads.touch()
+    buckets = [('Gemini Models', 'gemini-weekly', 0.75 if later else 0.9892, '2026-11-26T05:42:15Z'), ('Claude and GPT models', '3p-weekly', 0.5 if later else 1, '2026-11-26T05:56:49Z')]
+    groups = [{'name': name, 'description': '', 'buckets': [{'id': id, 'name': 'Weekly Limit Remaining', 'window': 'weekly', 'remaining_fraction': remaining, 'reset_time': reset}]} for name, id, remaining, reset in buckets]
+    print(json.dumps({'conversation_id': '', 'status': 'SUCCESS', 'num_turns': 0, 'usage': {'total_tokens': 0}, 'command': {'name': 'usage', 'data': {'groups': groups}}}))
+
+
+if sys.argv[1:] == ['-p', '/quota', '--output-format', 'json']:
+    quota()
+    sys.exit(0)
+
+
+def send(message):
+    sys.stdout.write(json.dumps({'jsonrpc': '2.0', **message}) + '\n')
+    sys.stdout.flush()
+
+
+def reply(request, result):
+    send({'id': request['id'], 'result': result})
+
+
+def fail(request, code, message):
+    send({'id': request['id'], 'error': {'code': code, 'message': message}})
+
+
+def receive():
+    line = sys.stdin.readline()
+    if not line:
+        sys.exit(0)
+    message = json.loads(line)
+    with (state / 'received.jsonl').open('a') as log:
+        log.write(json.dumps(message) + '\n')
+    return message
+
+
+def load(session):
+    return json.loads((stored / f'{session}.json').read_text())
+
+
+def save(session, value):
+    (stored / f'{session}.json').write_text(json.dumps(value))
+
+
+def options(session):
+    return [
+        {'id': 'model', 'name': 'Model', 'category': 'model', 'type': 'select', 'currentValue': session['model'], 'options': [
+            {'value': 'gemini-3.8-flash', 'name': 'Gemini 3.8 Flash'},
+            {'value': 'claude-opus-4-6-thinking', 'name': 'Claude Opus 4.6 (Thinking)'},
+        ]},
+        {'id': 'thought_level', 'name': 'Thinking', 'category': 'thought_level', 'type': 'select', 'currentValue': session['effort'], 'options': [
+            {'value': 'low', 'name': 'Low'}, {'value': 'medium', 'name': 'Medium'}, {'value': 'high', 'name': 'High'},
+        ]},
+    ]
+
+
+def opened(id, session):
+    modes = [{'id': 'default', 'name': 'Default'}, {'id': 'accept-edits', 'name': 'Accept edits'}, {'id': 'plan', 'name': 'Plan'}]
+    return {'sessionId': id, 'modes': {'currentModeId': session['mode'], 'availableModes': modes}, 'configOptions': options(session)}
+
+
+def update(id, session, value):
+    if value['sessionUpdate'] in RECORDED:
+        session['history'].append(value)
+    if value['sessionUpdate'] == 'session_info_update':
+        session['title'] = value['title']
+    send({'method': 'session/update', 'params': {'sessionId': id, 'update': value}})
+
+
+def answer(asking):
+    while True:
+        message = receive()
+        if message.get('id') == asking and 'method' not in message:
+            outcome = message['result']['outcome']
+            return outcome.get('optionId', 'cancelled') if outcome['outcome'] == 'selected' else 'cancelled'
+        handle(message)
+
+
+def prompt(request):
+    global asked
+    id = request['params']['sessionId']
+    session = load(id)
+    for block in request['params']['prompt']:
+        session['history'].append({'sessionUpdate': 'user_message_chunk', 'content': block})
+    chosen = None
+    stop = 'end_turn'
+    usage = None
+    for line in (FIXTURES / f'{fixture}.synthetic.jsonl').read_text().splitlines():
+        step = json.loads(line.replace('{cwd}', session['cwd']))
+        if step.get('when', chosen) != chosen:
+            continue
+        if 'update' in step:
+            update(id, session, step['update'])
+        elif 'permission' in step:
+            asked += 1
+            asking = f'permission-{asked}'
+            send({'id': asking, 'method': 'session/request_permission', 'params': {'sessionId': id, **step['permission']}})
+            chosen = answer(asking)
+            if chosen == 'cancelled':
+                stop = 'cancelled'
+                break
+        elif 'usage' in step:
+            usage = step['usage']
+    save(id, session)
+    result = {'stopReason': stop}
+    if usage and stop != 'cancelled':
+        result['usage'] = usage
+    reply(request, result)
+
+
+def handle(request):
+    method = request.get('method', '')
+    params = request.get('params', {})
+    if method == 'initialize':
+        reply(request, {
+            'protocolVersion': 1,
+            'agentCapabilities': {'loadSession': True, 'promptCapabilities': {'image': True, 'audio': False, 'embeddedContext': True}, 'sessionCapabilities': {'resume': {}, 'close': {}, 'load': {}, 'list': {}}},
+            'agentInfo': {'name': 'Antigravity ACP Server', 'version': '1.5.12'},
+            'authMethods': [{'id': 'oauth-personal', 'name': 'Log in with Google'}],
+        })
+    elif method in ('session/new', 'session/load') and fixture == 'unauthenticated':
+        fail(request, -32000, 'Authentication required')
+    elif method == 'session/new':
+        id = str(uuid.uuid4())
+        session = {'cwd': params['cwd'], 'title': None, 'model': 'gemini-3.8-flash', 'effort': 'high', 'mode': 'default', 'history': []}
+        save(id, session)
+        reply(request, opened(id, session))
+    elif method == 'session/load':
+        id = params['sessionId']
+        if not (stored / f'{id}.json').exists():
+            return fail(request, -32002, 'Session not found')
+        session = load(id)
+        for value in session['history']:
+            send({'method': 'session/update', 'params': {'sessionId': id, 'update': value}})
+        reply(request, opened(id, session))
+    elif method == 'session/list':
+        if params.get('cursor'):
+            listed = [load(path.stem) | {'sessionId': path.stem} for path in stored.glob('*.json')]
+            sessions = [{'sessionId': session['sessionId'], 'cwd': session['cwd'], 'title': session['title'], 'updatedAt': UPDATED} for session in listed if session['title']]
+            reply(request, {'sessions': sessions})
+        else:
+            elsewhere = {'sessionId': 'elsewhere-session', 'cwd': '/elsewhere', 'title': 'Another project', 'updatedAt': UPDATED}
+            reply(request, {'sessions': [elsewhere], 'nextCursor': 'more'})
+    elif method == 'session/set_config_option':
+        id = params['sessionId']
+        session = load(id)
+        session['model' if params['configId'] == 'model' else 'effort'] = params['value']
+        save(id, session)
+        reply(request, {'configOptions': options(session)})
+    elif method == 'session/set_mode':
+        id = params['sessionId']
+        session = load(id)
+        session['mode'] = params['modeId']
+        save(id, session)
+        reply(request, {})
+    elif method == 'session/prompt':
+        prompt(request)
+    elif method == 'authenticate':
+        fail(request, -32603, 'Stampede must never authenticate')
+    elif 'id' in request and method:
+        reply(request, {})
+
+
+while True:
+    handle(receive())

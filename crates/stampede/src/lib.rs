@@ -500,7 +500,7 @@ async fn set_modes(State(state): State<AppState>, Json(chosen): Json<ChosenModes
 }
 
 fn mode_choices(config: &Config) -> Value {
-    Value::Object([Agent::ClaudeCode, Agent::Codex, Agent::Copilot].into_iter().map(|agent| {
+    Value::Object(Agent::ALL.into_iter().map(|agent| {
         let available = config.available_modes(agent);
         let choices = agent.chat_modes().into_iter().map(|mode| {
             json!({ "value": mode, "label": chats::Choice::mode(mode).label, "available": available.contains(&mode) })

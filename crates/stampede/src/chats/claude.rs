@@ -1381,6 +1381,9 @@ impl Transcript {
         let efforts = listed.and_then(|listed| listed["supportedEffortLevels"].as_array()).into_iter().flatten();
         let capabilities = Capabilities {
             rewinds_files: true,
+            forks: true,
+            rewinds: true,
+            compacts: true,
             models: self.models.iter().filter_map(|model| model["value"].as_str()).map(str::to_owned).collect(),
             efforts: efforts.filter_map(Value::as_str).map(str::to_owned).collect(),
             speeds: listed.map(speeds).unwrap_or_default(),

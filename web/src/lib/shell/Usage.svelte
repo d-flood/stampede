@@ -18,13 +18,13 @@
 	const agents = [
 		{ agent: 'claude-code', label: 'Claude', Logo: logos['claude-code'] },
 		{ agent: 'codex', label: 'Codex', Logo: logos.codex },
+		{ agent: 'antigravity', label: 'Google Antigravity', Logo: logos.antigravity },
 		{ agent: 'copilot', label: 'Copilot', Logo: logos.copilot }
 	] as const;
 	const high = 80;
 
 	const visibleAgents = $derived(agents.filter(({ agent }) => (agent === 'codex' && codexResets !== null) || readings.some((reading) => reading.agent === agent && (agent === 'copilot' || reading.used !== undefined))));
 	const resets = $derived(codexResets?.availableCount ?? 0);
-	const crowded = $derived(agents.flatMap(({ agent }) => measured(agent)).length > 3);
 
 	let now = $state(Date.now());
 	let open = $state(false);
@@ -83,10 +83,13 @@
 	}
 
 	function measured(agent: string) {
-		return windows.flatMap(({ window, label, name, short }) => {
-			const reading = readings.find((reading) => reading.agent === agent && reading.window === window);
-			return reading?.used === undefined ? [] : [{ window, label, name, short, reading, percent: Math.round(reading.used * 100) }];
-		});
+		return windows.flatMap(({ window, label, name, short }) =>
+			readings.flatMap((reading) =>
+				reading.agent !== agent || reading.window !== window || reading.used === undefined
+					? []
+					: [{ label: reading.group?.name ?? label, name: reading.group?.name ?? name, short: reading.group?.short ?? short, reading, percent: Math.round(reading.used * 100) }]
+			)
+		);
 	}
 </script>
 
@@ -141,7 +144,7 @@
 				{#if agent === 'copilot'}
 					{@render billing()}
 				{:else}
-					{#each measured(agent) as { window, label: period, reading, percent } (window)}
+					{#each measured(agent) as { name, label: period, reading, percent } (name)}
 						<div class="window" class:high={percent >= high}>
 							<span class="period">{period}</span>
 							<span class="bar" aria-hidden="true"><span class="fill" style:width="{Math.min(percent, 100)}%"></span></span>
@@ -191,31 +194,31 @@
 		{/snippet}
 		{@render detail(true)}
 	</Popover>
-	<div class="row" class:crowded>
+	<div class="row">
 		{#each visibleAgents as { agent, label, Logo } (agent)}
 			<div class="agent {agent}" role="group" aria-label={label}>
-				<span class="brand" aria-hidden="true"><Logo /></span>
-				{#if agent !== 'copilot'}
-					{@const meters = measured(agent)}
-					{@const hottest = meters.reduce((top, meter) => (meter.percent > top.percent ? meter : top), meters[0])}
-					{#each meters as meter (meter.window)}
-						<span class="meter" class:high={meter.percent >= high} class:secondary={meter !== hottest} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
-							<span class="ring">
-								<svg viewBox="0 0 40 40" aria-hidden="true">
-									<circle class="track" cx="20" cy="20" r="18.3" />
-									<circle class="arc" cx="20" cy="20" r="18.3" pathLength="100" stroke-dasharray="{Math.min(meter.percent, 100)} 100" transform="rotate(-90 20 20)" />
-								</svg>
-								<span class="number">{meter.percent}</span>
+				<span class="meters">
+					<span class="brand" aria-hidden="true"><Logo /></span>
+					{#if agent !== 'copilot'}
+						{#each measured(agent) as meter (meter.name)}
+							<span class="meter" class:high={meter.percent >= high} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
+								<span class="ring">
+									<svg viewBox="0 0 40 40" aria-hidden="true">
+										<circle class="track" cx="20" cy="20" r="18.3" />
+										<circle class="arc" cx="20" cy="20" r="18.3" pathLength="100" stroke-dasharray="{Math.min(meter.percent, 100)} 100" transform="rotate(-90 20 20)" />
+									</svg>
+									<span class="number">{meter.percent}</span>
+								</span>
+								<span class="caption">
+									<span>{meter.short}</span>
+									{#if meter.reading.resetsAt !== undefined}
+										<span class="remaining">{remaining(meter.reading.resetsAt)}</span>
+									{/if}
+								</span>
 							</span>
-							<span class="caption">
-								<span>{meter.short}</span>
-								{#if meter.reading.resetsAt !== undefined}
-									<span class="remaining">{remaining(meter.reading.resetsAt)}</span>
-								{/if}
-							</span>
-						</span>
-					{/each}
-				{/if}
+						{/each}
+					{/if}
+				</span>
 				{#if agent === 'codex' && resets > 0}
 					<span class="count"><ResetIcon aria-hidden="true" />{resets}<span class="assistive">{` ${resets === 1 ? 'reset' : 'resets'}`}</span></span>
 				{/if}
@@ -271,7 +274,8 @@
 		--logo: 16px;
 		position: relative;
 		display: flex;
-		gap: var(--space-3);
+		flex-wrap: wrap;
+		gap: var(--space-2) var(--space-3);
 		padding: 4.5px var(--space-4);
 		overflow: hidden;
 		color: var(--muted-fg);
@@ -284,11 +288,19 @@
 		--number: 12.5px;
 		--label: 10.5px;
 		--logo: 18px;
-		gap: var(--space-4);
+		column-gap: var(--space-4);
 		padding-block: 5.5px;
 	}
 
 	.agent {
+		display: flex;
+		flex: none;
+		flex-wrap: wrap;
+		max-width: 100%;
+		gap: var(--space-2) var(--space-1);
+	}
+
+	.meters {
 		display: flex;
 		flex: none;
 		align-items: flex-start;
@@ -301,6 +313,10 @@
 
 	.codex {
 		--brand: #52669e;
+	}
+
+	.antigravity {
+		--brand: #8e75b2;
 	}
 
 	.copilot {
@@ -330,7 +346,6 @@
 	.meter {
 		display: flex;
 		flex: none;
-		flex-direction: var(--meter-flow, row);
 		align-items: center;
 		gap: 1px 2px;
 		line-height: 1;
@@ -379,7 +394,6 @@
 		display: grid;
 		gap: 1px;
 		font-size: var(--label);
-		text-align: var(--caption-align, start);
 	}
 
 	.remaining {
@@ -440,52 +454,14 @@
 		clip-path: inset(50%);
 	}
 
-	@container (max-width: 319px) {
-		.row {
-			--meter-flow: column;
-			--caption-align: center;
-		}
-	}
-
-	@container (max-width: 351px) {
-		.phone .row {
-			--meter-flow: column;
-			--caption-align: center;
-		}
-	}
-
-	@container (max-width: 394px) {
-		.crowded {
-			--meter-flow: column;
-			--caption-align: center;
-		}
-	}
-
-	@container (max-width: 429px) {
-		.phone .crowded {
-			--meter-flow: column;
-			--caption-align: center;
-		}
-	}
-
-	@container (max-width: 300px) {
-		.copilot,
-		.secondary {
-			display: none;
-		}
-
-		.meter + .meter {
-			margin-left: 0;
-		}
-	}
-
 	@container (max-width: 176px) {
 		.row,
 		.phone .row {
 			--ring: 28px;
 			--number: 10.5px;
+			--label: 10px;
 			--logo: 14px;
-			gap: var(--space-2);
+			column-gap: var(--space-2);
 			padding-inline: var(--space-3);
 		}
 	}
@@ -496,6 +472,16 @@
 		font-size: var(--font-size-sm);
 		min-width: 15rem;
 		white-space: normal;
+	}
+
+	.agent-detail {
+		display: grid;
+		grid-template-columns: minmax(3.5rem, max-content) minmax(3rem, 1fr) 2.75rem;
+		column-gap: var(--space-2);
+	}
+
+	.agent-detail > :global(*) {
+		grid-column: 1 / -1;
 	}
 
 	.agent-detail + .agent-detail {
@@ -529,9 +515,8 @@
 
 	.window {
 		display: grid;
-		grid-template-columns: 3.5rem minmax(3rem, 1fr) 2.75rem;
+		grid-template-columns: subgrid;
 		align-items: center;
-		gap: 0 var(--space-2);
 		padding-top: var(--space-1);
 	}
 

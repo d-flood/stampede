@@ -5,7 +5,7 @@ import Icons from 'unplugin-icons/vite';
 import { defineConfig } from 'vite';
 
 const crate = readFileSync(new URL('../crates/stampede/Cargo.toml', import.meta.url), 'utf8');
-const brandColors: Record<string, string> = { claude: '#d97757', openai: '#10a37f', githubcopilot: '#8534f3' };
+const brandColors: Record<string, string> = { claude: '#d97757', openai: '#10a37f', githubcopilot: '#8534f3', googlegemini: '#8e75b2' };
 
 export default defineConfig({
 	plugins: [

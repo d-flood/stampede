@@ -21,7 +21,7 @@
 	import SubagentHeader from '#lib/chat/SubagentHeader.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
-	import { modes } from '#lib/config.svelte.ts';
+	import { agentNames, modes } from '#lib/config.svelte.ts';
 	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ResetCredits, ServerMessage } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -62,7 +62,7 @@
 	const history = $derived([...new Set(items.flatMap((item) => (item.kind === 'user' && item.text ? [item.text] : item.kind === 'shell' ? [`!${item.command}`] : [])).reverse())].reverse());
 	const shelling = $derived(items.some((item) => item.kind === 'shell' && item.status === 'running'));
 	const live = $derived(device.connection === 'connected');
-	const agent = $derived(chat.agent === 'codex' ? 'Codex' : 'Claude');
+	const agent = $derived(chat.agent === 'claude-code' ? 'Claude' : agentNames[chat.agent]);
 	let rewinding = $state(false);
 	let preview = $state<{ path: string; line?: number; anchor: DOMRect }>();
 	let rewindTarget = $state<number>();
@@ -76,7 +76,7 @@
 		if (shelling) return 'Wait for running commands to finish, or interrupt first.';
 		if (subagents.some(({ subagent }) => subagent.status !== 'done')) return 'Wait for subagents to finish, or interrupt first.';
 	});
-	let capabilities = $state<Capabilities>({ models: [], efforts: [], speeds: [], ultracode: false, modes: [], commands: [], rewindsFiles: false });
+	let capabilities = $state<Capabilities>({ models: [], efforts: [], speeds: [], ultracode: false, modes: [], commands: [], rewindsFiles: false, forks: false, rewinds: false, compacts: false });
 	const choices = $derived({
 		model: capabilities.models.map((value) => ({ value, label: value })),
 		effort: capabilities.efforts.map((value) => ({ value, label: value })),
@@ -264,7 +264,7 @@
 		<div class="transcript" bind:this={scroller} style:padding-top="max(var(--space-6), {form() === 'phone' ? 0 : messageNavHeight}px)" {@attach follow}>
 			<div class="column">
 				{#if attached && !items.length && !chat.queued.length}<EmptyChat rig={chat.rig} agent={chat.agent} settings={chat.settings} {choices} {project} {branch} />{/if}
-				<Transcript {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={(index) => run('rewind', index)} onfork={live && attached ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
+				<Transcript {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={capabilities.rewinds ? (index) => run('rewind', index) : undefined} onfork={live && attached && capabilities.forks ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
 			</div>
 		</div>

@@ -137,6 +137,8 @@ pub struct Rig {
     pub ultracode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_tools: Vec<String>,
 }
 
 impl Rig {
@@ -145,6 +147,7 @@ impl Rig {
             Agent::ClaudeCode => ("Claude Code", "auto"),
             Agent::Codex => ("Codex", "approve-for-me"),
             Agent::Copilot => ("GitHub Copilot", "default"),
+            Agent::Antigravity => ("Google Antigravity", "default"),
         };
         Self {
             name: name.to_owned(),
@@ -156,6 +159,7 @@ impl Rig {
             speed: None,
             ultracode: None,
             mode: Some(mode.to_owned()),
+            disabled_tools: if agent == Agent::Antigravity { vec!["delegate_to_rig".to_owned()] } else { Vec::new() },
         }
     }
 
@@ -163,7 +167,7 @@ impl Rig {
         let mode = self.mode.clone().or_else(|| Some(match self.agent {
             Agent::ClaudeCode => "auto",
             Agent::Codex => "approve-for-me",
-            Agent::Copilot => "default",
+            Agent::Copilot | Agent::Antigravity => "default",
         }.to_owned()));
         AgentSettings { model: self.model.clone(), effort: self.effort.clone(), speed: self.speed.clone(), ultracode: self.ultracode.clone(), mode }
     }
@@ -243,14 +247,18 @@ pub enum Agent {
     ClaudeCode,
     Codex,
     Copilot,
+    Antigravity,
 }
 
 impl Agent {
+    pub const ALL: [Agent; 4] = [Agent::ClaudeCode, Agent::Codex, Agent::Copilot, Agent::Antigravity];
+
     pub fn name(self) -> &'static str {
         match self {
             Agent::ClaudeCode => "claude-code",
             Agent::Codex => "codex",
             Agent::Copilot => "copilot",
+            Agent::Antigravity => "antigravity",
         }
     }
 
@@ -260,6 +268,7 @@ impl Agent {
             Agent::ClaudeCode => &["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
             Agent::Codex => &["read-only", "default", "approve-for-me", "full-access"],
             Agent::Copilot => &["default", "full-access"],
+            Agent::Antigravity => &["default", "accept-edits", "plan", "full-access"],
         }
     }
 
@@ -451,10 +460,9 @@ impl Config {
         })
     }
 
-    /// The Rig that drafts commit messages: the chosen one, else the first.
     pub fn commit_rig(&self) -> Option<&Rig> {
-        let chosen = self.commit_rig.as_ref().and_then(|name| self.rigs.iter().find(|rig| rig.name == *name));
-        chosen.or(self.rigs.first())
+        let chosen = self.commit_rig.as_ref().and_then(|name| self.rigs.iter().find(|rig| rig.name == *name && rig.agent != Agent::Antigravity));
+        chosen.or_else(|| self.rigs.iter().find(|rig| rig.agent != Agent::Antigravity))
     }
 
     pub fn commit_instructions(&self) -> &str {
@@ -557,8 +565,12 @@ pub fn write_commit_rig(path: &Path, name: &str) -> Result<String, Error> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         text => text?,
     };
-    if !Config::parse(&text)?.rigs.iter().any(|rig| rig.name == name) {
+    let config = Config::parse(&text)?;
+    let Some(rig) = config.rigs.iter().find(|rig| rig.name == name) else {
         return Err(format!("there is no Rig {name}").into());
+    };
+    if rig.agent == Agent::Antigravity {
+        return Err("Google Antigravity can't draft commit messages. Choose another Rig.".into());
     }
     fs::write(path, with_top_level(text, "commit_rig", Some(name))?)?;
     Ok(name.to_owned())
@@ -1183,7 +1195,7 @@ mod tests {
     #[test]
     fn configured_rigs_use_the_same_permission_defaults_as_fallback_rigs() {
         let defaults = Config::default();
-        for agent in [Agent::ClaudeCode, Agent::Codex, Agent::Copilot] {
+        for agent in Agent::ALL {
             let config = Config::parse(&format!("[[rig]]\nname = 'Mine'\nagent = '{}'\n", agent.name())).unwrap();
             assert_eq!(config.rigs[0].settings(), defaults.rig_for(agent).settings());
         }

@@ -60,6 +60,7 @@
 	const agents = Object.keys(agentNames) as Agent[];
 	const phone = $derived(form() === 'phone');
 	const current = $derived(chosen ?? (phone ? undefined : 'general'));
+	const commitRigs = $derived(rigs().filter((rig) => rig.agent !== 'antigravity'));
 	const unseen = $derived(update && update.head !== seen);
 	const count = (total: number, noun: string) => `${total} ${noun}${total === 1 ? '' : 's'}`;
 	const pages: { id: Page; label: string; icon: Component; summary: () => string }[] = [
@@ -307,8 +308,8 @@
 								<p id="commit-rig-help">The Rig that drafts commit messages from staged changes.</p>
 							</div>
 							<div class="control">
-								<Select id="commit-rig" value={commitRig() ?? ''} disabled={!rigs().length} onchange={(event) => chooseCommitRig(event.currentTarget.value)} aria-describedby="commit-rig-help">
-									{#each rigs() as rig (rig.name)}
+								<Select id="commit-rig" value={commitRig() ?? ''} disabled={!commitRigs.length} onchange={(event) => chooseCommitRig(event.currentTarget.value)} aria-describedby="commit-rig-help">
+									{#each commitRigs as rig (rig.name)}
 										<option value={rig.name}>{rig.name}</option>
 									{:else}
 										<option value="">No Rigs</option>

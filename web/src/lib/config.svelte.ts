@@ -20,9 +20,9 @@ type Keybar = { extra: string[] };
 
 export type Appearance = { theme: ITheme; fontFamily: string; fontSize: number; scrollback: number };
 export type FontRole = 'ui' | 'chat' | 'code';
-export type Agent = 'claude-code' | 'codex' | 'copilot';
+export type Agent = 'claude-code' | 'codex' | 'copilot' | 'antigravity';
 export { agentNames } from '#lib/chat/sessions.ts';
-export type Rig = { name: string; agent: Agent; shortcut?: string; model?: string; effort?: string; speed?: string; ultracode?: string; mode?: string };
+export type Rig = { name: string; agent: Agent; shortcut?: string; model?: string; effort?: string; speed?: string; ultracode?: string; mode?: string; disabled_tools?: string[] };
 export type Template = { name: string; description: string };
 export type Mode = { value: string; label: string; available: boolean };
 export type Clip = { name: string; text: string };
@@ -381,7 +381,7 @@ export function rigs(): Rig[] {
 	return configured;
 }
 
-export async function saveRig(settings: { original?: string; name: string; agent: Agent; model?: string; effort?: string; speed?: string; ultracode?: string; mode: string }) {
+export async function saveRig(settings: { original?: string; name: string; agent: Agent; model?: string; effort?: string; speed?: string; ultracode?: string; mode: string; disabled_tools: string[] }) {
 	const response = await fetch('/api/rigs', {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },

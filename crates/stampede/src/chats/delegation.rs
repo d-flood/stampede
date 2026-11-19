@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, net::UnixListener, sync::{broadcast, watch}};
 
 use super::{ChatToolsArgs, Chats, Entry, Item, Notice, Outcome, Phase, RequestKind, Status, Totals};
-use crate::config::Config;
+use crate::config::{Agent, Config};
 
 pub const LIST: &str = "list_rigs";
 pub const TOOL: &str = "delegate_to_rig";
@@ -163,7 +163,7 @@ pub fn listen(listener: UnixListener, chats: Arc<Chats>, terminals: Arc<crate::t
                         if (&mut reader).take(1024 * 1024).read_line(&mut line).await.is_err() { return; }
                         let result = match serde_json::from_str::<Request>(&line) {
                             Ok(request) if request.name == LIST => {
-                                let rigs: Vec<_> = config.borrow().rigs.iter().map(|rig| json!({
+                                let rigs: Vec<_> = config.borrow().rigs.iter().filter(|rig| rig.agent != Agent::Antigravity).map(|rig| json!({
                                     "name": rig.name, "agent": rig.agent, "model": rig.model, "effort": rig.effort,
                                 })).collect();
                                 json!({ "content": [{ "type": "text", "text": serde_json::to_string(&rigs).unwrap() }], "isError": false })
@@ -179,6 +179,9 @@ pub fn listen(listener: UnixListener, chats: Arc<Chats>, terminals: Arc<crate::t
                                 Ok(task) if !task.rig.trim().is_empty() && !task.task.trim().is_empty() && task.task.len() <= 65536 => {
                                     let rig = config.borrow().rigs.iter().find(|rig| rig.name == task.rig).cloned();
                                     match (request.chat_id, rig) {
+                                        (_, Some(rig)) if rig.agent == Agent::Antigravity => {
+                                            error("Google's terms don't allow another Agent to drive Google Antigravity on a Google login.")
+                                        }
                                         (Some(parent), Some(rig)) => {
                                             match chats.delegate(&parent, &rig, task.task, &mut reader).await {
                                                 Ok(report) => report.reply(&chats.data_dir, &parent).unwrap_or_else(|cause| error(format!("Could not save delegation report: {cause}"))),

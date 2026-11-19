@@ -1,0 +1,5 @@
+{"update": {"sessionUpdate": "session_info_update", "title": "Shell Command Execution Test"}}
+{"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Welcome—**"}}}
+{"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "glad** you’re here."}}}
+{"update": {"sessionUpdate": "usage_update", "used": 9123, "size": 1048576}}
+{"usage": {"inputTokens": 11136, "outputTokens": 160, "cachedReadTokens": 6833, "thoughtTokens": 119, "totalTokens": 18129}}

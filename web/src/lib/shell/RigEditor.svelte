@@ -3,6 +3,7 @@
 	import { agentNames, deleteRig, modes, reorderRigs, rigs, saveRig, type Agent, type Rig } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Checkbox from '#lib/ui/Checkbox.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Kbd from '#lib/ui/Kbd.svelte';
 	import Select from '#lib/ui/Select.svelte';
@@ -15,6 +16,16 @@
 	type Model = { value: string; label: string; efforts: string[]; speeds: { value: string; label: string; detail?: string }[]; ultracode: boolean };
 	type Options = { models: Model[]; modes: { value: string; label: string }[]; settings?: { model?: string; effort?: string } };
 
+	const tools = [
+		['delegate_to_rig', 'Delegate to Rigs'],
+		['ask_questions', 'Ask questions'],
+		['stage_command', 'Stage commands'],
+		['read_terminal', 'Read Terminals'],
+		['render_html', 'Render HTML'],
+		['render_media', 'Render media'],
+		['pr_review', 'PR review comments']
+	] as const;
+
 	let { editing = $bindable(false) }: { editing?: boolean } = $props();
 
 	let selected = $state<string>();
@@ -25,6 +36,7 @@
 	let speed = $state('');
 	let ultracode = $state('');
 	let mode = $state('auto');
+	let disabled = $state<string[]>([]);
 	let options = $state<Options>({ models: [], modes: [] });
 	let loading = $state(false);
 	let saving = $state(false);
@@ -88,6 +100,7 @@
 		speed = rig?.speed ?? '';
 		ultracode = rig?.ultracode ?? '';
 		mode = rig?.mode ?? defaultMode(agent);
+		disabled = rig?.disabled_tools ?? [];
 		saved = '';
 		void load();
 	}
@@ -107,12 +120,18 @@
 		speed = '';
 		ultracode = '';
 		mode = defaultMode(agent);
+		disabled = agent === 'antigravity' ? ['delegate_to_rig'] : [];
 		saved = '';
 		void load();
 	}
 
 	function defaultMode(provider: Agent) {
-		return { 'claude-code': 'auto', codex: 'approve-for-me', copilot: 'default' }[provider];
+		return { 'claude-code': 'auto', codex: 'approve-for-me', copilot: 'default', antigravity: 'default' }[provider];
+	}
+
+	function toggle(tool: string, on: boolean) {
+		disabled = on ? disabled.filter((other) => other !== tool) : [...disabled, tool];
+		saved = '';
 	}
 
 	function summary(rig: Rig) {
@@ -127,7 +146,7 @@
 		saved = '';
 		ordered = '';
 		try {
-			await saveRig({ original: selected || undefined, name, agent, model: model || undefined, effort: effort || undefined, speed: speed || undefined, ultracode: ultracode || undefined, mode });
+			await saveRig({ original: selected || undefined, name, agent, model: model || undefined, effort: effort || undefined, speed: speed || undefined, ultracode: ultracode || undefined, mode, disabled_tools: disabled });
 			name = name.trim();
 			selected = name;
 			saved = 'Rig saved.';
@@ -227,6 +246,12 @@
 				{#if !options.modes.some((choice) => choice.value === mode)}<option value={mode}>{mode}</option>{/if}
 				{#each options.modes as choice (choice.value)}<option value={choice.value}>{choice.label}</option>{/each}
 			</Select>
+			<span class="label" id="rig-tools">Tools</span>
+			<div class="tools" role="group" aria-labelledby="rig-tools">
+				{#each tools as [tool, label] (tool)}
+					<label><Checkbox checked={!disabled.includes(tool)} onchange={(event) => toggle(tool, event.currentTarget.checked)} />{label}</label>
+				{/each}
+			</div>
 		</fieldset>
 		{#if loading}<p role="status">Loading provider choices…</p>{/if}
 		{#if error}<p role="alert">{error}</p><Button disabled={loading || busy} onclick={load}>Reload choices</Button>{/if}
@@ -471,8 +496,16 @@
 			column-gap: var(--space-4);
 		}
 
-		fieldset label {
+		fieldset label,
+		fieldset .label {
 			margin: 0;
+		}
+
+		fieldset .label {
+			display: flex;
+			align-items: center;
+			align-self: start;
+			min-height: var(--target-min);
 		}
 	}
 
@@ -482,9 +515,26 @@
 		border: 0;
 	}
 
-	label {
+	label,
+	.label {
 		margin-top: var(--space-2);
 		font-size: var(--font-size-sm);
+	}
+
+	.tools {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+		column-gap: var(--space-4);
+	}
+
+	.tools label {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		min-height: var(--target-min);
+		margin: 0;
+		font-size: inherit;
+		cursor: pointer;
 	}
 
 	p {

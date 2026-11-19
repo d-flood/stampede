@@ -67,31 +67,34 @@ const longest: Reading[] = (['claude-code', 'codex'] as const).flatMap((agent) =
 	{ agent, window: 'five-hour' as const, used: 1, readAt: now, resetsAt: now + 4 * hour + 59 * minute },
 	{ agent, window: 'weekly' as const, used: 1, readAt: now, resetsAt: now + 6 * day + 23 * hour }
 ]);
+const antigravity: Reading[] = [
+	{ agent: 'antigravity', window: 'weekly', group: { name: 'Gemini Models', short: 'gemini' }, used: 1, readAt: now, resetsAt: now + 6 * day + 23 * hour },
+	{ agent: 'antigravity', window: 'weekly', group: { name: 'Claude and GPT models', short: 'other' }, used: 1, readAt: now, resetsAt: now + 6 * day + 23 * hour }
+];
 
 test('Resets, logos, rings, and reset times fit at every Sidebar width when every window is high', async () => {
 	vi.useFakeTimers({ toFake: ['Date'] });
 	vi.setSystemTime(now);
-	const view = await render(Usage, { readings: [...longest, readings[3]], codexResets: { availableCount: 12 } });
+	const view = await render(Usage, { readings: [...longest, ...antigravity, readings[3]], codexResets: { availableCount: 12 } });
 	const row = view.container.querySelector('.row')!;
-	for (const [width, rings] of [[160, 2], [320, 4], [form() === 'phone' ? 430 : 395, 4]]) {
+	expect(row.querySelectorAll('.ring')).toHaveLength(6);
+	for (const width of [160, 320, form() === 'phone' ? 430 : 395]) {
 		view.container.style.width = `${width}px`;
 		await expect.poll(() => {
 			const box = row.getBoundingClientRect();
-			const shown = [...row.querySelectorAll('.ring')].filter((node) => node.getBoundingClientRect().width > 0);
-			return box.width === width && shown.length === rings && [...row.querySelectorAll('.claude-code .brand, .codex .brand, .count, .caption'), ...shown].filter((node) => node.getBoundingClientRect().width > 0).every((node) => {
-				const { left, right } = node.getBoundingClientRect();
-				return left >= box.left && right <= box.right;
+			return box.width === width && [...row.querySelectorAll('.brand, .ring, .count, .caption')].every((node) => {
+				const { left, right, width } = node.getBoundingClientRect();
+				return width > 0 && left >= box.left && right <= box.right;
 			});
 		}).toBe(true);
 	}
 	vi.useRealTimers();
 });
 
-test('every caption moves below its ring at once and logos stay on the ring line', async () => {
+test('the row wraps with captions beside rings and logos on their ring line', async () => {
 	vi.useFakeTimers({ toFake: ['Date'] });
 	vi.setSystemTime(now);
 	const phone = form() === 'phone';
-	const three = longest.slice(0, 3);
 	const view = await render(Usage, { readings: longest, codexResets: { availableCount: 3 } });
 	const row = view.container.querySelector('.row')!;
 	const section = view.container.querySelector('section')!;
@@ -99,24 +102,16 @@ test('every caption moves below its ring at once and logos stay on the ring line
 		const { top, bottom } = node.getBoundingClientRect();
 		return (top + bottom) / 2;
 	};
-	const cases = [
-		{ rings: longest, width: phone ? 430 : 395, placement: 'beside', height: phone ? 48 : 40 },
-		{ rings: longest, width: phone ? 429 : 394, placement: 'below', height: phone ? 71 : 62 },
-		{ rings: three, width: phone ? 352 : 320, placement: 'beside', height: phone ? 48 : 40 },
-		{ rings: three, width: phone ? 351 : 319, placement: 'below', height: phone ? 71 : 62 }
-	];
-	for (const { rings, width, placement, height } of cases) {
-		await view.rerender({ readings: rings, codexResets: { availableCount: 3 } });
+	for (const [width, height] of [[phone ? 430 : 395, phone ? 48 : 40], [320, phone ? 90 : 76]]) {
 		view.container.style.width = `${width}px`;
-		await expect.poll(() => [...row.querySelectorAll('.meter')].map((meter) => {
-			const ring = meter.querySelector('.ring')!.getBoundingClientRect();
-			const caption = meter.querySelector('.caption')!.getBoundingClientRect();
-			if (caption.left >= ring.right) return 'beside';
-			return caption.top >= ring.bottom ? 'below' : 'overlapping';
-		})).toEqual(rings.map(() => placement));
 		await expect.poll(() => section.getBoundingClientRect().height).toBe(height);
-		const line = center(row.querySelector('.ring')!);
-		for (const node of row.querySelectorAll('.brand, .ring, .count')) expect(center(node)).toBeCloseTo(line, 0);
+		for (const meter of row.querySelectorAll('.meter')) {
+			expect(meter.querySelector('.caption')!.getBoundingClientRect().left).toBeGreaterThanOrEqual(meter.querySelector('.ring')!.getBoundingClientRect().right);
+		}
+		for (const agent of row.querySelectorAll('.agent')) {
+			const line = center(agent.querySelector('.ring')!);
+			for (const node of agent.querySelectorAll('.brand, .ring, .count')) expect(center(node)).toBeCloseTo(line, 0);
+		}
 		expect(row.querySelector('.agent:last-child')!.getBoundingClientRect().right).toBeLessThanOrEqual(row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight));
 	}
 	vi.useRealTimers();

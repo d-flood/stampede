@@ -47,8 +47,20 @@ fn record(args: &ChatToolsArgs) -> Option<super::Chat> {
     args.chat_id.as_deref().and_then(|id| super::read_record(&super::record_path(&args.data_dir, id)).ok())
 }
 
-pub fn instructions(data_dir: &Path, chat_id: Option<&str>) -> String {
-    let text = crate::templates::STAMPEDE.lines().filter(|line| chat_id.is_some() || !line.contains("{canvas}")).collect::<Vec<_>>().join("\n");
+const TOGGLEABLE: [&str; 7] = [
+    super::delegation::TOOL, super::questions::TOOL, super::terminal_tools::STAGE, super::terminal_tools::READ, TOOL, crate::media::TOOL, crate::pr_reviews::TOOL,
+];
+
+fn off(disabled: &[String], name: &str) -> bool {
+    let id = if name == super::delegation::LIST { super::delegation::TOOL } else { name };
+    TOGGLEABLE.contains(&id) && disabled.iter().any(|tool| tool == id)
+}
+
+pub fn instructions(data_dir: &Path, chat_id: Option<&str>, disabled: &[String]) -> String {
+    let text = crate::templates::STAMPEDE.lines()
+        .filter(|line| chat_id.is_some() || !line.contains("{canvas}"))
+        .filter(|line| !line.split(|c: char| !c.is_alphanumeric() && c != '_').any(|word| off(disabled, word)))
+        .collect::<Vec<_>>().join("\n");
     let mut text = match chat_id {
         Some(chat_id) => text.replace("{canvas}", &crate::canvas::dir(data_dir, chat_id).display().to_string()),
         None => text,
@@ -71,7 +83,7 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
             "protocolVersion": "2025-11-25",
             "capabilities": { "tools": {} },
             "serverInfo": { "name": SERVER, "version": env!("CARGO_PKG_VERSION") },
-            "instructions": instructions(data_dir, args.chat_id.as_deref()),
+            "instructions": instructions(data_dir, args.chat_id.as_deref(), &record(args).map(|chat| chat.disabled_tools).unwrap_or_default()),
         }),
         Some("ping") => json!({}),
         Some("tools/list") => {
@@ -108,8 +120,14 @@ fn reply(request: &Value, args: &ChatToolsArgs) -> Option<Value> {
                 tools.splice(0..0, [super::delegation::list_tool(), super::delegation::tool()]);
             }
             tools.push(crate::pr_reviews::tool());
+            if let Some(chat) = &chat {
+                tools.retain(|tool| !off(&chat.disabled_tools, tool["name"].as_str().unwrap_or_default()));
+            }
             tools.extend(chat.and_then(|chat| chat.duty).map(crate::cli::tool));
             catalog
+        }
+        Some("tools/call") if request["params"]["name"].as_str().is_some_and(|name| record(args).is_some_and(|chat| off(&chat.disabled_tools, name))) => {
+            json!({ "content": [{ "type": "text", "text": "This tool is turned off for this Rig." }], "isError": true })
         }
         Some("tools/call") if matches!(request["params"]["name"].as_str(), Some(super::delegation::LIST | super::delegation::TOOL)) && !can_delegate(args) => {
             json!({ "content": [{ "type": "text", "text": "Delegation tools are unavailable in delegated chats. Return your result to the calling agent." }], "isError": true })

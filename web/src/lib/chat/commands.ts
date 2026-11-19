@@ -2,7 +2,9 @@ import { templates } from '#lib/config.svelte.ts';
 import type { Capabilities, Choice, Setting } from '#lib/device.svelte.ts';
 
 const settings: Setting[] = ['effort', 'model', 'speed', 'ultracode', 'mode'];
-export const builtins = [...settings, 'compact', 'rewind'];
+export function builtins(capabilities: Capabilities) {
+	return [...settings, ...(capabilities.compacts ? ['compact'] : []), ...(capabilities.rewinds ? ['rewind'] : [])];
+}
 
 export function describe(command: 'compact' | 'rewind', capabilities: Capabilities) {
 	if (command === 'compact') return 'free up context';
@@ -18,7 +20,7 @@ export function recognize(text: string, capabilities: Capabilities, choices: Rec
 	const [, name, value] = text.match(/^\/(\S+)(?: +(\S+))?/) ?? [];
 	if (!name) return;
 	const token = `/${name}`;
-	if (name === 'compact' || name === 'rewind') return { token, builtin: true, detail: describe(name, capabilities) };
+	if ((name === 'compact' || name === 'rewind') && builtins(capabilities).includes(name)) return { token, builtin: true, detail: describe(name, capabilities) };
 	const setting = settings.find((setting) => setting === name && offered(setting, choices));
 	if (setting) return { token, builtin: true, detail: choices[setting].find((choice) => choice.value === value || choice.label === value)?.label ?? '' };
 	const template = templates().find((template) => template.name === name);

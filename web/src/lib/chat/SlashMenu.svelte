@@ -71,11 +71,10 @@
 				choose: () => replace(`/${setting} `)
 			})),
 			{ label: '/mode', choices: choices.mode, current: settings.mode, choose: () => replace('/mode ') },
-			now('compact'),
-			now('rewind'),
+			...(['compact', 'rewind'] as const).filter((command) => builtins(capabilities).includes(command)).map(now),
 			...templates().map(({ name, description }) => ({ label: `/${name}`, detail: description, choose: () => replace(`/${name} `) }))
 		];
-		const taken = [...builtins, ...templates().map((template) => template.name)];
+		const taken = [...builtins(capabilities), ...templates().map((template) => template.name)];
 		const commands = capabilities.commands.filter((command) => !taken.includes(command.name));
 		const own = commands.map((command) => ({
 			label: `/${command.name}`,

@@ -1,6 +1,7 @@
 mod common;
 
 mod browser;
+mod chat_antigravity;
 mod chat_attention;
 mod chat_canvas;
 mod chat_claude;

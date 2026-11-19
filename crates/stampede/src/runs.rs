@@ -544,7 +544,7 @@ impl Runs {
         let mut paused_window = None;
         if let Some(Pause::Usage { agent, window, resets_at }) = &run.paused {
             paused_window = Some((*agent, *window));
-            let latest = readings.iter().find(|reading| (reading.agent, reading.window) == (*agent, *window));
+            let latest = readings.iter().find(|reading| reading.group.is_none() && (reading.agent, reading.window) == (*agent, *window));
             let waiting = match resets_at {
                 Some(at) => *at > now,
                 None => latest.is_none_or(|reading| reading.used.is_some_and(|used| used >= config.pause_at) && reading.resets_at.is_none_or(|at| at > now)),
@@ -560,7 +560,7 @@ impl Runs {
         readings
             .into_iter()
             .filter(|reading| {
-                (agents.contains(&reading.agent) || paused_window == Some((reading.agent, reading.window)))
+                reading.group.is_none() && (agents.contains(&reading.agent) || paused_window == Some((reading.agent, reading.window)))
                     && reading.used.is_some_and(|used| used >= config.pause_at) && reading.resets_at.is_none_or(|at| at > now)
             })
             .max_by_key(|reading| reading.resets_at.unwrap_or(u64::MAX))

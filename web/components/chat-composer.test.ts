@@ -7,7 +7,7 @@ import { render } from 'vitest-browser-svelte';
 const phone = matchMedia('(pointer: coarse) and (max-width: 767px)').matches;
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const pixels = () => Uint8Array.from(atob(png), (char) => char.charCodeAt(0));
-const capabilities: Capabilities = { rewindsFiles: false, models: [], efforts: [], speeds: [], ultracode: false, modes: [], commands: [] };
+const capabilities: Capabilities = { rewindsFiles: false, forks: true, rewinds: true, compacts: true, models: [], efforts: [], speeds: [], ultracode: false, modes: [], commands: [] };
 
 async function mount(overrides: Partial<Chat> = {}) {
 	const send = vi.fn();

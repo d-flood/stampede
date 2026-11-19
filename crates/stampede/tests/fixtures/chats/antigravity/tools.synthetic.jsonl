@@ -1,0 +1,13 @@
+{"update": {"sessionUpdate": "session_info_update", "title": "Shell Command Execution Test"}}
+{"update": {"sessionUpdate": "available_commands_update", "availableCommands": [{"name": "review", "description": "Review the changes", "input": {"hint": "path"}}]}}
+{"update": {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "Run the probe first."}}}
+{"update": {"sessionUpdate": "tool_call", "toolCallId": "call_1", "status": "pending", "kind": "execute", "title": "echo stampede-probe", "rawInput": {"CommandLine": "echo stampede-probe"}}}
+{"permission": {"toolCall": {"toolCallId": "call_1", "kind": "execute", "title": "echo stampede-probe"}, "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}, {"optionId": "deny", "name": "Deny", "kind": "reject_once"}]}}
+{"when": "allow", "update": {"sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "completed", "rawOutput": {"output": "Command exited with code 0.\n\nCommand output:\nstampede-probe\r\n"}}}
+{"when": "deny", "update": {"sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "failed"}}
+{"update": {"sessionUpdate": "tool_call", "toolCallId": "call_2", "status": "in_progress", "kind": "edit", "title": "Edit file.txt", "locations": [{"path": "{cwd}/file.txt"}], "content": [{"type": "diff", "path": "{cwd}/file.txt", "oldText": "old\n", "newText": "new\n"}]}}
+{"update": {"sessionUpdate": "tool_call_update", "toolCallId": "call_2", "status": "completed"}}
+{"update": {"sessionUpdate": "tool_call", "toolCallId": "call_3", "status": "completed", "kind": "read", "title": "Read README.md", "locations": [{"path": "{cwd}/README.md"}]}}
+{"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "done"}}}
+{"update": {"sessionUpdate": "usage_update", "used": 9123, "size": 1048576}}
+{"usage": {"inputTokens": 11136, "outputTokens": 160, "cachedReadTokens": 6833, "thoughtTokens": 119, "totalTokens": 18129}}

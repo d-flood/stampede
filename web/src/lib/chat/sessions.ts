@@ -3,9 +3,10 @@ import type { Component } from 'svelte';
 import Claude from '~icons/simple-icons/claude';
 import OpenAI from '~icons/simple-icons/openai';
 import Copilot from '~icons/simple-icons/githubcopilot';
+import Gemini from '~icons/simple-icons/googlegemini';
 
-export const logos: Record<Agent, Component> = { 'claude-code': Claude, codex: OpenAI, copilot: Copilot };
-export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex', copilot: 'GitHub Copilot' };
+export const logos: Record<Agent, Component> = { 'claude-code': Claude, codex: OpenAI, copilot: Copilot, antigravity: Gemini };
+export const agentNames: Record<Agent, string> = { 'claude-code': 'Claude Code', codex: 'Codex', copilot: 'GitHub Copilot', antigravity: 'Google Antigravity' };
 
 const units: [Intl.RelativeTimeFormatUnit, number][] = [
 	['year', 31_536_000],
