@@ -82,7 +82,7 @@ test('Resets, logos, bars, and reset times fit at every Sidebar width when every
 	const row = view.container.querySelector('.row')!;
 	expect(row.querySelectorAll('[role="meter"]')).toHaveLength(5);
 	await expect.element(view.getByRole('meter', { name: 'Google Antigravity · week' })).toHaveAttribute('aria-valuenow', '100');
-	for (const width of [160, 320, form() === 'phone' ? 430 : 395]) {
+	for (const width of [160, 240, 300, form() === 'phone' ? 430 : 395]) {
 		view.container.style.width = `${width}px`;
 		await expect.poll(() => {
 			const box = row.getBoundingClientRect();
@@ -98,7 +98,7 @@ test('Resets, logos, bars, and reset times fit at every Sidebar width when every
 	vi.useRealTimers();
 });
 
-test('every Agent window and the Copilot cost line up in shared columns', async () => {
+test('every Agent window and the Copilot cost line up in shared columns that span the row', async () => {
 	vi.useFakeTimers({ toFake: ['Date'] });
 	vi.setSystemTime(now);
 	const view = await render(Usage, { readings: [...longest.slice(0, 2), readings[2], ...antigravity, readings[3]], codexResets: { availableCount: 3 } });
@@ -112,6 +112,10 @@ test('every Agent window and the Copilot cost line up in shared columns', async 
 		expect(edges('.weekly .number', 'right').size).toBe(1);
 		expect(edges('.cost')).toEqual(edges('.five-hour'));
 	}
+	const box = row.getBoundingClientRect();
+	const style = getComputedStyle(row);
+	expect(row.querySelector('.count')!.getBoundingClientRect().right).toBeCloseTo(box.right - parseFloat(style.paddingRight), 0);
+	expect(row.querySelector('.brand')!.getBoundingClientRect().left).toBeCloseTo(box.left + parseFloat(style.paddingLeft), 0);
 	vi.useRealTimers();
 });
 

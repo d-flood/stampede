@@ -291,7 +291,7 @@
 		--bar: 28px;
 		position: relative;
 		display: grid;
-		grid-template-columns: repeat(9, auto) minmax(0, 1fr);
+		grid-template-columns: auto repeat(2, auto minmax(var(--bar), 1fr) auto auto) auto;
 		row-gap: var(--space-2);
 		align-items: center;
 		padding: var(--space-2) var(--space-4);
@@ -371,7 +371,6 @@
 
 	.row .bar {
 		align-self: center;
-		width: var(--bar);
 		margin-right: var(--space-1);
 		background: color-mix(in oklab, var(--brand) 16%, var(--surface-3));
 	}
@@ -463,13 +462,36 @@
 		clip-path: inset(50%);
 	}
 
-	@container (max-width: 176px) {
+	@container (width < 299px) {
+		.remaining {
+			display: none;
+		}
+	}
+
+	@container (width < 330px) {
+		.phone .remaining {
+			display: none;
+		}
+	}
+
+	@container (width < 216px) {
 		.row {
+			grid-template-columns: repeat(9, auto) minmax(0, 1fr);
 			padding-inline: var(--space-3);
 		}
 
-		.row .bar,
-		.remaining {
+		.row .bar {
+			display: none;
+		}
+	}
+
+	@container (width < 244px) {
+		.phone .row {
+			grid-template-columns: repeat(9, auto) minmax(0, 1fr);
+			padding-inline: var(--space-3);
+		}
+
+		.phone .bar {
 			display: none;
 		}
 	}
