@@ -90,11 +90,19 @@
 					if (reading.group?.name !== group || reading.window !== window || reading.used === undefined) return [];
 					const percent = Math.round(reading.used * 100);
 					return [reading.group
-						? { group, label, name: `${reading.group.name} ${name}`, short: `${reading.group.short} ${short}`, reading, percent }
-						: { group, label, name, short, reading, percent }];
+						? { group, window, label, name: `${reading.group.name} ${name}`, short: `${reading.group.short} ${short}`, reading, percent }
+						: { group, window, label, name, short, reading, percent }];
 				})
 			)
 		);
+	}
+
+	function hottest(agent: string) {
+		const meters = measured(agent);
+		return windows.flatMap(({ window, name, short }) => {
+			const shown = meters.filter((meter) => meter.window === window);
+			return shown.length ? [{ ...shown.reduce((top, meter) => (meter.percent > top.percent ? meter : top)), name, short }] : [];
+		});
 	}
 </script>
 
@@ -209,7 +217,7 @@
 						<span class="brand" aria-hidden="true"><Logo /></span>
 						{#if agent !== 'copilot'}
 							<span class="rings">
-								{#each measured(agent) as meter (meter.name)}
+								{#each hottest(agent) as meter (meter.name)}
 									<span class="meter" class:high={meter.percent >= high} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
 										<span class="ring">
 											<svg viewBox="0 0 40 40" aria-hidden="true">

@@ -68,7 +68,7 @@ const longest: Reading[] = (['claude-code', 'codex'] as const).flatMap((agent) =
 	{ agent, window: 'weekly' as const, used: 1, readAt: now, resetsAt: now + 6 * day + 23 * hour }
 ]);
 const antigravity: Reading[] = [
-	{ agent: 'antigravity', window: 'weekly', group: { name: 'Gemini Models', short: 'gemini' }, used: 1, readAt: now, resetsAt: now + 6 * day + 23 * hour },
+	{ agent: 'antigravity', window: 'weekly', group: { name: 'Gemini Models', short: 'gemini' }, used: 0.3, readAt: now, resetsAt: now + 6 * day + 23 * hour },
 	{ agent: 'antigravity', window: 'weekly', group: { name: 'Claude and GPT models', short: 'other' }, used: 1, readAt: now, resetsAt: now + 6 * day + 23 * hour }
 ];
 
@@ -77,7 +77,8 @@ test('Resets, logos, rings, and reset times fit at every Sidebar width when ever
 	vi.setSystemTime(now);
 	const view = await render(Usage, { readings: [...longest, ...antigravity, readings[3]], codexResets: { availableCount: 12 } });
 	const row = view.container.querySelector('.row')!;
-	expect(row.querySelectorAll('.ring')).toHaveLength(6);
+	expect(row.querySelectorAll('.ring')).toHaveLength(5);
+	await expect.element(view.getByRole('meter', { name: 'Google Antigravity · week' })).toHaveAttribute('aria-valuenow', '100');
 	for (const width of [160, 320, form() === 'phone' ? 430 : 395]) {
 		view.container.style.width = `${width}px`;
 		await expect.poll(() => {
