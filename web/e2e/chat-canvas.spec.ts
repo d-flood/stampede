@@ -66,7 +66,7 @@ test('a chat canvas opens beside its chat, follows edits, and keeps versions', a
 	await closeProject(page, name);
 });
 
-test('a canvas written without Write or Edit still reaches the tray', { tag: '@desktop' }, async ({ page }, { project, repeatEachIndex }) => {
+test('a canvas written without Write or Edit still reaches the tray and opens from a link', { tag: '@desktop' }, async ({ page }, { project, repeatEachIndex }) => {
 	let chatId = '';
 	await page.routeWebSocket('**/ws', (socket) => {
 		const server = socket.connectToServer();
@@ -90,5 +90,10 @@ test('a canvas written without Write or Edit still reaches the tray', { tag: '@d
 	await expect(tray).toBeVisible();
 	await page.reload();
 	await expect(tray).toBeVisible();
+	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+	await panel.getByRole('textbox', { name: 'Composer' }).fill(`[Watch it](<${directory}/sketch.html>)`);
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await panel.getByRole('link', { name: 'Watch it' }).click();
+	await expect(page.getByRole('region', { name: 'sketch' }).locator('iframe').contentFrame().getByRole('heading', { name: 'Scripted' })).toBeVisible();
 	await closeProject(page, name);
 });

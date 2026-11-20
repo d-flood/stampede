@@ -176,7 +176,7 @@
 		const linked = (event: Event) => {
 			const anchor = (event.target as Element).closest<HTMLElement>('.text a.file');
 			const file = anchor && fileLink(anchor.getAttribute('href')!);
-			return file && { anchor, path: root && relative(file.path, root), cursor: file.cursor };
+			return file && { anchor, path: root && relative(file.path, root), cursor: file.cursor, canvas: canvases.find((canvas) => file.path.endsWith(`/canvases/${canvas}`)) };
 		};
 		const hide = () => {
 			clearTimeout(timer);
@@ -199,7 +199,8 @@
 				if (!link) return;
 				event.preventDefault();
 				hide();
-				if (link.path) onfile(link.path, link.cursor);
+				if (link.canvas) oncanvas(link.canvas);
+				else if (link.path) onfile(link.path, link.cursor);
 			}),
 			on(panel, 'pointerover', (event) => event.pointerType === 'mouse' && show(event, 400)),
 			on(panel, 'pointerout', leave),
