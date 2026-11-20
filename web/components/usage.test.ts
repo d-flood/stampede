@@ -23,17 +23,20 @@ function tooltip() {
 	return page.getByRole('tooltip');
 }
 
+function text(node: Element) {
+	return [...node.children].map((child) => child.textContent!.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ');
+}
+
 function inTooltip(selector: string) {
 	return () => [...document.querySelectorAll(`[role="tooltip"] ${selector}`)].map((node) => node.textContent?.replace(/\s+/g, ' ').trim());
 }
 
-test('the row shows labelled rings with numbers, reset times, and the Reset count', async () => {
+test('the row shows labelled bars with numbers, reset times, the Reset count, and Copilot cost', async () => {
 	vi.useFakeTimers({ toFake: ['Date'] });
 	vi.setSystemTime(now);
 	const view = await render(Usage, { readings, codexResets: resets });
 	const section = view.getByRole('region', { name: 'Usage windows' });
-	await expect.poll(() => section.element().getBoundingClientRect().height).toBe(form() === 'phone' ? 48 : 40);
-	expect(view.container.querySelector('.ring')!.getBoundingClientRect().width).toBe(form() === 'phone' ? 36 : 30);
+	await expect.poll(() => section.element().getBoundingClientRect().height).toBe(form() === 'phone' ? 79 : 67);
 	expect(view.getByRole('group').elements()).toHaveLength(3);
 	expect(view.getByRole('meter').elements()).toHaveLength(3);
 	await expect.element(view.getByRole('meter', { name: 'Claude · 5h' })).toHaveAttribute('aria-valuenow', '100');
@@ -41,15 +44,15 @@ test('the row shows labelled rings with numbers, reset times, and the Reset coun
 	await expect.element(view.getByRole('meter', { name: 'Codex · week' })).toHaveAttribute('aria-valuenow', '43');
 	const claude = view.getByRole('group', { name: 'Claude', exact: true }).element();
 	const codex = view.getByRole('group', { name: 'Codex', exact: true }).element();
-	expect(claude.textContent?.replace(/\s+/g, ' ').trim()).toBe('100 5h 3h 9m 12 wk 6d 14h');
+	expect(text(claude)).toBe('5h 100 3h 9m wk 12 6d 14h');
 	const warning = claude.querySelector('.high .number')!;
 	const probe = warning.appendChild(document.createElement('i'));
 	probe.style.color = 'var(--status-waiting)';
 	expect(getComputedStyle(warning).color).toBe(getComputedStyle(probe).color);
 	probe.remove();
-	expect(codex.textContent?.replace(/\s+/g, ' ').trim()).toBe('43 wk 4d 20h 2 resets');
+	expect(text(codex)).toBe('wk 43 4d 20h 2 resets');
 	await expect.element(view.getByRole('group', { name: 'Codex', exact: true }).getByText('2 resets')).toBeVisible();
-	expect(view.getByRole('group', { name: 'Copilot', exact: true }).element().textContent?.trim()).toBe('');
+	expect(text(view.getByRole('group', { name: 'Copilot', exact: true }).element())).toBe('$12.345 this month');
 	for (const [used, high] of [[0.79, false], [0.8, true]] as const) {
 		await view.rerender({ readings: [{ ...readings[2], used }], codexResets: { availableCount: 1 } });
 		await expect.poll(() => codex.querySelector('.meter')?.classList.contains('high')).toBe(high);
@@ -72,48 +75,42 @@ const antigravity: Reading[] = [
 	{ agent: 'antigravity', window: 'weekly', group: { name: 'Claude and GPT models', short: 'other' }, used: 1, readAt: now, resetsAt: now + 6 * day + 23 * hour }
 ];
 
-test('Resets, logos, rings, and reset times fit at every Sidebar width when every window is high', async () => {
+test('Resets, logos, bars, and reset times fit at every Sidebar width when every window is high', async () => {
 	vi.useFakeTimers({ toFake: ['Date'] });
 	vi.setSystemTime(now);
 	const view = await render(Usage, { readings: [...longest, ...antigravity, readings[3]], codexResets: { availableCount: 12 } });
 	const row = view.container.querySelector('.row')!;
-	expect(row.querySelectorAll('.ring')).toHaveLength(5);
+	expect(row.querySelectorAll('[role="meter"]')).toHaveLength(5);
 	await expect.element(view.getByRole('meter', { name: 'Google Antigravity · week' })).toHaveAttribute('aria-valuenow', '100');
 	for (const width of [160, 320, form() === 'phone' ? 430 : 395]) {
 		view.container.style.width = `${width}px`;
 		await expect.poll(() => {
 			const box = row.getBoundingClientRect();
-			return box.width === width && [...row.querySelectorAll('.brand, .ring, .count, .caption')].every((node) => {
+			return box.width === width && [...row.querySelectorAll('.brand, .period, .number, .count, .cost')].every((node) => {
 				const { left, right, width } = node.getBoundingClientRect();
 				return width > 0 && left >= box.left && right <= box.right;
+			}) && [...row.querySelectorAll('.bar, .remaining')].every((node) => {
+				const { left, right, width } = node.getBoundingClientRect();
+				return width === 0 || (left >= box.left && right <= box.right);
 			});
 		}).toBe(true);
 	}
 	vi.useRealTimers();
 });
 
-test('the row wraps with captions beside rings and logos on their ring line', async () => {
+test('every Agent window and the Copilot cost line up in shared columns', async () => {
 	vi.useFakeTimers({ toFake: ['Date'] });
 	vi.setSystemTime(now);
-	const phone = form() === 'phone';
-	const view = await render(Usage, { readings: longest, codexResets: { availableCount: 3 } });
+	const view = await render(Usage, { readings: [...longest.slice(0, 2), readings[2], ...antigravity, readings[3]], codexResets: { availableCount: 3 } });
 	const row = view.container.querySelector('.row')!;
-	const section = view.container.querySelector('section')!;
-	const center = (node: Element) => {
-		const { top, bottom } = node.getBoundingClientRect();
-		return (top + bottom) / 2;
-	};
-	for (const [width, height] of [[phone ? 430 : 395, phone ? 48 : 40], [320, phone ? 90 : 76]]) {
+	const edges = (selector: string, side: 'left' | 'right' = 'left') => new Set([...row.querySelectorAll(selector)].map((node) => Math.round(node.getBoundingClientRect()[side])));
+	for (const width of [160, 320]) {
 		view.container.style.width = `${width}px`;
-		await expect.poll(() => section.getBoundingClientRect().height).toBe(height);
-		for (const meter of row.querySelectorAll('.meter')) {
-			expect(meter.querySelector('.caption')!.getBoundingClientRect().left).toBeGreaterThanOrEqual(meter.querySelector('.ring')!.getBoundingClientRect().right);
-		}
-		for (const agent of row.querySelectorAll('.agent')) {
-			const line = center(agent.querySelector('.ring')!);
-			for (const node of agent.querySelectorAll('.brand, .ring, .count')) expect(center(node)).toBeCloseTo(line, 0);
-		}
-		expect(row.querySelector('.agent:last-child')!.getBoundingClientRect().right).toBeLessThanOrEqual(row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight));
+		await expect.poll(() => row.getBoundingClientRect().width).toBe(width);
+		expect(row.querySelectorAll('.weekly .period')).toHaveLength(3);
+		for (const selector of ['.brand', '.weekly .period', '.weekly .bar', '.weekly .remaining']) expect(edges(selector).size, selector).toBe(1);
+		expect(edges('.weekly .number', 'right').size).toBe(1);
+		expect(edges('.cost')).toEqual(edges('.five-hour'));
 	}
 	vi.useRealTimers();
 });

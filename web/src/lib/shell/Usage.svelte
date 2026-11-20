@@ -25,6 +25,15 @@
 
 	const visibleAgents = $derived(agents.filter(({ agent }) => (agent === 'codex' && codexResets !== null) || readings.some((reading) => reading.agent === agent && (agent === 'copilot' || reading.used !== undefined))));
 	const resets = $derived(codexResets?.availableCount ?? 0);
+	const copilot = $derived.by(() => {
+		const reading = readings.find((reading) => reading.agent === 'copilot' && reading.window === 'monthly');
+		const currentSessions = readings.filter((reading) => reading.agent === 'copilot' && reading.window === 'session');
+		const unit = currentSessions.some((reading) => reading.consumption?.unit === 'credits') ? 'credits' : 'requests';
+		const sessions = currentSessions.filter((reading) => reading.consumption?.unit === unit);
+		const consumption = reading?.consumption ?? (sessions.length ? { amount: sessions.reduce((total, reading) => total + reading.consumption!.amount, 0), unit } : undefined);
+		const partial = !reading?.consumption && (sessions.some((reading) => reading.partial) || sessions.length < currentSessions.length);
+		return { reading, sessions, consumption, partial };
+	});
 
 	let now = $state(Date.now());
 	let open = $state(false);
@@ -107,12 +116,7 @@
 </script>
 
 {#snippet billing()}
-	{@const reading = readings.find((reading) => reading.agent === 'copilot' && reading.window === 'monthly')}
-	{@const currentSessions = readings.filter((reading) => reading.agent === 'copilot' && reading.window === 'session')}
-	{@const unit = currentSessions.some((reading) => reading.consumption?.unit === 'credits') ? 'credits' : 'requests'}
-	{@const sessions = currentSessions.filter((reading) => reading.consumption?.unit === unit)}
-	{@const consumption = reading?.consumption ?? (sessions.length ? { amount: sessions.reduce((total, reading) => total + reading.consumption!.amount, 0), unit } : undefined)}
-	{@const partial = !reading?.consumption && (sessions.some((reading) => reading.partial) || sessions.length < currentSessions.length)}
+	{@const { reading, sessions, consumption, partial } = copilot}
 	<div class="billing">
 		<span class="amount">
 			{#if consumption}
@@ -213,30 +217,24 @@
 		<div class="row">
 			{#each visibleAgents as { agent, label, Logo } (agent)}
 				<div class="agent {agent}" role="group" aria-label={label}>
-					<span class="meters">
-						<span class="brand" aria-hidden="true"><Logo /></span>
-						{#if agent !== 'copilot'}
-							<span class="rings">
-								{#each hottest(agent) as meter (meter.name)}
-									<span class="meter" class:high={meter.percent >= high} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
-										<span class="ring">
-											<svg viewBox="0 0 40 40" aria-hidden="true">
-												<circle class="track" cx="20" cy="20" r="18.3" />
-												<circle class="arc" cx="20" cy="20" r="18.3" pathLength="100" stroke-dasharray="{Math.min(meter.percent, 100)} 100" transform="rotate(-90 20 20)" />
-											</svg>
-											<span class="number">{meter.percent}</span>
-										</span>
-										<span class="caption">
-											<span>{meter.short}</span>
-											{#if meter.reading.resetsAt !== undefined}
-												<span class="remaining">{remaining(meter.reading.resetsAt)}</span>
-											{/if}
-										</span>
-									</span>
-								{/each}
-							</span>
+					<span class="brand" aria-hidden="true"><Logo /></span>
+					{#if agent === 'copilot'}
+						{#if copilot.consumption}
+							{@const { amount, unit } = copilot.consumption}
+							<span class="cost">{unit === 'credits' ? cost(amount) : `${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${unit}`}{#if copilot.reading?.consumption}{' '}<span class="month">this month</span>{/if}</span>
 						{/if}
-					</span>
+					{:else}
+						{#each hottest(agent) as meter (meter.name)}
+							<span class="meter {meter.window}" class:high={meter.percent >= high} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
+								<span class="period">{meter.short}</span>
+								<span class="bar" aria-hidden="true"><span class="fill" style:width="{Math.min(meter.percent, 100)}%"></span></span>
+								<span class="number">{meter.percent}</span>
+								{#if meter.reading.resetsAt !== undefined}
+									<span class="remaining">{remaining(meter.reading.resetsAt)}</span>
+								{/if}
+							</span>
+						{/each}
+					{/if}
 					{#if agent === 'codex' && resets > 0}
 						<span class="count"><ResetIcon aria-hidden="true" />{resets}<span class="assistive">{` ${resets === 1 ? 'reset' : 'resets'}`}</span></span>
 					{/if}
@@ -287,50 +285,53 @@
 	}
 
 	.row {
-		--ring: 30px;
 		--number: 11px;
 		--label: 10px;
-		--logo: 16px;
+		--logo: 14px;
+		--bar: 28px;
 		position: relative;
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-2) var(--space-3);
-		padding: 4.5px var(--space-4);
+		display: grid;
+		grid-template-columns: repeat(9, auto) minmax(0, 1fr);
+		row-gap: var(--space-2);
+		align-items: center;
+		padding: var(--space-2) var(--space-4);
 		overflow: hidden;
 		color: var(--muted-fg);
+		font-size: var(--label);
+		line-height: 1;
 		white-space: nowrap;
 		pointer-events: none;
 	}
 
 	.phone .row {
-		--ring: 36px;
 		--number: 12.5px;
 		--label: 10.5px;
-		--logo: 18px;
-		column-gap: var(--space-4);
-		padding-block: 5.5px;
+		--logo: 16px;
+		--bar: 36px;
+		padding-block: var(--space-3);
+	}
+
+	.agent,
+	.meter {
+		display: grid;
+		grid-template-columns: subgrid;
 	}
 
 	.agent {
-		display: flex;
-		flex: none;
-		flex-wrap: wrap;
-		max-width: 100%;
-		gap: var(--space-2) var(--space-1);
+		grid-column: 1 / -1;
+		align-items: center;
 	}
 
-	.meters {
-		display: flex;
-		min-width: 0;
-		align-items: flex-start;
-		gap: var(--space-1);
+	.meter {
+		align-items: baseline;
 	}
 
-	.rings {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-2);
-		min-width: 0;
+	.five-hour {
+		grid-column: 2 / span 4;
+	}
+
+	.weekly {
+		grid-column: 6 / span 4;
 	}
 
 	.claude-code {
@@ -364,71 +365,56 @@
 		color: var(--brand);
 	}
 
-	.agent .brand {
-		align-items: center;
-		height: var(--ring);
+	.meter .period {
+		padding-inline: var(--space-3) var(--space-1);
 	}
 
-	.meter {
-		display: flex;
-		flex: none;
-		align-items: center;
-		gap: 1px 2px;
-		line-height: 1;
+	.row .bar {
+		align-self: center;
+		width: var(--bar);
+		margin-right: var(--space-1);
+		background: color-mix(in oklab, var(--brand) 16%, var(--surface-3));
 	}
 
-	.ring {
-		display: grid;
-		place-items: center;
-		width: var(--ring);
-		height: var(--ring);
+	.row .fill {
+		background: var(--brand);
 	}
 
-	.ring svg,
-	.number {
-		grid-area: 1 / 1;
-	}
-
-	.ring svg {
-		width: 100%;
-		height: 100%;
-		fill: none;
-		stroke-width: 3.4;
-	}
-
-	.track {
-		stroke: color-mix(in oklab, var(--brand) 16%, var(--surface-3));
-	}
-
-	.arc {
-		stroke: var(--brand);
-		transition: stroke-dasharray calc(4 * var(--dur-med)) var(--ease-out);
+	.row .high .fill {
+		background: var(--status-waiting);
 	}
 
 	.number {
+		justify-self: end;
 		color: var(--color-fg);
 		font-size: var(--number);
 		font-weight: 500;
 		font-variant-numeric: tabular-nums;
 	}
 
-	.caption {
-		display: grid;
-		gap: 1px;
-		font-size: var(--label);
-	}
-
 	.remaining {
+		padding-left: var(--space-2);
 		color: color-mix(in oklab, var(--color-fg) 80%, var(--muted-fg));
 		font-variant-numeric: tabular-nums;
 	}
 
-	.high .arc {
-		stroke: var(--status-waiting);
-	}
-
 	.high .number {
 		color: var(--status-waiting);
+	}
+
+	.cost {
+		grid-column: 2 / -1;
+		overflow: hidden;
+		padding-left: var(--space-3);
+		color: var(--color-fg);
+		font-size: var(--number);
+		font-variant-numeric: tabular-nums;
+		text-overflow: ellipsis;
+	}
+
+	.month {
+		color: var(--muted-fg);
+		font-size: var(--label);
 	}
 
 	.bar {
@@ -462,10 +448,11 @@
 
 	.count {
 		display: flex;
-		flex: none;
+		grid-column: 10;
 		align-items: center;
-		gap: 3px;
-		height: var(--ring);
+		gap: var(--space-1);
+		padding-left: var(--space-3);
+		font-size: var(--number);
 	}
 
 	.assistive {
@@ -477,14 +464,13 @@
 	}
 
 	@container (max-width: 176px) {
-		.row,
-		.phone .row {
-			--ring: 28px;
-			--number: 10.5px;
-			--label: 10px;
-			--logo: 14px;
-			column-gap: var(--space-2);
+		.row {
 			padding-inline: var(--space-3);
+		}
+
+		.row .bar,
+		.remaining {
+			display: none;
 		}
 	}
 

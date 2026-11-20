@@ -33,7 +33,7 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', { tag
 	await sections.getByRole('radio', { name: 'Epics', exact: true }).click();
 	await expect(sections.getByRole('radio', { name: 'Epics', exact: true })).toHaveAttribute('aria-checked', 'true');
 	const usage = sidebar.getByRole('region', { name: 'Usage windows' });
-	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(106);
+	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(47);
 	for (const name of ['Claude', 'Codex']) {
 		const agent = usage.getByRole('group', { name, exact: true });
 		await expect(agent.locator('.brand svg')).toBeVisible();
@@ -68,7 +68,6 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', { tag
 	await expect(resizer).toHaveAttribute('aria-valuenow', '640');
 	await page.mouse.up();
 	await expect(usage.getByRole('meter')).toHaveCount(4);
-	await expect.poll(async () => (await usage.boundingBox())?.height).toBe(40);
 	await expect.poll(async () => (await page.locator('main').boundingBox())!.width).toBeGreaterThan(500);
 	await page.setViewportSize({ width: 800, height: 800 });
 	await expect(resizer).toHaveAttribute('aria-valuemax', '480');
