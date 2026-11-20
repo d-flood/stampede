@@ -20,8 +20,12 @@ def quota():
     reads = state / 'quota-reads'
     later = reads.exists()
     reads.touch()
-    buckets = [('Gemini Models', 'gemini-weekly', 0.75 if later else 0.9892, '2026-11-26T05:42:15Z'), ('Claude and GPT models', '3p-weekly', 0.5 if later else 1, '2026-11-26T05:56:49Z')]
-    groups = [{'name': name, 'description': '', 'buckets': [{'id': id, 'name': 'Weekly Limit Remaining', 'window': 'weekly', 'remaining_fraction': remaining, 'reset_time': reset}]} for name, id, remaining, reset in buckets]
+    buckets = [('Gemini Models', 'gemini', 0.75 if later else 0.9892, '2026-11-26T05:42:15Z'), ('Claude and GPT models', '3p', 0.5 if later else 1, '2026-11-26T05:56:49Z')]
+    groups = [{'name': name, 'description': '', 'buckets': [
+        {'id': f'{id}-weekly', 'name': 'Weekly Limit Remaining', 'window': 'weekly', 'remaining_fraction': remaining, 'reset_time': reset},
+        {'id': f'{id}-5h', 'name': 'Five Hour Limit Remaining', 'window': '5h', 'remaining_fraction': 0.1, 'reset_time': '2026-11-19T10:42:15Z'},
+    ]} for name, id, remaining, reset in buckets]
+    groups.append({'name': 'Gemini 4 Argon', 'description': '', 'buckets': [{'id': 'gemini-argon-wtu-weekly', 'name': 'Gemini 4 Argon Weekly Limit', 'window': 'weekly', 'remaining_fraction': 1, 'reset_time': '2026-11-26T06:10:00Z'}]})
     print(json.dumps({'conversation_id': '', 'status': 'SUCCESS', 'num_turns': 0, 'usage': {'total_tokens': 0}, 'command': {'name': 'usage', 'data': {'groups': groups}}}))
 
 

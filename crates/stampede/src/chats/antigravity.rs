@@ -164,7 +164,7 @@ fn current(options: &[Value], id: &str) -> Option<String> {
     options.iter().find(|option| option["id"] == id)?["currentValue"].as_str().map(str::to_owned)
 }
 
-/// Reads each quota group's weekly limit with agy's `/quota`, which makes no model call.
+/// Reads each quota group's 5h and weekly limits with agy's `/quota`, which makes no model call.
 pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
     let output = Command::new(executable(env)).args(["-p", "/quota", "--output-format", "json"]).envs(env).current_dir(crate::home())
         .stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true).output().await?;
@@ -174,8 +174,10 @@ pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
     let quota: Value = serde_json::from_slice(&output.stdout)?;
     Ok(quota["command"]["data"]["groups"].as_array().into_iter().flatten().flat_map(|group| {
         group["buckets"].as_array().into_iter().flatten().filter_map(|bucket| {
-            let mut reading = Reading::new(Agent::Antigravity, Window::Weekly, 1.0 - bucket["remaining_fraction"].as_f64()?, bucket["reset_time"].as_str().and_then(super::epoch_ms));
-            let short = if bucket["id"] == "gemini-weekly" { "gemini" } else { "other" };
+            let window = match bucket["window"].as_str()? { "5h" => Window::FiveHour, "weekly" => Window::Weekly, _ => return None };
+            let mut reading = Reading::new(Agent::Antigravity, window, 1.0 - bucket["remaining_fraction"].as_f64()?, bucket["reset_time"].as_str().and_then(super::epoch_ms));
+            let id = bucket["id"].as_str()?;
+            let short = if id.starts_with("gemini-argon") { "argon" } else if id.starts_with("gemini") { "gemini" } else { "other" };
             reading.group = Some(Group { name: group["name"].as_str()?.to_owned(), short: short.to_owned() });
             Some(reading)
         })

@@ -185,14 +185,19 @@ async fn antigravity_explains_missing_sign_in_and_install() {
 }
 
 #[tokio::test]
-async fn antigravity_quota_reads_one_weekly_reading_per_group() {
+async fn antigravity_quota_reads_each_group_window() {
     let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
     let server = Server::with_env("antigravity", &rig("simple-turn", ""), vec![("PATH", path.into())]).await;
-    let reading = |name: &str, short: &str, used: f64, resets_at: u64| json!({ "agent": "antigravity", "window": "weekly", "group": { "name": name, "short": short }, "used": used, "resetsAt": resets_at });
+    let reading = |window: &str, name: &str, short: &str, used: f64, resets_at: u64| json!({ "agent": "antigravity", "window": window, "group": { "name": name, "short": short }, "used": used, "resetsAt": resets_at });
+    let five_hour = |name: &str, short: &str| reading("five-hour", name, short, 0.9, 1795084935000);
+    let argon = reading("weekly", "Gemini 4 Argon", "argon", 0.0, 1795673400000);
     let mut socket = device(server.port).await;
     assert_eq!(timeout(Duration::from_secs(20), quota(&mut socket, 1.0 - 0.9892)).await.expect("no Antigravity usage"), json!([
-        reading("Gemini Models", "gemini", 1.0 - 0.9892, 1795671735000),
-        reading("Claude and GPT models", "other", 0.0, 1795672609000),
+        reading("weekly", "Gemini Models", "gemini", 1.0 - 0.9892, 1795671735000),
+        five_hour("Gemini Models", "gemini"),
+        reading("weekly", "Claude and GPT models", "other", 0.0, 1795672609000),
+        five_hour("Claude and GPT models", "other"),
+        argon,
     ]));
     drop(socket);
     let later = timeout(Duration::from_secs(20), async {
@@ -204,7 +209,10 @@ async fn antigravity_quota_reads_one_weekly_reading_per_group() {
         }
     }).await.expect("a later read never arrived");
     assert_eq!(later, json!([
-        reading("Gemini Models", "gemini", 0.25, 1795671735000),
-        reading("Claude and GPT models", "other", 0.5, 1795672609000),
+        reading("weekly", "Gemini Models", "gemini", 0.25, 1795671735000),
+        five_hour("Gemini Models", "gemini"),
+        reading("weekly", "Claude and GPT models", "other", 0.5, 1795672609000),
+        five_hour("Claude and GPT models", "other"),
+        argon,
     ]));
 }

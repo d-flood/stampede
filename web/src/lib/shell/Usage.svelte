@@ -83,11 +83,16 @@
 	}
 
 	function measured(agent: string) {
-		return windows.flatMap(({ window, label, name, short }) =>
-			readings.flatMap((reading) =>
-				reading.agent !== agent || reading.window !== window || reading.used === undefined
-					? []
-					: [{ label: reading.group?.name ?? label, name: reading.group?.name ?? name, short: reading.group?.short ?? short, reading, percent: Math.round(reading.used * 100) }]
+		const own = readings.filter((reading) => reading.agent === agent);
+		return [...new Set(own.map((reading) => reading.group?.name))].flatMap((group) =>
+			windows.flatMap(({ window, label, name, short }) =>
+				own.flatMap((reading) => {
+					if (reading.group?.name !== group || reading.window !== window || reading.used === undefined) return [];
+					const percent = Math.round(reading.used * 100);
+					return [reading.group
+						? { group, label, name: `${reading.group.name} ${name}`, short: `${reading.group.short} ${short}`, reading, percent }
+						: { group, label, name, short, reading, percent }];
+				})
 			)
 		);
 	}
@@ -144,7 +149,9 @@
 				{#if agent === 'copilot'}
 					{@render billing()}
 				{:else}
-					{#each measured(agent) as { name, label: period, reading, percent } (name)}
+					{@const meters = measured(agent)}
+					{#each meters as { group, name, label: period, reading, percent }, index (name)}
+						{#if group && group !== meters[index - 1]?.group}<span class="group">{group}</span>{/if}
 						<div class="window" class:high={percent >= high}>
 							<span class="period">{period}</span>
 							<span class="bar" aria-hidden="true"><span class="fill" style:width="{Math.min(percent, 100)}%"></span></span>
@@ -176,56 +183,60 @@
 	{@render detail(false)}
 {/snippet}
 
-<section aria-label="Usage windows" class:phone={form() === 'phone'} hidden={!visibleAgents.length}>
-	<Popover
-		bind:open={() => open, (value) => { open = value; if (value) tip = false; }}
-		bind:ref={popover}
-		label="Usage details"
-		side={form() === 'phone' ? 'bottom' : 'top'}
-		width="24rem"
-		onopenautofocus={(event) => { event.preventDefault(); popover?.focus(); }}
-	>
-		{#snippet trigger(props)}
-			<Tooltip delayDuration={0} ignoreNonKeyboardFocus bind:open={() => tip, (value) => (tip = value && !open)} content={tooltipDetail}>
-				{#snippet children(tooltip)}
-					<button {...mergeProps(props, tooltip)} class="trigger" aria-label="Usage details"></button>
-				{/snippet}
-			</Tooltip>
-		{/snippet}
-		{@render detail(true)}
-	</Popover>
-	<div class="row">
-		{#each visibleAgents as { agent, label, Logo } (agent)}
-			<div class="agent {agent}" role="group" aria-label={label}>
-				<span class="meters">
-					<span class="brand" aria-hidden="true"><Logo /></span>
-					{#if agent !== 'copilot'}
-						{#each measured(agent) as meter (meter.name)}
-							<span class="meter" class:high={meter.percent >= high} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
-								<span class="ring">
-									<svg viewBox="0 0 40 40" aria-hidden="true">
-										<circle class="track" cx="20" cy="20" r="18.3" />
-										<circle class="arc" cx="20" cy="20" r="18.3" pathLength="100" stroke-dasharray="{Math.min(meter.percent, 100)} 100" transform="rotate(-90 20 20)" />
-									</svg>
-									<span class="number">{meter.percent}</span>
-								</span>
-								<span class="caption">
-									<span>{meter.short}</span>
-									{#if meter.reading.resetsAt !== undefined}
-										<span class="remaining">{remaining(meter.reading.resetsAt)}</span>
-									{/if}
-								</span>
+<svelte:boundary onerror={(error) => console.error(error)}>
+	<section aria-label="Usage windows" class:phone={form() === 'phone'} hidden={!visibleAgents.length}>
+		<Popover
+			bind:open={() => open, (value) => { open = value; if (value) tip = false; }}
+			bind:ref={popover}
+			label="Usage details"
+			side={form() === 'phone' ? 'bottom' : 'top'}
+			width="24rem"
+			onopenautofocus={(event) => { event.preventDefault(); popover?.focus(); }}
+		>
+			{#snippet trigger(props)}
+				<Tooltip delayDuration={0} ignoreNonKeyboardFocus bind:open={() => tip, (value) => (tip = value && !open)} content={tooltipDetail}>
+					{#snippet children(tooltip)}
+						<button {...mergeProps(props, tooltip)} class="trigger" aria-label="Usage details"></button>
+					{/snippet}
+				</Tooltip>
+			{/snippet}
+			{@render detail(true)}
+		</Popover>
+		<div class="row">
+			{#each visibleAgents as { agent, label, Logo } (agent)}
+				<div class="agent {agent}" role="group" aria-label={label}>
+					<span class="meters">
+						<span class="brand" aria-hidden="true"><Logo /></span>
+						{#if agent !== 'copilot'}
+							<span class="rings">
+								{#each measured(agent) as meter (meter.name)}
+									<span class="meter" class:high={meter.percent >= high} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
+										<span class="ring">
+											<svg viewBox="0 0 40 40" aria-hidden="true">
+												<circle class="track" cx="20" cy="20" r="18.3" />
+												<circle class="arc" cx="20" cy="20" r="18.3" pathLength="100" stroke-dasharray="{Math.min(meter.percent, 100)} 100" transform="rotate(-90 20 20)" />
+											</svg>
+											<span class="number">{meter.percent}</span>
+										</span>
+										<span class="caption">
+											<span>{meter.short}</span>
+											{#if meter.reading.resetsAt !== undefined}
+												<span class="remaining">{remaining(meter.reading.resetsAt)}</span>
+											{/if}
+										</span>
+									</span>
+								{/each}
 							</span>
-						{/each}
+						{/if}
+					</span>
+					{#if agent === 'codex' && resets > 0}
+						<span class="count"><ResetIcon aria-hidden="true" />{resets}<span class="assistive">{` ${resets === 1 ? 'reset' : 'resets'}`}</span></span>
 					{/if}
-				</span>
-				{#if agent === 'codex' && resets > 0}
-					<span class="count"><ResetIcon aria-hidden="true" />{resets}<span class="assistive">{` ${resets === 1 ? 'reset' : 'resets'}`}</span></span>
-				{/if}
-			</div>
-		{/each}
-	</div>
-</section>
+				</div>
+			{/each}
+		</div>
+	</section>
+</svelte:boundary>
 
 <style>
 	section {
@@ -302,9 +313,16 @@
 
 	.meters {
 		display: flex;
-		flex: none;
+		min-width: 0;
 		align-items: flex-start;
 		gap: var(--space-1);
+	}
+
+	.rings {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+		min-width: 0;
 	}
 
 	.claude-code {
@@ -349,10 +367,6 @@
 		align-items: center;
 		gap: 1px 2px;
 		line-height: 1;
-	}
-
-	.meter + .meter {
-		margin-left: var(--space-1);
 	}
 
 	.ring {
@@ -518,6 +532,14 @@
 		grid-template-columns: subgrid;
 		align-items: center;
 		padding-top: var(--space-1);
+	}
+
+	.group {
+		padding-top: var(--space-1);
+	}
+
+	.window + .group {
+		padding-top: var(--space-2);
 	}
 
 	.percent {
