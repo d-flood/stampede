@@ -5,7 +5,8 @@ import { OSC8LinkProvider, type ILink, type Terminal } from 'ghostty-web';
 const URLS = /https?:\/\/[\w\-.~:/?#@!$&*+,;=%\[\]]+/g;
 const TRAILING = /[.,;!?)\]]+$/;
 const PATHS = /([./~]?[\w@.-]+(?:\/[\w@.-]+)*\.\w+)(?::(\d+)(?::(\d+))?)?/g;
-const FILE_LINK = /^(.+?)(?:(?::|#L)(\d+)(?:[:C](\d+))?)?$/;
+const FILE_URL = /^file:\/\/(?:localhost)?(?=\/)/i;
+const FILE_LINK = /^(.+?)(?:(?::|#L)(\d+)(?:[:C](\d+))?(?:-L?\d+(?:[:C]\d+)?)?)?$/;
 const FRESH_MS = 10_000;
 
 const checks = new Map<string, { at: number; exists: Promise<boolean> }>();
@@ -29,12 +30,15 @@ export function relative(path: string, root: string): string | undefined {
 }
 
 export function fileLink(href: string): { path: string; cursor?: Cursor } | undefined {
-	if (/^([a-z][a-z0-9+-]*:|\/\/|#)/i.test(href)) return;
-	let decoded = href;
+	const target = href.replace(FILE_URL, '');
+	if (/^([a-z][a-z0-9+-]*:|\/\/|#)/i.test(target)) return;
+	// Split off the line before decoding, so an encoded `:` or `#` stays part of the path.
+	const [, encoded, line, column] = target.match(FILE_LINK) ?? [];
+	if (!encoded) return;
+	let path = encoded;
 	try {
-		decoded = decodeURI(href);
+		path = decodeURIComponent(encoded);
 	} catch {}
-	const [, path, line, column] = decoded.match(FILE_LINK)!;
 	return { path, cursor: line ? { line: Number(line), column: Number(column ?? 1) } : undefined };
 }
 

@@ -8,6 +8,8 @@ import Check from '~icons/ph/check?raw';
 import Copy from '~icons/ph/copy?raw';
 
 const markdown = new MarkdownIt({ breaks: true, linkify: true, highlight: highlighted });
+const validate = markdown.validateLink;
+markdown.validateLink = (url) => (/^file:/i.test(url) ? !!fileLink(url) : validate(url));
 const rules = markdown.renderer.rules;
 const copy = `<button class="copy" type="button" aria-label="Copy">${Copy}${Check}</button>`;
 const maxCacheBytes = 2 << 20;

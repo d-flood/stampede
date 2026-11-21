@@ -1,4 +1,5 @@
 import Text from '#lib/chat/Text.svelte';
+import { fileLink } from '#lib/links.ts';
 import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
@@ -75,6 +76,24 @@ test('inline code follows the chat size and code blocks use four-column tabs', a
 	} finally {
 		document.documentElement.style.removeProperty('--code-size');
 	}
+});
+
+test('file:// links render as file links without linkify hijacking filenames or allowing unsafe schemes', async () => {
+	const view = await render(Text, {
+		item: item(
+			'See [README.md](file:///repo/README.md#L10-L20), [local](file://localhost/repo/app.ts#L5C3-L9C1), [remote](file://other/etc/passwd), and [bad](javascript:alert(1)).'
+		)
+	});
+	const links = [...view.container.querySelectorAll<HTMLAnchorElement>('a')];
+	expect(links.map((link) => ({ text: link.textContent, href: link.getAttribute('href'), file: link.classList.contains('file'), icon: !!link.querySelector('svg') }))).toEqual([
+		{ text: 'README.md', href: 'file:///repo/README.md#L10-L20', file: true, icon: true },
+		{ text: 'local', href: 'file://localhost/repo/app.ts#L5C3-L9C1', file: true, icon: true }
+	]);
+	expect(fileLink('file:///repo/README.md#L10-L20')).toEqual({ path: '/repo/README.md', cursor: { line: 10, column: 1 } });
+	expect(fileLink('file://localhost/repo/app.ts#L5C3-L9C1')).toEqual({ path: '/repo/app.ts', cursor: { line: 5, column: 3 } });
+	expect(fileLink('file://other/etc/passwd')).toBeUndefined();
+	expect(fileLink('file:///repo/notes%23draft.md#L10')).toEqual({ path: '/repo/notes#draft.md', cursor: { line: 10, column: 1 } });
+	expect(fileLink('file:///repo/a%0Ab.md')).toEqual({ path: '/repo/a\nb.md' });
 });
 
 test.runIf(matchMedia('(pointer: coarse) and (max-width: 767px)').matches)('phone tables scroll inside their wrapper without wrapping cells', async () => {

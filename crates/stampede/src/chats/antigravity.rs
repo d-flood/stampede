@@ -26,6 +26,9 @@ use crate::{
 };
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
+const UNSOLICITED_AFTER_USAGE: Duration = Duration::from_millis(500);
+const UNSOLICITED_IDLE: Duration = Duration::from_secs(3);
+const UNSOLICITED_QUIET: Duration = Duration::from_secs(30);
 const SIGN_IN: &str = "Google Antigravity isn't signed in. Run `agy` in a Terminal and sign in with Google.";
 const AUTH_REQUIRED: i64 = -32000;
 
@@ -234,7 +237,8 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
     transcript.capabilities.modes = Agent::Antigravity.modes().iter().map(|mode| Choice::mode(mode)).collect();
     let mut live = Live {
         data_dir: data_dir.to_owned(), chat_id: chat.id.clone(), env: env.clone(), connection: None, session: chat.agent_session.clone(),
-        loaded: false, full_access: false, prompts: HashSet::new(), interrupting: false, permissions: HashMap::new(), progress, transcript,
+        loaded: false, full_access: false, prompts: HashSet::new(), unsolicited: false, settle: None, interrupting: false,
+        permissions: HashMap::new(), progress, transcript,
     };
     live.open(chat.agent_session.is_some() && chat.status != Status::Done, &chat.shell_context).await;
     tokio::spawn(live.drive(actions, shells));
@@ -251,6 +255,9 @@ struct Live {
     loaded: bool,
     full_access: bool,
     prompts: HashSet<u64>,
+    /// True when agy streamed updates without an open `session/prompt`, such as a background-task wakeup.
+    unsolicited: bool,
+    settle: Option<tokio::time::Instant>,
     interrupting: bool,
     permissions: HashMap<String, (Value, Vec<Value>)>,
     progress: UnboundedSender<shell::Progress>,
@@ -282,9 +289,11 @@ impl Live {
                     None => {
                         if let Some(connection) = self.connection.take() { connection.close().await; }
                         self.prompts.clear();
+                        self.unsolicited = false;
                         self.fail("Google Antigravity stopped unexpectedly.".to_owned()).await;
                     }
                 },
+                _ = until(self.settle) => self.end_turn().await,
                 Some(progress) = shells.recv() => self.transcript.shell_progress(progress),
             }
         }
@@ -302,7 +311,7 @@ impl Live {
 
     async fn fail(&mut self, text: String) {
         self.transcript.error(text);
-        if self.prompts.is_empty() { self.end_turn().await; }
+        if self.prompts.is_empty() && !self.unsolicited { self.end_turn().await; }
     }
 
     async fn connect(&mut self) -> io::Result<()> {
@@ -392,9 +401,13 @@ impl Live {
             Action::Interrupt => {
                 self.transcript.stop_shells();
                 self.cancel_permissions().await;
-                if let (false, Some(session), Some(connection)) = (self.prompts.is_empty(), &self.session, &mut self.connection) {
+                if let (true, Some(session), Some(connection)) = (!self.prompts.is_empty() || self.unsolicited, &self.session, &mut self.connection) {
                     self.interrupting = true;
                     connection.notify("session/cancel", json!({ "sessionId": session })).await?;
+                    if self.prompts.is_empty() {
+                        self.end_turn().await;
+                        self.transcript.push(Item::interrupted());
+                    }
                 }
                 Ok(())
             }
@@ -413,6 +426,10 @@ impl Live {
         if !text.is_empty() { prompt.push(json!({ "type": "text", "text": text })); }
         prompt.extend(images.iter().map(|image| json!({ "type": "image", "mimeType": image.media_type, "data": image.data })));
         self.transcript.close();
+        if std::mem::take(&mut self.unsolicited) {
+            self.settle = None;
+            self.transcript.conclude();
+        }
         if std::mem::take(&mut self.interrupting) {
             self.transcript.stop_commands();
             self.transcript.push(Item::interrupted());
@@ -495,6 +512,7 @@ impl Live {
                     }
                 } else {
                     self.transcript.update(update, history);
+                    if !history && self.prompts.is_empty() { self.track_unsolicited(update); }
                 }
             }
             (Some("session/request_permission"), Some(id)) => self.permission(id.clone(), &message["params"]).await,
@@ -508,8 +526,43 @@ impl Live {
         }
     }
 
+    fn track_unsolicited(&mut self, update: &Value) {
+        let kind = update["sessionUpdate"].as_str();
+        let active = match kind {
+            Some("agent_thought_chunk" | "agent_message_chunk") => {
+                update["content"]["type"] == "text" && !update["content"]["text"].as_str().unwrap_or_default().is_empty()
+            }
+            Some("tool_call") => true,
+            // A late update to a call from an ended turn isn't new work.
+            Some("tool_call_update") => update["toolCallId"].as_str().is_some_and(|id| self.transcript.tools.contains_key(id)),
+            _ => false,
+        };
+        if active {
+            self.unsolicited = true;
+            if self.transcript.status == Status::Done { self.transcript.status(Status::Working); }
+        }
+        if !self.unsolicited { return; }
+        if !self.permissions.is_empty() || self.transcript.has_running_tools() {
+            self.settle = None;
+            return;
+        }
+        let now = tokio::time::Instant::now();
+        let replied = matches!(self.transcript.open, Some((Chunk::Text, _)));
+        self.settle = match kind {
+            Some("agent_message_chunk") if replied => Some(now + UNSOLICITED_IDLE),
+            Some("usage_update") if replied => {
+                let soon = now + UNSOLICITED_AFTER_USAGE;
+                Some(self.settle.map_or(soon, |current| current.min(soon)))
+            }
+            _ if active => Some(now + UNSOLICITED_QUIET),
+            _ => self.settle.or(Some(now + UNSOLICITED_QUIET)),
+        };
+    }
+
     async fn permission(&mut self, rpc: Value, params: &Value) {
         let id = Uuid::new_v4().to_string();
+        if self.prompts.is_empty() { self.unsolicited = true; }
+        self.settle = None;
         let call = self.transcript.merged(&params["toolCall"]);
         let input = &call["rawInput"];
         let kind = match call["kind"].as_str() {
@@ -554,6 +607,8 @@ impl Live {
 
     async fn end_turn(&mut self) {
         self.interrupting = false;
+        self.unsolicited = false;
+        self.settle = None;
         self.cancel_permissions().await;
         self.transcript.tools.clear();
         self.transcript.stop_commands();
@@ -564,6 +619,13 @@ impl Live {
 async fn next(connection: &mut Option<Connection>) -> Option<Value> {
     match connection {
         Some(connection) => connection.incoming.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn until(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
         None => std::future::pending().await,
     }
 }
@@ -684,12 +746,21 @@ impl Transcript {
 
     /// Ends the streaming chunk, so that the next one starts its own Item.
     fn close(&mut self) {
-        if let Some((Chunk::Thought, index)) = self.open.take()
-            && let Item::Thinking { seconds, .. } = &mut self.items[index]
-        {
-            *seconds = self.thinking.take().map_or(0, |started| started.elapsed().as_secs());
-            self.changed(index);
+        match self.open.take() {
+            Some((Chunk::Text, index)) => if let Item::Text { streaming, .. } = &mut self.items[index] && *streaming {
+                *streaming = false;
+                self.changed(index);
+            }
+            Some((Chunk::Thought, index)) => if let Item::Thinking { seconds, .. } = &mut self.items[index] {
+                *seconds = self.thinking.take().map_or(0, |started| started.elapsed().as_secs());
+                self.changed(index);
+            }
+            _ => {}
         }
+    }
+
+    fn has_running_tools(&self) -> bool {
+        self.tools.values().any(|(_, call, _)| !matches!(call["status"].as_str(), Some("completed" | "failed")))
     }
 
     /// Marks the turn's last reply as addressed to the user.
@@ -993,21 +1064,73 @@ impl Transcript {
 mod tests {
     use super::*;
 
+    fn test_live(root: &Path) -> (Live, UnboundedReceiver<Event>) {
+        let (events, received) = mpsc::unbounded_channel();
+        let (progress, _) = mpsc::unbounded_channel();
+        let live = Live {
+            data_dir: root.to_owned(), chat_id: "test".to_owned(), env: BTreeMap::new(), connection: None, session: None,
+            loaded: false, full_access: true, prompts: HashSet::new(), unsolicited: false, settle: None, interrupting: false,
+            permissions: HashMap::new(), progress, transcript: Transcript::new(root, root, events, Settings::default()),
+        };
+        (live, received)
+    }
+
+    fn session_update(update: Value) -> Value {
+        json!({ "method": "session/update", "params": { "update": update } })
+    }
+
     #[tokio::test]
     async fn full_access_survives_agent_mode_updates() {
         let root = tempfile::tempdir().unwrap();
-        let (events, _received) = mpsc::unbounded_channel();
-        let (progress, _) = mpsc::unbounded_channel();
-        let mut live = Live {
-            data_dir: root.path().to_owned(), chat_id: "test".to_owned(), env: BTreeMap::new(), connection: None, session: None,
-            loaded: false, full_access: true, prompts: HashSet::new(), interrupting: false, permissions: HashMap::new(), progress,
-            transcript: Transcript::new(root.path(), root.path(), events, Settings::default()),
-        };
+        let (mut live, _received) = test_live(root.path());
         live.transcript.settings.chosen.mode = Some("full-access".to_owned());
         for mode in ["plan", "default"] {
-            live.handle(json!({ "method": "session/update", "params": { "update": { "sessionUpdate": "current_mode_update", "currentModeId": mode } } }), false).await;
+            live.handle(session_update(json!({ "sessionUpdate": "current_mode_update", "currentModeId": mode })), false).await;
             assert_eq!(live.transcript.settings.chosen.mode.as_deref(), Some("full-access"));
             assert_eq!(live.transcript.mode.as_deref(), Some(mode));
         }
+    }
+
+    #[tokio::test]
+    async fn unsolicited_wakeup_stops_mid_turn_streaming_and_concludes_when_idle() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut live, mut received) = test_live(root.path());
+
+        // Commentary followed by a tool call stops streaming immediately and holds off settling while the tool runs.
+        live.handle(session_update(json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Checking diff." } })), false).await;
+        assert_eq!(live.transcript.status, Status::Working);
+        assert!(live.settle.is_some());
+        live.handle(session_update(json!({ "sessionUpdate": "tool_call", "toolCallId": "1", "status": "in_progress", "kind": "execute", "title": "git diff" })), false).await;
+        assert!(matches!(&live.transcript.items[0], Item::Text { text, streaming: false, phase: Phase::Commentary } if text == "Checking diff."));
+        assert!(live.settle.is_none());
+
+        live.handle(session_update(json!({ "sessionUpdate": "tool_call_update", "toolCallId": "1", "status": "completed", "rawOutput": { "output": "" } })), false).await;
+        assert_eq!(live.transcript.status, Status::Working);
+        assert!(live.settle.is_some());
+        live.fail("Boom".to_owned()).await;
+        assert_eq!(live.transcript.status, Status::Working);
+
+        // Final reply text streams, tightens its settle timer on usage_update, then drive() concludes it as Final + Done.
+        live.handle(session_update(json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "All clean." } })), false).await;
+        let idle = live.settle.expect("idle settle deadline");
+        live.handle(session_update(json!({ "sessionUpdate": "usage_update", "used": 1000, "size": 100000 })), false).await;
+        let soon = live.settle.expect("post-usage settle deadline");
+        assert!(soon < idle);
+
+        let (actions_tx, actions_rx) = mpsc::unbounded_channel();
+        let (_shells_tx, shells_rx) = mpsc::unbounded_channel();
+        let driver = tokio::spawn(live.drive(actions_rx, shells_rx));
+        let mut finalized = false;
+        timeout(Duration::from_secs(2), async {
+            while let Some(event) = received.recv().await {
+                match event {
+                    Event::Item(3, Item::Text { text, streaming: false, phase: Phase::Final }) if text == "All clean." => finalized = true,
+                    Event::Status(Status::Done) if finalized => break,
+                    _ => {}
+                }
+            }
+        }).await.expect("unsolicited turn never settled");
+        let _ = actions_tx.send(Action::Close);
+        driver.await.unwrap();
     }
 }
