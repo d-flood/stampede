@@ -31,6 +31,33 @@ test('phone swipes open Projects and the Sidebar over the Tab, and back or a cho
 	await sidebar.getByRole('button', { name: 'greeting.ts', exact: true }).click();
 	await expect(sidebar).toBeHidden();
 	await expectCurrent(page, 'greeting.ts');
+
+	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true });
+	const greeting = tabs.getByRole('tab', { name: 'greeting.ts', exact: true });
+	for (const [origin, distance] of [[greeting, 180], [tabs, -180]] as const) {
+		const box = (await origin.boundingBox())!;
+		await touchSwipe(page, box.x + box.width / 2, box.y + box.height / 2, distance);
+		await expect(projects).toBeHidden();
+		await expect(sidebar).toBeHidden();
+		await expect(greeting).toHaveAttribute('aria-selected', 'true');
+	}
+
+	for (const name of ['README.md', 'desktop.txt', 'pixel.txt']) {
+		await (await showSidebar(page)).getByRole('button', { name, exact: true }).click();
+		await expectCurrent(page, name);
+	}
+	const offset = () => tabs.evaluate((element) => element.scrollLeft);
+	await expect.poll(offset).toBeGreaterThan(0);
+	const box = (await tabs.boundingBox())!;
+	const y = box.y + box.height / 2;
+	await touchSwipe(page, box.x + box.width / 3, y, 220);
+	await expect.poll(offset).toBe(0);
+	await touchSwipe(page, box.x + box.width / 3, y, 220);
+	await expectCurrent(page, 'pixel.txt');
+	await expect(projects).toBeHidden();
+	await touchSwipe(page, box.x + box.width * 0.8, y, -220);
+	await expect.poll(offset).toBeGreaterThan(0);
+	await expect(sidebar).toBeHidden();
 });
 
 test('phone Tab strip switches without the keyboard and closes Tabs dragged up unless they ask first', { tag: '@phone' }, async ({ page }) => {

@@ -534,12 +534,19 @@
 
 	const pullsPanels = swipe({
 		share: 0.25,
-		allow: (event) => !panel && !scrolls(event),
+		allow: (event) => !panel && !(event.target as Element).closest('main.bottom > .strip') && !scrolls(event),
 		drag: (distance) => (pull = focused || distance > 0 ? distance : 0),
 		release: async (distance, committed) => {
 			if (committed && pull) await openPanel(distance > 0 ? 'projects' : 'sidebar');
 			pull = 0;
 		}
+	});
+
+	const blocksTabStripHistory = swipe({
+		share: 1,
+		engage: (event, distance) => !scrolls(event, distance),
+		drag: () => {},
+		release: () => {}
 	});
 
 	/** Closes a phone Tab dragged up off the strip, or settles it back when it falls short or asks first. */
@@ -1052,6 +1059,7 @@
 					style:grid-column={index * 2 + 1}
 					onfocusin={() => focused && group.active && choose(focused.id, group.active)}
 					onpointerdown={grab}
+					{@attach phone && blocksTabStripHistory}
 				>
 					{#if !phone && !sidebar && sidebarPosition.side === 'left' && index === 0}
 						{@render sidebarToggle(false)}
@@ -1789,6 +1797,7 @@
 		margin-bottom: 0;
 		padding-top: var(--border-width);
 		padding-bottom: var(--space-2);
+		overscroll-behavior-x: contain;
 		touch-action: pan-x;
 	}
 

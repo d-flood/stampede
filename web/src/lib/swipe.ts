@@ -8,6 +8,7 @@ type Swipe = {
 	/** Only swipes toward this end count; -1 is left, or up when vertical. */
 	direction?: -1 | 1;
 	allow?(event: TouchEvent): boolean;
+	engage?(event: TouchEvent, distance: number): boolean;
 	drag(distance: number): void;
 	release(distance: number, committed: boolean): void;
 };
@@ -33,7 +34,11 @@ export function swipe(options: Swipe) {
 			if (!gesture.engaged) {
 				const across = options.vertical ? touch.clientX - gesture.x : touch.clientY - gesture.y;
 				if (Math.max(Math.abs(distance), Math.abs(across)) < 8) return;
-				if (Math.abs(across) >= Math.abs(distance) || (options.direction && Math.sign(distance) !== options.direction) || !event.cancelable) {
+				if (
+					Math.abs(across) >= Math.abs(distance) ||
+					(options.direction && Math.sign(distance) !== options.direction) ||
+					!event.cancelable || options.engage?.(event, distance) === false
+				) {
 					gesture = undefined;
 					return;
 				}
@@ -63,10 +68,12 @@ export function swipe(options: Swipe) {
 }
 
 /** Whether a touch began in something that scrolls sideways, which keeps the swipe for itself. */
-export function scrolls(event: TouchEvent) {
+export function scrolls(event: TouchEvent, distance = 0) {
 	const within = event.currentTarget as Element;
 	for (let element = event.target as Element | null; element && element !== within; element = element.parentElement) {
-		if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) return true;
+		const overflow = element.scrollWidth - element.clientWidth;
+		if (overflow <= 0 || !/auto|scroll/.test(getComputedStyle(element).overflowX)) continue;
+		if (!distance || (distance > 0 ? element.scrollLeft > 0 : element.scrollLeft < overflow)) return true;
 	}
 	return false;
 }
