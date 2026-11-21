@@ -544,7 +544,7 @@
 
 	const blocksTabStripHistory = swipe({
 		share: 1,
-		engage: (event, distance) => !scrolls(event, distance),
+		holds: (event, distance) => !scrolls(event, distance),
 		drag: () => {},
 		release: () => {}
 	});
