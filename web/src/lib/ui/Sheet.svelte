@@ -54,13 +54,15 @@
 		z-index: 5;
 		background: color-mix(in oklab, var(--ansi-0) 45%, transparent);
 		opacity: 0;
-		pointer-events: none;
 		transition: opacity var(--dur-med) var(--ease-out);
+	}
+
+	.scrim:not(.shown) {
+		pointer-events: none;
 	}
 
 	.scrim.shown {
 		opacity: 1;
-		pointer-events: auto;
 	}
 
 	.sheet {
