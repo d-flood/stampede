@@ -98,7 +98,19 @@ async fn antigravity_maps_updates_settings_and_permissions() {
     let id = chat["id"].as_str().unwrap();
     let opened = attached(&mut socket, &chat).await;
     assert_eq!(opened["capabilities"]["forks"], false);
-    assert_eq!(opened["capabilities"]["models"], json!(["gemini-3.8-flash", "claude-opus-4-6-thinking"]));
+    let models = if !opened["capabilities"]["models"].as_array().unwrap().is_empty() {
+        opened["capabilities"]["models"].clone()
+    } else {
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let message = next_control(&mut socket, "chat.capabilities").await;
+                if message["chatId"] == id && !message["capabilities"]["models"].as_array().unwrap().is_empty() {
+                    break message["capabilities"]["models"].clone();
+                }
+            }
+        }).await.expect("capabilities never arrived")
+    };
+    assert_eq!(models, json!(["gemini-3.8-flash", "claude-opus-4-6-thinking"]));
     for allow in [true, false] {
         control(&mut socket, json!({ "type": "chat.send", "chatId": id, "text": "Run the probe" })).await;
         let request = timeout(Duration::from_secs(10), next_control(&mut socket, "chat.request")).await.unwrap()["request"].clone();
@@ -175,7 +187,16 @@ async fn antigravity_explains_missing_sign_in_and_install() {
     let sign_in = "Google Antigravity isn't signed in. Run `agy` in a Terminal and sign in with Google.";
     let chat = open(&mut socket, &project).await;
     let opened = attached(&mut socket, &chat).await;
-    assert_eq!(opened["items"], json!([{ "kind": "notice", "notice": "error", "text": sign_in }]));
+    let notice = json!({ "kind": "notice", "notice": "error", "text": sign_in });
+    if opened["items"] != json!([notice]) {
+        let item = timeout(Duration::from_secs(10), async {
+            loop {
+                let message = next_control(&mut socket, "chat.item").await;
+                if message["chatId"] == chat["id"] { break message["item"].clone(); }
+            }
+        }).await.expect("sign-in error never arrived");
+        assert_eq!(item, notice);
+    }
     let response = options(&server, "Antigravity").await;
     assert_eq!(response.status(), 502);
     assert_eq!(response.text().await.unwrap(), sign_in);

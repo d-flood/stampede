@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     fs, io,
     path::{Path, PathBuf},
     process::Stdio,
@@ -53,6 +53,12 @@ enum Request {
     Checkpoint(usize, oneshot::Sender<Option<String>>),
 }
 
+enum EarlyRequest {
+    Send(String, Vec<Image>),
+    Shell(String),
+    Retry,
+}
+
 impl Driver for Codex {
     fn send(&self, text: &str, images: &[Image]) {
         let _ = self.requests.send(Request::Send(text.to_owned(), images.to_vec()));
@@ -98,16 +104,126 @@ pub async fn start(
     env: &BTreeMap<String, String>,
     settings: &AgentSettings,
 ) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
-    let (mut connection, proxy) = connect(cwd, env).await?;
-    let started = connection.call("thread/start", thread(data_dir, chat_id, cwd, settings, env)).await?;
-    let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?;
     let (events, received) = mpsc::unbounded_channel();
-    let _ = events.send(Event::Session(thread.to_owned()));
-    let mut transcript = Transcript::new(thread, cwd, events);
+    let (requests, pending) = mpsc::unbounded_channel();
+    let mut transcript = Transcript::new("", cwd, events);
     transcript.data_dir = Some(data_dir.to_owned());
     transcript.chat_id = chat_id.to_owned();
-    transcript.settings = current(&started);
-    Ok((run(connection, proxy, transcript, data_dir, cwd, env), received))
+    transcript.storage_roots = writable_roots(data_dir, env);
+    transcript.settings = Settings { chosen: settings.clone(), pending: Vec::new() };
+    transcript.report_settings();
+    transcript.declare();
+    tokio::spawn(boot(pending, transcript, data_dir.to_owned(), cwd.to_owned(), env.clone(), settings.clone()));
+    Ok((Codex { requests }, received))
+}
+
+async fn establish(
+    data_dir: PathBuf,
+    chat_id: String,
+    cwd: PathBuf,
+    env: BTreeMap<String, String>,
+    settings: AgentSettings,
+) -> io::Result<(Connection, Child, String, Value)> {
+    let (mut connection, proxy) = connect(&cwd, &env).await?;
+    let started = connection.call("thread/start", thread(&data_dir, &chat_id, &cwd, &settings, &env)).await?;
+    let thread = started["thread"]["id"].as_str().ok_or_else(|| io::Error::other("thread/start gave no thread"))?.to_owned();
+    Ok((connection, proxy, thread, started))
+}
+
+/// Connects a fresh Codex Chat off the creation path while handling early Close, Send, Interrupt and settings changes.
+async fn boot(
+    mut pending: UnboundedReceiver<Request>,
+    mut transcript: Transcript,
+    data_dir: PathBuf,
+    cwd: PathBuf,
+    env: BTreeMap<String, String>,
+    mut initial: AgentSettings,
+) {
+    let mut queued = Vec::new();
+    loop {
+        let opening = establish(data_dir.clone(), transcript.chat_id.clone(), cwd.clone(), env.clone(), initial.clone());
+        tokio::pin!(opening);
+        let opened = loop {
+            tokio::select! {
+                result = &mut opening => break result,
+                request = pending.recv() => match request {
+                    Some(Request::Close) | None => return,
+                    Some(Request::Send(text, images)) => {
+                        transcript.push_provisional_user(&text, &images);
+                        transcript.report(Status::Working);
+                        let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
+                        queued.push(EarlyRequest::Send(text, images));
+                    }
+                    Some(Request::Interrupt) => {
+                        if queued.iter().any(|item| matches!(item, EarlyRequest::Send(..))) {
+                            queued.retain(|item| !matches!(item, EarlyRequest::Send(..)));
+                            transcript.provisional_users.clear();
+                            transcript.push(Item::interrupted());
+                            transcript.report(Status::Done);
+                        }
+                    }
+                    Some(Request::Run(Builtin::Model(model))) => transcript.choose(Setting::Model, model),
+                    Some(Request::Run(Builtin::Effort(effort))) => transcript.choose(Setting::Effort, effort),
+                    Some(Request::Run(Builtin::Speed(speed))) => transcript.choose(Setting::Speed, speed),
+                    Some(Request::Run(Builtin::Mode(mode))) => transcript.choose(Setting::Mode, mode),
+                    Some(Request::Delegated(item)) => transcript.delegated(item),
+                    Some(Request::Checkpoint(_, reply)) => { let _ = reply.send(None); }
+                    Some(Request::Shell(command)) => queued.push(EarlyRequest::Shell(command)),
+                    Some(Request::Retry) => queued.push(EarlyRequest::Retry),
+                    Some(_) => {}
+                },
+            }
+        };
+        let had_send = queued.iter().any(|item| matches!(item, EarlyRequest::Send(..)));
+        match opened {
+            Ok((connection, proxy, thread_id, started)) => {
+                transcript.thread = thread_id.clone();
+                let _ = transcript.events.send(Event::Session(thread_id));
+                let overrides = transcript.settings.clone();
+                transcript.settings = current(&started);
+                for &setting in &overrides.pending {
+                    *transcript.settings.get_mut(setting) = overrides.get(setting).clone();
+                    transcript.settings.mark_pending(setting);
+                }
+                drive(connection, proxy, transcript, pending, data_dir, cwd, env, queued).await;
+                return;
+            }
+            Err(error) => {
+                transcript.provisional_users.clear();
+                transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() });
+                queued.retain(|item| !matches!(item, EarlyRequest::Send(..)));
+                if had_send { transcript.report(Status::Done); }
+                // Stay open so the user can see the startup error, fix Codex, and send again.
+                loop {
+                    match pending.recv().await {
+                        Some(Request::Close) | None => return,
+                        Some(Request::Send(text, images)) => {
+                            initial = transcript.settings.chosen.clone();
+                            transcript.push_provisional_user(&text, &images);
+                            transcript.report(Status::Working);
+                            let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
+                            queued.push(EarlyRequest::Send(text, images));
+                            break;
+                        }
+                        Some(Request::Retry) if transcript.last_input.is_some() => {
+                            initial = transcript.settings.chosen.clone();
+                            transcript.report(Status::Working);
+                            let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
+                            queued.push(EarlyRequest::Retry);
+                            break;
+                        }
+                        Some(Request::Run(Builtin::Model(model))) => transcript.choose(Setting::Model, model),
+                        Some(Request::Run(Builtin::Effort(effort))) => transcript.choose(Setting::Effort, effort),
+                        Some(Request::Run(Builtin::Speed(speed))) => transcript.choose(Setting::Speed, speed),
+                        Some(Request::Run(Builtin::Mode(mode))) => transcript.choose(Setting::Mode, mode),
+                        Some(Request::Delegated(item)) => transcript.delegated(item),
+                        Some(Request::Checkpoint(_, reply)) => { let _ = reply.send(None); }
+                        Some(_) => {}
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub async fn resume(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
@@ -309,7 +425,7 @@ async fn connect(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Conn
     if env.contains_key("STAMPEDE_SCRATCH") {
         for name in crate::storage::ENVIRONMENT { daemon.env_remove(name); }
     }
-    let daemon = daemon.args(["app-server", "daemon", "start"]).stdout(Stdio::null()).status().await?;
+    let daemon = daemon.args(["app-server", "daemon", "start"]).stdout(Stdio::null()).kill_on_drop(true).status().await?;
     if !daemon.success() {
         return Err(io::Error::other(format!("codex app-server daemon start: {daemon}")));
     }
@@ -333,28 +449,62 @@ async fn connect(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<(Conn
 }
 
 fn run(
-    mut connection: Connection,
-    mut proxy: Child,
+    connection: Connection,
+    proxy: Child,
     mut transcript: Transcript,
     data_dir: &Path,
     cwd: &Path,
     env: &BTreeMap<String, String>,
 ) -> Codex {
-    let (requests, mut pending) = mpsc::unbounded_channel();
+    let (requests, pending) = mpsc::unbounded_channel();
     let (data_dir, cwd, env) = (data_dir.to_owned(), cwd.to_owned(), env.clone());
     transcript.storage_roots = writable_roots(&data_dir, &env);
-    tokio::spawn(async move {
-        // The proxy outlives a daemon that has gone until it next relays something.
-        let mut heartbeat = interval(HEARTBEAT);
-        transcript.report_settings();
-        transcript.declare();
-        let lists = [("model/list", json!({}), List::Models), ("skills/list", json!({ "cwds": [cwd] }), List::Skills)];
-        for (method, params, list) in lists {
-            if let Ok(id) = connection.request(method, params).await {
-                transcript.lists.insert(id, list);
+    tokio::spawn(drive(connection, proxy, transcript, pending, data_dir, cwd, env, Vec::new()));
+    Codex { requests }
+}
+
+async fn drive(
+    mut connection: Connection,
+    mut proxy: Child,
+    mut transcript: Transcript,
+    mut pending: UnboundedReceiver<Request>,
+    data_dir: PathBuf,
+    cwd: PathBuf,
+    env: BTreeMap<String, String>,
+    queued: Vec<EarlyRequest>,
+) {
+    // The proxy outlives a daemon that has gone until it next relays something.
+    let mut heartbeat = interval(HEARTBEAT);
+    transcript.report_settings();
+    transcript.declare();
+    let lists = [("model/list", json!({}), List::Models), ("skills/list", json!({ "cwds": [cwd] }), List::Skills)];
+    for (method, params, list) in lists {
+        if let Ok(id) = connection.request(method, params).await {
+            transcript.lists.insert(id, list);
+        }
+    }
+    if queued.iter().any(|item| matches!(item, EarlyRequest::Send(..))) {
+        let _ = transcript.events.send(Event::Activity(None));
+    }
+    for item in queued {
+        match item {
+            EarlyRequest::Send(text, images) => {
+                let mut input = vec![json!({ "type": "text", "text": text, "text_elements": [] })];
+                input.extend(images.iter().map(|image| json!({ "type": "image", "url": format!("data:{};base64,{}", image.media_type, image.data) })));
+                input.extend(transcript.skill(&text));
+                let _ = connection.send(&mut transcript, Value::Array(input)).await;
+            }
+            EarlyRequest::Shell(command) => {
+                let _ = connection.request("thread/shellCommand", json!({ "threadId": transcript.thread, "command": command })).await;
+            }
+            EarlyRequest::Retry => {
+                if let Some(input) = transcript.last_input.clone() {
+                    let _ = connection.send(&mut transcript, input).await;
+                }
             }
         }
-        loop {
+    }
+    loop {
             tokio::select! {
                 request = pending.recv() => match request {
                     Some(Request::Send(text, images)) => {
@@ -502,8 +652,6 @@ fn run(
             }
         }
         let _ = proxy.kill().await;
-    });
-    Codex { requests }
 }
 
 fn persist_extra_rules(env: &BTreeMap<String, String>, rules: &[super::Rule]) -> io::Result<()> {
@@ -728,7 +876,7 @@ impl Connection {
     }
 
     async fn start(&mut self, transcript: &mut Transcript, input: Value) -> io::Result<()> {
-        transcript.report(Status::Working);
+        if transcript.status != Status::Working { transcript.report(Status::Working); }
         let mut turn = json!({ "threadId": transcript.thread, "input": input });
         transcript.overrides(&mut turn);
         let id = self.request("turn/start", turn).await?;
@@ -781,6 +929,7 @@ struct Transcript {
     events: UnboundedSender<Event>,
     len: usize,
     checkpoints: HashMap<usize, String>,
+    provisional_users: VecDeque<usize>,
     starting: Option<u64>,
     turn: Option<String>,
     streaming: HashMap<String, (usize, String, Phase)>,
@@ -897,6 +1046,7 @@ impl Transcript {
             events,
             len: 0,
             checkpoints: HashMap::new(),
+            provisional_users: VecDeque::new(),
             starting: None,
             turn: None,
             streaming: HashMap::new(),
@@ -1073,6 +1223,7 @@ impl Transcript {
         self.asked.clear();
         self.edits.clear();
         self.checkpoints.clear();
+        self.provisional_users.clear();
         self.plan = None;
         for turn in turns {
             self.turn = turn["id"].as_str().map(str::to_owned);
@@ -1132,7 +1283,26 @@ impl Transcript {
         if let Some(turn) = &self.turn { self.checkpoints.insert(self.len, turn.clone()); }
     }
 
+    fn push_provisional_user(&mut self, text: &str, images: &[Image]) {
+        let mut input = vec![json!({ "type": "text", "text": text, "text_elements": [] })];
+        let image_urls: Vec<String> = images.iter().map(|image| format!("data:{};base64,{}", image.media_type, image.data)).collect();
+        input.extend(image_urls.iter().map(|url| json!({ "type": "image", "url": url })));
+        self.last_input = Some(Value::Array(input));
+        let index = self.push(Item::User { text: text.to_owned(), images: images.len(), image_urls, template: None, rewind_from: None });
+        self.provisional_users.push_back(index);
+    }
+
     fn push_user(&mut self, input: &Value) {
+        if let Some(index) = self.provisional_users.pop_front() {
+            if let Some(turn) = &self.turn { self.checkpoints.insert(index, turn.clone()); }
+            let boundary = self.checkpoints.iter().filter(|(_, turn)| Some(*turn) == self.turn.as_ref()).map(|(at, _)| *at).min();
+            let mut item = user(input);
+            if let Item::User { rewind_from, .. } = &mut item {
+                *rewind_from = boundary.filter(|at| *at < index);
+            }
+            let _ = self.events.send(Event::Item(index, item));
+            return;
+        }
         self.checkpoint();
         let boundary = self.checkpoints.iter().filter(|(_, turn)| Some(*turn) == self.turn.as_ref()).map(|(index, _)| *index).min();
         let mut item = user(input);
@@ -2067,5 +2237,47 @@ mod tests {
         transcript.overrides(&mut turn);
         assert_eq!(turn["collaborationMode"]["mode"], "plan");
         assert!(turn.get("approvalsReviewer").is_none());
+    }
+
+    #[tokio::test]
+    async fn new_chat_opens_without_waiting_for_codex_startup() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let script = root.path().join("codex");
+        std::fs::write(&script, "#!/bin/sh\nsleep 10\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!("{}:{}", root.path().display(), std::env::var("PATH").unwrap_or_default());
+        let env = BTreeMap::from([("PATH".to_owned(), path)]);
+
+        let started = Instant::now();
+        let (driver, mut events) = start(root.path(), "early", root.path(), &env, &AgentSettings::default()).await.unwrap();
+        assert!(started.elapsed() < Duration::from_millis(200), "start() blocked for {:?}", started.elapsed());
+
+        driver.send("Hi", &[]);
+        let (mut saw_user, mut saw_starting) = (false, false);
+        timeout(Duration::from_secs(2), async {
+            while let Some(event) = events.recv().await {
+                match event {
+                    Event::Item(_, Item::User { text, .. }) if text == "Hi" => saw_user = true,
+                    Event::Activity(Some(label)) if label == "Starting…" => saw_starting = true,
+                    _ => {}
+                }
+                if saw_user && saw_starting { break; }
+            }
+        }).await.expect("early send did not emit user message and Starting… activity");
+
+        driver.interrupt();
+        timeout(Duration::from_secs(2), async {
+            while let Some(event) = events.recv().await {
+                if matches!(event, Event::Status(Status::Done)) { break; }
+            }
+        }).await.expect("early interrupt never settled");
+
+        let closing = Instant::now();
+        driver.close();
+        timeout(Duration::from_secs(2), async { while events.recv().await.is_some() {} })
+            .await.expect("closing mid-startup hung");
+        assert!(closing.elapsed() < Duration::from_secs(2));
     }
 }

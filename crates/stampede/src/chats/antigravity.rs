@@ -47,6 +47,11 @@ enum Action {
     Shell(String),
 }
 
+enum Pending {
+    Send { shell_context: Option<String>, text: String, images: Vec<Image> },
+    Action(Action),
+}
+
 impl Driver for Antigravity {
     fn send(&self, text: &str, images: &[Image]) { let _ = self.requests.send(Action::Send(text.to_owned(), images.to_vec())); }
     fn retry(&self) { let _ = self.requests.send(Action::Retry); }
@@ -240,9 +245,37 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
         loaded: false, full_access: false, prompts: HashSet::new(), unsolicited: false, settle: None, interrupting: false,
         permissions: HashMap::new(), progress, transcript,
     };
-    live.open(chat.agent_session.is_some() && chat.status != Status::Done, &chat.shell_context).await;
-    tokio::spawn(live.drive(actions, shells));
+    if chat.agent_session.is_some() {
+        live.open(chat.status != Status::Done, &chat.shell_context).await;
+        tokio::spawn(live.drive(actions, shells, false));
+    } else {
+        live.transcript.restore_shell_context(&chat.shell_context);
+        live.transcript.report_settings();
+        tokio::spawn(live.drive(actions, shells, true));
+    }
     (Antigravity { requests }, received)
+}
+
+async fn establish(
+    cwd: PathBuf,
+    data_dir: PathBuf,
+    chat_id: String,
+    env: BTreeMap<String, String>,
+    full_access: bool,
+    session: Option<String>,
+) -> io::Result<(Connection, Value, Vec<Value>)> {
+    let mut connection = Connection::open(&cwd, &env, full_access).await?;
+    let config = html::config(&data_dir, &chat_id);
+    let servers = json!([{ "name": html::SERVER, "command": config["command"], "args": config["args"], "env": [] }]);
+    let mut held = Vec::new();
+    let opened = match &session {
+        Some(session) => connection.call("session/load", json!({ "sessionId": session, "cwd": cwd, "mcpServers": servers }), &mut held).await,
+        None => connection.call("session/new", json!({ "cwd": cwd, "mcpServers": servers }), &mut held).await,
+    };
+    match opened {
+        Ok(opened) => Ok((connection, opened, held)),
+        Err(error) => { connection.close().await; Err(error) }
+    }
 }
 
 struct Live {
@@ -277,8 +310,23 @@ impl Live {
         self.transcript.report_settings();
     }
 
-    async fn drive(mut self, mut actions: UnboundedReceiver<Action>, mut shells: UnboundedReceiver<shell::Progress>) {
-        loop {
+    async fn drive(mut self, mut actions: UnboundedReceiver<Action>, mut shells: UnboundedReceiver<shell::Progress>, connect: bool) {
+        let mut open = true;
+        if connect {
+            match self.connect_background(&mut actions, &mut shells).await {
+                Some(pending) => {
+                    for item in pending {
+                        let result = match item {
+                            Pending::Send { shell_context, text, images } => self.dispatch_send(shell_context, text, images).await,
+                            Pending::Action(action) => self.act(action).await,
+                        };
+                        if let Err(error) = result { self.fail(error.to_string()).await; }
+                    }
+                }
+                None => open = false,
+            }
+        }
+        while open {
             tokio::select! {
                 action = actions.recv() => match action {
                     Some(Action::Close) | None => break,
@@ -309,6 +357,57 @@ impl Live {
         self.transcript.finish();
     }
 
+    /// Connects a fresh Chat off the creation path while handling Close, Shell, and early Send actions.
+    async fn connect_background(&mut self, actions: &mut UnboundedReceiver<Action>, shells: &mut UnboundedReceiver<shell::Progress>) -> Option<Vec<Pending>> {
+        let full_access = self.transcript.settings.chosen.mode.as_deref() == Some("full-access");
+        let connecting = establish(
+            self.transcript.cwd.clone(), self.data_dir.clone(), self.chat_id.clone(),
+            self.env.clone(), full_access, self.session.clone(),
+        );
+        tokio::pin!(connecting);
+        let mut pending = Vec::new();
+        let established = loop {
+            tokio::select! {
+                result = &mut connecting => break result,
+                action = actions.recv() => match action {
+                    Some(Action::Close) | None => return None,
+                    Some(Action::Shell(command)) => self.transcript.run_shell(command, &self.progress, &self.env),
+                    Some(Action::Delegated(item)) => self.transcript.delegated(item),
+                    Some(Action::Send(text, images)) => {
+                        let shell_context = self.transcript.take_shell_context();
+                        self.record_send(&text, &images);
+                        let _ = self.transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
+                        pending.push(Pending::Send { shell_context, text, images });
+                    }
+                    Some(Action::Interrupt) => {
+                        self.transcript.stop_shells();
+                        if pending.iter().any(|item| matches!(item, Pending::Send { .. })) {
+                            pending.retain(|item| !matches!(item, Pending::Send { .. }));
+                            self.transcript.push(Item::interrupted());
+                            self.end_turn().await;
+                        }
+                    }
+                    Some(action) => pending.push(Pending::Action(action)),
+                },
+                Some(progress) = shells.recv() => self.transcript.shell_progress(progress),
+            }
+        };
+        let had_send = pending.iter().any(|item| matches!(item, Pending::Send { .. }));
+        match established {
+            Ok((connection, opened, held)) => {
+                self.attach(connection, full_access, opened, held).await;
+                if had_send { let _ = self.transcript.events.send(Event::Activity(None)); }
+            }
+            Err(error) => {
+                self.transcript.error(error.to_string());
+                pending.retain(|item| !matches!(item, Pending::Send { .. }));
+                if had_send { self.end_turn().await; }
+                self.transcript.report_settings();
+            }
+        }
+        Some(pending)
+    }
+
     async fn fail(&mut self, text: String) {
         self.transcript.error(text);
         if self.prompts.is_empty() && !self.unsolicited { self.end_turn().await; }
@@ -317,18 +416,15 @@ impl Live {
     async fn connect(&mut self) -> io::Result<()> {
         if self.connection.is_some() { return Ok(()); }
         let full_access = self.transcript.settings.chosen.mode.as_deref() == Some("full-access");
-        let mut connection = Connection::open(&self.transcript.cwd, &self.env, full_access).await?;
-        let config = html::config(&self.data_dir, &self.chat_id);
-        let servers = json!([{ "name": html::SERVER, "command": config["command"], "args": config["args"], "env": [] }]);
-        let mut held = Vec::new();
-        let opened = match &self.session {
-            Some(session) => connection.call("session/load", json!({ "sessionId": session, "cwd": self.transcript.cwd, "mcpServers": servers }), &mut held).await,
-            None => connection.call("session/new", json!({ "cwd": self.transcript.cwd, "mcpServers": servers }), &mut held).await,
-        };
-        let opened = match opened {
-            Ok(opened) => opened,
-            Err(error) => { connection.close().await; return Err(error); }
-        };
+        let (connection, opened, held) = establish(
+            self.transcript.cwd.clone(), self.data_dir.clone(), self.chat_id.clone(),
+            self.env.clone(), full_access, self.session.clone(),
+        ).await?;
+        self.attach(connection, full_access, opened, held).await;
+        Ok(())
+    }
+
+    async fn attach(&mut self, connection: Connection, full_access: bool, opened: Value, held: Vec<Value>) {
         if let Some(session) = opened["sessionId"].as_str() {
             self.session = Some(session.to_owned());
             let _ = self.transcript.events.send(Event::Session(session.to_owned()));
@@ -342,7 +438,6 @@ impl Live {
         let chosen = self.transcript.settings.chosen.clone();
         self.transcript.configure(&opened);
         self.apply(chosen).await;
-        Ok(())
     }
 
     /// Brings agy's model, effort and mode in line with the Chat's.
@@ -421,10 +516,12 @@ impl Live {
 
     async fn send(&mut self, text: String, images: Vec<Image>) -> io::Result<()> {
         self.connect().await?;
-        let mut prompt = Vec::new();
-        if let Some(context) = self.transcript.take_shell_context() { prompt.push(json!({ "type": "text", "text": context })); }
-        if !text.is_empty() { prompt.push(json!({ "type": "text", "text": text })); }
-        prompt.extend(images.iter().map(|image| json!({ "type": "image", "mimeType": image.media_type, "data": image.data })));
+        let shell_context = self.transcript.take_shell_context();
+        self.record_send(&text, &images);
+        self.dispatch_send(shell_context, text, images).await
+    }
+
+    fn record_send(&mut self, text: &str, images: &[Image]) {
         self.transcript.close();
         if std::mem::take(&mut self.unsolicited) {
             self.settle = None;
@@ -434,9 +531,16 @@ impl Live {
             self.transcript.stop_commands();
             self.transcript.push(Item::interrupted());
         }
-        self.transcript.user(&text, &images, false);
-        self.transcript.last_input = Some((text, images));
+        self.transcript.user(text, images, false);
+        self.transcript.last_input = Some((text.to_owned(), images.to_vec()));
         self.transcript.status(Status::Working);
+    }
+
+    async fn dispatch_send(&mut self, shell_context: Option<String>, text: String, images: Vec<Image>) -> io::Result<()> {
+        let mut prompt = Vec::new();
+        if let Some(context) = shell_context { prompt.push(json!({ "type": "text", "text": context })); }
+        if !text.is_empty() { prompt.push(json!({ "type": "text", "text": text })); }
+        prompt.extend(images.iter().map(|image| json!({ "type": "image", "mimeType": image.media_type, "data": image.data })));
         let session = self.session.clone().unwrap_or_default();
         let connection = self.connection.as_mut().ok_or_else(|| io::Error::other("Google Antigravity isn't running"))?;
         let id = connection.request("session/prompt", json!({ "sessionId": session, "prompt": prompt })).await?;
@@ -482,7 +586,7 @@ impl Live {
             Builtin::Mode(mode) if Agent::Antigravity.modes().contains(&mode.as_str()) => {
                 let full_access = mode == "full-access";
                 if self.connection.is_some() && full_access != self.full_access {
-                    if self.transcript.status != Status::Done {
+                    if !self.prompts.is_empty() || self.unsolicited {
                         return Err(io::Error::other("Wait for the turn to finish before switching to or from full access."));
                     }
                     if let Some(connection) = self.connection.take() { connection.close().await; }
@@ -1124,7 +1228,7 @@ mod tests {
 
         let (actions_tx, actions_rx) = mpsc::unbounded_channel();
         let (_shells_tx, shells_rx) = mpsc::unbounded_channel();
-        let driver = tokio::spawn(live.drive(actions_rx, shells_rx));
+        let driver = tokio::spawn(live.drive(actions_rx, shells_rx, false));
         let mut finalized = false;
         timeout(Duration::from_secs(2), async {
             while let Some(event) = received.recv().await {
@@ -1163,5 +1267,88 @@ mod tests {
             "rawOutput": { "content": [{ "type": "text", "text": "This tool is turned off for this Rig." }], "isError": true },
         })), false).await;
         assert!(matches!(&live.transcript.items[1], Item::Tools { .. }));
+    }
+
+    #[tokio::test]
+    async fn new_chat_opens_without_waiting_for_agy_startup() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let script = root.path().join("slow-agy");
+        std::fs::write(&script, r#"#!/usr/bin/env python3
+import json, os, sys, time
+delay = float(os.environ.get("SLOW_AGY_DELAY", "0.4"))
+for line in sys.stdin:
+    req = json.loads(line)
+    method = req.get("method")
+    if method == "initialize":
+        time.sleep(delay)
+        resp = {"jsonrpc": "2.0", "id": req["id"], "result": {"protocolVersion": 1}}
+    elif method == "session/new":
+        resp = {"jsonrpc": "2.0", "id": req["id"], "result": {
+            "sessionId": "slow-session",
+            "modes": {"currentModeId": "default", "availableModes": [{"id": "default"}]},
+            "configOptions": [],
+        }}
+    elif method == "session/prompt":
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "method": "session/update", "params": {
+            "sessionId": "slow-session",
+            "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Ready."}},
+        }}) + "\n")
+        sys.stdout.flush()
+        resp = {"jsonrpc": "2.0", "id": req["id"], "result": {"stopReason": "end_turn"}}
+    else:
+        resp = {"jsonrpc": "2.0", "id": req["id"], "result": {}}
+    sys.stdout.write(json.dumps(resp) + "\n")
+    sys.stdout.flush()
+"#).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let chat = |id: &str| Chat {
+            id: id.to_owned(), project_id: "p".to_owned(), rig: "Neon".to_owned(), agent: Agent::Antigravity,
+            cwd: root.path().to_owned(), created: 0, agent_session: None, title: None, resume_at: None,
+            plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
+            running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
+            queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),
+            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, parent: None,
+            duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
+        };
+
+        // 1. start() returns immediately while agy is still booting, shows "Starting…" on early send, and completes.
+        let env = BTreeMap::from([
+            ("AGY_CLI_PATH".to_owned(), script.display().to_string()),
+            ("SLOW_AGY_DELAY".to_owned(), "0.4".to_owned()),
+        ]);
+        let started = Instant::now();
+        let (driver, mut events) = start(root.path(), &chat("early-send"), &env).await;
+        assert!(started.elapsed() < Duration::from_millis(200), "start() blocked for {:?}", started.elapsed());
+
+        driver.send("Hi", &[]);
+        let (mut saw_user, mut saw_starting, mut saw_reply) = (false, false, false);
+        timeout(Duration::from_secs(5), async {
+            while let Some(event) = events.recv().await {
+                match event {
+                    Event::Item(_, Item::User { text, .. }) if text == "Hi" => saw_user = true,
+                    Event::Activity(Some(label)) if label == "Starting…" => saw_starting = true,
+                    Event::Item(_, Item::Text { text, streaming: false, phase: Phase::Final }) if text == "Ready." => saw_reply = true,
+                    Event::Status(Status::Done) if saw_reply => break,
+                    _ => {}
+                }
+            }
+        }).await.expect("early prompt never finished");
+        assert!(saw_user && saw_starting);
+        driver.close();
+
+        // 2. Closing while agy is still starting cancels startup immediately instead of waiting.
+        let env = BTreeMap::from([
+            ("AGY_CLI_PATH".to_owned(), script.display().to_string()),
+            ("SLOW_AGY_DELAY".to_owned(), "10".to_owned()),
+        ]);
+        let (driver, mut events) = start(root.path(), &chat("early-close"), &env).await;
+        let closing = Instant::now();
+        driver.close();
+        timeout(Duration::from_secs(2), async { while events.recv().await.is_some() {} })
+            .await.expect("closing mid-startup hung");
+        assert!(closing.elapsed() < Duration::from_secs(2));
     }
 }

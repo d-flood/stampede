@@ -416,7 +416,14 @@ async fn copilot_settings_compaction_and_rewind_use_sdk_operations() {
 #[tokio::test]
 async fn copilot_uses_the_fresh_session_catalog_in_rigs_and_chat_models() {
     let (server, mut socket, chat) = launch("simple-turn", "default").await;
-    let capabilities = next_control(&mut socket, "chat.capabilities").await["capabilities"].clone();
+    let capabilities = timeout(Duration::from_secs(10), async {
+        loop {
+            let message = next_control(&mut socket, "chat.capabilities").await;
+            if message["chatId"] == chat["id"] && !message["capabilities"]["models"].as_array().unwrap().is_empty() {
+                break message["capabilities"].clone();
+            }
+        }
+    }).await.expect("Copilot capabilities never arrived");
     let response = reqwest::Client::new().get(format!("http://127.0.0.1:{}/api/rigs/options?agent=copilot&rig=Copilot", server.port)).send().await.unwrap();
     let response: Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
     let models: Vec<&Value> = response["models"].as_array().unwrap().iter().map(|model| &model["value"]).collect();

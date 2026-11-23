@@ -80,6 +80,7 @@ async fn a_codex_chat_starts_its_thread_with_its_rigs_model_effort_and_mode() {
     let (server, mut socket, project_id) = open().await;
     let chat = create(&mut socket, &project_id, "codex").await;
     assert_eq!(chat["settings"], json!({ "model": "gpt-6-luna", "effort": "low", "mode": "read-only" }));
+    wait_ready(&mut socket, &chat["id"]).await;
 
     close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
     let log = fs::read_to_string(server.root.path().join("home/.codex/fake-daemon/received.jsonl")).unwrap();
@@ -139,6 +140,7 @@ async fn a_codex_rig_starts_its_thread_with_its_speed() {
     let config = CONFIG.replace("mode = \"read-only\"\n", "speed = \"priority\"\nmode = \"read-only\"\n");
     let (server, mut socket, project_id) = open_with_config(&config).await;
     let chat = create(&mut socket, &project_id, "codex").await;
+    wait_ready(&mut socket, &chat["id"]).await;
     close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
     let log = fs::read_to_string(server.root.path().join("home/.codex/fake-daemon/received.jsonl")).unwrap();
     let start = log.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).find(|message| message["method"] == "thread/start").unwrap();
@@ -167,4 +169,17 @@ async fn create(socket: &mut Socket, project_id: &Value, rig: &str) -> Value {
     control(socket, json!({ "type": "chat.attach", "chatId": chat["id"] })).await;
     assert_eq!(next_control(socket, "chat.items").await["items"], json!([]));
     chat
+}
+
+async fn wait_ready(socket: &mut Socket, chat_id: &Value) {
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let message = next_control(socket, "chat.capabilities").await;
+            if message["chatId"] == *chat_id && !message["capabilities"]["models"].as_array().unwrap().is_empty() {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the Codex chat never reported its models");
 }

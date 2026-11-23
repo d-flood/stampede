@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io,
     path::{Path, PathBuf},
     process::Stdio,
@@ -47,6 +47,19 @@ enum Action {
     Close,
     Shell(String),
     Checkpoint(usize, oneshot::Sender<Option<String>>),
+}
+
+enum EarlyAction {
+    Send(String, Vec<Image>),
+    Action(Action),
+}
+
+struct Metadata {
+    models: Option<Vec<Value>>,
+    current_model: Option<String>,
+    current_effort: Option<String>,
+    quota: Option<Vec<Reading>>,
+    cost: Option<Reading>,
 }
 
 impl Driver for Copilot {
@@ -315,63 +328,215 @@ pub async fn fork(cwd: &Path, env: &BTreeMap<String, String>, session: &str, eve
     Ok(forked?.session_id.to_string())
 }
 
-pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Copilot, UnboundedReceiver<Event>)> {
-    let connection = Connection::open(&chat.cwd, env).await?;
+async fn fetch_metadata(session: Arc<CopilotSession>, chat_id: String) -> Metadata {
+    let (models, current, quota, metrics) = tokio::join!(
+        models(&session),
+        async { rpc(session.rpc().model().get_current()).await },
+        async { rpc(session.rpc().quota().get()).await },
+        async { rpc(session.rpc().usage().get_metrics()).await },
+    );
+    let (current_model, current_effort) = match current {
+        Ok(current) => (current.model_id, current.reasoning_effort),
+        Err(_) => (None, None),
+    };
+    let quota = quota.ok().map(|quota| readings(quota.provider_quotas.as_deref().unwrap_or_default()));
+    let cost = metrics.ok().map(|metrics| session_cost(session.id(), Some(&chat_id), &metrics));
+    Metadata { models: models.ok(), current_model, current_effort, quota, cost }
+}
+
+async fn establish(
+    data_dir: PathBuf,
+    chat: Chat,
+    env: BTreeMap<String, String>,
+) -> io::Result<(Connection, CopilotSession, UnboundedReceiver<Interaction>)> {
+    let connection = Connection::open(&chat.cwd, &env).await?;
     let (interactions, pending) = mpsc::unbounded_channel();
     let handlers = Arc::new(Handlers(interactions));
-    let session = open_session(&connection.client, data_dir, chat, handlers).await?;
-    let subscribed = session.subscribe();
-    let models = models(&session).await?;
-    let history = if chat.agent_session.is_some() { rpc(session.get_events()).await? } else { Vec::new() };
+    let session = open_session(&connection.client, &data_dir, &chat, handlers).await?;
+    Ok((connection, session, pending))
+}
+
+pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Copilot, UnboundedReceiver<Event>)> {
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(&chat.cwd, events, chat.settings.clone());
     transcript.data_dir = Some(data_dir.to_owned());
-    transcript.capabilities.models = models.iter().filter_map(|model| model["id"].as_str().map(str::to_owned)).collect();
-    transcript.capabilities.forks = true;
-    transcript.capabilities.rewinds = true;
-    transcript.capabilities.compacts = true;
-    transcript.capabilities.modes = Agent::Copilot.modes().iter().map(|mode| Choice::mode(mode)).collect();
-    if let Ok(current) = rpc(session.rpc().model().get_current()).await {
-        transcript.settings.chosen.model = current.model_id.or(transcript.settings.chosen.model);
-        transcript.settings.chosen.effort = current.reasoning_effort.or(transcript.settings.chosen.effort);
-    }
-    transcript.efforts = models.iter().filter_map(|model| {
-        let id = model["id"].as_str()?.to_owned();
-        let efforts = model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
-        Some((id, efforts))
-    }).collect();
-    let _ = transcript.events.send(Event::Session(session.id().to_string()));
-    if let Ok(quota) = rpc(session.rpc().quota().get()).await {
-        let _ = transcript.events.send(Event::Usage(readings(quota.provider_quotas.as_deref().unwrap_or_default())));
-    }
-    report_cost(&session, &chat.id, &transcript.events).await;
-    for event in history { transcript.read(&event, true); }
-    transcript.stop_commands();
-    transcript.finish();
-    if chat.agent_session.is_some() && chat.status != Status::Done {
-        transcript.push(Item::interrupted());
-        let _ = transcript.events.send(Event::Recoverable);
-    }
-    transcript.report_settings();
+    transcript.init_capabilities();
     let (requests, actions) = mpsc::unbounded_channel();
-    tokio::spawn(drive(connection, session, subscribed, transcript, pending, actions, chat.id.clone()));
+    if chat.agent_session.is_some() {
+        let connection = Connection::open(&chat.cwd, env).await?;
+        let (interactions, pending) = mpsc::unbounded_channel();
+        let handlers = Arc::new(Handlers(interactions));
+        let session = Arc::new(open_session(&connection.client, data_dir, chat, handlers).await?);
+        let subscribed = session.subscribe();
+        let (history, metadata) = tokio::join!(rpc(session.get_events()), fetch_metadata(Arc::clone(&session), chat.id.clone()));
+        let history = history?;
+        let _ = transcript.events.send(Event::Session(session.id().to_string()));
+        transcript.apply_metadata(metadata);
+        for event in history { transcript.read(&event, true); }
+        transcript.stop_commands();
+        transcript.finish();
+        if chat.status != Status::Done {
+            transcript.push(Item::interrupted());
+            let _ = transcript.events.send(Event::Recoverable);
+        }
+        transcript.report_settings();
+        tokio::spawn(drive(connection, session, subscribed, transcript, pending, actions, chat.id.clone(), None, Vec::new()));
+    } else {
+        transcript.report_settings();
+        tokio::spawn(boot(data_dir.to_owned(), chat.clone(), env.clone(), transcript, actions));
+    }
     Ok((Copilot { requests }, received))
+}
+
+/// Connects a fresh Copilot Chat off the creation path while handling early Close, Send, Interrupt and Mode actions.
+async fn boot(
+    data_dir: PathBuf,
+    mut chat: Chat,
+    env: BTreeMap<String, String>,
+    mut transcript: Transcript,
+    mut actions: UnboundedReceiver<Action>,
+) {
+    let mut queued = Vec::new();
+    loop {
+        chat.settings = transcript.settings.clone();
+        let opening = establish(data_dir.clone(), chat.clone(), env.clone());
+        tokio::pin!(opening);
+        let opened = loop {
+            tokio::select! {
+                result = &mut opening => break result,
+                action = actions.recv() => match action {
+                    Some(Action::Close) | None => return,
+                    Some(Action::Send(text, images)) => {
+                        transcript.push_provisional_user(&text, &images);
+                        transcript.status(Status::Working);
+                        let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
+                        queued.push(EarlyAction::Send(text, images));
+                    }
+                    Some(Action::Interrupt) => {
+                        if queued.iter().any(|item| matches!(item, EarlyAction::Send(..))) {
+                            queued.retain(|item| !matches!(item, EarlyAction::Send(..)));
+                            transcript.provisional_users.clear();
+                            transcript.push(Item::interrupted());
+                            transcript.finish();
+                        }
+                    }
+                    Some(Action::Run(Builtin::Mode(mode))) if Agent::Copilot.modes().contains(&mode.as_str()) => {
+                        transcript.settings.chosen.mode = Some(mode);
+                        transcript.report_settings();
+                    }
+                    Some(Action::Delegated(item)) => transcript.delegated(item),
+                    Some(Action::Checkpoint(_, reply)) => { let _ = reply.send(None); }
+                    Some(action) => queued.push(EarlyAction::Action(action)),
+                },
+            }
+        };
+        let had_send = queued.iter().any(|item| matches!(item, EarlyAction::Send(..)));
+        match opened {
+            Ok((connection, session, interactions)) => {
+                let session = Arc::new(session);
+                let subscribed = session.subscribe();
+                let _ = transcript.events.send(Event::Session(session.id().to_string()));
+                let (meta_tx, meta_rx) = oneshot::channel();
+                let meta_session = Arc::clone(&session);
+                let meta_chat_id = chat.id.clone();
+                tokio::spawn(async move { let _ = meta_tx.send(fetch_metadata(meta_session, meta_chat_id).await); });
+                if had_send { let _ = transcript.events.send(Event::Activity(None)); }
+                drive(connection, session, subscribed, transcript, interactions, actions, chat.id, Some(meta_rx), queued).await;
+                return;
+            }
+            Err(error) => {
+                transcript.provisional_users.clear();
+                transcript.error(error.to_string());
+                queued.retain(|item| !matches!(item, EarlyAction::Send(..)));
+                if had_send { transcript.finish(); }
+                // Stay open so the user can see the startup error, fix sign-in/install, and send again.
+                loop {
+                    match actions.recv().await {
+                        Some(Action::Close) | None => return,
+                        Some(Action::Send(text, images)) => {
+                            transcript.push_provisional_user(&text, &images);
+                            transcript.status(Status::Working);
+                            let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
+                            queued.push(EarlyAction::Send(text, images));
+                            break;
+                        }
+                        Some(Action::Retry) => {
+                            if let Some((text, images)) = transcript.last_input.clone() {
+                                transcript.push_provisional_user(&text, &images);
+                                transcript.status(Status::Working);
+                                let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
+                                queued.push(EarlyAction::Send(text, images));
+                                break;
+                            }
+                        }
+                        Some(Action::Run(Builtin::Mode(mode))) if Agent::Copilot.modes().contains(&mode.as_str()) => {
+                            transcript.settings.chosen.mode = Some(mode);
+                            transcript.report_settings();
+                        }
+                        Some(Action::Delegated(item)) => transcript.delegated(item),
+                        Some(Action::Checkpoint(_, reply)) => { let _ = reply.send(None); }
+                        Some(_) => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn ready_metadata(pending: &mut Option<oneshot::Receiver<Metadata>>) -> Option<Metadata> {
+    match pending {
+        Some(receiver) => receiver.await.ok(),
+        None => std::future::pending().await,
+    }
 }
 
 async fn drive(
     mut connection: Connection,
-    mut session: CopilotSession,
+    session: Arc<CopilotSession>,
     mut subscribed: github_copilot_sdk::subscription::EventSubscription,
     mut transcript: Transcript,
     mut interactions: UnboundedReceiver<Interaction>,
     mut actions: UnboundedReceiver<Action>,
     chat_id: String,
+    mut metadata: Option<oneshot::Receiver<Metadata>>,
+    queued: Vec<EarlyAction>,
 ) {
     let mut pending = HashMap::<String, oneshot::Sender<Answer>>::new();
     let mut shells = HashSet::<String>::new();
     let (shelled, mut finished) = mpsc::unbounded_channel::<(String, Result<Value, String>)>();
+    for item in queued {
+        let result = match item {
+            EarlyAction::Send(text, images) => dispatch_send(&session, &mut transcript, &text, &images).await,
+            EarlyAction::Action(Action::Shell(command)) => {
+                let request = Uuid::new_v4().to_string();
+                shells.insert(request.clone());
+                let (client, shelled) = (connection.client.clone(), shelled.clone());
+                let params = json!({ "sessionId": session.id().to_string(), "command": command, "requestId": request });
+                tokio::spawn(async move {
+                    let result = client.call("session.shell.executeUserRequested", Some(params)).await.map_err(|error| error.to_string());
+                    let _ = shelled.send((request, result));
+                });
+                Ok(())
+            }
+            EarlyAction::Action(Action::Run(builtin)) => {
+                let result = run(&session, &mut transcript, builtin).await;
+                if result.is_ok() { transcript.saw_cost = true; report_cost(&session, &chat_id, &transcript.events).await; }
+                result
+            }
+            EarlyAction::Action(Action::Retry) => {
+                if let Some((text, images)) = transcript.last_input.clone() { send(&session, &mut transcript, &text, &images).await } else { Ok(()) }
+            }
+            EarlyAction::Action(_) => Ok(()),
+        };
+        if let Err(error) = result { transcript.error(error.to_string()); }
+    }
     loop {
         let result: io::Result<()> = tokio::select! {
+            loaded = ready_metadata(&mut metadata) => {
+                metadata = None;
+                if let Some(loaded) = loaded { transcript.apply_metadata(loaded); }
+                Ok(())
+            },
             action = actions.recv() => match action {
                 Some(Action::Send(text, images)) => send(&session, &mut transcript, &text, &images).await,
                 Some(Action::Shell(command)) => {
@@ -404,8 +569,8 @@ async fn drive(
                     Ok(())
                 }
                 Some(Action::Run(builtin)) => {
-                    let result = run(&mut session, &mut transcript, builtin).await;
-                    if result.is_ok() { report_cost(&session, &chat_id, &transcript.events).await; }
+                    let result = run(&session, &mut transcript, builtin).await;
+                    if result.is_ok() { transcript.saw_cost = true; report_cost(&session, &chat_id, &transcript.events).await; }
                     result
                 }
                 Some(Action::Delegated(item)) => { transcript.delegated(item); Ok(()) }
@@ -439,6 +604,7 @@ async fn drive(
                 Ok(event) => {
                     transcript.read(&event, false);
                     if matches!(event.event_type.as_str(), "assistant.usage" | "session.idle") {
+                        transcript.saw_cost = true;
                         report_cost(&session, &chat_id, &transcript.events).await;
                     }
                     if transcript.status == Status::Done { resolve(&mut pending, &transcript.events); }
@@ -459,25 +625,31 @@ fn resolve(pending: &mut HashMap<String, oneshot::Sender<Answer>>, events: &Unbo
 }
 
 async fn send(session: &CopilotSession, transcript: &mut Transcript, text: &str, images: &[Image]) -> io::Result<()> {
-    let attachments = images.iter().map(|image| Attachment::Blob { data: image.data.clone(), mime_type: image.media_type.clone(), display_name: None }).collect();
     transcript.last_input = Some((text.to_owned(), images.to_vec()));
     transcript.status(Status::Working);
+    dispatch_send(session, transcript, text, images).await
+}
+
+async fn dispatch_send(session: &CopilotSession, transcript: &mut Transcript, text: &str, images: &[Image]) -> io::Result<()> {
+    let attachments = images.iter().map(|image| Attachment::Blob { data: image.data.clone(), mime_type: image.media_type.clone(), display_name: None }).collect();
     match rpc(session.send(MessageOptions::new(text).with_attachments(attachments))).await {
         Ok(_) => Ok(()),
-        Err(error) => { transcript.finish(); Err(error) }
+        Err(error) => { transcript.provisional_users.clear(); transcript.finish(); Err(error) }
     }
 }
 
-async fn run(session: &mut CopilotSession, transcript: &mut Transcript, builtin: Builtin) -> io::Result<()> {
+async fn run(session: &CopilotSession, transcript: &mut Transcript, builtin: Builtin) -> io::Result<()> {
     match builtin {
         Builtin::Model(model) => {
             rpc(session.set_model(&model, None)).await?;
+            transcript.model_overridden = true;
             transcript.settings.chosen.model = Some(model);
             transcript.settings.chosen.effort = rpc(session.rpc().model().get_current()).await?.reasoning_effort;
         }
         Builtin::Effort(effort) => {
             let model = transcript.settings.chosen.model.as_deref().ok_or_else(|| io::Error::other("Choose a model before setting its effort"))?;
             rpc(session.set_model(model, Some(SetModelOptions::default().with_reasoning_effort(&effort)))).await?;
+            transcript.effort_overridden = true;
             transcript.settings.chosen.effort = Some(effort);
         }
         Builtin::Mode(mode) if Agent::Copilot.modes().contains(&mode.as_str()) => transcript.settings.chosen.mode = Some(mode),
@@ -506,10 +678,15 @@ struct Transcript {
     seen: HashSet<String>,
     messages: HashMap<String, usize>,
     user_events: HashMap<usize, String>,
+    provisional_users: VecDeque<usize>,
     last_input: Option<(String, Vec<Image>)>,
     tools: HashMap<String, (usize, Value)>,
     thinking: Option<(usize, Instant)>,
     settings: Settings,
+    model_overridden: bool,
+    effort_overridden: bool,
+    saw_quota: bool,
+    saw_cost: bool,
     capabilities: Capabilities,
     efforts: HashMap<String, Vec<String>>,
     status: Status,
@@ -520,7 +697,38 @@ struct Transcript {
 
 impl Transcript {
     fn new(cwd: &Path, events: UnboundedSender<Event>, settings: Settings) -> Self {
-        Self { data_dir: None, cwd: cwd.to_owned(), events, items: Vec::new(), seen: HashSet::new(), messages: HashMap::new(), user_events: HashMap::new(), last_input: None, tools: HashMap::new(), thinking: None, settings, capabilities: Capabilities::default(), efforts: HashMap::new(), status: Status::Done, tokens: Tokens { input: 0, output: 0 }, cache: None, subagents: HashMap::new() }
+        Self { data_dir: None, cwd: cwd.to_owned(), events, items: Vec::new(), seen: HashSet::new(), messages: HashMap::new(), user_events: HashMap::new(), provisional_users: VecDeque::new(), last_input: None, tools: HashMap::new(), thinking: None, settings, model_overridden: false, effort_overridden: false, saw_quota: false, saw_cost: false, capabilities: Capabilities::default(), efforts: HashMap::new(), status: Status::Done, tokens: Tokens { input: 0, output: 0 }, cache: None, subagents: HashMap::new() }
+    }
+
+    fn init_capabilities(&mut self) {
+        self.capabilities.forks = true;
+        self.capabilities.rewinds = true;
+        self.capabilities.compacts = true;
+        self.capabilities.modes = Agent::Copilot.modes().iter().map(|mode| Choice::mode(mode)).collect();
+    }
+
+    fn apply_metadata(&mut self, metadata: Metadata) {
+        if let Some(models) = metadata.models {
+            self.capabilities.models = models.iter().filter_map(|model| model["id"].as_str().map(str::to_owned)).collect();
+            self.efforts = models.iter().filter_map(|model| {
+                let id = model["id"].as_str()?.to_owned();
+                let efforts = model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+                Some((id, efforts))
+            }).collect();
+        }
+        if !self.model_overridden { self.settings.chosen.model = metadata.current_model.or(self.settings.chosen.model.take()); }
+        if !self.effort_overridden { self.settings.chosen.effort = metadata.current_effort.or(self.settings.chosen.effort.take()); }
+        if !self.saw_quota && let Some(quota) = metadata.quota { let _ = self.events.send(Event::Usage(quota)); }
+        if !self.saw_cost && let Some(cost) = metadata.cost { let _ = self.events.send(Event::Usage(vec![cost])); }
+        self.report_settings();
+    }
+
+    fn push_provisional_user(&mut self, text: &str, images: &[Image]) {
+        self.finish_thinking();
+        self.last_input = Some((text.to_owned(), images.to_vec()));
+        let image_urls = images.iter().map(|image| format!("data:{};base64,{}", image.media_type, image.data)).collect();
+        let index = self.push(Item::User { text: text.to_owned(), images: images.len(), image_urls, template: None, rewind_from: None });
+        self.provisional_users.push_back(index);
     }
 
     fn push(&mut self, item: Item) -> usize {
@@ -554,7 +762,7 @@ impl Transcript {
     }
 
     fn reset(&mut self) {
-        self.items.clear(); self.messages.clear(); self.user_events.clear(); self.tools.clear(); self.thinking = None;
+        self.items.clear(); self.messages.clear(); self.user_events.clear(); self.provisional_users.clear(); self.tools.clear(); self.thinking = None;
         self.seen.clear(); self.last_input = None; self.subagents.clear();
         self.tokens = Tokens { input: 0, output: 0 };
         let _ = self.events.send(Event::Truncate(0));
@@ -618,7 +826,16 @@ impl Transcript {
                 })).collect();
                 self.last_input = Some((text.clone(), images.clone()));
                 let image_urls = images.iter().map(|image| format!("data:{};base64,{}", image.media_type, image.data)).collect();
-                let index = self.push(Item::User { text, images: images.len(), image_urls, template: None, rewind_from: None });
+                let item = Item::User { text, images: images.len(), image_urls, template: None, rewind_from: None };
+                let index = if let Some(index) = self.provisional_users.pop_front() {
+                    if self.items[index] != item {
+                        self.items[index] = item;
+                        self.changed(index);
+                    }
+                    index
+                } else {
+                    self.push(item)
+                };
                 self.user_events.insert(index, event.id.clone());
             }
             "assistant.message_delta" | "assistant.message" => {
@@ -691,6 +908,7 @@ impl Transcript {
             "session.quota_observation" if !history => {
                 if let Some(data) = event.typed_data::<SessionQuotaObservationData>()
                     && data.observation.provider.id == "copilot" && data.observation.monthly_usage.is_some() {
+                    self.saw_quota = true;
                     let _ = self.events.send(Event::Usage(readings(&[data.observation])));
                 }
             }
@@ -1011,5 +1229,55 @@ mod tests {
         }
         assert_eq!(items.len(), 1);
         assert!(matches!(&items[&0], Item::Shell { command, status: CommandStatus::Failed, output, started_at, .. } if command == "make" && output == "cc main.c\n" && started_at.is_none()));
+    }
+
+    #[tokio::test]
+    async fn new_chat_opens_without_waiting_for_copilot_startup() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let script = root.path().join("slow-copilot");
+        std::fs::write(&script, "#!/bin/sh\nsleep 10\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let env = BTreeMap::from([("COPILOT_CLI_PATH".to_owned(), script.display().to_string())]);
+        let chat = Chat {
+            id: "early".to_owned(), project_id: "p".to_owned(), rig: "Argon".to_owned(), agent: Agent::Copilot,
+            cwd: root.path().to_owned(), created: 0, agent_session: None, title: None, resume_at: None,
+            plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
+            running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
+            queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),
+            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, parent: None,
+            duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
+        };
+
+        let started = Instant::now();
+        let (driver, mut events) = start(root.path(), &chat, &env).await.unwrap();
+        assert!(started.elapsed() < Duration::from_millis(200), "start() blocked for {:?}", started.elapsed());
+
+        driver.send("Hi", &[]);
+        let (mut saw_user, mut saw_starting) = (false, false);
+        timeout(Duration::from_secs(2), async {
+            while let Some(event) = events.recv().await {
+                match event {
+                    Event::Item(_, Item::User { text, .. }) if text == "Hi" => saw_user = true,
+                    Event::Activity(Some(label)) if label == "Starting…" => saw_starting = true,
+                    _ => {}
+                }
+                if saw_user && saw_starting { break; }
+            }
+        }).await.expect("early send did not emit user message and Starting… activity");
+
+        driver.interrupt();
+        timeout(Duration::from_secs(2), async {
+            while let Some(event) = events.recv().await {
+                if matches!(event, Event::Status(Status::Done)) { break; }
+            }
+        }).await.expect("early interrupt never settled");
+
+        let closing = Instant::now();
+        driver.close();
+        timeout(Duration::from_secs(2), async { while events.recv().await.is_some() {} })
+            .await.expect("closing mid-startup hung");
+        assert!(closing.elapsed() < Duration::from_secs(2));
     }
 }
