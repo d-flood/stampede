@@ -415,7 +415,7 @@
 				for (const project of opened) staleGit.add(project.id);
 				if (left?.worktree && !projects.some((project) => project.id === left.id)) {
 					const { parent } = left.worktree;
-					chosenTabs[parent] = selected ?? chosenTabs[parent];
+					if (selected && chats[left.id]?.some(({ id }) => id === selected)) chosenTabs[parent] = selected;
 					chosen = parent;
 				}
 				for (const projectId in browsers) {

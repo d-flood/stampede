@@ -353,10 +353,19 @@ impl Runs {
                 .map_err(|error| format!("Stampede could not check out the submodules of its worktree: {error}"))?;
             let place = format!("Reviewer {number}'s new worktree");
             run_setup(&self.storage, epic.setup.as_deref().unwrap_or_default(), &worktree, &place).await?;
-            self.chats.create(&project, Path::new(&worktree), &rig, None, Some(Duty::Reviewer)).await.map_err(|error| format!("Its Chat could not start: {error}."))
+            let home = self.home(slug, &project, &worktree, Role::Reviewer(number));
+            match self.chats.create(&home, Path::new(&worktree), &rig, None, Some(Duty::Reviewer)).await {
+                Ok(chat) => Ok((home, chat)),
+                Err(error) => {
+                    if home.id != project.id {
+                        self.close_project(&home.id);
+                    }
+                    Err(format!("Its Chat could not start: {error}."))
+                }
+            }
         };
-        let chat = match started.await {
-            Ok(chat) => chat,
+        let (home, chat) = match started.await {
+            Ok(started) => started,
             Err(error) => {
                 remove_worktree(&integration, Path::new(&worktree)).await;
                 return Err(error);
@@ -365,6 +374,9 @@ impl Runs {
         let event = Event::ReviewerStarted { reviewer: number, rig: rig.name.clone(), chat: chat.id.clone(), worktree: PathBuf::from(&worktree) };
         if let Err(error) = self.epics.record(slug, event) {
             self.chats.close(&chat.id);
+            if home.id != project.id {
+                self.close_project(&home.id);
+            }
             remove_worktree(&integration, Path::new(&worktree)).await;
             return Err(error);
         }
@@ -694,11 +706,18 @@ impl Runs {
                 _ if path.exists() => continue,
                 _ => {}
             }
-            if let Some(Worktree { kind: Kind::Epic { role: Role::Ticket(number), .. }, .. }) = &project.worktree
-                && epic.tickets.get(number).is_some_and(|ticket| matches!(ticket.status, Status::Merged | Status::Skipped))
-            {
-                self.close_project(&project.id);
-                continue;
+            if let Some(Worktree { kind: Kind::Epic { role, .. }, .. }) = &project.worktree {
+                let done = match role {
+                    Role::Ticket(number) => epic.tickets.get(number).is_some_and(|ticket| matches!(ticket.status, Status::Merged | Status::Skipped)),
+                    Role::Reviewer(number) => epic.review.as_ref().is_none_or(|review| {
+                        review.ended || review.reviewers.iter().find(|reviewer| reviewer.number == *number).is_none_or(|reviewer| reviewer.done())
+                    }),
+                    Role::Integration => false,
+                };
+                if done {
+                    self.close_project(&project.id);
+                    continue;
+                }
             }
             let parent = match &project.worktree {
                 Some(worktree) => Some(worktree.parent.clone()),
@@ -722,7 +741,19 @@ impl Runs {
             return;
         }
         let Ok(parent) = self.project(&epic).await else { return };
+        let live = self.chats.list();
+        let chatting = |number: u32| {
+            epic.review.iter().flat_map(|review| &review.reviewers).any(|reviewer| {
+                reviewer.number == number && reviewer.chat.as_ref().is_some_and(|chat| live.iter().any(|other| other.id == *chat))
+            })
+        };
         for (path, role) in missing {
+            // A live Reviewer without a worktree Project keeps its Chat in the parent, so nesting would split them.
+            if let Role::Reviewer(number) = role
+                && chatting(number)
+            {
+                continue;
+            }
             self.projects.nest(&path.to_string_lossy(), Worktree { parent: parent.id.clone(), kind: Kind::Epic { epic: slug.to_owned(), role } });
         }
     }
@@ -1255,6 +1286,9 @@ impl Drop for Starting {
 fn role(name: &str) -> Option<Role> {
     if name == "integration" {
         return Some(Role::Integration);
+    }
+    if let Some(number) = name.strip_prefix("review-") {
+        return number.parse().ok().map(Role::Reviewer);
     }
     name.split('-').next()?.parse().ok().map(Role::Ticket)
 }

@@ -16,7 +16,11 @@ export function labels(projects: Project[]): Map<string, string> {
 		projects.map(({ id, path, worktree }) => {
 			if (worktree && 'branch' in worktree) return [id, worktree.branch];
 			if (worktree && 'commit' in worktree) return [id, basename(path)];
-			if (worktree) return [id, worktree.role === 'integration' ? `Integration ${worktree.epic}` : `${worktree.epic}/${worktree.role.ticket}`];
+			if (worktree) {
+				if (worktree.role === 'integration') return [id, `Integration ${worktree.epic}`];
+				if ('reviewer' in worktree.role) return [id, `Reviewer ${worktree.role.reviewer} ${worktree.epic}`];
+				return [id, `${worktree.epic}/${worktree.role.ticket}`];
+			}
 			const name = basename(path);
 			const collides = own.some((other) => other.id !== id && basename(other.path) === name);
 			return [id, collides ? segments(path).slice(-2).join('/') : name];
@@ -37,7 +41,12 @@ export function monogram(path: string): string {
 }
 
 export function worktrees(projects: Project[], epics: Record<string, Epic[]>, chats: Chat[], statusOf: (chat: Chat) => Status | 'background', needs: Map<string, number>): Map<string, Tile[]> {
-	const rank = (worktree: Worktree) => (!('epic' in worktree) ? Number.MAX_SAFE_INTEGER : worktree.role === 'integration' ? 0 : worktree.role.ticket);
+	const rank = (worktree: Worktree) => {
+		if (!('epic' in worktree)) return Number.MAX_SAFE_INTEGER;
+		if (worktree.role === 'integration') return 0;
+		if ('ticket' in worktree.role) return worktree.role.ticket;
+		return 1e9 + worktree.role.reviewer;
+	};
 	const nested = projects.flatMap(({ id, path, worktree }) => (worktree ? [{ id, path, worktree }] : []));
 	const tiles = new Map<string, Tile[]>();
 	for (const { id, path, worktree } of nested.sort((a, b) => rank(a.worktree) - rank(b.worktree))) {
@@ -50,12 +59,18 @@ export function worktrees(projects: Project[], epics: Record<string, Epic[]>, ch
 			continue;
 		}
 		const { parent, epic: slug, role } = worktree;
-		const tickets = epics[parent]?.find((epic) => epic.slug === slug)?.tickets ?? [];
-		const ticket = role === 'integration' ? undefined : tickets.find(({ number }) => number === role.ticket);
-		const chat = role === 'integration' ? tickets.find(({ resolver }) => resolver)?.resolver : ticket?.claim?.chat;
+		const epic = epics[parent]?.find((other) => other.slug === slug);
+		const ticket = role !== 'integration' && 'ticket' in role ? epic?.tickets.find(({ number }) => number === role.ticket) : undefined;
+		const reviewer = role !== 'integration' && 'reviewer' in role ? epic?.review?.reviewers.find(({ number }) => number === role.reviewer) : undefined;
+		const chat =
+			role === 'integration'
+				? (epic?.tickets.find(({ resolver }) => resolver)?.resolver ?? epic?.review?.remediator?.chat)
+				: reviewer
+					? reviewer.chat
+					: ticket?.claim?.chat;
 		const claimed = chats.find((other) => other.id === chat);
 		const status = ticket?.releasing ? 'stopping' : (active ?? claimed?.status);
-		const mark = role === 'integration' ? 'In' : String(role.ticket);
+		const mark = role === 'integration' ? 'In' : 'reviewer' in role ? `R${role.reviewer}` : String(role.ticket);
 		tiles.set(parent, [...(tiles.get(parent) ?? []), { id, mark, status, needs: needs.get(id) }]);
 	}
 	return tiles;

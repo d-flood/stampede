@@ -2,7 +2,7 @@ import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { Page, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { newTab, openProject, pinned, showProjects, showSidebar } from './shell.ts';
+import { expectSelected, newTab, openProject, pinned, showProjects, showSidebar } from './shell.ts';
 
 const alpha = () => `${process.env.STAMPEDE_E2E_ROOT}/projects/alpha`;
 const git = (...args: string[]) => execFileSync('git', ['-C', alpha(), ...args], { encoding: 'utf8' }).trim();
@@ -36,7 +36,18 @@ test('a Project at a repository root mints worktrees from a chosen ref or an exi
 	await expect(page.getByRole('menuitem', { name: 'New worktree…' })).toHaveCount(0);
 	await page.keyboard.press('Escape');
 
+	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab');
+	const count = await tabs.count();
+	await newTab(page, 'Terminal');
+	await expect(tabs).toHaveCount(count + 1);
+	const chosen = await pinned(tabs.last());
+	await newTab(page, 'Terminal');
+	await expect(tabs).toHaveCount(count + 2);
+	await chosen.click();
+
 	await mint(page, 'try/it', 'origin/main');
+	await newTab(page, 'Browser');
+	await expect(page.getByRole('tabpanel', { name: 'Browser', exact: true })).toBeVisible();
 	const worktrees = rail.getByRole('group', { name: 'Worktrees of alpha' });
 	const tile = worktrees.getByRole('button', { name: 'try/it', exact: true });
 	await expect(tile.locator('.tile')).toHaveText('It');
@@ -48,6 +59,7 @@ test('a Project at a repository root mints worktrees from a chosen ref or an exi
 	await tile.click({ button: 'right' });
 	await page.getByRole('menuitem', { name: 'Delete worktree' }).click();
 	await expect(tile).toHaveCount(0);
+	await expectSelected(chosen);
 	expect(git('branch', '--list', 'try/it')).toBe('');
 
 	await mint(page, '', 'keep/me');

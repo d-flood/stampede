@@ -144,11 +144,12 @@ impl Runs {
             Kind::Branch { branch, existing } => (None, (!existing).then(|| branch.clone()), None, None),
             Kind::Epic { epic, role } => {
                 let (event, branch, starting) = self.hold(epic, *role, path)?;
-                (event, Some(branch), None, starting)
+                let since = matches!(role, Role::Reviewer(_)).then(|| epic_branch(epic));
+                (event, branch, since, starting)
             }
-            Kind::Detached { commit } => (None, None, Some(commit.as_str()), None),
+            Kind::Detached { commit } => (None, None, Some(commit.clone()), None),
         };
-        if !force && let Some(work) = unmerged(path, branch.as_deref(), since).await {
+        if !force && let Some(work) = unmerged(path, branch.as_deref(), since.as_deref()).await {
             return Err(Refusal::Unmerged(work));
         }
         git::run(Path::new(&checkout), &["worktree", "remove", "--force", &project.path])
@@ -168,9 +169,10 @@ impl Runs {
         Ok(())
     }
 
-    fn hold(&self, slug: &str, role: Role, path: &Path) -> Result<(Option<Event>, String, Option<Starting>), Refusal> {
+    fn hold(&self, slug: &str, role: Role, path: &Path) -> Result<(Option<Event>, Option<String>, Option<Starting>), Refusal> {
         let starting = match role {
             Role::Ticket(number) => Some(Starting::new(self, slug, Slot::Ticket(number)).map_err(Refusal::Refused)?),
+            Role::Reviewer(number) => Some(Starting::new(self, slug, Slot::Reviewer(number)).map_err(Refusal::Refused)?),
             Role::Integration => None,
         };
         let epic = self.epics.get(slug).map_err(Refusal::Refused)?;
@@ -190,7 +192,7 @@ impl Runs {
                     return Err(Refusal::Refused(format!("{slug}/{number} is {} and merges into it.", ticket.status)));
                 }
                 let event = (epic.integration.as_deref() == Some(path)).then_some(Event::IntegrationRemoved);
-                Ok((event, epic_branch(slug), starting))
+                Ok((event, Some(epic_branch(slug)), starting))
             }
             Role::Ticket(number) => {
                 let event = match epic.tickets.get(&number).filter(|ticket| ticket.worktree.as_deref() == Some(path)) {
@@ -201,7 +203,19 @@ impl Runs {
                     None => None,
                 };
                 let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
-                Ok((event, ticket_branch(slug, &name), starting))
+                Ok((event, Some(ticket_branch(slug, &name)), starting))
+            }
+            Role::Reviewer(number) => {
+                let reviewing = epic.reviewing().is_some_and(|review| {
+                    review
+                        .reviewers
+                        .iter()
+                        .any(|reviewer| reviewer.number == number && !reviewer.done() && reviewer.worktree.as_deref() == Some(path))
+                });
+                if reviewing {
+                    return Err(Refusal::Refused(format!("{slug}'s Reviewer {number} is reviewing in it.")));
+                }
+                Ok((None, None, starting))
             }
         }
     }

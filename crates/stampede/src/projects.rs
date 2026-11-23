@@ -44,6 +44,7 @@ pub enum Kind {
 pub enum Role {
     Integration,
     Ticket(u32),
+    Reviewer(u32),
 }
 
 pub type List = Arc<Vec<Project>>;

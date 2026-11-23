@@ -130,6 +130,21 @@ impl Loop {
         self.root.join(format!("data/chats/{}.json", chat.as_str().unwrap())).exists()
     }
 
+    fn chat(&self, chat: &Value) -> Value {
+        let path = self.root.join(format!("data/chats/{}.json", chat.as_str().unwrap()));
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    fn projects(&self) -> Vec<Value> {
+        serde_json::from_str(&fs::read_to_string(self.root.join("data/projects.json")).unwrap()).unwrap()
+    }
+
+    async fn delete_worktree(&self, project_id: &str) -> (u16, String) {
+        let url = format!("http://127.0.0.1:{}/api/projects/{project_id}/worktree?force=false", self.port);
+        let response = reqwest::Client::new().delete(url).send().await.unwrap();
+        (response.status().as_u16(), response.text().await.unwrap())
+    }
+
     fn gate(&self) -> PathBuf {
         self.gates.path().join("review")
     }
@@ -161,6 +176,13 @@ async fn reviewers_take_the_runs_slots_in_turn_then_one_remediator_judges_and_fi
     assert_eq!(first[0]["worktree"], json!(review));
     assert_eq!(output(&review, &["rev-parse", "HEAD"]), output(&lp.repo, &["rev-parse", "stampede/work/epic"]));
     assert_eq!(output(&review, &["symbolic-ref", "-q", "HEAD"]), "", "a Reviewer's worktree is detached");
+    let projects = lp.projects();
+    let main = projects.iter().find(|project| project["path"] == json!(lp.repo)).unwrap()["id"].clone();
+    let nested = projects.iter().find(|project| project["path"] == json!(review)).expect("Reviewer 1 opens as a nested worktree Project");
+    let nested_id = nested["id"].as_str().unwrap().to_owned();
+    assert_eq!(nested["worktree"], json!({ "parent": main, "epic": "work", "role": { "reviewer": 1 } }));
+    assert_eq!(lp.chat(&first[0]["chat"])["projectId"], json!(nested_id), "Reviewer 1's Chat lives in its worktree Project");
+    assert_eq!(lp.delete_worktree(&nested_id).await, (400, "work's Reviewer 1 is reviewing in it.".to_owned()));
     let finding = &lp.entries("finding.added")[0];
     assert_eq!((&finding["finding"], &finding["rig"], &finding["body"]), (&json!(1), &json!("Reviewer A"), &json!("work.txt is all capitals.\n")));
 
@@ -176,6 +198,10 @@ async fn reviewers_take_the_runs_slots_in_turn_then_one_remediator_judges_and_fi
     lp.until("Reviewer 2 at its gate", |lp| lp.entries("reviewer.started").len() == 2 && lp.gate().exists()).await;
     lp.until("Reviewer 1's worktree to go once it reports", |_| !review.exists()).await;
     lp.until("Reviewer 1's Chat to end once it reports", |lp| !lp.chat_exists(&first[0]["chat"])).await;
+    lp.until("Reviewer 1's worktree Project to close once it reports", |lp| {
+        !lp.projects().iter().any(|project| project["id"] == json!(nested_id))
+    })
+    .await;
     fs::remove_file(lp.gate()).unwrap();
 
     lp.until("the Run to finish", |lp| !lp.entries("run.finished").is_empty()).await;
@@ -229,6 +255,10 @@ async fn stopping_a_run_mid_review_ends_its_reviewers_and_discards_their_worktre
     lp.record(json!({ "kind": "run.stopped" })).await.unwrap();
     lp.until("the Reviewer's Chat to end", |lp| !lp.chat_exists(&chat)).await;
     lp.until("its worktree to go", |lp| !lp.worktree("review-1").exists()).await;
+    lp.until("its worktree Project to close", |lp| {
+        !lp.projects().iter().any(|project| project["path"] == json!(lp.worktree("review-1")))
+    })
+    .await;
     assert!(lp.entries("reviewer.failed").is_empty(), "a stopped Review gives up on nobody");
     let refused = lp.cli.refused(&lp.repo, &["reviewed", "work"], "");
     assert!(refused.contains("only a Reviewer of work"), "{refused}");
