@@ -51,33 +51,33 @@
 		</Tooltip>
 	{/if}
 	{#if parts.length}
-		<Menu items={sections}>
+		<Menu side={phone ? 'top' : 'bottom'} items={sections}>
 			{#snippet trigger(props)}
 				<Chip
 					{...props}
-					variant="ghost"
+					variant={phone ? 'default' : 'ghost'}
 					pending={later}
 					aria-label="Model: {parts.join(' ')}{later ? ', next turn' : ''}"
 					title={later ? 'Takes effect on the next turn' : undefined}
 				>
 					<span class="label"><span class="model">{parts[0]}</span>{parts.slice(1).map((part) => ` ${part}`).join('')}</span>
-					{#if !phone}<span class="caret"><CaretDown aria-hidden="true" /></span>{/if}
+					<span class="caret"><CaretDown aria-hidden="true" /></span>
 				</Chip>
 			{/snippet}
 		</Menu>
 	{/if}
 	{#if settings.mode}
-		<Menu items={menu('mode')}>
+		<Menu side={phone ? 'top' : 'bottom'} items={menu('mode')}>
 			{#snippet trigger(props)}
 				<Chip
 					{...props}
-					variant="ghost"
+					variant={phone ? 'default' : 'ghost'}
 					pending={pending('mode')}
 					aria-label="Mode: {label('mode')}{pending('mode') ? ', next turn' : ''}"
 					title={pending('mode') ? 'Takes effect on the next turn' : undefined}
 				>
 					<span class="label">{label('mode')}{phone ? '' : ' mode'}</span>
-					{#if !phone}<span class="caret"><CaretDown aria-hidden="true" /></span>{/if}
+					<span class="caret"><CaretDown aria-hidden="true" /></span>
 				</Chip>
 			{/snippet}
 		</Menu>
@@ -131,6 +131,12 @@
 	}
 
 	.phone {
-		padding-left: 0;
+		--target-min: var(--control-min);
+		gap: var(--space-2);
+		padding: 0 var(--space-1);
+	}
+
+	.phone .end {
+		margin-left: auto;
 	}
 </style>

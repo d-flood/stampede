@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { canvasName } from '#lib/canvas.svelte.ts';
+	import Approval from '#lib/chat/Approval.svelte';
 	import { brief } from '#lib/chat/brief.ts';
 	import Code from '#lib/chat/Code.svelte';
 	import CodeBlock from '#lib/chat/CodeBlock.svelte';
@@ -7,7 +8,7 @@
 	import Edit from '#lib/chat/Edit.svelte';
 	import Elapsed from '#lib/chat/Elapsed.svelte';
 	import { formatJson } from '#lib/chat/format-json.ts';
-	import { icon, icons } from '#lib/chat/icons.ts';
+	import { icon, toolIcon } from '#lib/chat/icons.ts';
 	import { chips, summarize, type Chip as Edited } from '#lib/chat/summary.ts';
 	import Thinking from '#lib/chat/Thinking.svelte';
 	import Tool from '#lib/chat/Tool.svelte';
@@ -26,10 +27,12 @@
 	const edits = $derived(chips(items));
 	const running = $derived(items.flatMap((item) => (item.kind === 'command' && activity === `Running ${item.command}` ? [item.command] : []))[0]);
 	const current = $derived(items.at(-1));
-	const command = $derived(current?.kind === 'command' && activity === `Running ${current.command}` ? current : undefined);
+	// Codex starts a command before its approval review lands, so the verdict can trail the running command.
+	const latest = $derived(items.findLast((item) => item.kind !== 'tools' || item.calls.some((call) => call.kind !== 'approval')));
+	const command = $derived(latest?.kind === 'command' && activity === `Running ${latest.command}` ? latest : undefined);
 	const tool = $derived(current?.kind === 'tools' && activity === `Using ${current.calls.at(-1)?.name}` ? current.calls.at(-1) : undefined);
 	const args = $derived(watching && tool ? formatJson(tool.detail) : undefined);
-	const rail = $derived(watching && command ? items.slice(0, -1) : items);
+	const rail = $derived(watching && command ? items.filter((item) => item !== command) : items);
 	const verbs: Partial<Record<ToolCall['kind'], string>> = { read: 'Read', search: 'Search', fetch: 'Fetch', web: 'Web search' };
 	const ROW_CHARACTERS = 500;
 
@@ -84,10 +87,12 @@
 			{#each rail as item, index (index)}
 				{#if item.kind === 'tools'}
 					{#each (watching && tool && index === items.length - 1 ? item.calls.slice(0, -1) : item.calls) as call, number (number)}
-						<div class="step" data-dot="done">
-							{@render marker(icons[call.kind])}
+						<div class="step" data-dot={call.kind === 'approval' && call.name !== 'approved' ? 'failed' : 'done'}>
+							{@render marker(toolIcon(call))}
 							{#if call.kind === 'mcp' || call.kind === 'other'}
 								<Tool {call} bind:open={() => shownTools[`${index}:${number}`] ?? false, (value) => (shownTools[`${index}:${number}`] = value)} />
+							{:else if call.kind === 'approval'}
+								<Approval {call} bind:open={() => shownTools[`${index}:${number}`] ?? false, (value) => (shownTools[`${index}:${number}`] = value)} />
 							{:else}
 								<div class="call"><span class="verb">{verbs[call.kind] ?? call.name}</span> <span class="detail" title={call.detail}>{call.detail}</span></div>
 							{/if}
@@ -112,7 +117,7 @@
 	{/if}
 	{#if watching && command}
 		<div class="current-command">
-			<Command item={command} full bind:open={() => shown[items.length - 1] ?? false, (value) => (shown[items.length - 1] = value)} onexpand={onexpand && (() => onexpand(command))} />
+			<Command item={command} full bind:open={() => shown[items.indexOf(command)] ?? false, (value) => (shown[items.indexOf(command)] = value)} onexpand={onexpand && (() => onexpand(command))} />
 		</div>
 	{:else if watching && tool}
 		<div class="current-tool">

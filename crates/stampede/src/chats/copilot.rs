@@ -863,7 +863,7 @@ impl Transcript {
 
 fn tool(name: &str, args: &Value, kind: ToolKind) -> Item {
     let detail = args["path"].as_str().or(args["pattern"].as_str()).or(args["url"].as_str()).map(str::to_owned).unwrap_or_else(|| args.to_string());
-    Item::Tools { calls: vec![ToolCall { kind, name: name.to_owned(), detail }] }
+    Item::Tools { calls: vec![ToolCall::new(kind, name, detail)] }
 }
 
 #[cfg(test)]

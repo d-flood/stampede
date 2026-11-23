@@ -2502,7 +2502,7 @@ impl Transcript {
     }
 
     fn call(&mut self, kind: ToolKind, name: &str, detail: String) {
-        let call = ToolCall { kind, name: name.to_owned(), detail };
+        let call = ToolCall::new(kind, name, detail);
         match &mut self.tools {
             Some((index, calls)) => {
                 calls.push(call);
@@ -3500,7 +3500,7 @@ mod subagent_tests {
         }).last().unwrap();
         let [Item::Subagent { id, status, outcome, items, .. }] = outer.as_slice() else { panic!("{outer:?}") };
         assert_eq!((id.as_str(), *status, *outcome), ("B", Status::Done, Some(Outcome::Completed)));
-        let read = ToolCall { kind: ToolKind::Read, name: "Read".to_owned(), detail: "notes.txt".to_owned() };
+        let read = ToolCall::new(ToolKind::Read, "Read", "notes.txt".to_owned());
         assert!(matches!(items.as_slice(), [Item::Tools { calls }] if calls == &[read]), "{items:?}");
     }
 }

@@ -16,10 +16,19 @@ export function summarize(items: Item[]): string[] {
 		[count('web'), 'searched the web', 'time'],
 		[count('mcp', 'other'), 'used', 'tool']
 	];
+	const approvals = calls.filter((call) => call.kind === 'approval');
+	const denied = approvals.filter((call) => call.name === 'denied').length;
+	const timedOut = approvals.filter((call) => call.name === 'timedOut').length;
 	const segments = counts.filter(([count]) => count).map(([count, verb, noun]) => `${verb} ${count} ${noun}${count === 1 ? '' : 's'}`);
 	if (failed) segments.push(`${failed} failed`);
+	if (denied) segments.push(`${denied} ${denied === 1 ? 'approval' : 'approvals'} denied`);
+	if (timedOut) segments.push(`${timedOut} ${timedOut === 1 ? 'approval' : 'approvals'} timed out`);
 	if (!segments.length) {
-		const seconds = items.reduce((total, item) => total + (item.kind === 'thinking' ? item.seconds : 0), 0);
+		const thinking = items.filter((item) => item.kind === 'thinking');
+		if (!thinking.length && approvals.length) {
+			return [`Reviewed ${approvals.length} ${approvals.length === 1 ? 'approval' : 'approvals'}`];
+		}
+		const seconds = thinking.reduce((total, item) => total + item.seconds, 0);
 		return [seconds ? `Thought for ${seconds}s` : 'Thought briefly'];
 	}
 	segments[0] = segments[0].charAt(0).toUpperCase() + segments[0].slice(1);

@@ -134,3 +134,25 @@ test('a recognized leading command is marked exactly over its text', async () =>
 	expect(Math.abs(pill.width - 2 * pad - measure.measureText('/compact').width)).toBeLessThan(1);
 	expect(Math.abs((pill.top + pill.bottom) / 2 - (box.top + box.bottom) / 2)).toBeLessThan(1);
 });
+
+test('working composer hides Queue and Steer until a draft is entered and phone context opens a popover', async () => {
+	const { view, composer } = await mount({
+		status: 'working',
+		context: { used: 12_000, window: 200_000 },
+		tokens: { input: 8_400, output: 1_200 },
+		settings: { model: 'opus', effort: 'high', mode: 'auto' }
+	});
+	await expect.element(view.getByRole('button', { name: 'Interrupt', exact: true })).toBeVisible();
+	await expect.element(view.getByRole('button', { name: 'Queue', exact: true })).not.toBeInTheDocument();
+	await expect.element(view.getByRole('button', { name: 'Steer', exact: true })).not.toBeInTheDocument();
+	await composer.fill('Check contrast');
+	await expect.element(view.getByRole('button', { name: 'Interrupt', exact: true })).toBeVisible();
+	await expect.element(view.getByRole('button', { name: 'Queue', exact: true })).toBeEnabled();
+	await expect.element(view.getByRole('button', { name: 'Steer', exact: true })).toBeEnabled();
+	if (phone) {
+		await view.getByRole('button', { name: 'Context: 12k / 200k (6%)', exact: true }).click();
+		const dialog = page.getByRole('dialog', { name: 'Context', exact: true });
+		await expect.element(dialog.getByText('12k / 200k (6%)')).toBeVisible();
+		await expect.element(dialog.getByText('8k in · 1k out')).toBeVisible();
+	}
+});

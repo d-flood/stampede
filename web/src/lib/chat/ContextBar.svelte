@@ -2,6 +2,9 @@
 	import { cold, describe, warmth } from '#lib/chat/cache.ts';
 	import { count } from '#lib/chat/count.ts';
 	import type { Context, Tokens } from '#lib/device.svelte.ts';
+	import { form } from '#lib/form.ts';
+	import IconButton from '#lib/ui/IconButton.svelte';
+	import Popover from '#lib/ui/Popover.svelte';
 	import Tooltip from '#lib/ui/Tooltip.svelte';
 	import { cubicOut } from 'svelte/easing';
 	import { prefersReducedMotion, Tween } from 'svelte/motion';
@@ -15,28 +18,47 @@
 	const tip = $derived([`Context ${figure} (${percent}%)`, tokens && `${count(tokens.input)} in · ${count(tokens.output)} out`, context.cache && describe(context.cache)].filter(Boolean).join('\n'));
 </script>
 
-<Tooltip text={tip} delayDuration={0}>
-	{#snippet children(props)}
-		<span
-			{...props}
-			class="context"
-			class:high={percent >= 90}
-			class:cold={cold(state)}
-			role="meter"
-			aria-label="Context"
-			aria-valuemin={0}
-			aria-valuemax={context.window}
-			aria-valuenow={Math.min(context.used, context.window)}
-			aria-valuetext="{figure} ({percent}%){cold(state) ? `, cache ${state?.replace('-', ' ')}` : ''}"
-		>
-			<svg viewBox="0 0 40 40" aria-hidden="true">
-				<circle class="track" cx="20" cy="20" r="17" />
-				<circle class="fill" cx="20" cy="20" r="17" pathLength="100" stroke-dasharray="{Math.min(shown.current, 100)} 100" transform="rotate(-90 20 20)" />
-			</svg>
-			<span class="percent">{Math.round(shown.current)}%</span>
-		</span>
-	{/snippet}
-</Tooltip>
+{#snippet ring(props: Record<string, unknown> = {})}
+	<span
+		{...props}
+		class="context"
+		class:high={percent >= 90}
+		class:cold={cold(state)}
+		role="meter"
+		aria-label="Context"
+		aria-valuemin={0}
+		aria-valuemax={context.window}
+		aria-valuenow={Math.min(context.used, context.window)}
+		aria-valuetext="{figure} ({percent}%){cold(state) ? `, cache ${state?.replace('-', ' ')}` : ''}"
+	>
+		<svg viewBox="0 0 40 40" aria-hidden="true">
+			<circle class="track" cx="20" cy="20" r="17" />
+			<circle class="fill" cx="20" cy="20" r="17" pathLength="100" stroke-dasharray="{Math.min(shown.current, 100)} 100" transform="rotate(-90 20 20)" />
+		</svg>
+		<span class="percent">{Math.round(shown.current)}%</span>
+	</span>
+{/snippet}
+
+{#if form() === 'phone'}
+	<Popover label="Context" side="top" align="end">
+		{#snippet trigger(props)}
+			<IconButton {...props} type="button" label="Context: {figure} ({percent}%)">
+				{@render ring()}
+			</IconButton>
+		{/snippet}
+		<dl class="details">
+			<div class="row"><dt>Context</dt><dd>{figure} ({percent}%)</dd></div>
+			{#if tokens}<div class="row"><dt>Tokens</dt><dd>{count(tokens.input)} in · {count(tokens.output)} out</dd></div>{/if}
+			{#if context.cache}<div class="row"><dt>Prompt cache</dt><dd class:cold-text={cold(state)}>{describe(context.cache)}</dd></div>{/if}
+		</dl>
+	</Popover>
+{:else}
+	<Tooltip text={tip} delayDuration={0}>
+		{#snippet children(props)}
+			{@render ring(props)}
+		{/snippet}
+	</Tooltip>
+{/if}
 
 <style>
 	.context {
@@ -100,5 +122,34 @@
 		border-radius: 50%;
 		background: var(--ansi-1);
 		content: '';
+	}
+
+	.details {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		margin: 0;
+		font-size: var(--font-size-sm);
+	}
+
+	.row {
+		display: flex;
+		justify-content: space-between;
+		gap: var(--space-4);
+	}
+
+	dt {
+		color: var(--muted-fg);
+	}
+
+	dd {
+		margin: 0;
+		font-family: var(--font-mono);
+		font-variant-numeric: tabular-nums;
+		text-align: right;
+	}
+
+	.cold-text {
+		color: var(--ansi-1);
 	}
 </style>

@@ -19,9 +19,10 @@
 		loading?: string;
 		side?: 'top' | 'right' | 'bottom' | 'left';
 		align?: 'start' | 'end';
+		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { items, context = false, trigger, row: custom, open = $bindable(false), resize = false, loading, side = 'bottom', align = 'start' }: Props = $props();
+	let { items, context = false, trigger, row: custom, open = $bindable(false), resize = false, loading, side = 'bottom', align = 'start', oncloseautofocus }: Props = $props();
 	let width = $state(0);
 </script>
 
@@ -99,7 +100,7 @@
 			{/snippet}
 		</ContextMenu.Trigger>
 		<ContextMenu.Portal>
-			<ContextMenu.Content child={content} />
+			<ContextMenu.Content onCloseAutoFocus={oncloseautofocus} child={content} />
 		</ContextMenu.Portal>
 	</ContextMenu.Root>
 {:else}
@@ -110,7 +111,7 @@
 			{/snippet}
 		</DropdownMenu.Trigger>
 		<DropdownMenu.Portal>
-			<DropdownMenu.Content {side} {align} sideOffset={4} child={content} />
+			<DropdownMenu.Content {side} {align} sideOffset={4} onCloseAutoFocus={oncloseautofocus} child={content} />
 		</DropdownMenu.Portal>
 	</DropdownMenu.Root>
 {/if}

@@ -28,6 +28,7 @@
 	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Paperclip from '~icons/ph/paperclip';
 	import Play from '~icons/ph/play';
+	import Plus from '~icons/ph/plus';
 	import Stop from '~icons/ph/stop-fill';
 	import Terminal from '~icons/ph/terminal';
 	import X from '~icons/ph/x';
@@ -56,6 +57,8 @@
 	let reading = $state(false);
 	let launching = $state(false);
 	let confirming = $state<{ text: string; queue: boolean; probably: boolean }>();
+	let focusComposer = false;
+	const phone = $derived(form() === 'phone');
 	const imageable = $derived(!request || (request.kind === 'question' && !!request.questions[0]?.type));
 
 	function choose() {
@@ -189,7 +192,13 @@
 	</div>
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} mark={(text) => command(text)?.token.length ?? 0} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
+{#snippet meta()}
+	<Chips agent={chat.agent} settings={chat.settings} {choices} {onrun}>
+		{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
+	</Chips>
+{/snippet}
+
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} mark={(text) => command(text)?.token.length ?? 0} footer={phone ? meta : undefined} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
 	{#snippet border(text: string)}
 		{@const known = chat.status === 'done' && !shell && !slash?.isOpen() && !files?.isOpen() ? command(text) : undefined}
 		<TurnRing status={chat.status} activity={chat.activity} {shell} />
@@ -208,58 +217,94 @@
 		{/if}
 	{/snippet}
 	{#snippet actions(text: string, clear: () => void)}
-		{#if form() === 'phone'}
-			<Button variant="ghost" aria-label="Commands" tip="Commands" aria-expanded={slash?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => slash?.toggle()}><Terminal /></Button>
-			<Button variant="ghost" aria-label="Reference file" tip="Reference file" aria-expanded={files?.isOpen() ?? false} onmousedown={keepFocus} onclick={() => (files?.isOpen() ? files.dismiss() : composer.insert('@'))}><At /></Button>
-		{/if}
-		<Chips agent={chat.agent} settings={chat.settings} {choices} {onrun}>
-			{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
-		</Chips>
-		<Button variant="ghost" aria-label="Attach image" tip="Attach image" disabled={!live || reading || !imageable} onclick={() => picker.click()}><Paperclip /></Button>
-		<Menu items={[{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]}>
-			{#snippet trigger(props)}
-				<Button {...props} variant="ghost" aria-label="More" tip="More"><DotsThree /></Button>
-			{/snippet}
-		</Menu>
-		<div class="turn">
-			{#if stoppable}
-				<Button variant="ghost" aria-label="Interrupt" tip="Interrupt" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
-					<span class="stop"><Stop /></span>
-				</Button>
-			{/if}
-			{#if text.trimStart().startsWith('!')}
-				<Button variant="primary" disabled={!text.trim().slice(1).trim() || !live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
-					<Terminal /> Run
-				</Button>
-			{:else if !request && !images.length && command(text)?.builtin}
-				<Button variant="primary" disabled={!live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
-					<Play /> Run
-				</Button>
-			{:else if working && !launching}
-				<Button aria-label={form() === 'phone' ? 'Queue' : undefined} disabled={(!text.trim() && !images.length) || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
-					<ListPlus />{#if form() !== 'phone'} Queue{/if}
-				</Button>
-				<Button
-					variant="primary"
-					aria-label={form() === 'phone' ? 'Steer' : undefined}
-					disabled={(!text.trim() && !images.length) || !live || reading}
-					onmousedown={keepFocus}
-					onclick={() => send(text, false) && clear()}
+		{@const hasDraft = !!text.trim() || !!images.length}
+		{@const interruptOnly = stoppable && !hasDraft && !launching}
+		{#if phone}
+			<div class="group">
+				<Menu
+					side="top"
+					align="start"
+					items={[
+						{
+							heading: 'Insert',
+							items: [
+								{ label: 'Commands', icon: Terminal, hint: '/', onselect: () => { focusComposer = true; slash?.toggle(); } },
+								{ label: 'Reference file', icon: At, hint: '@', onselect: () => { focusComposer = true; if (files?.isOpen()) files.dismiss(); else composer.insert('@'); } }
+							]
+						},
+						{
+							heading: 'Chat',
+							items: [{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]
+						}
+					]}
+					oncloseautofocus={(event) => {
+						if (!focusComposer) return;
+						focusComposer = false;
+						event.preventDefault();
+						composer.focus();
+					}}
 				>
-					<ArrowBendUpRight />{#if form() !== 'phone'} Steer{/if}
+					{#snippet trigger(props)}
+						<Button {...props} aria-label="More"><Plus /></Button>
+					{/snippet}
+				</Menu>
+				<Button variant="ghost" aria-label="Attach image" disabled={!live || reading || !imageable} onclick={() => picker.click()}><Paperclip /></Button>
+			</div>
+		{:else}
+			{@render meta()}
+			<Button variant="ghost" aria-label="Attach image" tip="Attach image" disabled={!live || reading || !imageable} onclick={() => picker.click()}><Paperclip /></Button>
+			<Menu items={[{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]}>
+				{#snippet trigger(props)}
+					<Button {...props} variant="ghost" aria-label="More" tip="More"><DotsThree /></Button>
+				{/snippet}
+			</Menu>
+		{/if}
+		<div class={phone ? 'phone-turn' : 'turn'}>
+			{#if interruptOnly}
+				<Button variant="danger" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
+					<Stop /> Interrupt
 				</Button>
 			{:else}
-				<Button
-					variant="primary"
-					aria-label="Send"
-					tip="Send"
-					style={form() === 'phone' ? undefined : 'min-width: calc(2 * (1.2em + 2 * var(--space-3) + 2 * var(--border-width)))'}
-					disabled={(!text.trim() && !images.length) || !live || reading}
-					onmousedown={keepFocus}
-					onclick={() => send(text, false) && clear()}
-				>
-					<span class="plane" class:launching onanimationend={() => (launching = false)}><PaperPlaneRight /></span>
-				</Button>
+				{#if stoppable}
+					<Button variant="danger" aria-label="Interrupt" tip={phone ? undefined : 'Interrupt'} disabled={!live} onmousedown={keepFocus} onclick={interrupt}>
+						<Stop />
+					</Button>
+					{#if phone}<span class="divider" aria-hidden="true"></span>{/if}
+				{/if}
+				{#if text.trimStart().startsWith('!')}
+					<Button variant="primary" disabled={!text.trim().slice(1).trim() || !live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
+						<Terminal /> Run
+					</Button>
+				{:else if !request && !images.length && command(text)?.builtin}
+					<Button variant="primary" disabled={!live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
+						<Play /> Run
+					</Button>
+				{:else if working && !launching}
+					<Button aria-label={phone ? 'Queue' : undefined} disabled={!hasDraft || !live || reading} onmousedown={keepFocus} onclick={() => send(text, true) && clear()}>
+						<ListPlus />{#if !phone} Queue{/if}
+					</Button>
+					<Button
+						variant="primary"
+						aria-label={phone ? 'Steer' : undefined}
+						disabled={!hasDraft || !live || reading}
+						onmousedown={keepFocus}
+						onclick={() => send(text, false) && clear()}
+					>
+						<ArrowBendUpRight />{#if !phone} Steer{/if}
+					</Button>
+				{:else}
+					<Button
+						variant="primary"
+						aria-label="Send"
+						tip={phone ? undefined : 'Send'}
+						style={phone ? undefined : 'min-width: calc(2 * (1.2em + 2 * var(--space-3) + 2 * var(--border-width)))'}
+						disabled={!hasDraft || !live || reading}
+						onmousedown={keepFocus}
+						onclick={() => send(text, false) && clear()}
+					>
+						<span class="plane" class:launching onanimationend={() => (launching = false)}><PaperPlaneRight /></span>
+					</Button>
+				{/if}
 			{/if}
 		</div>
 	{/snippet}
@@ -290,9 +335,24 @@
 	.phone .thumbnail { display: flex; align-items: center; gap: var(--space-1); }
 	.phone .thumbnail button { position: static; display: inline-grid; place-items: center; }
 	[role='alert'] { color: var(--ansi-1); }
-	.stop {
-		display: inline-flex;
-		color: var(--ansi-1);
+
+	.group,
+	.phone-turn {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+	}
+
+	.group :global(button),
+	.phone-turn :global(button) {
+		min-width: var(--target-min);
+	}
+
+	.divider {
+		flex: none;
+		width: var(--border-width);
+		height: calc(var(--target-min) - 2 * var(--space-4));
+		background: var(--border);
 	}
 
 	.plane {

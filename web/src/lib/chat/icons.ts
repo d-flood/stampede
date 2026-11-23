@@ -9,6 +9,8 @@ import MagnifyingGlass from '~icons/ph/magnifying-glass';
 import PencilSimple from '~icons/ph/pencil-simple';
 import Plug from '~icons/ph/plug';
 import Robot from '~icons/ph/robot';
+import ShieldCheck from '~icons/ph/shield-check';
+import ShieldSlash from '~icons/ph/shield-slash';
 import Terminal from '~icons/ph/terminal';
 import Wrench from '~icons/ph/wrench';
 
@@ -21,10 +23,15 @@ export const icons: Record<ToolCall['kind'] | 'command' | 'edit' | 'write' | 'to
 	edit: PencilSimple,
 	write: FilePlus,
 	mcp: Plug,
+	approval: ShieldCheck,
 	other: Wrench,
 	todos: ListChecks,
 	subagent: Robot
 };
+
+export function toolIcon(call: ToolCall): Component {
+	return call.kind === 'approval' && call.name !== 'approved' ? ShieldSlash : icons[call.kind];
+}
 
 export function icon(item: Item): Component | undefined {
 	if (item.kind === 'command') return icons.command;

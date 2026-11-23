@@ -173,7 +173,9 @@ test('a working Chat steers, queues until its turn ends, and interrupts, with no
 	if (project.name === 'pixel') {
 		await page.setViewportSize({ width: 375, height: 812 });
 		await expect.poll(() => panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
-		await expect(panel.getByRole('button', { name: 'Commands', exact: true })).toBeInViewport();
+		await expect(panel.getByRole('button', { name: 'More', exact: true })).toBeInViewport();
+		await expect(panel.getByRole('button', { name: 'Interrupt', exact: true })).toBeInViewport();
+		await expect(panel.getByRole('button', { name: 'Queue', exact: true })).toHaveCount(0);
 	}
 
 	await composer.fill(later);
@@ -250,17 +252,18 @@ for (const { agent, rig, command, before, after } of slashed) {
 		const composer = panel.getByRole('textbox', { name: 'Composer' });
 		const menu = panel.getByRole('region', { name: 'Commands' });
 		if (project.name === 'pixel') {
-			const commands = panel.getByRole('button', { name: 'Commands', exact: true });
+			const more = panel.getByRole('button', { name: 'More', exact: true });
 			await composer.fill('Keep this draft');
-			await commands.click();
+			await more.click();
+			await page.getByRole('menuitem', { name: 'Commands' }).click();
 			await expect(menu).toBeVisible();
-			await expect(commands).toHaveAttribute('aria-expanded', 'true');
 			await expect(composer).toHaveValue('Keep this draft');
-			await commands.click();
+			await more.click();
+			await page.getByRole('menuitem', { name: 'Commands' }).click();
 			await expect(menu).toHaveCount(0);
-			await expect(commands).toHaveAttribute('aria-expanded', 'false');
 			await expect(composer).toHaveValue('Keep this draft');
-			await commands.click();
+			await more.click();
+			await page.getByRole('menuitem', { name: 'Commands' }).click();
 			await expect.poll(() => panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
 		} else {
 			await composer.fill('/');

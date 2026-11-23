@@ -190,7 +190,7 @@ test('the model control holds Speed and shows it only once it differs from the d
 	await closeProject(page, name);
 });
 
-test('phone Composer holds the Chat settings and every control is at least 44px tall', { tag: '@phone' }, async ({ page }, { project }) => {
+test('phone Composer holds the Chat settings and its controls meet touch target sizes', { tag: '@phone' }, async ({ page }, { project }) => {
 	const name = `composer-targets-${project.name}`;
 	const { panel, composer } = await launch(page, name);
 	const model = panel.getByRole('button', { name: /^Model:/ });
@@ -199,8 +199,14 @@ test('phone Composer holds the Chat settings and every control is at least 44px 
 	expect(setting!.y).toBeGreaterThanOrEqual(text!.y + text!.height);
 	await composer.fill('Draft');
 	const controls = panel.locator('.composer .actions button');
-	await expect(controls).toHaveCount(7);
-	for (const box of await controls.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height))) expect(box).toBeGreaterThanOrEqual(44);
+	await expect(controls).toHaveCount(3);
+	for (const box of await controls.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect()))) {
+		expect(box.height).toBeGreaterThanOrEqual(44);
+		expect(box.width).toBeGreaterThanOrEqual(44);
+	}
+	const footer = panel.locator('.composer .footer button');
+	await expect(footer).toHaveCount(2);
+	for (const box of await footer.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height))) expect(box).toBeGreaterThanOrEqual(36);
 	await expect.poll(() => panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
 	await closeProject(page, name);
 });

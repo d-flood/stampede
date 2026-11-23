@@ -263,3 +263,26 @@ test('only the label of a command in this group is highlighted', async () => {
 	await expect.poll(() => highlighted(live())).toBeGreaterThan(0);
 	expect(live().textContent).toBe(' · Running cargo test');
 });
+
+test('approval reviews stay in Activity, stay quiet when approved, and surface denials', async () => {
+	const items: Item[] = [
+		{ kind: 'tools', calls: [{ kind: 'approval', name: 'approved', detail: 'cargo test', rationale: 'Runs the workspace test suite.' }] },
+		{ kind: 'command', command: 'cargo test', status: 'ok', output: 'ok' },
+		{ kind: 'tools', calls: [{ kind: 'approval', name: 'denied', detail: 'touch /elsewhere', rationale: 'Writes outside the workspace.' }] }
+	];
+	const view = await render(Transcript, { ...handlers, items });
+	expect(summaries(view.container).map((element) => element.textContent)).toEqual(['Ran 1 command, 1 approval denied']);
+	await page.elementLocator(summaries(view.container)[0]).click();
+	const approvals = [...view.container.querySelectorAll<HTMLDetailsElement>('.rail .approval')];
+	expect(approvals).toHaveLength(2);
+	expect(approvals[0].classList.contains('blocked')).toBe(false);
+	expect(approvals[1].classList.contains('blocked')).toBe(true);
+	await page.elementLocator(approvals[1].querySelector('summary')!).click();
+	await expect.element(view.getByText('Writes outside the workspace.', { exact: true })).toBeVisible();
+	await view.rerender({ ...handlers, items: [{ kind: 'tools', calls: [{ kind: 'approval', name: 'approved', detail: 'cargo test' }] }] });
+	expect(summaries(view.container).map((element) => element.textContent)).toEqual(['Reviewed 1 approval']);
+	await view.rerender({ ...handlers, items: [{ kind: 'command', command: 'cargo test', status: 'running', output: '' }, { kind: 'tools', calls: [{ kind: 'approval', name: 'approved', detail: 'cargo test' }] }], activity: 'Running cargo test' });
+	await page.elementLocator(view.container.querySelector('.calls button.live')!).click();
+	await expect.poll(() => view.container.querySelector('.current-command pre')?.textContent).toBe('cargo test');
+	await expect.poll(() => view.container.scrollWidth <= view.container.clientWidth).toBe(true);
+});

@@ -19,7 +19,7 @@ export type Terminal = {
 	pending?: string;
 };
 
-export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'mcp' | 'other'; name: string; detail: string };
+export type ToolCall = { kind: 'read' | 'search' | 'fetch' | 'web' | 'mcp' | 'approval' | 'other'; name: string; detail: string; rationale?: string };
 
 export type Subagent = {
 	kind: 'subagent';

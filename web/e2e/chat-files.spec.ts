@@ -39,7 +39,8 @@ test('@ references a tracked file by its plain path', async ({ page }, { project
 		await expect(menu).toBeHidden();
 		await composer.press('Backspace');
 	} else {
-		await panel.getByRole('button', { name: 'Reference file', exact: true }).click();
+		await panel.getByRole('button', { name: 'More', exact: true }).click();
+		await page.getByRole('menuitem', { name: 'Reference file' }).click();
 		await expect(composer).toBeFocused();
 		await expect(composer).toHaveValue('Compare src/lib/viewer.ts @');
 		await expect(menu).toHaveText('Type to find a file');

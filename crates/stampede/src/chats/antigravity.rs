@@ -936,7 +936,12 @@ impl Transcript {
         }
         let tool = stampede(call);
         let rendered = match tool {
-            Some(html::TOOL) => html::item(&call["rawInput"]),
+            Some(html::TOOL) if status == Some("completed") && call["rawOutput"]["isError"] != true && call["rawOutput"]["is_error"] != true => {
+                // Agy adds toolSummary to rawInput.
+                let mut input = call["rawInput"].clone();
+                if let Some(map) = input.as_object_mut() { map.remove("toolSummary"); }
+                html::item(&input)
+            }
             Some(crate::media::TOOL) if status == Some("completed") => crate::media::item(&result(call)),
             Some(delegation::TOOL) if matches!(status, Some("completed" | "failed")) => delegation::item(&result(call), Some(&self.data_dir)),
             _ => None,
@@ -950,7 +955,7 @@ impl Transcript {
             Some("fetch") => (ToolKind::Fetch, call["rawInput"]["url"].as_str().map(str::to_owned).unwrap_or_else(|| title.clone())),
             _ => (if tool.is_some() { ToolKind::Mcp } else { ToolKind::Other }, if call["rawInput"].is_null() { title.clone() } else { call["rawInput"].to_string() }),
         };
-        Item::Tools { calls: vec![ToolCall { kind, name: title, detail }] }
+        Item::Tools { calls: vec![ToolCall::new(kind, title, detail)] }
     }
 
     fn delegated(&mut self, item: Item) {
@@ -1132,5 +1137,31 @@ mod tests {
         }).await.expect("unsolicited turn never settled");
         let _ = actions_tx.send(Action::Close);
         driver.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn render_html_renders_with_tool_summary_only_when_completed_without_error() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut live, _received) = test_live(root.path());
+        let input = json!({ "title": "Preview", "html": "<p>Hi</p>", "toolSummary": "Render preview" });
+
+        live.handle(session_update(json!({
+            "sessionUpdate": "tool_call", "toolCallId": "call_1", "status": "in_progress",
+            "kind": "other", "title": "mcp_stampede_chat_render_html", "rawInput": input,
+        })), false).await;
+        assert!(matches!(&live.transcript.items[0], Item::Tools { .. }));
+
+        live.handle(session_update(json!({
+            "sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "completed",
+            "rawOutput": { "output": "Rendered HTML in the chat." },
+        })), false).await;
+        assert_eq!(live.transcript.items[0], Item::Html { title: "Preview".to_owned(), html: "<p>Hi</p>".to_owned() });
+
+        live.handle(session_update(json!({
+            "sessionUpdate": "tool_call", "toolCallId": "call_2", "status": "completed",
+            "kind": "other", "title": "mcp_stampede_chat_render_html", "rawInput": input,
+            "rawOutput": { "content": [{ "type": "text", "text": "This tool is turned off for this Rig." }], "isError": true },
+        })), false).await;
+        assert!(matches!(&live.transcript.items[1], Item::Tools { .. }));
     }
 }

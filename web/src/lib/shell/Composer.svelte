@@ -24,9 +24,10 @@
 		/** Replaces Insert and Send, and boxes the Composer in a Chat's column. */
 		actions?: Snippet<[text: string, clear: () => void]>;
 		border?: Snippet<[text: string]>;
+		footer?: Snippet;
 	};
 
-	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], mark, onsend, actions, border, menu, onkeydown, onpaste }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], mark, onsend, actions, border, footer, menu, onkeydown, onpaste }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
@@ -108,55 +109,68 @@
 	}
 </script>
 
+{#snippet editor()}
+	<textarea
+		{@attach (element) => { if (focused && !phone) element.focus(); }}
+		bind:this={box}
+		bind:value={text}
+		oninput={(event) => { keep(); track(event); }}
+		onkeydown={keydown}
+		onkeyup={track}
+		onpointerup={track}
+		onfocus={track}
+		onscroll={() => mirror && (mirror.scrollTop = box.scrollTop)}
+		{onpaste}
+		aria-label="Composer"
+		class:code={coded}
+		{placeholder}
+		rows={actions ? 1 : 3}
+		autocorrect={coded ? 'off' : 'on'}
+		autocapitalize={coded ? 'off' : 'sentences'}
+		spellcheck={!coded}
+	></textarea>
+	{#if marked}
+		<!-- Trails a space so a final newline still adds a line, as it does in the textarea. -->
+		<div bind:this={mirror} class="mirror" aria-hidden="true" {@attach (node) => { node.scrollTop = box.scrollTop; }}><mark>{text.slice(0, marked)}</mark>{`${text.slice(marked)} `}</div>
+	{/if}
+{/snippet}
+
 <div class="composer" class:boxed={actions} class:phone>
 	{@render menu?.(text, replace, caret)}
 	<ClipMenu bind:this={clipMenu} {text} {caret} {replace} />
-	<div class="field">
-		<textarea
-			{@attach (element) => { if (focused && !phone) element.focus(); }}
-			bind:this={box}
-			bind:value={text}
-			oninput={(event) => { keep(); track(event); }}
-			onkeydown={keydown}
-			onkeyup={track}
-			onpointerup={track}
-			onfocus={track}
-			onscroll={() => mirror && (mirror.scrollTop = box.scrollTop)}
-			{onpaste}
-			aria-label="Composer"
-			class:code={coded}
-			{placeholder}
-			rows={actions ? (phone ? 2 : 1) : 3}
-			autocorrect={coded ? 'off' : 'on'}
-			autocapitalize={coded ? 'off' : 'sentences'}
-			spellcheck={!coded}
-		></textarea>
-		{#if marked}
-			<!-- Trails a space so a final newline still adds a line, as it does in the textarea. -->
-			<div bind:this={mirror} class="mirror" aria-hidden="true" {@attach (node) => { node.scrollTop = box.scrollTop; }}><mark>{text.slice(0, marked)}</mark>{`${text.slice(marked)} `}</div>
-		{/if}
-		{@render border?.(text)}
-	</div>
-	<div class="actions">
-		{#if !actions && text.trim()}
-			<Button aria-label="Save as Clip" tip="Save as Clip" onmousedown={(event) => event.preventDefault()} onclick={() => (clipping = true)}><BookmarkSimple /></Button>
-		{/if}
-		{#if actions}
-			{@render actions(text, clear)}
-		{:else}
-			<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
-				Insert
-			</Button>
-			<Button
-				variant="primary"
-				disabled={!text || disabled}
-				onmousedown={(event) => event.preventDefault()}
-				onclick={() => submit(true)}
-			>
-				Send
-			</Button>
-		{/if}
-	</div>
+	{#if actions && phone}
+		<div class="card">
+			<div class="field">{@render editor()}</div>
+			<div class="actions">{@render actions(text, clear)}</div>
+			{#if border}<div class="outline">{@render border(text)}</div>{/if}
+		</div>
+		{#if footer}<div class="footer">{@render footer()}</div>{/if}
+	{:else}
+		<div class="field">
+			{@render editor()}
+			{@render border?.(text)}
+		</div>
+		<div class="actions">
+			{#if !actions && text.trim()}
+				<Button aria-label="Save as Clip" tip="Save as Clip" onmousedown={(event) => event.preventDefault()} onclick={() => (clipping = true)}><BookmarkSimple /></Button>
+			{/if}
+			{#if actions}
+				{@render actions(text, clear)}
+			{:else}
+				<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
+					Insert
+				</Button>
+				<Button
+					variant="primary"
+					disabled={!text || disabled}
+					onmousedown={(event) => event.preventDefault()}
+					onclick={() => submit(true)}
+				>
+					Send
+				</Button>
+			{/if}
+		</div>
+	{/if}
 </div>
 <Dialog bind:open={clipping} full={phone} title="Save as Clip">
 	{#if clipping}<ClipEditor draft={text} ondone={() => (clipping = false)} />{/if}
@@ -254,20 +268,47 @@
 	}
 
 	.boxed.phone {
-		gap: var(--space-3);
+		gap: var(--space-2);
+	}
+
+	.card {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		border: var(--border-width) solid var(--border-strong);
+		border-radius: var(--radius-xl);
+		background: var(--surface-1);
+	}
+
+	.outline {
+		position: absolute;
+		inset: calc(-1 * var(--border-width));
+		pointer-events: none;
+	}
+
+	.footer {
+		display: flex;
+		align-items: center;
+		min-width: 0;
 	}
 
 	.boxed.phone .actions {
+		justify-content: space-between;
 		flex-wrap: nowrap;
-		gap: var(--space-1);
-	}
-
-	.boxed.phone textarea {
-		min-height: var(--target-min);
-		box-shadow: none;
+		gap: var(--space-2);
+		padding: 0 var(--space-2) var(--space-2);
 	}
 
 	.boxed.phone textarea, .boxed.phone .mirror {
+		border: 0;
+		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+		background: none;
+		box-shadow: none;
 		font-size: var(--font-size-lg);
+	}
+
+	.boxed.phone textarea {
+		min-height: 0;
+		max-height: 36vh;
 	}
 </style>

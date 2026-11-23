@@ -154,6 +154,14 @@ pub struct ToolCall {
     pub kind: ToolKind,
     pub name: String,
     pub detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
+}
+
+impl ToolCall {
+    pub fn new(kind: ToolKind, name: impl Into<String>, detail: String) -> Self {
+        Self { kind, name: name.into(), detail, rationale: None }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -164,6 +172,7 @@ pub enum ToolKind {
     Fetch,
     Web,
     Mcp,
+    Approval,
     Other,
 }
 
@@ -354,7 +363,7 @@ impl Subagent {
         let totals = done.then(|| Totals {
             duration_ms: self.duration.unwrap_or(self.finished_at.saturating_sub(self.started_at)),
             tools: self.tools.unwrap_or_else(|| items.iter().map(|item| match item {
-                Item::Tools { calls } => calls.len(),
+                Item::Tools { calls } => calls.iter().filter(|call| call.kind != ToolKind::Approval).count(),
                 Item::Command { .. } | Item::Edit { .. } | Item::Canvas { .. } | Item::Html { .. } => 1,
                 _ => 0,
             }).sum()),

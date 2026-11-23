@@ -1623,27 +1623,20 @@ impl Transcript {
     }
 
     fn review_started(&mut self, params: &Value) {
-        let Some(id) = params["reviewId"].as_str().filter(|id| !self.subagents.contains_key(*id)) else { return };
-        let (mut subagent, events) = Subagent::new(id, "Automatic approval review".to_owned(), params["startedAtMs"].as_u64().unwrap_or_else(super::now));
-        let action = &params["action"];
-        subagent.prompt = Some(action["command"].as_str().map_or_else(|| action.to_string(), str::to_owned));
-        subagent.index = self.push(subagent.item());
-        self.subagents.insert(id.to_owned(), (subagent, Transcript::new(id, &self.cwd, events)));
+        if let Some(id) = params["reviewId"].as_str() {
+            self.activity.start(&format!("review:{id}"), "Reviewing approval…".to_owned(), &self.events);
+        }
     }
 
     fn review_completed(&mut self, params: &Value) {
-        if !params["reviewId"].as_str().is_some_and(|id| self.subagents.contains_key(id)) { self.review_started(params); }
-        let Some((subagent, _)) = params["reviewId"].as_str().and_then(|id| self.subagents.get_mut(id)) else { return };
+        if let Some(id) = params["reviewId"].as_str() {
+            self.activity.finish(&format!("review:{id}"), &self.events);
+        }
         let review = &params["review"];
-        let status = review["status"].as_str().unwrap_or_default();
-        subagent.finish(Some(match status {
-            "approved" | "denied" => Outcome::Completed,
-            "aborted" => Outcome::Stopped,
-            _ => Outcome::Failed,
-        }));
-        subagent.report = Some(format!("{status}: {}", review["rationale"].as_str().unwrap_or_default()));
-        subagent.duration = params["completedAtMs"].as_u64().zip(params["startedAtMs"].as_u64()).map(|(end, start)| end.saturating_sub(start));
-        let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+        let status = review["status"].as_str().filter(|status| !status.is_empty()).unwrap_or("failed");
+        let detail = review_action(&self.cwd, &params["action"]);
+        let rationale = review["rationale"].as_str().map(str::trim).filter(|text| !text.is_empty()).map(str::to_owned);
+        self.push_call(ToolCall { kind: ToolKind::Approval, name: status.to_owned(), detail, rationale });
     }
 
     fn spawn(&mut self, thread: &str, task: &str) {
@@ -1657,7 +1650,10 @@ impl Transcript {
     }
 
     fn call(&mut self, kind: ToolKind, name: &str, detail: String) {
-        let call = ToolCall { kind, name: name.to_owned(), detail };
+        self.push_call(ToolCall::new(kind, name, detail));
+    }
+
+    fn push_call(&mut self, call: ToolCall) {
         match &mut self.tools {
             Some((index, calls)) => {
                 calls.push(call);
@@ -1671,12 +1667,50 @@ impl Transcript {
     }
 }
 
-fn command(item: &Value) -> Item {
-    let line = item["command"].as_str().unwrap_or_default();
-    let command = match shlex::split(line).as_deref() {
+fn strip_shell(line: &str) -> String {
+    match shlex::split(line).as_deref() {
         Some([_, flag, script]) if flag == "-lc" || flag == "-c" => script.clone(),
         _ => line.to_owned(),
-    };
+    }
+}
+
+fn review_action(cwd: &Path, action: &Value) -> String {
+    match action["type"].as_str() {
+        Some("command") => strip_shell(action["command"].as_str().unwrap_or_default()),
+        Some("execve") => {
+            let args = action["argv"].as_array().into_iter().flatten().skip(1).filter_map(Value::as_str);
+            let argv: Vec<&str> = std::iter::once(action["program"].as_str().unwrap_or_default()).chain(args).collect();
+            shlex::try_join(argv.iter().copied()).unwrap_or_else(|_| argv.join(" "))
+        }
+        Some("writeStdin") => match action["stdin"].as_str().map(str::trim).filter(|stdin| !stdin.is_empty()) {
+            Some(stdin) => format!("stdin: {stdin}"),
+            None => "Write to stdin".to_owned(),
+        },
+        Some("applyPatch") => {
+            let files: Vec<String> = action["files"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|path| relative(cwd, path)).collect();
+            if files.is_empty() { "Apply patch".to_owned() } else { files.join(", ") }
+        }
+        Some("networkAccess") => {
+            if let Some(target) = action["target"].as_str().filter(|target| !target.is_empty()) {
+                target.to_owned()
+            } else {
+                let protocol = action["protocol"].as_str().unwrap_or("https");
+                let host = action["host"].as_str().unwrap_or_default();
+                match action["port"].as_u64() {
+                    Some(port) => format!("{protocol}://{host}:{port}"),
+                    None => format!("{protocol}://{host}"),
+                }
+            }
+        }
+        Some("mcpToolCall") => format!("{}.{}", action["server"].as_str().unwrap_or_default(), action["toolName"].as_str().unwrap_or_default()),
+        Some("requestPermissions") => action["reason"].as_str().map(str::trim).filter(|reason| !reason.is_empty())
+            .map(str::to_owned).unwrap_or_else(|| action["permissions"].to_string()),
+        _ => action["command"].as_str().map(strip_shell).unwrap_or_else(|| action.to_string()),
+    }
+}
+
+fn command(item: &Value) -> Item {
+    let command = strip_shell(item["command"].as_str().unwrap_or_default());
     let status = match item["status"].as_str() {
         Some("inProgress") => CommandStatus::Running,
         Some("completed") => CommandStatus::Ok,
@@ -1750,24 +1784,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_automatic_approval_review_is_a_subagent() {
+    fn an_automatic_approval_review_is_activity_not_a_subagent() {
         let (events, mut received) = mpsc::unbounded_channel();
         let mut transcript = Transcript::new("thread", Path::new("/project"), events);
         let params = json!({ "threadId": "thread", "reviewId": "review", "startedAtMs": 1000, "review": { "status": "inProgress" },
-            "action": { "type": "command", "command": "touch /elsewhere" } });
+            "action": { "type": "command", "command": "/bin/bash -lc 'touch /elsewhere'" } });
         transcript.read(&json!({ "method": "item/autoApprovalReview/started", "params": params }));
-        let mut latest = || std::iter::from_fn(|| received.try_recv().ok()).filter_map(|event| match event {
+        let started: Vec<Event> = std::iter::from_fn(|| received.try_recv().ok()).collect();
+        assert!(started.iter().any(|event| matches!(event, Event::Activity(Some(text)) if text == "Reviewing approval…")));
+        assert!(!started.iter().any(|event| matches!(event, Event::Item(_, _))));
+        assert!(transcript.subagents.is_empty());
+
+        let params = json!({ "threadId": "thread", "reviewId": "review", "startedAtMs": 1000, "completedAtMs": 3500,
+            "review": { "status": "denied", "rationale": "Too risky." }, "action": { "type": "command", "command": "/bin/bash -lc 'touch /elsewhere'" } });
+        transcript.read(&json!({ "method": "item/autoApprovalReview/completed", "params": params }));
+        let completed: Vec<Event> = std::iter::from_fn(|| received.try_recv().ok()).collect();
+        assert!(completed.iter().any(|event| matches!(event, Event::Activity(None))));
+        let Some(Item::Tools { calls }) = completed.into_iter().filter_map(|event| match event {
             Event::Item(0, item) => Some(item),
             _ => None,
-        }).last();
-        assert!(matches!(latest(), Some(Item::Subagent { status: Status::Working, prompt: Some(prompt), .. }) if prompt == "touch /elsewhere"));
-        let params = json!({ "threadId": "thread", "reviewId": "review", "startedAtMs": 1000, "completedAtMs": 3500,
-            "review": { "status": "denied", "rationale": "Too risky." }, "action": { "type": "command", "command": "touch /elsewhere" } });
-        transcript.read(&json!({ "method": "item/autoApprovalReview/completed", "params": params }));
-        let Some(Item::Subagent { task, status, outcome, report, totals, .. }) = latest() else { panic!() };
-        assert_eq!((task.as_str(), status, outcome, report.as_deref()), ("Automatic approval review", Status::Done, Some(Outcome::Completed), Some("denied: Too risky.")));
-        assert_eq!(totals.unwrap().duration_ms, 2500);
-        assert_eq!(transcript.subagents.len(), 1);
+        }).last() else { panic!() };
+        assert_eq!(calls, [ToolCall { kind: ToolKind::Approval, name: "denied".to_owned(), detail: "touch /elsewhere".to_owned(), rationale: Some("Too risky.".to_owned()) }]);
+        assert!(transcript.subagents.is_empty());
+
+        let cwd = Path::new("/project");
+        assert_eq!(review_action(cwd, &json!({ "type": "execve", "program": "/usr/bin/git", "argv": ["git", "commit", "-m", "a b"] })), "/usr/bin/git commit -m 'a b'");
+        assert_eq!(review_action(cwd, &json!({ "type": "writeStdin", "stdin": "y\n" })), "stdin: y");
+        assert_eq!(review_action(cwd, &json!({ "type": "applyPatch", "files": ["/project/src/lib.rs", "/etc/hosts"] })), "src/lib.rs, /etc/hosts");
+        assert_eq!(review_action(cwd, &json!({ "type": "networkAccess", "target": "https://example.com" })), "https://example.com");
+        assert_eq!(review_action(cwd, &json!({ "type": "mcpToolCall", "server": "github", "toolName": "create_issue" })), "github.create_issue");
+        assert_eq!(review_action(cwd, &json!({ "type": "requestPermissions", "reason": "Need network access", "permissions": {} })), "Need network access");
     }
 
     #[test]
