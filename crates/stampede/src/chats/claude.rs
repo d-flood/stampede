@@ -314,7 +314,10 @@ fn drive(mut frames: Frames, mut writer: OwnedWriteHalf, mut transcript: Transcr
         tails.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
-                _ = tails.tick(), if transcript.following() => transcript.follow(),
+                _ = tails.tick(), if transcript.following() => {
+                    transcript.follow();
+                    transcript.end_waits();
+                }
                 command = pending.recv() => match command {
                     Some(Command::Send(text, images)) => {
                         let text = match transcript.take_shell_context() {
@@ -1060,6 +1063,7 @@ struct Transcript {
     command: Option<(String, String)>,
     agents: Option<(String, PathBuf)>,
     outputs: HashSet<String>,
+    background: Background,
 }
 
 /// A finished agent's last entries may still be on their way to its session file.
@@ -1071,6 +1075,33 @@ struct Tail {
     path: PathBuf,
     read: u64,
     idle: u8,
+}
+
+#[derive(Default)]
+struct Background {
+    live: Option<HashSet<String>>,
+    owners: HashMap<String, String>,
+    waiting: HashSet<String>,
+}
+
+impl Background {
+    /// A task leaves the list while it waits on its own, so its owner is kept to reach the agents above it.
+    fn list(&mut self, tasks: &Value) {
+        let listed = || tasks.as_array().into_iter().flatten();
+        let id = |task: &Value, key: &str| task[key].as_str().map(str::to_owned);
+        self.owners.extend(listed().filter_map(|task| Some((id(task, "task_id")?, id(task, "parent_task_id")?))));
+        self.live = Some(listed().filter_map(|task| id(task, "task_id")).collect());
+    }
+
+    fn owns_live(&self, agent: &str) -> bool {
+        self.live.iter().flatten().any(|task| {
+            std::iter::successors(self.owners.get(task), |owner| self.owners.get(*owner)).any(|owner| owner == agent)
+        })
+    }
+
+    fn runs(&self, agent: &str) -> bool {
+        self.live.as_ref().is_some_and(|live| live.contains(agent)) || self.owns_live(agent)
+    }
 }
 
 impl Tail {
@@ -1220,6 +1251,7 @@ impl Transcript {
             command: None,
             agents: None,
             outputs: HashSet::new(),
+            background: Background::default(),
             slash_commands: Vec::new(),
             settings: Settings::default(),
             applied: AgentSettings::default(),
@@ -1470,15 +1502,26 @@ impl Transcript {
         }
     }
 
-    fn subagent_status(&mut self, id: &str, status: Status) -> bool {
+    fn subagent_status(&mut self, id: &str, status: Status) {
+        self.change(id, &|subagent| {
+            let changed = subagent.status != Status::Done && subagent.status != status;
+            if changed { subagent.status = status; }
+            changed
+        });
+    }
+
+    fn resume(&mut self, id: &str) {
+        let live = !self.replaying && self.history.is_none();
+        self.change(id, &|subagent| {
+            let resumed = subagent.resume();
+            if resumed && live { subagent.started_at = super::now(); }
+            resumed
+        });
+    }
+
+    fn change(&mut self, id: &str, change: &impl Fn(&mut Subagent) -> bool) -> bool {
         for (key, (subagent, transcript)) in &mut self.subagents {
-            let changed = if key == id {
-                let changed = subagent.status != Status::Done && subagent.status != status;
-                if changed { subagent.status = status; }
-                changed
-            } else {
-                transcript.subagent_status(id, status) && subagent.update()
-            };
+            let changed = if key == id { change(subagent) } else { transcript.change(id, change) && subagent.update() };
             if changed {
                 let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
                 return true;
@@ -1673,7 +1716,8 @@ impl Transcript {
             }
         }
         // SendMessage restarts a task under its own tool use, but the run still belongs to the original Agent call.
-        self.tasks.entry(task.to_owned()).or_insert_with(|| id.to_owned());
+        let agent = self.tasks.entry(task.to_owned()).or_insert_with(|| id.to_owned()).clone();
+        self.resume(&agent);
         if message["task_type"] == "local_workflow"
             && let Some((subagent, _)) = self.subagents.get_mut(id)
         {
@@ -1681,6 +1725,34 @@ impl Transcript {
             subagent.name = message["workflow_name"].as_str().map(str::to_owned);
             if let Some(description) = message["description"].as_str() { subagent.task = description.to_owned(); }
             let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+        }
+    }
+
+    /// Until the first list, an agent that recorded its turn as completed may only have been waiting.
+    fn background_tasks(&mut self, tasks: &Value) {
+        let first = self.background.live.is_none();
+        self.background.list(tasks);
+        if !first { return; }
+        let running: Vec<_> = self.tasks.iter().filter(|(task, _)| self.background.runs(task)).map(|(task, agent)| (task.clone(), agent.clone())).collect();
+        for (task, agent) in running {
+            self.change(&agent, &Subagent::resume);
+            self.background.waiting.insert(task);
+        }
+    }
+
+    /// Nothing resumes an agent whose background work was stopped. One being resumed is briefly unlisted too, so only
+    /// a tick ends a wait.
+    fn end_waits(&mut self) {
+        let ended: Vec<_> = self.background.waiting.iter().filter(|task| !self.background.runs(task)).cloned().collect();
+        for task in ended {
+            self.background.waiting.remove(&task);
+            if let Some(agent) = self.tasks.get(&task).cloned() {
+                self.change(&agent, &|subagent| {
+                    let running = subagent.status != Status::Done;
+                    if running { subagent.finish(Some(Outcome::Completed)); }
+                    running
+                });
+            }
         }
     }
 
@@ -1929,6 +2001,7 @@ impl Transcript {
         let top = message["parent_tool_use_id"].is_null();
         match message["type"].as_str() {
             Some("system") if message["subtype"] == "task_started" => self.task_started(message),
+            Some("system") if message["subtype"] == "background_tasks_changed" => self.background_tasks(&message["tasks"]),
             Some("system") if message["subtype"] == "task_progress" => {
                 if let Some(tool) = message["tool_use_id"].as_str().filter(|tool| self.workflows.contains(*tool))
                     && let Some((subagent, _)) = self.subagents.get_mut(tool)
@@ -2059,6 +2132,7 @@ impl Transcript {
                 self.tasks.clear();
                 self.skills.clear();
                 self.agents = None;
+                self.background = Background::default();
                 self.todos_held = false;
                 self.pending.clear();
                 self.checkpoints.clear();
@@ -2094,11 +2168,20 @@ impl Transcript {
             Some("system") if message["subtype"] == "task_updated" || message["subtype"] == "task_notification" => {
                 // An agent can finish before the next tick has found it.
                 if self.history.is_none() { self.follow(); }
+                let task = message["task_id"].as_str();
+                let status = message["status"].as_str().or_else(|| message["patch"]["status"].as_str());
+                // An agent that stops to wait for its own background work is completed too, but has handed nothing back.
+                if status == Some("completed") && message["handback"].is_null()
+                    && let Some(task) = task.filter(|task| self.background.owns_live(task))
+                {
+                    self.background.waiting.insert(task.to_owned());
+                    return;
+                }
                 let usage = &message["usage"];
                 self.task_status(
-                    message["task_id"].as_str(),
+                    task,
                     message["tool_use_id"].as_str(),
-                    message["status"].as_str().or_else(|| message["patch"]["status"].as_str()),
+                    status,
                     message["summary"].as_str(),
                     [&usage["duration_ms"], &usage["tool_uses"], &usage["total_tokens"]].map(Value::as_u64),
                 );
@@ -2415,10 +2498,8 @@ impl Transcript {
                 self.todos.push((task.to_owned(), Todo { text: text.to_owned(), status: TodoStatus::Pending }));
                 self.report_todos();
             }
-            if let Some((subagent, _)) = result["resumedAgentId"].as_str().and_then(|agent| self.tasks.get(agent)).and_then(|tool| self.subagents.get_mut(tool)) {
-                subagent.resume();
-                if !self.replaying && self.history.is_none() { subagent.started_at = super::now(); }
-                let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
+            if let Some(agent) = result["resumedAgentId"].as_str().and_then(|agent| self.tasks.get(agent)).cloned() {
+                self.resume(&agent);
             }
             self.skills.remove(id);
             let forked = result["status"] == "forked";
@@ -3395,12 +3476,33 @@ mod subagent_tests {
         }
         assert_eq!(latest_subagent(&mut received), Some((Status::Working, None, None)));
 
+        let listed = |tasks: Value| json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": tasks });
+        let mut status = |messages: &[Value]| {
+            for message in messages { transcript.read(message); }
+            transcript.end_waits();
+            transcript.subagents["agent"].0.status
+        };
+        assert_eq!(status(&[
+            listed(json!([])),
+            listed(json!([{ "task_id": "reviewer" }, { "task_id": "helper", "parent_task_id": "reviewer" }])),
+            listed(json!([{ "task_id": "reviewer" }, { "task_id": "tests", "parent_task_id": "helper" }])),
+            json!({ "type": "system", "subtype": "task_updated", "task_id": "reviewer", "patch": { "status": "completed" } }),
+            json!({ "type": "system", "subtype": "task_notification", "task_id": "reviewer", "tool_use_id": "agent", "status": "completed", "summary": "Not reported yet" }),
+            listed(json!([{ "task_id": "tests", "parent_task_id": "helper" }])),
+        ]), Status::Working, "it waits on its own background work");
+        assert_eq!(status(&[listed(json!([])), listed(json!([{ "task_id": "reviewer" }]))]), Status::Working, "its work resumes it");
+        assert_eq!(status(&[listed(json!([]))]), Status::Done, "nothing is left to resume it");
+        assert_eq!(status(&[
+            json!({ "type": "system", "subtype": "task_started", "task_id": "reviewer", "tool_use_id": "agent", "is_backgrounded": true }),
+        ]), Status::Working, "Claude resumed it");
+
         for message in [
             json!({ "type": "assistant", "parent_tool_use_id": "agent", "message": { "content": [
                 { "type": "tool_use", "id": "handback", "name": "SubagentHandback", "input": { "message": "Second report" } },
             ] } }),
+            listed(json!([{ "task_id": "reviewer" }, { "task_id": "server", "parent_task_id": "reviewer" }])),
             json!({ "type": "system", "subtype": "task_updated", "task_id": "reviewer", "patch": { "status": "completed" } }),
-            json!({ "type": "system", "subtype": "task_notification", "task_id": "reviewer", "tool_use_id": "resume", "status": "completed", "summary": "Agent \"Review\" finished" }),
+            json!({ "type": "system", "subtype": "task_notification", "task_id": "reviewer", "tool_use_id": "resume", "status": "completed", "summary": "Agent \"Review\" finished", "handback": "send" }),
         ] {
             transcript.read(&message);
         }
@@ -3433,14 +3535,24 @@ mod subagent_tests {
             let mut transcript = Transcript::new(events, Path::new("/project"));
             fs::write(project.join("session.jsonl"), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
             transcript.history(&env, "session", None, false);
-            latest_subagent(&mut received)
+            let latest = latest_subagent(&mut received);
+            (transcript, latest)
         };
-        assert_eq!(replay(&entries), Some((Status::Working, None, None)));
+        assert_eq!(replay(&entries).1, Some((Status::Working, None, None)));
 
         entries.push(json!({ "type": "attachment", "isMeta": true, "attachment": { "type": "queued_command", "prompt":
             "<task-notification><task-id>reviewer</task-id><tool-use-id>resume</tool-use-id><status>completed</status><result>This agent's report was delivered to you.</result></task-notification>",
         } }));
-        assert_eq!(replay(&entries), Some((Status::Done, Some(Outcome::Completed), Some("Second report".to_owned()))));
+        let (mut transcript, latest) = replay(&entries);
+        assert_eq!(latest, Some((Status::Done, Some(Outcome::Completed), Some("Second report".to_owned()))));
+
+        let mut list = |tasks: Value| {
+            transcript.read(&json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": tasks }));
+            transcript.end_waits();
+            transcript.subagents["agent"].0.status
+        };
+        assert_eq!(list(json!([{ "task_id": "tests", "parent_task_id": "reviewer" }])), Status::Working, "it was only waiting");
+        assert_eq!(list(json!([])), Status::Done, "its work ended without resuming it");
     }
 
     #[test]

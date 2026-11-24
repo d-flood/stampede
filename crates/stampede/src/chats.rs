@@ -347,12 +347,14 @@ impl Subagent {
         self.outcome = outcome.or(self.outcome);
     }
 
-    fn resume(&mut self) {
+    fn resume(&mut self) -> bool {
+        if self.status != Status::Done { return false; }
         self.status = Status::Working;
         self.outcome = None;
         self.report = None;
         self.duration = None;
         self.tools = None;
+        true
     }
 
     fn item(&self) -> Item {
