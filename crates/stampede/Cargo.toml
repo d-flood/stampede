@@ -47,6 +47,3 @@ path = "tests/integration.rs"
 [dev-dependencies]
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["time"] }
-
-[build-dependencies]
-native-tls = { version = "0.2.18", features = ["vendored"] }
