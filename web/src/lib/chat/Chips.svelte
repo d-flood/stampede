@@ -51,7 +51,7 @@
 		</Tooltip>
 	{/if}
 	{#if parts.length}
-		<Menu side={phone ? 'top' : 'bottom'} items={sections}>
+		<Menu side="top" items={sections} loading={choices.model.length ? undefined : 'Loading models…'}>
 			{#snippet trigger(props)}
 				<Chip
 					{...props}
@@ -67,7 +67,7 @@
 		</Menu>
 	{/if}
 	{#if settings.mode}
-		<Menu side={phone ? 'top' : 'bottom'} items={menu('mode')}>
+		<Menu side="top" items={menu('mode')} loading={choices.mode.length ? undefined : 'Loading modes…'}>
 			{#snippet trigger(props)}
 				<Chip
 					{...props}

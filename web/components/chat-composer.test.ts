@@ -156,3 +156,19 @@ test('working composer hides Queue and Steer until a draft is entered and phone 
 		await expect.element(dialog.getByText('8k in · 1k out')).toBeVisible();
 	}
 });
+
+test('the model menu shows it is loading, then its models, above the Composer', async () => {
+	const { view } = await mount({ settings: { model: 'opus' } });
+	view.container.style.cssText = 'position: fixed; inset: auto 0 10rem';
+	const chip = view.getByRole('button', { name: 'Model: opus', exact: true });
+	await chip.click();
+	const menu = page.getByRole('menu');
+	const above = () => expect.poll(() => menu.element().getBoundingClientRect().bottom <= chip.element().getBoundingClientRect().top).toBe(true);
+	await expect.element(menu.getByRole('status')).toHaveTextContent('Loading models…');
+	await above();
+	const models = ['opus', 'sonnet', 'haiku'].map((value) => ({ value, label: value }));
+	await view.rerender({ choices: { model: models, effort: [], speed: [], ultracode: [], mode: [] } });
+	await expect.element(menu.getByRole('menuitemcheckbox', { name: 'haiku' })).toBeVisible();
+	await expect.element(menu.getByRole('status')).not.toBeInTheDocument();
+	await above();
+});

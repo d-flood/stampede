@@ -253,7 +253,7 @@
 		{:else}
 			{@render meta()}
 			<Button variant="ghost" aria-label="Attach image" tip="Attach image" disabled={!live || reading || !imageable} onclick={() => picker.click()}><Paperclip /></Button>
-			<Menu items={[{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]}>
+			<Menu side="top" items={[{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]}>
 				{#snippet trigger(props)}
 					<Button {...props} variant="ghost" aria-label="More" tip="More"><DotsThree /></Button>
 				{/snippet}
