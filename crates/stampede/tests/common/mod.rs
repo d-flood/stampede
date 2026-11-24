@@ -118,6 +118,7 @@ async fn spawn(root: &Path, port: u16, env: &[(&str, OsString)]) -> Child {
         .arg(root.join("data"))
         .arg("--config")
         .arg(root.join("config.toml"))
+        .env("PATH", format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap()))
         .env("SHELL", "/bin/bash")
         .env("HOME", root.join("home"))
         .env_remove("STAMPEDE_SCRATCH")
