@@ -5,6 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
+  bits-ui@2.22.0: 715cc4bb240e81c91c08071972925f55555b7156111be31e6c8692732a48c4c1
   ghostty-web@0.4.0-next.25.g835eb27: fcb52fc8284ffebb823638ea1db1848874ca02d0925aeb35d8ccdeafd3399a25
 
 importers:
@@ -109,7 +110,7 @@ importers:
         version: 5.1.1(playwright@1.65.1)(vite@8.3.8(@types/node@26.6.6))(vitest@5.1.1)
       bits-ui:
         specifier: ^2.22.0
-        version: 2.22.0(@internationalized/date@3.12.4)(@sveltejs/kit@3.4.0(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.59.1)(vite@8.3.8(@types/node@26.6.6)))(svelte@5.59.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)))(svelte@5.59.1)
+        version: 2.22.0(patch_hash=715cc4bb240e81c91c08071972925f55555b7156111be31e6c8692732a48c4c1)(@internationalized/date@3.12.4)(@sveltejs/kit@3.4.0(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.59.1)(vite@8.3.8(@types/node@26.6.6)))(svelte@5.59.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)))(svelte@5.59.1)
       codemirror:
         specifier: ^6.0.2
         version: 6.0.2
@@ -1692,7 +1693,7 @@ snapshots:
 
   axobject-query@4.1.0: {}
 
-  bits-ui@2.22.0(@internationalized/date@3.12.4)(@sveltejs/kit@3.4.0(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.59.1)(vite@8.3.8(@types/node@26.6.6)))(svelte@5.59.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)))(svelte@5.59.1):
+  bits-ui@2.22.0(patch_hash=715cc4bb240e81c91c08071972925f55555b7156111be31e6c8692732a48c4c1)(@internationalized/date@3.12.4)(@sveltejs/kit@3.4.0(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.59.1)(vite@8.3.8(@types/node@26.6.6)))(svelte@5.59.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)))(svelte@5.59.1):
     dependencies:
       '@floating-ui/core': 1.8.0
       '@floating-ui/dom': 1.8.0

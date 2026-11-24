@@ -92,6 +92,8 @@ test('emoji load on demand locally, support search and categories, and persist a
 	await search.fill('books');
 	await expect(dialog.getByRole('option', { name: /📚.*books/ })).toBeVisible();
 	await expect(search).toBeFocused();
+	await page.locator('body').evaluate((body) => body.appendChild(document.createElement('button')).focus());
+	await expect(search).toBeFocused();
 	await search.press('Shift+Tab');
 	await expect(dialog.getByRole('button', { name: 'Upload image…' })).toBeFocused();
 	await dialog.getByRole('button', { name: 'Upload image…' }).press('Tab');

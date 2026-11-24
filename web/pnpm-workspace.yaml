@@ -1,2 +1,3 @@
 patchedDependencies:
+  bits-ui@2.22.0: patches/bits-ui@2.22.0.patch
   ghostty-web@0.4.0-next.25.g835eb27: patches/ghostty-web@0.4.0-next.25.g835eb27.patch

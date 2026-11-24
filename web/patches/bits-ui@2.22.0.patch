@@ -1,0 +1,33 @@
+diff --git a/dist/bits/utilities/focus-scope/focus-scope.svelte.js b/dist/bits/utilities/focus-scope/focus-scope.svelte.js
+index 5d0c80f27382408a8599e9c4132c47d47c4b27fa..f531ad7b969be082389a3b8e13a5a7dd8889a264 100644
+--- a/dist/bits/utilities/focus-scope/focus-scope.svelte.js
++++ b/dist/bits/utilities/focus-scope/focus-scope.svelte.js
+@@ -119,8 +119,8 @@ export class FocusScope {
+         const handleFocus = (e) => {
+             if (this.#paused || !this.#manager.isActiveScope(this))
+                 return;
+-            const target = retargetToScopeTree(e.composedPath()[0], container);
+-            const isInside = target !== null && container.contains(target);
++            const target = e.composedPath()[0];
++            const isInside = container.contains(retargetToScopeTree(target, container));
+             if (isInside) {
+                 // store last focused element
+                 this.#manager.setFocusMemory(this, target);
+@@ -128,7 +128,7 @@ export class FocusScope {
+             else {
+                 // focus escaped - bring it back
+                 const lastFocused = this.#manager.getFocusMemory(this);
+-                if (lastFocused && container.contains(lastFocused) && isFocusable(lastFocused)) {
++                if (lastFocused && container.contains(retargetToScopeTree(lastFocused, container)) && isFocusable(lastFocused)) {
+                     e.preventDefault();
+                     lastFocused.focus({ preventScroll: true });
+                 }
+@@ -162,7 +162,7 @@ export class FocusScope {
+         this.#cleanupFns.push(on(doc, "focusin", handleFocus, { capture: true }), on(container, "keydown", handleKeydown));
+         const observer = new MutationObserver(() => {
+             const lastFocused = this.#manager.getFocusMemory(this);
+-            if (lastFocused && !container.contains(lastFocused)) {
++            if (lastFocused && !container.contains(retargetToScopeTree(lastFocused, container))) {
+                 // last focused element was removed
+                 const firstTabbable = this.#getFirstTabbable();
+                 const firstFocusable = this.#getAllFocusables()[0];
