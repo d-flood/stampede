@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     fs::{self, File, OpenOptions},
     io,
+    ops::Deref,
     os::unix::fs::{DirBuilderExt, MetadataExt},
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
@@ -25,13 +26,30 @@ pub struct Session {
     owner: String,
     scratch: PathBuf,
     cache: PathBuf,
-    _scratch_lease: File,
-    _cache_lease: File,
+    _scratch_lease: Lease,
+    _cache_lease: Lease,
     pub env: BTreeMap<String, String>,
 }
 
-fn lease(path: &Path) -> io::Result<File> {
-    OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path.join(".lease"))
+/// Closing a file leaves its lock with any child forked but not yet running its program, so a lease unlocks first.
+pub struct Lease(File);
+
+impl Deref for Lease {
+    type Target = File;
+
+    fn deref(&self) -> &File {
+        &self.0
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+fn lease(path: &Path) -> io::Result<Lease> {
+    OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path.join(".lease")).map(Lease)
 }
 
 fn path_with_stampede(configured: Option<&String>) -> Option<String> {
@@ -182,7 +200,7 @@ impl Drop for Session {
     }
 }
 
-pub fn inherited_leases() -> io::Result<Vec<File>> {
+pub fn inherited_leases() -> io::Result<Vec<Lease>> {
     ["STAMPEDE_SCRATCH", "STAMPEDE_CACHE"].into_iter().filter_map(std::env::var_os).map(|path| {
         let file = lease(Path::new(&path))?;
         file.lock_shared()?;
