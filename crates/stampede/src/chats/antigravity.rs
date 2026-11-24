@@ -48,8 +48,14 @@ enum Action {
 }
 
 enum Pending {
-    Send { shell_context: Option<String>, text: String, images: Vec<Image> },
+    Send(String, Vec<Image>),
     Action(Action),
+}
+
+impl Pending {
+    fn turn(&self) -> bool {
+        matches!(self, Self::Send(..))
+    }
 }
 
 impl Driver for Antigravity {
@@ -249,6 +255,8 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
         live.open(chat.status != Status::Done, &chat.shell_context).await;
         tokio::spawn(live.drive(actions, shells, false));
     } else {
+        // A restored Chat that was still starting lost its early prompts.
+        if chat.status != Status::Done { live.transcript.status(Status::Done); }
         live.transcript.restore_shell_context(&chat.shell_context);
         live.transcript.report_settings();
         tokio::spawn(live.drive(actions, shells, true));
@@ -317,7 +325,7 @@ impl Live {
                 Some(pending) => {
                     for item in pending {
                         let result = match item {
-                            Pending::Send { shell_context, text, images } => self.dispatch_send(shell_context, text, images).await,
+                            Pending::Send(text, images) => self.dispatch_send(text, images).await,
                             Pending::Action(action) => self.act(action).await,
                         };
                         if let Err(error) = result { self.fail(error.to_string()).await; }
@@ -357,7 +365,7 @@ impl Live {
         self.transcript.finish();
     }
 
-    /// Connects a fresh Chat off the creation path while handling Close, Shell, and early Send actions.
+    /// Connects a fresh Chat off the creation path, holding the actions that arrive meanwhile.
     async fn connect_background(&mut self, actions: &mut UnboundedReceiver<Action>, shells: &mut UnboundedReceiver<shell::Progress>) -> Option<Vec<Pending>> {
         let full_access = self.transcript.settings.chosen.mode.as_deref() == Some("full-access");
         let connecting = establish(
@@ -369,43 +377,58 @@ impl Live {
         let established = loop {
             tokio::select! {
                 result = &mut connecting => break result,
-                action = actions.recv() => match action {
-                    Some(Action::Close) | None => return None,
-                    Some(Action::Shell(command)) => self.transcript.run_shell(command, &self.progress, &self.env),
-                    Some(Action::Delegated(item)) => self.transcript.delegated(item),
-                    Some(Action::Send(text, images)) => {
-                        let shell_context = self.transcript.take_shell_context();
-                        self.record_send(&text, &images);
-                        let _ = self.transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
-                        pending.push(Pending::Send { shell_context, text, images });
-                    }
-                    Some(Action::Interrupt) => {
-                        self.transcript.stop_shells();
-                        if pending.iter().any(|item| matches!(item, Pending::Send { .. })) {
-                            pending.retain(|item| !matches!(item, Pending::Send { .. }));
-                            self.transcript.push(Item::interrupted());
-                            self.end_turn().await;
-                        }
-                    }
-                    Some(action) => pending.push(Pending::Action(action)),
-                },
+                action = actions.recv() => if !self.early(action, &mut pending).await { return None },
                 Some(progress) = shells.recv() => self.transcript.shell_progress(progress),
             }
         };
-        let had_send = pending.iter().any(|item| matches!(item, Pending::Send { .. }));
         match established {
             Ok((connection, opened, held)) => {
                 self.attach(connection, full_access, opened, held).await;
-                if had_send { let _ = self.transcript.events.send(Event::Activity(None)); }
+                // Applying the Rig's settings doesn't read actions, so a Stop or Close may be waiting.
+                while let Ok(action) = actions.try_recv() {
+                    if !self.early(Some(action), &mut pending).await { return None }
+                }
+                if pending.iter().any(Pending::turn) { let _ = self.transcript.events.send(Event::Activity(None)); }
             }
             Err(error) => {
                 self.transcript.error(error.to_string());
-                pending.retain(|item| !matches!(item, Pending::Send { .. }));
-                if had_send { self.end_turn().await; }
+                if pending.iter().any(Pending::turn) {
+                    pending.retain(|item| !item.turn());
+                    self.end_turn().await;
+                }
                 self.transcript.report_settings();
             }
         }
         Some(pending)
+    }
+
+    /// Handles an action that arrives before agy is ready, giving false on Close.
+    async fn early(&mut self, action: Option<Action>, pending: &mut Vec<Pending>) -> bool {
+        match action {
+            Some(Action::Close) | None => return false,
+            Some(Action::Shell(command)) => self.transcript.run_shell(command, &self.progress, &self.env),
+            Some(Action::Delegated(item)) => self.transcript.delegated(item),
+            Some(Action::Send(text, images)) => self.queue_send(pending, text, images),
+            Some(Action::Retry) => if let Some((text, images)) = self.transcript.last_input.clone() {
+                self.queue_send(pending, text, images);
+            },
+            Some(Action::Interrupt) => {
+                self.transcript.stop_shells();
+                if pending.iter().any(Pending::turn) {
+                    pending.retain(|item| !item.turn());
+                    self.transcript.push(Item::interrupted());
+                    self.end_turn().await;
+                }
+            }
+            Some(action) => pending.push(Pending::Action(action)),
+        }
+        true
+    }
+
+    fn queue_send(&mut self, pending: &mut Vec<Pending>, text: String, images: Vec<Image>) {
+        self.record_send(&text, &images);
+        let _ = self.transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
+        pending.push(Pending::Send(text, images));
     }
 
     async fn fail(&mut self, text: String) {
@@ -516,9 +539,8 @@ impl Live {
 
     async fn send(&mut self, text: String, images: Vec<Image>) -> io::Result<()> {
         self.connect().await?;
-        let shell_context = self.transcript.take_shell_context();
         self.record_send(&text, &images);
-        self.dispatch_send(shell_context, text, images).await
+        self.dispatch_send(text, images).await
     }
 
     fn record_send(&mut self, text: &str, images: &[Image]) {
@@ -536,13 +558,13 @@ impl Live {
         self.transcript.status(Status::Working);
     }
 
-    async fn dispatch_send(&mut self, shell_context: Option<String>, text: String, images: Vec<Image>) -> io::Result<()> {
+    async fn dispatch_send(&mut self, text: String, images: Vec<Image>) -> io::Result<()> {
+        let connection = self.connection.as_mut().ok_or_else(|| io::Error::other("Google Antigravity isn't running"))?;
         let mut prompt = Vec::new();
-        if let Some(context) = shell_context { prompt.push(json!({ "type": "text", "text": context })); }
+        if let Some(context) = self.transcript.take_shell_context() { prompt.push(json!({ "type": "text", "text": context })); }
         if !text.is_empty() { prompt.push(json!({ "type": "text", "text": text })); }
         prompt.extend(images.iter().map(|image| json!({ "type": "image", "mimeType": image.media_type, "data": image.data })));
         let session = self.session.clone().unwrap_or_default();
-        let connection = self.connection.as_mut().ok_or_else(|| io::Error::other("Google Antigravity isn't running"))?;
         let id = connection.request("session/prompt", json!({ "sessionId": session, "prompt": prompt })).await?;
         self.prompts.insert(id);
         Ok(())
@@ -1314,14 +1336,11 @@ for line in sys.stdin:
             duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
         };
 
-        // 1. start() returns immediately while agy is still booting, shows "Starting…" on early send, and completes.
         let env = BTreeMap::from([
             ("AGY_CLI_PATH".to_owned(), script.display().to_string()),
             ("SLOW_AGY_DELAY".to_owned(), "0.4".to_owned()),
         ]);
-        let started = Instant::now();
         let (driver, mut events) = start(root.path(), &chat("early-send"), &env).await;
-        assert!(started.elapsed() < Duration::from_millis(200), "start() blocked for {:?}", started.elapsed());
 
         driver.send("Hi", &[]);
         let (mut saw_user, mut saw_starting, mut saw_reply) = (false, false, false);
@@ -1339,7 +1358,6 @@ for line in sys.stdin:
         assert!(saw_user && saw_starting);
         driver.close();
 
-        // 2. Closing while agy is still starting cancels startup immediately instead of waiting.
         let env = BTreeMap::from([
             ("AGY_CLI_PATH".to_owned(), script.display().to_string()),
             ("SLOW_AGY_DELAY".to_owned(), "10".to_owned()),

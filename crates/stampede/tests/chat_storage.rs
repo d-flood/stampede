@@ -16,6 +16,16 @@ async fn create(socket: &mut Socket, path: &Path, rig: &str) -> String {
     next_control(socket, "chat.created").await["chat"]["id"].as_str().unwrap().to_owned()
 }
 
+async fn environments(output: &Path, count: usize) -> Vec<Value> {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let environments: Vec<Value> = fs::read_to_string(output).unwrap_or_default().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            if environments.len() == count { break environments }
+            sleep(Duration::from_millis(20)).await;
+        }
+    }).await.unwrap()
+}
+
 async fn connect(port: u16) -> Socket {
     let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await.unwrap();
     control(&mut socket, json!({ "type": "hello", "deviceId": "storage" })).await;
@@ -40,14 +50,9 @@ async fn both_agents_get_owned_scratch_and_shared_worktree_build_settings() {
         git(&repo, &["worktree", "add", "--detach", other.to_str().unwrap()]);
         let mut socket = connect(server.port).await;
         let first = create(&mut socket, &repo, "test").await;
+        environments(&output, 1).await;
         let second = create(&mut socket, &other, "test").await;
-        let environments = timeout(Duration::from_secs(5), async {
-            loop {
-                let environments: Vec<Value> = fs::read_to_string(&output).unwrap_or_default().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-                if environments.len() == 2 { break environments }
-                sleep(Duration::from_millis(20)).await;
-            }
-        }).await.unwrap();
+        let environments = environments(&output, 2).await;
         let first_scratch = PathBuf::from(environments[0]["CLAUDE_CODE_TMPDIR"].as_str().unwrap());
         let second_scratch = PathBuf::from(environments[1]["CLAUDE_CODE_TMPDIR"].as_str().unwrap());
         assert_ne!(first_scratch, second_scratch);

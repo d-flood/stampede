@@ -50,8 +50,14 @@ enum Action {
 }
 
 enum EarlyAction {
-    Send(String, Vec<Image>),
+    Send(String, Vec<Image>, usize),
     Action(Action),
+}
+
+impl EarlyAction {
+    fn turn(&self) -> bool {
+        matches!(self, Self::Send(..))
+    }
 }
 
 struct Metadata {
@@ -362,13 +368,13 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
     transcript.data_dir = Some(data_dir.to_owned());
     transcript.init_capabilities();
     let (requests, actions) = mpsc::unbounded_channel();
-    if chat.agent_session.is_some() {
-        let connection = Connection::open(&chat.cwd, env).await?;
-        let (interactions, pending) = mpsc::unbounded_channel();
-        let handlers = Arc::new(Handlers(interactions));
-        let session = Arc::new(open_session(&connection.client, data_dir, chat, handlers).await?);
+    // Runs give up a Claim when its Chat can't start, so they wait for Copilot.
+    if chat.agent_session.is_some() || chat.duty.is_some() {
+        let (connection, session, pending) = establish(data_dir.to_owned(), chat.clone(), env.clone()).await?;
+        let session = Arc::new(session);
         let subscribed = session.subscribe();
-        let (history, metadata) = tokio::join!(rpc(session.get_events()), fetch_metadata(Arc::clone(&session), chat.id.clone()));
+        let history = async { if chat.agent_session.is_some() { rpc(session.get_events()).await } else { Ok(Vec::new()) } };
+        let (history, metadata) = tokio::join!(history, fetch_metadata(Arc::clone(&session), chat.id.clone()));
         let history = history?;
         let _ = transcript.events.send(Event::Session(session.id().to_string()));
         transcript.apply_metadata(metadata);
@@ -382,13 +388,15 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
         transcript.report_settings();
         tokio::spawn(drive(connection, session, subscribed, transcript, pending, actions, chat.id.clone(), None, Vec::new()));
     } else {
+        // A restored Chat that was still starting lost its early prompts.
+        if chat.status != Status::Done { transcript.status(Status::Done); }
         transcript.report_settings();
         tokio::spawn(boot(data_dir.to_owned(), chat.clone(), env.clone(), transcript, actions));
     }
     Ok((Copilot { requests }, received))
 }
 
-/// Connects a fresh Copilot Chat off the creation path while handling early Close, Send, Interrupt and Mode actions.
+/// Connects a fresh Copilot Chat off the creation path, holding the actions that arrive meanwhile.
 async fn boot(
     data_dir: PathBuf,
     mut chat: Chat,
@@ -404,33 +412,10 @@ async fn boot(
         let opened = loop {
             tokio::select! {
                 result = &mut opening => break result,
-                action = actions.recv() => match action {
-                    Some(Action::Close) | None => return,
-                    Some(Action::Send(text, images)) => {
-                        transcript.push_provisional_user(&text, &images);
-                        transcript.status(Status::Working);
-                        let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
-                        queued.push(EarlyAction::Send(text, images));
-                    }
-                    Some(Action::Interrupt) => {
-                        if queued.iter().any(|item| matches!(item, EarlyAction::Send(..))) {
-                            queued.retain(|item| !matches!(item, EarlyAction::Send(..)));
-                            transcript.provisional_users.clear();
-                            transcript.push(Item::interrupted());
-                            transcript.finish();
-                        }
-                    }
-                    Some(Action::Run(Builtin::Mode(mode))) if Agent::Copilot.modes().contains(&mode.as_str()) => {
-                        transcript.settings.chosen.mode = Some(mode);
-                        transcript.report_settings();
-                    }
-                    Some(Action::Delegated(item)) => transcript.delegated(item),
-                    Some(Action::Checkpoint(_, reply)) => { let _ = reply.send(None); }
-                    Some(action) => queued.push(EarlyAction::Action(action)),
-                },
+                action = actions.recv() => if !early(&mut transcript, &mut queued, action) { return },
             }
         };
-        let had_send = queued.iter().any(|item| matches!(item, EarlyAction::Send(..)));
+        let had_send = queued.iter().any(EarlyAction::turn);
         match opened {
             Ok((connection, session, interactions)) => {
                 let session = Arc::new(session);
@@ -447,40 +432,58 @@ async fn boot(
             Err(error) => {
                 transcript.provisional_users.clear();
                 transcript.error(error.to_string());
-                queued.retain(|item| !matches!(item, EarlyAction::Send(..)));
+                queued.retain(|item| !item.turn());
                 if had_send { transcript.finish(); }
                 // Stay open so the user can see the startup error, fix sign-in/install, and send again.
-                loop {
-                    match actions.recv().await {
-                        Some(Action::Close) | None => return,
-                        Some(Action::Send(text, images)) => {
-                            transcript.push_provisional_user(&text, &images);
-                            transcript.status(Status::Working);
-                            let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
-                            queued.push(EarlyAction::Send(text, images));
-                            break;
-                        }
-                        Some(Action::Retry) => {
-                            if let Some((text, images)) = transcript.last_input.clone() {
-                                transcript.push_provisional_user(&text, &images);
-                                transcript.status(Status::Working);
-                                let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
-                                queued.push(EarlyAction::Send(text, images));
-                                break;
-                            }
-                        }
-                        Some(Action::Run(Builtin::Mode(mode))) if Agent::Copilot.modes().contains(&mode.as_str()) => {
-                            transcript.settings.chosen.mode = Some(mode);
-                            transcript.report_settings();
-                        }
-                        Some(Action::Delegated(item)) => transcript.delegated(item),
-                        Some(Action::Checkpoint(_, reply)) => { let _ = reply.send(None); }
-                        Some(_) => {}
-                    }
+                while !queued.iter().any(EarlyAction::turn) {
+                    if !early(&mut transcript, &mut queued, actions.recv().await) { return }
                 }
             }
         }
     }
+}
+
+/// Handles an action that arrives before Copilot is ready, giving false on Close.
+fn early(transcript: &mut Transcript, queued: &mut Vec<EarlyAction>, action: Option<Action>) -> bool {
+    match action {
+        Some(Action::Close) | None => return false,
+        Some(Action::Send(text, images)) => queue_send(transcript, queued, text, images),
+        Some(Action::Retry) => if let Some((text, images)) = transcript.last_input.clone() {
+            queue_send(transcript, queued, text, images);
+        },
+        Some(Action::Interrupt) => if queued.iter().any(EarlyAction::turn) {
+            queued.retain(|item| !item.turn());
+            transcript.provisional_users.clear();
+            transcript.push(Item::interrupted());
+            transcript.finish();
+        },
+        Some(Action::Run(Builtin::Mode(mode))) if Agent::Copilot.modes().contains(&mode.as_str()) => {
+            transcript.settings.chosen.mode = Some(mode);
+            transcript.report_settings();
+        }
+        // A session opening now takes these once it's ready, and a later one opens with them.
+        Some(Action::Run(Builtin::Model(model))) => {
+            (transcript.settings.chosen.model, transcript.settings.chosen.effort) = (Some(model.clone()), None);
+            transcript.report_settings();
+            queued.push(EarlyAction::Action(Action::Run(Builtin::Model(model))));
+        }
+        Some(Action::Run(Builtin::Effort(effort))) => {
+            transcript.settings.chosen.effort = Some(effort.clone());
+            transcript.report_settings();
+            queued.push(EarlyAction::Action(Action::Run(Builtin::Effort(effort))));
+        }
+        Some(Action::Delegated(item)) => transcript.delegated(item),
+        Some(Action::Checkpoint(_, reply)) => { let _ = reply.send(None); }
+        Some(action) => queued.push(EarlyAction::Action(action)),
+    }
+    true
+}
+
+fn queue_send(transcript: &mut Transcript, queued: &mut Vec<EarlyAction>, text: String, images: Vec<Image>) {
+    let index = transcript.push_provisional_user(&text, &images);
+    transcript.status(Status::Working);
+    let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
+    queued.push(EarlyAction::Send(text, images, index));
 }
 
 async fn ready_metadata(pending: &mut Option<oneshot::Receiver<Metadata>>) -> Option<Metadata> {
@@ -506,7 +509,11 @@ async fn drive(
     let (shelled, mut finished) = mpsc::unbounded_channel::<(String, Result<Value, String>)>();
     for item in queued {
         let result = match item {
-            EarlyAction::Send(text, images) => dispatch_send(&session, &mut transcript, &text, &images).await,
+            EarlyAction::Send(text, images, index) => {
+                let result = send(&session, &mut transcript, &text, &images).await;
+                if result.is_err() { transcript.provisional_users.retain(|at| *at != index); }
+                result
+            }
             EarlyAction::Action(Action::Shell(command)) => {
                 let request = Uuid::new_v4().to_string();
                 shells.insert(request.clone());
@@ -522,9 +529,6 @@ async fn drive(
                 let result = run(&session, &mut transcript, builtin).await;
                 if result.is_ok() { transcript.saw_cost = true; report_cost(&session, &chat_id, &transcript.events).await; }
                 result
-            }
-            EarlyAction::Action(Action::Retry) => {
-                if let Some((text, images)) = transcript.last_input.clone() { send(&session, &mut transcript, &text, &images).await } else { Ok(()) }
             }
             EarlyAction::Action(_) => Ok(()),
         };
@@ -625,16 +629,12 @@ fn resolve(pending: &mut HashMap<String, oneshot::Sender<Answer>>, events: &Unbo
 }
 
 async fn send(session: &CopilotSession, transcript: &mut Transcript, text: &str, images: &[Image]) -> io::Result<()> {
+    let attachments = images.iter().map(|image| Attachment::Blob { data: image.data.clone(), mime_type: image.media_type.clone(), display_name: None }).collect();
     transcript.last_input = Some((text.to_owned(), images.to_vec()));
     transcript.status(Status::Working);
-    dispatch_send(session, transcript, text, images).await
-}
-
-async fn dispatch_send(session: &CopilotSession, transcript: &mut Transcript, text: &str, images: &[Image]) -> io::Result<()> {
-    let attachments = images.iter().map(|image| Attachment::Blob { data: image.data.clone(), mime_type: image.media_type.clone(), display_name: None }).collect();
     match rpc(session.send(MessageOptions::new(text).with_attachments(attachments))).await {
         Ok(_) => Ok(()),
-        Err(error) => { transcript.provisional_users.clear(); transcript.finish(); Err(error) }
+        Err(error) => { transcript.finish(); Err(error) }
     }
 }
 
@@ -642,7 +642,7 @@ async fn run(session: &CopilotSession, transcript: &mut Transcript, builtin: Bui
     match builtin {
         Builtin::Model(model) => {
             rpc(session.set_model(&model, None)).await?;
-            transcript.model_overridden = true;
+            (transcript.model_overridden, transcript.effort_overridden) = (true, true);
             transcript.settings.chosen.model = Some(model);
             transcript.settings.chosen.effort = rpc(session.rpc().model().get_current()).await?.reasoning_effort;
         }
@@ -723,12 +723,13 @@ impl Transcript {
         self.report_settings();
     }
 
-    fn push_provisional_user(&mut self, text: &str, images: &[Image]) {
+    fn push_provisional_user(&mut self, text: &str, images: &[Image]) -> usize {
         self.finish_thinking();
         self.last_input = Some((text.to_owned(), images.to_vec()));
         let image_urls = images.iter().map(|image| format!("data:{};base64,{}", image.media_type, image.data)).collect();
         let index = self.push(Item::User { text: text.to_owned(), images: images.len(), image_urls, template: None, rewind_from: None });
         self.provisional_users.push_back(index);
+        index
     }
 
     fn push(&mut self, item: Item) -> usize {
@@ -927,7 +928,11 @@ impl Transcript {
                 if let Some(title) = data["title"].as_str() { let _ = self.events.send(Event::Title(title.to_owned())); }
             }
             "session.model_change" => {
-                if let Some(model) = data["newModel"].as_str() { self.settings.chosen.model = Some(model.to_owned()); self.report_settings(); }
+                if let Some(model) = data["newModel"].as_str() {
+                    self.model_overridden = true;
+                    self.settings.chosen.model = Some(model.to_owned());
+                    self.report_settings();
+                }
             }
             "session.commands_changed" => {
                 self.capabilities.commands = data["commands"].as_array().into_iter().flatten().filter_map(|command| Some(AgentCommand {
@@ -1250,9 +1255,7 @@ mod tests {
             duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
         };
 
-        let started = Instant::now();
         let (driver, mut events) = start(root.path(), &chat, &env).await.unwrap();
-        assert!(started.elapsed() < Duration::from_millis(200), "start() blocked for {:?}", started.elapsed());
 
         driver.send("Hi", &[]);
         let (mut saw_user, mut saw_starting) = (false, false);

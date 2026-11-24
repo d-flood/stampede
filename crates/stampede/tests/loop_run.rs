@@ -88,6 +88,11 @@ agent = "codex"
 env = { STAMPEDE_FAKE_FIXTURE = "approval" }
 
 [[rig]]
+name = "Codex Broken"
+agent = "codex"
+env = { STAMPEDE_FAKE_FIXTURE = "missing" }
+
+[[rig]]
 name = "Resume"
 agent = "claude-code"
 env = { STAMPEDE_FAKE_FIXTURE = "FIXTURES/claude-code/resume-verdict.synthetic.jsonl" }
@@ -631,6 +636,15 @@ async fn a_failing_setup_command_flags_its_ticket_and_the_run_moves_on() {
     lp.run("Verdict", 1).await;
     lp.finished(2).await;
     assert_eq!(lp.claims(), [2, 1, 3], "a new Run retries the flagged Ticket");
+}
+
+#[tokio::test]
+async fn a_chat_that_cannot_start_flags_its_ticket_without_claiming_it() {
+    let lp = Loop::new("loop-run-unstartable", &[(1, "")]).await;
+    lp.run("Codex Broken", 1).await;
+    lp.until("the Ticket to be flagged", |lp| !lp.entries("start.failed").is_empty()).await;
+    assert!(lp.claims().is_empty());
+    assert!(lp.entries("start.failed")[0]["reason"].as_str().unwrap().contains("cannot start a Chat"));
 }
 
 #[tokio::test]

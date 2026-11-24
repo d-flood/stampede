@@ -1098,7 +1098,7 @@ impl Chats {
             Agent::Codex if session.is_some() => codex::resume(&self.data_dir, &chat, &storage.env)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-            Agent::Codex => codex::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen)
+            Agent::Codex => codex::start(&self.data_dir, &chat, &storage.env)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             Agent::Copilot => copilot::start(&self.data_dir, &chat, &storage.env)
@@ -1167,6 +1167,10 @@ impl Chats {
     async fn resume(&self, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Box<dyn Driver>, UnboundedReceiver<Event>)> {
         match chat.agent {
             Agent::ClaudeCode => claude::resume(&self.data_dir, chat, env)
+                .await
+                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
+            // A first-turn fork, or a Chat Codex never started, has no thread yet, while a Run's Chat without one lost it.
+            Agent::Codex if chat.agent_session.is_none() && chat.duty.is_none() => codex::start(&self.data_dir, chat, env)
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             Agent::Codex => codex::resume(&self.data_dir, chat, env)
@@ -1296,14 +1300,7 @@ impl Chats {
 
     async fn open(self: &Arc<Self>, chat: Chat, storage: crate::storage::Session) -> io::Result<Chat> {
         write_record(&self.data_dir, &chat)?;
-        let started = match chat.agent {
-            // A Codex fork of a conversation's first turn has no thread to resume, while any other Codex Chat without one lost it.
-            Agent::Codex if chat.agent_session.is_none() && chat.forked_from.is_some() => codex::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen)
-                .await
-                .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
-            _ => self.resume(&chat, &storage.env).await,
-        };
-        let (driver, events) = started.inspect_err(|_| {
+        let (driver, events) = self.resume(&chat, &storage.env).await.inspect_err(|_| {
             let _ = fs::remove_file(record_path(&self.data_dir, &chat.id));
         })?;
         let _ = self.adopt(chat.clone(), driver, events, storage).await;

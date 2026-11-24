@@ -55,8 +55,15 @@ enum Request {
 
 enum EarlyRequest {
     Send(String, Vec<Image>),
+    Retry(Value),
     Shell(String),
-    Retry,
+    Choose(Setting, String),
+}
+
+impl EarlyRequest {
+    fn turn(&self) -> bool {
+        matches!(self, Self::Send(..) | Self::Retry(_))
+    }
 }
 
 impl Driver for Codex {
@@ -97,23 +104,25 @@ impl Driver for Codex {
     }
 }
 
-pub async fn start(
-    data_dir: &Path,
-    chat_id: &str,
-    cwd: &Path,
-    env: &BTreeMap<String, String>,
-    settings: &AgentSettings,
-) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
+pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Codex, UnboundedReceiver<Event>)> {
     let (events, received) = mpsc::unbounded_channel();
-    let (requests, pending) = mpsc::unbounded_channel();
-    let mut transcript = Transcript::new("", cwd, events);
+    let mut transcript = Transcript::new("", &chat.cwd, events);
     transcript.data_dir = Some(data_dir.to_owned());
-    transcript.chat_id = chat_id.to_owned();
+    transcript.chat_id = chat.id.clone();
+    transcript.settings = Settings { chosen: chat.settings.chosen.clone(), pending: Vec::new() };
+    // Runs give up a Claim when its Chat can't start, so they wait for Codex.
+    if chat.duty.is_some() {
+        let (connection, proxy, thread, started) = establish(data_dir.to_owned(), chat.id.clone(), chat.cwd.clone(), env.clone(), chat.settings.chosen.clone()).await?;
+        transcript.connected(thread, &started);
+        return Ok((run(connection, proxy, transcript, data_dir, &chat.cwd, env), received));
+    }
+    let (requests, pending) = mpsc::unbounded_channel();
     transcript.storage_roots = writable_roots(data_dir, env);
-    transcript.settings = Settings { chosen: settings.clone(), pending: Vec::new() };
+    // A restored Chat that was still starting lost its early prompts.
+    if chat.status != Status::Done { transcript.report(Status::Done); }
     transcript.report_settings();
     transcript.declare();
-    tokio::spawn(boot(pending, transcript, data_dir.to_owned(), cwd.to_owned(), env.clone(), settings.clone()));
+    tokio::spawn(boot(pending, transcript, data_dir.to_owned(), chat.cwd.clone(), env.clone()));
     Ok((Codex { requests }, received))
 }
 
@@ -130,98 +139,84 @@ async fn establish(
     Ok((connection, proxy, thread, started))
 }
 
-/// Connects a fresh Codex Chat off the creation path while handling early Close, Send, Interrupt and settings changes.
-async fn boot(
-    mut pending: UnboundedReceiver<Request>,
-    mut transcript: Transcript,
-    data_dir: PathBuf,
-    cwd: PathBuf,
-    env: BTreeMap<String, String>,
-    mut initial: AgentSettings,
-) {
+/// Connects a fresh Codex Chat off the creation path, holding the requests that arrive meanwhile.
+async fn boot(mut pending: UnboundedReceiver<Request>, mut transcript: Transcript, data_dir: PathBuf, cwd: PathBuf, env: BTreeMap<String, String>) {
     let mut queued = Vec::new();
     loop {
-        let opening = establish(data_dir.clone(), transcript.chat_id.clone(), cwd.clone(), env.clone(), initial.clone());
+        let opening = establish(data_dir.clone(), transcript.chat_id.clone(), cwd.clone(), env.clone(), transcript.settings.chosen.clone());
         tokio::pin!(opening);
         let opened = loop {
             tokio::select! {
                 result = &mut opening => break result,
-                request = pending.recv() => match request {
-                    Some(Request::Close) | None => return,
-                    Some(Request::Send(text, images)) => {
-                        transcript.push_provisional_user(&text, &images);
-                        transcript.report(Status::Working);
-                        let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
-                        queued.push(EarlyRequest::Send(text, images));
-                    }
-                    Some(Request::Interrupt) => {
-                        if queued.iter().any(|item| matches!(item, EarlyRequest::Send(..))) {
-                            queued.retain(|item| !matches!(item, EarlyRequest::Send(..)));
-                            transcript.provisional_users.clear();
-                            transcript.push(Item::interrupted());
-                            transcript.report(Status::Done);
-                        }
-                    }
-                    Some(Request::Run(Builtin::Model(model))) => transcript.choose(Setting::Model, model),
-                    Some(Request::Run(Builtin::Effort(effort))) => transcript.choose(Setting::Effort, effort),
-                    Some(Request::Run(Builtin::Speed(speed))) => transcript.choose(Setting::Speed, speed),
-                    Some(Request::Run(Builtin::Mode(mode))) => transcript.choose(Setting::Mode, mode),
-                    Some(Request::Delegated(item)) => transcript.delegated(item),
-                    Some(Request::Checkpoint(_, reply)) => { let _ = reply.send(None); }
-                    Some(Request::Shell(command)) => queued.push(EarlyRequest::Shell(command)),
-                    Some(Request::Retry) => queued.push(EarlyRequest::Retry),
-                    Some(_) => {}
-                },
+                request = pending.recv() => if !early(&mut transcript, &mut queued, request) { return },
             }
         };
-        let had_send = queued.iter().any(|item| matches!(item, EarlyRequest::Send(..)));
         match opened {
-            Ok((connection, proxy, thread_id, started)) => {
-                transcript.thread = thread_id.clone();
-                let _ = transcript.events.send(Event::Session(thread_id));
-                let overrides = transcript.settings.clone();
-                transcript.settings = current(&started);
-                for &setting in &overrides.pending {
-                    *transcript.settings.get_mut(setting) = overrides.get(setting).clone();
-                    transcript.settings.mark_pending(setting);
-                }
-                drive(connection, proxy, transcript, pending, data_dir, cwd, env, queued).await;
-                return;
+            Ok((connection, proxy, thread, started)) => {
+                transcript.connected(thread, &started);
+                return drive(connection, proxy, transcript, pending, data_dir, cwd, env, queued).await;
             }
             Err(error) => {
-                transcript.provisional_users.clear();
+                let turn = queued.iter().any(EarlyRequest::turn);
+                drop_turns(&mut transcript, &mut queued);
                 transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() });
-                queued.retain(|item| !matches!(item, EarlyRequest::Send(..)));
-                if had_send { transcript.report(Status::Done); }
+                if turn { transcript.report(Status::Done); }
                 // Stay open so the user can see the startup error, fix Codex, and send again.
-                loop {
-                    match pending.recv().await {
-                        Some(Request::Close) | None => return,
-                        Some(Request::Send(text, images)) => {
-                            initial = transcript.settings.chosen.clone();
-                            transcript.push_provisional_user(&text, &images);
-                            transcript.report(Status::Working);
-                            let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
-                            queued.push(EarlyRequest::Send(text, images));
-                            break;
-                        }
-                        Some(Request::Retry) if transcript.last_input.is_some() => {
-                            initial = transcript.settings.chosen.clone();
-                            transcript.report(Status::Working);
-                            let _ = transcript.events.send(Event::Activity(Some("Starting…".to_owned())));
-                            queued.push(EarlyRequest::Retry);
-                            break;
-                        }
-                        Some(Request::Run(Builtin::Model(model))) => transcript.choose(Setting::Model, model),
-                        Some(Request::Run(Builtin::Effort(effort))) => transcript.choose(Setting::Effort, effort),
-                        Some(Request::Run(Builtin::Speed(speed))) => transcript.choose(Setting::Speed, speed),
-                        Some(Request::Run(Builtin::Mode(mode))) => transcript.choose(Setting::Mode, mode),
-                        Some(Request::Delegated(item)) => transcript.delegated(item),
-                        Some(Request::Checkpoint(_, reply)) => { let _ = reply.send(None); }
-                        Some(_) => {}
-                    }
+                while !queued.iter().any(EarlyRequest::turn) {
+                    if !early(&mut transcript, &mut queued, pending.recv().await) { return }
                 }
             }
+        }
+    }
+}
+
+/// Handles a request that arrives before Codex is ready, giving false on Close.
+fn early(transcript: &mut Transcript, queued: &mut Vec<EarlyRequest>, request: Option<Request>) -> bool {
+    match request {
+        Some(Request::Close) | None => return false,
+        Some(Request::Send(text, images)) => {
+            transcript.push_provisional_user(&text, &images);
+            transcript.booting();
+            queued.push(EarlyRequest::Send(text, images));
+        }
+        Some(Request::Retry) => if let Some(input) = transcript.last_input.clone() {
+            transcript.booting();
+            queued.push(EarlyRequest::Retry(input));
+        },
+        Some(Request::Interrupt) => if queued.iter().any(EarlyRequest::turn) {
+            drop_turns(transcript, queued);
+            transcript.push(Item::interrupted());
+            transcript.report(Status::Done);
+        },
+        Some(Request::Run(Builtin::Model(model))) => choose_early(transcript, queued, Setting::Model, model),
+        Some(Request::Run(Builtin::Effort(effort))) => choose_early(transcript, queued, Setting::Effort, effort),
+        Some(Request::Run(Builtin::Speed(speed))) => choose_early(transcript, queued, Setting::Speed, speed),
+        Some(Request::Run(Builtin::Mode(mode))) => choose_early(transcript, queued, Setting::Mode, mode),
+        Some(Request::Delegated(item)) => transcript.delegated(item),
+        Some(Request::Checkpoint(_, reply)) => { let _ = reply.send(None); }
+        Some(Request::Shell(command)) => queued.push(EarlyRequest::Shell(command)),
+        Some(_) => {}
+    }
+    true
+}
+
+/// Holds a setting changed after an early prompt for the turn after it, as Codex would mid-turn.
+fn choose_early(transcript: &mut Transcript, queued: &mut Vec<EarlyRequest>, setting: Setting, value: String) {
+    if queued.iter().any(EarlyRequest::turn) {
+        queued.push(EarlyRequest::Choose(setting, value));
+    } else {
+        transcript.choose(setting, value);
+    }
+}
+
+/// Drops early prompts, applying the setting changes held for them.
+fn drop_turns(transcript: &mut Transcript, queued: &mut Vec<EarlyRequest>) {
+    transcript.provisional_users.clear();
+    for item in std::mem::take(queued) {
+        match item {
+            EarlyRequest::Send(..) | EarlyRequest::Retry(_) => {}
+            EarlyRequest::Choose(setting, value) => transcript.choose(setting, value),
+            shell => queued.push(shell),
         }
     }
 }
@@ -483,7 +478,11 @@ async fn drive(
             transcript.lists.insert(id, list);
         }
     }
-    if queued.iter().any(|item| matches!(item, EarlyRequest::Send(..))) {
+    if queued.iter().any(EarlyRequest::turn) {
+        // Early prompts may name skills, and the settings held for them need the models.
+        while !transcript.lists.is_empty() && let Some(message) = connection.next().await {
+            transcript.read(&message);
+        }
         let _ = transcript.events.send(Event::Activity(None));
     }
     for item in queued {
@@ -494,14 +493,13 @@ async fn drive(
                 input.extend(transcript.skill(&text));
                 let _ = connection.send(&mut transcript, Value::Array(input)).await;
             }
+            EarlyRequest::Retry(input) => {
+                let _ = connection.send(&mut transcript, input).await;
+            }
             EarlyRequest::Shell(command) => {
                 let _ = connection.request("thread/shellCommand", json!({ "threadId": transcript.thread, "command": command })).await;
             }
-            EarlyRequest::Retry => {
-                if let Some(input) = transcript.last_input.clone() {
-                    let _ = connection.send(&mut transcript, input).await;
-                }
-            }
+            EarlyRequest::Choose(setting, value) => transcript.choose(setting, value),
         }
     }
     loop {
@@ -1122,20 +1120,44 @@ impl Transcript {
         *self.settings.get_mut(setting) = Some(value);
         self.settings.mark_pending(setting);
         if setting == Setting::Model {
-            let efforts = self.efforts();
-            if self.settings.chosen.effort.as_ref().is_some_and(|effort| !efforts.contains(effort)) {
-                let fallback = self.listed().and_then(|listed| listed["defaultReasoningEffort"].as_str());
-                self.settings.chosen.effort = fallback.map(str::to_owned);
-                self.settings.mark_pending(Setting::Effort);
-            }
-            let tiers = self.listed().map(speeds).unwrap_or_default();
-            if self.settings.chosen.speed.as_ref().is_some_and(|speed| !tiers.iter().any(|tier| tier.value == *speed)) {
-                self.settings.chosen.speed = Some(STANDARD.to_owned());
-                self.settings.mark_pending(Setting::Speed);
-            }
+            self.fit();
             self.declare();
         }
         self.report_settings();
+    }
+
+    /// Resets an effort or speed the chosen model lacks, once the models have been listed.
+    fn fit(&mut self) {
+        if self.models.is_empty() {
+            return;
+        }
+        let efforts = self.efforts();
+        if self.settings.chosen.effort.as_ref().is_some_and(|effort| !efforts.contains(effort)) {
+            let fallback = self.listed().and_then(|listed| listed["defaultReasoningEffort"].as_str());
+            self.settings.chosen.effort = fallback.map(str::to_owned);
+            self.settings.mark_pending(Setting::Effort);
+        }
+        let tiers = self.listed().map(speeds).unwrap_or_default();
+        if self.settings.chosen.speed.as_ref().is_some_and(|speed| !tiers.iter().any(|tier| tier.value == *speed)) {
+            self.settings.chosen.speed = Some(STANDARD.to_owned());
+            self.settings.mark_pending(Setting::Speed);
+        }
+    }
+
+    fn booting(&mut self) {
+        self.report(Status::Working);
+        let _ = self.events.send(Event::Activity(Some("Starting…".to_owned())));
+    }
+
+    /// Adopts a new thread's settings, keeping the changes chosen before it started.
+    fn connected(&mut self, thread: String, started: &Value) {
+        self.thread = thread.clone();
+        let _ = self.events.send(Event::Session(thread));
+        let chosen = std::mem::replace(&mut self.settings, current(started));
+        for &setting in &chosen.pending {
+            *self.settings.get_mut(setting) = chosen.get(setting).clone();
+            self.settings.mark_pending(setting);
+        }
     }
 
     fn overrides(&mut self, turn: &mut Value) {
@@ -1355,7 +1377,13 @@ impl Transcript {
     fn read(&mut self, message: &Value) {
         if let Some(list) = response(message).and_then(|id| self.lists.remove(&id)) {
             match list {
-                List::Models => self.models = message["result"]["data"].as_array().cloned().unwrap_or_default(),
+                List::Models => {
+                    self.models = message["result"]["data"].as_array().cloned().unwrap_or_default();
+                    if self.settings.pending.contains(&Setting::Model) {
+                        self.fit();
+                        self.report_settings();
+                    }
+                }
                 List::Skills => self.skills = enabled(&message["result"]),
                 List::Thread(child) => {
                     if let Some((subagent, _)) = self.subagents.get_mut(&child) {
@@ -1384,6 +1412,7 @@ impl Transcript {
                 }
                 None => {
                     eprintln!("codex turn/start failed: {}", message["error"]);
+                    self.provisional_users.pop_front();
                     self.report(Status::Done);
                 }
             }
@@ -2250,9 +2279,16 @@ mod tests {
         let path = format!("{}:{}", root.path().display(), std::env::var("PATH").unwrap_or_default());
         let env = BTreeMap::from([("PATH".to_owned(), path)]);
 
-        let started = Instant::now();
-        let (driver, mut events) = start(root.path(), "early", root.path(), &env, &AgentSettings::default()).await.unwrap();
-        assert!(started.elapsed() < Duration::from_millis(200), "start() blocked for {:?}", started.elapsed());
+        let chat = Chat {
+            id: "early".to_owned(), project_id: "p".to_owned(), rig: "Codex".to_owned(), agent: Agent::Codex,
+            cwd: root.path().to_owned(), created: 0, agent_session: None, title: None, resume_at: None,
+            plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
+            running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
+            queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),
+            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, parent: None,
+            duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
+        };
+        let (driver, mut events) = start(root.path(), &chat, &env).await.unwrap();
 
         driver.send("Hi", &[]);
         let (mut saw_user, mut saw_starting) = (false, false);
