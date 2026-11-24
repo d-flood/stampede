@@ -1,10 +1,23 @@
 use crate::common;
 
-use std::{fs, time::Duration};
+use std::{
+    fs,
+    os::fd::AsRawFd,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use common::{Server, View, state};
 use libghostty_vt::screen::Screen;
-use tokio::time::{Instant, sleep};
+use serde_json::json;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{UnixListener, UnixStream},
+    time::{Instant, sleep},
+};
 
 const SCRIPT: &str = r#"
 for i in $(seq 1 60); do printf '\033[3%dmline %d\033[0m\n' $((i % 8)) "$i"; done
@@ -64,4 +77,55 @@ async fn a_newly_attached_device_sees_the_holders_screen() {
         assert!(Instant::now() < deadline, "the holder outlived its shell");
         sleep(Duration::from_millis(50)).await;
     }
+}
+
+const HELLO: u8 = 1;
+const ATTACH: u8 = 2;
+const SNAPSHOT: u8 = 3;
+const TITLE_CHANGED: u8 = 10;
+
+#[tokio::test]
+async fn a_device_is_redrawn_when_the_holder_drops_the_server() {
+    let mut server = Server::start("dropped").await;
+    server.stop().await;
+    let terminals = server.root.path().join("data/terminals");
+    fs::create_dir_all(&terminals).unwrap();
+    let record = json!({ "id": "held", "cwd": "/", "command": ["bash"], "size": { "cols": 80, "rows": 24 }, "protocol": 7 });
+    fs::write(terminals.join("held.json"), record.to_string()).unwrap();
+    let directory = fs::File::open(&terminals).unwrap();
+    // A socket path must fit in 108 bytes.
+    let listener = UnixListener::bind(format!("/proc/self/fd/{}/held.sock", directory.as_raw_fd())).unwrap();
+    let dropped = Arc::new(AtomicBool::new(false));
+    tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            tokio::spawn(hold(socket, Arc::clone(&dropped)));
+        }
+    });
+    server.restart().await;
+
+    let mut view = View::open(server.port, "device", Some("held")).await;
+    view.settle(|text| text.contains("redrawn")).await;
+}
+
+/// Speaks for a holder, dropping the first connection to attach once it is drawn.
+async fn hold(mut socket: UnixStream, dropped: Arc<AtomicBool>) {
+    let hello = json!({ "protocol": 7, "holder_version": "test" });
+    let title = json!({ "title": null, "cwd": "/" });
+    for (tag, payload) in [(HELLO, hello), (TITLE_CHANGED, title)] {
+        socket.write_all(&frame(tag, payload.to_string().as_bytes())).await.unwrap();
+    }
+    while let Ok(len) = socket.read_u32().await {
+        let mut message = vec![0; len as usize];
+        socket.read_exact(&mut message).await.unwrap();
+        if message[0] == ATTACH {
+            let first = !dropped.swap(true, Ordering::Relaxed);
+            let screen: &[u8] = if first { b"drawn" } else { b"redrawn" };
+            socket.write_all(&frame(SNAPSHOT, screen)).await.unwrap();
+            if first { return }
+        }
+    }
+}
+
+fn frame(tag: u8, payload: &[u8]) -> Vec<u8> {
+    [&(payload.len() as u32 + 1).to_be_bytes(), [tag].as_slice(), payload].concat()
 }

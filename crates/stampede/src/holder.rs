@@ -7,7 +7,11 @@ use std::{
     net::Shutdown,
     os::unix::net::{UnixListener, UnixStream},
     path::{Path, PathBuf},
-    sync::mpsc::{self, SyncSender},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+        mpsc::{self, Sender, SyncSender},
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -37,7 +41,7 @@ const FOREGROUND_POLL: Duration = Duration::from_millis(100);
 const SAVE_INTERVAL: Duration = Duration::from_secs(2);
 const CLOSING: Duration = Duration::from_secs(5);
 const QUEUED_EVENTS: usize = 16;
-const QUEUED_FRAMES: usize = 256;
+const QUEUED_BYTES: usize = 4 << 20;
 
 #[derive(clap::Args)]
 pub struct HoldArgs {
@@ -218,14 +222,16 @@ enum Event {
 }
 
 struct Conn {
-    frames: SyncSender<Vec<u8>>,
+    frames: Sender<Vec<u8>>,
+    queued: Arc<AtomicUsize>,
+    limit: usize,
     attached: bool,
 }
 
 impl Conn {
     /// A connection too far behind is dropped rather than queued for without end.
     fn send(&self, frame: Vec<u8>) -> bool {
-        self.frames.try_send(frame).is_ok()
+        self.queued.fetch_add(frame.len(), Ordering::Relaxed) < self.limit && self.frames.send(frame).is_ok()
     }
 }
 
@@ -343,6 +349,8 @@ fn run(
             Event::Received(id, Message::Attach) => match snapshot(&mut terminal) {
                 Ok(bytes) => {
                     if let Some(conn) = conns.get_mut(&id) {
+                        // However long the scrollback, output queued behind it keeps its whole share.
+                        conn.limit = QUEUED_BYTES + bytes.len();
                         conn.send(protocol::encode(&Message::Snapshot(bytes)));
                         conn.attached = true;
                     }
@@ -462,12 +470,15 @@ fn resize(terminal: &mut Terminal, pty: &dyn MasterPty, size: Size) -> Result<()
 fn connect(id: u64, stream: UnixStream, events: SyncSender<Event>) -> io::Result<Conn> {
     let mut reader = stream.try_clone()?;
     let mut writer = stream;
-    let (frames, pending) = mpsc::sync_channel::<Vec<u8>>(QUEUED_FRAMES);
+    let (frames, pending) = mpsc::channel::<Vec<u8>>();
+    let queued = Arc::new(AtomicUsize::new(0));
+    let written = Arc::clone(&queued);
     thread::spawn(move || {
         for frame in pending {
             if writer.write_all(&frame).is_err() {
                 break;
             }
+            written.fetch_sub(frame.len(), Ordering::Relaxed);
         }
         let _ = writer.shutdown(Shutdown::Both);
     });
@@ -483,11 +494,14 @@ fn connect(id: u64, stream: UnixStream, events: SyncSender<Event>) -> io::Result
         protocol: protocol::VERSION,
         holder_version: env!("CARGO_PKG_VERSION").into(),
     };
-    let _ = frames.send(protocol::encode(&Message::Hello(hello)));
-    Ok(Conn {
+    let conn = Conn {
         frames,
+        queued,
+        limit: QUEUED_BYTES,
         attached: false,
-    })
+    };
+    conn.send(protocol::encode(&Message::Hello(hello)));
+    Ok(conn)
 }
 
 fn snapshot(terminal: &mut Terminal) -> Result<Vec<u8>, libghostty_vt::Error> {

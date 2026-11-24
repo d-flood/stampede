@@ -16,7 +16,7 @@ use axum::{
     },
     response::Response,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
@@ -50,6 +50,7 @@ const OUTPUT: u8 = 1;
 const INPUT: u8 = 2;
 const QUEUED_BYTES: u32 = 64 << 20;
 const QUEUED_OUTPUT: u32 = 1 << 20;
+const BATCHED_OUTPUT: usize = 64 << 10;
 const BRIEF_OUTPUT: usize = 2 << 10;
 const PING_EVERY: Duration = Duration::from_secs(20);
 const SILENT_FOR: Duration = Duration::from_secs(60);
@@ -730,6 +731,8 @@ impl Device {
     async fn attach(&mut self, terminal_id: String) {
         let Attachment { mut size, mut output } = match self.terminals.attach(&terminal_id).await {
             Ok(attachment) => attachment,
+            // The holder may exit before the server hears that its Terminal ended.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound || !self.terminals.live(&terminal_id) => return,
             Err(error) => return eprintln!("cannot attach terminal {terminal_id}: {error}"),
         };
         let channel = self.next_channel;
@@ -746,14 +749,21 @@ impl Device {
         let (outgoing, resyncs) = (self.outgoing.clone(), self.resyncs.clone());
         let terminal = terminal_id.clone();
         let attachment = self.attachments.spawn(async move {
+            let mut drawn = false;
             let behind = loop {
                 tokio::select! {
                     bytes = output.next() => {
-                        let Some(bytes) = bytes else { break false };
+                        // A holder drops a connection too far behind, but one dropped undrawn would only be dropped again.
+                        let Some(bytes) = bytes else { break drawn };
+                        drawn = true;
                         let mut frame = Vec::with_capacity(5 + bytes.len());
                         frame.push(OUTPUT);
                         frame.extend_from_slice(&channel.to_be_bytes());
                         frame.extend_from_slice(&bytes);
+                        // A flood arrives in small reads, and a message for each costs a Device more than its bytes.
+                        while frame.len() < BATCHED_OUTPUT && let Some(Some(more)) = output.next().now_or_never() {
+                            frame.extend_from_slice(&more);
+                        }
                         if !outgoing.output(frame) {
                             break true;
                         }
@@ -782,7 +792,9 @@ impl Device {
     /// Attaching afresh redraws the Terminal from the holder's screen. The old channel keeps taking input until the
     /// client detaches it, so keys typed before the client sees the new channel still arrive.
     async fn resync(&mut self, channel: u32) {
-        if let Some((terminal_id, _)) = self.channels.get(&channel) {
+        if let Some((terminal_id, _)) = self.channels.get(&channel)
+            && self.terminals.live(terminal_id)
+        {
             self.attach(terminal_id.clone()).await;
         }
     }

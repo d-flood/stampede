@@ -439,6 +439,10 @@ impl Terminals {
         }
     }
 
+    pub fn live(&self, id: &str) -> bool {
+        self.get(id).is_some()
+    }
+
     fn get(&self, id: &str) -> Option<Arc<Entry>> {
         let terminals = self.terminals.lock().unwrap();
         terminals.iter().find_map(|(other, slot)| match slot {
