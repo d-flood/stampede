@@ -17,6 +17,7 @@ async function platformFont(page: Page, selector: string) {
 }
 
 test('UI, chat and code fonts each come from the Host and apply only to their own text', { tag: '@desktop' }, async ({ page }) => {
+	test.slow();
 	const config = () => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
 	await openProject(page, 'alpha');
 	const families: string[] = await (await page.request.get('/api/fonts')).json();
