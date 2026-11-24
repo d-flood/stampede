@@ -39,7 +39,6 @@ use std::{net::Ipv4Addr, path::PathBuf, sync::Arc, time::UNIX_EPOCH};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    handler::Handler,
     http::{HeaderMap, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
@@ -203,10 +202,10 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/git/stashes/{index}/{action}", post(git::actions::unstash))
         .route("/api/lsp/log", get(language_servers::log))
         .route("/fonts/host/{index}", get(host_font).layer(compression.clone()))
-        .route("/fonts/system/{family}/{index}", get(system_font).layer(compression.clone()))
+        .route("/fonts/system/{family}/{index}", get(system_font).layer(compression))
         .route("/manifest.webmanifest", get(manifest))
         .route("/ws", get(device::upgrade))
-        .fallback(spa.layer(compression))
+        .fallback(spa)
         .with_state(state)
 }
 
