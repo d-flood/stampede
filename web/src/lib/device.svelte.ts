@@ -88,6 +88,7 @@ export function chosen(setting: Setting, settings: Settings, choices: Record<Set
 }
 
 export type Capabilities = {
+	ready: boolean;
 	rewindsFiles: boolean;
 	forks: boolean;
 	rewinds: boolean;

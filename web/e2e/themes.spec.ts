@@ -191,8 +191,10 @@ test('the color scheme button cycles light, dark, and system on this device', { 
 	await toggle.click();
 	await expect(toggle).toHaveAccessibleName('Color scheme: System');
 	await expect.poll(background).toBe('rgb(247, 247, 247)');
+	await expect.poll(terminalBackground).toBe('#f7f7f7');
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await expect.poll(background).toBe('rgb(40, 42, 54)');
+	await expect.poll(terminalBackground).toBe('#282a36');
 	await page.reload();
 	await expect(toggle).toHaveAccessibleName('Color scheme: System');
 	await expect.poll(background).toBe('rgb(40, 42, 54)');

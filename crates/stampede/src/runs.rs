@@ -697,6 +697,11 @@ impl Runs {
         let Ok(epic) = self.epics.get(slug) else { return };
         let worktrees = Path::new(&self.worktrees).join(slug);
         let projects = self.projects.list();
+        let reviewed = |number: u32| {
+            epic.review.as_ref().is_none_or(|review| {
+                review.ended || review.reviewers.iter().find(|reviewer| reviewer.number == number).is_none_or(|reviewer| reviewer.done())
+            })
+        };
         for project in projects.iter() {
             let path = Path::new(&project.path);
             match &project.worktree {
@@ -709,9 +714,7 @@ impl Runs {
             if let Some(Worktree { kind: Kind::Epic { role, .. }, .. }) = &project.worktree {
                 let done = match role {
                     Role::Ticket(number) => epic.tickets.get(number).is_some_and(|ticket| matches!(ticket.status, Status::Merged | Status::Skipped)),
-                    Role::Reviewer(number) => epic.review.as_ref().is_none_or(|review| {
-                        review.ended || review.reviewers.iter().find(|reviewer| reviewer.number == *number).is_none_or(|reviewer| reviewer.done())
-                    }),
+                    Role::Reviewer(number) => reviewed(*number),
                     Role::Integration => false,
                 };
                 if done {
@@ -750,7 +753,7 @@ impl Runs {
         for (path, role) in missing {
             // A live Reviewer without a worktree Project keeps its Chat in the parent, so nesting would split them.
             if let Role::Reviewer(number) = role
-                && chatting(number)
+                && (reviewed(number) || chatting(number))
             {
                 continue;
             }

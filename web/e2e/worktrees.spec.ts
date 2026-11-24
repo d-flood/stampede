@@ -1,4 +1,4 @@
-import type { ServerMessage } from '#lib/device.svelte.ts';
+import type { Chat, Project, ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { Page, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
@@ -145,9 +145,10 @@ test('a working Chat in a worktree spins on its Project square and tile', { tag:
 	await expect(tile).toHaveAccessibleName('spin, working');
 });
 
-test('a worktree tile carries the shell and attention marks of its Chats', { tag: '@desktop' }, async ({ page }) => {
+test('a worktree tile carries the shell and attention marks of its Chats, and its parent selects one only once it lists it', { tag: '@desktop' }, async ({ page }) => {
 	let route: WebSocketRoute;
-	let chat: { id: string; projectId: string };
+	let chat: Chat;
+	let projects: Project[];
 	await page.routeWebSocket('**/ws', (socket) => {
 		route = socket;
 		const server = socket.connectToServer();
@@ -155,14 +156,22 @@ test('a worktree tile carries the shell and attention marks of its Chats', { tag
 			if (typeof data === 'string') {
 				const message: ServerMessage = JSON.parse(data);
 				if (message.type === 'chat.created') chat = message.chat;
+				if (message.type === 'projects.changed') projects = message.projects;
 			}
 			socket.send(data);
 		});
 	});
 	await openProject(page, 'alpha');
+	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab');
+	await newTab(page, 'Terminal');
+	const terminal = await pinned(tabs.last());
+	await newTab(page, 'Terminal');
+	await expect(tabs).toHaveCount(2);
+	await terminal.click();
 	await mint(page, 'marks');
 	await newTab(page, 'Fake Claude');
-	await expect((await pinned(page.getByRole('tab', { name: /^Fake Claude/ }))).getByTitle('done')).toBeVisible();
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
+	await expect(tab.getByTitle('done')).toBeVisible();
 
 	const rail = page.getByRole('navigation', { name: 'Projects' });
 	const tile = rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: /^marks/ });
@@ -175,4 +184,11 @@ test('a worktree tile carries the shell and attention marks of its Chats', { tag
 
 	route!.send(JSON.stringify({ type: 'attention.changed', items: [{ projectId: chat!.projectId, chatId: chat!.id, label: 'Fake Claude', status: 'waiting' }] }));
 	await expect(tile.locator('.attention')).toHaveText('1');
+
+	const { parent } = projects!.find(({ id }) => id === chat!.projectId)!.worktree!;
+	route!.send(JSON.stringify({ type: 'projects.changed', projects: projects!.filter(({ id }) => id !== chat!.projectId) }));
+	await expect(tile).toHaveCount(0);
+	await expectSelected(terminal);
+	route!.send(JSON.stringify({ type: 'chats.changed', projectId: parent, chats: [{ ...chat!, projectId: parent }] }));
+	await expectSelected(tab);
 });

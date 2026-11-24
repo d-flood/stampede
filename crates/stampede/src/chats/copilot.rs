@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet},
     io,
     path::{Path, PathBuf},
     process::Stdio,
@@ -58,10 +58,14 @@ impl EarlyAction {
     fn turn(&self) -> bool {
         matches!(self, Self::Send(..))
     }
+
+    fn connects(&self) -> bool {
+        matches!(self, Self::Send(..) | Self::Action(Action::Shell(_)))
+    }
 }
 
 struct Metadata {
-    models: Option<Vec<Value>>,
+    models: io::Result<Vec<Value>>,
     current_model: Option<String>,
     current_effort: Option<String>,
     quota: Option<Vec<Reading>>,
@@ -347,7 +351,7 @@ async fn fetch_metadata(session: Arc<CopilotSession>, chat_id: String) -> Metada
     };
     let quota = quota.ok().map(|quota| readings(quota.provider_quotas.as_deref().unwrap_or_default()));
     let cost = metrics.ok().map(|metrics| session_cost(session.id(), Some(&chat_id), &metrics));
-    Metadata { models: models.ok(), current_model, current_effort, quota, cost }
+    Metadata { models, current_model, current_effort, quota, cost }
 }
 
 async fn establish(
@@ -377,8 +381,9 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
         let (history, metadata) = tokio::join!(history, fetch_metadata(Arc::clone(&session), chat.id.clone()));
         let history = history?;
         let _ = transcript.events.send(Event::Session(session.id().to_string()));
-        transcript.apply_metadata(metadata);
+        let listed = transcript.apply_metadata(metadata);
         for event in history { transcript.read(&event, true); }
+        if let Err(error) = listed { transcript.error(error.to_string()); }
         transcript.stop_commands();
         transcript.finish();
         if chat.status != Status::Done {
@@ -390,7 +395,6 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
     } else {
         // A restored Chat that was still starting lost its early prompts.
         if chat.status != Status::Done { transcript.status(Status::Done); }
-        transcript.report_settings();
         tokio::spawn(boot(data_dir.to_owned(), chat.clone(), env.clone(), transcript, actions));
     }
     Ok((Copilot { requests }, received))
@@ -406,6 +410,8 @@ async fn boot(
 ) {
     let mut queued = Vec::new();
     loop {
+        transcript.capabilities.ready = false;
+        transcript.report_settings();
         chat.settings = transcript.settings.clone();
         let opening = establish(data_dir.clone(), chat.clone(), env.clone());
         tokio::pin!(opening);
@@ -430,12 +436,15 @@ async fn boot(
                 return;
             }
             Err(error) => {
-                transcript.provisional_users.clear();
                 transcript.error(error.to_string());
                 queued.retain(|item| !item.turn());
                 if had_send { transcript.finish(); }
-                // Stay open so the user can see the startup error, fix sign-in/install, and send again.
-                while !queued.iter().any(EarlyAction::turn) {
+                transcript.capabilities.ready = true;
+                transcript.report_settings();
+                // Stay open so the user can see the startup error, fix sign-in/install, and send or run a command again.
+                let connecting = |queued: &[EarlyAction]| queued.iter().filter(|item| item.connects()).count();
+                let held = connecting(&queued);
+                while connecting(&queued) == held {
                     if !early(&mut transcript, &mut queued, actions.recv().await) { return }
                 }
             }
@@ -452,8 +461,7 @@ fn early(transcript: &mut Transcript, queued: &mut Vec<EarlyAction>, action: Opt
             queue_send(transcript, queued, text, images);
         },
         Some(Action::Interrupt) => if queued.iter().any(EarlyAction::turn) {
-            queued.retain(|item| !item.turn());
-            transcript.provisional_users.clear();
+            queued.retain(|item| !item.connects());
             transcript.push(Item::interrupted());
             transcript.finish();
         },
@@ -509,11 +517,7 @@ async fn drive(
     let (shelled, mut finished) = mpsc::unbounded_channel::<(String, Result<Value, String>)>();
     for item in queued {
         let result = match item {
-            EarlyAction::Send(text, images, index) => {
-                let result = send(&session, &mut transcript, &text, &images).await;
-                if result.is_err() { transcript.provisional_users.retain(|at| *at != index); }
-                result
-            }
+            EarlyAction::Send(text, images, index) => send(&session, &mut transcript, &text, &images).await.map(|message| { transcript.provisional_users.insert(message, index); }),
             EarlyAction::Action(Action::Shell(command)) => {
                 let request = Uuid::new_v4().to_string();
                 shells.insert(request.clone());
@@ -538,11 +542,10 @@ async fn drive(
         let result: io::Result<()> = tokio::select! {
             loaded = ready_metadata(&mut metadata) => {
                 metadata = None;
-                if let Some(loaded) = loaded { transcript.apply_metadata(loaded); }
-                Ok(())
+                loaded.map_or(Ok(()), |loaded| transcript.apply_metadata(loaded))
             },
             action = actions.recv() => match action {
-                Some(Action::Send(text, images)) => send(&session, &mut transcript, &text, &images).await,
+                Some(Action::Send(text, images)) => send(&session, &mut transcript, &text, &images).await.map(drop),
                 Some(Action::Shell(command)) => {
                     let request = Uuid::new_v4().to_string();
                     shells.insert(request.clone());
@@ -555,7 +558,7 @@ async fn drive(
                     Ok(())
                 }
                 Some(Action::Retry) => {
-                    if let Some((text, images)) = transcript.last_input.clone() { send(&session, &mut transcript, &text, &images).await } else { Ok(()) }
+                    if let Some((text, images)) = transcript.last_input.clone() { send(&session, &mut transcript, &text, &images).await.map(drop) } else { Ok(()) }
                 }
                 Some(Action::Interrupt) => {
                     for request in &shells {
@@ -628,12 +631,13 @@ fn resolve(pending: &mut HashMap<String, oneshot::Sender<Answer>>, events: &Unbo
     for (id, _) in pending.drain() { let _ = events.send(Event::Resolved(id)); }
 }
 
-async fn send(session: &CopilotSession, transcript: &mut Transcript, text: &str, images: &[Image]) -> io::Result<()> {
+/// Sends a message, giving the id its `user.message` will carry.
+async fn send(session: &CopilotSession, transcript: &mut Transcript, text: &str, images: &[Image]) -> io::Result<String> {
     let attachments = images.iter().map(|image| Attachment::Blob { data: image.data.clone(), mime_type: image.media_type.clone(), display_name: None }).collect();
     transcript.last_input = Some((text.to_owned(), images.to_vec()));
     transcript.status(Status::Working);
     match rpc(session.send(MessageOptions::new(text).with_attachments(attachments))).await {
-        Ok(_) => Ok(()),
+        Ok(message) => Ok(message),
         Err(error) => { transcript.finish(); Err(error) }
     }
 }
@@ -678,7 +682,8 @@ struct Transcript {
     seen: HashSet<String>,
     messages: HashMap<String, usize>,
     user_events: HashMap<usize, String>,
-    provisional_users: VecDeque<usize>,
+    /// The Items of messages shown before Copilot was ready, by message id.
+    provisional_users: HashMap<String, usize>,
     last_input: Option<(String, Vec<Image>)>,
     tools: HashMap<String, (usize, Value)>,
     thinking: Option<(usize, Instant)>,
@@ -697,7 +702,7 @@ struct Transcript {
 
 impl Transcript {
     fn new(cwd: &Path, events: UnboundedSender<Event>, settings: Settings) -> Self {
-        Self { data_dir: None, cwd: cwd.to_owned(), events, items: Vec::new(), seen: HashSet::new(), messages: HashMap::new(), user_events: HashMap::new(), provisional_users: VecDeque::new(), last_input: None, tools: HashMap::new(), thinking: None, settings, model_overridden: false, effort_overridden: false, saw_quota: false, saw_cost: false, capabilities: Capabilities::default(), efforts: HashMap::new(), status: Status::Done, tokens: Tokens { input: 0, output: 0 }, cache: None, subagents: HashMap::new() }
+        Self { data_dir: None, cwd: cwd.to_owned(), events, items: Vec::new(), seen: HashSet::new(), messages: HashMap::new(), user_events: HashMap::new(), provisional_users: HashMap::new(), last_input: None, tools: HashMap::new(), thinking: None, settings, model_overridden: false, effort_overridden: false, saw_quota: false, saw_cost: false, capabilities: Capabilities::default(), efforts: HashMap::new(), status: Status::Done, tokens: Tokens { input: 0, output: 0 }, cache: None, subagents: HashMap::new() }
     }
 
     fn init_capabilities(&mut self) {
@@ -707,29 +712,30 @@ impl Transcript {
         self.capabilities.modes = Agent::Copilot.modes().iter().map(|mode| Choice::mode(mode)).collect();
     }
 
-    fn apply_metadata(&mut self, metadata: Metadata) {
-        if let Some(models) = metadata.models {
+    /// Adopts what Copilot reports of a session, failing when it couldn't list its models.
+    fn apply_metadata(&mut self, metadata: Metadata) -> io::Result<()> {
+        self.capabilities.ready = true;
+        let listed = metadata.models.map(|models| {
             self.capabilities.models = models.iter().filter_map(|model| model["id"].as_str().map(str::to_owned)).collect();
             self.efforts = models.iter().filter_map(|model| {
                 let id = model["id"].as_str()?.to_owned();
                 let efforts = model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
                 Some((id, efforts))
             }).collect();
-        }
+        });
         if !self.model_overridden { self.settings.chosen.model = metadata.current_model.or(self.settings.chosen.model.take()); }
         if !self.effort_overridden { self.settings.chosen.effort = metadata.current_effort.or(self.settings.chosen.effort.take()); }
         if !self.saw_quota && let Some(quota) = metadata.quota { let _ = self.events.send(Event::Usage(quota)); }
         if !self.saw_cost && let Some(cost) = metadata.cost { let _ = self.events.send(Event::Usage(vec![cost])); }
         self.report_settings();
+        listed.map_err(|error| io::Error::other(format!("Cannot list models: {error}")))
     }
 
     fn push_provisional_user(&mut self, text: &str, images: &[Image]) -> usize {
         self.finish_thinking();
         self.last_input = Some((text.to_owned(), images.to_vec()));
         let image_urls = images.iter().map(|image| format!("data:{};base64,{}", image.media_type, image.data)).collect();
-        let index = self.push(Item::User { text: text.to_owned(), images: images.len(), image_urls, template: None, rewind_from: None });
-        self.provisional_users.push_back(index);
-        index
+        self.push(Item::User { text: text.to_owned(), images: images.len(), image_urls, template: None, rewind_from: None })
     }
 
     fn push(&mut self, item: Item) -> usize {
@@ -828,7 +834,7 @@ impl Transcript {
                 self.last_input = Some((text.clone(), images.clone()));
                 let image_urls = images.iter().map(|image| format!("data:{};base64,{}", image.media_type, image.data)).collect();
                 let item = Item::User { text, images: images.len(), image_urls, template: None, rewind_from: None };
-                let index = if let Some(index) = self.provisional_users.pop_front() {
+                let index = if let Some(index) = data["messageId"].as_str().and_then(|id| self.provisional_users.remove(id)) {
                     if self.items[index] != item {
                         self.items[index] = item;
                         self.changed(index);

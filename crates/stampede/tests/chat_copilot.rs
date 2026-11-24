@@ -4,7 +4,7 @@ use std::{env, fs, time::Duration};
 
 use common::{Server, apply, chat_turn, close_chat, control, next, next_control};
 use serde_json::{Value, json};
-use tokio::{net::TcpStream, time::timeout};
+use tokio::{net::TcpStream, time::{sleep, timeout}};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -322,6 +322,24 @@ async fn copilot_interrupts_streaming_and_pending_permissions() {
         assert!(transcript["items"].as_array().unwrap().iter().any(|item| item["notice"] == "interrupted"));
         close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
     }
+}
+
+#[tokio::test]
+async fn copilot_shows_a_message_after_the_ones_a_stop_dropped() {
+    let (server, mut socket, chat) = launch("interrupt", "default").await;
+    for text in ["First", "Second"] {
+        control(&mut socket, json!({ "type": "chat.send", "chatId": chat["id"], "text": text })).await;
+    }
+    let sends = || received(&server).iter().filter(|message| message["method"] == "session.send").count();
+    timeout(Duration::from_secs(10), async { while !server.root.path().join("copilot/received.jsonl").exists() || sends() < 2 { sleep(Duration::from_millis(20)).await; } }).await.unwrap();
+    control(&mut socket, json!({ "type": "chat.interrupt", "chatId": chat["id"] })).await;
+    done(&mut socket).await;
+    control(&mut socket, json!({ "type": "chat.send", "chatId": chat["id"], "text": "Third" })).await;
+    timeout(Duration::from_secs(10), async { while next_control(&mut socket, "chat.item").await["item"]["text"] != "Third" {} }).await.unwrap();
+    let transcript = items(&mut socket, &chat).await;
+    let at = |matches: &dyn Fn(&Value) -> bool| transcript["items"].as_array().unwrap().iter().position(matches);
+    assert!(at(&|item| item["text"] == "Third") > at(&|item| item["notice"] == "interrupted"), "{transcript}");
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
 }
 
 #[tokio::test]

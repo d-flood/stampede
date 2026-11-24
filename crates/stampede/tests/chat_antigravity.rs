@@ -2,7 +2,7 @@ use crate::common;
 
 use std::{env, fs, time::Duration};
 
-use common::{Server, chat_turn, close_chat, control, next, next_control};
+use common::{Server, apply, chat_turn, close_chat, control, next, next_control};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
@@ -178,6 +178,29 @@ async fn antigravity_reopens_history_after_restart_and_lists_project_sessions() 
     let resumed = timeout(Duration::from_secs(20), next_control(&mut socket, "chat.created")).await.unwrap()["chat"].clone();
     assert_eq!(attached(&mut socket, &resumed).await["items"].as_array().unwrap().len(), 4);
     close_chat(&mut socket, server.root.path(), resumed["id"].as_str().unwrap()).await;
+}
+
+#[tokio::test]
+async fn antigravity_stays_working_when_a_setting_before_an_early_prompt_fails() {
+    let (server, mut socket, project) = start(&rig("simple-turn", "")).await;
+    let chat = open(&mut socket, &project).await;
+    let mut items = attached(&mut socket, &chat).await["items"].as_array().unwrap().clone();
+    control(&mut socket, json!({ "type": "chat.run", "chatId": chat["id"], "command": "model", "value": "unlisted" })).await;
+    control(&mut socket, json!({ "type": "chat.send", "chatId": chat["id"], "text": "Hello" })).await;
+    let mut working = false;
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let message = next(&mut socket).await;
+            match message["type"].as_str() {
+                Some("chat.item" | "chat.append") => apply(&mut items, &message),
+                Some("chat.status") if message["status"] == "done" && working => break,
+                Some("chat.status") => working = message["status"] == "working",
+                _ => {}
+            }
+        }
+    }).await.unwrap();
+    assert!(items.iter().any(|item| item["text"] == "Welcome—**glad** you’re here."), "{items:?}");
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
 }
 
 #[tokio::test]

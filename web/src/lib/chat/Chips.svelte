@@ -12,12 +12,13 @@
 	type Props = {
 		agent: Agent;
 		settings: Settings;
+		ready: boolean;
 		choices: Record<Setting, Choice[]>;
 		children?: Snippet;
 		onrun(setting: Setting, value: string): void;
 	};
 
-	let { agent, settings, choices, children, onrun }: Props = $props();
+	let { agent, settings, ready, choices, children, onrun }: Props = $props();
 
 	const names: Record<Setting, string> = { model: 'Model', effort: 'Effort', speed: 'Speed', ultracode: 'Ultracode', mode: 'Mode' };
 	const phone = $derived(form() === 'phone');
@@ -38,7 +39,9 @@
 			onselect: () => onrun(setting, choice.value)
 		}));
 	const sections = $derived(
-		tuning.filter((setting) => choices[setting].length).map((setting) => ({ heading: pending(setting) ? `${names[setting]} · next turn` : names[setting], items: menu(setting) }))
+		tuning
+			.filter((setting) => choices[setting].length || (setting === 'model' && ready))
+			.map((setting) => ({ heading: pending(setting) ? `${names[setting]} · next turn` : names[setting], items: menu(setting), empty: 'No models available' }))
 	);
 </script>
 
@@ -51,7 +54,7 @@
 		</Tooltip>
 	{/if}
 	{#if parts.length}
-		<Menu side="top" items={sections} loading={choices.model.length ? undefined : 'Loading models…'}>
+		<Menu side="top" items={sections} loading={ready || choices.model.length ? undefined : 'Loading models…'}>
 			{#snippet trigger(props)}
 				<Chip
 					{...props}

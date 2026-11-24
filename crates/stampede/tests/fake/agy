@@ -167,6 +167,8 @@ def handle(request):
     elif method == 'session/set_config_option':
         id = params['sessionId']
         session = load(id)
+        if params['value'] == 'unlisted':
+            return fail(request, -32602, 'Unknown value')
         session['model' if params['configId'] == 'model' else 'effort'] = params['value']
         save(id, session)
         reply(request, {'configOptions': options(session)})

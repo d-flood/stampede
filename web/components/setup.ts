@@ -18,6 +18,9 @@ declare module 'vitest/browser' {
 const pageFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => (String(input).startsWith('/api/') ? Response.json(null) : pageFetch(input, init));
 
+// Vitest's page keeps a phone's zoom after a test, leaving the next test's controls off screen.
+parent.document.querySelector('meta[name=viewport]')?.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1');
+
 beforeAll(async () => {
 	await commands.hardwareGpu();
 	await Promise.all(['16px "Literata Variable"', '16px "Fira Sans"', '16px "JetBrains Mono"'].map((font) => document.fonts.load(font)));

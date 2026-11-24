@@ -1380,6 +1380,7 @@ impl Transcript {
         let listed = self.models.iter().find(|listed| listed["value"] == model);
         let efforts = listed.and_then(|listed| listed["supportedEffortLevels"].as_array()).into_iter().flatten();
         let capabilities = Capabilities {
+            ready: !self.asked.values().any(|asked| matches!(asked, Asked::Initialize)),
             rewinds_files: true,
             forks: true,
             rewinds: true,

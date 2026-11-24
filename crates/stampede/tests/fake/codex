@@ -56,6 +56,8 @@ def answers():
 
 
 def answer(message):
+    if message['method'] == os.environ.get('STAMPEDE_FAKE_SILENT'):
+        return
     for output in answers()[message['method']]:
         output['id'] = message['id']
         send(output)

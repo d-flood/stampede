@@ -33,6 +33,7 @@ use crate::{
 const HEARTBEAT: Duration = Duration::from_secs(5);
 const RECONNECTING: Duration = Duration::from_secs(30);
 const REPLAY: Duration = Duration::from_secs(5);
+const LISTING: Duration = Duration::from_secs(5);
 
 const SOURCES: [&str; 5] = ["cli", "vscode", "exec", "appServer", "unknown"];
 const STANDARD: &str = "default";
@@ -121,7 +122,6 @@ pub async fn start(data_dir: &Path, chat: &Chat, env: &BTreeMap<String, String>)
     // A restored Chat that was still starting lost its early prompts.
     if chat.status != Status::Done { transcript.report(Status::Done); }
     transcript.report_settings();
-    transcript.declare();
     tokio::spawn(boot(pending, transcript, data_dir.to_owned(), chat.cwd.clone(), env.clone()));
     Ok((Codex { requests }, received))
 }
@@ -143,6 +143,8 @@ async fn establish(
 async fn boot(mut pending: UnboundedReceiver<Request>, mut transcript: Transcript, data_dir: PathBuf, cwd: PathBuf, env: BTreeMap<String, String>) {
     let mut queued = Vec::new();
     loop {
+        transcript.ready = false;
+        transcript.declare();
         let opening = establish(data_dir.clone(), transcript.chat_id.clone(), cwd.clone(), env.clone(), transcript.settings.chosen.clone());
         tokio::pin!(opening);
         let opened = loop {
@@ -161,8 +163,11 @@ async fn boot(mut pending: UnboundedReceiver<Request>, mut transcript: Transcrip
                 drop_turns(&mut transcript, &mut queued);
                 transcript.push(Item::Notice { notice: Notice::Error, text: error.to_string() });
                 if turn { transcript.report(Status::Done); }
-                // Stay open so the user can see the startup error, fix Codex, and send again.
-                while !queued.iter().any(EarlyRequest::turn) {
+                transcript.ready = true;
+                transcript.declare();
+                // Stay open so the user can see the startup error, fix Codex, and send or run a command again.
+                let held = queued.len();
+                while queued.len() == held {
                     if !early(&mut transcript, &mut queued, pending.recv().await) { return }
                 }
             }
@@ -185,6 +190,7 @@ fn early(transcript: &mut Transcript, queued: &mut Vec<EarlyRequest>, request: O
         },
         Some(Request::Interrupt) => if queued.iter().any(EarlyRequest::turn) {
             drop_turns(transcript, queued);
+            queued.clear();
             transcript.push(Item::interrupted());
             transcript.report(Status::Done);
         },
@@ -466,7 +472,7 @@ async fn drive(
     data_dir: PathBuf,
     cwd: PathBuf,
     env: BTreeMap<String, String>,
-    queued: Vec<EarlyRequest>,
+    mut queued: Vec<EarlyRequest>,
 ) {
     // The proxy outlives a daemon that has gone until it next relays something.
     let mut heartbeat = interval(HEARTBEAT);
@@ -480,8 +486,21 @@ async fn drive(
     }
     if queued.iter().any(EarlyRequest::turn) {
         // Early prompts may name skills, and the settings held for them need the models.
-        while !transcript.lists.is_empty() && let Some(message) = connection.next().await {
-            transcript.read(&message);
+        let overdue = sleep(LISTING);
+        tokio::pin!(overdue);
+        while !transcript.lists.is_empty() && queued.iter().any(EarlyRequest::turn) {
+            tokio::select! {
+                message = connection.next() => match message {
+                    Some(message) => transcript.read(&message),
+                    None => break,
+                },
+                request = pending.recv() => if !early(&mut transcript, &mut queued, request) {
+                    let _ = timeout(CLOSING, connection.close(&mut transcript)).await;
+                    let _ = proxy.kill().await;
+                    return;
+                },
+                _ = &mut overdue => break,
+            }
         }
         let _ = transcript.events.send(Event::Activity(None));
     }
@@ -947,6 +966,7 @@ struct Transcript {
     edits: HashMap<String, Value>,
     settings: Settings,
     models: Vec<Value>,
+    ready: bool,
     skills: Vec<Value>,
     compacting: Option<u64>,
     applying: Vec<(Setting, Option<String>)>,
@@ -1063,6 +1083,7 @@ impl Transcript {
             edits: HashMap::new(),
             settings: Settings::default(),
             models: Vec::new(),
+            ready: false,
             skills: Vec::new(),
             compacting: None,
             applying: Vec::new(),
@@ -1098,6 +1119,7 @@ impl Transcript {
             }
         });
         let capabilities = Capabilities {
+            ready: self.ready,
             rewinds_files: false,
             forks: true,
             rewinds: true,
@@ -1378,6 +1400,7 @@ impl Transcript {
         if let Some(list) = response(message).and_then(|id| self.lists.remove(&id)) {
             match list {
                 List::Models => {
+                    self.ready = true;
                     self.models = message["result"]["data"].as_array().cloned().unwrap_or_default();
                     if self.settings.pending.contains(&Setting::Model) {
                         self.fit();
@@ -1587,6 +1610,7 @@ impl Transcript {
                     self.push(notice(&params["turn"]["error"]));
                 }
                 if params["turn"]["status"] == "interrupted" {
+                    self.provisional_users.clear();
                     self.push(Item::interrupted());
                 }
                 self.report(Status::Done);

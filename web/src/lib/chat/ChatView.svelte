@@ -76,7 +76,7 @@
 		if (shelling) return 'Wait for running commands to finish, or interrupt first.';
 		if (subagents.some(({ subagent }) => subagent.status !== 'done')) return 'Wait for subagents to finish, or interrupt first.';
 	});
-	let capabilities = $state<Capabilities>({ models: [], efforts: [], speeds: [], ultracode: false, modes: [], commands: [], rewindsFiles: false, forks: false, rewinds: false, compacts: false });
+	let capabilities = $state<Capabilities>({ ready: false, models: [], efforts: [], speeds: [], ultracode: false, modes: [], commands: [], rewindsFiles: false, forks: false, rewinds: false, compacts: false });
 	const choices = $derived({
 		model: capabilities.models.map((value) => ({ value, label: value })),
 		effort: capabilities.efforts.map((value) => ({ value, label: value })),

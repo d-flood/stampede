@@ -7,7 +7,7 @@ import { render } from 'vitest-browser-svelte';
 const phone = matchMedia('(pointer: coarse) and (max-width: 767px)').matches;
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const pixels = () => Uint8Array.from(atob(png), (char) => char.charCodeAt(0));
-const capabilities: Capabilities = { rewindsFiles: false, forks: true, rewinds: true, compacts: true, models: [], efforts: [], speeds: [], ultracode: false, modes: [], commands: [] };
+const capabilities: Capabilities = { ready: false, rewindsFiles: false, forks: true, rewinds: true, compacts: true, models: [], efforts: [], speeds: [], ultracode: false, modes: [], commands: [] };
 
 async function mount(overrides: Partial<Chat> = {}) {
 	const send = vi.fn();
@@ -171,4 +171,7 @@ test('the model menu shows it is loading, then its models, above the Composer', 
 	await expect.element(menu.getByRole('menuitemcheckbox', { name: 'haiku' })).toBeVisible();
 	await expect.element(menu.getByRole('status')).not.toBeInTheDocument();
 	await above();
+	await view.rerender({ capabilities: { ...capabilities, ready: true }, choices: { model: [], effort: [], speed: [], ultracode: [], mode: [] } });
+	await expect.element(menu.getByText('No models available')).toBeVisible();
+	await expect.element(menu.getByRole('status')).not.toBeInTheDocument();
 });

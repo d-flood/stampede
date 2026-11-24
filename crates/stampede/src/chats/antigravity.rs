@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io,
     path::{Path, PathBuf},
     process::Stdio,
@@ -308,6 +308,7 @@ struct Live {
 impl Live {
     async fn open(&mut self, unfinished: bool, shell_context: &[String]) {
         if let Err(error) = self.connect().await { self.transcript.error(error.to_string()); }
+        self.transcript.capabilities.ready = true;
         self.transcript.stop_commands();
         self.transcript.finish();
         if unfinished {
@@ -323,12 +324,20 @@ impl Live {
         if connect {
             match self.connect_background(&mut actions, &mut shells).await {
                 Some(pending) => {
-                    for item in pending {
+                    let mut pending = VecDeque::from(pending);
+                    while let Some(item) = pending.pop_front() {
                         let result = match item {
-                            Pending::Send(text, images) => self.dispatch_send(text, images).await,
+                            Pending::Send(text, images) => match self.connect().await {
+                                Ok(()) => self.dispatch_send(text, images).await,
+                                Err(error) => Err(error),
+                            },
                             Pending::Action(action) => self.act(action).await,
                         };
-                        if let Err(error) = result { self.fail(error.to_string()).await; }
+                        match result {
+                            Ok(()) => {}
+                            Err(error) if pending.iter().any(Pending::turn) => self.transcript.error(error.to_string()),
+                            Err(error) => self.fail(error.to_string()).await,
+                        }
                     }
                 }
                 None => open = false,
@@ -396,6 +405,7 @@ impl Live {
                     pending.retain(|item| !item.turn());
                     self.end_turn().await;
                 }
+                self.transcript.capabilities.ready = true;
                 self.transcript.report_settings();
             }
         }
@@ -419,6 +429,11 @@ impl Live {
                     self.transcript.push(Item::interrupted());
                     self.end_turn().await;
                 }
+            }
+            Some(Action::Run(Builtin::Mode(mode))) if Agent::Antigravity.modes().contains(&mode.as_str()) && !pending.iter().any(Pending::turn) => {
+                self.transcript.settings.chosen.mode = Some(mode.clone());
+                self.transcript.report_settings();
+                pending.push(Pending::Action(Action::Run(Builtin::Mode(mode))));
             }
             Some(action) => pending.push(Pending::Action(action)),
         }
@@ -853,6 +868,7 @@ impl Transcript {
     fn error(&mut self, text: String) { self.close(); self.push(Item::Notice { notice: Notice::Error, text }); }
 
     fn configure(&mut self, session: &Value) {
+        self.capabilities.ready = true;
         if let Some(options) = session["configOptions"].as_array() { self.options = options.clone(); }
         if let Some(mode) = session["modes"]["currentModeId"].as_str() { self.mode = Some(mode.to_owned()); }
         self.adopt_options();

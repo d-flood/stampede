@@ -666,6 +666,8 @@ pub trait Driver: Send + Sync {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
+    /// Whether the Agent has answered with its models, or failed to.
+    pub ready: bool,
     pub rewinds_files: bool,
     pub forks: bool,
     pub rewinds: bool,

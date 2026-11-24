@@ -1,9 +1,8 @@
-import { MediaQuery } from 'svelte/reactivity';
-
 export type Scheme = 'light' | 'dark' | 'system';
 
 const key = 'stampede.color-scheme';
-const system = new MediaQuery('(prefers-color-scheme: dark)');
+const system = matchMedia('(prefers-color-scheme: dark)');
+let systemDark = $state(system.matches);
 export const colorScheme = $state<{ choice: Scheme }>({ choice: stored() });
 
 function stored(): Scheme {
@@ -16,7 +15,7 @@ function stored(): Scheme {
 }
 
 export function isDark(): boolean {
-	return colorScheme.choice === 'system' ? system.current : colorScheme.choice === 'dark';
+	return colorScheme.choice === 'system' ? systemDark : colorScheme.choice === 'dark';
 }
 
 function apply() {
@@ -32,5 +31,9 @@ export function selectScheme(choice: Scheme) {
 	} catch {}
 }
 
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', apply);
+// Effects that read colors from CSS run as soon as a listener returns, so one listener updates both.
+system.addEventListener('change', () => {
+	systemDark = system.matches;
+	apply();
+});
 apply();

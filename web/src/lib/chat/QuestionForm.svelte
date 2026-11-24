@@ -250,11 +250,14 @@
 	.option { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: var(--space-3); margin-inline: calc(var(--space-2) * -1); padding: var(--space-2); border-radius: var(--radius-md); cursor: pointer; transition: background var(--dur-fast); }
 	.option:hover { background: var(--hover); }
 	.details { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
-	.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-2); }
-	.tiles .option { margin: 0; grid-template-columns: auto minmax(0, 1fr); row-gap: var(--space-2); }
+	.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr)); gap: var(--space-2); }
+	.tiles .option { grid-row: span 4; grid-template: subgrid / auto minmax(0, 1fr); margin: 0; }
 	.tiles .details { display: contents; }
+	.tiles .details > :global(:not(strong)) { grid-column: 1 / -1; }
+	.tiles :global(.description) { grid-row: 2; }
 	.tiles :global(strong > span) { display: block; margin-left: 0; }
-	.tiles :global(figure) { position: relative; grid-column: 1 / -1; }
+	.tiles :global(figure) { position: relative; grid-row: 3; }
+	.tiles :global(.preview) { grid-row: 4; }
 	.tiles :global(figcaption) { position: absolute; top: var(--space-1); right: var(--space-1); padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--surface-2); }
 	.tiles :global(figcaption > span) { display: none; }
 	.tiles :global(figure img) { width: 100%; object-position: center; }

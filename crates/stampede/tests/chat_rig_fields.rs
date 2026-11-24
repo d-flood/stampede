@@ -6,7 +6,7 @@ use common::{Server, chat_turn, close_chat, control, next_control};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
-    time::timeout,
+    time::{sleep, timeout},
 };
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
@@ -145,6 +145,40 @@ async fn a_codex_rig_starts_its_thread_with_its_speed() {
     let log = fs::read_to_string(server.root.path().join("home/.codex/fake-daemon/received.jsonl")).unwrap();
     let start = log.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).find(|message| message["method"] == "thread/start").unwrap();
     assert_eq!(start["params"]["serviceTier"], "priority");
+}
+
+#[tokio::test]
+async fn a_codex_chat_stops_while_its_daemon_has_yet_to_list_skills() {
+    let config = CONFIG.replace("agent = \"codex\"\ncommand = \"codex\"\nenv = { ", "agent = \"codex\"\ncommand = \"codex\"\nenv = { STAMPEDE_FAKE_SILENT = \"skills/list\", ");
+    let (server, mut socket, project_id) = open_with_config(&config).await;
+    let chat = create(&mut socket, &project_id, "codex").await;
+    control(&mut socket, json!({ "type": "chat.send", "chatId": chat["id"], "text": "Hello" })).await;
+    wait_ready(&mut socket, &chat["id"]).await;
+    control(&mut socket, json!({ "type": "chat.shell", "chatId": chat["id"], "command": "true" })).await;
+    control(&mut socket, json!({ "type": "chat.interrupt", "chatId": chat["id"] })).await;
+    timeout(Duration::from_secs(3), async { while next_control(&mut socket, "chat.status").await["status"] != "done" {} }).await.expect("the Chat never stopped");
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
+    let log = fs::read_to_string(server.root.path().join("home/.codex/fake-daemon/received.jsonl")).unwrap();
+    assert!(!log.contains("turn/start") && !log.contains("thread/shellCommand"), "{log}");
+}
+
+#[tokio::test]
+async fn a_command_tries_a_codex_chat_that_could_not_start_again() {
+    let config = CONFIG.replace("agent = \"codex\"\ncommand = \"codex\"\nenv = { STAMPEDE_FAKE_FIXTURE = \"rig-fields\" }", "agent = \"codex\"\ncommand = \"codex\"\nenv = { STAMPEDE_FAKE_FIXTURE = \"missing\" }");
+    let (server, mut socket, project_id) = open_with_config(&config).await;
+    control(&mut socket, json!({ "type": "chat.create", "projectId": project_id, "rig": "codex" })).await;
+    let chat = next_control(&mut socket, "chat.created").await["chat"].clone();
+    for failures in 1..=2 {
+        timeout(Duration::from_secs(20), async {
+            loop {
+                control(&mut socket, json!({ "type": "chat.attach", "chatId": chat["id"] })).await;
+                if next_control(&mut socket, "chat.items").await["items"].as_array().unwrap().len() == failures { break; }
+                sleep(Duration::from_millis(50)).await;
+            }
+        }).await.unwrap_or_else(|_| panic!("the Chat never failed to start {failures} times"));
+        control(&mut socket, json!({ "type": "chat.shell", "chatId": chat["id"], "command": "codex login status" })).await;
+    }
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
 }
 
 async fn open() -> (Server, Socket, Value) {

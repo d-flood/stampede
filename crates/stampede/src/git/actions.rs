@@ -20,7 +20,7 @@ use tokio::{
     sync::mpsc,
 };
 
-use super::{Commit, Kind, Operation, Status, common_dir, inside, read, sha, trunk};
+use super::{Commit, Kind, Operation, Status, common_dir, inside, read, run_alone, sha, trunk};
 use crate::{
     AppState,
     files::{Failure, root},
@@ -515,7 +515,7 @@ pub async fn publish(State(state): State<AppState>, Param(id): Param<String>) ->
 pub async fn pull_trunk(State(state): State<AppState>, Param(id): Param<String>) -> Result<StatusCode, Failure> {
     let dir = root(&state, &id)?;
     let branch = origin::default_branch(&dir).await.ok_or_else(|| refuse("origin has no default branch."))?;
-    let worktrees = exec(&dir, &["worktree", "list", "--porcelain"]).await.map_err(|output| (StatusCode::BAD_REQUEST, output))?;
+    let worktrees = run_alone(&dir, &["worktree", "list", "--porcelain"]).await.map_err(|output| (StatusCode::BAD_REQUEST, output))?;
     let line = format!("branch refs/heads/{branch}");
     let checkout = worktrees.split("\n\n").find(|block| block.lines().any(|entry| entry == line)).and_then(|block| block.lines().next()?.strip_prefix("worktree "));
     let result = match checkout {

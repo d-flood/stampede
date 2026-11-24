@@ -115,13 +115,31 @@ test('number keys work once the form has focus', async () => {
 
 test('options with images become side-by-side tiles', async () => {
 	const image = { title: 'Layout', asset: 'missing.png' };
-	const { view } = await open([{ ...single, options: [{ id: 'a', label: 'Footnotes', description: '', image }, { id: 'b', label: 'Columns', description: '', image }] }]);
-	await expect.element(view.getByRole('radio', { name: 'Columns', exact: true })).toBeVisible();
-	const [first, second] = view.container.querySelectorAll('.option');
-	await expect.poll(() => first.getBoundingClientRect().top === second.getBoundingClientRect().top && first.getBoundingClientRect().left < second.getBoundingClientRect().left).toBe(true);
-	await view.getByText('Columns').click();
-	await expect.element(view.getByRole('radio', { name: 'Columns', exact: true })).toBeChecked();
-	await expect.element(view.getByRole('radio', { name: 'Footnotes', exact: true })).not.toBeChecked();
+	const { view } = await open([{
+		...single,
+		options: [
+			{ id: 'a', label: 'A: the house at dusk', description: 'Cozy kitchen above, sparks at the basement window below.', recommended: true, image },
+			{ id: 'b', label: 'B: the dinner table', description: 'Table set, one empty chair.', image }
+		]
+	}]);
+	await expect.element(view.getByRole('radio', { name: 'B: the dinner table', exact: true })).toBeVisible();
+	const tiles = [...view.container.querySelectorAll('.option')];
+	const rects = (selector: string) => tiles.map((tile) => tile.querySelector(selector)!.getBoundingClientRect());
+	await expect.poll(() => {
+		const [first, second] = rects('figure');
+		return first.top === second.top && first.left < second.left;
+	}).toBe(true);
+	for (const [index, label] of rects('strong').entries()) {
+		expect(label.width).toBeGreaterThan(tiles[index].clientWidth / 2);
+		expect(rects('.description')[index].top).toBeGreaterThanOrEqual(label.bottom);
+	}
+	await view.getByText('B: the dinner table').click();
+	await expect.element(view.getByRole('radio', { name: 'B: the dinner table', exact: true })).toBeChecked();
+	await expect.element(view.getByRole('radio', { name: 'A: the house at dusk, recommended', exact: true })).not.toBeChecked();
+
+	view.container.style.width = '150px';
+	const scroll = view.container.querySelector('.scroll')!;
+	await expect.poll(() => scroll.clientWidth < 150 && scroll.scrollWidth <= scroll.clientWidth).toBe(true);
 });
 
 test('questions without rich fields use the same form and answer by label', async () => {

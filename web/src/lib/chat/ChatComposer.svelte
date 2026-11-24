@@ -193,7 +193,7 @@
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
 {#snippet meta()}
-	<Chips agent={chat.agent} settings={chat.settings} {choices} {onrun}>
+	<Chips agent={chat.agent} settings={chat.settings} ready={capabilities.ready} {choices} {onrun}>
 		{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
 	</Chips>
 {/snippet}

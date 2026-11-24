@@ -103,6 +103,8 @@
 	const staleGit = new SvelteSet<string>();
 	let chosen = $state(restored.chosen);
 	let chosenTabs = $state<Record<string, string>>(restored.chosenTabs);
+	/** A closed worktree's selected Chat, which its parent selects once it lists it. */
+	let adopting: { projectId: string; tabId: string } | undefined;
 	let splits = $state<Record<string, Split>>(restored.splits);
 	let dragging = $state<{ id: string; x: number; y: number; moved: boolean; over?: Side }>();
 	let dragged = false;
@@ -307,6 +309,11 @@
 				if (selected && focused?.worktree?.parent === message.projectId && message.chats.some(({ id }) => id === selected)) {
 					chosenTabs[message.projectId] = selected;
 				}
+				if (adopting?.projectId === message.projectId) {
+					const { tabId } = adopting;
+					if (message.chats.some(({ id }) => id === tabId)) chosenTabs[message.projectId] = tabId;
+					adopting = undefined;
+				}
 				const listed = (chat: Chat) => message.chats.some(({ id }) => id === chat.id);
 				const gone = (chats[message.projectId] ?? []).filter((chat) => !listed(chat));
 				for (const projectId in chats) {
@@ -415,7 +422,7 @@
 				for (const project of opened) staleGit.add(project.id);
 				if (left?.worktree && !projects.some((project) => project.id === left.id)) {
 					const { parent } = left.worktree;
-					if (selected && chats[left.id]?.some(({ id }) => id === selected)) chosenTabs[parent] = selected;
+					if (selected && chats[left.id]?.some(({ id }) => id === selected)) adopting = { projectId: parent, tabId: selected };
 					chosen = parent;
 				}
 				for (const projectId in browsers) {

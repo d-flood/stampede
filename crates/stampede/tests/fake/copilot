@@ -112,6 +112,8 @@ while True:
     elif method == 'session.send':
         message = str(uuid.uuid4())
         reply(request, {'messageId': message})
+        if waiting == 'interrupt':
+            continue
         event('user.message', {'messageId': message, 'content': params['prompt'], 'attachments': params.get('attachments', [])})
         if fixture == 'approval':
             waiting = 'approval'
@@ -121,6 +123,7 @@ while True:
             waiting = 'question'
             send({'jsonrpc': '2.0', 'id': 900001, 'method': 'userInput.request', 'params': {'sessionId': session, 'question': 'Which format?', 'choices': ['JSON', 'CSV'], 'allowFreeform': True}})
         elif fixture == 'interrupt':
+            waiting = 'interrupt'
             event('assistant.message_delta', {'messageId': 'stream', 'deltaContent': 'Still working'})
         elif fixture in ['tools', 'usage-missing', 'usage-partial', 'cost-unavailable']:
             event('tool.execution_start', {'toolCallId': 'shell', 'toolName': 'bash', 'arguments': {'command': 'git status'}})
