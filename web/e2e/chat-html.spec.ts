@@ -4,6 +4,9 @@ import type { WebSocketRoute } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { closeProject, newTab, openProject } from './shell.ts';
 
+// Chromium shrinks an isolated frame by an emulated pixel density, so taps miss it.
+test.use({ deviceScaleFactor: 1 });
+
 const snippet: Item = {
 	kind: 'html',
 	title: 'Research workflow',
