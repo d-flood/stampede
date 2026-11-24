@@ -60,7 +60,7 @@ impl Runs {
                 ticket.status
             )),
             None => match submodules::status(integration).await {
-                Err(_) if !integration.exists() => git::run(&landing.checkout, &["worktree", "prune"])
+                Err(_) if !integration.exists() => git::run_alone(&landing.checkout, &["worktree", "prune"])
                     .await
                     .err()
                     .map(|error| format!("git could not forget the missing Integration Worktree at {path}: {error}")),
@@ -68,14 +68,14 @@ impl Runs {
                 Ok(status) if !status.is_empty() => Some(format!(
                     "Stampede kept the Integration Worktree at {path} and the Epic branch {branch}, because the worktree has uncommitted changes."
                 )),
-                Ok(_) => git::run(&landing.checkout, &["worktree", "remove", "--force", &path])
+                Ok(_) => git::run_alone(&landing.checkout, &["worktree", "remove", "--force", &path])
                     .await
                     .err()
                     .map(|error| format!("git could not remove the Integration Worktree at {path}: {error}")),
             },
         };
         if kept.is_none()
-            && let Err(error) = git::run(&landing.checkout, &["branch", "-d", branch]).await
+            && let Err(error) = git::run_alone(&landing.checkout, &["branch", "-d", branch]).await
         {
             eprintln!("cannot delete {branch}: {error}");
         }
@@ -190,7 +190,7 @@ impl Landing {
 /// The Project's own checkout: the main worktree of the repository whose git common directory is `common_dir`.
 async fn checkout(common_dir: &Path) -> Result<PathBuf, String> {
     let shown = common_dir.display();
-    let list = git::run(common_dir, &["worktree", "list", "--porcelain"]).await.map_err(|error| format!("git could not list the worktrees of {shown}: {error}"))?;
+    let list = git::run_alone(common_dir, &["worktree", "list", "--porcelain"]).await.map_err(|error| format!("git could not list the worktrees of {shown}: {error}"))?;
     let mut lines = list.lines();
     match (lines.next().and_then(|line| line.strip_prefix("worktree ")), lines.next()) {
         (Some(path), next) if next != Some("bare") => Ok(PathBuf::from(path)),

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, btree_map::Entry},
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, SystemTime},
 };
 
@@ -449,6 +449,15 @@ pub async fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     Err(if stderr.is_empty() { format!("git {} failed: {stdout}", args.join(" ")) } else { stderr })
+}
+
+/// Runs a command that reads every worktree of its repository, which git fails at when it catches one half made.
+pub async fn run_alone(dir: &Path, args: &[&str]) -> Result<String, String> {
+    static REPOSITORIES: LazyLock<Mutex<HashMap<Option<PathBuf>, Arc<tokio::sync::Mutex<()>>>>> = LazyLock::new(Mutex::default);
+    let repository = common_dir(dir).await;
+    let turn = Arc::clone(REPOSITORIES.lock().unwrap().entry(repository).or_default());
+    let _turn = turn.lock().await;
+    run(dir, args).await
 }
 
 async fn git(dir: &Path, args: &[&str]) -> Option<Vec<u8>> {

@@ -47,14 +47,14 @@ impl Runs {
             return Err(format!("{path} already exists"));
         }
         if existing {
-            git::run(checkout, &["worktree", "add", "-q", &path, branch]).await?;
+            git::run_alone(checkout, &["worktree", "add", "-q", &path, branch]).await?;
         } else {
-            git::run(checkout, &["worktree", "add", "-q", track, "-b", branch, &path, from]).await?;
+            git::run_alone(checkout, &["worktree", "add", "-q", track, "-b", branch, &path, from]).await?;
         }
         if let Err(error) = submodules::init(Path::new(&path), checkout).await {
             if !existing {
                 discard(&project.path, &path, branch).await;
-            } else if let Err(removal) = git::run(checkout, &["worktree", "remove", "--force", &path]).await {
+            } else if let Err(removal) = git::run_alone(checkout, &["worktree", "remove", "--force", &path]).await {
                 eprintln!("cannot discard {path}: {removal}");
             }
             return Err(format!("Stampede could not check out the submodules of the new worktree: {error}"));
@@ -70,9 +70,9 @@ impl Runs {
         let parent = project.worktree.as_ref().map_or(&project.id, |worktree| &worktree.parent);
         let base = format!("{}/_branches/{parent}/{name}", self.worktrees);
         let path = (1..).map(|count| if count == 1 { base.clone() } else { format!("{base}-{count}") }).find(|path| !Path::new(path).exists()).unwrap();
-        git::run(checkout, &["worktree", "add", "-q", "--detach", &path, commit]).await?;
+        git::run_alone(checkout, &["worktree", "add", "-q", "--detach", &path, commit]).await?;
         if let Err(error) = submodules::init(Path::new(&path), checkout).await {
-            if let Err(removal) = git::run(checkout, &["worktree", "remove", "--force", &path]).await {
+            if let Err(removal) = git::run_alone(checkout, &["worktree", "remove", "--force", &path]).await {
                 eprintln!("cannot discard {path}: {removal}");
             }
             return Err(format!("Stampede could not check out the submodules of the new worktree: {error}"));
@@ -152,12 +152,12 @@ impl Runs {
         if !force && let Some(work) = unmerged(path, branch.as_deref(), since.as_deref()).await {
             return Err(Refusal::Unmerged(work));
         }
-        git::run(Path::new(&checkout), &["worktree", "remove", "--force", &project.path])
+        git::run_alone(Path::new(&checkout), &["worktree", "remove", "--force", &project.path])
             .await
             .map_err(|error| Refusal::Refused(format!("git could not remove {}: {error}", project.path)))?;
         self.close_project(project_id);
         if let Some(branch) = &branch
-            && let Err(error) = git::run(Path::new(&checkout), &["branch", "-D", branch]).await
+            && let Err(error) = git::run_alone(Path::new(&checkout), &["branch", "-D", branch]).await
         {
             eprintln!("cannot delete {branch}: {error}");
         }

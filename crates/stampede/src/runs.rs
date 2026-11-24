@@ -346,7 +346,7 @@ impl Runs {
         let integration = epic.integration.clone().ok_or_else(|| format!("{slug} has no Integration Worktree to review"))?;
         let worktree = self.worktree(slug, &format!("review-{number}"));
         remove_worktree(&integration, Path::new(&worktree)).await;
-        git::run(&integration, &["worktree", "add", "--detach", &worktree, &epic_branch(slug)]).await?;
+        git::run_alone(&integration, &["worktree", "add", "--detach", &worktree, &epic_branch(slug)]).await?;
         let started = async {
             submodules::init(Path::new(&worktree), &integration)
                 .await
@@ -872,7 +872,7 @@ impl Runs {
             }
             None => {
                 let (worktree, branch) = self.fresh(Path::new(&integration), slug, number).await;
-                git::run(Path::new(&integration), &["worktree", "add", "-b", &branch, &worktree, &epic_branch(slug)]).await?;
+                git::run_alone(Path::new(&integration), &["worktree", "add", "-b", &branch, &worktree, &epic_branch(slug)]).await?;
                 if let Err(error) = submodules::init(Path::new(&worktree), Path::new(&integration)).await {
                     discard(&integration, &worktree, &branch).await;
                     return Err(format!("Stampede could not check out the submodules of {slug}/{number}'s new worktree: {error}"));
@@ -938,7 +938,7 @@ impl Runs {
             .await
             .map_err(|_| format!("{} is not on a branch, so there is nothing to cut {slug}'s branch from", project.path))?;
         let (branch, worktree) = (epic_branch(slug), self.worktree(slug, "integration"));
-        git::run(checkout, &["worktree", "add", "-b", &branch, &worktree, &base]).await?;
+        git::run_alone(checkout, &["worktree", "add", "-b", &branch, &worktree, &base]).await?;
         if let Err(error) = submodules::init(Path::new(&worktree), checkout).await {
             discard(&project.path, &worktree, &branch).await;
             return Err(format!("Stampede could not check out the submodules of {slug}'s new Integration Worktree: {error}"));
@@ -1222,7 +1222,7 @@ impl Runs {
         let kept = |reason: String| Event::WorktreeKept { ticket: number, reason };
         let event = match submodules::status(worktree).await {
             Err(_) if !worktree.exists() => {
-                git::run(integration, &["worktree", "prune"]).await?;
+                git::run_alone(integration, &["worktree", "prune"]).await?;
                 Event::WorktreeRemoved { ticket: number }
             }
             Err(error) => kept(format!("Stampede kept its Ticket Worktree at {path}, where git status failed: {error}")),
@@ -1232,10 +1232,10 @@ impl Runs {
             Ok(_) if git::run(integration, &["merge-base", "--is-ancestor", &branch, &epic_branch(slug)]).await.is_err() => kept(format!(
                 "Stampede kept its Ticket Worktree at {path} and its branch {branch}, which has commits the Epic branch lacks."
             )),
-            Ok(_) => match git::run(integration, &["worktree", "remove", "--force", &path]).await {
+            Ok(_) => match git::run_alone(integration, &["worktree", "remove", "--force", &path]).await {
                 Err(error) => kept(format!("git could not remove its Ticket Worktree at {path}: {error}")),
                 Ok(_) => {
-                    if let Err(error) = git::run(integration, &["branch", "-D", &branch]).await {
+                    if let Err(error) = git::run_alone(integration, &["branch", "-D", &branch]).await {
                         eprintln!("cannot delete {branch}: {error}");
                     }
                     Event::WorktreeRemoved { ticket: number }
@@ -1368,8 +1368,8 @@ fn abandon(review: &Review, chat: &str, reason: String) -> Option<Event> {
 /// Removes a Reviewer's detached worktree, which holds nothing worth keeping.
 async fn remove_worktree(repo: &Path, worktree: &Path) {
     let removed = match worktree.exists() {
-        true => git::run(repo, &["worktree", "remove", "--force", &worktree.to_string_lossy()]).await,
-        false => git::run(repo, &["worktree", "prune"]).await,
+        true => git::run_alone(repo, &["worktree", "remove", "--force", &worktree.to_string_lossy()]).await,
+        false => git::run_alone(repo, &["worktree", "prune"]).await,
     };
     if let Err(error) = removed {
         eprintln!("cannot remove {}: {error}", worktree.display());
@@ -1379,8 +1379,8 @@ async fn remove_worktree(repo: &Path, worktree: &Path) {
 /// Removes a worktree and branch made moments ago, which hold nothing yet.
 async fn discard(repo: &str, worktree: &str, branch: &str) {
     let repo = Path::new(repo);
-    let removed = git::run(repo, &["worktree", "remove", "--force", worktree]).await;
-    if let Err(error) = removed.and(git::run(repo, &["branch", "-D", branch]).await) {
+    let removed = git::run_alone(repo, &["worktree", "remove", "--force", worktree]).await;
+    if let Err(error) = removed.and(git::run_alone(repo, &["branch", "-D", branch]).await) {
         eprintln!("cannot discard {worktree}: {error}");
     }
 }

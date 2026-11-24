@@ -2,6 +2,7 @@ use crate::common;
 
 use std::{
     env, fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -872,8 +873,14 @@ fn roles(message: &Value) -> Vec<Value> {
 #[tokio::test]
 async fn an_epics_worktrees_open_as_projects_beside_its_own_and_close_once_resolved_or_removed() {
     let mut lp = Loop::new("loop-run-nest", &[(1, ""), (2, "")]).await;
+    let (adding, overlapped) = (lp.root.join("adding"), lp.root.join("overlapped"));
+    let hook = lp.repo.join(".git/hooks/post-checkout");
+    fs::write(&hook, format!("#!/bin/sh\nmkdir '{}' || touch '{}'\nsleep 0.3\nrmdir '{0}' || true\n", adding.display(), overlapped.display())).unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
     lp.run("Done", 2).await;
     lp.claimed(&[1, 2]).await;
+    assert!(!overlapped.exists(), "git fails on a worktree it catches half added");
+    fs::remove_file(hook).unwrap();
     let changed = lp.message(|message| message["type"] == "projects.changed" && roles(message).len() == 3).await;
     let projects = changed["projects"].as_array().unwrap();
     let nested = |role: Value| projects.iter().find(|project| project["worktree"]["role"] == role).unwrap().clone();
