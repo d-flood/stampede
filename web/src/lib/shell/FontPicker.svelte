@@ -76,7 +76,7 @@
 	<strong style:font-family="var({fontVariables[role]})">{candidate ?? defaultFonts[role]}</strong>
 </div>
 <Command.Root shouldFilter={false} loop>
-	<Command.Input placeholder="Search installed fonts" aria-label="Search fonts" autocomplete="off" spellcheck={false}>
+	<Command.Input value={query} placeholder="Search installed fonts" aria-label="Search fonts" autocomplete="off" spellcheck={false}>
 		{#snippet child({ props })}
 			<TextField {...props} bind:value={query} {@attach (element) => { tick().then(() => element.focus()); }} />
 		{/snippet}

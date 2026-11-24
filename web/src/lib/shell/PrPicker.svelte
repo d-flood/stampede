@@ -49,7 +49,7 @@
 </script>
 
 <Command.Root label="Pull requests" shouldFilter={false} loop>
-	<Command.Input placeholder="Find, or type a number or URL" autocomplete="off" spellcheck={false}>
+	<Command.Input value={query} placeholder="Find, or type a number or URL" autocomplete="off" spellcheck={false}>
 		{#snippet child({ props })}
 			<TextField {...props} bind:value={query} {@attach (element) => element.focus()} />
 		{/snippet}

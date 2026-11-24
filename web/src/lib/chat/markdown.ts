@@ -31,7 +31,8 @@ rules.link_open = (tokens, index, options, env, self) => {
 	const token = tokens[index];
 	token.attrSet('target', '_blank');
 	token.attrSet('rel', 'noreferrer');
-	const file = env.files && fileLink(token.attrGet('href')!);
+	const href = token.attrGet('href');
+	const file = env?.files && typeof href === 'string' ? fileLink(href) : undefined;
 	if (!file) return self.renderToken(tokens, index, options);
 	token.attrJoin('class', 'file');
 	const { svg, color = 'inherit' } = fileIcon(file.path);
@@ -42,17 +43,17 @@ for (const name of ['fence', 'code_block'] as const) {
 	const rule = rules[name]!;
 	rules[name] = (tokens, index, options, env, self) => {
 		const html = rule(tokens, index, options, env, self);
-		return env.copy ? `<div class="code-block">${html}${copy}</div>` : html;
+		return env?.copy ? `<div class="code-block">${html}${copy}</div>` : html;
 	};
 }
 
-rules.table_open = (tokens, index, options, env, self) => (env.copy ? '<div class="table">' : '') + self.renderToken(tokens, index, options);
-rules.table_close = (tokens, index, options, env, self) => self.renderToken(tokens, index, options) + (env.copy ? '</div>' : '');
+rules.table_open = (tokens, index, options, env, self) => (env?.copy ? '<div class="table">' : '') + self.renderToken(tokens, index, options);
+rules.table_close = (tokens, index, options, env, self) => self.renderToken(tokens, index, options) + (env?.copy ? '</div>' : '');
 
 const inline = rules.code_inline!;
 rules.code_inline = (tokens, index, options, env, self) => {
 	const html = inline(tokens, index, options, env, self);
-	return env.copy && tokens[index].content.length >= 20 ? `<span class="code-inline">${html}${copy}</span>` : html;
+	return env?.copy && tokens[index].content.length >= 20 ? `<span class="code-inline">${html}${copy}</span>` : html;
 };
 
 // CSS can't size a column by its text length, and without a floor long text shrinks to its longest word.

@@ -499,18 +499,21 @@ fn describe(record: Record) -> (Terminal, String, Title) {
 }
 
 fn plain(bytes: &[u8], size: Size) -> io::Result<String> {
-    use libghostty_vt::{Terminal, fmt::{Format, Formatter, FormatterOptions}, screen::Screen, terminal::Mode};
+    use libghostty_vt::{Terminal, fmt::Formatter, mode::Mode, screen::Screen};
+
+    fn format(terminal: &Terminal) -> Result<Vec<u8>, libghostty_vt::Error> {
+        Ok(Formatter::new(terminal)?.set_unwrap(true)?.format_alloc(None)?.to_vec())
+    }
 
     let extract = || -> Result<String, libghostty_vt::Error> {
         let mut terminal = Terminal::new(size.cols, size.rows)?;
-        terminal.set_scrollback_max_bytes(None)?.set_scrollback_max_lines(None)?;
+        terminal.set_scrollback_max_bytes(Some(usize::MAX))?.set_scrollback_max_lines(None)?;
         terminal.vt_write(bytes);
-        let options = || FormatterOptions::new().with_format(Format::Plain).with_unwrap(true).with_trim(true);
-        let active = Formatter::new(&terminal, options())?.format_alloc(None)?.to_vec();
+        let active = format(&terminal)?;
         let mut text = Vec::new();
         if terminal.active_screen()? == Screen::Alternate {
             terminal.vt_write(if terminal.mode(Mode::ALT_SCREEN_SAVE)? { b"\x1b[?1049l" } else { b"\x1b[?47l" });
-            text.extend_from_slice(&Formatter::new(&terminal, options())?.format_alloc(None)?);
+            text = format(&terminal)?;
             text.push(b'\n');
         }
         text.extend_from_slice(&active);

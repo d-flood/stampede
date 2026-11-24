@@ -6,7 +6,7 @@
 ./setup
 ```
 
-Needs Linux with a systemd user session. It installs missing toolchains without sudo: Rust via rustup, Zig 0.16 in `~/.local/zig`, and Node with pnpm in `~/.local`. Tools already present at a suitable version are reused. When Tailscale is running with HTTPS certificates enabled, it serves Stampede at `https://<machine>.<tailnet>.ts.net:8443`. It then runs `./rebuild` and prints the remaining sudo commands (base packages, lingering, Tailscale operator) and agent logins. Rerun it after those steps; it accepts the same options as `./rebuild`.
+Needs Linux with a systemd user session. It installs missing toolchains without sudo: Rust via rustup, Zig 0.17 in `~/.local/zig`, and Node with pnpm in `~/.local`. Tools already present at a suitable version are reused. When Tailscale is running with HTTPS certificates enabled, it serves Stampede at `https://<machine>.<tailnet>.ts.net:8443`. It then runs `./rebuild` and prints the remaining sudo commands (base packages, lingering, Tailscale operator) and agent logins. Rerun it after those steps; it accepts the same options as `./rebuild`.
 
 ## Rebuilding
 

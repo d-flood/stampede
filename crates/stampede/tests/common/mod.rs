@@ -20,8 +20,8 @@ use nix::{
 };
 use libghostty_vt::{
     Terminal,
-    fmt::{Format, Formatter, FormatterOptions},
-    terminal::Mode,
+    fmt::{Extras, Format, Formatter},
+    mode::Mode,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -55,13 +55,12 @@ pub fn state(terminal: &Terminal) -> String {
 }
 
 fn format(terminal: &Terminal, format: Format) -> String {
-    let options = FormatterOptions::new()
-        .with_format(format)
-        .with_unwrap(true)
-        .with_modes(true)
-        .with_cursor(true)
-        .with_style(true);
-    let bytes = Formatter::new(terminal, options).unwrap().format_alloc(None).unwrap();
+    let mut formatter = Formatter::new(terminal).unwrap();
+    formatter.set_format(format).unwrap()
+        .set_unwrap(true).unwrap()
+        .set_trim(false).unwrap()
+        .set_extras(Extras::MODES | Extras::CURSOR | Extras::STYLE).unwrap();
+    let bytes = formatter.format_alloc(None).unwrap();
     String::from_utf8_lossy(&bytes).into_owned()
 }
 

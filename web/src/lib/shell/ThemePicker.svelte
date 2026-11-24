@@ -58,7 +58,7 @@
 	<IconButton label="Next theme" disabled={choice.saving || choice.matches.length === 0} onclick={() => choice.cycle(1)}><CaretRight /></IconButton>
 </div>
 <Command.Root shouldFilter={false} loop>
-	<Command.Input placeholder="Search {choice.all ? 'all' : choice.scheme} themes" aria-label="Search themes" autocomplete="off" spellcheck={false}>
+	<Command.Input value={choice.query} placeholder="Search {choice.all ? 'all' : choice.scheme} themes" aria-label="Search themes" autocomplete="off" spellcheck={false}>
 		{#snippet child({ props })}
 			<TextField {...props} bind:value={choice.query} {@attach (element) => { tick().then(() => element.focus()); }} />
 		{/snippet}

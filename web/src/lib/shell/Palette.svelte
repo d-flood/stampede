@@ -103,6 +103,7 @@
 
 <Command.Root label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[scope]} shouldFilter={false} loop>
 	<Command.Input
+		value={query}
 		placeholder={{ all: 'Switch Project, launch a Rig, or open a file', files: 'Find a file', sessions: 'Find a session by title', tabs: 'Choose what to open' }[scope]}
 		autocomplete="off"
 		spellcheck={false}

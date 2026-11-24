@@ -14,10 +14,10 @@ use std::{
 
 use libghostty_vt::{
     Terminal,
-    fmt::{Format, Formatter, FormatterOptions},
+    fmt::{Extras, Format, Formatter},
+    mode::Mode,
     screen::Screen,
     snapshot::Decoder,
-    terminal::Mode,
 };
 use nix::{
     sys::{
@@ -291,7 +291,7 @@ fn run(
     let mut terminal = Terminal::new(record.size.cols, record.size.rows)?;
     terminal
         // The default byte cap (10 KB) would prune long before the line cap.
-        .set_scrollback_max_bytes(None)?
+        .set_scrollback_max_bytes(Some(usize::MAX))?
         .set_scrollback_max_lines(Some(scrollback))?
         .set_continuation_max_bytes(MAX_CONTINUATION)?
         .on_pty_write({
@@ -325,7 +325,8 @@ fn run(
                 terminal.vt_write(&bytes);
                 changed = true;
                 if titled.replace(false) {
-                    titles.set(terminal.title().unwrap_or_default(), pty.master.process_group_leader());
+                    let title = std::str::from_utf8(terminal.title().unwrap_or_default()).unwrap_or_default();
+                    titles.set(title, pty.master.process_group_leader());
                 }
                 let frame = protocol::encode(&Message::Output(bytes));
                 conns.retain(|_, conn| !conn.attached || conn.send(frame.clone()));
@@ -512,19 +513,12 @@ fn snapshot(terminal: &mut Terminal) -> Result<Vec<u8>, libghostty_vt::Error> {
 }
 
 fn format(terminal: &Terminal, terminal_state: bool) -> Result<Vec<u8>, libghostty_vt::Error> {
-    let options = FormatterOptions::new()
-        .with_format(Format::Vt)
-        .with_unwrap(true)
-        .with_modes(terminal_state)
-        .with_scrolling_region(terminal_state)
-        .with_tabstops(terminal_state)
-        .with_pwd(terminal_state)
-        .with_keyboard(terminal_state)
-        .with_cursor(true)
-        .with_style(true)
-        .with_hyperlink(true)
-        .with_protection(true)
-        .with_kitty_keyboard(true)
-        .with_charsets(true);
-    Ok(Formatter::new(terminal, options)?.format_alloc(None)?.to_vec())
+    let mut extras = Extras::CURSOR | Extras::STYLE | Extras::HYPERLINK | Extras::PROTECTION
+        | Extras::KITTY_KEYBOARD | Extras::CHARSETS;
+    if terminal_state {
+        extras |= Extras::MODES | Extras::SCROLLING_REGION | Extras::TABSTOPS | Extras::PWD | Extras::KEYBOARD;
+    }
+    let mut formatter = Formatter::new(terminal)?;
+    formatter.set_format(Format::Vt)?.set_unwrap(true)?.set_trim(false)?.set_extras(extras)?;
+    Ok(formatter.format_alloc(None)?.to_vec())
 }

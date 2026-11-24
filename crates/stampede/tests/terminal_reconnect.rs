@@ -42,7 +42,7 @@ async fn a_newly_attached_device_sees_the_holders_screen() {
     assert!(late.text().contains("line 1\n"));
     assert_eq!(state(&late.terminal), state(&watcher.terminal));
 
-    watcher.terminal.set_scrollback_max_bytes(None).unwrap();
+    watcher.terminal.set_scrollback_max_bytes(Some(usize::MAX)).unwrap();
     watcher.send("seq 1 2000; echo history-ready\r").await;
     watcher.settle(|text| text.contains("2000\nhistory-ready")).await;
     fs::write(server.root.path().join("config.toml"), "scrollback = 3\n").unwrap();

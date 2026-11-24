@@ -213,7 +213,7 @@ test('the Tray counts Subagents with colored dots, surfaces waiting ones and kee
 	await expect(calls).toContainText('Read codex.rs');
 	await expect(panel.getByText('Checking the relevant code.', { exact: true })).toBeVisible();
 	await calls.locator('details.running > summary').click();
-	await expect(calls.locator('pre')).toHaveText('running 3 tests');
+	await expect(calls.locator('pre.output')).toHaveText('running 3 tests');
 	(items[2] as Subagent).items[4] = { kind: 'text', text: 'First finding: missing validation.', phase: 'final', streaming: true };
 	send({ type: 'chat.item', chatId: chatId!, index: 2, item: items[2] });
 	await expect(panel.getByText('First finding: missing validation.', { exact: true })).toBeVisible();

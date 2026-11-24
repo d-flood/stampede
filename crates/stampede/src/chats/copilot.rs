@@ -286,7 +286,7 @@ impl PermissionHandler for Handlers {
 
 #[async_trait]
 impl UserInputHandler for Handlers {
-    async fn handle(&self, _session: SessionId, question: String, choices: Option<Vec<String>>, _freeform: Option<bool>) -> Option<UserInputResponse> {
+    async fn handle(&self, _session: SessionId, _request: Option<RequestId>, question: String, choices: Option<Vec<String>>, _freeform: Option<bool>) -> Option<UserInputResponse> {
         let choices = choices.unwrap_or_default();
         let request = RequestKind::Question { id: Uuid::new_v4().to_string(), questions: vec![Question {
             id: String::new(), header: String::new(), question,

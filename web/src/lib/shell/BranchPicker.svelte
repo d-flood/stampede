@@ -73,7 +73,7 @@
 
 <Command.Root label="Branches" shouldFilter={false} loop>
 	<div class="search">
-		<Command.Input placeholder={onpick ? 'Find a branch' : 'Find or create a branch'} autocomplete="off" spellcheck={false}>
+		<Command.Input value={query} placeholder={onpick ? 'Find a branch' : 'Find or create a branch'} autocomplete="off" spellcheck={false}>
 			{#snippet child({ props })}
 				<TextField {...props} mono bind:value={query} {@attach (element) => element.focus()} />
 			{/snippet}
