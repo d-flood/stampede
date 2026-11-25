@@ -695,8 +695,19 @@
 		}
 	}
 
-	.content:not(.narrow) :global(.cm-scroller) {
-		mask-image: linear-gradient(to right, #000 calc(100% - 3 * var(--space-6)), transparent);
+	/* An overlay rather than a mask, so Draft comments can sit above the fade. */
+	.content:not(.narrow) > :global(.cm-editor > .cm-scroller::after),
+	.content:not(.narrow) :global(.cm-mergeViewEditor > .cm-editor > .cm-scroller::after) {
+		content: '';
+		position: sticky;
+		top: 0;
+		right: 0;
+		flex: none;
+		align-self: stretch;
+		width: calc(3 * var(--space-6));
+		margin-left: calc(-3 * var(--space-6));
+		background: linear-gradient(to right, transparent, var(--color-bg));
+		pointer-events: none;
 	}
 
 	.counts {
@@ -757,6 +768,14 @@
 
 	.content :global(.cm-mergeView) {
 		height: 100%;
+	}
+
+	.content :global(.cm-mergeViewEditors) {
+		min-height: 100%;
+	}
+
+	.content :global(.cm-mergeViewEditor + .cm-mergeViewEditor) {
+		border-left: var(--border-width) solid var(--border);
 	}
 
 	.content :global(.cm-merge-revert) {

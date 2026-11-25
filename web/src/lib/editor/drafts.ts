@@ -339,6 +339,43 @@ const pressing = ViewPlugin.fromClass(
 	}
 );
 
+/** Reveals the "+" of whichever line a mouse is over, on the code as well as in the gutter. */
+const hovering = ViewPlugin.fromClass(
+	class {
+		shown?: HTMLElement;
+
+		constructor(readonly view: EditorView) {
+			view.dom.addEventListener('pointermove', this.move);
+			view.dom.addEventListener('pointerleave', this.clear);
+			view.dom.addEventListener('wheel', this.clear, { passive: true });
+		}
+
+		move = (event: PointerEvent) => {
+			if (event.pointerType !== 'mouse') return;
+			const under = (add: HTMLElement) => {
+				const { top, bottom } = add.getBoundingClientRect();
+				return top <= event.clientY && event.clientY < bottom;
+			};
+			if (this.shown?.isConnected && under(this.shown)) return;
+			this.show([...this.view.dom.querySelectorAll<HTMLElement>('.cm-draftAdd[data-line]')].find(under));
+		};
+
+		clear = () => this.show(undefined);
+
+		show(add: HTMLElement | undefined) {
+			this.shown?.classList.remove('cm-draftAddHover');
+			add?.classList.add('cm-draftAddHover');
+			this.shown = add;
+		}
+
+		destroy() {
+			this.view.dom.removeEventListener('pointermove', this.move);
+			this.view.dom.removeEventListener('pointerleave', this.clear);
+			this.view.dom.removeEventListener('wheel', this.clear);
+		}
+	}
+);
+
 function tint(percent: number) {
 	const color = `color-mix(in oklab, var(--accent) ${percent}%, transparent)`;
 	return `linear-gradient(${color}, ${color})`;
@@ -376,19 +413,21 @@ const style = EditorView.theme({
 		borderRadius: 'var(--radius-sm)',
 		color: 'var(--muted-fg)',
 		cursor: 'pointer',
-		opacity: 0.45,
+		opacity: 0,
+		transition: 'opacity var(--dur-fast)',
 		userSelect: 'none'
 	},
-	'.cm-draftAdd:hover, .cm-draftAddOn': { background: 'var(--accent)', color: 'var(--color-bg)', opacity: 1 },
+	'&.cm-focused .cm-activeLineGutter .cm-draftAdd': { background: 'var(--selected-bg)', color: 'var(--accent)', opacity: 1 },
+	'&.cm-draftReplacing .cm-draftAdd': { color: 'var(--accent)', opacity: 1 },
+	'.cm-draftAdds > .cm-draftAdd.cm-draftAddHover, .cm-draftAdds > .cm-draftAdd:hover, .cm-draftAdds > .cm-draftAdd.cm-draftAddOn': { background: 'var(--accent)', color: 'var(--color-bg)', opacity: 1 },
 	'.cm-lineNumbers .cm-gutterElement': { cursor: 'pointer' },
 	'.cm-draftCommentable': { boxShadow: 'inset 3px 0 var(--accent)' },
 	'.cm-draftRange': { backgroundImage: tint(10) },
 	'.cm-draftSelected': { backgroundImage: tint(22), boxShadow: 'inset 3px 0 var(--accent)' },
-	'&.cm-draftReplacing .cm-draftAdd': { color: 'var(--accent)', opacity: 1 },
 	'.cm-draftComment': {
-		padding: 'var(--space-2) var(--space-2) var(--space-2) var(--space-3)',
-		borderBlock: 'var(--border-width) solid var(--border)',
-		background: 'var(--surface-1)',
+		position: 'relative',
+		zIndex: 1,
+		padding: 'var(--space-2) var(--space-3)',
 		whiteSpace: 'normal',
 		boxSizing: 'border-box',
 		maxWidth: 'var(--draft-width)'
@@ -408,6 +447,7 @@ export function draftComments(side: Side, unified: boolean, hunks: Hunks, drafts
 		replacingClass,
 		adds,
 		pressing,
+		hovering,
 		fitting,
 		style
 	];

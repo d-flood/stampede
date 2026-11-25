@@ -85,6 +85,10 @@
 		display: grid;
 		gap: var(--space-2);
 		max-width: 60rem;
+		padding: var(--space-2);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-lg);
+		background: var(--card);
 		font-family: var(--font-ui);
 	}
 
@@ -98,6 +102,11 @@
 		min-height: 3lh;
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-md);
+		background: none;
+	}
+
+	.draft :global(.cm-editor:not(.cm-focused) .cm-activeLine) {
+		background: none;
 	}
 
 	.draft :global(.cm-editor.cm-focused) {
