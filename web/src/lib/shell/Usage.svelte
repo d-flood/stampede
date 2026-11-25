@@ -290,7 +290,7 @@
 		--logo: 14px;
 		position: relative;
 		display: grid;
-		grid-template-columns: auto repeat(2, auto auto auto auto minmax(0, 1fr)) auto;
+		grid-template-columns: auto repeat(4, auto) minmax(0, var(--space-3)) repeat(4, auto) minmax(0, 1fr) auto;
 		row-gap: var(--space-2);
 		align-items: center;
 		padding: var(--space-2) var(--space-4);

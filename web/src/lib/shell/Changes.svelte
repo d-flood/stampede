@@ -342,7 +342,7 @@
 			<span class="upstream">Not on origin</span>
 			<Button title="Publish Branch (P)" disabled={busy && running?.action !== 'publish'} busy={running?.action === 'publish'} onclick={push}><CloudArrowUp /> Publish Branch</Button>
 		{:else}
-			<span class="upstream">{git.detached ? 'Detached HEAD' : 'Local branch'}</span>
+			<span class="upstream">{git.detached ? 'Detached HEAD' : 'No remote'}</span>
 		{/if}
 		{#if trunk && trunk.branch !== git.branch}
 			<Chip
@@ -755,7 +755,23 @@
 		flex: none;
 	}
 
+	/* Overlays hover actions so badges and counts stay flush right. */
 	@media (hover: hover) {
+		li.row {
+			position: relative;
+		}
+
+		.actions {
+			position: absolute;
+			right: 0;
+			border-radius: inherit;
+			background: var(--chrome);
+		}
+
+		.row:hover .actions {
+			background: var(--hover);
+		}
+
 		.row:not(:hover, :focus-within) .actions {
 			opacity: 0;
 		}

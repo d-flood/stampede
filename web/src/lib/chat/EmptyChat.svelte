@@ -7,9 +7,9 @@
 	let { rig, agent, project, branch }: { rig: string; agent: Agent; project?: string; branch?: string } = $props();
 	const Logo = $derived(logos[agent]);
 	const hints = [
-		['/', 'commands'],
-		['@', 'files'],
-		['!', 'shell'],
+		['/', 'Commands'],
+		['@', 'Files'],
+		['!', 'Shell'],
 		[';', 'Clips']
 	];
 </script>

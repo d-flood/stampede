@@ -139,14 +139,8 @@
 >
 	<div class="clip">
 		<div class="content" style:width={form() === 'desktop' ? `${size}px` : undefined}>
-			{#if form() === 'desktop'}
-				<header>
-					{#if project}<h1 title={project.path}>{label}</h1>{/if}
-					{@render toggle?.()}
-				</header>
-			{/if}
-			{#if project}
-				{#if git?.branch && project.worktree}
+			{#snippet branch()}
+				{#if git?.branch && project?.worktree}
 					<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>
 				{:else if git?.branch}
 					<div class="switch">
@@ -154,6 +148,17 @@
 							<GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span><CaretUpDown />
 						</Chip>
 					</div>
+				{/if}
+			{/snippet}
+			{#if form() === 'desktop'}
+				<header>
+					{#if project}<h1 title={project.path}>{label}</h1>{@render branch()}{/if}
+					{@render toggle?.()}
+				</header>
+			{/if}
+			{#if project}
+				{#if form() === 'phone'}{@render branch()}{/if}
+				{#if git?.branch && !project.worktree}
 					<Dialog bind:open={switching} full={form() === 'phone'} title="Switch branch" description="Uncommitted changes come along unless they clash with the branch.">
 						{#if Picker}<Picker projectId={project.id} current={git.branch} origin={!!git.origin} onswitch={() => (switching = false)} />{/if}
 					</Dialog>
@@ -354,6 +359,12 @@
 	.switch {
 		display: flex;
 		padding: 0 var(--space-2);
+	}
+
+	header :is(.branch, .switch) {
+		flex: 0 1 auto;
+		min-width: 0;
+		padding: 0;
 	}
 
 	.branch span,

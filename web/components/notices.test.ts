@@ -10,7 +10,7 @@ test('an empty Chat names its Rig, where, and the input hints', async () => {
 	await expect.element(view.getByText('stampede', { exact: true })).toBeVisible();
 	await expect.element(view.getByText('main', { exact: true })).toBeVisible();
 	const hints = view.getByRole('list', { name: 'Input hints' }).element();
-	expect([...hints.querySelectorAll('li')].map((hint) => hint.textContent)).toEqual(['/commands', '@files', '!shell', ';Clips']);
+	expect([...hints.querySelectorAll('li')].map((hint) => hint.textContent)).toEqual(['/Commands', '@Files', '!Shell', ';Clips']);
 	expect([...hints.querySelectorAll('kbd')].map((key) => key.textContent)).toEqual(['/', '@', '!', ';']);
 	await expect.poll(() => view.container.scrollWidth <= view.container.clientWidth).toBe(true);
 });

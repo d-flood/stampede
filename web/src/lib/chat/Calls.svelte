@@ -142,7 +142,7 @@
 		column-gap: var(--space-1);
 		min-width: 0;
 		padding-left: calc(1em + var(--space-2));
-		font-size: var(--font-size-sm);
+		font-size: var(--font-size-md);
 	}
 
 	.summary,

@@ -348,7 +348,7 @@
 	/* A Chat with nothing in it yet gathers its welcome and Composer at the middle. */
 	.fresh {
 		justify-content: center;
-		padding-bottom: calc(4 * var(--space-6));
+		padding-bottom: calc(4 * var(--space-6) + 12vh);
 	}
 
 	.fresh .conversation {
@@ -367,7 +367,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
-		max-width: 760px;
+		max-width: var(--measure);
 		min-height: 100%;
 		margin: 0 auto;
 		line-height: 1.55;

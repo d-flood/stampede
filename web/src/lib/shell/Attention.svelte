@@ -52,7 +52,7 @@
 	const menu = $derived([
 		{ heading: 'Needs attention', empty: 'Nothing needs attention', items: items.map((item) => ({ label: item.label, data: item, onselect: () => onselect(item) })) },
 		...others.map(({ heading, entries }) => ({ heading, items: entries.map((item) => ({ label: item.label, data: item, onselect: () => onselect(item) })) })),
-		...(push === 'unsupported' ? [] : [{ label: pushLabel, disabled: pushDisabled, onselect: notify }])
+		...(push === 'unsupported' ? [] : [{ label: pushLabel, icon: Bell, disabled: pushDisabled, onselect: notify }])
 	]);
 	let sheet = $state(false);
 	notifications().then((state) => (push = state));

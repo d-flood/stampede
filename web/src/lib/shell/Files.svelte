@@ -348,7 +348,14 @@
 	}
 
 	@media (hover: hover) {
+		.row {
+			position: relative;
+		}
+
 		.row > :global(button:last-child:not(:first-child)) {
+			position: absolute;
+			right: 0;
+			background: var(--chrome);
 			opacity: 0;
 			transition: opacity var(--dur-fast);
 		}
@@ -358,13 +365,10 @@
 		.row > :global(button[data-state='open']) {
 			opacity: 1;
 		}
+
+		.row:hover > :global(button:last-child:not(:first-child)),
+		.row > :global(button[data-state='open']) {
+			background: var(--hover);
+		}
 	}
-
-
-
-
-
-
-
-
 </style>

@@ -115,8 +115,12 @@
 		overflow-y: auto;
 	}
 
+	.launchpad:not(.phone) {
+		padding-bottom: calc(var(--space-6) + 16vh);
+	}
+
 	.pad {
-		width: min(36rem, 100%);
+		width: min(var(--measure), 100%);
 	}
 
 	h2 {
@@ -207,6 +211,7 @@
 		flex-wrap: wrap;
 		gap: var(--space-1);
 		margin-top: var(--space-3);
+		font-size: var(--font-size-sm);
 	}
 
 	.fill {

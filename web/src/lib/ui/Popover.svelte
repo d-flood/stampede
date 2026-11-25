@@ -44,7 +44,7 @@
 		max-height: min(var(--bits-floating-available-height), 100dvh - 2 * var(--space-2));
 		overflow-y: auto;
 		padding: var(--space-3) var(--space-4);
-		border: var(--border-width) solid var(--border);
+		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-lg);
 		background: var(--surface-2);
 		box-shadow: var(--shadow-float);

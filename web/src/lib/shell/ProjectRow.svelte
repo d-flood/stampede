@@ -225,13 +225,12 @@
 		color: var(--color-fg);
 	}
 
-	.project::before,
 	.tile::before {
 		content: '';
 		position: absolute;
 		top: 22%;
 		bottom: 22%;
-		left: calc(-1 * var(--space-3) - var(--border-width));
+		left: calc(-1 * var(--space-3) - var(--square) + var(--target-min));
 		width: 4px;
 		border-radius: 0 4px 4px 0;
 		background: var(--color-fg);
@@ -242,11 +241,6 @@
 			scale var(--dur-med) var(--ease-out);
 	}
 
-	.tile::before {
-		left: calc(-1 * var(--space-3) - var(--square) + var(--target-min));
-	}
-
-	.compact .project.focused::before,
 	.compact .worktree.focused .tile::before {
 		opacity: 1;
 		scale: 1;

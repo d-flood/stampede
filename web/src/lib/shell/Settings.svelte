@@ -167,7 +167,7 @@
 <IconButton label={unseen ? 'Settings, Stampede update available' : 'Settings'} title={unseen ? 'Stampede update available' : undefined} aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}>
 	<span class="gear"><Gear />{#if unseen}<span class="dot"></span>{/if}</span>
 </IconButton>
-<Dialog bind:open full={phone} wide fit closeButton={false} title="Settings" oncloseautofocus={dock}>
+<Dialog bind:open full={phone} wide closeButton={false} title="Settings" oncloseautofocus={dock}>
 	<div class="settings" class:phone>
 		{#if !phone || !current}
 			<div class="sections">

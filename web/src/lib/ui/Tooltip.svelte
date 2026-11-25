@@ -18,7 +18,7 @@
 			<Tooltip.Content sideOffset={4} collisionPadding={8}>
 				{#snippet child({ wrapperProps, props })}
 					<div {...wrapperProps}>
-						<div {...props} class="tooltip" role="tooltip">{#if content}{@render content()}{:else}{text}{/if}</div>
+						<div {...props} class="tooltip" role="tooltip">{#if content}{@render content()}{:else}{@const [first, ...rest] = text.split('\n')}{first}{#if rest.length}<span class="detail">{`\n${rest.join('\n')}`}</span>{/if}{/if}</div>
 					</div>
 				{/snippet}
 			</Tooltip.Content>
@@ -46,5 +46,9 @@
 		font-size: var(--font-size-sm);
 		line-height: 1.5;
 		white-space: pre-line;
+	}
+
+	.detail {
+		color: var(--muted-fg);
 	}
 </style>

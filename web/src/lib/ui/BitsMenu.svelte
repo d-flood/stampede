@@ -126,7 +126,7 @@
 		max-width: min(24rem, 100vw - 2 * var(--space-2));
 		max-height: min(var(--bits-floating-available-height), 100dvh - 2 * var(--space-2));
 		overflow-y: auto;
-		border: var(--border-width) solid var(--border);
+		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-lg);
 		background: var(--surface-2);
 		box-shadow: var(--shadow-float);

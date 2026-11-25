@@ -62,10 +62,8 @@
 	}
 
 	.item[aria-current]:not([aria-current='false']) {
-		background: var(--color-bg);
-		box-shadow:
-			var(--shadow-lift),
-			0 0 0 var(--border-width) var(--border);
+		background: var(--selected-bg);
+		box-shadow: inset 0 0 0 var(--border-width) var(--selected-border);
 		color: var(--color-fg);
 		font-weight: 600;
 	}

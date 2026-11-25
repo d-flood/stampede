@@ -116,6 +116,7 @@
 
 	.folder .name {
 		flex: none;
+		margin-right: auto;
 		font-weight: 500;
 	}
 
@@ -124,7 +125,6 @@
 		min-width: 0;
 		overflow: hidden;
 		direction: rtl;
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		text-align: left;
 		text-overflow: ellipsis;

@@ -12,7 +12,7 @@
 	import { branches, comparing, image, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
-	import { baseline, index, indexUrl, show, showUrl, type Git } from '#lib/git.ts';
+	import { baseline, index, indexUrl, show, showUrl, stage, unstage, type Git } from '#lib/git.ts';
 	import { acceptDraft, createDraft, deleteDraft, editDraft, hunks, setViewed, viewedState, type Hunks, type Placement, type PrReview, type Side } from '#lib/pr-reviews.ts';
 	import DraftBox from '#lib/shell/DraftBox.svelte';
 	import ImageDiff, { type ImageSide } from '#lib/shell/ImageDiff.svelte';
@@ -34,6 +34,8 @@
 	import CheckSquare from '~icons/ph/check-square';
 	import Columns from '~icons/ph/columns';
 	import FloppyDisk from '~icons/ph/floppy-disk';
+	import Minus from '~icons/ph/minus';
+	import Plus from '~icons/ph/plus';
 	import Rows from '~icons/ph/rows';
 
 	type Props = {
@@ -54,6 +56,7 @@
 	let { diff, git, reviews, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
+	let moving = $state(false);
 	let width = $state(0);
 	const narrow = $derived(width > 0 && width < 720);
 	const layout = $derived(narrow ? 'unified' : diff.layout);
@@ -279,6 +282,17 @@
 	});
 
 	/** Both sides, but HEAD's, which follows the status. */
+	async function move(staging: boolean) {
+		moving = true;
+		try {
+			await (staging ? stage : unstage)(diff.projectId, [diff.path]);
+		} catch (error) {
+			console.error(error);
+		} finally {
+			moving = false;
+		}
+	}
+
 	function sides(): Promise<[string | undefined, Contents]> | undefined {
 		if (diff.against === 'HEAD') return Promise.all([undefined, current()]);
 		if (diff.against === 'index') return Promise.all([index(diff.projectId, diff.path), current()]);
@@ -598,6 +612,12 @@
 			<span class="sides" title={diff.against.subject}>{diff.against.short}^ ↔ {diff.against.short}</span>
 		{/if}
 		{#if counts && (counts.added || counts.removed)}<span class="counts" aria-label="{counts.added} added, {counts.removed} removed">{#if counts.added}<span class="added">+{counts.added}</span>{/if}{#if counts.removed}<span class="removed">−{counts.removed}</span>{/if}</span>{/if}
+		{#if diff.against === 'index' || diff.against === 'staged'}
+			{@const unstaged = diff.against === 'index'}
+			{@const label = unstaged ? 'Stage' : 'Unstage'}
+			{@const Icon = unstaged ? Plus : Minus}
+			<Button variant="ghost" size="sm" aria-label="{label} file" disabled={moving || !counts?.added && !counts?.removed} onclick={() => move(unstaged)}><Icon />{#if form() === 'desktop'}{label}{/if}</Button>
+		{/if}
 		{#if compared?.error}<span class="error">{compared.error.message}</span>{/if}
 		{#if compared}
 			<IconButton label="Previous file" title="Previous file (Alt+↑)" disabled={at <= 0} onclick={() => step(-1)}><ArrowUp /></IconButton>

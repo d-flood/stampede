@@ -108,6 +108,7 @@
 	--space-3: 9px;
 	--space-4: 12px;
 	--space-6: 18px;
+	--measure: 760px;
 	--font-size-base: var(--ui-size, 13px);
 	--font-size-chat: var(--chat-size, 15px);
 	--font-size-code: var(--code-size, 13px);
