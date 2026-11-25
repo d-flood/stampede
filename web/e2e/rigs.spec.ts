@@ -82,7 +82,7 @@ test('a Rig edits in place below its row, one at a time', { tag: '@desktop' }, a
 	await codex.getByRole('combobox', { name: 'Effort level', exact: true }).selectOption('xhigh');
 	await codex.getByRole('button', { name: 'Save rig', exact: true }).click();
 	await expect(codex.getByRole('status')).toHaveText('Rig saved.');
-	await expect(row(dialog, 'Fake Codex')).toHaveAccessibleDescription(/^gpt-6-sol, xhigh, /);
+	await expect(row(dialog, 'Fake Codex')).toHaveAccessibleDescription(/^gpt-6-sol · xhigh · /);
 	expect((await (await request.get('/api/rigs')).json()).find((rig: { name: string }) => rig.name === 'Fake Codex')).toMatchObject({ model: 'gpt-6-sol', effort: 'xhigh' });
 	await row(dialog, 'Fake Claude').click();
 	await expect(row(dialog, 'Fake Codex')).toHaveAttribute('aria-expanded', 'false');
@@ -223,7 +223,7 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 	const created = 'Reviewer';
 	await closeRig(dialog, created);
 	await expect(list(dialog).locator('.name').last()).toHaveText(created);
-	await expect(row(dialog, created)).toHaveAccessibleDescription(/^opus, high, .+, fast, Ultracode on/);
+	await expect(row(dialog, created)).toHaveAccessibleDescription(/^opus · high · .+ · fast · Ultracode on/);
 	const reviewer = (await (await page.request.get('/api/rigs')).json()).find((rig: { name: string }) => rig.name === created);
 	expect(reviewer).toMatchObject({ speed: 'fast', ultracode: 'on' });
 	await dialog.getByRole('button', { name: 'Done', exact: true }).click();

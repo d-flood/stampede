@@ -99,7 +99,7 @@
 	{@render trigger({ onclick: () => (sheet = true) })}
 	<Dialog bind:open={sheet} full title="Chats">
 		{#if push !== 'unsupported'}
-			<div class="notify"><Button variant="ghost" disabled={pushDisabled} onclick={notify}><Bell /> {pushLabel}</Button></div>
+			<div class="notify"><Button disabled={pushDisabled} onclick={notify}><Bell /> {pushLabel}</Button></div>
 		{/if}
 		<ListLabel element="h3">Needs attention</ListLabel>
 		<div class="sheet">
@@ -145,9 +145,12 @@
 	}
 
 	.notify {
-		display: flex;
-		justify-content: flex-end;
-		margin: 0 0 var(--space-2);
+		display: grid;
+		margin: 0 0 var(--space-4);
+	}
+
+	.notify :global(button) {
+		justify-content: flex-start;
 	}
 
 	.none {
