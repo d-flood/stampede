@@ -8,12 +8,12 @@ import TerminalWindow from '~icons/ph/terminal-window';
 
 const RECENT = 5;
 
-export type TabItem = { label: string; icon?: Component; hint?: string; onselect: () => void };
-export type RigItem = TabItem & { model: string };
+export type TabItem = { label: string; icon?: Component; hint?: string; shortcut?: string; onselect: () => void };
+export type RigItem = TabItem & { model: string; onprompt(text: string): void };
 export type TabItems = { rigs: RigItem[]; tools: TabItem[]; sessions: TabItem[]; search?: TabItem };
 
 type Actions = {
-	launch(rig: Rig): void;
+	launch(rig: Rig, text?: string): void;
 	terminal(): void;
 	browser(): void;
 	files(): void;
@@ -27,14 +27,15 @@ export function tabItems(rigs: Rig[], sessions: Session[], actions: Actions): Ta
 		rigs: rigs.map((rig, index) => ({
 			label: rig.name,
 			icon: logos[rig.agent],
-			hint: index < 9 ? `Ctrl+Shift+${index + 1}` : `${index + 1}`,
+			shortcut: index < 9 ? `Ctrl+Shift+${index + 1}` : undefined,
 			model: [rig.model, rig.effort].filter(Boolean).join(', '),
-			onselect: () => actions.launch(rig)
+			onselect: () => actions.launch(rig),
+			onprompt: (text) => actions.launch(rig, text)
 		})),
 		tools: [
-			{ label: 'Terminal', hint: 'Ctrl+Shift+T', icon: TerminalWindow, onselect: actions.terminal },
+			{ label: 'Terminal', shortcut: 'Ctrl+Shift+T', icon: TerminalWindow, onselect: actions.terminal },
 			{ label: 'Browser', icon: Globe, onselect: actions.browser },
-			{ label: 'Open file', hint: 'Ctrl+Shift+O', icon: FileCode, onselect: actions.files }
+			{ label: 'Open file', shortcut: 'Ctrl+Shift+O', icon: FileCode, onselect: actions.files }
 		],
 		sessions: recent.map((session) => ({ label: session.title, icon: logos[session.agent], hint: ago(session.updatedAt), onselect: () => actions.reopen(session) })),
 		search: recent.length ? { label: 'Search sessions…', onselect: actions.search } : undefined

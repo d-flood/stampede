@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { ContextMenu, DropdownMenu } from 'bits-ui';
+	import Kbd from '#lib/ui/Kbd.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import type { Component, Snippet } from 'svelte';
 
-	type Item = { label: string; onselect: () => void; disabled?: boolean; icon?: Component; hint?: string; checked?: boolean; keepOpen?: boolean; data?: unknown };
+	type Item = { label: string; onselect: () => void; disabled?: boolean; icon?: Component; hint?: string; shortcut?: string; checked?: boolean; keepOpen?: boolean; data?: unknown };
 	type Group = { heading: string; items: Item[]; empty?: string };
 	type Layer = { wrapperProps: Record<string, unknown>; props: Record<string, unknown> };
 
@@ -26,7 +27,7 @@
 	let width = $state(0);
 </script>
 
-{#snippet row(props: Record<string, unknown>, { label, checked, icon: Icon, hint, data }: Item)}
+{#snippet row(props: Record<string, unknown>, { label, checked, icon: Icon, hint, shortcut, data }: Item)}
 	<ListItem {...props}>
 		{#if custom && data !== undefined}
 			{@render custom(data)}
@@ -34,6 +35,7 @@
 			{#if Icon}<Icon />{/if}
 			<span class="label" class:checked>{label}</span>
 			{#if hint}<span class="hint" aria-hidden="true">{hint}</span>{/if}
+			{#if shortcut}<span class="hint" aria-hidden="true"><Kbd>{shortcut}</Kbd></span>{/if}
 			{#if checked}<span class="check" aria-hidden="true">✓</span>{/if}
 		{/if}
 	</ListItem>

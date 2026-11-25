@@ -105,9 +105,9 @@ test('emoji load on demand locally, support search and categories, and persist a
 	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
 	await expect(button.locator('img')).toHaveAttribute('src', source!);
 	dialog = await picker(page, button);
-	await dialog.getByRole('button', { name: 'Use initials (Al)' }).click();
+	await dialog.getByRole('button', { name: 'Use initial (A)' }).click();
 	await expect(button.locator('img')).toHaveCount(0);
-	await expect(button).toContainText('Al');
+	await expect(button).toContainText('A');
 });
 
 test('a failed emoji catalog leaves image choices available', { tag: '@desktop' }, async ({ page }) => {
@@ -122,7 +122,7 @@ test('a failed emoji catalog leaves image choices available', { tag: '@desktop' 
 	await expect(dialog.locator('emoji-picker')).toHaveCount(0);
 	await expect(dialog.getByRole('region', { name: 'Project images' })).toBeVisible();
 	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-	await expect(button).toContainText('Al');
+	await expect(button).toContainText('A');
 });
 
 test('project images are previewed, copied, restored after reopening, and removable', async ({ page }) => {
@@ -132,7 +132,7 @@ test('project images are previewed, copied, restored after reopening, and remova
 	writeFileSync(`${root}/assets/broken.png`, 'broken');
 	await openProject(page, 'alpha');
 	let button = await navigation(page);
-	await expect(button).toContainText('Al');
+	await expect(button).toContainText('A');
 	let dialog = await picker(page, button);
 	await dialog.getByRole('button', { name: 'Choose from project…' }).click();
 	await dialog.getByRole('button', { name: 'assets', exact: true }).click();
@@ -157,10 +157,10 @@ test('project images are previewed, copied, restored after reopening, and remova
 	await expect(button.locator('img')).toHaveAttribute('src', source!);
 	await expect.poll(() => button.locator('img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(256);
 	dialog = await picker(page, button);
-	await dialog.getByRole('button', { name: 'Use initials (Al)' }).click();
+	await dialog.getByRole('button', { name: 'Use initial (A)' }).click();
 	await expect(dialog).toBeHidden();
 	await expect(button.locator('img')).toHaveCount(0);
-	await expect(button).toContainText('Al');
+	await expect(button).toContainText('A');
 });
 
 test('website URL paths discover icons and failed requests preserve the saved icon', { tag: '@desktop' }, async ({ page }) => {
@@ -224,7 +224,7 @@ test('website URL paths discover icons and failed requests preserve the saved ic
 		await page.reload();
 		await navigation(page);
 		await expect(button.locator('img')).toHaveCount(0);
-		await expect(button).toContainText('Al');
+		await expect(button).toContainText('A');
 	} finally { await new Promise<void>((resolve, reject) => site.close((error) => error ? reject(error) : resolve())); }
 });
 
@@ -239,5 +239,5 @@ test('device uploads can be previewed and cancelled without changing the icon', 
 	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect(button.locator('img')).toHaveCount(0);
-	await expect(button).toContainText('Al');
+	await expect(button).toContainText('A');
 });

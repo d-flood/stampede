@@ -3,11 +3,17 @@
 	import { form } from '#lib/form.ts';
 	import { openSettings } from '#lib/shell/Settings.svelte';
 	import type { TabItems } from '#lib/shell/new-tab.ts';
+	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Card from '#lib/ui/Card.svelte';
+	import Chip from '#lib/ui/Chip.svelte';
+	import Kbd from '#lib/ui/Kbd.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
+	import Menu from '#lib/ui/Menu.svelte';
 	import { untrack } from 'svelte';
+	import CaretDown from '~icons/ph/caret-down';
+	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Plus from '~icons/ph/plus';
 
 	type Props = { name: string; path: string; git?: Git; items: TabItems; reading: boolean; onread: () => void };
@@ -19,9 +25,19 @@
 	const changes = $derived(git?.isRepo ? git.changes.length : undefined);
 	const meta = $derived([git?.branch, changes === undefined ? undefined : `${changes} changed file${changes === 1 ? '' : 's'}`].filter(Boolean).join(' · '));
 
+	let chosen = $state(0);
+	const rig = $derived(items.rigs[Math.min(chosen, items.rigs.length - 1)]);
+	const rigMenu = $derived([{ heading: 'Rigs', items: items.rigs.map((entry, index) => ({ label: entry.label, icon: entry.icon, shortcut: entry.shortcut, checked: entry === rig, onselect: () => (chosen = index) })) }]);
+
 	function enter(node: HTMLElement) {
 		untrack(onread);
-		if (!document.activeElement?.closest('input, textarea, select, [contenteditable], dialog[open]')) node.querySelector<HTMLElement>('.primary')?.focus({ focusVisible: false } as FocusOptions);
+		if (!phone && !document.activeElement?.closest('input, textarea, select, [contenteditable], dialog[open]')) node.querySelector<HTMLElement>('textarea, .primary')?.focus();
+	}
+
+	function start(text: string) {
+		if (!rig || !text.trim()) return false;
+		rig.onprompt(text);
+		return true;
 	}
 
 </script>
@@ -30,20 +46,25 @@
 	<div class="pad">
 		<h2 id="{id}-name">{name}</h2>
 		<p class="where" title={path}><span class="path"><bdi>{path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>{#if meta}<span class="meta">{meta}</span>{/if}</p>
-		<h3>Rigs</h3>
-		<div class="rigs">
-			{#each items.rigs as { label, icon: Icon, model, hint, onselect }, index (label)}
-				<Card primary={index === 0} aria-labelledby="{id}-rig-{index}" aria-describedby={model ? `${id}-model-${index}` : undefined} onclick={onselect}>
-					<span class="rig">
-						{#if Icon}<span class="logo"><Icon /></span>{/if}
-						<span class="meta">
-							<span class="label" id="{id}-rig-{index}">{label}</span>
-							{#if model}<span class="model" id="{id}-model-{index}">{model}</span>{/if}
-						</span>
-						{#if hint && !phone}<span class="hint" aria-hidden="true">{hint}</span>{/if}
-					</span>
-				</Card>
-			{:else}
+		{#if rig}
+			{@const Logo = rig.icon}
+			<Composer id="launchpad:{path}" placeholder="Message {rig.label}" onsend={start}>
+				{#snippet actions(text, clear)}
+					<Menu side="top" align="start" items={rigMenu}>
+						{#snippet trigger(props)}
+							<Chip {...props} variant="ghost" aria-label="Rig: {rig.label}">
+								{#if Logo}<Logo aria-hidden="true" />{/if}<span>{rig.label}</span><CaretDown aria-hidden="true" />
+							</Chip>
+						{/snippet}
+					</Menu>
+					<span class="fill"></span>
+					<Button variant="primary" round aria-label="Send" disabled={!text.trim()} onmousedown={(event) => event.preventDefault()} onclick={() => start(text) && clear()}>
+						<PaperPlaneRight />
+					</Button>
+				{/snippet}
+			</Composer>
+		{:else}
+			<div class="rigs">
 				<Card primary aria-labelledby="{id}-create" aria-describedby="{id}-create-help" onclick={() => openSettings('rigs')}>
 					<span class="rig">
 						<span class="logo"><Plus /></span>
@@ -53,15 +74,14 @@
 						</span>
 					</span>
 				</Card>
-			{/each}
-		</div>
-		<h3 class="open">Open</h3>
+			</div>
+		{/if}
 		<div class="tools">
-			{#each items.tools as { label, icon: Icon, hint, onselect } (label)}
+			{#each items.tools as { label, icon: Icon, shortcut, onselect } (label)}
 				<button class="tool" onclick={onselect}>
 					{#if Icon}<Icon />{/if}
 					<span class="label">{label}</span>
-					{#if hint && !phone}<span class="hint" aria-hidden="true">{hint}</span>{/if}
+					{#if shortcut && !phone}<span class="hint" aria-hidden="true"><Kbd>{shortcut}</Kbd></span>{/if}
 				</button>
 			{/each}
 		</div>
@@ -183,12 +203,14 @@
 	}
 
 	.tools {
-		display: grid;
-		gap: var(--space-2);
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-1);
+		margin-top: var(--space-3);
 	}
 
-	.open {
-		margin-top: var(--space-4);
+	.fill {
+		flex: 1;
 	}
 
 	.tool {
@@ -196,14 +218,16 @@
 		align-items: center;
 		gap: var(--space-2);
 		min-width: 0;
-		padding: var(--space-3);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
+		padding: var(--space-1) var(--space-3);
+		border: var(--border-width) solid transparent;
+		border-radius: var(--radius-md);
+		color: var(--muted-fg);
 	}
 
 
 	.tool:hover {
 		background: var(--hover);
+		color: var(--color-fg);
 	}
 
 	.recent {

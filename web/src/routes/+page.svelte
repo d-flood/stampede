@@ -393,6 +393,10 @@
 				place(message.chat.projectId, message.chat.id);
 				choose(message.chat.projectId, message.chat.id);
 				if (message.chat.projectId === focused?.id) closePanel();
+				if (prompting && prompting.projectId === message.chat.projectId && prompting.rig === message.chat.rig) {
+					device.send({ type: 'chat.send', chatId: message.chat.id, text: prompting.text, queue: false, images: [] });
+					prompting = undefined;
+				}
 				break;
 			}
 			case 'chat.moved': {
@@ -649,7 +653,7 @@
 
 	function newTab(projectId: string) {
 		return tabItems(rigs(), sessions[projectId] ?? [], {
-			launch: (rig) => launch(rig, projectId),
+			launch: (rig, text) => launch(rig, projectId, text),
 			terminal: () => device.send({ type: 'terminal.create', projectId }),
 			browser: () => openBrowser(projectId),
 			files: () => openPalette('files'),
@@ -662,8 +666,13 @@
 		device.send({ type: 'chat.resume', projectId, agent, sessionId });
 	}
 
-	function launch(rig: Rig, projectId = focused?.id) {
-		if (projectId) device.send({ type: 'chat.create', projectId, rig: rig.name });
+	/** A first message waiting for its Chat, which the server creates before it can take input. */
+	let prompting: { projectId: string; rig: string; text: string } | undefined;
+
+	function launch(rig: Rig, projectId = focused?.id, text?: string) {
+		if (!projectId) return;
+		prompting = text ? { projectId, rig: rig.name, text } : undefined;
+		device.send({ type: 'chat.create', projectId, rig: rig.name });
 	}
 
 	function jump(index: number) {

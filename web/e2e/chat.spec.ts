@@ -585,7 +585,7 @@ function filledWith(meter: Locator, token: string) {
 		probe.style.color = `var(${token})`;
 		const color = getComputedStyle(probe).color;
 		probe.remove();
-		return getComputedStyle(element.querySelector('.fill')!).backgroundColor === color;
+		return getComputedStyle(element.querySelector('.arc')!).stroke === color;
 	}, token);
 }
 

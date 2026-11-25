@@ -252,6 +252,10 @@
 		scale: 1;
 	}
 
+	.compact .project.focused .square {
+		box-shadow: 0 0 0 calc(2 * var(--border-width)) var(--accent);
+	}
+
 	.project:focus-visible,
 	.worktree:focus-visible {
 		outline: var(--focus-ring);

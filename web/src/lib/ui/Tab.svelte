@@ -204,11 +204,6 @@
 		color: var(--color-fg);
 	}
 
-	.agent {
-		color: var(--color-fg);
-		font-weight: 600;
-	}
-
 	.deleted .label {
 		text-decoration: line-through;
 	}

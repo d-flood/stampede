@@ -17,7 +17,7 @@
 		border-bottom-width: calc(2 * var(--border-width));
 		border-radius: var(--radius-sm);
 		background: var(--color-bg);
-		color: var(--color-fg);
+		color: var(--muted-fg);
 		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		line-height: 1.5;

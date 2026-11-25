@@ -11,7 +11,7 @@
 	{#if image}
 		<img class="squircle" src="/api/project-icons/{project.icon}" alt="" onerror={() => (failed = project.icon)} />
 	{:else}
-		{monogram(project.path)}
+		{monogram(project.path, 1)}
 	{/if}
 </span>
 

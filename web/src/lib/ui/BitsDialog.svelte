@@ -107,6 +107,7 @@
 
 	.wide.fit:not(.full) {
 		height: auto;
+		min-height: min(32rem, calc(100dvh - 2 * var(--space-4)));
 		max-height: min(42rem, calc(100dvh - 2 * var(--space-4)));
 	}
 

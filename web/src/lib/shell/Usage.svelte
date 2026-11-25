@@ -227,7 +227,7 @@
 						{#each hottest(agent) as meter (meter.name)}
 							<span class="meter {meter.window}" class:high={meter.percent >= high} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
 								<span class="period">{meter.short}</span>
-								<span class="bar" aria-hidden="true"><span class="fill" style:width="{Math.min(meter.percent, 100)}%"></span></span>
+								<svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="track" cx="10" cy="10" r="8" /><circle class="arc" cx="10" cy="10" r="8" pathLength="100" stroke-dasharray="{Math.min(meter.percent, 100)} 100" transform="rotate(-90 10 10)" /></svg>
 								<span class="number">{meter.percent}</span>
 								{#if meter.reading.resetsAt !== undefined}
 									<span class="remaining">{remaining(meter.reading.resetsAt)}</span>
@@ -288,10 +288,9 @@
 		--number: 11px;
 		--label: 10px;
 		--logo: 14px;
-		--bar: 28px;
 		position: relative;
 		display: grid;
-		grid-template-columns: auto repeat(2, auto minmax(var(--bar), 1fr) auto auto) auto;
+		grid-template-columns: auto repeat(2, auto auto auto auto minmax(0, 1fr)) auto;
 		row-gap: var(--space-2);
 		align-items: center;
 		padding: var(--space-2) var(--space-4);
@@ -307,7 +306,6 @@
 		--number: 12.5px;
 		--label: 10.5px;
 		--logo: 16px;
-		--bar: 36px;
 		padding-block: var(--space-3);
 	}
 
@@ -331,7 +329,7 @@
 	}
 
 	.weekly {
-		grid-column: 6 / span 4;
+		grid-column: 7 / span 4;
 	}
 
 	.claude-code {
@@ -369,18 +367,27 @@
 		padding-inline: var(--space-3) var(--space-1);
 	}
 
-	.row .bar {
+	.ring {
 		align-self: center;
+		width: var(--logo);
+		height: var(--logo);
 		margin-right: var(--space-1);
-		background: color-mix(in oklab, var(--brand) 16%, var(--surface-3));
+		fill: none;
+		stroke-width: 3.5;
 	}
 
-	.row .fill {
-		background: var(--brand);
+	.ring .track {
+		stroke: color-mix(in oklab, var(--brand) 22%, var(--surface-3));
 	}
 
-	.row .high .fill {
-		background: var(--status-waiting);
+	.ring .arc {
+		stroke: var(--brand);
+		stroke-linecap: round;
+		transition: stroke-dasharray calc(4 * var(--dur-med)) var(--ease-out);
+	}
+
+	.high .ring .arc {
+		stroke: var(--status-waiting);
 	}
 
 	.number {
@@ -447,7 +454,7 @@
 
 	.count {
 		display: flex;
-		grid-column: 10;
+		grid-column: 12;
 		align-items: center;
 		gap: var(--space-1);
 		padding-left: var(--space-3);
@@ -485,22 +492,20 @@
 
 	@container (width < 216px) {
 		.row {
-			grid-template-columns: repeat(9, auto) minmax(0, 1fr);
 			padding-inline: var(--space-3);
 		}
 
-		.row .bar {
+		.row .ring {
 			display: none;
 		}
 	}
 
 	@container (width < 244px) {
 		.phone .row {
-			grid-template-columns: repeat(9, auto) minmax(0, 1fr);
 			padding-inline: var(--space-3);
 		}
 
-		.phone .bar {
+		.phone .ring {
 			display: none;
 		}
 	}
