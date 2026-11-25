@@ -79,9 +79,11 @@
 
 <nav aria-label="Projects" class:open>
 	<div class="top">
-		<IconButton label={open ? 'Collapse project rail' : 'Expand project rail'} aria-expanded={open} onclick={() => (open = !open)}>
-			{#if open}<CaretDoubleLeft />{:else}<CaretDoubleRight />{/if}
-		</IconButton>
+		{#if projects.length}
+			<IconButton label={open ? 'Collapse project rail' : 'Expand project rail'} aria-expanded={open} onclick={() => (open = !open)}>
+				{#if open}<CaretDoubleLeft />{:else}<CaretDoubleRight />{/if}
+			</IconButton>
+		{/if}
 	</div>
 	<ol bind:this={list} onpointerdown={pointerdown}>
 		{#each shown as project (project.id)}
