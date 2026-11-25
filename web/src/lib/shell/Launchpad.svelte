@@ -291,14 +291,12 @@
 		min-width: 0;
 	}
 
-	/* The Rig decides everything after it, so it leads in weight. */
 	.rig {
 		display: contents;
 	}
 
 	.rig :global(.chip) {
 		color: var(--color-fg);
-		font-weight: 500;
 	}
 
 	.tool {
