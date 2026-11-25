@@ -378,7 +378,7 @@
 					bind:value={() => message, (value) => (messages[projectId] = value)}
 					aria-label="Commit message"
 					placeholder="Commit message"
-					rows={3}
+					rows={1}
 					spellcheck="true"
 					readonly={committing}
 					onkeydown={commitKey}
@@ -614,7 +614,7 @@
 	}
 
 	.commit :global(textarea) {
-		min-height: calc(3lh + 2 * var(--space-1));
+		min-height: calc(1lh + 2 * var(--space-1));
 		max-height: 12lh;
 		resize: none;
 		field-sizing: content;

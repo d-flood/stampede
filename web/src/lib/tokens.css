@@ -117,6 +117,7 @@
 	--font-size-sm: calc(var(--font-size-base) - 2px);
 	--font-size-md: var(--font-size-base);
 	--font-size-lg: calc(var(--font-size-base) + 2px);
+	--font-size-xl: calc(var(--font-size-base) + 6px);
 	--border-width: 1px;
 	--shadow-lift: 0 1px 2px color-mix(in oklab, var(--ansi-0) 28%, transparent);
 	--shadow-float: 0 1px 2px color-mix(in oklab, var(--ansi-0) 30%, transparent),
@@ -159,7 +160,7 @@
 	--surface-2: color-mix(in lab, var(--color-bg) 92%, var(--color-fg));
 	--surface-3: color-mix(in lab, var(--color-bg) 86%, var(--color-fg));
 	--canvas: rgb(from var(--color-bg) calc(r * 0.72) calc(g * 0.72) calc(b * 0.72));
-	--chrome: var(--canvas);
+	--chrome: color-mix(in lab, var(--canvas) 55%, var(--color-bg));
 	--raised: color-mix(in lab, var(--color-bg) 80%, var(--color-fg));
 }
 

@@ -318,11 +318,13 @@
 		min-width: 0;
 	}
 
+	/* Matches a Tab's height so the title row lines up with the Tab strip beside it. */
 	header {
 		display: flex;
 		justify-content: flex-end;
 		align-items: center;
 		gap: var(--space-2);
+		min-height: calc(var(--target-min) + var(--space-2));
 		padding: var(--space-2) var(--space-2) 0 var(--space-4);
 	}
 

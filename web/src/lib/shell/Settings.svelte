@@ -416,7 +416,7 @@
 
 	h3 {
 		margin: var(--space-1) 0 var(--space-4);
-		font-size: var(--font-size-lg);
+		font-size: var(--font-size-xl);
 	}
 
 	h4 {

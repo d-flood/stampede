@@ -1776,6 +1776,12 @@
 		user-select: none;
 	}
 
+	/* Centres strip controls on the Tabs, which hang from the strip's bottom edge. */
+	main:not(.bottom) .strip > :global(:not([role='tablist'])) {
+		align-self: flex-end;
+		margin-bottom: calc((var(--space-2) - 2 * var(--border-width)) / 2);
+	}
+
 	main.bottom {
 		grid-template-rows: minmax(0, 1fr) auto;
 	}
