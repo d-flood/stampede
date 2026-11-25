@@ -250,6 +250,16 @@ class Sign extends GutterMarker {
 
 const signs = { a: new Sign('−'), b: new Sign('+') };
 
+class DeletedSign extends Sign {
+	elementClass = 'cm-diffDeletedSign';
+
+	eq(other: Sign) {
+		return other instanceof DeletedSign;
+	}
+}
+
+const deletedSign = new DeletedSign('−');
+
 /** Marks each line inside a diff chunk with − on the original side or + on the changed side. */
 export function diffSigns(side: 'a' | 'b') {
 	return gutter({
@@ -262,6 +272,8 @@ export function diffSigns(side: 'a' | 'b') {
 			});
 			return inside ? signs[side] : null;
 		},
+		// Unified views draw deletions as a block widget above the line they precede.
+		widgetMarker: (_view, widget) => (side === 'b' && deletion(widget) ? deletedSign : null),
 		lineMarkerChange: (update) => update.docChanged || update.transactions.some((transaction) => transaction.effects.length > 0)
 	});
 }
@@ -297,6 +309,11 @@ export function originalNumbers() {
 				}
 				return new OriginalNumber(b.lineAt(line.from).number + shift);
 			},
+			widgetMarker(view, widget, block) {
+				if (!deletion(widget)) return null;
+				const chunk = getChunks(view.state)?.chunks.find((chunk) => chunk.fromB === block.from || (chunk.toB > chunk.fromB && block.from >= chunk.fromB && block.from < chunk.toB));
+				return chunk ? new OriginalNumber(getOriginalDoc(view.state).lineAt(chunk.fromA).number) : null;
+			},
 			lineMarkerChange: (update) => update.docChanged || update.transactions.some((transaction) => transaction.effects.length > 0)
 		})
 	);
@@ -313,6 +330,16 @@ class CollapsedRow extends GutterMarker {
 }
 
 const collapsedRow = new CollapsedRow();
+
+class DeletedRow extends GutterMarker {
+	elementClass = 'cm-diffDeletedRow';
+}
+
+const deletedRow = new DeletedRow();
+
+/** Merge keeps its widgets private: the collapse widget counts hidden lines in a numeric `lines`, the deletion widget builds lazily. */
+const collapse = (widget: WidgetType) => typeof (widget as { lines?: unknown }).lines === 'number';
+const deletion = (widget: WidgetType) => typeof (widget as { buildDOM?: unknown }).buildDOM === 'function';
 const wholeLine = Decoration.line({ class: 'cm-diffWholeLine' });
 
 /** Tints every gutter cell on a changed line, so the row reads as one band with its code, and marks lines whose chunk has nothing on the other side. */
@@ -323,11 +350,14 @@ export function diffRows(side: 'a' | 'b') {
 		const doc = state.doc;
 		for (const chunk of getChunks(state)?.chunks ?? []) {
 			const [from, to] = side === 'a' ? [chunk.fromA, chunk.toA] : [chunk.fromB, chunk.toB];
-			const whole = side === 'a' ? chunk.fromB === chunk.toB : chunk.fromA === chunk.toA;
+			const alone = side === 'a' ? chunk.fromB === chunk.toB : chunk.fromA === chunk.toA;
+			// A line one change covers end to end is wholly new or gone, so word highlights would only box all of it.
+			const covered = (start: number, end: number) =>
+				end > start && chunk.changes.some((change) => (side === 'a' ? change.fromA : change.fromB) <= start - from && (side === 'a' ? change.toA : change.toB) >= end - from);
 			for (let pos = from; pos < Math.min(to, doc.length + 1); ) {
 				const line = doc.lineAt(Math.min(pos, doc.length));
 				gutters.add(line.from, line.from, changedRow);
-				if (whole) lines.add(line.from, line.from, wholeLine);
+				if (alone || covered(line.from, line.to)) lines.add(line.from, line.from, wholeLine);
 				pos = line.to + 1;
 			}
 		}
@@ -339,8 +369,7 @@ export function diffRows(side: 'a' | 'b') {
 		provide: (field) => [
 			gutterLineClass.from(field, (value) => value.gutters),
 			EditorView.decorations.from(field, (value) => value.lines),
-			// Merge keeps its collapse widget private; only it counts hidden lines in a numeric `lines`.
-			gutterWidgetClass.of((_view, widget) => (typeof (widget as { lines?: unknown }).lines === 'number' ? collapsedRow : null))
+			gutterWidgetClass.of((_view, widget) => (collapse(widget) ? collapsedRow : deletion(widget) ? deletedRow : null))
 		]
 	});
 }

@@ -5,22 +5,25 @@
 	import { indentedWrap } from '#lib/editor/wrap.ts';
 	import { read, type OpenChanges } from '#lib/files.svelte.ts';
 	import { baseline, split, stage, type Change, type Git } from '#lib/git.ts';
-	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import Button from '#lib/ui/Button.svelte';
+	import Caret from '#lib/ui/Caret.svelte';
+	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import { getChunks, getOriginalDoc, unifiedMergeView } from '@codemirror/merge';
-	import { Compartment, EditorState } from '@codemirror/state';
+	import { EditorState, type Extension } from '@codemirror/state';
 	import { EditorView } from '@codemirror/view';
 	import { basicSetup } from 'codemirror';
 	import Plus from '~icons/ph/plus';
 
 	type Side = { text: string; binary?: undefined } | { binary: true };
-	type Loaded = { change: Change; before: Side; after: Side };
+	type Loaded = { change: Change; before: Side; after: Side; syntax: Extension };
 
 	let { tab, git, active, onopen }: { tab: OpenChanges; git?: Git; active: boolean; onopen(path: string): void } = $props();
 
 	let loaded = $state.raw<Loaded[]>([]);
 	let counts = $state<Record<string, { added: number; removed: number }>>({});
 	let staging = $state<string>();
+	let folded = $state<Record<string, boolean>>({});
+	const unstaged = $derived((git?.unstaged ?? []).map(({ path }) => path));
 	const changes = $derived(git?.changes ?? []);
 	const key = $derived(changes.map(({ path, kind }) => `${kind}:${path}`).join('\n'));
 	const totals = $derived(Object.values(counts).reduce((sum, { added, removed }) => ({ added: sum.added + added, removed: sum.removed + removed }), { added: 0, removed: 0 }));
@@ -41,22 +44,21 @@
 		if (!active) return;
 		const listed = changes;
 		let stale = false;
-		Promise.all(listed.map(async (change) => ({ change, before: await before(change), after: await after(change) }))).then((all) => {
+		Promise.all(listed.map(async (change) => ({ change, before: await before(change), after: await after(change), syntax: await language(change.path) }))).then((all) => {
 			if (!stale) loaded = all;
 		});
 		return () => (stale = true);
 	});
 
-	function build(node: HTMLElement, { change, before, after }: Loaded) {
+	function build(node: HTMLElement, { change, before, after, syntax }: Loaded) {
 		if (before.binary || after.binary) return;
 		const whole = !before.text.length !== !after.text.length;
-		const syntax = new Compartment();
 		const view = new EditorView({
 			parent: node,
 			doc: after.text,
 			extensions: [
 				basicSetup,
-				syntax.of([]),
+				syntax,
 				theme,
 				diffTheme(whole),
 				EditorState.readOnly.of(true),
@@ -68,17 +70,15 @@
 				unifiedMergeView({ original: before.text, mergeControls: false, highlightChanges: !whole, collapseUnchanged: {}, diffConfig })
 			]
 		});
-		let live = true;
-		language(change.path).then((extension) => live && view.dispatch({ effects: syntax.reconfigure(extension) }));
 		counts[change.path] = diffCounts(getChunks(view.state)?.chunks ?? [], getOriginalDoc(view.state), view.state.doc);
-		return () => ((live = false), view.destroy());
+		return () => view.destroy();
 	}
 
 
-	async function stageFile(path: string) {
-		staging = path;
+	async function stageFiles(paths: string[]) {
+		staging = paths.length === 1 ? paths[0] : '';
 		try {
-			await stage(tab.projectId, [path]);
+			await stage(tab.projectId, paths);
 		} finally {
 			staging = undefined;
 		}
@@ -90,24 +90,27 @@
 		<span>{changes.length} changed {changes.length === 1 ? 'file' : 'files'}</span>
 		{#if totals.added}<span class="added">+{totals.added}</span>{/if}
 		{#if totals.removed}<span class="removed">−{totals.removed}</span>{/if}
+		<span class="fill"></span>
+		{#if unstaged.length}<Button variant="ghost" size="sm" disabled={staging !== undefined} onclick={() => stageFiles(unstaged)}><Plus />Stage all</Button>{/if}
 	</header>
 	{#each loaded as item (item.change.path)}
 		{@const { dir, name } = split(item.change.path)}
 		{@const count = counts[item.change.path]}
 		<article class="file" aria-label={item.change.path}>
 			<header>
+				<button class="fold" aria-expanded={!folded[item.change.path]} aria-label="{folded[item.change.path] ? 'Expand' : 'Collapse'} {item.change.path}" onclick={() => (folded[item.change.path] = !folded[item.change.path])}><Caret /></button>
 				<FileIcon path={item.change.path} />
 				<button class="path" title="Open {item.change.path}" onclick={() => onopen(item.change.path)}>{dir}<span class="name">{name}</span></button>
 				{#if count?.added}<span class="added">+{count.added}</span>{/if}
 				{#if count?.removed}<span class="removed">−{count.removed}</span>{/if}
 				<span class="fill"></span>
-				{#if git?.unstaged.some(({ path }) => path === item.change.path)}
-					<Button variant="ghost" size="sm" aria-label="Stage {item.change.path}" disabled={staging === item.change.path} onclick={() => stageFile(item.change.path)}><Plus />Stage</Button>
+				{#if unstaged.includes(item.change.path)}
+					<Button variant="ghost" size="sm" aria-label="Stage {item.change.path}" disabled={staging !== undefined} onclick={() => stageFiles([item.change.path])}><Plus />Stage</Button>
 				{/if}
 			</header>
 			{#if item.before.binary || item.after.binary}
-				<p class="binary">Binary file</p>
-			{:else}
+				<p class="binary" hidden={folded[item.change.path]}>Binary file</p>
+			{:else if !folded[item.change.path]}
 				<div class="body" {@attach (node) => build(node, item)}></div>
 			{/if}
 		</article>
@@ -153,6 +156,25 @@
 		padding: 0 var(--space-1) 0 var(--space-3);
 		border-bottom: var(--border-width) solid var(--border);
 		background: var(--chrome);
+	}
+
+	.fold {
+		display: inline-grid;
+		flex: none;
+		place-items: center;
+		width: var(--target-min);
+		height: var(--target-min);
+		margin-left: calc(-1 * var(--space-2));
+		padding: 0;
+		border: none;
+		border-radius: var(--radius-sm);
+		background: none;
+		cursor: pointer;
+	}
+
+	.fold:focus-visible {
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-offset);
 	}
 
 	.path {
