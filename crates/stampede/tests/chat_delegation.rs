@@ -199,6 +199,7 @@ async fn saved_rig_names_are_discoverable_and_can_be_used_for_delegation_after_r
         (Some("source"), "Writer", "claude-code", "opus", "high", "auto"),
         (Some("target"), "Careful Reviewer", "codex", "gpt-6-luna", "low", "read-only"),
         (None, "Quick Reviewer", "codex", "gpt-6-luna", "low", "read-only"),
+        (None, "Gemini", "antigravity", "gemini-3.8-flash", "low", "full-access"),
     ] {
         let response = client.put(format!("http://127.0.0.1:{}/api/rigs", server.port))
             .header("Content-Type", "application/json")
@@ -221,6 +222,9 @@ async fn saved_rig_names_are_discoverable_and_can_be_used_for_delegation_after_r
     assert_eq!(result["result"]["isError"], false);
     assert_eq!(result["result"]["structuredContent"]["outcome"], "completed");
     assert_eq!(result["result"]["structuredContent"]["report"], FINDING);
+    let gemini = call(&server, &source, "delegate_to_rig", json!({ "rig": "Gemini", "task": TASK })).await;
+    assert_eq!(gemini["structuredContent"]["outcome"], "completed", "{gemini}");
+    assert_eq!(gemini["structuredContent"]["report"], "Welcome—**glad** you’re here.");
     close_chat(&mut socket, server.root.path(), source["id"].as_str().unwrap()).await;
 }
 
@@ -236,12 +240,9 @@ async fn delegation_discovers_rigs_and_rejects_invalid_tasks_without_starting_ch
     let rigs = call(&server, &source, "list_rigs", json!({})).await;
     let rigs: Value = serde_json::from_str(rigs["content"][0]["text"].as_str().unwrap()).unwrap();
     let names: Vec<_> = rigs.as_array().unwrap().iter().map(|rig| rig["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["source", "target", "Limited"]);
+    assert_eq!(names, ["source", "target", "Antigravity", "Limited"]);
     assert_eq!(rigs[1]["agent"], "codex");
     assert!(rigs.as_array().unwrap().iter().all(|rig| rig.get("env").is_none()));
-    let refused = call(&server, &source, "delegate_to_rig", json!({ "rig": "Antigravity", "task": TASK })).await;
-    assert_eq!(refused["isError"], true);
-    assert_eq!(refused["content"][0]["text"], "Google's terms don't allow another Agent to drive Google Antigravity on a Google login.");
     for arguments in [json!({ "rig": "missing", "task": TASK }), json!({ "rig": "target", "task": " " }),
         json!({ "rig": "target", "task": TASK, "extra": true }), json!({ "rig": "target", "task": "x".repeat(65537) })]
     {
