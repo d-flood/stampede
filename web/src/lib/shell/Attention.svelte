@@ -12,7 +12,7 @@
 	import Menu from '#lib/ui/Menu.svelte';
 	import { WaitingMark, WorkingMark } from '#lib/ui/spinners.ts';
 	import Article from '~icons/ph/article';
-	import Bell from '~icons/ph/bell';
+	import ChatsCircle from '~icons/ph/chats-circle';
 	import CheckBold from '~icons/ph/check-bold';
 
 	type Props = { items: Attention[]; projects: Map<string, string>; chats: Chat[]; onselect(item: Attention): void };
@@ -20,6 +20,19 @@
 	let { items, projects, chats, onselect }: Props = $props();
 
 	const marks = { working: WorkingMark, waiting: WaitingMark, done: CheckBold };
+
+	const listed = $derived(new Set(items.map(tabOf)));
+	/** Every open Chat that doesn't already need attention, grouped by Project in rail order. */
+	const others = $derived.by(() => {
+		const groups = new Map<string, Attention[]>();
+		for (const chat of chats) {
+			if (listed.has(chat.id)) continue;
+			const group = groups.get(chat.projectId) ?? [];
+			group.push({ projectId: chat.projectId, chatId: chat.id, label: chat.title ?? chat.rig, status: chat.status });
+			groups.set(chat.projectId, group);
+		}
+		return [...groups].map(([projectId, entries]) => ({ heading: projects.get(projectId) ?? projectId, entries }));
+	});
 
 	function icon(item: Attention) {
 		if (!('chatId' in item)) return Article;
@@ -36,6 +49,7 @@
 	const pushLabel = $derived(failed ? `Retry ${push === 'on' ? 'disabling' : 'enabling'} notifications` : push === 'unsupported' ? '' : labels[push]);
 	const menu = $derived([
 		{ heading: 'Needs attention', empty: 'Nothing needs attention', items: items.map((item) => ({ label: item.label, data: item, onselect: () => onselect(item) })) },
+		...others.map(({ heading, entries }) => ({ heading, items: entries.map((item) => ({ label: item.label, data: item, onselect: () => onselect(item) })) })),
 		...(push === 'unsupported' ? [] : [{ label: pushLabel, disabled: pushDisabled, onselect: notify }])
 	]);
 	let sheet = $state(false);
@@ -57,7 +71,7 @@
 
 {#snippet trigger(props: Record<string, unknown>)}
 	<span class="trigger">
-		<IconButton {...props} label="Attention list"><Bell /></IconButton>
+		<IconButton {...props} label="Attention list" title="Chats"><ChatsCircle /></IconButton>
 		{#if items.length}<span class="count"><Badge tone="waiting">{items.length}</Badge></span>{/if}
 	</span>
 {/snippet}
@@ -69,15 +83,16 @@
 	<span class="icon">{#if Icon}<Icon />{/if}</span>
 	<span class="label">
 		<strong>{item.label}</strong>
-		<span class="project">in {projects.get(item.projectId)}</span>
+		{#if listed.has(tabOf(item))}<span class="project">in {projects.get(item.projectId)}</span>{/if}
 	</span>
 	<span class="mark {item.status}" role="img" aria-label={item.status} title={item.status}><Mark /></span>
 {/snippet}
 
 {#if form() === 'phone'}
 	{@render trigger({ onclick: () => (sheet = true) })}
-	<Dialog bind:open={sheet} full title="Needs attention">
-		<ul class="sheet">
+	<Dialog bind:open={sheet} full title="Chats">
+		<ul class="sheet" aria-label="Needs attention">
+			<ListLabel element="li">Needs attention</ListLabel>
 			{#each items as item (tabOf(item))}
 				<li>
 					<ListItem element="button" onclick={() => ((sheet = false), onselect(item))}>{@render entry(item)}</ListItem>
@@ -86,6 +101,16 @@
 				<ListLabel element="li">Nothing needs attention</ListLabel>
 			{/each}
 		</ul>
+		{#each others as { heading, entries } (heading)}
+			<ul class="sheet" aria-label={heading}>
+				<ListLabel element="li">{heading}</ListLabel>
+				{#each entries as item (tabOf(item))}
+					<li>
+						<ListItem element="button" onclick={() => ((sheet = false), onselect(item))}>{@render entry(item)}</ListItem>
+					</li>
+				{/each}
+			</ul>
+		{/each}
 		{#if push !== 'unsupported'}
 			<Button disabled={pushDisabled} onclick={notify}>{pushLabel}</Button>
 		{/if}

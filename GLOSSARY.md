@@ -322,7 +322,7 @@ True of a Tab whose Agent is waiting, or is done and not yet viewed on any Devic
 _Avoid_: unread, alert
 
 **Attention list**:
-The dropdown of every Tab, across all Projects, that needs attention.
+The dropdown of every Tab, across all Projects, that needs attention, followed by every other open Chat grouped by Project.
 _Avoid_: notification center, inbox
 
 **Composer**:

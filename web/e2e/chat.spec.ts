@@ -522,8 +522,8 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 	const list = page.getByRole('button', { name: 'Attention list' });
 	const entry =
 		project.name === 'pixel'
-			? page.getByRole('dialog', { name: 'Needs attention' }).getByRole('button', { name: `Fake Claude in ${name}` })
-			: page.getByRole('menuitem', { name: `Fake Claude in ${name}` });
+			? page.getByRole('dialog', { name: 'Chats' }).getByRole('list', { name: 'Needs attention' }).getByRole('button', { name: `Fake Claude in ${name}` })
+			: page.getByRole('group', { name: 'Needs attention' }).getByRole('menuitem', { name: `Fake Claude in ${name}` });
 	await list.click();
 	await entry.click();
 	await expectShown(page, chatId);
