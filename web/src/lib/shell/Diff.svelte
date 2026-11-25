@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Device, ServerMessage } from '#lib/device.svelte.ts';
-	import { diffConfig } from '#lib/editor/changes.ts';
+	import { diffConfig, diffSigns, originalNumbers } from '#lib/editor/changes.ts';
 	import { find } from '#lib/editor/find.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { languageServer } from '#lib/editor/lsp-editor.ts';
@@ -23,7 +23,7 @@
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Segmented from '#lib/ui/Segmented.svelte';
 	import Toolbar from '#lib/ui/Toolbar.svelte';
-	import { getOriginalDoc, MergeView, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
+	import { getChunks, getOriginalDoc, MergeView, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
 	import { setDiagnostics } from '@codemirror/lint';
 	import { ChangeSet, Compartment, EditorState, Prec, type Extension, type Text } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
@@ -54,7 +54,27 @@
 	let { diff, git, reviews, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
+	let width = $state(0);
+	const narrow = $derived(width > 0 && width < 720);
+	const layout = $derived(narrow ? 'unified' : diff.layout);
 	let shown = $state.raw<Shown>();
+	let revision = $state(0);
+	const counts = $derived.by(() => {
+		revision;
+		const chunks = shown && getChunks(shown.b.state)?.chunks;
+		if (!shown || !chunks) return;
+		const lines = (doc: Text, from: number, to: number) => {
+			if (to <= from) return 0;
+			const text = doc.sliceString(from, to);
+			return text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+		};
+		const [b, a] = [shown.b.state.doc, shown.original];
+		return chunks.reduce((sum, chunk) => ({ added: sum.added + lines(b, chunk.fromB, chunk.toB), removed: sum.removed + lines(a, chunk.fromA, chunk.toA) }), { added: 0, removed: 0 });
+	});
+	const recount = EditorView.updateListener.of((update) => {
+		// Dispatches often run inside effects, so a tracked read here would make them depend on what they write.
+		if (update.docChanged || update.transactions.some((transaction) => transaction.effects.length)) untrack(() => revision++);
+	});
 	let syntax = $state.raw<Extension>();
 	let note = $state<string>();
 	let heads = 0;
@@ -378,14 +398,20 @@
 
 	function toggle() {
 		diff.layout = diff.layout === 'split' ? 'unified' : 'split';
-		if (!shown) return;
-		const pending = reopened(shown, diff.layout === 'unified');
-		const views = build(shown.original, shown.b.state.doc, { typed: shown.typed, pending }).views;
-		for (const view of views) {
-			const pos = openPosition(view);
-			if (pos !== undefined) view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
-		}
 	}
+
+	$effect(() => {
+		const unified = layout === 'unified';
+		untrack(() => {
+			if (!shown || (shown.views.length === 1) === unified) return;
+			const pending = reopened(shown, unified);
+			const views = build(shown.original, shown.b.state.doc, { typed: shown.typed, pending }).views;
+			for (const view of views) {
+				const pos = openPosition(view);
+				if (pos !== undefined) view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+			}
+		});
+	});
 
 	/** The drafts drawn inline on `path`; a Displaced draft's lines no longer apply. */
 	function placed(review: PrReview, path: string) {
@@ -474,7 +500,7 @@
 					])
 				)
 			: [];
-		const shared = [walking, basicSetup, find, syntax ?? [], theme, diffTheme(whole)];
+		const shared = [walking, basicSetup, find, syntax ?? [], theme, diffTheme(whole), recount];
 		const working = [
 			keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 			shared,
@@ -482,11 +508,11 @@
 			sync.listener,
 			analysis.of(analyzed ? languageServer(servers, diff.projectId, diff.path, false) : [])
 		];
-		if (diff.layout === 'split') {
+		if (layout === 'split') {
 			const view = new MergeView({
 				parent: container,
-				a: { doc: a, extensions: [shared, EditorState.readOnly.of(true), commenting('target', false)] },
-				b: { doc: b, extensions: [working, commenting('source', false)] },
+				a: { doc: a, extensions: [shared, diffSigns('a'), EditorState.readOnly.of(true), commenting('target', false)] },
+				b: { doc: b, extensions: [working, diffSigns('b'), commenting('source', false)] },
 				revertControls: editable ? 'a-to-b' : undefined,
 				highlightChanges: !whole,
 				collapseUnchanged: {},
@@ -515,6 +541,8 @@
 				doc: b,
 				extensions: [
 					working,
+					originalNumbers(),
+					diffSigns('b'),
 					commenting('source', true),
 					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {}, diffConfig })
 				]
@@ -555,11 +583,11 @@
 <div class="diff" role="tabpanel" hidden={!active} onkeydown={stepKey}>
 	<Toolbar path={diff.from ? `${diff.from} → ${diff.path}` : diff.path} title={diff.path} deleted={diff.deleted} wrap={svg}>
 		{#if diff.against === 'disk'}
-			<span class="sides">disk ↔ unsaved edits</span>
+			<span class="sides">Unsaved edits</span>
 		{:else if diff.against === 'index'}
-			<span class="sides">index ↔ disk</span>
+			<span class="sides">Unstaged</span>
 		{:else if diff.against === 'staged'}
-			<span class="sides">HEAD ↔ index</span>
+			<span class="sides">Staged</span>
 		{:else if comparing(diff.against)}
 			{#if form() === 'desktop'}
 				{@const { target, source } = branches(diff.against)}
@@ -568,6 +596,7 @@
 		{:else if diff.against !== 'HEAD'}
 			<span class="sides" title={diff.against.subject}>{diff.against.short}^ ↔ {diff.against.short}</span>
 		{/if}
+		{#if counts && (counts.added || counts.removed)}<span class="counts" aria-label="{counts.added} added, {counts.removed} removed">{#if counts.added}<span class="added">+{counts.added}</span>{/if}{#if counts.removed}<span class="removed">−{counts.removed}</span>{/if}</span>{/if}
 		{#if compared?.error}<span class="error">{compared.error.message}</span>{/if}
 		{#if compared}
 			<IconButton label="Previous file" title="Previous file (Alt+↑)" disabled={at <= 0} onclick={() => step(-1)}><ArrowUp /></IconButton>
@@ -588,9 +617,9 @@
 		{/if}
 		{#if analyzed && !pictures}<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} />{/if}
 		{#if shown || pictures}
-			{#if diff.layout === 'split'}
+			{#if layout === 'split'}
 				<IconButton label="Single column" title="Single column" onclick={toggle}><Rows /></IconButton>
-			{:else}
+			{:else if !narrow}
 				<IconButton label="Side by side" title="Side by side" onclick={toggle}><Columns /></IconButton>
 			{/if}
 			{#if shown && !pictures && form() === 'phone' && editable}
@@ -606,7 +635,7 @@
 		</div>
 	{/if}
 	<Conflict {sync} onshowdiff={(disk) => shown && onshowdiff(disk, shown.b.state.doc.toString())} />
-	<div class="content" bind:this={container} hidden={!!pictures}>
+	<div class="content" bind:this={container} bind:clientWidth={width} hidden={!!pictures}>
 		{#if note}<p>{note}</p>{/if}
 	</div>
 	{#if pictures}
@@ -631,6 +660,35 @@
 		flex: none;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
+	}
+
+	/* Hunk actions wait for the pointer so they don't sit over code while reading. */
+	@media (hover: hover) {
+		.content :global(.cm-editor:not(:hover) .cm-chunkButtons:not(:focus-within)),
+		.content :global(.cm-mergeView:not(:hover) .cm-merge-revert:not(:focus-within)) {
+			opacity: 0;
+		}
+	}
+
+	.content :global(.cm-scroller) {
+		mask-image: linear-gradient(to right, #000 calc(100% - var(--space-6)), transparent);
+	}
+
+	.counts {
+		display: inline-flex;
+		flex: none;
+		gap: var(--space-1);
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.added {
+		color: var(--git-added);
+	}
+
+	.removed {
+		color: var(--git-deleted);
 	}
 
 	.comparison {

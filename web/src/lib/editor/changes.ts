@@ -1,4 +1,4 @@
-import { Chunk } from '@codemirror/merge';
+import { Chunk, getChunks, getOriginalDoc } from '@codemirror/merge';
 import { Prec, StateEffect, StateField, type ChangeDesc, type Text } from '@codemirror/state';
 import {
 	Decoration,
@@ -220,3 +220,71 @@ export const changeMarkers = [
 		])
 	)
 ];
+
+class Sign extends GutterMarker {
+	constructor(readonly text: string) {
+		super();
+	}
+
+	eq(other: Sign) {
+		return other.text === this.text;
+	}
+
+	toDOM() {
+		return document.createTextNode(this.text);
+	}
+}
+
+const signs = { a: new Sign('−'), b: new Sign('+') };
+
+/** Marks each line inside a diff chunk with − on the original side or + on the changed side. */
+export function diffSigns(side: 'a' | 'b') {
+	return gutter({
+		class: `cm-diffSigns cm-diffSigns-${side}`,
+		lineMarker(view, line) {
+			const chunks = getChunks(view.state)?.chunks ?? [];
+			const inside = chunks.some((chunk) => {
+				const [from, to] = side === 'a' ? [chunk.fromA, chunk.toA] : [chunk.fromB, chunk.toB];
+				return to > from && line.from >= from && line.from < to;
+			});
+			return inside ? signs[side] : null;
+		},
+		lineMarkerChange: (update) => update.docChanged || update.transactions.some((transaction) => transaction.effects.length > 0)
+	});
+}
+
+class OriginalNumber extends GutterMarker {
+	constructor(readonly value: number) {
+		super();
+	}
+
+	eq(other: OriginalNumber) {
+		return other.value === this.value;
+	}
+
+	toDOM() {
+		return document.createTextNode(String(this.value));
+	}
+}
+
+/** Numbers each unchanged line of a unified diff as it was in the original, beside the editor's own numbers. */
+export function originalNumbers() {
+	const count = (doc: Text, from: number, to: number) => (to > from ? doc.lineAt(Math.min(to, doc.length)).number - doc.lineAt(from).number + (to > doc.length ? 1 : 0) : 0);
+	return Prec.highest(
+		gutter({
+			class: 'cm-originalNumbers',
+			lineMarker(view, line) {
+				const chunks = getChunks(view.state)?.chunks ?? [];
+				const [b, a] = [view.state.doc, getOriginalDoc(view.state)];
+				let shift = 0;
+				for (const chunk of chunks) {
+					if (line.from >= chunk.fromB && line.from < chunk.toB) return null;
+					if (line.from < chunk.fromB) break;
+					shift += count(a, chunk.fromA, chunk.toA) - count(b, chunk.fromB, chunk.toB);
+				}
+				return new OriginalNumber(b.lineAt(line.from).number + shift);
+			},
+			lineMarkerChange: (update) => update.docChanged || update.transactions.some((transaction) => transaction.effects.length > 0)
+		})
+	);
+}

@@ -170,10 +170,10 @@ test('a staged file diffs HEAD with the index and an unstaged one the index with
 
 	await sidebar.getByRole('list', { name: 'Staged Changes' }).getByRole('button', { name: 'file.ts', exact: true }).click();
 	await expect(page.getByRole('tab', { name: /file\.ts/ })).toHaveAttribute('aria-selected', 'true');
-	await expect(diff.locator('.sides')).toHaveText('HEAD ↔ index');
+	await expect(diff.locator('.sides')).toHaveText('Staged');
 	await expect(diff.locator('.cm-merge-b .cm-changedLine', { hasText: 'value = 2' })).toBeVisible();
 	await (await showSidebar(page)).getByRole('list', { name: 'Changes', exact: true }).getByRole('button', { name: 'file.ts', exact: true }).click();
-	await expect(diff.locator('.sides')).toHaveText('index ↔ disk');
+	await expect(diff.locator('.sides')).toHaveText('Unstaged');
 	await expect(diff.locator('.cm-merge-b .cm-changedLine', { hasText: 'value = 3' })).toBeVisible();
 });
 
