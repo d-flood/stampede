@@ -1205,7 +1205,11 @@
 						{@const projectId = focused.id}
 						<Menu items={menuItems(newTab(projectId))} resize loading={readingSessions[projectId] ? 'Reading sessions…' : undefined} onopen={() => readSessions(projectId)}>
 							{#snippet trigger(props)}
-								<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
+								{#if group.tabs.length}
+									<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
+								{:else}
+									<Button {...props} variant="ghost" size="sm" title="New tab (Ctrl/Cmd+T)"><Plus />New Tab</Button>
+								{/if}
 							{/snippet}
 						</Menu>
 					{/if}

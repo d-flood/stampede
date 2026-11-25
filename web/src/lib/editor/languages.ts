@@ -3,20 +3,9 @@ import { LanguageDescription, LanguageSupport, StreamLanguage, type StreamParser
 import type { Extension } from '@codemirror/state';
 import File from '~icons/ph/file?raw';
 import FileCode from '~icons/ph/file-code?raw';
-import FileCss from '~icons/ph/file-css?raw';
-import FileHtml from '~icons/ph/file-html?raw';
 import FileImage from '~icons/ph/file-image?raw';
-import FileIni from '~icons/ph/file-ini?raw';
-import FileJs from '~icons/ph/file-js?raw';
-import FileJsx from '~icons/ph/file-jsx?raw';
-import FileMd from '~icons/ph/file-md?raw';
 import FilePdf from '~icons/ph/file-pdf?raw';
-import FilePy from '~icons/ph/file-py?raw';
-import FileRs from '~icons/ph/file-rs?raw';
-import FileSvg from '~icons/ph/file-svg?raw';
-import FileTs from '~icons/ph/file-ts?raw';
-import FileTsx from '~icons/ph/file-tsx?raw';
-import FileVue from '~icons/ph/file-vue?raw';
+import FileText from '~icons/ph/file-text?raw';
 import GitDiff from '~icons/ph/git-diff?raw';
 
 type Load = () => Promise<LanguageSupport>;
@@ -55,21 +44,21 @@ const shell: Load = async () => {
 
 // Keys double as LSP language IDs for entries with servers.
 const languages: Record<string, Language> = {
-	typescript: { extensions: ['ts', 'mts', 'cts'], icon: FileTs, load: javascript({ typescript: true }), servers: ['typescript', 'eslint'] },
-	typescriptreact: { extensions: ['tsx'], icon: FileTsx, load: javascript({ typescript: true, jsx: true }), servers: ['typescript', 'eslint'] },
-	javascript: { extensions: ['js', 'mjs', 'cjs'], icon: FileJs, load: javascript({}), servers: ['typescript', 'eslint'] },
-	javascriptreact: { extensions: ['jsx'], icon: FileJsx, load: javascript({ jsx: true }), servers: ['typescript', 'eslint'] },
-	python: { extensions: ['py', 'pyi'], icon: FilePy, load: async () => (await import('@codemirror/lang-python')).python(), servers: ['python', 'ruff'] },
-	css: { extensions: ['css'], icon: FileCss, load: async () => (await import('@codemirror/lang-css')).css() },
-	html: { extensions: ['html'], icon: FileHtml, load: async () => (await import('@codemirror/lang-html')).html() },
-	svg: { extensions: ['svg'], icon: FileSvg, load: xml },
+	typescript: { extensions: ['ts', 'mts', 'cts'], icon: FileCode, load: javascript({ typescript: true }), servers: ['typescript', 'eslint'] },
+	typescriptreact: { extensions: ['tsx'], icon: FileCode, load: javascript({ typescript: true, jsx: true }), servers: ['typescript', 'eslint'] },
+	javascript: { extensions: ['js', 'mjs', 'cjs'], icon: FileCode, load: javascript({}), servers: ['typescript', 'eslint'] },
+	javascriptreact: { extensions: ['jsx'], icon: FileCode, load: javascript({ jsx: true }), servers: ['typescript', 'eslint'] },
+	python: { extensions: ['py', 'pyi'], icon: FileCode, load: async () => (await import('@codemirror/lang-python')).python(), servers: ['python', 'ruff'] },
+	css: { extensions: ['css'], icon: FileCode, load: async () => (await import('@codemirror/lang-css')).css() },
+	html: { extensions: ['html'], icon: FileCode, load: async () => (await import('@codemirror/lang-html')).html() },
+	svg: { extensions: ['svg'], icon: FileImage, load: xml },
 	xml: { extensions: ['xml'], icon: FileCode, load: xml },
 	json: { extensions: ['json', 'jsonc', 'jsonl', 'jsonld', 'webmanifest'], icon: FileCode, load: async () => (await import('@codemirror/lang-json')).json() },
-	markdown: { extensions: ['md', 'markdown'], icon: FileMd, load: markdown },
-	rust: { extensions: ['rs'], icon: FileRs, load: async () => (await import('@codemirror/lang-rust')).rust() },
-	yaml: { extensions: ['yaml', 'yml'], icon: FileIni, load: async () => (await import('@codemirror/lang-yaml')).yaml() },
+	markdown: { extensions: ['md', 'markdown'], icon: FileText, load: markdown },
+	rust: { extensions: ['rs'], icon: FileCode, load: async () => (await import('@codemirror/lang-rust')).rust() },
+	yaml: { extensions: ['yaml', 'yml'], icon: FileCode, load: async () => (await import('@codemirror/lang-yaml')).yaml() },
 	shell: { extensions: ['sh', 'bash', 'zsh'], icon: FileCode, load: shell },
-	toml: { extensions: ['toml'], icon: FileIni, load: async () => stream((await import('@codemirror/legacy-modes/mode/toml')).toml) },
+	toml: { extensions: ['toml'], icon: FileCode, load: async () => stream((await import('@codemirror/legacy-modes/mode/toml')).toml) },
 	dockerfile: {
 		extensions: ['dockerfile'],
 		filenames: ['Dockerfile'],
@@ -79,7 +68,7 @@ const languages: Record<string, Language> = {
 	diff: { extensions: ['diff', 'patch'], icon: GitDiff, load: async () => stream((await import('@codemirror/legacy-modes/mode/diff')).diff) },
 	svelte: { extensions: ['svelte'], icon: FileCode, load: async () => (await import('@replit/codemirror-lang-svelte')).svelte(), servers: ['svelte', 'eslint'] },
 	astro: { extensions: ['astro'], icon: FileCode, load: async () => (await import('./astro.ts')).astro(), servers: ['astro', 'eslint'] },
-	vue: { extensions: ['vue'], icon: FileVue, load: async () => (await import('@codemirror/lang-vue')).vue() }
+	vue: { extensions: ['vue'], icon: FileCode, load: async () => (await import('@codemirror/lang-vue')).vue() }
 };
 
 const lookup = new Map(
