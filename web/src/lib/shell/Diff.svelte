@@ -7,6 +7,7 @@
 	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
+	import { indentedWrap } from '#lib/editor/wrap.ts';
 	import { draftComments, draftPosition, openPlacement, openPosition, setDrafts, setReplacing, type Render } from '#lib/editor/drafts.ts';
 	import { comparison } from '#lib/compare.svelte.ts';
 	import { branches, comparing, image, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
@@ -254,7 +255,7 @@
 	$effect(() => {
 		const wrap = narrow;
 		untrack(() => {
-			if (shown?.views.length === 1) shown.b.dispatch({ effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []) });
+			if (shown?.views.length === 1) shown.b.dispatch({ effects: wrapping.reconfigure(wrap ? indentedWrap : []) });
 		});
 	});
 
@@ -567,7 +568,7 @@
 					diffSigns('b'),
 					diffRows('b'),
 					commenting('source', true),
-					wrapping.of(narrow ? EditorView.lineWrapping : []),
+					wrapping.of(narrow ? indentedWrap : []),
 					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {}, diffConfig })
 				]
 			});
