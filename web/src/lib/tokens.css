@@ -70,6 +70,8 @@
 	--chrome: var(--surface-1);
 	/* A control lifted off a surface-2 track: lighter than the track in either scheme. */
 	--raised: var(--color-bg);
+	/* A card floating on content, such as the Composer: never darker than the content it sits on. */
+	--card: var(--color-bg);
 
 	--accent: var(--ansi-4);
 	--selected-bg: color-mix(in oklab, var(--accent) 14%, transparent);
@@ -162,6 +164,7 @@
 	--canvas: rgb(from var(--color-bg) calc(r * 0.72) calc(g * 0.72) calc(b * 0.72));
 	--chrome: color-mix(in lab, var(--canvas) 55%, var(--color-bg));
 	--raised: color-mix(in lab, var(--color-bg) 80%, var(--color-fg));
+	--card: var(--surface-1);
 }
 
 @media (pointer: coarse) {

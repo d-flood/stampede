@@ -182,6 +182,21 @@
 		padding-right: calc(var(--target-min) + var(--space-3));
 	}
 
+	/* Puts a status or unsaved mark in the close button's slot and swaps them on hover. */
+	@media (hover: hover) {
+		.closable:not(.bottom):has(:global(:is(.mark, .dirty))) .select {
+			padding-right: var(--space-3);
+		}
+
+		.closable:not(.bottom):has(:global(:is(.mark, .dirty))):not(:hover, :focus-within) .close {
+			opacity: 0;
+		}
+
+		.closable:not(.bottom):is(:hover, :focus-within) .select :global(:is(.mark, .dirty)) {
+			opacity: 0;
+		}
+	}
+
 	.select > :global(svg) {
 		flex: none;
 	}

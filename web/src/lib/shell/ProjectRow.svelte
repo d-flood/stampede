@@ -314,8 +314,9 @@
 		box-sizing: border-box;
 		min-width: 1.4em;
 		height: 1.4em;
-		border: var(--border-width) solid var(--surface-2);
+		border: var(--border-width) solid var(--canvas);
 		border-radius: 0.7em;
+		box-shadow: 0 0 0 var(--border-width) var(--canvas);
 		background: var(--surface-1);
 		font-size: calc(var(--font-size-sm) - 1px);
 	}

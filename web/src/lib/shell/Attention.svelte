@@ -123,7 +123,7 @@
 		{/each}
 	</Dialog>
 {:else}
-	<Menu items={menu} row={entry} {trigger} side="right" align="end" offset={12} />
+	<Menu items={menu} row={entry} {trigger} side="right" align="end" offset={22} />
 {/if}
 
 <style>
@@ -136,6 +136,8 @@
 		position: absolute;
 		top: calc(-1 * var(--space-1));
 		right: calc(-1 * var(--space-1));
+		border-radius: var(--radius-pill);
+		box-shadow: 0 0 0 calc(2 * var(--border-width)) var(--canvas);
 		pointer-events: none;
 	}
 

@@ -271,7 +271,8 @@
 		flex-direction: column;
 		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-xl);
-		background: var(--surface-1);
+		background: var(--card);
+		box-shadow: var(--shadow-lift);
 	}
 
 	.card textarea, .card .mirror {

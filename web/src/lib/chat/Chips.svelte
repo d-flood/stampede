@@ -110,7 +110,8 @@
 		display: inline-flex;
 		flex: none;
 		align-items: center;
-		margin-right: var(--space-1);
+		/* Pulls the next ghost Chip's padding in, so the glyph reads as its leading icon. */
+		margin-right: calc(-1 * var(--space-1));
 		color: var(--muted-fg);
 	}
 
