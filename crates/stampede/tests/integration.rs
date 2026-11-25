@@ -26,6 +26,7 @@ mod chat_sessions;
 mod chat_storage;
 mod chat_terminals;
 mod chat_transcript;
+mod cloud;
 mod files;
 mod fonts;
 mod git;

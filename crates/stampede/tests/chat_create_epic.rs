@@ -22,7 +22,7 @@ async fn creates_epic(agent: &str) {
     let (_fixture, server, mut socket, chat) = launch(agent, None).await;
     let templates: Value = serde_json::from_str(&reqwest::get(format!("http://127.0.0.1:{}/api/templates", server.port)).await.unwrap().text().await.unwrap()).unwrap();
     let names: Vec<_> = templates.as_array().unwrap().iter().map(|template| template["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["grill", "create-epic"]);
+    assert_eq!(names, ["grill", "create-epic", "cloud-setup"]);
 
     control(&mut socket, json!({ "type": "chat.send", "chatId": chat, "text": "/create-epic Use the existing conversation." })).await;
     gate(&server, "brief").await;

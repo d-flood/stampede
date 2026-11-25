@@ -13,6 +13,7 @@ pub struct Template {
 pub const TEMPLATES: &[Template] = &[
     Template { name: "grill", description: "interview me about a plan, keeping the glossary and ADRs", text: include_str!("templates/grill.md") },
     Template { name: "create-epic", description: "create an Epic with its Brief and Tickets", text: include_str!("templates/spec.md") },
+    Template { name: "cloud-setup", description: "draft this Project's Cloud Setup", text: include_str!("templates/cloud-setup.md") },
 ];
 
 pub const TICKETS: Template = Template { name: "tickets", description: "write the Epic's Tickets and its Setup Command", text: include_str!("templates/tickets.md") };

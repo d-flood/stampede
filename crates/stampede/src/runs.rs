@@ -33,6 +33,7 @@ use crate::{
 mod landing;
 mod submodules;
 mod worktrees;
+pub(crate) use worktrees::branch_spec;
 
 pub use worktrees::Refusal;
 

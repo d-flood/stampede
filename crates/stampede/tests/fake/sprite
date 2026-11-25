@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+import datetime
+import json
+import os
+import shutil
+import socket
+import socketserver
+import sys
+import threading
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+from sprite_common import environment, fail, inject, option, root, started, stop, stop_descendants
+
+
+def proxy(sprite, ports):
+    local, remote = map(int, ports.split(':'))
+
+    def copy(source, target):
+        try:
+            while data := source.recv(65536):
+                target.sendall(data)
+        except OSError:
+            pass
+        finally:
+            try:
+                target.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+
+    class Relay(socketserver.BaseRequestHandler):
+        def handle(self):
+            try:
+                with socket.create_connection(('127.0.0.1', remote)) as peer:
+                    thread = threading.Thread(target=copy, args=(self.request, peer))
+                    thread.start()
+                    copy(peer, self.request)
+                    thread.join()
+            except OSError:
+                pass
+
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    with Server(('127.0.0.1', local), Relay) as server:
+        record = sprite / f'proxy-{os.getpid()}.json'
+        record.write_text(json.dumps({'pid': os.getpid(), 'started': started(os.getpid())}))
+        server.serve_forever()
+
+
+def main(args):
+    base = root()
+    inject(base, args[0], *(['push', 'file push'] if args[:2] == ['file', 'push'] else []))
+    config = base / 'sprite.json'
+    if not config.exists():
+        fail('No authentication found')
+    sprites = base / 'sprites'
+    sprites.mkdir(exist_ok=True)
+    if args == ['list', '--json']:
+        print(json.dumps({
+            'sprites': [dict(name=p.name, status='running', created_at=(p / 'created').read_text())
+                        for p in sorted(sprites.iterdir()) if (p / 'created').exists()],
+            'org': {'name': json.loads(config.read_text())['organization']},
+        }))
+        return
+    name = option(args, '-s') or args[-1]
+    if name in ('', '.', '..') or Path(name).name != name:
+        fail(f'Invalid Sprite name: {name}')
+    sprite = sprites / name
+    home = sprite / 'home'
+    if args[0] == 'create':
+        if args != ['create', '--skip-console', name]:
+            fail(f'fake sprite: unsupported command {args}')
+        if sprite.exists():
+            fail(f'Sprite {name} already exists')
+        home.mkdir(parents=True)
+        (sprite / 'created').write_text(datetime.datetime.now(datetime.timezone.utc).isoformat())
+        return
+    if not home.is_dir():
+        fail(f'Sprite {name} not found')
+    match args[0]:
+        case 'destroy' if args == ['destroy', '--force', name]:
+            for record in sprite.glob('proxy-*.json'):
+                stop(json.loads(record.read_text()))
+            for record in (sprite / 'services').glob('*.json'):
+                stop(json.loads(record.read_text()), group=True)
+            stop_descendants(home)
+            shutil.rmtree(sprite)
+        case 'exec':
+            flags = args[:args.index('--')]
+            if option(flags, '-s') != name or '--stdin' not in flags or '--no-port-forward' not in flags:
+                fail(f'fake sprite: unsupported exec flags {flags}')
+            command = args[args.index('--') + 1:]
+            os.chdir(home / option(flags, '--dir', '.'))
+            os.execvpe(command[0], command, environment(home, option(flags, '--env', '')))
+        case 'file' if args[:5] == ['file', 'push', '-p', '-s', name] and len(args) == 7:
+            local, remote = map(Path, args[-2:])
+            remote = home / remote
+            remote.parent.mkdir(parents=True, exist_ok=True)
+            if local.is_dir():
+                shutil.copytree(local, remote, dirs_exist_ok=True)
+            else:
+                shutil.copy2(local, remote)
+        case 'proxy' if args[:3] == ['proxy', '-s', name] and len(args) == 4:
+            proxy(sprite, args[-1])
+        case _:
+            fail(f'fake sprite: unsupported command {args}')
+
+
+main(sys.argv[1:])

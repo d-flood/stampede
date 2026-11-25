@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	type Page = 'general' | 'appearance' | 'agents' | 'rigs' | 'clips';
+	type Page = 'general' | 'appearance' | 'agents' | 'rigs' | 'clips' | 'cloud-hosts';
 
 	let open = $state(false);
 	let chosen = $state<Page>();
@@ -39,6 +39,7 @@
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
 	import Check from '~icons/ph/check-bold';
+	import Cloud from '~icons/ph/cloud';
 	import Gear from '~icons/ph/gear';
 	import PaintBrush from '~icons/ph/paint-brush';
 	import Robot from '~icons/ph/robot';
@@ -54,6 +55,8 @@
 	let modesRefusal = $state<string | null>(null);
 	let fetchRefusal = $state<string | null>(null);
 	let editingRig = $state(false);
+	let cloud = $state<{ cli: 'missing' | 'signed-out' | 'ready'; organization?: string }>();
+	let cloudError = $state(false);
 	let docking: ThemeChoice | undefined;
 	const agents = Object.keys(agentNames) as Agent[];
 	const phone = $derived(form() === 'phone');
@@ -66,7 +69,8 @@
 		{ id: 'appearance', label: 'Appearance', icon: PaintBrush, summary: () => themeLabel() },
 		{ id: 'agents', label: 'Agents', icon: Robot, summary: () => 'Commit messages and modes' },
 		{ id: 'rigs', label: 'Rigs', icon: RocketLaunch, summary: () => count(rigs().length, 'Rig') },
-		{ id: 'clips', label: 'Clips', icon: BookmarkSimple, summary: () => count(clips().length, 'Clip') }
+		{ id: 'clips', label: 'Clips', icon: BookmarkSimple, summary: () => count(clips().length, 'Clip') },
+		{ id: 'cloud-hosts', label: 'Cloud Hosts', icon: Cloud, summary: () => cloud?.cli === 'ready' ? 'Ready' : 'Not set up' }
 	];
 	const roles: { role: FontRole; description: string }[] = [
 		{ role: 'ui', description: 'Menus, buttons, tabs and labels.' },
@@ -94,6 +98,22 @@
 		try {
 			localStorage.setItem(seenKey, seen);
 		} catch {}
+	});
+
+	$effect(() => {
+		if (!open) return;
+		const controller = new AbortController();
+		cloud = undefined;
+		cloudError = false;
+		fetch('/api/cloud', { signal: controller.signal }).then((response) => {
+			if (!response.ok) throw new Error();
+			return response.json();
+		}).then((status) => {
+			if (!controller.signal.aborted) cloud = status;
+		}).catch(() => {
+			if (!controller.signal.aborted) cloudError = true;
+		});
+		return () => controller.abort();
 	});
 
 	function storedSeen() {
@@ -340,6 +360,28 @@
 							</div>
 						</section>
 					</div>
+				{:else if current === 'cloud-hosts'}
+					<h3>Cloud Hosts</h3>
+					{#if !phone}<p class="lede">A worktree can run on a Fly.io Sprite that is created for it and destroyed with it.</p>{/if}
+					<div class="group">
+						<section class="row" aria-labelledby="fly-label">
+							<div class="text">
+								<span class="label" id="fly-label">Fly.io</span>
+								{#if cloud?.cli === 'ready'}
+									<p>The <code>sprite</code> CLI, signed in to {cloud.organization}.</p>
+								{:else if cloud?.cli === 'signed-out'}
+									<p>The <code>sprite</code> CLI is installed but signed out. Run <code>sprite login</code>.</p>
+								{:else if cloud?.cli === 'missing'}
+									<p>Install the <code>sprite</code> CLI and sign in to use Cloud Hosts.</p>
+								{:else if cloudError}
+									<p>Could not check the <code>sprite</code> CLI.</p>
+								{:else}
+									<p>Checking the <code>sprite</code> CLI…</p>
+								{/if}
+							</div>
+							{#if cloud?.cli === 'ready'}<span class="cloud-status"><span class="ready-dot"></span>Ready</span>{/if}
+						</section>
+					</div>
 				{:else if current === 'rigs'}
 					<section aria-label="Rigs">
 						{#if !editingRig}
@@ -504,6 +546,21 @@
 		color: var(--muted-fg);
 		font-weight: 400;
 		vertical-align: middle;
+	}
+
+	.cloud-status {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.ready-dot {
+		width: var(--space-2);
+		height: var(--space-2);
+		border-radius: var(--radius-pill);
+		background: var(--status-done);
 	}
 
 	.control {

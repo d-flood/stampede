@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { projectUrl } from '#lib/host.ts';
 	import type { Device } from '#lib/device.svelte.ts';
 	import { RequestError, type OpenFile } from '#lib/files.svelte.ts';
 	import { painted } from '#lib/paint.svelte.ts';
@@ -21,7 +22,7 @@
 
 	$effect(() => {
 		const text = content;
-		const url = `/api/projects/${file.projectId}/image?${new URLSearchParams({ path: file.path })}`;
+		const url = projectUrl(file.projectId, `image?${new URLSearchParams({ path: file.path })}`);
 		revision;
 		const controller = new AbortController();
 		let objectUrl: string | undefined;

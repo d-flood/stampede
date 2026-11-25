@@ -4,6 +4,8 @@ mod canvas;
 mod chats;
 mod cli;
 mod clips;
+pub mod cloud;
+mod cloud_hosts;
 mod config;
 mod device;
 mod epics;
@@ -77,6 +79,8 @@ struct Spa;
 pub struct ServeArgs {
     #[arg(long, default_value_t = 4580)]
     pub port: u16,
+    #[arg(long, value_enum)]
+    pub cloud: Option<cloud::Service>,
     #[arg(long, value_name = "DIR", default_value_os_t = data_dir())]
     pub data_dir: PathBuf,
     #[arg(long, value_name = "FILE", default_value_os_t = home().join(".config/stampede/config.toml"))]
@@ -100,6 +104,7 @@ struct AppState {
     attention: Arc<Feed>,
     usage: Arc<Usage>,
     projects: Arc<Projects>,
+    cloud_hosts: Arc<cloud_hosts::CloudHosts>,
     config: watch::Receiver<Arc<Config>>,
     config_path: PathBuf,
     disk: broadcast::Sender<watcher::Changed>,
@@ -120,6 +125,7 @@ fn router(state: AppState) -> Router {
     let compression = CompressionLayer::new().compress_when(DefaultPredicate::new().and(NotForContentType::const_new("font/woff")));
     Router::new()
         .route("/api/version", get(version))
+        .route("/api/cloud", get(cloud::status))
         .route("/api/browser", post(browser::open))
         .route("/api/host-name", get(host_name).put(set_host_name))
         .route("/api/auto-fetch", get(auto_fetch).put(set_auto_fetch))
@@ -205,13 +211,17 @@ fn router(state: AppState) -> Router {
         .route("/fonts/system/{family}/{index}", get(system_font).layer(compression))
         .route("/manifest.webmanifest", get(manifest))
         .route("/ws", get(device::upgrade))
+        .route("/cloud/{id}/", axum::routing::any(cloud_hosts::proxy))
+        .route("/cloud/{id}/{*rest}", axum::routing::any(cloud_hosts::proxy))
         .fallback(spa)
         .with_state(state)
 }
 
 pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let config = config::watch(&args.config)?;
+    let cloud_hosts = Arc::new(cloud_hosts::CloudHosts::load(&args.data_dir)?);
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
+    let port = listener.local_addr()?.port();
     let epics = Arc::new(Epics::load(&args.data_dir)?);
     let pr_reviews = Arc::new(pr_reviews::PrReviews::load(&args.data_dir)?);
     let requests = cli::bind(&args.data_dir)?;
@@ -220,7 +230,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let push = Arc::new(Push::load(&args.data_dir)?);
     let languages = Arc::new(LanguageServers::load(&args.data_dir)?);
     let layouts = Arc::new(Layouts::load(&args.data_dir)?);
-    let browsers = Arc::new(browser::Browsers::new(args.port));
+    let browsers = Arc::new(browser::Browsers::new(port));
     let attention = Arc::new(Feed::default());
     push::spawn(Arc::clone(&push), &attention);
     let usage = Arc::new(Usage::default());
@@ -257,7 +267,10 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let origin = origin::spawn(projects.subscribe(), config.clone(), devices.subscribe(), git.clone());
     eprintln!("stampede listening on http://{}", listener.local_addr()?);
     let canvases = canvas::Canvases::watch(&args.data_dir)?;
-    let state = AppState { media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, pr_reviews, runs, devices, origin };
+    if args.cloud.is_some() {
+        std::fs::write(args.data_dir.join("port"), port.to_string())?;
+    }
+    let state = AppState { cloud_hosts, media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, pr_reviews, runs, devices, origin };
     let listener = listener.tap_io(|stream| {
         let _ = stream.set_nodelay(true);
     });
@@ -382,11 +395,15 @@ async fn land_epic(State(state): State<AppState>, Path(slug): Path<String>) -> R
 struct Creation {
     branch: Option<String>,
     from: String,
+    cloud: Option<cloud::Service>,
 }
 
-async fn create_worktree(State(state): State<AppState>, Path(id): Path<String>, Json(creation): Json<Creation>) -> Result<Json<Value>, files::Failure> {
+async fn create_worktree(State(state): State<AppState>, Path(id): Path<String>, Json(creation): Json<Creation>) -> Result<Response, files::Failure> {
+    if let Some(service) = creation.cloud {
+        return Ok(cloud_hosts::create(state, id, creation, service));
+    }
     let project_id = state.runs.create_worktree(&id, creation.branch.as_deref(), &creation.from).await.map_err(|error| (StatusCode::BAD_REQUEST, error))?;
-    Ok(Json(json!({ "projectId": project_id })))
+    Ok(Json(json!({ "projectId": project_id })).into_response())
 }
 
 #[derive(Deserialize)]

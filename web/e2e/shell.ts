@@ -88,7 +88,7 @@ export async function chooseTab(page: Page, name: string | RegExp) {
 	await page.getByRole('tab', { name }).click();
 }
 
-export async function openSettings(page: Page, section: 'General' | 'Appearance' | 'Agents' | 'Rigs' | 'Clips') {
+export async function openSettings(page: Page, section: 'General' | 'Appearance' | 'Agents' | 'Rigs' | 'Clips' | 'Cloud Hosts') {
 	await showProjects(page);
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });

@@ -4,7 +4,7 @@ import type { Trunk, Update } from '#lib/git.ts';
 import type { PrReview } from '#lib/pr-reviews.ts';
 import { on } from 'svelte/events';
 
-export type Project = { id: string; path: string; icon?: string; worktree?: Worktree };
+export type Project = { id: string; host?: string; path: string; icon?: string; worktree?: Worktree };
 
 export type Worktree = { parent: string } & ({ epic: string; role: 'integration' | { ticket: number } | { reviewer: number } } | { branch: string } | { commit: string });
 

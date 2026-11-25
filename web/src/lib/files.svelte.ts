@@ -1,3 +1,4 @@
+import { projectUrl } from '#lib/host.ts';
 import { form } from '#lib/form.ts';
 import type { Commit } from '#lib/git.ts';
 import fuzzysort, { type Snapshot } from 'fuzzysort';
@@ -29,7 +30,7 @@ export function imageSource(projectId: string, path: string, src: string): strin
 		if (name !== '..') parts.push(name);
 		else if (!parts.pop()) return null;
 	}
-	return `/api/projects/${projectId}/image?${new URLSearchParams({ path: parts.join('/') })}`;
+	return projectUrl(projectId, `image?${new URLSearchParams({ path: parts.join('/') })}`);
 }
 
 export class OpenFile {
@@ -57,7 +58,7 @@ export class OpenFile {
 	}
 
 	save(content: string, baseHash: string): Promise<Saved> {
-		return put(`/api/projects/${this.projectId}/file`, { path: this.path, content, baseHash });
+		return put(projectUrl(this.projectId, 'file'), { path: this.path, content, baseHash });
 	}
 }
 
@@ -184,7 +185,7 @@ class Listing {
 		this.#stale = false;
 		this.failed = false;
 		try {
-			this.snapshot = fuzzysort.snapshot(await json<string[]>(await fetch(`/api/projects/${this.#projectId}/files`)));
+			this.snapshot = fuzzysort.snapshot(await json<string[]>(await fetch(projectUrl(this.#projectId, 'files'))));
 		} catch {
 			this.#stale = true;
 			this.failed = true;
@@ -211,21 +212,21 @@ export function invalidate(projectId: string) {
 export async function list(projectId: string, path: string, includeIgnored: boolean): Promise<Entry[]> {
 	const query = new URLSearchParams({ path });
 	if (includeIgnored) query.set('includeIgnored', '1');
-	return json(await fetch(`/api/projects/${projectId}/tree?${query}`));
+	return json(await fetch(projectUrl(projectId, `tree?${query}`)));
 }
 
 export async function read(projectId: string, path: string): Promise<Contents> {
-	return json(await fetch(`/api/projects/${projectId}/file?${new URLSearchParams({ path })}`));
+	return json(await fetch(projectUrl(projectId, `file?${new URLSearchParams({ path })}`)));
 }
 
 export async function remove(projectId: string, path: string): Promise<void> {
-	const response = await fetch(`/api/projects/${projectId}/file?${new URLSearchParams({ path })}`, { method: 'DELETE' });
+	const response = await fetch(projectUrl(projectId, `file?${new URLSearchParams({ path })}`), { method: 'DELETE' });
 	if (!response.ok) throw new RequestError(response.status, await response.text());
 	invalidate(projectId);
 }
 
 export async function create(projectId: string, path: string, dir: boolean): Promise<void> {
-	const response = await fetch(`/api/projects/${projectId}/file`, {
+	const response = await fetch(projectUrl(projectId, 'file'), {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ path, dir })
@@ -235,7 +236,7 @@ export async function create(projectId: string, path: string, dir: boolean): Pro
 }
 
 export async function copy(projectId: string, path: string, destination: string): Promise<{ path: string }> {
-	const result = await json<{ path: string }>(await fetch(`/api/projects/${projectId}/file/copy`, {
+	const result = await json<{ path: string }>(await fetch(projectUrl(projectId, 'file/copy'), {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ path, destination })
@@ -245,7 +246,7 @@ export async function copy(projectId: string, path: string, destination: string)
 }
 
 export async function rename(projectId: string, path: string, name: string): Promise<{ path: string }> {
-	const result = await json<{ path: string }>(await fetch(`/api/projects/${projectId}/file/rename`, {
+	const result = await json<{ path: string }>(await fetch(projectUrl(projectId, 'file/rename'), {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ path, name })

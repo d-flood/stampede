@@ -468,7 +468,7 @@ fn console_body(response: reqwest::Response, proxy: &Proxy) -> Body {
     Body::from_stream(stream)
 }
 
-fn clean(headers: &mut HeaderMap) {
+pub(crate) fn clean(headers: &mut HeaderMap) {
     let extra: Vec<_> = headers
         .get_all(header::CONNECTION)
         .iter()
@@ -492,7 +492,7 @@ fn clean(headers: &mut HeaderMap) {
     }
 }
 
-async fn bridge(
+pub(crate) async fn bridge(
     socket: WebSocket,
     upstream: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,

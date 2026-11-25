@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+from sprite_common import environment, fail, option, started, stop
+
+
+def main(args):
+    home = Path(os.environ['HOME'])
+    services = home.parent / 'services'
+    services.mkdir(exist_ok=True)
+    verb, name = args[1:3]
+    record = services / f'{name}.json'
+    if verb == 'create':
+        options = {
+            'command': [option(args, '--cmd')] + (option(args, '--args').split(',') if '--args' in args else []),
+            'env': option(args, '--env', ''),
+            'dir': str(home / option(args, '--dir', '.')),
+        }
+    elif verb == 'restart':
+        options = json.loads(record.read_text())
+        stop(options, group=True)
+    else:
+        fail(f'fake sprite-env: unsupported command {args}')
+    with (services / f'{name}.log').open('ab') as log:
+        child = subprocess.Popen(options['command'], cwd=options['dir'], env=environment(home, options['env']),
+                                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    record.write_text(json.dumps(dict(options, pid=child.pid, started=started(child.pid))))
+
+
+main(sys.argv[1:])

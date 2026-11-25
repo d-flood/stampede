@@ -164,7 +164,11 @@ pub struct View {
 
 impl View {
     pub async fn open(port: u16, device_id: &str, terminal_id: Option<&str>) -> Self {
-        let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await.unwrap();
+        Self::open_url(&format!("ws://127.0.0.1:{port}/ws"), device_id, terminal_id).await
+    }
+
+    pub async fn open_url(url: &str, device_id: &str, terminal_id: Option<&str>) -> Self {
+        let (mut socket, _) = connect_async(url).await.unwrap();
         control(&mut socket, json!({ "type": "hello", "deviceId": device_id })).await;
         let hello = next_control(&mut socket, "hello").await;
         let listed = match terminal_id {

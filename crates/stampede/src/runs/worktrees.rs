@@ -16,7 +16,7 @@ pub enum Refusal {
 }
 
 impl Runs {
-    async fn repository_root(&self, project_id: &str) -> Result<Project, String> {
+    pub(crate) async fn repository_root(&self, project_id: &str) -> Result<Project, String> {
         let projects = self.projects.list();
         let project = projects.iter().find(|project| project.id == project_id).ok_or_else(|| format!("Project {project_id} is not open"))?;
         match git::run(Path::new(&project.path), &["rev-parse", "--show-toplevel"]).await {
@@ -28,19 +28,7 @@ impl Runs {
     pub async fn create_worktree(&self, project_id: &str, branch: Option<&str>, from: &str) -> Result<String, String> {
         let project = self.repository_root(project_id).await?;
         let checkout = Path::new(&project.path);
-        if from.starts_with('-') || git::run(checkout, &["rev-parse", "-q", "--verify", &format!("{from}^{{commit}}")]).await.is_err() {
-            return Err(format!("{from} is not a branch or commit"));
-        }
-        let exists = async |reference: String| git::run(checkout, &["show-ref", "-q", "--verify", &reference]).await.is_ok();
-        let (branch, existing, track) = match branch {
-            Some(branch) => (branch, false, "--no-track"),
-            None if exists(format!("refs/heads/{from}")).await => (from, true, ""),
-            None if exists(format!("refs/remotes/{from}")).await => (from.split_once('/').map_or(from, |(_, name)| name), false, "--track"),
-            None => return Err(format!("{from} is not a branch")),
-        };
-        if branch.starts_with('-') || git::run(checkout, &["check-ref-format", "--branch", branch]).await.is_err() {
-            return Err(format!("{branch} is not a valid branch name"));
-        }
+        let (branch, existing, track) = branch_spec(checkout, branch, from).await?;
         let parent = project.worktree.as_ref().map_or(&project.id, |worktree| &worktree.parent);
         let path = format!("{}/_branches/{parent}/{}", self.worktrees, branch.replace('/', "-"));
         if Path::new(&path).exists() {
@@ -270,4 +258,21 @@ async fn carry(from: &Path, to: &Path) -> Result<bool, String> {
         return Err(error);
     }
     Ok(true)
+}
+
+pub(crate) async fn branch_spec<'a>(checkout: &Path, branch: Option<&'a str>, from: &'a str) -> Result<(&'a str, bool, &'static str), String> {
+    if from.starts_with('-') || git::run(checkout, &["rev-parse", "-q", "--verify", &format!("{from}^{{commit}}")]).await.is_err() {
+        return Err(format!("{from} is not a branch or commit"));
+    }
+    let exists = async |reference: String| git::run(checkout, &["show-ref", "-q", "--verify", &reference]).await.is_ok();
+    let (branch, existing, track) = match branch {
+        Some(branch) => (branch, false, "--no-track"),
+        None if exists(format!("refs/heads/{from}")).await => (from, true, ""),
+        None if exists(format!("refs/remotes/{from}")).await => (from.split_once('/').map_or(from, |(_, name)| name), false, "--track"),
+        None => return Err(format!("{from} is not a branch")),
+    };
+    if branch.starts_with('-') || git::run(checkout, &["check-ref-format", "--branch", branch]).await.is_err() {
+        return Err(format!("{branch} is not a valid branch name"));
+    }
+    Ok((branch, existing, track))
 }

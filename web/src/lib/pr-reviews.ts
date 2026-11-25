@@ -1,3 +1,4 @@
+import { projectUrl } from '#lib/host.ts';
 import { json, RequestError } from '#lib/files.svelte.ts';
 import type { Change } from '#lib/git.ts';
 
@@ -30,20 +31,20 @@ export type DraftComment = Placement & { id: string; path: string; body: string;
 export type Hunks = Record<Side, [number, number][]>;
 
 export async function prs(projectId: string): Promise<Availability & { prs: Pr[] }> {
-	return json(await fetch(`/api/projects/${projectId}/prs`));
+	return json(await fetch(projectUrl(projectId, 'prs')));
 }
 
 export async function openReview(projectId: string, pr: number | string): Promise<PrReview> {
 	const body = JSON.stringify({ pr });
-	return json(await fetch(`/api/projects/${projectId}/pr-reviews`, { method: 'POST', headers: { 'content-type': 'application/json' }, body }));
+	return json(await fetch(projectUrl(projectId, 'pr-reviews'), { method: 'POST', headers: { 'content-type': 'application/json' }, body }));
 }
 
 export async function refreshReview(projectId: string, pr: number): Promise<PrReview> {
-	return json(await fetch(`/api/projects/${projectId}/pr-reviews/${pr}/refresh`, { method: 'POST' }));
+	return json(await fetch(projectUrl(projectId, `pr-reviews/${pr}/refresh`), { method: 'POST' }));
 }
 
 export async function discardReview(projectId: string, pr: number): Promise<void> {
-	const response = await fetch(`/api/projects/${projectId}/pr-reviews/${pr}`, { method: 'DELETE' });
+	const response = await fetch(projectUrl(projectId, `pr-reviews/${pr}`), { method: 'DELETE' });
 	if (!response.ok) throw new RequestError(response.status, await response.text());
 }
 
@@ -56,15 +57,15 @@ export function viewedState(review: PrReview, change: Change): 'viewed' | 'chang
 
 export async function setViewed(projectId: string, pr: number, path: string, viewed: boolean): Promise<PrReview> {
 	const body = JSON.stringify({ path, viewed });
-	return json(await fetch(`/api/projects/${projectId}/pr-reviews/${pr}/viewed`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body }));
+	return json(await fetch(projectUrl(projectId, `pr-reviews/${pr}/viewed`), { method: 'PUT', headers: { 'content-type': 'application/json' }, body }));
 }
 
 export async function openWorktree(projectId: string, pr: number): Promise<string> {
-	return (await json<{ projectId: string }>(await fetch(`/api/projects/${projectId}/pr-reviews/${pr}/worktree`, { method: 'POST' }))).projectId;
+	return (await json<{ projectId: string }>(await fetch(projectUrl(projectId, `pr-reviews/${pr}/worktree`), { method: 'POST' }))).projectId;
 }
 
 export async function hunks(projectId: string, pr: number, path: string): Promise<Hunks> {
-	return json(await fetch(`/api/projects/${projectId}/pr-reviews/${pr}/hunks?${new URLSearchParams({ path })}`));
+	return json(await fetch(projectUrl(projectId, `pr-reviews/${pr}/hunks?${new URLSearchParams({ path })}`)));
 }
 
 async function draftRequest(method: string, url: string, body?: object): Promise<PrReview> {
@@ -73,11 +74,11 @@ async function draftRequest(method: string, url: string, body?: object): Promise
 }
 
 export function createDraft(projectId: string, pr: number, draft: Placement & { path: string; body: string }): Promise<PrReview> {
-	return draftRequest('POST', `/api/projects/${projectId}/pr-reviews/${pr}/drafts`, draft);
+	return draftRequest('POST', projectUrl(projectId, `pr-reviews/${pr}/drafts`), draft);
 }
 
 export function editDraft(projectId: string, pr: number, id: string, edit: Partial<Placement> & { body?: string }): Promise<PrReview> {
-	return draftRequest('PUT', `/api/projects/${projectId}/pr-reviews/${pr}/drafts/${id}`, edit);
+	return draftRequest('PUT', projectUrl(projectId, `pr-reviews/${pr}/drafts/${id}`), edit);
 }
 
 /** Accepts a Suggested draft, as any edit does. */
@@ -86,11 +87,11 @@ export function acceptDraft(projectId: string, pr: number, id: string): Promise<
 }
 
 export function deleteDraft(projectId: string, pr: number, id: string): Promise<PrReview> {
-	return draftRequest('DELETE', `/api/projects/${projectId}/pr-reviews/${pr}/drafts/${id}`);
+	return draftRequest('DELETE', projectUrl(projectId, `pr-reviews/${pr}/drafts/${id}`));
 }
 
 export type ReviewEvent = 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES';
 
 export function sendReview(projectId: string, pr: number, body: string, event: ReviewEvent): Promise<PrReview> {
-	return draftRequest('POST', `/api/projects/${projectId}/pr-reviews/${pr}/send`, { body, event });
+	return draftRequest('POST', projectUrl(projectId, `pr-reviews/${pr}/send`), { body, event });
 }
