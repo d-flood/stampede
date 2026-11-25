@@ -59,7 +59,7 @@ test('the Launchpad offers the New Tab items and comes back focused when the las
 	});
 	await openProject(page, 'alpha');
 	const launchpad = page.getByRole('region', { name: 'alpha', exact: true });
-	await expect(launchpad.getByText(/^main · \d+ changed files?$/)).toBeVisible();
+	await expect(launchpad.getByText(/^main · (clean|\d+ changed files?)$/)).toBeVisible();
 	const rigs = ['Claude Code', 'Codex'];
 	const tools = ['Terminal', 'Browser', 'Open file', 'Continue the collation', 'Search sessions…'];
 	await expect(launchpad.getByRole('button', { name: 'Continue the collation', exact: true })).toBeVisible();

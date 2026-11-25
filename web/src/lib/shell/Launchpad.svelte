@@ -24,7 +24,7 @@
 	const id = $props.id();
 	const phone = $derived(form() === 'phone');
 	const changes = $derived(git?.isRepo ? git.changes.length : undefined);
-	const meta = $derived([git?.branch, changes === undefined ? undefined : `${changes} changed file${changes === 1 ? '' : 's'}`].filter(Boolean).join(' · '));
+	const meta = $derived([git?.branch, changes === undefined ? undefined : changes ? `${changes} changed file${changes === 1 ? '' : 's'}` : 'clean'].filter(Boolean).join(' · '));
 
 	let chosen = $state(0);
 	const rig = $derived(items.rigs[Math.min(chosen, items.rigs.length - 1)]);
