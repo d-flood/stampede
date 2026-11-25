@@ -33,11 +33,11 @@ export function hue(path: string): number {
 	return ([...path].reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % 6) + 1;
 }
 
-export function monogram(path: string): string {
+export function monogram(path: string, length = 2): string {
 	const name = basename(path);
 	const words = name.split(/[-_.\s]+/).filter(Boolean);
 	const letters = words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? name).slice(0, 2);
-	return letters[0].toUpperCase() + letters.slice(1).toLowerCase();
+	return (letters[0].toUpperCase() + letters.slice(1).toLowerCase()).slice(0, length);
 }
 
 export function worktrees(projects: Project[], epics: Record<string, Epic[]>, chats: Chat[], statusOf: (chat: Chat) => Status | 'background', needs: Map<string, number>): Map<string, Tile[]> {

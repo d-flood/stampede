@@ -79,9 +79,11 @@
 
 <nav aria-label="Projects" class:open>
 	<div class="top">
-		<IconButton label={open ? 'Collapse project rail' : 'Expand project rail'} aria-expanded={open} onclick={() => (open = !open)}>
-			{#if open}<CaretDoubleLeft />{:else}<CaretDoubleRight />{/if}
-		</IconButton>
+		{#if projects.length}
+			<IconButton label={open ? 'Collapse project rail' : 'Expand project rail'} aria-expanded={open} onclick={() => (open = !open)}>
+				{#if open}<CaretDoubleLeft />{:else}<CaretDoubleRight />{/if}
+			</IconButton>
+		{/if}
 	</div>
 	<ol bind:this={list} onpointerdown={pointerdown}>
 		{#each shown as project (project.id)}
@@ -162,7 +164,7 @@
 		width: var(--tile);
 		height: var(--tile);
 		padding: 0;
-		border: var(--border-width) dashed var(--border-strong);
+		border: var(--border-width) solid transparent;
 		border-radius: var(--radius-tile);
 		background: none;
 		color: var(--muted-fg);
@@ -235,8 +237,5 @@
 		box-sizing: border-box;
 		width: var(--tile);
 		padding: 3px 0;
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-tile);
-		background: var(--surface-1);
 	}
 </style>

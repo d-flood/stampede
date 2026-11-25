@@ -53,7 +53,7 @@
 			/>
 		{/each}
 	</ol>
-	<Button onclick={onpick}><FolderOpen /> Open Project</Button>
+	<Button variant="ghost" onclick={onpick}><FolderOpen /> Open Project</Button>
 </nav>
 
 <style>

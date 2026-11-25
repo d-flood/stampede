@@ -22,6 +22,7 @@
 	<span
 		{...props}
 		class="context"
+		class:inline={form() !== 'phone'}
 		class:high={percent >= 90}
 		class:cold={cold(state)}
 		role="meter"
@@ -84,7 +85,7 @@
 	}
 
 	.track {
-		stroke: var(--border);
+		stroke: var(--border-strong);
 	}
 
 	.fill {
@@ -92,9 +93,29 @@
 	}
 
 	.percent {
-		font-family: var(--font-mono);
-		font-size: 9px;
+		font-family: var(--font-ui);
+		font-size: calc(var(--font-size-sm) - 1px);
 		font-variant-numeric: tabular-nums;
+	}
+
+	/* Desktop shows a small ring with the figure beside it, so it can't read as a spinner. */
+	.inline {
+		display: inline-flex;
+		gap: var(--space-1);
+		width: auto;
+		height: auto;
+	}
+
+	.inline svg {
+		width: 14px;
+		height: 14px;
+		stroke-width: 6;
+	}
+
+	.inline.cold::after {
+		top: -2px;
+		right: auto;
+		left: 9px;
 	}
 
 	.high .fill {

@@ -227,7 +227,7 @@
 						{#each hottest(agent) as meter (meter.name)}
 							<span class="meter {meter.window}" class:high={meter.percent >= high} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
 								<span class="period">{meter.short}</span>
-								<span class="bar" aria-hidden="true"><span class="fill" style:width="{Math.min(meter.percent, 100)}%"></span></span>
+								<span class="gauge" aria-hidden="true"><span class="level" style:width="{Math.min(meter.percent, 100)}%"></span></span>
 								<span class="number">{meter.percent}</span>
 								{#if meter.reading.resetsAt !== undefined}
 									<span class="remaining">{remaining(meter.reading.resetsAt)}</span>
@@ -285,13 +285,12 @@
 	}
 
 	.row {
-		--number: 11px;
-		--label: 10px;
+		--number: var(--font-size-sm);
+		--label: var(--font-size-sm);
 		--logo: 14px;
-		--bar: 28px;
 		position: relative;
 		display: grid;
-		grid-template-columns: auto repeat(2, auto minmax(var(--bar), 1fr) auto auto) auto;
+		grid-template-columns: auto repeat(4, auto) minmax(0, var(--space-3)) repeat(4, auto) minmax(0, 1fr) auto;
 		row-gap: var(--space-2);
 		align-items: center;
 		padding: var(--space-2) var(--space-4);
@@ -307,7 +306,6 @@
 		--number: 12.5px;
 		--label: 10.5px;
 		--logo: 16px;
-		--bar: 36px;
 		padding-block: var(--space-3);
 	}
 
@@ -331,7 +329,7 @@
 	}
 
 	.weekly {
-		grid-column: 6 / span 4;
+		grid-column: 7 / span 4;
 	}
 
 	.claude-code {
@@ -369,17 +367,25 @@
 		padding-inline: var(--space-3) var(--space-1);
 	}
 
-	.row .bar {
+	.gauge {
 		align-self: center;
-		margin-right: var(--space-1);
-		background: color-mix(in oklab, var(--brand) 16%, var(--surface-3));
+		width: calc(1.5 * var(--logo));
+		height: calc(4 * var(--border-width));
+		margin-right: var(--space-2);
+		overflow: hidden;
+		border-radius: var(--radius-pill);
+		background: color-mix(in oklab, var(--brand) 22%, var(--surface-3));
 	}
 
-	.row .fill {
+	.level {
+		display: block;
+		height: 100%;
+		border-radius: inherit;
 		background: var(--brand);
+		transition: width calc(4 * var(--dur-med)) var(--ease-out);
 	}
 
-	.row .high .fill {
+	.high .level {
 		background: var(--status-waiting);
 	}
 
@@ -447,11 +453,16 @@
 
 	.count {
 		display: flex;
-		grid-column: 10;
+		grid-column: 12;
 		align-items: center;
 		gap: var(--space-1);
 		padding-left: var(--space-3);
 		font-size: var(--number);
+	}
+
+	.count :global(svg) {
+		width: var(--logo);
+		height: var(--logo);
 	}
 
 	.assistive {
@@ -462,9 +473,18 @@
 		clip-path: inset(50%);
 	}
 
-	@container (width < 299px) {
+	@container (width < 340px) {
 		.remaining {
 			display: none;
+		}
+	}
+
+	/* Percent signs need the room that reset times give up below 340px. */
+	@container (260px <= width < 340px) or (width >= 380px) {
+		.number::after {
+			content: '%';
+			color: var(--muted-fg);
+			font-weight: 400;
 		}
 	}
 
@@ -476,22 +496,25 @@
 
 	@container (width < 216px) {
 		.row {
-			grid-template-columns: repeat(9, auto) minmax(0, 1fr);
 			padding-inline: var(--space-3);
 		}
 
-		.row .bar {
+		.meter .period,
+		.count {
+			padding-left: var(--space-2);
+		}
+
+		.row .gauge {
 			display: none;
 		}
 	}
 
 	@container (width < 244px) {
 		.phone .row {
-			grid-template-columns: repeat(9, auto) minmax(0, 1fr);
 			padding-inline: var(--space-3);
 		}
 
-		.phone .bar {
+		.phone .gauge {
 			display: none;
 		}
 	}

@@ -295,9 +295,9 @@
 				{:else}
 					<Button
 						variant="primary"
+						round
 						aria-label="Send"
 						tip={phone ? undefined : 'Send'}
-						style={phone ? undefined : 'min-width: calc(2 * (1.2em + 2 * var(--space-3) + 2 * var(--border-width)))'}
 						disabled={!hasDraft || !live || reading}
 						onmousedown={keepFocus}
 						onclick={() => send(text, false) && clear()}

@@ -6,18 +6,21 @@
 	import SubagentDot from '#lib/chat/SubagentDot.svelte';
 	import SubagentRow from '#lib/chat/SubagentRow.svelte';
 	import SubagentSheet from '#lib/chat/SubagentSheet.svelte';
-	import type { Item } from '#lib/device.svelte.ts';
+	import type { Item, Todo } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Chip from '#lib/ui/Chip.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import { untrack } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
+	import CheckCircle from '~icons/ph/check-circle';
+	import GitBranch from '~icons/ph/git-branch';
 
 	const DELAY = 1500;
 	const LINGER = 1000;
 	const DOTS = 3;
 
-	let { items, canvases = [], onopen, onattend, oncanvas }: { items: Item[]; canvases?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; oncanvas(canvas: string): void } = $props();
+	let { items, todos = [], canvases = [], changes = 0, branch, onchanges, onopen, onattend, oncanvas }: { items: Item[]; todos?: Todo[]; canvases?: string[]; changes?: number; branch?: string; onchanges?(): void; onopen(path: string[]): void; onattend(subagent: string): void; oncanvas(canvas: string): void } = $props();
+	const completed = $derived(todos.length > 0 && todos.every((todo) => todo.status === 'done'));
 
 	const all = $derived(commands(items));
 	const times = new SvelteMap<string, { since: number; until?: number }>();
@@ -59,6 +62,7 @@
 			.map(([count, label]) => `${count} ${label}`)
 			.join(', ')
 	);
+	const label = $derived(form() === 'phone' ? summary : summary.replace(/^(\d+)/, (count) => `${count} subagent${count === '1' ? '' : 's'}`));
 	let sheet = $state(false);
 
 	function ended({ subagent }: Placed) {
@@ -83,12 +87,24 @@
 			{#each shown.slice(0, DOTS) as { path, subagent } (path.join('/'))}<SubagentDot color={color(items, path)} pulse={subagent.status !== 'done'} />{/each}
 		</span>
 		{#if shown.length > DOTS}<span class="more">+{shown.length - DOTS}</span>{/if}
-		{#if summary}<span>{summary}</span>{/if}
+		{#if summary}<span>{label}</span>{/if}
 	</Chip>
 {/snippet}
 
-{#if subagents.length || shells.length || canvases.length}
+{#if subagents.length || shells.length || canvases.length || completed || (changes && onchanges)}
 	<section class="tray" aria-label="Tray">
+		{#if changes && onchanges}
+			<Chip title="Review changes" onclick={onchanges}><GitBranch aria-hidden="true" /><span>{branch ? `${branch} · ` : ''}{changes} changed {changes === 1 ? 'file' : 'files'}</span></Chip>
+		{/if}
+		{#if completed}
+			<section aria-label="Todos">
+				<Menu side="top" items={[{ heading: 'Todos', items: todos.map((todo) => ({ label: todo.text, checked: true, onselect: () => {} })) }]}>
+					{#snippet trigger(props)}
+						<Chip {...props}><CheckCircle aria-hidden="true" /><span>{todos.length} todos done</span></Chip>
+					{/snippet}
+				</Menu>
+			</section>
+		{/if}
 		{#if subagents.length}
 			<section class="subagents" aria-label="Subagents">
 				{#if form() === 'phone'}

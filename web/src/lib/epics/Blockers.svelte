@@ -9,7 +9,7 @@
 
 <div role="group" aria-label="Blocked by">
 	{#each tickets as ticket (ticket.number)}
-		<Chip mono pressed={blockers.includes(ticket.number)} title={ticket.title} onclick={() => ontoggle(ticket.number)}>
+		<Chip pressed={blockers.includes(ticket.number)} title={ticket.title} onclick={() => ontoggle(ticket.number)}>
 			{ticket.number}
 		</Chip>
 	{/each}

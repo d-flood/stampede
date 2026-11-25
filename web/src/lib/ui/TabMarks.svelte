@@ -9,11 +9,11 @@
 </script>
 
 <script lang="ts">
-	let { status, dirty = false }: { status?: Status; dirty?: boolean } = $props();
+	let { status, dirty = false, fresh = false }: { status?: Status; dirty?: boolean; fresh?: boolean } = $props();
 	const Mark = $derived(status && marks[status]);
 </script>
 
-{#if Mark}<span class="mark {status}" title={status}><Mark /></span>{/if}
+{#if status === 'done' && fresh}<span class="mark ready" title={status}><span class="dot"></span></span>{:else if Mark}<span class="mark {status}" title={status}><Mark /></span>{/if}
 {#if dirty}<span class="dirty" title="Unsaved changes"></span>{/if}
 
 <style>
@@ -37,6 +37,20 @@
 
 	.done {
 		--mark: var(--status-done);
+	}
+
+	.ready {
+		align-items: center;
+		justify-content: center;
+		width: 1em;
+		height: 1em;
+	}
+
+	.ready .dot {
+		width: 0.4em;
+		height: 0.4em;
+		border-radius: 50%;
+		background: var(--muted-fg);
 	}
 
 	.dirty {

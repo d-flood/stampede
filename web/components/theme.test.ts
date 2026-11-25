@@ -94,8 +94,10 @@ for (const [name, parsed] of Object.entries(palettes)) {
 	}
 }
 
-test('Jet keeps its surfaces near black', () => {
-	expect(Math.max(...measure('Jet', palettes.Jet, 'dark').steps)).toBeLessThanOrEqual(8);
+test('Jet layers its surfaces visibly while keeping them dark', () => {
+	const { steps } = measure('Jet', palettes.Jet, 'dark');
+	expect(steps[0]).toBeGreaterThanOrEqual(8);
+	expect(Math.max(...steps)).toBeLessThanOrEqual(40);
 });
 
 test('a monogram tile stays dark on a pure black background', async () => {
@@ -103,7 +105,7 @@ test('a monogram tile stays dark on a pure black background', async () => {
 	const view = await render(ProjectIcon, { project: { path: '/alpha' } as Project });
 	const tile = view.container.querySelector<HTMLElement>('.monogram')!;
 	tile.style.setProperty('--hue', 'var(--ansi-2)');
-	expect(Math.max(...rendered(getComputedStyle(tile).backgroundColor))).toBeLessThanOrEqual(0x12);
+	expect(Math.max(...rendered(getComputedStyle(tile).backgroundColor))).toBeLessThanOrEqual(0x30);
 });
 
 test('a Notice tint stays visible on a pure black background', async () => {

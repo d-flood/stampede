@@ -18,7 +18,6 @@
 		border-radius: var(--radius-sm);
 		background: none;
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		white-space: nowrap;
 		cursor: pointer;
@@ -31,10 +30,17 @@
 		font-size: var(--font-size-lg);
 	}
 
-	button:hover:not(:disabled),
 	button[data-state='open'] {
 		background: var(--hover);
 		color: var(--color-fg);
+	}
+
+	/* Touch screens keep :hover after a tap, which would leave the button lit. */
+	@media (hover: hover) {
+		button:hover:not(:disabled) {
+			background: var(--hover);
+			color: var(--color-fg);
+		}
 	}
 
 	button[aria-pressed='true'] {

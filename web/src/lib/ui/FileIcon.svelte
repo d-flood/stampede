@@ -3,19 +3,20 @@
 
 	let { path }: { path: string } = $props();
 
-	const icon = $derived(fileIcon(path));
+	const svg = $derived(fileIcon(path));
 </script>
 
-<span class="file-icon" style:color={icon.color}>{@html icon.svg}</span>
+<span class="file-icon">{@html svg}</span>
 
 <style>
 	.file-icon {
 		display: inline-flex;
 		flex: none;
+		color: var(--muted-fg);
 	}
 
 	.file-icon > :global(svg) {
-		width: 0.85em;
-		height: 0.85em;
+		width: 1em;
+		height: 1em;
 	}
 </style>

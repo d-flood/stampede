@@ -45,14 +45,6 @@
 		font-size: calc(0.95 * var(--font-size-chat));
 	}
 
-	.text > :global(:first-child) {
-		margin-top: 0;
-	}
-
-	.text > :global(:last-child) {
-		margin-bottom: 0;
-	}
-
 	.text :global(:is(p, ul, ol, pre, blockquote, .table, .code-block)) {
 		margin: 0 0 var(--space-3);
 	}
@@ -62,6 +54,14 @@
 		font-size: 1em;
 		font-weight: 600;
 		line-height: 1.25;
+	}
+
+	.text > :global(:first-child) {
+		margin-top: 0;
+	}
+
+	.text > :global(:last-child) {
+		margin-bottom: 0;
 	}
 
 	.text :global(h1) {

@@ -24,6 +24,10 @@
 		font-family: var(--font-mono);
 	}
 
+	.mono::placeholder {
+		font-family: var(--font-ui);
+	}
+
 	input:focus-visible {
 		outline: var(--focus-ring);
 		outline-offset: var(--focus-offset);

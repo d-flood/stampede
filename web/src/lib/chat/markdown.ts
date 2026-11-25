@@ -35,8 +35,7 @@ rules.link_open = (tokens, index, options, env, self) => {
 	const file = env?.files && typeof href === 'string' ? fileLink(href) : undefined;
 	if (!file) return self.renderToken(tokens, index, options);
 	token.attrJoin('class', 'file');
-	const { svg, color = 'inherit' } = fileIcon(file.path);
-	return `${self.renderToken(tokens, index, options)}<span style="color: ${color}">${svg}</span>`;
+	return `${self.renderToken(tokens, index, options)}<span>${fileIcon(file.path)}</span>`;
 };
 
 for (const name of ['fence', 'code_block'] as const) {

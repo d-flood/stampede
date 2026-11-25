@@ -11,7 +11,7 @@
 	{#if image}
 		<img class="squircle" src="/api/project-icons/{project.icon}" alt="" onerror={() => (failed = project.icon)} />
 	{:else}
-		{monogram(project.path)}
+		{monogram(project.path, 1)}
 	{/if}
 </span>
 
@@ -25,8 +25,8 @@
 	}
 
 	.monogram {
-		background: color-mix(in oklab, var(--hue) 15%, var(--tile-base, var(--surface-1)));
-		color: color-mix(in oklab, var(--hue), var(--color-fg) 30%);
+		background: var(--tile-base, var(--surface-1));
+		color: color-mix(in oklab, var(--hue), var(--color-fg) 20%);
 		font-weight: 700;
 	}
 

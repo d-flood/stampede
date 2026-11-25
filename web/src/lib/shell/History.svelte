@@ -333,7 +333,7 @@
 		z-index: 2;
 		margin-top: calc(-1 * var(--border-width));
 		border-block: var(--border-width) solid var(--border);
-		background: var(--surface-2);
+		background: var(--chrome);
 	}
 
 	.pinned {
@@ -403,6 +403,26 @@
 		background: var(--hover);
 	}
 
+	/* Shows row actions where a pointer can hover; touch keeps them visible. */
+	@media (hover: none) {
+		.row > :global(button:last-child:not(:first-child)) {
+			opacity: 0.45;
+		}
+	}
+
+	@media (hover: hover) {
+		.row > :global(button:last-child:not(:first-child)) {
+			opacity: 0;
+			transition: opacity var(--dur-fast);
+		}
+
+		.row:hover > :global(button:last-child:not(:first-child)),
+		.row:focus-within > :global(button:last-child:not(:first-child)),
+		.row > :global(button[data-state='open']) {
+			opacity: 1;
+		}
+	}
+
 	li > .row,
 	.file {
 		border-radius: var(--radius-md);
@@ -450,10 +470,6 @@
 		font-size: var(--font-size-sm);
 	}
 
-	.sha {
-		font-family: var(--font-mono);
-	}
-
 	.file {
 		align-items: center;
 		padding: 0 var(--space-3) 0 calc(var(--space-2) + var(--space-1) + 1em);
@@ -463,7 +479,6 @@
 		flex: none;
 		width: 1ch;
 		color: var(--git);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-weight: 700;
 	}
@@ -476,7 +491,6 @@
 		flex: none;
 		max-width: 70%;
 		overflow: hidden;
-		font-family: var(--font-mono);
 		font-size: var(--font-size-code);
 		text-overflow: ellipsis;
 	}
@@ -484,7 +498,6 @@
 	.dir {
 		overflow: hidden;
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		text-overflow: ellipsis;
 	}

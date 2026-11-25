@@ -58,7 +58,7 @@
 			{#snippet trigger(props)}
 				<Chip
 					{...props}
-					variant={phone ? 'default' : 'ghost'}
+					variant="ghost"
 					pending={later}
 					aria-label="Model: {parts.join(' ')}{later ? ', next turn' : ''}"
 					title={later ? 'Takes effect on the next turn' : undefined}
@@ -74,7 +74,7 @@
 			{#snippet trigger(props)}
 				<Chip
 					{...props}
-					variant={phone ? 'default' : 'ghost'}
+					variant="ghost"
 					pending={pending('mode')}
 					aria-label="Mode: {label('mode')}{pending('mode') ? ', next turn' : ''}"
 					title={pending('mode') ? 'Takes effect on the next turn' : undefined}
@@ -110,7 +110,8 @@
 		display: inline-flex;
 		flex: none;
 		align-items: center;
-		margin-right: var(--space-1);
+		/* Pulls the next ghost Chip's padding in, so the glyph reads as its leading icon. */
+		margin-right: calc(-1 * var(--space-1));
 		color: var(--muted-fg);
 	}
 
@@ -118,6 +119,10 @@
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.label::first-letter {
+		text-transform: uppercase;
 	}
 
 	.model {

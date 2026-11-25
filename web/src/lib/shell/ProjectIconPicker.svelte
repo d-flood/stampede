@@ -157,7 +157,7 @@
 		<div class="preview"><img src={selected.src} alt="Selected project icon" /><span>Preview</span></div>
 	{/if}
 	<div class="actions">
-		<Button disabled={busy} onclick={() => save(true)}>Use initials ({monogram(project.path)})</Button>
+		<Button disabled={busy} onclick={() => save(true)}>Use initial ({monogram(project.path, 1)})</Button>
 		<Button disabled={busy} onclick={onclose}>Cancel</Button>
 		<Button variant="primary" disabled={busy || !selected} onclick={() => save()}>Save</Button>
 	</div>

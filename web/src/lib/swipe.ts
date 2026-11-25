@@ -23,10 +23,12 @@ export function settleInto(element: Element | null | undefined, keyframes: Keyfr
 export function swipe(options: Swipe) {
 	return (element: HTMLElement) => {
 		let gesture: { x: number; y: number; time: number; engaged: boolean } | undefined;
+		let target: EventTarget | null = null;
 		const along = (touch: Touch) => (options.vertical ? touch.clientY - gesture!.y : touch.clientX - gesture!.x);
 		const start = (event: TouchEvent) => {
 			const [touch] = event.touches;
 			gesture = event.touches.length === 1 && (options.allow?.(event) ?? true) ? { x: touch.clientX, y: touch.clientY, time: performance.now(), engaged: false } : undefined;
+			if (gesture) follow(event.target);
 		};
 		const move = (event: TouchEvent) => {
 			if (!gesture) return;
@@ -58,14 +60,30 @@ export function swipe(options: Swipe) {
 				options.release(distance, event.type === 'touchend' && toward && far);
 			}
 			gesture = undefined;
+			follow(null);
 		};
+		// A touch keeps firing on the node it began on, so a node re-rendered away mid-swipe stops bubbling here.
+		const orphan = (handler: (event: TouchEvent) => void) => (event: Event) => {
+			if (!element.contains(event.target as Node)) handler(event as TouchEvent);
+		};
+		const orphanMove = orphan(move);
+		const orphanRelease = orphan(release);
+		function follow(next: EventTarget | null) {
+			target?.removeEventListener('touchmove', orphanMove);
+			target?.removeEventListener('touchend', orphanRelease);
+			target?.removeEventListener('touchcancel', orphanRelease);
+			target = next;
+			target?.addEventListener('touchmove', orphanMove, { passive: false });
+			target?.addEventListener('touchend', orphanRelease);
+			target?.addEventListener('touchcancel', orphanRelease);
+		}
 		const off = [
 			on(element, 'touchstart', start, { passive: true }),
 			on(element, 'touchmove', move, { passive: false }),
 			on(element, 'touchend', release),
 			on(element, 'touchcancel', release)
 		];
-		return () => off.forEach((listener) => listener());
+		return () => (off.forEach((listener) => listener()), follow(null));
 	};
 }
 

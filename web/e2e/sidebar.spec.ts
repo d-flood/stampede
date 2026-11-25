@@ -20,7 +20,7 @@ test('desktop sidebar resizes by dragging and keyboard within its limits', { tag
 	await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(initial.width + 120);
 	await resizer.focus();
 	await page.keyboard.press('ArrowLeft');
-	await expect(resizer).toHaveAttribute('aria-valuenow', '424');
+	await expect(resizer).toHaveAttribute('aria-valuenow', '384');
 	await page.keyboard.press('Home');
 	await expect(resizer).toHaveAttribute('aria-valuenow', '160');
 	const sections = sidebar.getByRole('radiogroup', { name: 'Sections' });

@@ -93,22 +93,17 @@ test('the initial message stays below the navigator at the top of a chat', async
 		await expect(nav).toHaveCSS('opacity', '1');
 	}
 	await transcript.evaluate((node) => { node.scrollTop = 0; });
-	await expect(nav).toHaveCSS('opacity', phone ? '0' : '1');
-	// The phone navigator floats over the transcript instead of pushing it down, so it hides at the top.
-	const unobscured = () => phone
-		? expect.poll(() => transcript.evaluate((node) => getComputedStyle(node).paddingTop === getComputedStyle(node).getPropertyValue('--space-6').trim())).toBe(true)
-		: expect.poll(async () => {
-			const [prompt, bar] = await Promise.all([message.boundingBox(), nav.boundingBox()]);
-			return prompt!.y - (bar!.y + bar!.height);
-		}).toBeGreaterThanOrEqual(0);
+	await expect(nav).toHaveCSS('opacity', '0');
+	// The navigator floats over the transcript instead of pushing it down, so it hides at the top.
+	const unobscured = () => expect.poll(() => transcript.evaluate((node) => getComputedStyle(node).paddingTop === getComputedStyle(node).getPropertyValue('--space-6').trim())).toBe(true);
 	await unobscured();
 	await expect(nav.getByRole('button', { name: 'Previous message', exact: true })).toBeDisabled();
 	await openSettings(page, 'Appearance');
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 	await settings.getByRole('combobox', { name: 'UI font size', exact: true }).selectOption('22');
 	await settings.getByRole('combobox', { name: 'Chat font size', exact: true }).selectOption('26');
-	await settings.getByRole('button', { name: 'Done', exact: true }).click();
+	await settings.getByRole('button', { name: 'Close', exact: true }).click();
 	await closeSheet(page);
-	await expect(nav).toHaveCSS('opacity', phone ? '0' : '1');
+	await expect(nav).toHaveCSS('opacity', '0');
 	await unobscured();
 });

@@ -340,11 +340,35 @@
 		background: var(--hover);
 	}
 
+	/* Shows row actions where a pointer can hover; touch keeps them visible. */
+	@media (hover: none) {
+		.row > :global(button:last-child:not(:first-child)) {
+			opacity: 0.45;
+		}
+	}
 
+	@media (hover: hover) {
+		.row {
+			position: relative;
+		}
 
+		.row > :global(button:last-child:not(:first-child)) {
+			position: absolute;
+			right: 0;
+			background: var(--chrome);
+			opacity: 0;
+			transition: opacity var(--dur-fast);
+		}
 
+		.row:hover > :global(button:last-child:not(:first-child)),
+		.row:focus-within > :global(button:last-child:not(:first-child)),
+		.row > :global(button[data-state='open']) {
+			opacity: 1;
+		}
 
-
-
-
+		.row:hover > :global(button:last-child:not(:first-child)),
+		.row > :global(button[data-state='open']) {
+			background: var(--hover);
+		}
+	}
 </style>

@@ -11,15 +11,18 @@ const chrome = EditorView.theme({
 	},
 	'&.cm-focused': { outline: 'none' },
 	'.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.5' },
-	'.cm-content': { caretColor: 'var(--color-cursor)' },
+	'.cm-content': { caretColor: 'var(--color-cursor)', fontVariantLigatures: 'none' },
 	'.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-cursor)' },
 	'.cm-fat-cursor': { background: 'var(--color-cursor)', color: 'var(--color-bg)' },
 	'&:not(.cm-focused) .cm-fat-cursor': { background: 'none', outline: 'var(--border-width) solid var(--color-cursor)' },
 	'.cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-content ::selection':
 		{ backgroundColor: 'var(--color-editor-selection)' },
 	'.cm-activeLine': { backgroundColor: 'color-mix(in oklab, var(--hover) 50%, transparent)' },
-	'.cm-gutters': { backgroundColor: 'var(--color-bg)', color: 'var(--muted-fg)', border: 'none' },
+	'.cm-gutters': { backgroundColor: 'var(--color-bg)', color: 'color-mix(in oklab, var(--muted-fg) 70%, var(--color-bg))', border: 'none' },
 	'.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--color-fg)' },
+	'.cm-foldGutter .cm-gutterElement': { padding: '0 var(--space-1)' },
+	'.cm-foldGutter .cm-gutterElement > *': { opacity: 0, transition: 'opacity var(--dur-fast)' },
+	'.cm-gutters:hover .cm-foldGutter .cm-gutterElement > *': { opacity: 1 },
 	'.cm-foldPlaceholder': { backgroundColor: 'var(--surface-2)', border: 'none', color: 'var(--muted-fg)' },
 	'.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
 		backgroundColor: 'var(--surface-3)',
@@ -79,21 +82,34 @@ export const highlight = HighlightStyle.define([
 
 export const theme = [chrome, syntaxHighlighting(highlight)];
 
-const removed = (percent: number) => `color-mix(in oklab, var(--git-deleted) ${percent}%, transparent)`;
-const added = (percent: number) => `color-mix(in oklab, var(--git-added) ${percent}%, transparent)`;
+const removed = (percent: number) => `color-mix(in oklab, var(--git-deleted) calc(${percent}% * var(--diff-tint)), transparent)`;
+const added = (percent: number) => `color-mix(in oklab, var(--git-added) calc(${percent}% * var(--diff-tint)), transparent)`;
 
 /** With `whole`, a file added or deleted outright keeps its gutter bars but no tinted lines. */
 export const diffTheme = (whole: boolean) => EditorView.theme({
 	'&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': { backgroundColor: whole ? 'transparent' : removed(12) },
 	'&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': { backgroundColor: whole ? 'transparent' : added(12) },
 	'&.cm-merge-a .cm-changedText, & .cm-deletedChunk .cm-deletedText, &.cm-merge-b .cm-deletedText': {
-		background: removed(30)
+		background: removed(14)
 	},
-	'&.cm-merge-b .cm-changedText': { background: added(30) },
-	'&.cm-merge-a .cm-changedLineGutter, & .cm-deletedLineGutter': { background: 'var(--git-deleted)' },
-	'&.cm-merge-b .cm-changedLineGutter': { background: 'var(--git-added)' },
+	'&.cm-merge-b .cm-changedText': { background: added(14) },
+	'&.cm-merge-a .cm-diffWholeLine .cm-changedText, &.cm-merge-b .cm-diffWholeLine .cm-changedText, & .cm-diffWholeLine .cm-changedText': { background: 'none' },
+	'&.cm-merge-a .cm-changedLineGutter, & .cm-deletedLineGutter': { background: whole ? 'var(--git-deleted)' : removed(12) },
+	'&:not(.cm-merge-a) .cm-changedLineGutter': { background: whole ? 'var(--git-added)' : added(12) },
 	'& .cm-inlineChangedLineGutter': { background: 'var(--git-modified)' },
+	'&.cm-merge-a .cm-diffChangedRow:not(.cm-changedLineGutter)': { backgroundColor: whole ? 'transparent' : removed(12) },
+	'&:not(.cm-merge-a) .cm-diffChangedRow:not(.cm-changedLineGutter, .cm-inlineChangedLineGutter)': { backgroundColor: whole ? 'transparent' : added(12) },
+	'& .cm-originalNumbers .cm-gutterElement': { minWidth: '3ch', paddingInline: 'var(--space-2) var(--space-3)', textAlign: 'right' },
+	'& .cm-diffSigns .cm-gutterElement': { minWidth: '1.5ch', paddingInline: 'var(--space-1)', fontFamily: 'var(--font-mono)', textAlign: 'center' },
+	'& .cm-diffSigns-a .cm-gutterElement': { color: 'var(--git-deleted)' },
+	'& .cm-diffSigns-b .cm-gutterElement': { color: 'var(--git-added)' },
+	'& .cm-diffSigns .cm-diffDeletedSign': { color: 'var(--git-deleted)' },
+	'& .cm-diffCollapsedRow': { background: 'var(--surface-1)' },
+	'& .cm-diffDeletedRow': { background: whole ? 'transparent' : removed(12) },
+	'& .cm-changeGutter': { paddingLeft: 0 },
 	'& .cm-collapsedLines': { background: 'var(--surface-1)', color: 'var(--muted-fg)', fontFamily: 'var(--font-ui)' },
+	'& .cm-collapsedLines::before': { content: '"↕"', marginRight: 'var(--space-2)' },
+	'& .cm-collapsedLines::after': { content: 'none' },
 	'.cm-deletedChunk .cm-chunkButtons': { insetInlineEnd: 'var(--space-2)', zIndex: 1 },
 	'.cm-deletedChunk .cm-chunkButtons button': {
 		minHeight: 'var(--target-min)',

@@ -107,7 +107,6 @@
 
 	.count {
 		margin-left: var(--space-1);
-		font-family: var(--font-mono);
 		font-weight: 400;
 	}
 
@@ -135,7 +134,6 @@
 	}
 
 	.where {
-		font-family: var(--font-mono);
 		font-size: var(--font-size-code);
 		overflow-wrap: anywhere;
 	}

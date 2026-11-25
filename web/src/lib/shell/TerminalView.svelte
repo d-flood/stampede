@@ -35,10 +35,12 @@
 		project?: Project;
 		onopen?(path: string, cursor?: Cursor): void;
 		onbrowse?(url: string): void;
+		/** False when the host shows these actions itself, through `controls`. */
+		toolbar?: boolean;
 		children?: Snippet;
 	};
 
-	let { device, terminalId, pending, active, displayed = true, focused, ended = false, project, onopen, onbrowse, children }: Props = $props();
+	let { device, terminalId, pending, active, displayed = true, focused, ended = false, project, onopen, onbrowse, toolbar = true, children }: Props = $props();
 
 	let container: HTMLDivElement;
 	let view = $state.raw<Terminal>();
@@ -391,6 +393,18 @@
 		device.send({ type: 'terminal.focus', terminalId });
 	}
 
+	export function controls() {
+		return {
+			live,
+			ended,
+			composing,
+			paste: pasteClipboard,
+			newline,
+			copy,
+			compose: () => (composing ? (composing = false) : startComposing())
+		};
+	}
+
 	export function focus() {
 		view?.focus();
 	}
@@ -399,7 +413,7 @@
 <svelte:document onvisibilitychange={() => (hidden = document.hidden)} />
 
 <div class="panel" role="tabpanel" hidden={!active}>
-	<Toolbar>
+	{#if toolbar}<Toolbar>
 		{#if !ended}
 			<IconButton label="Paste" title="Paste" disabled={!live} onclick={pasteClipboard}><Clipboard /></IconButton>
 			<IconButton label="Newline" title="Insert newline (Shift+Enter)" disabled={!live} onclick={newline}>
@@ -411,7 +425,7 @@
 		{:else}
 			<IconButton label="Copy mode" onclick={copy}><Copy /></IconButton>
 		{/if}
-	</Toolbar>
+	</Toolbar>{/if}
 	{@render children?.()}
 	<div class="view">
 		<div class="terminal" class:resizing title="Copy selection (Ctrl+Shift+C or Cmd+C)" bind:this={container} onfocusin={() => (typing = true)} onfocusout={blur}></div>
@@ -469,7 +483,7 @@
 		flex: 1;
 		min-width: 0;
 		min-height: 0;
-		padding: var(--space-1) 0 var(--space-2) var(--space-2);
+		padding: var(--space-2) 0 var(--space-2) var(--space-4);
 		overflow: auto;
 	}
 

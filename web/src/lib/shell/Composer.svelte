@@ -138,7 +138,7 @@
 <div class="composer" class:boxed={actions} class:phone>
 	{@render menu?.(text, replace, caret)}
 	<ClipMenu bind:this={clipMenu} {text} {caret} {replace} />
-	{#if actions && phone}
+	{#if actions}
 		<div class="card">
 			<div class="field">{@render editor()}</div>
 			<div class="actions">{@render actions(text, clear)}</div>
@@ -151,24 +151,20 @@
 			{@render border?.(text)}
 		</div>
 		<div class="actions">
-			{#if !actions && text.trim()}
+			{#if text.trim()}
 				<Button aria-label="Save as Clip" tip="Save as Clip" onmousedown={(event) => event.preventDefault()} onclick={() => (clipping = true)}><BookmarkSimple /></Button>
 			{/if}
-			{#if actions}
-				{@render actions(text, clear)}
-			{:else}
-				<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
-					Insert
-				</Button>
-				<Button
-					variant="primary"
-					disabled={!text || disabled}
-					onmousedown={(event) => event.preventDefault()}
-					onclick={() => submit(true)}
-				>
-					Send
-				</Button>
-			{/if}
+			<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
+				Insert
+			</Button>
+			<Button
+				variant="primary"
+				disabled={!text || disabled}
+				onmousedown={(event) => event.preventDefault()}
+				onclick={() => submit(true)}
+			>
+				Send
+			</Button>
 		</div>
 	{/if}
 </div>
@@ -246,6 +242,11 @@
 		background: none;
 	}
 
+	/* Types at the size a sent message shows in its bubble. */
+	.boxed textarea:not(.code), .boxed .mirror {
+		font-size: var(--font-size-chat);
+	}
+
 	.boxed textarea, .boxed .mirror {
 		padding: var(--space-3) var(--space-4);
 		align-content: safe center;
@@ -254,17 +255,15 @@
 	.boxed textarea {
 		min-height: 2lh;
 		max-height: 40vh;
-		border: var(--border-width) solid var(--border-strong);
-		border-radius: var(--radius-xl);
-		background: var(--surface-1);
-		box-shadow: var(--shadow-lift);
 		outline: none;
 		field-sizing: content;
 	}
 
 	.boxed .actions {
 		align-items: center;
-		flex-wrap: wrap;
+		flex-wrap: nowrap;
+		gap: var(--space-1);
+		padding: 0 var(--space-2) var(--space-2);
 	}
 
 	.boxed.phone {
@@ -277,7 +276,14 @@
 		flex-direction: column;
 		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-xl);
-		background: var(--surface-1);
+		background: var(--card);
+		box-shadow: var(--shadow-lift);
+	}
+
+	.card textarea, .card .mirror {
+		border: 0;
+		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+		background: none;
 	}
 
 	.outline {
@@ -294,16 +300,10 @@
 
 	.boxed.phone .actions {
 		justify-content: space-between;
-		flex-wrap: nowrap;
 		gap: var(--space-2);
-		padding: 0 var(--space-2) var(--space-2);
 	}
 
 	.boxed.phone textarea, .boxed.phone .mirror {
-		border: 0;
-		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-		background: none;
-		box-shadow: none;
 		font-size: var(--font-size-lg);
 	}
 

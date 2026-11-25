@@ -9,10 +9,12 @@
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
+	import NavList from '#lib/ui/NavList.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import { WaitingMark, WorkingMark } from '#lib/ui/spinners.ts';
 	import Article from '~icons/ph/article';
 	import Bell from '~icons/ph/bell';
+	import ChatsCircle from '~icons/ph/chats-circle';
 	import CheckBold from '~icons/ph/check-bold';
 
 	type Props = { items: Attention[]; projects: Map<string, string>; chats: Chat[]; onselect(item: Attention): void };
@@ -20,6 +22,19 @@
 	let { items, projects, chats, onselect }: Props = $props();
 
 	const marks = { working: WorkingMark, waiting: WaitingMark, done: CheckBold };
+
+	const listed = $derived(new Set(items.map(tabOf)));
+	/** Every open Chat that doesn't already need attention, grouped by Project in rail order. */
+	const others = $derived.by(() => {
+		const groups = new Map<string, Attention[]>();
+		for (const chat of chats) {
+			if (listed.has(chat.id)) continue;
+			const group = groups.get(chat.projectId) ?? [];
+			group.push({ projectId: chat.projectId, chatId: chat.id, label: chat.title ?? chat.rig, status: chat.status });
+			groups.set(chat.projectId, group);
+		}
+		return [...groups].map(([projectId, entries]) => ({ heading: projects.get(projectId) ?? projectId, entries }));
+	});
 
 	function icon(item: Attention) {
 		if (!('chatId' in item)) return Article;
@@ -36,7 +51,8 @@
 	const pushLabel = $derived(failed ? `Retry ${push === 'on' ? 'disabling' : 'enabling'} notifications` : push === 'unsupported' ? '' : labels[push]);
 	const menu = $derived([
 		{ heading: 'Needs attention', empty: 'Nothing needs attention', items: items.map((item) => ({ label: item.label, data: item, onselect: () => onselect(item) })) },
-		...(push === 'unsupported' ? [] : [{ label: pushLabel, disabled: pushDisabled, onselect: notify }])
+		...others.map(({ heading, entries }) => ({ heading, items: entries.map((item) => ({ label: item.label, data: item, onselect: () => onselect(item) })) })),
+		...(push === 'unsupported' ? [] : [{ label: pushLabel, icon: Bell, disabled: pushDisabled, onselect: notify }])
 	]);
 	let sheet = $state(false);
 	notifications().then((state) => (push = state));
@@ -57,8 +73,8 @@
 
 {#snippet trigger(props: Record<string, unknown>)}
 	<span class="trigger">
-		<IconButton {...props} label="Attention list"><Bell /></IconButton>
-		{#if items.length}<span class="count"><Badge tone="waiting">{items.length}</Badge></span>{/if}
+		<IconButton {...props} label="Attention list" title="Chats"><ChatsCircle /></IconButton>
+		{#if items.length}<span class="count"><Badge tone="waiting" small>{items.length}</Badge></span>{/if}
 	</span>
 {/snippet}
 
@@ -66,32 +82,48 @@
 	{@const item = data as Attention}
 	{@const Icon = icon(item)}
 	{@const Mark = marks[item.status]}
+	{@const unseen = listed.has(tabOf(item)) && item.status === 'done'}
 	<span class="icon">{#if Icon}<Icon />{/if}</span>
 	<span class="label">
-		<strong>{item.label}</strong>
-		<span class="project">in {projects.get(item.projectId)}</span>
+		<span class="title" class:strong={listed.has(tabOf(item))}>{item.label}</span>
+		{#if listed.has(tabOf(item))}<span class="project">in {projects.get(item.projectId)}</span>{/if}
 	</span>
-	<span class="mark {item.status}" role="img" aria-label={item.status} title={item.status}><Mark /></span>
+	{#if unseen}
+		<span class="mark unseen" role="img" aria-label="done, unseen" title="done, unseen"><span class="dot"></span></span>
+	{:else}
+		<span class="mark {item.status}" role="img" aria-label={item.status} title={item.status}><Mark /></span>
+	{/if}
 {/snippet}
 
 {#if form() === 'phone'}
 	{@render trigger({ onclick: () => (sheet = true) })}
-	<Dialog bind:open={sheet} full title="Needs attention">
-		<ul class="sheet">
-			{#each items as item (tabOf(item))}
-				<li>
-					<ListItem element="button" onclick={() => ((sheet = false), onselect(item))}>{@render entry(item)}</ListItem>
-				</li>
-			{:else}
-				<ListLabel element="li">Nothing needs attention</ListLabel>
-			{/each}
-		</ul>
+	<Dialog bind:open={sheet} full title="Chats">
 		{#if push !== 'unsupported'}
-			<Button disabled={pushDisabled} onclick={notify}>{pushLabel}</Button>
+			<div class="notify"><Button disabled={pushDisabled} onclick={notify}><Bell /> {pushLabel}</Button></div>
 		{/if}
+		<ListLabel element="h3">Needs attention</ListLabel>
+		<div class="sheet">
+			<NavList element="ul" aria-label="Needs attention">
+				{#each items as item (tabOf(item))}
+					<li><ListItem element="button" size="md" onclick={() => ((sheet = false), onselect(item))}>{@render entry(item)}</ListItem></li>
+				{:else}
+					<li class="none">Nothing needs attention</li>
+				{/each}
+			</NavList>
+		</div>
+		{#each others as { heading, entries } (heading)}
+			<ListLabel element="h3">{heading}</ListLabel>
+			<div class="sheet">
+				<NavList element="ul" aria-label={heading}>
+					{#each entries as item (tabOf(item))}
+						<li><ListItem element="button" size="md" onclick={() => ((sheet = false), onselect(item))}>{@render entry(item)}</ListItem></li>
+					{/each}
+				</NavList>
+			</div>
+		{/each}
 	</Dialog>
 {:else}
-	<Menu items={menu} row={entry} {trigger} side="right" align="end" />
+	<Menu items={menu} row={entry} {trigger} side="right" align="end" offset={22} />
 {/if}
 
 <style>
@@ -104,14 +136,35 @@
 		position: absolute;
 		top: calc(-1 * var(--space-1));
 		right: calc(-1 * var(--space-1));
+		border-radius: var(--radius-pill);
+		box-shadow: 0 0 0 calc(2 * var(--border-width)) var(--canvas);
 		pointer-events: none;
 	}
 
 
 	.sheet {
 		margin: 0 0 var(--space-4);
-		padding: 0;
-		list-style: none;
+	}
+
+	.notify {
+		display: grid;
+		margin: 0 0 var(--space-4);
+	}
+
+	.notify :global(button) {
+		justify-content: flex-start;
+	}
+
+	.none {
+		padding: var(--space-3) var(--space-4);
+		color: var(--muted-fg);
+	}
+
+	.unseen .dot {
+		width: 0.5em;
+		height: 0.5em;
+		border-radius: 50%;
+		background: var(--status-waiting);
 	}
 
 	.label {
@@ -119,6 +172,10 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.strong {
+		font-weight: 600;
 	}
 
 	.project {

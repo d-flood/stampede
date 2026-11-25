@@ -53,7 +53,7 @@ test('five Subagents show three dots then +2, and the chip opens them grouped Ru
 	const view = await render(Tray, { items, onopen, ...rest });
 	const subagents = view.getByRole('region', { name: 'Subagents' });
 	const chip = subagents.getByRole('button', { name: 'Subagents: 3 running, 2 done' });
-	await expect.element(chip).toMatchTextContent(/^\+2\s*3 running, 2 done$/);
+	await expect.element(chip).toMatchTextContent(/^\+2\s*3 (subagents )?running, 2 done$/);
 	const dots = [...subagents.element().querySelectorAll<HTMLElement>('.dot')].map((dot) => dot.style.backgroundColor);
 	expect(dots).toEqual([1, 2, 4].map((index) => `var(--subagent-${index})`));
 	await expect.element(subagents.getByRole('button', { name: /waiting/ })).not.toBeInTheDocument();

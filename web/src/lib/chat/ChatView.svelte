@@ -29,10 +29,13 @@
 	import { painted } from '#lib/paint.svelte.ts';
 	import { onMount, tick } from 'svelte';
 	import { on } from 'svelte/events';
+	import { prefersReducedMotion } from 'svelte/motion';
+	import { fade } from 'svelte/transition';
+	import ArrowDown from '~icons/ph/arrow-down';
 	import GitBranch from '~icons/ph/git-branch';
 	import GitFork from '~icons/ph/git-fork';
 
-	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
+	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, changes = 0, onchanges, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; changes?: number; onchanges?(): void; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
 		$props();
 
 	const subagents = $derived(flatten(items));
@@ -43,6 +46,7 @@
 	const source = $derived(chats.find(({ id }) => id === (chat.handoffFrom ?? chat.forkedFrom)));
 	const handoffs = $derived(chats.filter(({ handoffFrom }) => handoffFrom === chat.id));
 	const forks = $derived(chats.filter(({ forkedFrom }) => forkedFrom === chat.id));
+	let ended = $state(true);
 	let forkError = $state('');
 	let forkFailed = $state(false);
 	let requests = $state<Request[]>([]);
@@ -67,7 +71,6 @@
 	let preview = $state<{ path: string; line?: number; anchor: DOMRect }>();
 	let rewindTarget = $state<number>();
 	let scroller = $state<HTMLElement>();
-	let messageNavHeight = $state(0);
 	const rewindUnavailable = $derived.by(() => {
 		if (!live) return 'Reconnect to rewind.';
 		if (!attached) return 'Loading the conversation…';
@@ -214,7 +217,7 @@
 		};
 	}
 
-	function follow(scroller: HTMLElement) {
+	function follow(scroller: HTMLElement, onpin?: (bottom: boolean) => void) {
 		let pinned = true;
 		let top = 0;
 		let visible = false;
@@ -222,6 +225,7 @@
 		const pin = (bottom: boolean) => {
 			pinned = bottom;
 			scroller.style.overflowAnchor = bottom ? 'none' : '';
+			onpin?.(bottom);
 		};
 		pin(true);
 		const observer = new ResizeObserver(() => {
@@ -248,7 +252,7 @@
 </script>
 
 <!-- svelte-ignore a11y_interactive_supports_focus (Dropped images have the Attach image button as their keyboard path.) -->
-<div class="panel" class:phone={form() === 'phone'} role="tabpanel" hidden={!active} ondragover={dragover} ondrop={drop} {@attach links}>
+<div class="panel" class:phone={form() === 'phone'} class:fresh={form() === 'desktop' && !selected && attached && !items.length && !chat.queued.length} role="tabpanel" hidden={!active} ondragover={dragover} ondrop={drop} {@attach links}>
 	{#if !selected}
 		{#if source || handoffs.length || forks.length}
 			<div class="handoffs" aria-label="Related Chats">
@@ -261,15 +265,16 @@
 	{:else}
 		<SubagentHeader subagent={selected} path={opened} {trail} main={items} onopen={open} />
 	{/if}
+	{#if form() === 'desktop' && !selected}<MessageNav {items} {scroller} />{/if}
 	<div class="conversation" hidden={!!selected}>
-		<div class="transcript" bind:this={scroller} style:padding-top="max(var(--space-6), {form() === 'phone' ? 0 : messageNavHeight}px)" {@attach follow}>
+		<div class="transcript" bind:this={scroller} {@attach (node) => follow(node, (bottom) => (ended = bottom))}>
 			<div class="column">
-				{#if attached && !items.length && !chat.queued.length}<EmptyChat rig={chat.rig} agent={chat.agent} settings={chat.settings} {choices} {project} {branch} />{/if}
+				{#if attached && !items.length && !chat.queued.length}<EmptyChat rig={chat.rig} agent={chat.agent} {project} {branch} />{/if}
 				<Transcript {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={capabilities.rewinds ? (index) => run('rewind', index) : undefined} onfork={live && attached && capabilities.forks ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
 			</div>
 		</div>
-		<MessageNav {items} {scroller} bind:height={messageNavHeight} />
+		{#if form() === 'phone'}<MessageNav {items} {scroller} />{/if}
 	</div>
 	{#if selected}
 		{#key opened.join('/')}
@@ -288,8 +293,13 @@
 		{/key}
 	{/if}
 	<div class="foot">
+		{#if !ended && !selected}
+			<div class="latest" transition:fade={{ duration: 150 }}>
+				<Button round aria-label="Jump to latest" tip="Jump to latest" onclick={() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: prefersReducedMotion.current ? 'auto' : 'smooth' })}><ArrowDown /></Button>
+			</div>
+		{/if}
 		{#if selected}<Activity status={selected.status} activity={selected.activity} />{/if}
-		<Tray {items} {canvases} onopen={open} onattend={attend} {oncanvas} />
+		<Tray {items} todos={selected ? [] : chat.todos} {canvases} changes={selected || chat.status !== 'done' || form() === 'phone' ? 0 : changes} {branch} {onchanges} onopen={open} onattend={attend} {oncanvas} />
 		{#if request}
 			{#key request.id}
 				<RequestCard bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} onattach={(files) => composer?.attach(files)} />
@@ -319,8 +329,13 @@
 	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }
 	.report .label { font-size: var(--font-size-sm); }
 	.conversation { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
+	.conversation::before, .conversation::after { content: ''; position: absolute; z-index: 1; right: 0; left: 0; height: calc(4 * var(--space-2)); pointer-events: none; }
+	.conversation::before { top: 0; background: linear-gradient(var(--color-bg), transparent); }
+	.conversation::after { bottom: 0; background: linear-gradient(transparent, var(--color-bg)); }
 	.conversation[hidden] { display: none; }
+	.latest { position: absolute; z-index: 2; right: 0; bottom: calc(100% + var(--space-2)); border-radius: var(--radius-pill); box-shadow: var(--shadow-float); }
 	.panel {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		height: 100%;
@@ -330,25 +345,36 @@
 		display: none;
 	}
 
+	/* A Chat with nothing in it yet gathers its welcome and Composer at the middle. */
+	.fresh {
+		justify-content: center;
+		padding-bottom: calc(4 * var(--space-6) + 12vh);
+	}
+
+	.fresh .conversation {
+		flex: none;
+	}
+
 	.transcript {
 		flex: 1;
 		min-width: 0;
 		min-height: 0;
 		overflow-y: auto;
-		padding: var(--space-6) var(--space-6) var(--space-4);
+		padding: var(--space-6) var(--space-6) calc(2 * var(--space-6));
 	}
 
 	.column {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-4);
-		max-width: 760px;
+		gap: var(--space-3);
+		max-width: var(--measure);
 		min-height: 100%;
 		margin: 0 auto;
 		line-height: 1.55;
 	}
 
 	.foot {
+		position: relative;
 		display: flex;
 		flex: none;
 		flex-direction: column;
@@ -358,7 +384,7 @@
 	}
 
 	.phone .transcript {
-		padding: var(--space-4);
+		padding: var(--space-6) var(--space-4) calc(2 * var(--space-6));
 	}
 
 	.phone .foot {

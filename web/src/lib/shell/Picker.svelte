@@ -3,6 +3,7 @@
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command, computeCommandScore } from 'bits-ui';
+	import FolderSimple from '~icons/ph/folder-simple';
 
 	let { directories, onopen, autofocus = true }: { directories: string[]; onopen(path: string): Promise<string | undefined>; autofocus?: boolean } =
 		$props();
@@ -20,6 +21,9 @@
 					.map(({ path }) => path)
 			: directories
 	);
+
+	const parents = $derived(new Set(matches.map((path) => path.slice(0, path.lastIndexOf('/')))));
+	const shared = $derived(parents.size === 1 && matches.length > 1 ? [...parents][0].replace(/^(?:\/home|\/Users)\/[^/]+/, '~') : undefined);
 
 	function name(path: string) {
 		return path.slice(path.lastIndexOf('/') + 1);
@@ -40,7 +44,7 @@
 		spellcheck={false}
 	>
 		{#snippet child({ props })}
-			<TextField {...props} mono bind:value={query} {@attach (element) => { if (autofocus) element.focus(); }} />
+			<TextField {...props} bind:value={query} {@attach (element) => { if (autofocus) element.focus(); }} />
 		{/snippet}
 	</Command.Input>
 	{#if error}
@@ -57,12 +61,14 @@
 							{/snippet}
 						</Command.Item>
 					{/if}
+					{#if !typed && matches.length}<ListLabel element="p">{#if shared}<span class="shared">Folders in <bdi>{shared}</bdi></span>{:else}Folders{/if}</ListLabel>{/if}
 					{#each matches as path (path)}
 						{@const cut = path.lastIndexOf('/') + 1}
 						<Command.Item value={path} onSelect={() => open(path)}>
 							{#snippet child({ props })}
-								<ListItem {...props}>
-									<span class="path"><span class="parent">{path.slice(0, cut)}</span>{path.slice(cut)}</span>
+								<ListItem {...props} aria-label={path}>
+									<FolderSimple aria-hidden="true" />
+									<span class="folder">{#if !shared}<span class="parent"><bdi>{path.slice(0, cut)}</bdi></span>{/if}<span class="name">{path.slice(cut)}</span></span>
 								</ListItem>
 							{/snippet}
 						</Command.Item>
@@ -91,13 +97,45 @@
 
 	.path {
 		overflow: hidden;
-		font-family: var(--font-mono);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.parent {
 		color: var(--muted-fg);
+	}
+
+	.shared {
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	/* Reverses visually so the folder name leads, while the path stays in reading order. */
+	.folder {
+		display: flex;
+		flex-direction: row-reverse;
+		justify-content: flex-end;
+		align-items: baseline;
+		gap: var(--space-2);
+		min-width: 0;
+		white-space: nowrap;
+	}
+
+	.folder .name {
+		flex: none;
+		margin-right: auto;
+	}
+
+	/* Right-to-left moves the ellipsis to the path's start, keeping the segments that tell folders apart. */
+	.folder .parent {
+		min-width: 0;
+		overflow: hidden;
+		direction: rtl;
+		font-size: var(--font-size-sm);
+		text-align: left;
+		text-overflow: ellipsis;
 	}
 
 </style>

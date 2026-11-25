@@ -7,7 +7,12 @@
 	type Props = {
 		open?: boolean;
 		full?: boolean;
+		/** Rises from the bottom edge, sized to its content. */
+		sheet?: boolean;
 		wide?: boolean;
+		/** False when the dialog's own actions already close it. */
+		closeButton?: boolean;
+		/** Sizes a wide dialog to its content, up to its usual height. */
 		title: string;
 		description?: string;
 		children?: Snippet;
@@ -15,7 +20,7 @@
 		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { open = $bindable(false), full = false, wide = false, title, description, children, actions, oncloseautofocus }: Props = $props();
+	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, title, description, children, actions, oncloseautofocus }: Props = $props();
 </script>
 
 <Dialog.Root bind:open>
@@ -27,17 +32,17 @@
 		</Dialog.Overlay>
 	<Dialog.Content onCloseAutoFocus={oncloseautofocus}>
 			{#snippet child({ props })}
-				<div {...props} class="dialog" class:wide class:full class:footed={!!actions}>
+				<div {...props} class="dialog" class:wide class:full class:sheet class:footed={!!actions}>
 					<div class="heading">
 						<Dialog.Title>
 							{#snippet child({ props })}
 								<h2 {...props}>{title}</h2>
 							{/snippet}
 						</Dialog.Title>
-						{#if full || wide}
+						{#if (full || sheet || wide) && closeButton}
 							<Dialog.Close>
 								{#snippet child({ props })}
-									<IconButton {...props} label="Close"><X /></IconButton>
+									<IconButton {...props} data-state={undefined} label="Close"><X /></IconButton>
 								{/snippet}
 							</Dialog.Close>
 						{/if}
@@ -127,6 +132,35 @@
 
 	.wide.full {
 		overflow: hidden;
+	}
+
+	.sheet {
+		top: auto;
+		bottom: 0;
+		left: 0;
+		width: 100%;
+		max-height: 85dvh;
+		padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+		border-width: var(--border-width) 0 0;
+		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+		transform: none;
+		animation: slide var(--dur-med) var(--ease-out);
+	}
+
+	.sheet::before {
+		content: '';
+		display: block;
+		width: calc(2 * var(--tile));
+		height: var(--space-1);
+		margin: calc(-1 * var(--space-2)) auto var(--space-3);
+		border-radius: var(--radius-pill);
+		background: var(--border-strong);
+	}
+
+	@keyframes slide {
+		from {
+			translate: 0 100%;
+		}
 	}
 
 	.full.footed {

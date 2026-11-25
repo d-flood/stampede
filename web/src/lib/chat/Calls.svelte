@@ -51,7 +51,7 @@
 </script>
 
 {#snippet chip(chip: Edited)}
-	<span class="name">{chip.canvas ? canvasName(chip.path) : chip.path.split('/').at(-1)}</span><span class="added">+{chip.added}</span><span class="removed">−{chip.removed}</span>
+	<span class="name">{chip.canvas ? canvasName(chip.path) : chip.path.split('/').at(-1)}</span>{#if chip.added}<span class="added">+{chip.added}</span>{/if}{#if chip.removed}<span class="removed">−{chip.removed}</span>{/if}
 {/snippet}
 
 {#snippet marker(Icon: ReturnType<typeof icon>)}
@@ -73,11 +73,11 @@
 		<div class="chips">
 			{#each edits as edit (`${edit.canvas}:${edit.path}`)}
 				{#if edit.canvas}
-					<Chip mono title={edit.path} onclick={() => oncanvas(edit.path)}>{@render chip(edit)}</Chip>
+					<Chip title={edit.path} onclick={() => oncanvas(edit.path)}>{@render chip(edit)}</Chip>
 				{:else if edit.path.startsWith('/')}
-					<Chip element="span" mono title={edit.path}>{@render chip(edit)}</Chip>
+					<Chip element="span" title={edit.path}>{@render chip(edit)}</Chip>
 				{:else}
-					<Chip mono title={edit.path} onclick={() => ondiff(edit.path)}>{@render chip(edit)}</Chip>
+					<Chip title={edit.path} onclick={() => ondiff(edit.path)}>{@render chip(edit)}</Chip>
 				{/if}
 			{/each}
 		</div>
@@ -108,7 +108,7 @@
 						{:else if item.kind === 'edit'}
 							<Edit {item} {ondiff} />
 						{:else if item.kind === 'canvas'}
-							<div class="call"><span class="verb">Edited canvas</span> <span class="detail">{canvasName(item.canvas)}</span><span class="added">+{item.added}</span><span class="removed">−{item.removed}</span><Button variant="link" onclick={() => oncanvas(item.canvas)}>Open</Button></div>
+							<div class="call"><span class="verb">Edited canvas</span> <span class="detail">{canvasName(item.canvas)}</span>{#if item.added}<span class="added">+{item.added}</span>{/if}{#if item.removed}<span class="removed">−{item.removed}</span>{/if}<Button variant="link" onclick={() => oncanvas(item.canvas)}>Open</Button></div>
 						{/if}
 					</div>
 				{/if}
@@ -142,7 +142,7 @@
 		column-gap: var(--space-1);
 		min-width: 0;
 		padding-left: calc(1em + var(--space-2));
-		font-size: var(--font-size-sm);
+		font-size: var(--font-size-md);
 	}
 
 	.summary,

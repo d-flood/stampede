@@ -30,13 +30,14 @@
 
 <style>
 	.lines { display: flex; flex-direction: column; align-items: flex-start; }
-	.spawn { display: flex; align-items: center; gap: var(--space-2); max-width: 100%; min-height: var(--target-min); padding: 0 var(--space-2); margin-left: calc(-1 * var(--space-2)); border: none; border-radius: var(--radius-md); background: none; color: var(--muted-fg); font-family: var(--font-ui); font-size: var(--font-size-sm); white-space: nowrap; text-align: start; cursor: pointer; }
+	.spawn { display: flex; align-items: center; gap: var(--space-2); max-width: 100%; min-height: var(--target-min); padding: 0 var(--space-2); margin-left: calc(-1 * var(--space-2)); border: none; border-radius: var(--radius-md); background: none; color: var(--muted-fg); font-family: var(--font-ui); font-size: var(--font-size-md); white-space: nowrap; text-align: start; cursor: pointer; }
 	.spawn:hover { background: var(--hover); }
 	.logo { display: inline-flex; flex: none; color: var(--color-fg); }
 	.name { flex: none; color: var(--color-fg); font-weight: 600; }
 	.role { flex: none; }
 	.task { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--color-fg); text-overflow: ellipsis; }
 	.state { flex: none; font-variant-numeric: tabular-nums; }
+	.state::before { content: '·'; margin-inline-end: var(--space-2); }
 	.waiting .state { color: var(--status-waiting); }
 	.failed .state { color: var(--ansi-1); }
 </style>

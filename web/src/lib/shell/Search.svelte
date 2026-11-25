@@ -290,7 +290,6 @@
 
 	.error {
 		color: var(--ansi-1);
-		font-family: var(--font-mono);
 		text-align: left;
 		white-space: pre-wrap;
 	}
@@ -318,7 +317,6 @@
 		gap: var(--space-2);
 		min-height: var(--target-min);
 		padding: 0 var(--space-3);
-		font-family: var(--font-mono);
 		white-space: nowrap;
 	}
 
@@ -376,7 +374,6 @@
 		flex: none;
 		min-width: 3ch;
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-variant-numeric: tabular-nums;
 		text-align: right;

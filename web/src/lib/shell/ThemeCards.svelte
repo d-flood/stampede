@@ -44,14 +44,13 @@
 			aria-pressed={selectedTheme[slot] === name}
 			style:--card-bg={palette?.background}
 			style:--card-fg={palette?.foreground}
-			style:--card-accent={palette?.palette[4]}
 			onclick={() => choose(name)}
 		>
 			<span class="mini" aria-hidden="true">
 				<i class="bubble"></i>
 				<i class="prose"></i>
 				<i class="prose short"></i>
-				<i class="accent"></i>
+				<span class="swatches">{#each [1, 2, 3, 4, 5, 6] as index (index)}<i style:background={palette?.palette[index]}></i>{/each}</span>
 			</span>
 			<span class="name">{name}</span>
 		</button>
@@ -132,10 +131,16 @@
 		width: 64%;
 	}
 
-	.mini .accent {
-		width: 26%;
+	.swatches {
+		display: flex;
+		gap: 4px;
 		margin-top: auto;
-		background: var(--card-accent);
+	}
+
+	.mini .swatches i {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
 	}
 
 	.name {

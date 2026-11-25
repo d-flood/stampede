@@ -3,23 +3,14 @@ import Notice from '#lib/chat/Notice.svelte';
 import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-const choices = {
-	model: [{ value: 'opus', label: 'Opus 5.5' }],
-	effort: [{ value: 'xhigh', label: 'xhigh' }],
-	speed: [],
-	ultracode: [],
-	mode: [{ value: 'default', label: 'default' }]
-};
-
-test('an empty Chat names its Rig, what it runs, where, and the input hints', async () => {
-	const view = await render(EmptyChat, { rig: 'Deep Claude', agent: 'claude-code', settings: { model: 'opus', effort: 'xhigh', mode: 'default' }, choices, project: 'stampede', branch: 'main' });
+test('an empty Chat names its Rig, where, and the input hints', async () => {
+	const view = await render(EmptyChat, { rig: 'Deep Claude', agent: 'claude-code', project: 'stampede', branch: 'main' });
 	await expect.element(view.getByRole('heading', { name: 'Deep Claude' })).toBeVisible();
 	expect(view.getByRole('heading').element().querySelector('svg')).not.toBeNull();
-	await expect.element(view.getByText('Opus 5.5, xhigh, default mode', { exact: true })).toBeVisible();
 	await expect.element(view.getByText('stampede', { exact: true })).toBeVisible();
 	await expect.element(view.getByText('main', { exact: true })).toBeVisible();
 	const hints = view.getByRole('list', { name: 'Input hints' }).element();
-	expect([...hints.querySelectorAll('li')].map((hint) => hint.textContent)).toEqual(['/commands', '@files', '!shell', ';Clips']);
+	expect([...hints.querySelectorAll('li')].map((hint) => hint.textContent)).toEqual(['/Commands', '@Files', '!Shell', ';Clips']);
 	expect([...hints.querySelectorAll('kbd')].map((key) => key.textContent)).toEqual(['/', '@', '!', ';']);
 	await expect.poll(() => view.container.scrollWidth <= view.container.clientWidth).toBe(true);
 });

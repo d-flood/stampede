@@ -51,16 +51,19 @@
 	}
 
 	.item[data-highlighted],
-	.item[data-selected],
-	.hoverable:hover:not(:disabled) {
+	.item[data-selected] {
 		background: var(--hover);
 	}
 
+	/* Hover stays a step weaker than the current item's fill, so the two never read as two selections. */
+	@media (hover: hover) {
+		.hoverable:hover:not(:disabled) {
+			background: color-mix(in oklab, var(--hover) 55%, transparent);
+		}
+	}
+
 	.item[aria-current]:not([aria-current='false']) {
-		background: var(--color-bg);
-		box-shadow:
-			var(--shadow-lift),
-			0 0 0 var(--border-width) var(--border);
+		background: var(--selected-bg);
 		color: var(--color-fg);
 		font-weight: 600;
 	}

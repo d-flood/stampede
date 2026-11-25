@@ -11,7 +11,7 @@ test('the Host name titles every page, heads the phone Projects screen, and save
 	const section = settings.getByRole('region', { name: 'Host name', exact: true });
 	const field = section.getByRole('textbox', { name: 'Host name', exact: true });
 	const commit = () => (phone ? field.blur() : field.press('Enter'));
-	const done = () => settings.getByRole('button', { name: 'Done', exact: true }).click();
+	const done = () => settings.getByRole('button', { name: 'Close', exact: true }).click();
 
 	await page.goto('/');
 	if (phone) {

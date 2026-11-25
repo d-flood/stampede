@@ -68,8 +68,6 @@
 		min-width: 0;
 		overflow: hidden;
 		color: var(--git, currentColor);
-		font-family: var(--font-mono);
-		font-size: var(--font-size-code);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
@@ -85,7 +83,6 @@
 	.letter {
 		flex: none;
 		color: var(--git, var(--muted-fg));
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-weight: 700;
 	}

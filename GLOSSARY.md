@@ -310,6 +310,10 @@ _Avoid_: WYSIWYG, rich text, live mode
 A Tab comparing a file against a commit or across a Comparison; editable when showing Uncommitted changes, read-only for history.
 _Avoid_: diff view, diff tile
 
+**Changes tab**:
+A read-only Tab stacking every file's Uncommitted changes against HEAD, each under a header with its counts; opened from the Tray or the Git section.
+_Avoid_: review tab, multi-diff
+
 **Split**:
 Two Tabs shown side by side in the main window.
 _Avoid_: tile, pane
@@ -327,7 +331,7 @@ True of a Tab whose Agent is waiting, or is done and not yet viewed on any Devic
 _Avoid_: unread, alert
 
 **Attention list**:
-The dropdown of every Tab, across all Projects, that needs attention.
+The dropdown of every Tab, across all Projects, that needs attention, followed by every other open Chat grouped by Project.
 _Avoid_: notification center, inbox
 
 **Composer**:

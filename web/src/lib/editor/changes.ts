@@ -1,5 +1,5 @@
-import { Chunk } from '@codemirror/merge';
-import { Prec, StateEffect, StateField, type ChangeDesc, type Text } from '@codemirror/state';
+import { Chunk, getChunks, getOriginalDoc } from '@codemirror/merge';
+import { Prec, RangeSetBuilder, StateEffect, StateField, type ChangeDesc, type EditorState, type RangeSet, type Text } from '@codemirror/state';
 import {
 	Decoration,
 	EditorView,
@@ -7,7 +7,11 @@ import {
 	ViewPlugin,
 	WidgetType,
 	gutter,
+	gutterLineClass,
+	gutterWidgetClass,
 	keymap,
+	type BlockInfo,
+	type DecorationSet,
 	type ViewUpdate
 } from '@codemirror/view';
 
@@ -16,6 +20,16 @@ type Kind = 'added' | 'modified' | 'deleted';
 type Changes = { baseline: Text | null; chunks: readonly Chunk[]; open: number | null };
 
 const DEBOUNCE = 250;
+
+/** Lines added and removed across a merge view's chunks. */
+export function diffCounts(chunks: readonly Chunk[], original: Text, doc: Text) {
+	const lines = (text: Text, from: number, to: number) => {
+		if (to <= from) return 0;
+		const slice = text.sliceString(from, to);
+		return slice.split('\n').length - (slice.endsWith('\n') ? 1 : 0);
+	};
+	return chunks.reduce((sum, chunk) => ({ added: sum.added + lines(doc, chunk.fromB, chunk.toB), removed: sum.removed + lines(original, chunk.fromA, chunk.toA) }), { added: 0, removed: 0 });
+}
 export const diffConfig = { scanLimit: 10_000, timeout: 20 };
 
 export const setBaseline = StateEffect.define<Text | null>();
@@ -220,3 +234,148 @@ export const changeMarkers = [
 		])
 	)
 ];
+
+class Sign extends GutterMarker {
+	constructor(readonly text: string) {
+		super();
+	}
+
+	eq(other: Sign) {
+		return other.text === this.text;
+	}
+
+	toDOM() {
+		return document.createTextNode(this.text);
+	}
+}
+
+const signs = { a: new Sign('−'), b: new Sign('+') };
+
+class DeletedSign extends Sign {
+	elementClass = 'cm-diffDeletedSign';
+
+	eq(other: Sign) {
+		return other instanceof DeletedSign;
+	}
+}
+
+const deletedSign = new DeletedSign('−');
+
+/** Marks each line inside a diff chunk with − on the original side or + on the changed side. */
+export function diffSigns(side: 'a' | 'b') {
+	return gutter({
+		class: `cm-diffSigns cm-diffSigns-${side}`,
+		lineMarker(view, line) {
+			const chunks = getChunks(view.state)?.chunks ?? [];
+			const inside = chunks.some((chunk) => {
+				const [from, to] = side === 'a' ? [chunk.fromA, chunk.toA] : [chunk.fromB, chunk.toB];
+				return to > from && line.from >= from && line.from < to;
+			});
+			return inside ? signs[side] : null;
+		},
+		// Unified views draw deletions as a block widget above the line they precede.
+		widgetMarker: (view, widget, block) => (side === 'b' && removal(view, widget, block) ? deletedSign : null),
+		lineMarkerChange: (update) => update.docChanged || update.transactions.some((transaction) => transaction.effects.length > 0)
+	});
+}
+
+class OriginalNumber extends GutterMarker {
+	constructor(readonly value: number) {
+		super();
+	}
+
+	eq(other: OriginalNumber) {
+		return other.value === this.value;
+	}
+
+	toDOM() {
+		return document.createTextNode(String(this.value));
+	}
+}
+
+/** Numbers each unchanged line of a unified diff as it was in the original, beside the editor's own numbers. */
+export function originalNumbers() {
+	const count = (doc: Text, from: number, to: number) => (to > from ? doc.lineAt(Math.min(to, doc.length)).number - doc.lineAt(from).number + (to > doc.length ? 1 : 0) : 0);
+	return Prec.highest(
+		gutter({
+			class: 'cm-originalNumbers',
+			lineMarker(view, line) {
+				const chunks = getChunks(view.state)?.chunks ?? [];
+				const [b, a] = [view.state.doc, getOriginalDoc(view.state)];
+				let shift = 0;
+				for (const chunk of chunks) {
+					if (line.from >= chunk.fromB && line.from < chunk.toB) return null;
+					if (line.from < chunk.fromB) break;
+					shift += count(a, chunk.fromA, chunk.toA) - count(b, chunk.fromB, chunk.toB);
+				}
+				return new OriginalNumber(b.lineAt(line.from).number + shift);
+			},
+			widgetMarker(view, widget, block) {
+				const chunk = removal(view, widget, block);
+				return chunk ? new OriginalNumber(getOriginalDoc(view.state).lineAt(chunk.fromA).number) : null;
+			},
+			lineMarkerChange: (update) => update.docChanged || update.transactions.some((transaction) => transaction.effects.length > 0)
+		})
+	);
+}
+
+class ChangedRow extends GutterMarker {
+	elementClass = 'cm-diffChangedRow';
+}
+
+const changedRow = new ChangedRow();
+
+class CollapsedRow extends GutterMarker {
+	elementClass = 'cm-diffCollapsedRow';
+}
+
+const collapsedRow = new CollapsedRow();
+
+class DeletedRow extends GutterMarker {
+	elementClass = 'cm-diffDeletedRow';
+}
+
+const deletedRow = new DeletedRow();
+
+/** Merge keeps its widgets private: the collapse widget counts hidden lines in a numeric `lines`, the deletion widget builds lazily. */
+const collapse = (widget: WidgetType) => typeof (widget as { lines?: unknown }).lines === 'number';
+const deletion = (widget: WidgetType) => typeof (widget as { buildDOM?: unknown }).buildDOM === 'function';
+
+/** The chunk a deletion widget shows, when it removes lines; every chunk gets one, empty for pure insertions. */
+function removal(view: EditorView, widget: WidgetType, block: BlockInfo) {
+	if (!deletion(widget)) return undefined;
+	return getChunks(view.state)?.chunks.find((chunk) => chunk.fromB === block.from && chunk.toA > chunk.fromA);
+}
+const wholeLine = Decoration.line({ class: 'cm-diffWholeLine' });
+
+/** Tints every gutter cell on a changed line, so the row reads as one band with its code, and marks lines whose chunk has nothing on the other side. */
+export function diffRows(side: 'a' | 'b') {
+	const rows = (state: EditorState) => {
+		const gutters = new RangeSetBuilder<GutterMarker>();
+		const lines = new RangeSetBuilder<Decoration>();
+		const doc = state.doc;
+		for (const chunk of getChunks(state)?.chunks ?? []) {
+			const [from, to] = side === 'a' ? [chunk.fromA, chunk.toA] : [chunk.fromB, chunk.toB];
+			const alone = side === 'a' ? chunk.fromB === chunk.toB : chunk.fromA === chunk.toA;
+			// A line one change covers end to end is wholly new or gone, so word highlights would only box all of it.
+			const covered = (start: number, end: number) =>
+				end > start && chunk.changes.some((change) => (side === 'a' ? change.fromA : change.fromB) <= start - from && (side === 'a' ? change.toA : change.toB) >= end - from);
+			for (let pos = from; pos < Math.min(to, doc.length + 1); ) {
+				const line = doc.lineAt(Math.min(pos, doc.length));
+				gutters.add(line.from, line.from, changedRow);
+				if (alone || covered(line.from, line.to)) lines.add(line.from, line.from, wholeLine);
+				pos = line.to + 1;
+			}
+		}
+		return { gutters: gutters.finish(), lines: lines.finish() };
+	};
+	return StateField.define<{ gutters: RangeSet<GutterMarker>; lines: DecorationSet }>({
+		create: rows,
+		update: (value, transaction) => (transaction.docChanged || transaction.effects.length > 0 ? rows(transaction.state) : value),
+		provide: (field) => [
+			gutterLineClass.from(field, (value) => value.gutters),
+			EditorView.decorations.from(field, (value) => value.lines),
+			gutterWidgetClass.of((view, widget, block) => (collapse(widget) ? collapsedRow : removal(view, widget, block) ? deletedRow : null))
+		]
+	});
+}

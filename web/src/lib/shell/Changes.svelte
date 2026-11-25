@@ -57,6 +57,7 @@
 	import CloudArrowUp from '~icons/ph/cloud-arrow-up';
 	import Copy from '~icons/ph/copy';
 	import DotsThree from '~icons/ph/dots-three';
+	import GitDiff from '~icons/ph/git-diff';
 	import Minus from '~icons/ph/minus';
 	import Plus from '~icons/ph/plus';
 	import Sparkle from '~icons/ph/sparkle';
@@ -72,10 +73,11 @@
 		device: Device;
 		onopen(path: string): void;
 		ondiff(change: Change, against: 'index' | 'staged'): void;
+		onchanges(): void;
 		children: Snippet;
 	};
 
-	let { projectId, git, trunk, device, onopen, ondiff, children }: Props = $props();
+	let { projectId, git, trunk, device, onopen, ondiff, onchanges, children }: Props = $props();
 
 	const LARGE = 200;
 	const collapsed = new SvelteSet<string>();
@@ -342,12 +344,11 @@
 			<span class="upstream">Not on origin</span>
 			<Button title="Publish Branch (P)" disabled={busy && running?.action !== 'publish'} busy={running?.action === 'publish'} onclick={push}><CloudArrowUp /> Publish Branch</Button>
 		{:else}
-			<span class="upstream">{git.detached ? 'Detached HEAD' : 'Local branch'}</span>
+			<span class="upstream">{git.detached ? 'Detached HEAD' : 'No remote'}</span>
 		{/if}
 		{#if trunk && trunk.branch !== git.branch}
 			<Chip
 				variant="ghost"
-				mono
 				aria-label="Pull {trunk.branch}"
 				title="Pull {trunk.behind} new from origin/{trunk.branch} into {trunk.branch} without switching"
 				disabled={busy && running?.action !== 'trunk'}
@@ -357,6 +358,7 @@
 				{trunk.branch}{@render motion('trunk', ArrowDown)}{trunk.behind}
 			</Chip>
 		{/if}
+		{#if git.changes.length}<IconButton label="Review all changes" title="Review all changes" onclick={onchanges}><GitDiff /></IconButton>{/if}
 		<Menu
 			items={[
 				{ label: 'Stash All Changes', icon: Archive, hint: 's', disabled: busy || !git.changes.length, onselect: () => run('stash', () => stash(projectId)) },
@@ -378,14 +380,14 @@
 					bind:value={() => message, (value) => (messages[projectId] = value)}
 					aria-label="Commit message"
 					placeholder="Commit message"
-					rows={3}
+					rows={1}
 					spellcheck="true"
 					readonly={committing}
 					onkeydown={commitKey}
 				/>
 				<div class="buttons">
 					{#if elapsed >= 2}<span class="elapsed" title="Time spent committing">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}</span>{/if}
-					<Button title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || committing || !git.staged.length} onclick={draftMessage}>
+					<Button variant="ghost" title={git.staged.length ? `Draft a message with ${commitRig() ?? 'the commit Rig'}` : 'Stage changes to draft a message'} disabled={drafting || committing || !git.staged.length} onclick={draftMessage}>
 						<Sparkle />{drafting ? 'Drafting…' : 'Draft'}
 					</Button>
 					<Button variant="primary" title="Commit (Ctrl+Enter)" disabled={!committable && !committing} busy={committing} onclick={commitStaged}>
@@ -418,13 +420,13 @@
 							{@const waiting = row.kind === 'file' ? pending.has(row.change.path) : row.changes.every(({ path }) => pending.has(path))}
 							<li class="row" class:pending={waiting} aria-busy={waiting || undefined}>
 								{#if row.kind === 'folder'}
-									<TreeRow data-key={row.key} name={row.folder.name} depth={row.depth + 1} open={row.open} title={row.folder.path} onclick={() => toggle(row.key, row.changes.length > LARGE ? opened : collapsed)} />
+									<TreeRow data-key={row.key} name={row.folder.name} depth={row.depth} open={row.open} muted title={row.folder.path} onclick={() => toggle(row.key, row.changes.length > LARGE ? opened : collapsed)} />
 								{:else}
 									{@const { change } = row}
 									<TreeRow
 										data-key={row.key}
 										name={split(change.path).name}
-										depth={row.depth + 1}
+										depth={row.depth}
 										git={change.kind}
 										letter={waiting ? undefined : letters[change.kind]}
 										title={change.from ? `${change.from} → ${change.path}` : change.path}
@@ -509,7 +511,7 @@
 		align-items: center;
 		gap: var(--space-1);
 		min-height: var(--target-min);
-		padding: 0 var(--space-1) 0 var(--space-3);
+		padding: 0 var(--space-1) 0 var(--space-2);
 	}
 
 	.upstream {
@@ -610,7 +612,14 @@
 	.commit {
 		display: grid;
 		gap: var(--space-2);
-		padding: var(--space-1) var(--space-3) var(--space-2);
+		padding: var(--space-1) var(--space-2) var(--space-2);
+	}
+
+	.commit :global(textarea) {
+		min-height: calc(1lh + 2 * var(--space-1));
+		max-height: 12lh;
+		resize: none;
+		field-sizing: content;
 	}
 
 	.buttons {
@@ -620,9 +629,12 @@
 		gap: var(--space-2);
 	}
 
+	.buttons > :global(button:last-child) {
+		flex: 1;
+	}
+
 	.elapsed {
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-variant-numeric: tabular-nums;
 	}
@@ -698,7 +710,7 @@
 		top: 0;
 		z-index: 1;
 		border-block: var(--border-width) solid var(--border);
-		background: var(--surface-2);
+		background: var(--chrome);
 	}
 
 	.heading + .heading {
@@ -739,7 +751,6 @@
 	.count {
 		flex: none;
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 	}
 
@@ -748,7 +759,23 @@
 		flex: none;
 	}
 
+	/* Overlays hover actions so badges and counts stay flush right. */
 	@media (hover: hover) {
+		li.row {
+			position: relative;
+		}
+
+		.actions {
+			position: absolute;
+			right: 0;
+			border-radius: inherit;
+			background: var(--chrome);
+		}
+
+		.row:hover .actions {
+			background: var(--hover);
+		}
+
 		.row:not(:hover, :focus-within) .actions {
 			opacity: 0;
 		}

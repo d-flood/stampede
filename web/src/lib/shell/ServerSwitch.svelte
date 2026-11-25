@@ -27,7 +27,7 @@
 	title="Language server: {state}"
 	onclick={() => servers.toggle(projectId)}
 >
-	<span class="state {state}"><span class="dot"></span>LSP {state}</span>
+	<span class="state {state}"><span class="dot"></span>LSP{state === 'off' ? '' : ` ${state}`}</span>
 </Button>
 {#if state === 'error'}
 	<a href={log} target="_blank" rel="noopener">view log</a>

@@ -67,6 +67,7 @@
 		onopen(path: string, cursor?: Cursor): void;
 		onrename(from: string, to: string): void;
 		ondiff(change: Change, against: Against, draft?: string, replace?: boolean): void;
+		onchanges(projectId: string): void;
 		onepic(slug: string): void;
 		onfocus(projectId: string): void;
 		toggle?: Snippet;
@@ -89,6 +90,7 @@
 		onopen,
 		onrename,
 		ondiff,
+		onchanges,
 		onepic,
 		onfocus,
 		toggle
@@ -101,7 +103,7 @@
 	const current = $derived(showing(section, git).id);
 	const id = $props.id();
 	let viewport = $state(window.innerWidth);
-	let width = $state(320);
+	let width = $state(280);
 	let drag = $state<{ x: number; width: number }>();
 	const maximum = $derived(Math.min(640, viewport * 0.6));
 	const minimum = $derived(Math.min(160, maximum));
@@ -139,21 +141,26 @@
 >
 	<div class="clip">
 		<div class="content" style:width={form() === 'desktop' ? `${size}px` : undefined}>
+			{#snippet branch()}
+				{#if git?.branch && project?.worktree}
+					<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>
+				{:else if git?.branch}
+					<div class="switch">
+						<Chip variant="ghost" title="Switch branch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => ((switching = true), warmUp())}>
+							<GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span><CaretUpDown />
+						</Chip>
+					</div>
+				{/if}
+			{/snippet}
 			{#if form() === 'desktop'}
 				<header>
-					{#if project}<h1 title={project.path}>{label}</h1>{/if}
+					{#if project}<h1 title={project.path}>{label}</h1>{@render branch()}{/if}
 					{@render toggle?.()}
 				</header>
 			{/if}
 			{#if project}
-				{#if git?.branch && project.worktree}
-					<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>
-				{:else if git?.branch}
-					<div class="switch">
-						<Chip variant="ghost" mono title="Switch branch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => ((switching = true), warmUp())}>
-							<GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span><CaretUpDown />
-						</Chip>
-					</div>
+				{#if form() === 'phone'}{@render branch()}{/if}
+				{#if git?.branch && !project.worktree}
 					<Dialog bind:open={switching} full={form() === 'phone'} title="Switch branch" description="Uncommitted changes come along unless they clash with the branch.">
 						{#if Picker}<Picker projectId={project.id} current={git.branch} origin={!!git.origin} onswitch={() => (switching = false)} />{/if}
 					</Dialog>
@@ -167,7 +174,7 @@
 				{#if current === 'git'}
 					{#key project.id}
 						{#if git}
-							<Changes projectId={project.id} {git} {trunk} {device} onopen={(path) => onopen(path)} {ondiff}>
+							<Changes projectId={project.id} {git} {trunk} {device} onopen={(path) => onopen(path)} {ondiff} onchanges={() => onchanges(project.id)}>
 								<History projectId={project.id} {device} onopen={ondiff} />
 							</Changes>
 						{/if}
@@ -217,10 +224,10 @@
 		position: relative;
 		display: flex;
 		flex: none;
-		width: 20rem;
+		width: 280px;
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-xl);
-		background: var(--surface-1);
+		background: var(--chrome);
 		transition:
 			width var(--dur-med) var(--ease-out),
 			margin var(--dur-med) var(--ease-out);
@@ -313,11 +320,13 @@
 		min-width: 0;
 	}
 
+	/* Matches a Tab's height so the title row lines up with the Tab strip beside it. */
 	header {
 		display: flex;
 		justify-content: flex-end;
 		align-items: center;
 		gap: var(--space-2);
+		min-height: calc(var(--target-min) + var(--space-2));
 		padding: var(--space-2) var(--space-2) 0 var(--space-4);
 	}
 
@@ -343,7 +352,6 @@
 		margin: 0;
 		padding: 0 var(--space-4);
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 	}
 
@@ -354,6 +362,12 @@
 	.switch {
 		display: flex;
 		padding: 0 var(--space-2);
+	}
+
+	header :is(.branch, .switch) {
+		flex: 0 1 auto;
+		min-width: 0;
+		padding: 0;
 	}
 
 	.branch span,

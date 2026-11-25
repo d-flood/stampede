@@ -1,12 +1,12 @@
 <script lang="ts">
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	type Props = HTMLButtonAttributes & { element?: 'button' | 'span'; variant?: 'default' | 'ghost'; mono?: boolean; pending?: boolean; pressed?: boolean };
+	type Props = HTMLButtonAttributes & { element?: 'button' | 'span'; variant?: 'default' | 'ghost'; pending?: boolean; pressed?: boolean };
 
-	let { element = 'button', variant = 'default', mono = false, pending = false, pressed, children, ...rest }: Props = $props();
+	let { element = 'button', variant = 'default', pending = false, pressed, children, ...rest }: Props = $props();
 </script>
 
-<svelte:element this={element} type={element === 'button' ? 'button' : undefined} class={['chip', variant, { mono, pending }]} aria-pressed={pressed} {...rest}>
+<svelte:element this={element} type={element === 'button' ? 'button' : undefined} class={['chip', variant, { pending }]} aria-pressed={pressed} {...rest}>
 	{@render children?.()}
 </svelte:element>
 
@@ -20,9 +20,9 @@
 		max-width: 100%;
 		min-height: var(--target-min);
 		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
+		border: var(--border-width) solid transparent;
 		border-radius: var(--radius-pill);
-		background: var(--surface-1);
+		background: var(--surface-2);
 		color: var(--color-fg);
 		font: inherit;
 		font-size: var(--font-size-sm);
@@ -35,6 +35,9 @@
 	/* Zero specificity lets callers tint an icon, such as a running Shell. */
 	:where(.chip) :global(svg) {
 		flex: none;
+	}
+
+	:where(.chip) :global(svg:not([color])) {
 		color: var(--muted-fg);
 	}
 
@@ -42,10 +45,29 @@
 		cursor: pointer;
 	}
 
+	/* Keeps the touch target at full size while the pill itself stays slim. */
+	@media (pointer: coarse) {
+		button.chip {
+			position: relative;
+			min-height: var(--control-min);
+		}
+
+		button.chip::after {
+			content: '';
+			position: absolute;
+			inset: calc((var(--control-min) - var(--target-min)) / 2) 0;
+		}
+	}
+
 	button:hover:not(:disabled),
 	button[data-state='open'] {
-		background: var(--hover);
+		background: var(--surface-3);
 		color: var(--color-fg);
+	}
+
+	button.ghost:hover:not(:disabled),
+	button.ghost[data-state='open'] {
+		background: var(--hover);
 	}
 
 	button:focus-visible {
@@ -62,10 +84,6 @@
 		border-color: transparent;
 		background: none;
 		color: var(--muted-fg);
-	}
-
-	.mono {
-		font-family: var(--font-mono);
 	}
 
 	.pending {

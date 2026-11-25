@@ -1,30 +1,21 @@
 <script lang="ts">
 	import { logos } from '#lib/chat/sessions.ts';
 	import type { Agent } from '#lib/config.svelte.ts';
-	import type { Choice, Setting, Settings } from '#lib/device.svelte.ts';
 	import Kbd from '#lib/ui/Kbd.svelte';
 	import GitBranch from '~icons/ph/git-branch';
 
-	let { rig, agent, settings, choices, project, branch }: { rig: string; agent: Agent; settings: Settings; choices: Record<Setting, Choice[]>; project?: string; branch?: string } = $props();
+	let { rig, agent, project, branch }: { rig: string; agent: Agent; project?: string; branch?: string } = $props();
 	const Logo = $derived(logos[agent]);
-	const runs = $derived(
-		(['model', 'effort', 'mode'] as const).flatMap((setting) => {
-			const value = settings[setting];
-			const label = choices[setting].find((choice) => choice.value === value)?.label ?? value;
-			return value ? [setting === 'mode' ? `${label} mode` : label] : [];
-		})
-	);
 	const hints = [
-		['/', 'commands'],
-		['@', 'files'],
-		['!', 'shell'],
+		['/', 'Commands'],
+		['@', 'Files'],
+		['!', 'Shell'],
 		[';', 'Clips']
 	];
 </script>
 
 <section class="empty" aria-label="New Chat">
 	<h2><Logo aria-hidden="true" />{rig}</h2>
-	{#if runs.length}<p class="runs">{runs.join(', ')}</p>{/if}
 	{#if project}
 		<p class="where">
 			<span>{project}</span>
@@ -57,7 +48,7 @@
 		gap: var(--space-3);
 		margin: 0 0 var(--space-1);
 		color: var(--color-fg);
-		font: 500 1.5rem var(--font-chat);
+		font: 600 calc(1.5 * var(--font-size-base)) var(--font-ui);
 		overflow-wrap: anywhere;
 	}
 

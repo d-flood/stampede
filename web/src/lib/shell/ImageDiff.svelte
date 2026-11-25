@@ -153,7 +153,6 @@
 	.label {
 		overflow: hidden;
 		color: var(--color-fg);
-		font-family: var(--font-mono);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}

@@ -107,7 +107,7 @@ test('worktrees are counted on their Project and listed under it, grouped in the
 	const toggle = rail.getByRole('button', { name: 'Expand project rail' });
 	await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 	await toggle.click();
-	await expect(row).toContainText(alpha());
+	await expect(row).toContainText(alpha().replace(/^(?:\/home|\/Users)\/[^/]+/, '~'));
 	await expect(worktrees.locator('.name')).toHaveText(['one', 'two']);
 	await expect.poll(async () => {
 		const [top, list] = [await square.boundingBox(), await worktrees.boundingBox()];
@@ -116,7 +116,7 @@ test('worktrees are counted on their Project and listed under it, grouped in the
 
 	await page.reload();
 	await expect(rail.getByRole('button', { name: 'Collapse project rail' })).toHaveAttribute('aria-expanded', 'true');
-	await expect(row).toContainText(alpha());
+	await expect(row).toContainText(alpha().replace(/^(?:\/home|\/Users)\/[^/]+/, '~'));
 });
 
 test('a working Chat in a worktree spins on its Project square and tile', { tag: '@desktop' }, async ({ page }) => {

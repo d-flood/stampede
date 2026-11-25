@@ -4,13 +4,13 @@
 	import { mergeProps } from 'bits-ui';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	type Props = HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'ghost' | 'danger' | 'link'; size?: 'sm' | 'lg'; tip?: string; busy?: boolean };
+	type Props = HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'ghost' | 'danger' | 'link'; size?: 'sm' | 'lg'; round?: boolean; tip?: string; busy?: boolean };
 
-	let { variant = 'default', size, tip, busy, children: content, ...rest }: Props = $props();
+	let { variant = 'default', size, round = false, tip, busy, children: content, ...rest }: Props = $props();
 </script>
 
 {#snippet button(props: HTMLButtonAttributes)}
-	<button class={[variant, size, { busy, progress: busy !== undefined }]} aria-busy={busy || undefined} {...props}>
+	<button class={[variant, size, { round, busy, progress: busy !== undefined }]} aria-busy={busy || undefined} {...props}>
 		{@render content?.()}
 		{#if busy !== undefined}<ProgressLine active={busy} />{/if}
 	</button>
@@ -28,19 +28,15 @@
 
 <style>
 	button {
-		--sheen: color-mix(in oklab, var(--color-fg) 8%, transparent);
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		gap: var(--space-2);
 		min-height: var(--target-min);
 		padding: 0 var(--space-3);
-		border: var(--border-width) solid var(--border-strong);
+		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-md);
-		background: linear-gradient(color-mix(in oklab, var(--surface-2), var(--color-fg) 3%), var(--surface-2));
-		box-shadow:
-			inset 0 1px 0 var(--sheen),
-			var(--shadow-lift);
+		background: var(--surface-2);
 		color: var(--color-fg);
 		font: inherit;
 		font-weight: 500;
@@ -56,11 +52,10 @@
 	}
 
 	button:hover:not(:disabled) {
-		background: linear-gradient(color-mix(in oklab, var(--border), var(--color-fg) 3%), var(--border));
+		background: var(--surface-3);
 	}
 
 	button:active:not(:disabled) {
-		box-shadow: inset 0 1px 2px color-mix(in oklab, var(--ansi-0) 25%, transparent);
 		scale: 0.97;
 	}
 
@@ -72,28 +67,27 @@
 	button:disabled {
 		border-color: var(--border);
 		background: var(--surface-1);
-		box-shadow: none;
 		color: var(--muted-fg);
 		cursor: default;
 	}
 
 	.primary {
 		--fill: var(--accent);
-		border-color: color-mix(in oklab, var(--fill), var(--color-fg) 16%);
-		background: linear-gradient(color-mix(in oklab, var(--fill), var(--color-fg) 3%), var(--fill));
+		border-color: transparent;
+		background: var(--fill);
 		color: var(--color-bg);
 		font-weight: 600;
 	}
 
 	.primary:hover:not(:disabled) {
 		--fill: color-mix(in oklab, var(--accent), var(--color-fg) 8%);
-		background: linear-gradient(color-mix(in oklab, var(--fill), var(--color-fg) 3%), var(--fill));
+		background: var(--fill);
 	}
 
 	.primary:disabled {
-		border-color: color-mix(in oklab, var(--accent) 22%, var(--border));
-		background: color-mix(in oklab, var(--accent) 7%, var(--surface-1));
-		color: color-mix(in oklab, var(--accent) 35%, var(--muted-fg));
+		border-color: var(--border);
+		background: var(--surface-2);
+		color: color-mix(in oklab, var(--muted-fg) 65%, transparent);
 	}
 
 	.ghost {
@@ -148,6 +142,13 @@
 	.lg {
 		padding: 0 var(--space-4);
 		font-size: var(--font-size-lg);
+	}
+
+	.round {
+		width: max(var(--target-min), 32px);
+		height: max(var(--target-min), 32px);
+		padding: 0;
+		border-radius: var(--radius-pill);
 	}
 
 	.link {

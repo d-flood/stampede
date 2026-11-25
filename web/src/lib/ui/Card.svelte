@@ -42,7 +42,6 @@
 
 	.primary,
 	.primary:hover:not(:disabled) {
-		border-color: var(--accent);
-		box-shadow: inset 0 0 0 var(--border-width) var(--accent);
+		border-color: var(--selected-border);
 	}
 </style>

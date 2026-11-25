@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures.ts';
-import { closeTab, expectCurrent, openProject } from './shell.ts';
+import { openProject } from './shell.ts';
 
 test.use({ starterRigs: true });
 
@@ -46,6 +46,11 @@ test('New Tab shows session loading and fits the loaded sessions', async ({ page
 
 test('the Launchpad offers the New Tab items and comes back focused when the last Tab closes', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
+	const created: Record<string, unknown>[] = [];
+	page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {
+		const message = typeof payload === 'string' && JSON.parse(payload);
+		if (message?.type === 'chat.create') created.push(message);
+	}));
 	await page.routeWebSocket('**/ws', (socket) => {
 		const server = socket.connectToServer();
 		server.onMessage((message) => {
@@ -59,34 +64,43 @@ test('the Launchpad offers the New Tab items and comes back focused when the las
 	});
 	await openProject(page, 'alpha');
 	const launchpad = page.getByRole('region', { name: 'alpha', exact: true });
-	await expect(launchpad.getByText(/, main, \d+ changed files?$/)).toBeVisible();
-	const offered = ['Claude Code', 'Codex', 'Terminal', 'Browser', 'Open file', 'Continue the collation', 'Search sessions…'];
+	await expect(launchpad.getByText(/^main · (clean|\d+ changed files?)$/)).toBeVisible();
+	const rigs = ['Claude Code', 'Codex'];
+	const tools = ['Terminal', 'Browser', 'Open file', 'Continue the collation', 'Search sessions…'];
 	await expect(launchpad.getByRole('button', { name: 'Continue the collation', exact: true })).toBeVisible();
-	await expect(launchpad.getByRole('button')).toHaveCount(offered.length);
-	for (const [index, label] of offered.entries()) await expect(launchpad.getByRole('button').nth(index)).toHaveAccessibleName(label);
-	await expect(launchpad.getByRole('button', { name: 'Claude Code', exact: true })).toHaveAccessibleDescription('Default model');
+	for (const label of tools) await expect(launchpad.getByRole('button', { name: new RegExp(`^${label}`) })).toBeVisible();
+	const chip = launchpad.getByRole('button', { name: 'Rig: Claude Code', exact: true });
+	await chip.click();
+	const choices = page.getByRole('menu').getByRole('menuitemcheckbox');
+	await expect(choices).toHaveCount(rigs.length);
+	for (const [index, label] of rigs.entries()) await expect(choices.nth(index)).toHaveAccessibleName(label);
+	await page.keyboard.press('Escape');
 
 	if (!phone) {
 		await page.getByRole('button', { name: 'New Tab', exact: true }).click();
 		const items = page.getByRole('menu').getByRole('menuitem');
-		await expect(items).toHaveCount(offered.length);
-		for (const [index, label] of offered.entries()) await expect(items.nth(index)).toHaveAccessibleName(label);
+		await expect(items).toHaveCount(rigs.length + tools.length);
+		for (const [index, label] of [...rigs, ...tools].entries()) await expect(items.nth(index)).toHaveAccessibleName(label);
 		await page.keyboard.press('Escape');
 	}
 
-	const primary = launchpad.getByRole('button', { name: 'Claude Code', exact: true });
-	await primary.click();
-	await expectCurrent(page, 'Claude Code');
+	const mode = launchpad.getByRole('button', { name: /^Mode: / });
+	await mode.click();
+	const other = page.getByRole('menu').getByRole('menuitemcheckbox', { checked: false }).last();
+	const label = (await other.textContent())!.trim();
+	await other.click();
+	await expect(mode).toHaveAccessibleName(`Mode: ${label}`);
+	const value = await page.evaluate(() => fetch('/api/modes').then((response) => response.json()));
+
+	const composer = launchpad.getByRole('textbox', { name: 'Composer' });
+	await composer.fill('Start from the Launchpad');
+	await launchpad.getByRole('button', { name: 'Send', exact: true }).click();
 	await expect(launchpad).toHaveCount(0);
-	await closeTab(page, 'Claude Code');
-	await expect(page.getByRole('tab', { name: /^Claude Code/ })).toHaveCount(0);
-	if (phone) await primary.click();
-	else {
-		await expect(primary).toBeFocused();
-		await page.keyboard.press('Enter');
-	}
-	await expectCurrent(page, 'Claude Code');
-	await expect(launchpad).toHaveCount(0);
+	await expect(page.getByRole('region', { name: 'User message 1', exact: true })).toContainText('Start from the Launchpad');
+	expect(created.at(-1)?.settings).toEqual({ mode: value['claude-code'].find((mode: { label: string }) => mode.label === label).value });
+	await page.getByRole('tablist', { name: 'Tabs' }).getByRole('button', { name: /^Close / }).click();
+	await expect(launchpad).toBeVisible();
+	if (!phone) await expect(composer).toBeFocused();
 });
 
 test('a Launchpad without Rigs offers Create a Rig, which opens Rigs settings', async ({ page }) => {

@@ -75,14 +75,14 @@
 			>
 				<span class="square squircle">
 					<ProjectIcon {project} />
-					{#if needs}<span class="attention">{needs}</span>{/if}
+					{#if needs}<span class="attention" title="{needs} {needs === 1 ? 'needs' : 'need'} attention"><span class="assistive">{needs}</span></span>{/if}
 					{#if trunk}<span class="behind" class:pulling class:failed title={failed ?? `${trunk.behind} new on origin/${trunk.branch}`}><ArrowDownBold /></span>{/if}
 					{#if tiles.length}<span class="count" title="{tiles.length} {tiles.length === 1 ? 'worktree' : 'worktrees'}">{tiles.length}</span>{/if}
 					{#if working}<span class="spinner" title="working"><WorkingMark /></span>{:else if background}<span class="shell" title="background"><ShellMark /></span>{/if}
 				</span>
 				<span class="text">
 					<strong>{label}</strong>
-					<span class="path">{project.path}</span>
+					<span class="path"><bdi>{project.path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>
 					{#each runs as epic (epic.slug)}
 						{@const tally = counts(epic)}
 						<span class="run">Run {epic.slug} · <span class="resolved">{tally.merged + tally.skipped} of {epic.tickets.length}</span></span>
@@ -110,7 +110,7 @@
 						>
 							<span class="tile squircle {tile.status ?? ''}">
 								{tile.mark}
-								{#if tile.needs}<span class="attention">{tile.needs}</span>{/if}
+								{#if tile.needs}<span class="attention" title="{tile.needs} {tile.needs === 1 ? 'needs' : 'need'} attention"><span class="assistive">{tile.needs}</span></span>{/if}
 								{#if tile.status === 'working'}<span class="spinner" title="working"><WorkingMark /></span>{:else if tile.status === 'background'}<span class="shell" title="background"><ShellMark /></span>{/if}
 							</span>
 							<span class="name">{name}</span>
@@ -199,8 +199,8 @@
 		touch-action: none;
 	}
 
-	.compact .project:not(.focused):has(:global(.monogram)) {
-		border-color: color-mix(in oklab, var(--hue) 38%, var(--color-bg));
+	.compact .project:has(:global(.monogram)) {
+		border-color: var(--border);
 	}
 
 	.card .project {
@@ -219,14 +219,40 @@
 	}
 
 	.project.focused {
-		--tile-base: var(--surface-3);
-		border-color: color-mix(in oklab, var(--color-fg) 38%, var(--color-bg));
-		background: var(--surface-3);
+		--tile-base: var(--selected-bg);
+		border-color: var(--selected-border);
+		background: var(--selected-bg);
 		color: var(--color-fg);
 	}
 
-	.project::before,
 	.tile::before {
+		content: '';
+		position: absolute;
+		top: 22%;
+		bottom: 22%;
+		left: calc(-1 * var(--space-3) - var(--square) + var(--target-min));
+		width: 4px;
+		border-radius: 0 4px 4px 0;
+		background: var(--color-fg);
+		opacity: 0;
+		scale: 1 0;
+		transition:
+			opacity var(--dur-fast),
+			scale var(--dur-med) var(--ease-out);
+	}
+
+	.compact .worktree.focused .tile::before {
+		opacity: 1;
+		scale: 1;
+	}
+
+	.compact .project.focused {
+		--tile-base: var(--hover);
+		border-color: var(--border-strong);
+		background: none;
+	}
+
+	.compact .project::before {
 		content: '';
 		position: absolute;
 		top: 22%;
@@ -242,12 +268,7 @@
 			scale var(--dur-med) var(--ease-out);
 	}
 
-	.tile::before {
-		left: calc(-1 * var(--space-3) - var(--square) + var(--target-min));
-	}
-
-	.compact .project.focused::before,
-	.compact .worktree.focused .tile::before {
+	.compact .project.focused::before {
 		opacity: 1;
 		scale: 1;
 	}
@@ -311,8 +332,9 @@
 		box-sizing: border-box;
 		min-width: 1.4em;
 		height: 1.4em;
-		border: var(--border-width) solid var(--surface-2);
+		border: var(--border-width) solid var(--canvas);
 		border-radius: 0.7em;
+		box-shadow: 0 0 0 var(--border-width) var(--canvas);
 		background: var(--surface-1);
 		font-size: calc(var(--font-size-sm) - 1px);
 	}
@@ -326,10 +348,21 @@
 	}
 
 	.attention {
-		top: calc(-1 * var(--space-1) - var(--border-width));
-		right: calc(-1 * var(--space-1) - var(--border-width));
+		top: calc(-1 * var(--space-1) / 2);
+		right: calc(-1 * var(--space-1) / 2);
+		min-width: 0;
+		width: var(--space-3);
+		height: var(--space-3);
+		padding: 0;
 		background: var(--status-waiting);
-		color: var(--color-bg);
+	}
+
+	.assistive {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
 	}
 
 	.behind {
@@ -410,9 +443,12 @@
 		white-space: nowrap;
 	}
 
+	/* Right-to-left moves the ellipsis to the path's start, keeping its distinguishing tail. */
 	.path {
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
+		direction: rtl;
+		text-align: left;
 	}
 
 	.run {
@@ -425,7 +461,6 @@
 
 	.progress {
 		color: var(--status-done);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-variant-numeric: tabular-nums;
 	}

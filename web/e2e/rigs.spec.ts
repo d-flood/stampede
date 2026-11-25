@@ -27,7 +27,7 @@ test('the Rig list is in shortcut order, and dragging or moving a Rig moves its 
 		return configured.map((rig) => rig.name);
 	};
 	expect((await shortcuts()).slice(0, 3)).toEqual(['Fake Claude', 'Fake Claude (steer)', 'Fake Codex']);
-	await expect(rows.nth(2).locator('kbd')).toHaveText('Ctrl+Shift+3');
+	await expect(rows.nth(2).locator('kbd')).toHaveText('Ctrl ⇧ 3');
 	await row(dialog, 'Fake Codex').click();
 	const name = dialog.getByRole('textbox', { name: 'Name', exact: true });
 	await name.fill('Unsaved name');
@@ -45,7 +45,7 @@ test('the Rig list is in shortcut order, and dragging or moving a Rig moves its 
 	}
 	await expect(up).toBeDisabled();
 	await expect(name).toHaveValue('Unsaved name');
-	await expect(rows.nth(0).locator('kbd')).toHaveText('Ctrl+Shift+1');
+	await expect(rows.nth(0).locator('kbd')).toHaveText('Ctrl ⇧ 1');
 	await dialog.getByRole('button', { name: 'Move down', exact: true }).click();
 	await expect(rows.nth(1).locator('.name')).toHaveText('Fake Codex');
 	await expect(row(dialog, 'Fake Codex')).toHaveAttribute('aria-expanded', 'true');
@@ -55,16 +55,16 @@ test('the Rig list is in shortcut order, and dragging or moving a Rig moves its 
 	await expect(dialog.getByRole('status')).toHaveText('Rig order saved.');
 	await expect(rows.nth(0).locator('.name')).toHaveText('Fake Codex');
 	expect((await shortcuts()).slice(0, 2)).toEqual(['Fake Codex', 'Fake Claude']);
-	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 	await page.keyboard.press('Control+Shift+1');
 	await expect(page.getByRole('tab', { name: /^Fake Codex/ }).getByTitle('done')).toBeVisible();
 	await page.reload();
 	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
-	await expect(page.getByRole('menuitem', { name: 'Fake Codex', exact: true })).toContainText('Ctrl+Shift+1');
-	await expect(page.getByRole('menuitem', { name: 'Fake Claude', exact: true })).toContainText('Ctrl+Shift+2');
+	await expect(page.getByRole('menuitem', { name: 'Fake Codex', exact: true })).toContainText('Ctrl ⇧ 1');
+	await expect(page.getByRole('menuitem', { name: 'Fake Claude', exact: true })).toContainText('Ctrl ⇧ 2');
 	await page.keyboard.press('Escape');
 	await openSettings(page, 'Rigs');
-	await expect(rows.nth(0).locator('kbd')).toHaveText('Ctrl+Shift+1');
+	await expect(rows.nth(0).locator('kbd')).toHaveText('Ctrl ⇧ 1');
 	await expect(rows.nth(0).locator('.name')).toHaveText('Fake Codex');
 });
 
@@ -82,7 +82,7 @@ test('a Rig edits in place below its row, one at a time', { tag: '@desktop' }, a
 	await codex.getByRole('combobox', { name: 'Effort level', exact: true }).selectOption('xhigh');
 	await codex.getByRole('button', { name: 'Save rig', exact: true }).click();
 	await expect(codex.getByRole('status')).toHaveText('Rig saved.');
-	await expect(row(dialog, 'Fake Codex')).toHaveAccessibleDescription(/^gpt-6-sol, xhigh, /);
+	await expect(row(dialog, 'Fake Codex')).toHaveAccessibleDescription(/^gpt-6-sol · xhigh · /);
 	expect((await (await request.get('/api/rigs')).json()).find((rig: { name: string }) => rig.name === 'Fake Codex')).toMatchObject({ model: 'gpt-6-sol', effort: 'xhigh' });
 	await row(dialog, 'Fake Claude').click();
 	await expect(row(dialog, 'Fake Codex')).toHaveAttribute('aria-expanded', 'false');
@@ -193,7 +193,7 @@ test.describe('starter rigs', () => {
 		await expect(dialog.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue('gpt-6-sol');
 		await expect(dialog.getByRole('combobox', { name: 'Effort level', exact: true })).toHaveValue('xhigh');
 		await expect(dialog.getByRole('combobox', { name: 'Permission mode', exact: true })).toHaveValue('read-only');
-		await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+		await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		await expect(page.getByRole('menuitem', { name: 'Writer', exact: true })).toBeVisible();
 		await expect(page.getByRole('menuitem', { name: 'Reviewer', exact: true })).toBeVisible();
@@ -223,10 +223,10 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 	const created = 'Reviewer';
 	await closeRig(dialog, created);
 	await expect(list(dialog).locator('.name').last()).toHaveText(created);
-	await expect(row(dialog, created)).toHaveAccessibleDescription(/^opus, high, .+, fast, Ultracode on/);
+	await expect(row(dialog, created)).toHaveAccessibleDescription(/^opus · high · .+ · fast · Ultracode on/);
 	const reviewer = (await (await page.request.get('/api/rigs')).json()).find((rig: { name: string }) => rig.name === created);
 	expect(reviewer).toMatchObject({ speed: 'fast', ultracode: 'on' });
-	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 	await newTab(page, created);
 	await expect((await pinned(page.getByRole('tab', { name: new RegExp(`^${created}`) }))).getByTitle('done')).toBeVisible();
 	await page.reload();
@@ -243,7 +243,7 @@ test('named rigs can be created, selected and renamed', async ({ page }) => {
 	await closeRig(dialog, 'Careful Reviewer');
 	await expect(row(dialog, 'Careful Reviewer')).toBeVisible();
 	await expect(row(dialog, 'Reviewer')).toHaveCount(0);
-	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(await currentTab(page)).toContainText('Careful Reviewer');
 	await page.reload();
 	await openSettings(page, 'Rigs');
@@ -353,7 +353,7 @@ test('rig deletion can be cancelled and retried while preserving existing chats'
 	await expect(row(settings, 'Fake Claude')).toHaveCount(0);
 	await expect(settings.getByRole('textbox', { name: 'Name', exact: true })).toHaveCount(0);
 	expect(await (await request.get('/api/rigs')).json()).toEqual(configured.filter((rig) => rig.name !== 'Fake Claude'));
-	await settings.getByRole('button', { name: 'Done', exact: true }).click();
+	await settings.getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(chat).toBeVisible();
 	await page.getByRole('button', { name: 'New Tab' }).click();
 	await expect(page.getByRole('menuitem', { name: 'Fake Claude', exact: true })).toHaveCount(0);
@@ -381,7 +381,7 @@ test('Copilot rigs use CLI models and open a chat', { tag: '@desktop' }, async (
 	await expect(dialog.getByRole('status')).toHaveText('Rig saved.');
 	const rigs = await (await request.get('/api/rigs')).json();
 	expect(rigs.find((rig: { name: string }) => rig.name === 'Copilot')).toMatchObject({ agent: 'copilot', model: 'gemini-3.8-flash', effort: 'high', mode: 'default' });
-	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 	await newTab(page, 'Copilot');
 	await expect(page.getByRole('tab', { name: /^Copilot/ }).getByTitle('done')).toBeVisible();
 	const composer = page.getByRole('textbox', { name: 'Composer', exact: true });
@@ -419,7 +419,7 @@ test('Antigravity rigs use agy choices and hide unsupported actions', { tag: '@d
 	await expect(tool('Render HTML')).not.toBeChecked();
 	await expect(tool('Delegate to Rigs')).not.toBeChecked();
 	await expect(tool('Ask questions')).toBeChecked();
-	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 	await newTab(page, 'Antigravity');
 	await expect(page.getByRole('tab', { name: /^Antigravity/ }).getByTitle('done')).toBeVisible();
 	await page.getByRole('textbox', { name: 'Composer', exact: true }).fill('Hello');

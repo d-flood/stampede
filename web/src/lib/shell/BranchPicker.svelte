@@ -75,7 +75,7 @@
 	<div class="search">
 		<Command.Input value={query} placeholder={onpick ? 'Find a branch' : 'Find or create a branch'} autocomplete="off" spellcheck={false}>
 			{#snippet child({ props })}
-				<TextField {...props} mono bind:value={query} {@attach (element) => element.focus()} />
+				<TextField {...props} bind:value={query} {@attach (element) => element.focus()} />
 			{/snippet}
 		</Command.Input>
 		{#if origin}
@@ -166,7 +166,6 @@
 		flex: 1;
 		min-width: 0;
 		overflow: hidden;
-		font-family: var(--font-mono);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}

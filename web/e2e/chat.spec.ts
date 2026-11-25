@@ -471,7 +471,7 @@ for (const agent of ['Claude', 'Codex']) {
 		await expect(card.getByText('-beta')).toBeVisible();
 
 		await chip.click();
-		await expectCurrent(page, 'notes.txt ↔ HEAD');
+		await expectCurrent(page, 'notes.txt · HEAD');
 		const diff = page.locator('.diff:not([hidden])');
 		await expect(diff.locator('.path')).toHaveText('notes.txt');
 		await expect(diff.locator('.cm-changedLine', { hasText: /^BETA$/ })).toBeVisible();
@@ -522,8 +522,8 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 	const list = page.getByRole('button', { name: 'Attention list' });
 	const entry =
 		project.name === 'pixel'
-			? page.getByRole('dialog', { name: 'Needs attention' }).getByRole('button', { name: `Fake Claude in ${name}` })
-			: page.getByRole('menuitem', { name: `Fake Claude in ${name}` });
+			? page.getByRole('dialog', { name: 'Chats' }).getByRole('list', { name: 'Needs attention' }).getByRole('button', { name: `Fake Claude in ${name}` })
+			: page.getByRole('group', { name: 'Needs attention' }).getByRole('menuitem', { name: `Fake Claude in ${name}` });
 	await list.click();
 	await entry.click();
 	await expectShown(page, chatId);
@@ -552,11 +552,12 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 });
 
 test('four Usage window meters show their readings and warn from 80%', async ({ page }, { project }) => {
-	await page.goto('/');
 	let usage = page.getByRole('region', { name: 'Usage windows' });
 	if (project.name === 'pixel') {
+		await page.goto('/');
 		await expect(await showProjects(page)).toBeInViewport();
 	} else {
+		await openProject(page, 'alpha');
 		await expect(page.getByRole('button', { name: 'Sidebar' })).toBeVisible();
 		usage = (await showSidebar(page)).getByRole('region', { name: 'Usage windows' });
 	}
@@ -584,7 +585,7 @@ function filledWith(meter: Locator, token: string) {
 		probe.style.color = `var(${token})`;
 		const color = getComputedStyle(probe).color;
 		probe.remove();
-		return getComputedStyle(element.querySelector('.fill')!).backgroundColor === color;
+		return getComputedStyle(element.querySelector('.level')!).backgroundColor === color;
 	}, token);
 }
 
@@ -599,8 +600,8 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 	await openProject(page, name);
 	const phone = project.name === 'pixel';
 	const chats = (count: number) => phone ? expect.poll(() => tabCount(page)).toBe(count) : expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(count);
-	const menu = phone ? page.getByRole('region', { name, exact: true }) : page.getByRole('menu');
 	if (!phone) await page.getByRole('button', { name: 'New Tab' }).click();
+	const menu = phone ? await openNewTab(page) : page.getByRole('menu');
 	const item = phone ? 'button' : 'menuitem';
 	await expect(menu.getByRole(item, { name: 'Fake Claude', exact: true })).toHaveCount(1);
 	await expect(menu.getByRole(item, { name: /as Chat|as TUI/ })).toHaveCount(0);
@@ -724,7 +725,7 @@ test('a Chat pins todos and counts its completed subagent in the Tray', async ({
 	await expect(todos.getByRole('listitem').first()).toBeInViewport();
 	unlinkSync(`${root}/subagent-${project.name}/todos`);
 	await expect(tab.getByTitle('done')).toBeVisible();
-	await expect(todos.locator('summary')).toHaveText('Todos 3 of 3');
+	await expect(todos.getByRole('button')).toHaveText('3 todos done');
 	await expect(panel.getByText('Explore · Find file mentioning needle')).toHaveCount(0);
 	const picker = page.getByRole('combobox', { name: /^Session in/ });
 	const subagents = panel.getByRole('region', { name: 'Subagents' });

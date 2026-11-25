@@ -20,11 +20,12 @@
 		type ResetCredits,
 		type ServerMessage,
 		type Session,
+		type Setting,
 		type Terminal
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
-	import { comparing, image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Against, type Cursor, type Reviewing, type Selection } from '#lib/files.svelte.ts';
+	import { comparing, image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, OpenChanges, RequestError, type Against, type Cursor, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { deleteWorktree, status, type Change, type Git, type Trunk, type Update } from '#lib/git.ts';
 	import type { PrReview } from '#lib/pr-reviews.ts';
@@ -69,6 +70,7 @@
 	import Power from '~icons/ph/power';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
 	import TerminalWindow from '~icons/ph/terminal-window';
+	import X from '~icons/ph/x';
 	import WifiSlash from '~icons/ph/wifi-slash';
 
 	const editor = () => import('#lib/shell/Editor.svelte');
@@ -392,6 +394,10 @@
 				place(message.chat.projectId, message.chat.id);
 				choose(message.chat.projectId, message.chat.id);
 				if (message.chat.projectId === focused?.id) closePanel();
+				if (prompting && prompting.projectId === message.chat.projectId && prompting.rig === message.chat.rig) {
+					device.send({ type: 'chat.send', chatId: message.chat.id, text: prompting.text, queue: false, images: [] });
+					prompting = undefined;
+				}
 				break;
 			}
 			case 'chat.moved': {
@@ -648,7 +654,7 @@
 
 	function newTab(projectId: string) {
 		return tabItems(rigs(), sessions[projectId] ?? [], {
-			launch: (rig) => launch(rig, projectId),
+			launch: (rig, text, settings) => launch(rig, projectId, text, settings),
 			terminal: () => device.send({ type: 'terminal.create', projectId }),
 			browser: () => openBrowser(projectId),
 			files: () => openPalette('files'),
@@ -661,8 +667,13 @@
 		device.send({ type: 'chat.resume', projectId, agent, sessionId });
 	}
 
-	function launch(rig: Rig, projectId = focused?.id) {
-		if (projectId) device.send({ type: 'chat.create', projectId, rig: rig.name });
+	/** A first message waiting for its Chat, which the server creates before it can take input. */
+	let prompting: { projectId: string; rig: string; text: string } | undefined;
+
+	function launch(rig: Rig, projectId = focused?.id, text?: string, settings?: Partial<Record<Setting, string>>) {
+		if (!projectId) return;
+		prompting = text ? { projectId, rig: rig.name, text } : undefined;
+		device.send({ type: 'chat.create', projectId, rig: rig.name, settings });
 	}
 
 	function jump(index: number) {
@@ -815,7 +826,7 @@
 		const terminal = tabs.find((tab) => tab.id === id);
 		const file = fileTabs.find((file) => file.id === id);
 		const close = { label: terminal && terminal.state !== 'live' ? 'Dismiss' : 'Close', onselect: () => closeAny(id) };
-		if (!file || file instanceof OpenDiff || file instanceof OpenConfig) return [close];
+		if (!file || file instanceof OpenDiff || file instanceof OpenConfig || file instanceof OpenChanges) return [close];
 		return [close, { label: 'Rename', onselect: () => renamer?.start(file.path, false) }];
 	}
 
@@ -960,7 +971,7 @@
 		const open = files[projectId] ?? [];
 		const ids = new Map<string, string>();
 		for (const file of open) {
-			if (file instanceof OpenDiff || file instanceof OpenConfig || (file.path !== from && !file.path.startsWith(`${from}/`))) continue;
+			if (file instanceof OpenDiff || file instanceof OpenConfig || file instanceof OpenChanges || (file.path !== from && !file.path.startsWith(`${from}/`))) continue;
 			const moved = new OpenFile(projectId, to + file.path.slice(from.length));
 			if (open.some((other) => other.id === moved.id)) continue;
 			ids.set(file.id, moved.id);
@@ -1012,7 +1023,7 @@
 {#snippet sidebarPanel()}
 	<Sidebar
 		bind:this={sidebarView}
-		open={phone || sidebar}
+		open={phone || (sidebar && !!focused)}
 		project={focused}
 		{label}
 		git={focused && git.get(focused.id)}
@@ -1028,6 +1039,7 @@
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		onrename={(from, to) => focused && retarget(focused.id, from, to)}
 		ondiff={(change, against, draft, replace) => focused && openDiff(focused.id, change, against, draft, replace)}
+		onchanges={(projectId) => openTab(new OpenChanges(projectId))}
 		onepic={(slug) => focused && openEpic(focused.id, slug)}
 		onfocus={focus}
 	>
@@ -1059,16 +1071,17 @@
 			`minmax(0, ${split.ratio}fr) var(--border-width) minmax(0, ${1 - split.ratio}fr)`}
 	>
 		<TooltipGroup>
-			{#each groups as group, index (index)}
+			{#each focused || phone ? groups : [] as group, index (index)}
 				<div
 					class="strip"
+					class:current={!phone && group.active === activeTab}
 					role="presentation"
 					style:grid-column={index * 2 + 1}
 					onfocusin={() => focused && group.active && choose(focused.id, group.active)}
 					onpointerdown={grab}
 					{@attach phone && blocksTabStripHistory}
 				>
-					{#if !phone && !sidebar && sidebarPosition.side === 'left' && index === 0}
+					{#if !phone && !sidebar && focused && sidebarPosition.side === 'left' && index === 0}
 						{@render sidebarToggle(false)}
 					{/if}
 					<div
@@ -1120,6 +1133,7 @@
 												variant="agent"
 												agent={chat.agent}
 												status={chatStatus(chat)}
+												fresh={!chat.title}
 												label={chat.title ?? chat.rig}
 												tooltip={chat.title && `${chat.title}\n${chat.rig}`}
 												active={id === group.active}
@@ -1168,10 +1182,10 @@
 												{...props}
 												data-tab={id}
 												bottom={phone}
-												variant={file instanceof OpenDiff ? 'diff' : 'editor'}
+												variant={file instanceof OpenDiff || file instanceof OpenChanges ? 'diff' : 'editor'}
 												against={file instanceof OpenDiff ? file.versus : undefined}
 												label={file.name}
-												tooltip={file.deleted ? `${file.path} (deleted on disk)` : file.path}
+												tooltip={file instanceof OpenChanges ? 'Uncommitted changes' : file.deleted ? `${file.path} (deleted on disk)` : file.path}
 												dirty={file.dirty}
 												deleted={file.deleted}
 												active={id === group.active}
@@ -1192,11 +1206,16 @@
 						{@const projectId = focused.id}
 						<Menu items={menuItems(newTab(projectId))} resize loading={readingSessions[projectId] ? 'Reading sessions…' : undefined} onopen={() => readSessions(projectId)}>
 							{#snippet trigger(props)}
-								<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
+								{#if group.tabs.length}
+									<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
+								{:else}
+									<Button {...props} variant="ghost" size="sm" title="New tab (Ctrl/Cmd+T)"><Plus />New Tab</Button>
+								{/if}
 							{/snippet}
 						</Menu>
 					{/if}
-					{#if !phone && !sidebar && sidebarPosition.side === 'right' && index === groups.length - 1}
+					<span class="fill"></span>
+					{#if !phone && !sidebar && focused && sidebarPosition.side === 'right' && index === groups.length - 1}
 						{@render sidebarToggle(false)}
 					{/if}
 				</div>
@@ -1312,6 +1331,8 @@
 								project={projectLabels.get(chat.projectId)}
 								root={projects.find(({ id }) => id === chat.projectId)?.path}
 								branch={git.get(chat.projectId)?.branch}
+								changes={git.get(chat.projectId)?.changes.length ?? 0}
+								onchanges={() => openTab(new OpenChanges(chat.projectId))}
 								{codexResets}
 								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}
 								onfile={(path, cursor) => openFile(chat.projectId, path, cursor)}
@@ -1332,7 +1353,11 @@
 						onfocusin={() => choose(file.projectId, file.id)}
 					>
 						{#if active || warm()}
-							{#if file instanceof OpenDiff}
+							{#if file instanceof OpenChanges}
+								{#await import('#lib/shell/ChangesTab.svelte') then { default: ChangesTab }}
+									<ChangesTab tab={file} git={git.get(file.projectId)} {active} onopen={(path) => openFile(file.projectId, path)} />
+								{/await}
+							{:else if file instanceof OpenDiff}
 								{#await import('#lib/shell/Diff.svelte') then { default: Diff }}
 									<Diff diff={file} git={git.get(file.projectId)} reviews={prReviews[file.projectId]} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
 								{/await}
@@ -1370,7 +1395,9 @@
 				{@render launchpad(focused)}
 			{:else if !focused && listed && !picking}
 				<div class="empty">
+					<img class="mark" src="/icons/icon.svg" alt="" />
 					<h2>Open a Project</h2>
+					<p class="lede">Choose a folder to work in. Its Chats, Terminals and Git stay together as a Project.</p>
 					{#await import('#lib/shell/Picker.svelte') then { default: Picker }}
 						<Picker {directories} onopen={open} autofocus={!phone} />
 					{/await}
@@ -1433,7 +1460,13 @@
 	</Sheet>
 	{#if focused}
 		<Sheet label="Sidebar" side="right" open={panel === 'sidebar'} pull={Math.max(-pull, 0)} onclose={closePanel}>
-			{#if panel === 'sidebar' || pull < 0 || warm()}{@render sidebarPanel()}{/if}
+			{#if panel === 'sidebar' || pull < 0 || warm()}
+				<div class="sheet-header">
+					<h2>{label}</h2>
+					<IconButton label="Close Sidebar" onclick={closePanel}><X /></IconButton>
+				</div>
+				{@render sidebarPanel()}
+			{/if}
 		</Sheet>
 	{/if}
 {:else}
@@ -1644,7 +1677,7 @@
 		box-sizing: border-box;
 		height: 100dvh;
 		padding: var(--gutter) var(--gutter) var(--gutter) 0;
-		background: var(--surface-2);
+		background: var(--canvas);
 	}
 
 	.shell > main {
@@ -1755,6 +1788,12 @@
 		user-select: none;
 	}
 
+	/* Centres strip controls on the Tabs, which hang from the strip's bottom edge. */
+	main:not(.bottom) .strip > :global(:not([role='tablist'])) {
+		align-self: flex-end;
+		margin-bottom: calc((var(--space-2) - 2 * var(--border-width)) / 2);
+	}
+
 	main.bottom {
 		grid-template-rows: minmax(0, 1fr) auto;
 	}
@@ -1783,7 +1822,7 @@
 
 	[role='tablist'] {
 		display: flex;
-		flex: 1;
+		flex: 0 1 auto;
 		align-self: stretch;
 		align-items: flex-end;
 		gap: 2px;
@@ -1796,6 +1835,25 @@
 		overflow-x: auto;
 		overflow-y: hidden;
 		scrollbar-width: none;
+	}
+
+	.fill {
+		flex: 1;
+	}
+
+	/* Marks which side of a Split has focus. */
+	main:not(.bottom) .strip:not(.current) :global([role='tab'][aria-selected='true']) {
+		background-image: linear-gradient(var(--border-strong), var(--border-strong));
+		background-position: top center;
+		background-repeat: no-repeat;
+		background-size: calc(100% - 2 * var(--radius-lg)) calc(2 * var(--border-width));
+	}
+
+	.current :global([role='tab'][aria-selected='true']) {
+		background-image: linear-gradient(var(--accent), var(--accent));
+		background-position: top center;
+		background-repeat: no-repeat;
+		background-size: calc(100% - 2 * var(--radius-lg)) calc(2 * var(--border-width));
 	}
 
 	.bottom [role='tablist'] {
@@ -1898,8 +1956,20 @@
 	}
 
 	.empty h2 {
-		margin: 0 0 var(--space-4);
-		font: 500 1.875rem/1.15 var(--font-chat);
+		margin: 0;
+		font: 600 calc(2 * var(--font-size-base))/1.2 var(--font-ui);
+	}
+
+	.lede {
+		margin: var(--space-2) 0 var(--space-6);
+		color: var(--muted-fg);
+	}
+
+	.mark {
+		display: block;
+		width: calc(1.5 * var(--tile));
+		height: calc(1.5 * var(--tile));
+		margin-bottom: var(--space-6);
 	}
 
 	.reconnecting {

@@ -217,6 +217,39 @@ function hex(rgb: number[]): string {
 		.join('')}`;
 }
 
+// Matches CSS color-mix(in lab, a weight, b): CIE Lab under D50, as CSS defines it.
+function mixLab(a: string, b: string, weight: number): string {
+	const white = [0.96422, 1, 0.82521];
+	const epsilon = 216 / 24389;
+	const kappa = 24389 / 27;
+	const lab = (hex: string) => {
+		const [r, g, bl] = linear(hex);
+		const d65 = [0.4123908 * r + 0.3575843 * g + 0.1804808 * bl, 0.212639 * r + 0.7151687 * g + 0.0721923 * bl, 0.0193308 * r + 0.1191948 * g + 0.9505322 * bl];
+		const d50 = [
+			1.0479298208 * d65[0] + 0.0229467933 * d65[1] - 0.0501922295 * d65[2],
+			0.0296278157 * d65[0] + 0.9904344846 * d65[1] - 0.017073825 * d65[2],
+			-0.0092430582 * d65[0] + 0.0150551449 * d65[1] + 0.75187429 * d65[2]
+		];
+		const [fx, fy, fz] = d50.map((value, i) => (value / white[i] > epsilon ? Math.cbrt(value / white[i]) : (kappa * (value / white[i]) + 16) / 116));
+		return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+	};
+	const [x, y] = [lab(a), lab(b)];
+	const [L, A, B] = x.map((value, i) => value * weight + y[i] * (1 - weight));
+	const fy = (L + 16) / 116;
+	const [fx, fz] = [fy + A / 500, fy - B / 200];
+	const d50 = [fx ** 3 > epsilon ? fx ** 3 : (116 * fx - 16) / kappa, L > kappa * epsilon ? fy ** 3 : L / kappa, fz ** 3 > epsilon ? fz ** 3 : (116 * fz - 16) / kappa].map((value, i) => value * white[i]);
+	const d65 = [
+		0.9554734527 * d50[0] - 0.0230985369 * d50[1] + 0.0632593087 * d50[2],
+		-0.028369707 * d50[0] + 1.009995458 * d50[1] + 0.021041399 * d50[2],
+		0.0123140017 * d50[0] - 0.0205076964 * d50[1] + 1.3303659366 * d50[2]
+	];
+	return hex([
+		3.2409699 * d65[0] - 1.5373832 * d65[1] - 0.4986108 * d65[2],
+		-0.9692436 * d65[0] + 1.8759675 * d65[1] + 0.0415551 * d65[2],
+		0.0556301 * d65[0] - 0.203977 * d65[1] + 1.0569715 * d65[2]
+	]);
+}
+
 function contrast(a: string, b: string): number {
 	const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
 	return (light + 0.05) / (dark + 0.05);
@@ -229,10 +262,10 @@ function editorSelection({ foreground, background, selectionBackground }: Palett
 		: selectionBackground;
 }
 
-function mutedText({ foreground, background }: Palette): string {
-	const surface = mix(background, foreground, 0.96);
+function mutedText({ foreground, background }: Palette, scheme: 'light' | 'dark'): string {
+	const surface = mixLab(background, foreground, scheme === 'light' ? 0.95 : 0.96);
 	const readable = (color: string) => contrast(color, background) >= 4.5 && contrast(color, surface) >= 4.5;
-	for (let percent = 60; percent < 100; percent++) {
+	for (let percent = 70; percent < 100; percent++) {
 		const muted = mix(foreground, background, percent / 100);
 		if (readable(muted)) return muted;
 	}
@@ -257,7 +290,7 @@ export function applyTheme(theme: ThemeResponse) {
 		style.setProperty(`--${scheme}-selection-bg`, palette.selectionBackground);
 		style.setProperty(`--${scheme}-selection-fg`, palette.selectionForeground);
 		style.setProperty(`--${scheme}-editor-selection`, editorSelection(palette));
-		style.setProperty(`--${scheme}-muted-fg`, mutedText(palette));
+		style.setProperty(`--${scheme}-muted-fg`, mutedText(palette, scheme));
 	}
 	revision++;
 }
@@ -365,6 +398,17 @@ export async function saveCommitInstructions(text: string) {
 
 export function modes(agent: Agent): Mode[] {
 	return offeredModes[agent] ?? [];
+}
+
+export function defaultMode(agent: Agent) {
+	return { 'claude-code': 'auto', codex: 'approve-for-me', copilot: 'default', antigravity: 'default' }[agent];
+}
+
+/** What a Rig starts Chats with, e.g. "opus · high · Default mode". */
+export function rigSummary(rig: Rig) {
+	const value = rig.mode ?? defaultMode(rig.agent);
+	const label = modes(rig.agent).find((choice) => choice.value === value)?.label ?? value;
+	return [rig.model ?? 'Default model', rig.effort, label && `${label[0].toUpperCase()}${label.slice(1)} mode`, rig.speed !== 'standard' && rig.speed !== 'default' && rig.speed, rig.ultracode === 'on' && 'Ultracode on'].filter(Boolean).join(' · ');
 }
 
 export async function saveModes(agent: Agent, values: string[]) {

@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { ContextMenu, DropdownMenu } from 'bits-ui';
+	import Shortcut from '#lib/ui/Shortcut.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import type { Component, Snippet } from 'svelte';
 
-	type Item = { label: string; onselect: () => void; disabled?: boolean; icon?: Component; hint?: string; checked?: boolean; keepOpen?: boolean; data?: unknown };
+	type Item = { label: string; onselect: () => void; disabled?: boolean; icon?: Component; hint?: string; shortcut?: string; checked?: boolean; keepOpen?: boolean; data?: unknown };
 	type Group = { heading: string; items: Item[]; empty?: string };
 	type Layer = { wrapperProps: Record<string, unknown>; props: Record<string, unknown> };
 
@@ -19,14 +20,15 @@
 		loading?: string;
 		side?: 'top' | 'right' | 'bottom' | 'left';
 		align?: 'start' | 'end';
+		offset?: number;
 		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { items, context = false, trigger, row: custom, open = $bindable(false), resize = false, loading, side = 'bottom', align = 'start', oncloseautofocus }: Props = $props();
+	let { items, context = false, trigger, row: custom, open = $bindable(false), resize = false, loading, side = 'bottom', align = 'start', offset = 4, oncloseautofocus }: Props = $props();
 	let width = $state(0);
 </script>
 
-{#snippet row(props: Record<string, unknown>, { label, checked, icon: Icon, hint, data }: Item)}
+{#snippet row(props: Record<string, unknown>, { label, checked, icon: Icon, hint, shortcut, data }: Item)}
 	<ListItem {...props}>
 		{#if custom && data !== undefined}
 			{@render custom(data)}
@@ -34,6 +36,7 @@
 			{#if Icon}<Icon />{/if}
 			<span class="label" class:checked>{label}</span>
 			{#if hint}<span class="hint" aria-hidden="true">{hint}</span>{/if}
+			{#if shortcut}<span class="hint" aria-hidden="true"><Shortcut keys={shortcut} /></span>{/if}
 			{#if checked}<span class="check" aria-hidden="true">✓</span>{/if}
 		{/if}
 	</ListItem>
@@ -100,7 +103,7 @@
 			{/snippet}
 		</ContextMenu.Trigger>
 		<ContextMenu.Portal>
-			<ContextMenu.Content onCloseAutoFocus={oncloseautofocus} child={content} />
+			<ContextMenu.Content collisionPadding={8} onCloseAutoFocus={oncloseautofocus} child={content} />
 		</ContextMenu.Portal>
 	</ContextMenu.Root>
 {:else}
@@ -111,7 +114,7 @@
 			{/snippet}
 		</DropdownMenu.Trigger>
 		<DropdownMenu.Portal>
-			<DropdownMenu.Content {side} {align} sideOffset={4} onCloseAutoFocus={oncloseautofocus} child={content} />
+			<DropdownMenu.Content {side} {align} sideOffset={offset} collisionPadding={8} onCloseAutoFocus={oncloseautofocus} child={content} />
 		</DropdownMenu.Portal>
 	</DropdownMenu.Root>
 {/if}
@@ -124,9 +127,10 @@
 		max-width: min(24rem, 100vw - 2 * var(--space-2));
 		max-height: min(var(--bits-floating-available-height), 100dvh - 2 * var(--space-2));
 		overflow-y: auto;
-		border: var(--border-width) solid var(--border);
+		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-lg);
-		background: var(--surface-2);
+		--hover: color-mix(in lab, var(--float) 90%, var(--color-fg));
+		background: var(--float);
 		box-shadow: var(--shadow-float);
 		color: var(--color-fg);
 		font-family: var(--font-ui);
@@ -167,6 +171,7 @@
 
 	.hint {
 		flex: none;
+		margin-left: var(--space-4);
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 	}

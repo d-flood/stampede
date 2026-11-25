@@ -170,10 +170,10 @@ test('a staged file diffs HEAD with the index and an unstaged one the index with
 
 	await sidebar.getByRole('list', { name: 'Staged Changes' }).getByRole('button', { name: 'file.ts', exact: true }).click();
 	await expect(page.getByRole('tab', { name: /file\.ts/ })).toHaveAttribute('aria-selected', 'true');
-	await expect(diff.locator('.sides')).toHaveText('HEAD ↔ index');
+	await expect(diff.locator('.sides')).toHaveText('Staged');
 	await expect(diff.locator('.cm-merge-b .cm-changedLine', { hasText: 'value = 2' })).toBeVisible();
 	await (await showSidebar(page)).getByRole('list', { name: 'Changes', exact: true }).getByRole('button', { name: 'file.ts', exact: true }).click();
-	await expect(diff.locator('.sides')).toHaveText('index ↔ disk');
+	await expect(diff.locator('.sides')).toHaveText('Unstaged');
 	await expect(diff.locator('.cm-merge-b .cm-changedLine', { hasText: 'value = 3' })).toBeVisible();
 });
 
@@ -199,6 +199,33 @@ test('both sides of an open Diff fold alike when staging changes the index', { t
 	await sidebar.getByRole('button', { name: 'Unstage All Staged Changes' }).click();
 	await folds(['16 unchanged lines', '38 unchanged lines']);
 	await expect(diff.locator('.cm-merge-b .cm-changedLine', { hasText: 'edited' })).toBeVisible();
+});
+
+test('Review all changes stacks every changed file with its counts and stages one', { tag: '@desktop' }, async ({ page }) => {
+	const { root, git } = repository('review');
+	const lines = ['kept = 1', 'b = 2', 'c = 3', 'd = 4', 'e = 5', 'f = 6'].map((line) => `export const ${line};`);
+	writeFileSync(`${root}/kept.ts`, `${lines.join('\n')}\n`);
+	git('add', '.');
+	git('commit', '-qm', 'Initial commit');
+	lines[0] = 'export const kept = 3;';
+	lines.splice(5, 0, 'export const inserted = 0;');
+	writeFileSync(`${root}/kept.ts`, `${lines.join('\n')}\n`);
+	writeFileSync(`${root}/fresh.ts`, 'export const fresh = true;\nexport const more = 1;\n');
+	const sidebar = await changesPanel(page, 'review');
+	await sidebar.getByRole('button', { name: 'Review all changes', exact: true }).click();
+	const review = page.getByRole('region', { name: 'Changes', exact: true });
+	await expect(page.getByRole('tab', { name: 'Changes', exact: true })).toHaveAttribute('aria-selected', 'true');
+	const kept = review.getByRole('article', { name: 'kept.ts' });
+	const fresh = review.getByRole('article', { name: 'fresh.ts' });
+	await expect(kept.locator('header')).toContainText('+2 −1');
+	const original = await kept.locator('.cm-originalNumbers .cm-gutterElement').allTextContents();
+	const numbers = original.filter(Boolean);
+	expect(new Set(numbers).size).toBe(numbers.length);
+	await expect(fresh.locator('header')).toContainText('+2');
+	await expect(fresh.locator('.cm-changedLine', { hasText: 'fresh = true' })).toBeVisible();
+	await fresh.getByRole('button', { name: 'Stage fresh.ts', exact: true }).click();
+	await expect.poll(() => git('diff', '--cached', '--name-only')).toBe('fresh.ts');
+	await expect(fresh.getByRole('button', { name: 'Stage fresh.ts', exact: true })).toHaveCount(0);
 });
 
 test('the commit Rig drafts a message for the staged changes', { tag: '@desktop' }, async ({ page }) => {

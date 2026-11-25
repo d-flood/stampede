@@ -1,14 +1,41 @@
+<script lang="ts" module>
+	type Options = { models: { value: string; label: string; efforts: string[] }[]; settings?: { model?: string; effort?: string } };
+
+	/** Listing models starts the provider's CLI, so each Rig asks once per session, and only when someone reaches for the chips. */
+	const listings = new Map<string, Promise<Options>>();
+
+	function list(agent: string, rig: string) {
+		const key = `${agent}:${rig}`;
+		let listing = listings.get(key);
+		if (!listing) {
+			listing = fetch(`/api/rigs/options?${new URLSearchParams({ agent, rig })}`).then((response) => (response.ok ? response.json() : Promise.reject(new Error('options'))));
+			listing.catch(() => listings.delete(key));
+			listings.set(key, listing);
+		}
+		return listing;
+	}
+</script>
+
 <script lang="ts">
+	import Chips from '#lib/chat/Chips.svelte';
+	import { defaultMode, modes } from '#lib/config.svelte.ts';
+	import type { Setting, Settings } from '#lib/device.svelte.ts';
 	import type { Git } from '#lib/git.ts';
 	import { form } from '#lib/form.ts';
 	import { openSettings } from '#lib/shell/Settings.svelte';
 	import type { TabItems } from '#lib/shell/new-tab.ts';
+	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Card from '#lib/ui/Card.svelte';
-	import Kbd from '#lib/ui/Kbd.svelte';
+	import Chip from '#lib/ui/Chip.svelte';
+	import Shortcut from '#lib/ui/Shortcut.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
+	import Menu from '#lib/ui/Menu.svelte';
 	import { untrack } from 'svelte';
+	import CaretDown from '~icons/ph/caret-down';
+	import GitBranch from '~icons/ph/git-branch';
+	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Plus from '~icons/ph/plus';
 
 	type Props = { name: string; path: string; git?: Git; items: TabItems; reading: boolean; onread: () => void };
@@ -18,13 +45,45 @@
 	const id = $props.id();
 	const phone = $derived(form() === 'phone');
 	const changes = $derived(git?.isRepo ? git.changes.length : undefined);
-	const where = $derived(
-		[path, git?.branch, changes === undefined ? undefined : `${changes} changed file${changes === 1 ? '' : 's'}`].filter(Boolean).join(', ')
+	const meta = $derived([git?.branch, changes === undefined ? undefined : changes ? `${changes} changed file${changes === 1 ? '' : 's'}` : 'clean'].filter(Boolean).join(' · '));
+
+	let chosen = $state(0);
+	let overrides = $state<Settings>({});
+	let options = $state.raw<Options>();
+	const rig = $derived(items.rigs[Math.min(chosen, items.rigs.length - 1)]);
+	const rigMenu = $derived([{ heading: 'Rigs', items: items.rigs.map((entry, index) => ({ label: entry.label, icon: entry.icon, shortcut: entry.shortcut, checked: entry === rig, onselect: () => pick(index) })) }]);
+	const settings = $derived<Settings>(
+		rig ? { model: rig.rig.model ?? options?.settings?.model ?? 'default', effort: rig.rig.effort ?? options?.settings?.effort, mode: rig.rig.mode ?? defaultMode(rig.rig.agent), ...overrides } : {}
 	);
+	const choices = $derived<Record<Setting, { value: string; label: string }[]>>({
+		model: options?.models.map(({ value, label }) => ({ value, label })) ?? [{ value: 'default', label: 'Default model' }],
+		effort: (options?.models.find(({ value }) => value === settings.model)?.efforts ?? []).map((value) => ({ value, label: value })),
+		speed: [],
+		ultracode: [],
+		mode: rig ? modes(rig.rig.agent).filter(({ available }) => available).map(({ value, label }) => ({ value, label })) : []
+	});
+
+	function pick(index: number) {
+		chosen = index;
+		overrides = {};
+		options = undefined;
+	}
+
+	function reach() {
+		if (!rig || options) return;
+		const current = rig;
+		list(current.rig.agent, current.rig.name).then((listed) => current === rig && (options = listed), () => {});
+	}
 
 	function enter(node: HTMLElement) {
 		untrack(onread);
-		if (!document.activeElement?.closest('input, textarea, select, [contenteditable], dialog[open]')) node.querySelector<HTMLElement>('.primary')?.focus();
+		if (!phone && !document.activeElement?.closest('input, textarea, select, [contenteditable], dialog[open]')) node.querySelector<HTMLElement>('textarea, .primary')?.focus();
+	}
+
+	function start(text: string) {
+		if (!rig || !text.trim()) return false;
+		rig.onprompt(text, overrides);
+		return true;
 	}
 
 </script>
@@ -32,20 +91,29 @@
 <section class="launchpad" class:phone aria-labelledby="{id}-name" {@attach enter}>
 	<div class="pad">
 		<h2 id="{id}-name">{name}</h2>
-		<p class="where">{where}</p>
-		<div class="rigs">
-			{#each items.rigs as { label, icon: Icon, model, hint, onselect }, index (label)}
-				<Card primary={index === 0} aria-labelledby="{id}-rig-{index}" aria-describedby="{id}-model-{index}" onclick={onselect}>
+		<p class="where" title={path}>{#if phone}<span class="path"><bdi>{path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>{/if}{#if meta}<span class="meta">{#if git?.branch}<GitBranch aria-hidden="true" />{/if}{meta}</span>{/if}</p>
+		{#if rig}
+			<Composer id="launchpad:{path}" placeholder="Message {rig.label}" onsend={start}>
+				{#snippet actions(text, clear)}
 					<span class="rig">
-						{#if Icon}<span class="logo"><Icon /></span>{/if}
-						<span class="meta">
-							<span class="label" id="{id}-rig-{index}">{label}</span>
-							<span class="model" id="{id}-model-{index}">{model}</span>
-						</span>
-						{#if hint && !phone}<Kbd aria-hidden="true">{hint}</Kbd>{/if}
+						<Menu side="top" align="start" items={rigMenu}>
+							{#snippet trigger(props)}
+								<Chip {...props} variant="ghost" aria-label="Rig: {rig.label}"><span>{rig.label}</span><CaretDown aria-hidden="true" /></Chip>
+							{/snippet}
+						</Menu>
 					</span>
-				</Card>
-			{:else}
+					<!-- svelte-ignore a11y_no_static_element_interactions (Hover and focus only start loading the model list.) -->
+					<span class="chips" onpointerenter={reach} onfocusin={reach}>
+						<Chips agent={rig.rig.agent} {settings} ready={!!options} {choices} onrun={(setting, value) => value !== 'default' && (overrides = { ...overrides, [setting]: value })} />
+					</span>
+					<span class="fill"></span>
+					<Button variant="primary" round aria-label="Send" disabled={!text.trim()} onmousedown={(event) => event.preventDefault()} onclick={() => start(text) && clear()}>
+						<PaperPlaneRight />
+					</Button>
+				{/snippet}
+			</Composer>
+		{:else}
+			<div class="rigs">
 				<Card primary aria-labelledby="{id}-create" aria-describedby="{id}-create-help" onclick={() => openSettings('rigs')}>
 					<span class="rig">
 						<span class="logo"><Plus /></span>
@@ -55,14 +123,14 @@
 						</span>
 					</span>
 				</Card>
-			{/each}
-		</div>
+			</div>
+		{/if}
 		<div class="tools">
-			{#each items.tools as { label, icon: Icon, hint, onselect } (label)}
+			{#each items.tools as { label, icon: Icon, shortcut, onselect } (label)}
 				<button class="tool" onclick={onselect}>
 					{#if Icon}<Icon />{/if}
 					<span class="label">{label}</span>
-					{#if hint && !phone}<Kbd aria-hidden="true">{hint}</Kbd>{/if}
+					{#if shortcut && !phone}<span class="hint" aria-hidden="true"><Shortcut keys={shortcut} /></span>{/if}
 				</button>
 			{/each}
 		</div>
@@ -96,20 +164,58 @@
 		overflow-y: auto;
 	}
 
+	.launchpad:not(.phone) {
+		padding-bottom: calc(var(--space-6) + 16vh);
+	}
+
+	.launchpad:not(.phone) h2 {
+		text-align: center;
+	}
+
+	.launchpad:not(.phone) :is(.where, .tools) {
+		align-items: center;
+		justify-content: center;
+	}
+
+	.launchpad:not(.phone) .path {
+		max-width: 100%;
+		text-align: center;
+	}
+
 	.pad {
-		width: min(34rem, 100%);
+		width: min(var(--measure), 100%);
 	}
 
 	h2 {
 		margin: 0;
-		font: 500 1.875rem/1.15 var(--font-chat);
+		font: 600 calc(2 * var(--font-size-base))/1.2 var(--font-ui);
 		overflow-wrap: anywhere;
 	}
 
 	.where {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
 		margin: var(--space-1) 0 var(--space-6);
 		color: var(--muted-fg);
-		overflow-wrap: anywhere;
+		white-space: nowrap;
+	}
+
+	/* Right-to-left moves the ellipsis to the path's start, keeping its meaningful tail. */
+	.path {
+		min-width: 0;
+		overflow: hidden;
+		direction: rtl;
+		text-align: left;
+		text-overflow: ellipsis;
+	}
+
+	.where .meta {
+		display: inline-flex;
+		flex: none;
+		flex-direction: row;
+		align-items: center;
+		gap: var(--space-1);
 	}
 
 	button {
@@ -127,14 +233,12 @@
 
 	.rigs {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
-		gap: var(--space-3);
+		gap: var(--space-2);
 	}
 
 	.rig {
 		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
+		align-items: center;
 		gap: var(--space-3);
 		height: 100%;
 	}
@@ -142,7 +246,7 @@
 	.logo {
 		display: grid;
 		place-items: center;
-		font-size: 1.375rem;
+		font-size: var(--font-size-lg);
 	}
 
 	.meta {
@@ -162,29 +266,54 @@
 	}
 
 
-	.rig > :global(kbd) {
-		margin-top: auto;
+	.hint {
+		margin-left: auto;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		white-space: nowrap;
 	}
 
 	.tools {
 		display: flex;
 		flex-wrap: wrap;
-		gap: var(--space-2);
+		gap: var(--space-1);
 		margin-top: var(--space-3);
+		font-size: var(--font-size-sm);
+	}
+
+	.fill {
+		flex: 1;
+	}
+
+	.chips {
+		display: flex;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.rig {
+		display: contents;
+	}
+
+	.rig :global(.chip) {
+		color: var(--color-fg);
 	}
 
 	.tool {
-		display: inline-flex;
+		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-		min-height: 2.25rem;
-		padding: 0 var(--space-4);
-		border: var(--border-width) solid var(--border);
+		min-width: 0;
+		padding: var(--space-1) var(--space-3);
+		border: var(--border-width) solid transparent;
 		border-radius: var(--radius-md);
+		color: var(--muted-fg);
 	}
+
 
 	.tool:hover {
 		background: var(--hover);
+		color: var(--color-fg);
 	}
 
 	.recent {

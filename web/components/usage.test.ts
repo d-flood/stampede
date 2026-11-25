@@ -89,7 +89,7 @@ test('Resets, logos, bars, and reset times fit at every Sidebar width when every
 			return box.width === width && [...row.querySelectorAll('.brand, .period, .number, .count, .cost')].every((node) => {
 				const { left, right, width } = node.getBoundingClientRect();
 				return width > 0 && left >= box.left && right <= box.right;
-			}) && [...row.querySelectorAll('.bar, .remaining')].every((node) => {
+			}) && [...row.querySelectorAll('.gauge, .remaining')].every((node) => {
 				const { left, right, width } = node.getBoundingClientRect();
 				return width === 0 || (left >= box.left && right <= box.right);
 			});
@@ -108,7 +108,7 @@ test('every Agent window and the Copilot cost line up in shared columns that spa
 		view.container.style.width = `${width}px`;
 		await expect.poll(() => row.getBoundingClientRect().width).toBe(width);
 		expect(row.querySelectorAll('.weekly .period')).toHaveLength(3);
-		for (const selector of ['.brand', '.weekly .period', '.weekly .bar', '.weekly .remaining']) expect(edges(selector).size, selector).toBe(1);
+		for (const selector of ['.brand', '.weekly .period', '.weekly .gauge', '.weekly .remaining']) expect(edges(selector).size, selector).toBe(1);
 		expect(edges('.weekly .number', 'right').size).toBe(1);
 		expect(edges('.cost')).toEqual(edges('.five-hour'));
 	}

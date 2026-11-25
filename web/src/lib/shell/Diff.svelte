@@ -1,18 +1,19 @@
 <script lang="ts">
 	import type { Device, ServerMessage } from '#lib/device.svelte.ts';
-	import { diffConfig } from '#lib/editor/changes.ts';
+	import { diffConfig, diffCounts, diffRows, diffSigns, originalNumbers } from '#lib/editor/changes.ts';
 	import { find } from '#lib/editor/find.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { languageServer } from '#lib/editor/lsp-editor.ts';
 	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { diffTheme, theme } from '#lib/editor/theme.ts';
+	import { indentedWrap } from '#lib/editor/wrap.ts';
 	import { draftComments, draftPosition, openPlacement, openPosition, setDrafts, setReplacing, type Render } from '#lib/editor/drafts.ts';
 	import { comparison } from '#lib/compare.svelte.ts';
 	import { branches, comparing, image, read, RequestError, type Contents, type OpenDiff } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
-	import { baseline, index, indexUrl, show, showUrl, type Git } from '#lib/git.ts';
+	import { baseline, index, indexUrl, show, showUrl, stage, unstage, type Git } from '#lib/git.ts';
 	import { acceptDraft, createDraft, deleteDraft, editDraft, hunks, setViewed, viewedState, type Hunks, type Placement, type PrReview, type Side } from '#lib/pr-reviews.ts';
 	import DraftBox from '#lib/shell/DraftBox.svelte';
 	import ImageDiff, { type ImageSide } from '#lib/shell/ImageDiff.svelte';
@@ -23,7 +24,7 @@
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Segmented from '#lib/ui/Segmented.svelte';
 	import Toolbar from '#lib/ui/Toolbar.svelte';
-	import { getOriginalDoc, MergeView, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
+	import { getChunks, getOriginalDoc, MergeView, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
 	import { setDiagnostics } from '@codemirror/lint';
 	import { ChangeSet, Compartment, EditorState, Prec, type Extension, type Text } from '@codemirror/state';
 	import { EditorView, keymap } from '@codemirror/view';
@@ -34,6 +35,8 @@
 	import CheckSquare from '~icons/ph/check-square';
 	import Columns from '~icons/ph/columns';
 	import FloppyDisk from '~icons/ph/floppy-disk';
+	import Minus from '~icons/ph/minus';
+	import Plus from '~icons/ph/plus';
 	import Rows from '~icons/ph/rows';
 
 	type Props = {
@@ -54,7 +57,22 @@
 	let { diff, git, reviews, device, servers, active, displayed, focused, onshowdiff }: Props = $props();
 
 	let container: HTMLDivElement;
+	let moving = $state(false);
+	let width = $state(0);
+	const narrow = $derived(width > 0 && width < 720);
+	const layout = $derived(narrow ? 'unified' : diff.layout);
 	let shown = $state.raw<Shown>();
+	let revision = $state(0);
+	const counts = $derived.by(() => {
+		revision;
+		const chunks = shown && getChunks(shown.b.state)?.chunks;
+		if (!shown || !chunks) return;
+		return diffCounts(chunks, shown.original, shown.b.state.doc);
+	});
+	const recount = EditorView.updateListener.of((update) => {
+		// Dispatches often run inside effects, so a tracked read here would make them depend on what they write.
+		if (update.docChanged || update.transactions.some((transaction) => transaction.effects.length)) untrack(() => revision++);
+	});
 	let syntax = $state.raw<Extension>();
 	let note = $state<string>();
 	let heads = 0;
@@ -64,6 +82,7 @@
 	let commentable: Hunks | undefined;
 	const sync = new Sync(() => diff, () => shown?.b);
 	const analysis = new Compartment();
+	const wrapping = new Compartment();
 	const editable = $derived(diff.against === 'HEAD' || diff.against === 'index');
 	const versusHead = $derived(diff.against === 'HEAD' || diff.against === 'staged');
 	const loaded = $derived(!!git);
@@ -228,6 +247,13 @@
 	});
 
 	$effect(() => {
+		const wrap = narrow;
+		untrack(() => {
+			if (shown?.views.length === 1) shown.b.dispatch({ effects: wrapping.reconfigure(wrap ? indentedWrap : []) });
+		});
+	});
+
+	$effect(() => {
 		const current = shown;
 		if (!current || !review) return;
 		const drafts = placed(review, current.path);
@@ -259,6 +285,17 @@
 	});
 
 	/** Both sides, but HEAD's, which follows the status. */
+	async function move(staging: boolean) {
+		moving = true;
+		try {
+			await (staging ? stage : unstage)(diff.projectId, [diff.path]);
+		} catch (error) {
+			console.error(error);
+		} finally {
+			moving = false;
+		}
+	}
+
 	function sides(): Promise<[string | undefined, Contents]> | undefined {
 		if (diff.against === 'HEAD') return Promise.all([undefined, current()]);
 		if (diff.against === 'index') return Promise.all([index(diff.projectId, diff.path), current()]);
@@ -378,14 +415,20 @@
 
 	function toggle() {
 		diff.layout = diff.layout === 'split' ? 'unified' : 'split';
-		if (!shown) return;
-		const pending = reopened(shown, diff.layout === 'unified');
-		const views = build(shown.original, shown.b.state.doc, { typed: shown.typed, pending }).views;
-		for (const view of views) {
-			const pos = openPosition(view);
-			if (pos !== undefined) view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
-		}
 	}
+
+	$effect(() => {
+		const unified = layout === 'unified';
+		untrack(() => {
+			if (!shown || (shown.views.length === 1) === unified) return;
+			const pending = reopened(shown, unified);
+			const views = build(shown.original, shown.b.state.doc, { typed: shown.typed, pending }).views;
+			for (const view of views) {
+				const pos = openPosition(view);
+				if (pos !== undefined) view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+			}
+		});
+	});
 
 	/** The drafts drawn inline on `path`; a Displaced draft's lines no longer apply. */
 	function placed(review: PrReview, path: string) {
@@ -474,7 +517,7 @@
 					])
 				)
 			: [];
-		const shared = [walking, basicSetup, find, syntax ?? [], theme, diffTheme(whole)];
+		const shared = [walking, basicSetup, find, syntax ?? [], theme, diffTheme(whole), recount];
 		const working = [
 			keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 			shared,
@@ -482,11 +525,11 @@
 			sync.listener,
 			analysis.of(analyzed ? languageServer(servers, diff.projectId, diff.path, false) : [])
 		];
-		if (diff.layout === 'split') {
+		if (layout === 'split') {
 			const view = new MergeView({
 				parent: container,
-				a: { doc: a, extensions: [shared, EditorState.readOnly.of(true), commenting('target', false)] },
-				b: { doc: b, extensions: [working, commenting('source', false)] },
+				a: { doc: a, extensions: [shared, diffSigns('a'), diffRows('a'), EditorState.readOnly.of(true), commenting('target', false)] },
+				b: { doc: b, extensions: [working, diffSigns('b'), diffRows('b'), commenting('source', false)] },
 				revertControls: editable ? 'a-to-b' : undefined,
 				highlightChanges: !whole,
 				collapseUnchanged: {},
@@ -515,7 +558,11 @@
 				doc: b,
 				extensions: [
 					working,
+					originalNumbers(),
+					diffSigns('b'),
+					diffRows('b'),
 					commenting('source', true),
+					wrapping.of(narrow ? indentedWrap : []),
 					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {}, diffConfig })
 				]
 			});
@@ -555,11 +602,11 @@
 <div class="diff" role="tabpanel" hidden={!active} onkeydown={stepKey}>
 	<Toolbar path={diff.from ? `${diff.from} → ${diff.path}` : diff.path} title={diff.path} deleted={diff.deleted} wrap={svg}>
 		{#if diff.against === 'disk'}
-			<span class="sides">disk ↔ unsaved edits</span>
+			<span class="sides">Unsaved edits</span>
 		{:else if diff.against === 'index'}
-			<span class="sides">index ↔ disk</span>
+			<span class="sides">Unstaged</span>
 		{:else if diff.against === 'staged'}
-			<span class="sides">HEAD ↔ index</span>
+			<span class="sides">Staged</span>
 		{:else if comparing(diff.against)}
 			{#if form() === 'desktop'}
 				{@const { target, source } = branches(diff.against)}
@@ -567,6 +614,13 @@
 			{/if}
 		{:else if diff.against !== 'HEAD'}
 			<span class="sides" title={diff.against.subject}>{diff.against.short}^ ↔ {diff.against.short}</span>
+		{/if}
+		{#if counts && (counts.added || counts.removed)}<span class="counts" aria-label="{counts.added} added, {counts.removed} removed">{#if counts.added}<span class="added">+{counts.added}</span>{/if}{#if counts.removed}<span class="removed">−{counts.removed}</span>{/if}</span>{/if}
+		{#if diff.against === 'index' || diff.against === 'staged'}
+			{@const unstaged = diff.against === 'index'}
+			{@const label = unstaged ? 'Stage' : 'Unstage'}
+			{@const Icon = unstaged ? Plus : Minus}
+			<Button variant="ghost" size="sm" aria-label="{label} file" disabled={moving || !counts?.added && !counts?.removed} onclick={() => move(unstaged)}><Icon />{#if form() === 'desktop'}{label}{/if}</Button>
 		{/if}
 		{#if compared?.error}<span class="error">{compared.error.message}</span>{/if}
 		{#if compared}
@@ -588,9 +642,9 @@
 		{/if}
 		{#if analyzed && !pictures}<ServerSwitch {servers} projectId={diff.projectId} path={diff.path} />{/if}
 		{#if shown || pictures}
-			{#if diff.layout === 'split'}
+			{#if layout === 'split'}
 				<IconButton label="Single column" title="Single column" onclick={toggle}><Rows /></IconButton>
-			{:else}
+			{:else if !narrow}
 				<IconButton label="Side by side" title="Side by side" onclick={toggle}><Columns /></IconButton>
 			{/if}
 			{#if shown && !pictures && form() === 'phone' && editable}
@@ -606,7 +660,7 @@
 		</div>
 	{/if}
 	<Conflict {sync} onshowdiff={(disk) => shown && onshowdiff(disk, shown.b.state.doc.toString())} />
-	<div class="content" bind:this={container} hidden={!!pictures}>
+	<div class="content" class:narrow bind:this={container} bind:clientWidth={width} hidden={!!pictures}>
 		{#if note}<p>{note}</p>{/if}
 	</div>
 	{#if pictures}
@@ -631,6 +685,34 @@
 		flex: none;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
+	}
+
+	/* Hunk actions wait for the pointer so they don't sit over code while reading. */
+	@media (hover: hover) {
+		.content :global(.cm-editor:not(:hover) .cm-chunkButtons:not(:focus-within)),
+		.content :global(.cm-mergeView:not(:hover) .cm-merge-revert:not(:focus-within)) {
+			opacity: 0;
+		}
+	}
+
+	.content:not(.narrow) :global(.cm-scroller) {
+		mask-image: linear-gradient(to right, #000 calc(100% - 3 * var(--space-6)), transparent);
+	}
+
+	.counts {
+		display: inline-flex;
+		flex: none;
+		gap: var(--space-1);
+		font-size: var(--font-size-sm);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.added {
+		color: var(--git-added);
+	}
+
+	.removed {
+		color: var(--git-deleted);
 	}
 
 	.comparison {

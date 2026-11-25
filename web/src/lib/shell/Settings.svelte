@@ -36,11 +36,9 @@
 	import TextField from '#lib/ui/TextField.svelte';
 	import type { Component } from 'svelte';
 	import BookmarkSimple from '~icons/ph/bookmark-simple';
-	import Browser from '~icons/ph/browser';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
 	import Check from '~icons/ph/check-bold';
-	import Devices from '~icons/ph/devices';
 	import Gear from '~icons/ph/gear';
 	import PaintBrush from '~icons/ph/paint-brush';
 	import Robot from '~icons/ph/robot';
@@ -164,11 +162,7 @@
 </script>
 
 {#snippet scope(everywhere: boolean)}
-	<span class="scope">
-		<Badge tone="outline" title={everywhere ? 'Saved on every device' : 'Saved in this browser'}>
-			{#if everywhere}<Devices /> All devices{:else}<Browser /> This browser{/if}
-		</Badge>
-	</span>
+	{#if !everywhere}<span class="scope" title="Saved in this browser only; other settings apply on every device"><Badge tone="soft">This browser</Badge></span>{/if}
 {/snippet}
 
 <IconButton label={unseen ? 'Settings, Stampede update available' : 'Settings'} title={unseen ? 'Stampede update available' : undefined} aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}>
@@ -350,7 +344,7 @@
 					<section aria-label="Rigs">
 						{#if !editingRig}
 							<h3>Rigs</h3>
-							<p class="lede">Starting settings for new chats. Order sets the Ctrl+Shift shortcuts. {@render scope(true)}</p>
+							<p class="lede">Starting settings for new chats. Order sets the Ctrl ⇧ shortcuts. {@render scope(true)}</p>
 						{/if}
 						{#if open}<RigEditor bind:editing={editingRig} />{/if}
 					</section>
@@ -364,9 +358,6 @@
 			</div>
 		{/if}
 	</div>
-	{#snippet actions()}
-		<Button onclick={() => (open = false)}>Done</Button>
-	{/snippet}
 </Dialog>
 
 <style>
@@ -417,11 +408,12 @@
 		min-width: 0;
 		padding: var(--space-4) var(--space-6) var(--space-6);
 		overflow: auto;
+		mask-image: linear-gradient(#000 calc(100% - 2 * var(--space-6)), transparent);
 	}
 
 	h3 {
 		margin: var(--space-1) 0 var(--space-4);
-		font-size: var(--font-size-lg);
+		font-size: var(--font-size-xl);
 	}
 
 	h4 {
@@ -509,6 +501,9 @@
 
 	.scope {
 		margin-left: var(--space-2);
+		color: var(--muted-fg);
+		font-weight: 400;
+		vertical-align: middle;
 	}
 
 	.control {

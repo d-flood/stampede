@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { logos } from '#lib/chat/sessions.ts';
-	import { agentNames, deleteRig, modes, reorderRigs, rigs, saveRig, type Agent, type Rig } from '#lib/config.svelte.ts';
+	import { agentNames, defaultMode, deleteRig, modes, reorderRigs, rigSummary, rigs, saveRig, type Agent, type Rig } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Caret from '#lib/ui/Caret.svelte';
 	import Checkbox from '#lib/ui/Checkbox.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
-	import Kbd from '#lib/ui/Kbd.svelte';
+	import Shortcut from '#lib/ui/Shortcut.svelte';
 	import Select from '#lib/ui/Select.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import CaretLeft from '~icons/ph/caret-left';
@@ -125,20 +126,11 @@
 		void load();
 	}
 
-	function defaultMode(provider: Agent) {
-		return { 'claude-code': 'auto', codex: 'approve-for-me', copilot: 'default', antigravity: 'default' }[provider];
-	}
-
 	function toggle(tool: string, on: boolean) {
 		disabled = on ? disabled.filter((other) => other !== tool) : [...disabled, tool];
 		saved = '';
 	}
 
-	function summary(rig: Rig) {
-		const value = rig.mode ?? defaultMode(rig.agent);
-		const label = modes(rig.agent).find((choice) => choice.value === value)?.label ?? value;
-		return [rig.model ?? 'Default model', rig.effort, label, rig.speed !== 'standard' && rig.speed !== 'default' && rig.speed, rig.ultracode === 'on' && 'Ultracode on'].filter(Boolean).join(', ');
-	}
 
 	async function save() {
 		saving = true;
@@ -313,9 +305,9 @@
 						<span class="logo"><Logo /></span>
 						<span class="text">
 							<span class="name" id="rig-{index}-name">{rig.name}</span>
-							<span class="detail" id="rig-{index}-detail">{summary(rig)}{#if index < 9}<span class="sr">, Ctrl+Shift+{index + 1}</span>{/if}</span>
+							<span class="detail" id="rig-{index}-detail">{rigSummary(rig)}{#if index < 9}<span class="sr">, Ctrl+Shift+{index + 1}</span>{/if}</span>
 						</span>
-						{#if phone}<CaretRight />{:else if index < 9}<Kbd aria-hidden="true">Ctrl+Shift+{index + 1}</Kbd>{/if}
+						{#if phone}<CaretRight />{:else}{#if index < 9}<Shortcut aria-hidden="true" keys="Ctrl+Shift+{index + 1}" />{/if}<Caret />{/if}
 					</button>
 				</div>
 				{#if selected === rig.name && !phone}{@render editor()}{/if}

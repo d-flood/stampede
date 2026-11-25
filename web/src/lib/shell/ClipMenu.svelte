@@ -61,7 +61,6 @@
 
 	.name,
 	.text {
-		font-family: var(--font-mono);
 		font-size: var(--font-size-md);
 		white-space: nowrap;
 	}
