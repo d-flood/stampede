@@ -72,8 +72,8 @@
 	--raised: var(--color-bg);
 	/* A card floating on content, such as the Composer: never darker than the content it sits on. */
 	--card: var(--color-bg);
-	/* Menus and popovers floating over everything else. */
-	--float: var(--surface-2);
+	/* Menus and popovers floating over everything else: the lightest surface in light schemes. */
+	--float: var(--color-bg);
 
 	--accent: var(--ansi-4);
 	--selected-bg: color-mix(in oklab, var(--accent) 14%, transparent);

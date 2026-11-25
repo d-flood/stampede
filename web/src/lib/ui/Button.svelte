@@ -85,7 +85,7 @@
 	}
 
 	.primary:disabled {
-		border-color: transparent;
+		border-color: var(--border);
 		background: var(--surface-2);
 		color: color-mix(in oklab, var(--muted-fg) 65%, transparent);
 	}
