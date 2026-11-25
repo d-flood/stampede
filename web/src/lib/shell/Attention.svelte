@@ -123,7 +123,7 @@
 		{/each}
 	</Dialog>
 {:else}
-	<Menu items={menu} row={entry} {trigger} side="right" align="end" />
+	<Menu items={menu} row={entry} {trigger} side="right" align="end" offset={12} />
 {/if}
 
 <style>

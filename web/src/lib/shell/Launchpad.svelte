@@ -119,6 +119,20 @@
 		padding-bottom: calc(var(--space-6) + 16vh);
 	}
 
+	.launchpad:not(.phone) h2 {
+		text-align: center;
+	}
+
+	.launchpad:not(.phone) :is(.where, .tools) {
+		align-items: center;
+		justify-content: center;
+	}
+
+	.launchpad:not(.phone) .path {
+		max-width: 100%;
+		text-align: center;
+	}
+
 	.pad {
 		width: min(var(--measure), 100%);
 	}

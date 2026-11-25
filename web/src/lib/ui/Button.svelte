@@ -86,8 +86,8 @@
 
 	.primary:disabled {
 		border-color: transparent;
-		background: color-mix(in oklab, var(--accent) 28%, var(--surface-2));
-		color: color-mix(in oklab, var(--accent) 45%, var(--muted-fg));
+		background: var(--surface-2);
+		color: var(--muted-fg);
 	}
 
 	.ghost {

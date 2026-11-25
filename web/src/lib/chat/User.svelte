@@ -89,6 +89,7 @@
 
 	.user :global(.text) {
 		font-family: var(--font-ui);
+		text-wrap: pretty;
 	}
 
 	details.user {

@@ -20,10 +20,11 @@
 		loading?: string;
 		side?: 'top' | 'right' | 'bottom' | 'left';
 		align?: 'start' | 'end';
+		offset?: number;
 		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { items, context = false, trigger, row: custom, open = $bindable(false), resize = false, loading, side = 'bottom', align = 'start', oncloseautofocus }: Props = $props();
+	let { items, context = false, trigger, row: custom, open = $bindable(false), resize = false, loading, side = 'bottom', align = 'start', offset = 4, oncloseautofocus }: Props = $props();
 	let width = $state(0);
 </script>
 
@@ -113,7 +114,7 @@
 			{/snippet}
 		</DropdownMenu.Trigger>
 		<DropdownMenu.Portal>
-			<DropdownMenu.Content {side} {align} sideOffset={4} collisionPadding={8} onCloseAutoFocus={oncloseautofocus} child={content} />
+			<DropdownMenu.Content {side} {align} sideOffset={offset} collisionPadding={8} onCloseAutoFocus={oncloseautofocus} child={content} />
 		</DropdownMenu.Portal>
 	</DropdownMenu.Root>
 {/if}

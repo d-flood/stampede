@@ -692,7 +692,7 @@
 	}
 
 	.content :global(.cm-scroller) {
-		mask-image: linear-gradient(to right, #000 calc(100% - var(--space-6)), transparent);
+		mask-image: linear-gradient(to right, #000 calc(100% - 3 * var(--space-6)), transparent);
 	}
 
 	.counts {

@@ -235,8 +235,5 @@
 		box-sizing: border-box;
 		width: var(--tile);
 		padding: 3px 0;
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-tile);
-		background: var(--surface-1);
 	}
 </style>

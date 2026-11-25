@@ -8,7 +8,9 @@ import {
 	WidgetType,
 	gutter,
 	gutterLineClass,
+	gutterWidgetClass,
 	keymap,
+	type DecorationSet,
 	type ViewUpdate
 } from '@codemirror/view';
 
@@ -296,24 +298,39 @@ class ChangedRow extends GutterMarker {
 
 const changedRow = new ChangedRow();
 
-/** Tints every gutter cell on a changed line, so the row reads as one band with its code. */
+class CollapsedRow extends GutterMarker {
+	elementClass = 'cm-diffCollapsedRow';
+}
+
+const collapsedRow = new CollapsedRow();
+const wholeLine = Decoration.line({ class: 'cm-diffWholeLine' });
+
+/** Tints every gutter cell on a changed line, so the row reads as one band with its code, and marks lines whose chunk has nothing on the other side. */
 export function diffRows(side: 'a' | 'b') {
 	const rows = (state: EditorState) => {
-		const builder = new RangeSetBuilder<GutterMarker>();
+		const gutters = new RangeSetBuilder<GutterMarker>();
+		const lines = new RangeSetBuilder<Decoration>();
 		const doc = state.doc;
 		for (const chunk of getChunks(state)?.chunks ?? []) {
 			const [from, to] = side === 'a' ? [chunk.fromA, chunk.toA] : [chunk.fromB, chunk.toB];
+			const whole = side === 'a' ? chunk.fromB === chunk.toB : chunk.fromA === chunk.toA;
 			for (let pos = from; pos < Math.min(to, doc.length + 1); ) {
 				const line = doc.lineAt(Math.min(pos, doc.length));
-				builder.add(line.from, line.from, changedRow);
+				gutters.add(line.from, line.from, changedRow);
+				if (whole) lines.add(line.from, line.from, wholeLine);
 				pos = line.to + 1;
 			}
 		}
-		return builder.finish();
+		return { gutters: gutters.finish(), lines: lines.finish() };
 	};
-	return StateField.define<RangeSet<GutterMarker>>({
+	return StateField.define<{ gutters: RangeSet<GutterMarker>; lines: DecorationSet }>({
 		create: rows,
 		update: (value, transaction) => (transaction.docChanged || transaction.effects.length > 0 ? rows(transaction.state) : value),
-		provide: (field) => gutterLineClass.from(field)
+		provide: (field) => [
+			gutterLineClass.from(field, (value) => value.gutters),
+			EditorView.decorations.from(field, (value) => value.lines),
+			// Merge keeps its collapse widget private; only it counts hidden lines in a numeric `lines`.
+			gutterWidgetClass.of((_view, widget) => (typeof (widget as { lines?: unknown }).lines === 'number' ? collapsedRow : null))
+		]
 	});
 }

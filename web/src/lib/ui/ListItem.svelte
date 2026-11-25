@@ -63,7 +63,6 @@
 
 	.item[aria-current]:not([aria-current='false']) {
 		background: var(--selected-bg);
-		box-shadow: inset 0 0 0 var(--border-width) var(--selected-border);
 		color: var(--color-fg);
 		font-weight: 600;
 	}
