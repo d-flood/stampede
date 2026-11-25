@@ -242,6 +242,11 @@
 		background: none;
 	}
 
+	/* Types at the size a sent message shows in its bubble. */
+	.boxed textarea:not(.code), .boxed .mirror {
+		font-size: var(--font-size-chat);
+	}
+
 	.boxed textarea, .boxed .mirror {
 		padding: var(--space-3) var(--space-4);
 		align-content: safe center;

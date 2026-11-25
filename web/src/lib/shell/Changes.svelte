@@ -509,7 +509,7 @@
 		align-items: center;
 		gap: var(--space-1);
 		min-height: var(--target-min);
-		padding: 0 var(--space-1) 0 var(--space-3);
+		padding: 0 var(--space-1) 0 var(--space-2);
 	}
 
 	.upstream {
@@ -610,7 +610,7 @@
 	.commit {
 		display: grid;
 		gap: var(--space-2);
-		padding: var(--space-1) var(--space-3) var(--space-2);
+		padding: var(--space-1) var(--space-2) var(--space-2);
 	}
 
 	.commit :global(textarea) {

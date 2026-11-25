@@ -144,7 +144,7 @@
 					<p class="branch" title={git.branch}><GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span></p>
 				{:else if git?.branch}
 					<div class="switch">
-						<Chip variant="ghost" mono title="Switch branch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => ((switching = true), warmUp())}>
+						<Chip variant="ghost" title="Switch branch" aria-haspopup="dialog" aria-expanded={switching} onclick={() => ((switching = true), warmUp())}>
 							<GitBranch role="img" aria-label="Branch" /><span>{git.branch}</span><CaretUpDown />
 						</Chip>
 					</div>
@@ -350,7 +350,6 @@
 		margin: 0;
 		padding: 0 var(--space-4);
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 	}
 

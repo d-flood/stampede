@@ -87,6 +87,7 @@
 	let commentable: Hunks | undefined;
 	const sync = new Sync(() => diff, () => shown?.b);
 	const analysis = new Compartment();
+	const wrapping = new Compartment();
 	const editable = $derived(diff.against === 'HEAD' || diff.against === 'index');
 	const versusHead = $derived(diff.against === 'HEAD' || diff.against === 'staged');
 	const loaded = $derived(!!git);
@@ -248,6 +249,13 @@
 	$effect(() => {
 		const current = shown?.b;
 		if (current) servers.displayed(current, displayed && !pictures);
+	});
+
+	$effect(() => {
+		const wrap = narrow;
+		untrack(() => {
+			if (shown?.views.length === 1) shown.b.dispatch({ effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []) });
+		});
 	});
 
 	$effect(() => {
@@ -559,6 +567,7 @@
 					diffSigns('b'),
 					diffRows('b'),
 					commenting('source', true),
+					wrapping.of(narrow ? EditorView.lineWrapping : []),
 					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {}, diffConfig })
 				]
 			});
@@ -656,7 +665,7 @@
 		</div>
 	{/if}
 	<Conflict {sync} onshowdiff={(disk) => shown && onshowdiff(disk, shown.b.state.doc.toString())} />
-	<div class="content" bind:this={container} bind:clientWidth={width} hidden={!!pictures}>
+	<div class="content" class:narrow bind:this={container} bind:clientWidth={width} hidden={!!pictures}>
 		{#if note}<p>{note}</p>{/if}
 	</div>
 	{#if pictures}
@@ -691,7 +700,7 @@
 		}
 	}
 
-	.content :global(.cm-scroller) {
+	.content:not(.narrow) :global(.cm-scroller) {
 		mask-image: linear-gradient(to right, #000 calc(100% - 3 * var(--space-6)), transparent);
 	}
 
