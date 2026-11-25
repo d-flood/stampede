@@ -85,7 +85,7 @@
 	{@const unseen = listed.has(tabOf(item)) && item.status === 'done'}
 	<span class="icon">{#if Icon}<Icon />{/if}</span>
 	<span class="label">
-		<strong>{item.label}</strong>
+		<span class="title" class:strong={listed.has(tabOf(item))}>{item.label}</span>
 		{#if listed.has(tabOf(item))}<span class="project">in {projects.get(item.projectId)}</span>{/if}
 	</span>
 	{#if unseen}
@@ -172,6 +172,10 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.strong {
+		font-weight: 600;
 	}
 
 	.project {

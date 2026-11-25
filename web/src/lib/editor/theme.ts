@@ -11,7 +11,7 @@ const chrome = EditorView.theme({
 	},
 	'&.cm-focused': { outline: 'none' },
 	'.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.5' },
-	'.cm-content': { caretColor: 'var(--color-cursor)' },
+	'.cm-content': { caretColor: 'var(--color-cursor)', fontVariantLigatures: 'none' },
 	'.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-cursor)' },
 	'.cm-fat-cursor': { background: 'var(--color-cursor)', color: 'var(--color-bg)' },
 	'&:not(.cm-focused) .cm-fat-cursor': { background: 'none', outline: 'var(--border-width) solid var(--color-cursor)' },
@@ -87,7 +87,6 @@ const added = (percent: number) => `color-mix(in oklab, var(--git-added) ${perce
 
 /** With `whole`, a file added or deleted outright keeps its gutter bars but no tinted lines. */
 export const diffTheme = (whole: boolean) => EditorView.theme({
-	'& .cm-content': { fontVariantLigatures: 'none' },
 	'&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': { backgroundColor: whole ? 'transparent' : removed(12) },
 	'&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': { backgroundColor: whole ? 'transparent' : added(12) },
 	'&.cm-merge-a .cm-changedText, & .cm-deletedChunk .cm-deletedText, &.cm-merge-b .cm-deletedText': {

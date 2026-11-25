@@ -7,7 +7,10 @@
 </script>
 
 <div class="toolbar" class:wrap>
-	{#if path !== undefined}<span class="path" title={title ?? path}>{path}</span>{/if}
+	{#if path !== undefined}
+		{@const cut = path.lastIndexOf('/') + 1}
+		<span class="path" title={title ?? path}>{path.slice(0, cut)}<span class="name">{path.slice(cut)}</span></span>
+	{/if}
 	{#if deleted}<span class="deleted">deleted on disk</span>{/if}
 	{@render children?.()}
 </div>
@@ -36,6 +39,10 @@
 		font-size: var(--font-size-sm);
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.name {
+		color: var(--color-fg);
 	}
 
 	.wrap .path {
