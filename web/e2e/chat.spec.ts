@@ -600,8 +600,8 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 	await openProject(page, name);
 	const phone = project.name === 'pixel';
 	const chats = (count: number) => phone ? expect.poll(() => tabCount(page)).toBe(count) : expect(page.getByRole('tab', { name: /^Fake Claude/ })).toHaveCount(count);
-	const menu = phone ? page.getByRole('region', { name, exact: true }) : page.getByRole('menu');
 	if (!phone) await page.getByRole('button', { name: 'New Tab' }).click();
+	const menu = phone ? await openNewTab(page) : page.getByRole('menu');
 	const item = phone ? 'button' : 'menuitem';
 	await expect(menu.getByRole(item, { name: 'Fake Claude', exact: true })).toHaveCount(1);
 	await expect(menu.getByRole(item, { name: /as Chat|as TUI/ })).toHaveCount(0);

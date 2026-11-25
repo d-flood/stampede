@@ -121,6 +121,7 @@
 	}
 
 	.bottom {
+		min-width: 8rem;
 		border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 	}
 

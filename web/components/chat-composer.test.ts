@@ -71,13 +71,7 @@ test('pasted images share picker limits and reject overlapping reads', async () 
 	paste(composer.element(), ten);
 	paste(composer.element(), ten);
 	await expect.poll(() => attachments.element().querySelectorAll('img').length).toBe(11);
-	if (phone) {
-		await view.getByRole('button', { name: 'More', exact: true }).click();
-		await expect.element(page.getByRole('menuitem', { name: 'Attach image' })).toBeEnabled();
-		await userEvent.keyboard('{Escape}');
-	} else {
-		await expect.element(view.getByRole('button', { name: 'Attach image', exact: true })).toBeEnabled();
-	}
+	await expect.element(view.getByRole('button', { name: 'Attach image', exact: true })).toBeEnabled();
 	paste(composer.element(), Array.from({ length: 10 }, (_, index) => ({ name: `extra-${index}.png` })));
 	await expect.element(alert).toHaveTextContent('Attach up to 20 images.');
 	expect(attachments.element().querySelectorAll('img')).toHaveLength(11);

@@ -198,7 +198,7 @@
 	</Chips>
 {/snippet}
 
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} mark={(text) => command(text)?.token.length ?? 0} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} mark={(text) => command(text)?.token.length ?? 0} footer={phone ? meta : undefined} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
 	{#snippet border(text: string)}
 		{@const known = chat.status === 'done' && !shell && !slash?.isOpen() && !files?.isOpen() ? command(text) : undefined}
 		<TurnRing status={chat.status} activity={chat.activity} {shell} />
@@ -229,8 +229,7 @@
 							heading: 'Insert',
 							items: [
 								{ label: 'Commands', icon: Terminal, hint: '/', onselect: () => { focusComposer = true; slash?.toggle(); } },
-								{ label: 'Reference file', icon: At, hint: '@', onselect: () => { focusComposer = true; if (files?.isOpen()) files.dismiss(); else composer.insert('@'); } },
-								{ label: 'Attach image', icon: Paperclip, disabled: !live || reading || !imageable, onselect: () => picker.click() }
+								{ label: 'Reference file', icon: At, hint: '@', onselect: () => { focusComposer = true; if (files?.isOpen()) files.dismiss(); else composer.insert('@'); } }
 							]
 						},
 						{
@@ -246,11 +245,11 @@
 					}}
 				>
 					{#snippet trigger(props)}
-						<Button {...props} variant="ghost" aria-label="More"><Plus /></Button>
+						<Button {...props} aria-label="More"><Plus /></Button>
 					{/snippet}
 				</Menu>
+				<Button variant="ghost" aria-label="Attach image" disabled={!live || reading || !imageable} onclick={() => picker.click()}><Paperclip /></Button>
 			</div>
-			{@render meta()}
 		{:else}
 			{@render meta()}
 			<Button variant="ghost" aria-label="Attach image" tip="Attach image" disabled={!live || reading || !imageable} onclick={() => picker.click()}><Paperclip /></Button>

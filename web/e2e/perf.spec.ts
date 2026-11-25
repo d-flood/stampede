@@ -112,7 +112,7 @@ for (const streaming of [true, false]) {
 		await openProject(page, name);
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		await page.getByRole('menuitem', { name: 'Fake Claude', exact: true }).click();
-		await expect(page.getByRole('textbox', { name: 'Composer' })).toBeVisible();
+		await expect(page.getByRole('region', { name: 'New Chat' })).toBeVisible();
 		const cdp = await page.context().newCDPSession(page);
 		const heap = async () => {
 			await cdp.send('HeapProfiler.collectGarbage');

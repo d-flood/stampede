@@ -24,9 +24,10 @@
 		/** Replaces Insert and Send, and boxes the Composer in a Chat's column. */
 		actions?: Snippet<[text: string, clear: () => void]>;
 		border?: Snippet<[text: string]>;
+		footer?: Snippet;
 	};
 
-	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], mark, onsend, actions, border, menu, onkeydown, onpaste }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], mark, onsend, actions, border, footer, menu, onkeydown, onpaste }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
@@ -143,6 +144,7 @@
 			<div class="actions">{@render actions(text, clear)}</div>
 			{#if border}<div class="outline">{@render border(text)}</div>{/if}
 		</div>
+		{#if footer}<div class="footer">{@render footer()}</div>{/if}
 	{:else}
 		<div class="field">
 			{@render editor()}
@@ -284,8 +286,14 @@
 		pointer-events: none;
 	}
 
+	.footer {
+		display: flex;
+		align-items: center;
+		min-width: 0;
+	}
 
 	.boxed.phone .actions {
+		justify-content: space-between;
 		gap: var(--space-2);
 	}
 
