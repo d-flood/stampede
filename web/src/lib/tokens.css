@@ -74,6 +74,8 @@
 	--card: var(--color-bg);
 	/* Menus and popovers floating over everything else: the lightest surface in light schemes. */
 	--float: var(--color-bg);
+	/* Scales diff tints: pale greens and reds need more weight on a light background. */
+	--diff-tint: 1.5;
 
 	--accent: var(--ansi-4);
 	--selected-bg: color-mix(in oklab, var(--accent) 14%, transparent);
@@ -168,6 +170,7 @@
 	--raised: color-mix(in lab, var(--color-bg) 80%, var(--color-fg));
 	--card: var(--surface-1);
 	--float: var(--surface-3);
+	--diff-tint: 1;
 }
 
 @media (pointer: coarse) {

@@ -82,8 +82,8 @@ export const highlight = HighlightStyle.define([
 
 export const theme = [chrome, syntaxHighlighting(highlight)];
 
-const removed = (percent: number) => `color-mix(in oklab, var(--git-deleted) ${percent}%, transparent)`;
-const added = (percent: number) => `color-mix(in oklab, var(--git-added) ${percent}%, transparent)`;
+const removed = (percent: number) => `color-mix(in oklab, var(--git-deleted) calc(${percent}% * var(--diff-tint)), transparent)`;
+const added = (percent: number) => `color-mix(in oklab, var(--git-added) calc(${percent}% * var(--diff-tint)), transparent)`;
 
 /** With `whole`, a file added or deleted outright keeps its gutter bars but no tinted lines. */
 export const diffTheme = (whole: boolean) => EditorView.theme({
