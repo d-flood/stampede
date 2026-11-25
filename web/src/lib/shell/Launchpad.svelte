@@ -13,6 +13,7 @@
 	import Menu from '#lib/ui/Menu.svelte';
 	import { untrack } from 'svelte';
 	import CaretDown from '~icons/ph/caret-down';
+	import GitBranch from '~icons/ph/git-branch';
 	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Plus from '~icons/ph/plus';
 
@@ -45,7 +46,7 @@
 <section class="launchpad" class:phone aria-labelledby="{id}-name" {@attach enter}>
 	<div class="pad">
 		<h2 id="{id}-name">{name}</h2>
-		<p class="where" title={path}>{#if phone}<span class="path"><bdi>{path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>{/if}{#if meta}<span class="meta">{meta}</span>{/if}</p>
+		<p class="where" title={path}>{#if phone}<span class="path"><bdi>{path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>{/if}{#if meta}<span class="meta">{#if git?.branch}<GitBranch aria-hidden="true" />{/if}{meta}</span>{/if}</p>
 		{#if rig}
 			{@const Logo = rig.icon}
 			<Composer id="launchpad:{path}" placeholder="Message {rig.label}" onsend={start}>
@@ -161,8 +162,12 @@
 		text-overflow: ellipsis;
 	}
 
-	.meta {
+	.where .meta {
+		display: inline-flex;
 		flex: none;
+		flex-direction: row;
+		align-items: center;
+		gap: var(--space-1);
 	}
 
 	button {

@@ -2,12 +2,12 @@
 	import type { Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
 
-	type Props = HTMLAttributes<HTMLSpanElement> & { tone?: 'neutral' | 'working' | 'waiting' | 'done' | 'soft' | 'outline'; children: Snippet };
+	type Props = HTMLAttributes<HTMLSpanElement> & { tone?: 'neutral' | 'working' | 'waiting' | 'done' | 'soft' | 'outline'; small?: boolean; children: Snippet };
 
-	let { tone = 'neutral', children, ...rest }: Props = $props();
+	let { tone = 'neutral', small = false, children, ...rest }: Props = $props();
 </script>
 
-<span class={tone} {...rest}>{@render children()}</span>
+<span class={tone} class:small {...rest}>{@render children()}</span>
 
 <style>
 	span {
@@ -30,6 +30,15 @@
 
 	span :global(svg) {
 		flex: none;
+	}
+
+	.small {
+		min-width: 1.4em;
+		height: 1.4em;
+		padding: 0 0.3em;
+		border-radius: 0.7em;
+		font-size: calc(var(--font-size-sm) - 1px);
+		font-weight: 600;
 	}
 
 	.working {

@@ -74,7 +74,7 @@
 {#snippet trigger(props: Record<string, unknown>)}
 	<span class="trigger">
 		<IconButton {...props} label="Attention list" title="Chats"><ChatsCircle /></IconButton>
-		{#if items.length}<span class="count"><Badge tone="waiting">{items.length}</Badge></span>{/if}
+		{#if items.length}<span class="count"><Badge tone="waiting" small>{items.length}</Badge></span>{/if}
 	</span>
 {/snippet}
 
