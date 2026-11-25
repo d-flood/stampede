@@ -20,6 +20,7 @@ for form in desktop pixel; do
 done
 "${alpha[@]}" add .
 "${alpha[@]}" commit -qm "Initial commit"
+echo '{"organization":"test-org"}' > "$STAMPEDE_E2E_ROOT/sprite.json"
 echo "roots = [\"$STAMPEDE_E2E_ROOT/projects\"]" > "$STAMPEDE_E2E_ROOT/config.toml"
 cat >> "$STAMPEDE_E2E_ROOT/config.toml" <<EOF
 

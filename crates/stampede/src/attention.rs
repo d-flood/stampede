@@ -1,13 +1,15 @@
-use std::{collections::HashSet, sync::Mutex};
+use std::{collections::{BTreeMap, HashSet}, sync::Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 
 use crate::chats::Status;
 
-#[derive(Clone, PartialEq, Serialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Attention {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub project_id: String,
     #[serde(flatten)]
     pub tab: Tab,
@@ -15,7 +17,7 @@ pub struct Attention {
     pub status: Status,
 }
 
-#[derive(Clone, PartialEq, Serialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Tab {
     Chat {
@@ -27,14 +29,15 @@ pub enum Tab {
     },
 }
 
-#[derive(Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub enum Source {
     Chats,
     Epics,
+    Cloud(String),
 }
 
 pub struct Feed {
-    sources: Mutex<[Vec<Attention>; 2]>,
+    sources: Mutex<BTreeMap<Source, Vec<Attention>>>,
     items: watch::Sender<Vec<Attention>>,
     calls: broadcast::Sender<(Attention, HashSet<String>)>,
 }
@@ -60,8 +63,8 @@ impl Feed {
 
     pub fn publish(&self, source: Source, items: Vec<Attention>) {
         let mut sources = self.sources.lock().unwrap();
-        sources[source as usize] = items;
-        let items = sources.concat();
+        sources.insert(source, items);
+        let items = sources.values().flatten().cloned().collect();
         self.items.send_if_modified(|current| {
             let changed = *current != items;
             *current = items;

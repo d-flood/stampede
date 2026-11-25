@@ -6,7 +6,7 @@ import { expect, test } from 'vitest';
 
 test('a visible linter retries startup when project files change', async () => {
 	const sent: ClientMessage[] = [];
-	const servers = new LanguageServers({ send: (message: ClientMessage) => sent.push(message) } as unknown as Device, () => '/project', () => {});
+	const servers = new LanguageServers(() => ({ send: (message: ClientMessage) => sent.push(message) }) as unknown as Device, () => '/project', () => {});
 	servers.message({ type: 'lsp.switch', projectId: 'p', on: true });
 	const view = new EditorView({ doc: 'import os\n', extensions: languageServer(servers, 'p', 'demo.py', true), parent: document.body });
 	await Promise.resolve();

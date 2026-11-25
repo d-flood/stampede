@@ -35,7 +35,7 @@
 	import GitBranch from '~icons/ph/git-branch';
 	import GitFork from '~icons/ph/git-fork';
 
-	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, changes = 0, onchanges, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; changes?: number; onchanges?(): void; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
+	let { device, chat, chats, movable = true, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, changes = 0, onchanges, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; movable?: boolean; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; changes?: number; onchanges?(): void; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
 		$props();
 
 	const subagents = $derived(flatten(items));
@@ -61,7 +61,7 @@
 	const onhandoff = $derived(handoff?.enabled() ? () => handoff?.show() : undefined);
 	const branches = $derived([
 		{ label: 'New Chat from here…', icon: GitFork, disabled: !handoff?.enabled(), onselect: () => handoff?.show() },
-		{ label: 'Move to new worktree…', icon: GitBranch, disabled: !mover?.enabled(), onselect: () => mover?.show() }
+		...(movable ? [{ label: 'Move to new worktree…', icon: GitBranch, disabled: !mover?.enabled(), onselect: () => mover?.show() }] : [])
 	]);
 	const history = $derived([...new Set(items.flatMap((item) => (item.kind === 'user' && item.text ? [item.text] : item.kind === 'shell' ? [`!${item.command}`] : [])).reverse())].reverse());
 	const shelling = $derived(items.some((item) => item.kind === 'shell' && item.status === 'running'));
@@ -314,7 +314,7 @@
 </div>
 {#if preview && active}<FilePreview projectId={chat.projectId} {...preview} />{/if}
 <Handoff bind:this={handoff} {device} {chat} available={attached && items.some((item) => item.kind === 'user')} />
-<MoveToWorktree bind:this={mover} {device} {chat} />
+{#if movable}<MoveToWorktree bind:this={mover} {device} {chat} />{/if}
 <Dialog bind:open={forkFailed} title="Could not fork">
 	<p class="failure" role="alert">{forkError}</p>
 	{#snippet actions()}<Button onclick={() => (forkFailed = false)}>Close</Button>{/snippet}

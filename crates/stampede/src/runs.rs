@@ -658,7 +658,7 @@ impl Runs {
     async fn item(&self, slug: &str, status: chats::Status) -> Result<Attention, String> {
         let project = self.project(&self.epics.get(slug)?).await?;
         let (tab, label) = (Tab::Epic { epic: slug.to_owned() }, format!("Epic {slug}"));
-        Ok(Attention { project_id: project.id, tab, label, status })
+        Ok(Attention { host: None, project_id: project.id, tab, label, status })
     }
 
     /// The open Project that checks out the Epic's repository, its main checkout before any other worktree,

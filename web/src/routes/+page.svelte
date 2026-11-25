@@ -6,10 +6,9 @@
 	import { same, subagents } from '#lib/chat/agents.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
-	import { hostName, rigs, type Rig } from '#lib/config.svelte.ts';
+	import { hostName, rigs, runsOn, type Rig } from '#lib/config.svelte.ts';
 	import { previewThemes, themeBar } from '#lib/themes.svelte.ts';
 	import {
-		connect,
 		tabOf,
 		type Attention,
 		type Chat,
@@ -23,12 +22,14 @@
 		type Setting,
 		type Terminal
 	} from '#lib/device.svelte.ts';
+	import { Devices } from '#lib/devices.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
 	import { comparing, image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, OpenChanges, RequestError, type Against, type Cursor, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { deleteWorktree, status, type Change, type Git, type Trunk, type Update } from '#lib/git.ts';
 	import type { PrReview } from '#lib/pr-reviews.ts';
+	import { hostOf } from '#lib/host.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { closePanel, openPanel, panel as phonePanel } from '#lib/phone.svelte.ts';
@@ -76,7 +77,8 @@
 	const editor = () => import('#lib/shell/Editor.svelte');
 	afterPaint(editor);
 	const restored = restore();
-	const device = connect();
+	const devices = new Devices(message);
+	const { home } = devices;
 	let projects = $state<Project[]>([]);
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let chats = $state<Record<string, Chat[]>>({});
@@ -148,7 +150,7 @@
 	let updateAvailable = $state(false);
 	const dirty = $derived(Object.values(files).flat().some((file) => file.dirty));
 	const servers = new LanguageServers(
-		device,
+		(projectId) => devices.of(projectId),
 		(projectId) => projects.find((project) => project.id === projectId)?.path,
 		(projectId, path) => openFile(projectId, path)
 	);
@@ -166,6 +168,7 @@
 	const needs = $derived(attentionList.reduce((map, item) => map.set(item.projectId, (map.get(item.projectId) ?? 0) + 1), new Map<string, number>()));
 	const nested = $derived(worktrees(projects, epics, allChats, chatStatus, needs));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
+	const host = $derived(focused?.host);
 	const tabs = $derived((focused && terminals[focused.id]) || []);
 	const chatTabs = $derived((focused && chats[focused.id]) || []);
 	const fileTabs = $derived((focused && files[focused.id]) || []);
@@ -181,7 +184,13 @@
 		...fileTabs.map((file) => file.id)
 	]);
 	const closingTabs = $derived(new Set([...tabs.filter((tab) => tab.state === 'closing'), ...chatTabs.filter((chat) => chat.closing)].map(({ id }) => id)));
-	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? ''] && !closingTabs.has(id)) ?? tabIds.findLast((id) => !closingTabs.has(id)));
+	const activeTab = $derived.by(() => {
+		const tabId = chosenTabs[focused?.id ?? ''];
+		const open = (id: string) => !closingTabs.has(id);
+		// Falling back while the chosen Tab may be one still to be listed would let its stand-in take the choice over.
+		if (tabId && focused && !known(focused.id)) return tabIds.find((id) => id === tabId);
+		return tabIds.find((id) => id === tabId && open(id)) ?? tabIds.findLast(open);
+	});
 	const whole = $derived({ tabs: tabIds, active: activeTab });
 	const layout = $derived(focused && arrange(splits[focused.id], tabIds, activeTab, closingTabs));
 	const side: Side = $derived(layout && layout.right.active === activeTab ? 'right' : 'left');
@@ -192,7 +201,7 @@
 	const shownChats = $derived(foreground ? chatTabs.filter((chat) => showing(chat.id)).map((chat) => chat.id) : []);
 	const shownEpics = $derived(foreground ? openEpics.filter((epic) => showing(epic.id)).map((epic) => epic.slug) : []);
 	const label = $derived(focused && projectLabels.get(focused.id));
-	const gitShown = $derived([...(focused ? [focused.id] : []), ...Object.keys(files).filter((projectId) => files[projectId].length)]);
+	const gitShown = $derived([...(focused ? [focused.id] : []), ...Object.keys(files).filter((projectId) => files[projectId].length && known(projectId))]);
 	const tabActions: Action[] = $derived.by(() => {
 		const items = tabTarget === 'drawer'
 			? [{ label: 'Terminal', icon: TerminalWindow, onselect: () => drawer.newTab() }]
@@ -229,7 +238,13 @@
 		})
 	);
 
-	$effect(() => device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics }));
+	$effect(() => {
+		if (host) return devices.show(host);
+	});
+	$effect(() => {
+		view();
+		for (const host of devices.hosts) view(host);
+	});
 	$effect(() => saveLayout(deviceLayout));
 	$effect(() => {
 		if (visible) for (const projectId of gitShown) freshen(projectId);
@@ -240,39 +255,42 @@
 	if (queryProject && queryTab) attend(queryProject, queryTab);
 
 	onMount(() => {
-		const unlisten = device.listen({ message });
+		const unlisten = home.listen({ message: (heard) => message(heard) });
 		const notified = ({ data }: MessageEvent<Attention>) => attend(data.projectId, tabOf(data));
 		navigator.serviceWorker?.addEventListener('message', notified);
 		return () => {
 			unlisten();
 			navigator.serviceWorker?.removeEventListener('message', notified);
-			device.close();
+			devices.close();
 		};
 	});
 
-	function message(message: ServerMessage) {
-		servers.message(message);
+	function message(message: ServerMessage, host?: string) {
+		servers.message(message, host);
 		switch (message.type) {
 			case 'hello': {
-				readingSessions = {};
-				updateAvailable = (message.buildId ?? message.version) !== version;
-				const owned: Record<string, Terminal[]> = {};
+				const here = projects.filter((project) => project.host === host);
+				readingSessions = elsewhere(readingSessions, host);
+				const owned: Record<string, Terminal[]> = Object.fromEntries(here.map(({ id }) => [id, []]));
 				for (const terminal of message.terminals) {
 					if (terminal.owner !== 'drawer') (owned[terminal.owner.project] ??= []).push(terminal);
 				}
-				terminals = owned;
+				terminals = { ...elsewhere(terminals, host), ...owned };
 				const chatsOwned: Record<string, Chat[]> = {};
 				for (const chat of message.chats) (chatsOwned[chat.projectId] ??= []).push(chat);
-				chats = chatsOwned;
-				saved.clear();
+				chats = { ...elsewhere(chats, host), ...chatsOwned };
+				const others = Object.values(elsewhere(chats, host)).flat();
+				for (const canvas of saved) if (!others.some(({ id }) => canvas.startsWith(`${id}/`))) saved.delete(canvas);
 				for (const canvas of message.canvases) saved.add(canvas);
-				for (const project of projects) {
+				for (const project of here) {
 					invalidate(project.id);
 					staleGit.add(project.id);
 				}
+				view(host);
+				if (host) break;
+				updateAvailable = (message.buildId ?? message.version) !== version;
 				subscribed.clear();
-				device.send({ type: 'projects.list' });
-				device.send({ type: 'device.view', chatIds: shownChats, epics: shownEpics });
+				home.send({ type: 'projects.list' });
 				break;
 			}
 			case 'attention.changed':
@@ -395,7 +413,7 @@
 				choose(message.chat.projectId, message.chat.id);
 				if (message.chat.projectId === focused?.id) closePanel();
 				if (prompting && prompting.projectId === message.chat.projectId && prompting.rig === message.chat.rig) {
-					device.send({ type: 'chat.send', chatId: message.chat.id, text: prompting.text, queue: false, images: [] });
+					devices.of(message.chat.projectId).send({ type: 'chat.send', chatId: message.chat.id, text: prompting.text, queue: false, images: [] });
 					prompting = undefined;
 				}
 				break;
@@ -410,7 +428,7 @@
 				break;
 			}
 			case 'sessions.listed':
-				sessions[message.projectId] = message.sessions;
+				sessions[message.projectId] = message.sessions.filter(({ agent }) => runsOn(host, agent));
 				readingSessions[message.projectId] = false;
 				break;
 			case 'terminal.title':
@@ -422,14 +440,24 @@
 				const left = focused;
 				const selected = activeTab;
 				const opened = message.projects.filter((project) => !projects.some((other) => other.id === project.id));
+				devices.list(new Set(message.projects.flatMap(({ host }) => host ?? [])));
 				projects = message.projects;
 				listed = true;
-				if (!projects.length) device.send({ type: 'picker.list' });
+				if (!projects.length) home.send({ type: 'picker.list' });
 				for (const project of opened) staleGit.add(project.id);
 				if (left?.worktree && !projects.some((project) => project.id === left.id)) {
 					const { parent } = left.worktree;
 					if (selected && chats[left.id]?.some(({ id }) => id === selected)) adopting = { projectId: parent, tabId: selected };
 					chosen = parent;
+				}
+				for (const projectId in terminals) {
+					if (!hostOf(projectId) || projects.some((project) => project.id === projectId)) continue;
+					for (const { id } of chats[projectId] ?? []) {
+						delete chatItems[id];
+						delete openSubagents[id];
+					}
+					delete terminals[projectId];
+					delete chats[projectId];
 				}
 				for (const projectId in browsers) {
 					if (!projects.some((project) => project.id === projectId)) delete browsers[projectId];
@@ -462,11 +490,11 @@
 				for (const projectId of subscribed) {
 					if (!projects.some((project) => project.id === projectId)) subscribed.delete(projectId);
 				}
-				for (const { id } of projects) {
-					if (subscribed.has(id)) continue;
+				for (const { id, host } of projects) {
+					if (host || subscribed.has(id)) continue;
 					subscribed.add(id);
-					device.send({ type: 'epics.subscribe', projectId: id });
-					device.send({ type: 'pr-reviews.subscribe', projectId: id });
+					home.send({ type: 'epics.subscribe', projectId: id });
+					home.send({ type: 'pr-reviews.subscribe', projectId: id });
 				}
 				if (!activeTab) warmUp();
 				break;
@@ -475,8 +503,8 @@
 				staleGit.add(message.projectId);
 				break;
 			case 'origin.changed':
-				trunks = message.trunks;
-				update = message.update;
+				trunks = { ...elsewhere(trunks, host), ...message.trunks };
+				if (!host) update = message.update;
 				break;
 			case 'pr-reviews.changed':
 				prReviews = { ...prReviews, [message.projectId]: message.reviews };
@@ -524,6 +552,20 @@
 				settle?.(message.error);
 				break;
 		}
+	}
+
+	/** Whether a Project's Terminals and Chats are listed, which for a Cloud Host's waits for its Device's first hello. */
+	function known(projectId: string) {
+		return !hostOf(projectId) || !!terminals[projectId];
+	}
+
+	function elsewhere<T>(owned: Record<string, T>, host?: string): Record<string, T> {
+		return Object.fromEntries(Object.entries(owned).filter(([projectId]) => hostOf(projectId) !== host));
+	}
+
+	function view(on?: string) {
+		const here = on === host;
+		devices.at(on).send({ type: 'device.view', chatIds: here ? shownChats : [], epics: here ? shownEpics : [] });
 	}
 
 	function chatStatus(chat: Chat) {
@@ -598,22 +640,22 @@
 	function pick() {
 		directories = [];
 		picking = true;
-		device.send({ type: 'picker.list' });
+		home.send({ type: 'picker.list' });
 	}
 
 	function open(path: string): Promise<string | undefined> {
 		settle?.();
-		device.send({ type: 'project.open', path });
+		home.send({ type: 'project.open', path });
 		return new Promise((resolve) => (settle = resolve));
 	}
 
 	function reorder(order: string[]) {
 		projects = [...order.flatMap((id) => projects.filter((project) => project.id === id)), ...projects.filter((project) => project.worktree)];
-		device.send({ type: 'project.reorder', order });
+		home.send({ type: 'project.reorder', order });
 	}
 
 	function stopping(projectId: string) {
-		const owned = (id: string) => id === projectId || projects.some((project) => project.id === id && project.worktree?.parent === projectId);
+		const owned = (id: string) => id === projectId || projects.some((project) => project.id === id && !project.host && project.worktree?.parent === projectId);
 		return stoppedBy(allChats.filter((chat) => owned(chat.projectId)), Object.entries(terminals).flatMap(([id, open]) => (owned(id) ? open : [])));
 	}
 
@@ -631,7 +673,7 @@
 			return;
 		}
 		closingProject = undefined;
-		device.send({ type: 'project.close', projectId });
+		home.send({ type: 'project.close', projectId });
 	}
 
 	async function removeWorktree(projectId: string, force = false) {
@@ -649,22 +691,22 @@
 
 	function readSessions(projectId: string) {
 		readingSessions[projectId] = true;
-		device.send({ type: 'sessions.list', projectId });
+		devices.of(projectId).send({ type: 'sessions.list', projectId });
 	}
 
 	function newTab(projectId: string) {
 		return tabItems(rigs(), sessions[projectId] ?? [], {
 			launch: (rig, text, settings) => launch(rig, projectId, text, settings),
-			terminal: () => device.send({ type: 'terminal.create', projectId }),
+			terminal: () => devices.of(projectId).send({ type: 'terminal.create', projectId }),
 			browser: () => openBrowser(projectId),
 			files: () => openPalette('files'),
 			reopen: (session) => reopen(projectId, session),
 			search: () => (palette = 'sessions')
-		});
+		}, hostOf(projectId));
 	}
 
 	function reopen(projectId: string, { agent, sessionId }: Session) {
-		device.send({ type: 'chat.resume', projectId, agent, sessionId });
+		devices.of(projectId).send({ type: 'chat.resume', projectId, agent, sessionId });
 	}
 
 	/** A first message waiting for its Chat, which the server creates before it can take input. */
@@ -673,7 +715,7 @@
 	function launch(rig: Rig, projectId = focused?.id, text?: string, settings?: Partial<Record<Setting, string>>) {
 		if (!projectId) return;
 		prompting = text ? { projectId, rig: rig.name, text } : undefined;
-		device.send({ type: 'chat.create', projectId, rig: rig.name, settings });
+		devices.of(projectId).send({ type: 'chat.create', projectId, rig: rig.name, settings });
 	}
 
 	function jump(index: number) {
@@ -777,7 +819,7 @@
 		}
 		closingTerminal = undefined;
 		leave(projectId, terminalId);
-		device.send({ type: 'terminal.close', terminalId });
+		devices.of(projectId).send({ type: 'terminal.close', terminalId });
 	}
 
 	function openTabPicker() {
@@ -789,7 +831,7 @@
 
 	function openTerminal() {
 		if (drawer.ownsFocus()) drawer.newTab();
-		else if (focused) device.send({ type: 'terminal.create', projectId: focused.id });
+		else if (focused) devices.of(focused.id).send({ type: 'terminal.create', projectId: focused.id });
 	}
 
 	function finishTabSelection(event: Event) {
@@ -837,7 +879,7 @@
 		}
 		closingChat = undefined;
 		leave(chat.projectId, chat.id);
-		device.send({ type: 'chat.close', chatId: chat.id });
+		devices.of(chat.projectId).send({ type: 'chat.close', chatId: chat.id });
 	}
 
 	function openTab<T extends OpenFile>(tab: T): T {
@@ -1028,7 +1070,7 @@
 		{label}
 		git={focused && git.get(focused.id)}
 		trunk={focused && trunks[focused.id]}
-		{device}
+		device={devices.at(host)}
 		bind:section
 		{usage}
 		{codexResets}
@@ -1260,7 +1302,7 @@
 								epic={epics[epic.projectId]?.find((listed) => listed.slug === epic.slug)}
 								loaded={!!epics[epic.projectId]}
 								active={showing(epic.id)}
-								{device}
+								device={devices.of(epic.projectId)}
 								chats={allChats}
 								oncompare={(selection) => showComparison(epic.projectId, selection)}
 								onchat={(chatId) => {
@@ -1284,7 +1326,7 @@
 					>
 						{#if showing(terminal.id) || warm()}
 							<TerminalView
-								{device}
+								device={devices.of(projectId)}
 								terminalId={terminal.id}
 								pending={terminal.pending}
 								active={showing(terminal.id)}
@@ -1318,9 +1360,10 @@
 					{#if showing(chat.id) || warm()}
 						{#await import('#lib/chat/ChatView.svelte') then { default: ChatView }}
 							<ChatView
-								{device}
+								device={devices.of(chat.projectId)}
 								{chat}
 								chats={allChats}
+								movable={!hostOf(chat.projectId)}
 								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); closePanel(); }}
 								items={chatItems[chat.id] ?? []}
 								saved={[...saved].filter((canvas) => canvas.startsWith(`${chat.id}/`))}
@@ -1346,13 +1389,14 @@
 				{#each open as file (file)}
 					{@const onshowdiff = (disk: string, buffer: string) => showDiff(file, disk, buffer)}
 					{@const active = showing(file.id)}
+					{@const device = file instanceof OpenConfig ? home : devices.of(file.projectId)}
 					<div
 						class="view"
 						hidden={!active}
 						style:grid-column={column(file.id)}
 						onfocusin={() => choose(file.projectId, file.id)}
 					>
-						{#if active || warm()}
+						{#if active || (warm() && known(file.projectId))}
 							{#if file instanceof OpenChanges}
 								{#await import('#lib/shell/ChangesTab.svelte') then { default: ChangesTab }}
 									<ChangesTab tab={file} git={git.get(file.projectId)} {active} onopen={(path) => openFile(file.projectId, path)} />
@@ -1391,7 +1435,7 @@
 					<div class="zone" class:over={dragging.over === 'right'} style:flex-grow={1 - ratio}></div>
 				</div>
 			{/if}
-			{#if focused && tabIds.every((id) => closingTabs.has(id))}
+			{#if focused && known(focused.id) && tabIds.every((id) => closingTabs.has(id))}
 				{@render launchpad(focused)}
 			{:else if !focused && listed && !picking}
 				<div class="empty">
@@ -1499,7 +1543,7 @@
 	{#if themeBar.choice}<ThemeBar choice={themeBar.choice} />{/if}
 {/if}
 
-<Drawer bind:this={drawer} bind:open={drawerOpen} {device} />
+<Drawer bind:this={drawer} bind:open={drawerOpen} device={home} />
 
 {#if phone && focused}
 	{@const projectId = focused.id}
@@ -1517,7 +1561,7 @@
 	</dialog>
 {/if}
 
-{#if device.connection === 'reconnecting'}
+{#if home.connection === 'reconnecting' || devices.at(host).connection === 'reconnecting'}
 	<FloatingBar edge="top" tone="waiting" passive role="status"><span class="reconnecting"><WifiSlash /> Reconnecting…</span></FloatingBar>
 {:else if updateAvailable}
 	<FloatingBar edge="top" tone="waiting" role="status">
@@ -1527,6 +1571,7 @@
 {/if}
 
 <Leader
+	{host}
 	ontab={jump}
 	onnew={openTabPicker}
 	onterminal={openTerminal}

@@ -74,7 +74,7 @@ export class Session {
 	#timer?: ReturnType<typeof setTimeout>;
 
 	#transport: Transport = {
-		send: (message) => this.servers.send({ type: 'lsp', channel: this.channel, message }),
+		send: (message) => this.servers.send(this.projectId, { type: 'lsp', channel: this.channel, message }),
 		subscribe: (handler) => this.#handlers.add(handler),
 		unsubscribe: (handler) => this.#handlers.delete(handler)
 	};
@@ -100,7 +100,7 @@ export class Session {
 
 	visibility(before: boolean) {
 		if (before !== this.shown && this.servers.switches[this.projectId]) {
-			this.servers.send({ type: this.shown ? 'lsp.open' : 'lsp.close', channel: this.channel });
+			this.servers.send(this.projectId, { type: this.shown ? 'lsp.open' : 'lsp.close', channel: this.channel });
 		}
 	}
 
@@ -149,7 +149,7 @@ export class Session {
 		const state = this.servers.states[this.channel];
 		// The server skips unconfigured linters, so a change may be the config or dependency it waits for.
 		if (this.shown && this.servers.switches[this.projectId] && (!state || state === 'off')) {
-			this.servers.send({ type: 'lsp.open', channel: this.channel });
+			this.servers.send(this.projectId, { type: 'lsp.open', channel: this.channel });
 		}
 	}
 

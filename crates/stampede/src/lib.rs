@@ -6,6 +6,7 @@ mod cli;
 mod clips;
 pub mod cloud;
 mod cloud_hosts;
+mod cloud_link;
 mod config;
 mod device;
 mod epics;
@@ -40,8 +41,9 @@ use std::{net::Ipv4Addr, path::PathBuf, sync::Arc, time::UNIX_EPOCH};
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::{HeaderMap, StatusCode, Uri, header},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     serve::ListenerExt,
@@ -97,11 +99,13 @@ fn data_dir() -> PathBuf {
 
 #[derive(Clone)]
 struct AppState {
+    cloud: Option<cloud::Service>,
     media_dir: PathBuf,
     canvases: Arc<canvas::Canvases>,
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
     attention: Arc<Feed>,
+    home_link: Option<Arc<cloud_link::HomeLink>>,
     usage: Arc<Usage>,
     projects: Arc<Projects>,
     cloud_hosts: Arc<cloud_hosts::CloudHosts>,
@@ -123,34 +127,53 @@ struct AppState {
 
 fn router(state: AppState) -> Router {
     let compression = CompressionLayer::new().compress_when(DefaultPredicate::new().and(NotForContentType::const_new("font/woff")));
-    Router::new()
-        .route("/api/version", get(version))
-        .route("/api/cloud", get(cloud::status))
-        .route("/api/browser", post(browser::open))
+    let mut home_only = Router::new()
+        .route("/api/projects/{id}/worktrees", post(create_worktree))
+        .route("/api/projects/{id}/prs", get(pr_reviews::prs))
+        .route("/api/projects/{id}/pr-reviews", get(pr_reviews::list).post(pr_reviews::open))
+        .route("/api/projects/{id}/pr-reviews/{number}", delete(pr_reviews::discard))
+        .route("/api/projects/{id}/pr-reviews/{number}/refresh", post(pr_reviews::refresh))
+        .route("/api/projects/{id}/pr-reviews/{number}/viewed", put(pr_reviews::view))
+        .route("/api/projects/{id}/pr-reviews/{number}/worktree", post(pr_reviews::worktree))
+        .route("/api/projects/{id}/pr-reviews/{number}/hunks", get(pr_reviews::commentable))
+        .route("/api/projects/{id}/pr-reviews/{number}/send", post(pr_reviews::send))
+        .route("/api/projects/{id}/pr-reviews/{number}/drafts", post(pr_reviews::create_draft))
+        .route("/api/projects/{id}/pr-reviews/{number}/drafts/{draft}", put(pr_reviews::edit_draft).delete(pr_reviews::delete_draft));
+    let mut settings = Router::new()
         .route("/api/host-name", get(host_name).put(set_host_name))
         .route("/api/auto-fetch", get(auto_fetch).put(set_auto_fetch))
         .route("/api/theme", get(theme).put(set_theme))
+        .route("/api/font-choice/{role}", get(chosen_font).put(choose_font))
+        .route("/api/rigs", get(rigs).put(rigs::save).delete(rigs::delete))
+        .route("/api/rigs/order", put(rigs::reorder))
+        .route("/api/commit-rig", get(commit_rig).put(set_commit_rig))
+        .route("/api/commit-instructions", get(commit_instructions).put(set_commit_instructions))
+        .route("/api/modes", get(modes).put(set_modes))
+        .route("/api/clips", get(clips::list).put(clips::save).delete(clips::delete))
+        .route("/api/clips/order", put(clips::reorder))
+        .route("/api/config/file", get(files::read_config).put(files::write_config));
+    if state.cloud.is_some() {
+        home_only = home_only.route_layer(middleware::from_fn(refuse));
+        settings = settings.route_layer(middleware::from_fn(refuse_writes));
+    }
+    Router::new()
+        .merge(home_only)
+        .merge(settings)
+        .route("/api/version", get(version))
+        .route("/api/cloud", get(cloud::status))
+        .route("/api/browser", post(browser::open))
         .route("/api/themes", get(theme_names))
         .route("/api/themes/{name}", get(preview_theme))
         .route("/api/font", get(font))
         .route("/api/fonts", get(font_families))
         .route("/api/fonts/{family}", get(preview_font))
-        .route("/api/font-choice/{role}", get(chosen_font).put(choose_font))
-        .route("/api/rigs", get(rigs).put(rigs::save).delete(rigs::delete))
         .route("/api/rigs/options", get(rigs::options))
-        .route("/api/commit-rig", get(commit_rig).put(set_commit_rig))
-        .route("/api/commit-instructions", get(commit_instructions).put(set_commit_instructions))
-        .route("/api/modes", get(modes).put(set_modes))
-        .route("/api/rigs/order", put(rigs::reorder))
-        .route("/api/clips", get(clips::list).put(clips::save).delete(clips::delete))
-        .route("/api/clips/order", put(clips::reorder))
         .route("/api/usage/codex/reset", post(usage::reset))
         .route("/api/templates", get(templates))
         .route("/api/editor", get(editor))
         .route("/api/leader", get(leader))
         .route("/api/keybar", get(keybar))
         .route("/api/scrollback", get(scrollback))
-        .route("/api/config/file", get(files::read_config).put(files::write_config))
         .route("/api/media/{asset}", get(media::read))
         .route("/api/canvases/{dir}/{name}", get(canvas::read))
         .route("/api/project-icons/{asset}", get(project_icons::read))
@@ -169,21 +192,10 @@ fn router(state: AppState) -> Router {
         .route("/api/projects/{id}/file/rename", post(files::rename))
         .route("/api/projects/{id}/file", get(files::read).head(files::exists).put(files::write).post(files::create).delete(files::delete))
         .route("/api/projects/{id}/worktree", delete(delete_worktree))
-        .route("/api/projects/{id}/worktrees", post(create_worktree))
         .route("/api/projects/{id}/git", get(git::status))
         .route("/api/projects/{id}/git/refs", get(git::refs))
         .route("/api/projects/{id}/git/log", get(git::history))
         .route("/api/projects/{id}/git/compare", get(git::compare))
-        .route("/api/projects/{id}/prs", get(pr_reviews::prs))
-        .route("/api/projects/{id}/pr-reviews", get(pr_reviews::list).post(pr_reviews::open))
-        .route("/api/projects/{id}/pr-reviews/{number}", delete(pr_reviews::discard))
-        .route("/api/projects/{id}/pr-reviews/{number}/refresh", post(pr_reviews::refresh))
-        .route("/api/projects/{id}/pr-reviews/{number}/viewed", put(pr_reviews::view))
-        .route("/api/projects/{id}/pr-reviews/{number}/worktree", post(pr_reviews::worktree))
-        .route("/api/projects/{id}/pr-reviews/{number}/hunks", get(pr_reviews::commentable))
-        .route("/api/projects/{id}/pr-reviews/{number}/send", post(pr_reviews::send))
-        .route("/api/projects/{id}/pr-reviews/{number}/drafts", post(pr_reviews::create_draft))
-        .route("/api/projects/{id}/pr-reviews/{number}/drafts/{draft}", put(pr_reviews::edit_draft).delete(pr_reviews::delete_draft))
         .route("/api/projects/{id}/git/commit/{sha}", get(git::commit))
         .route("/api/projects/{id}/git/show", get(git::show))
         .route("/api/projects/{id}/git/index", get(git::index))
@@ -211,6 +223,7 @@ fn router(state: AppState) -> Router {
         .route("/fonts/system/{family}/{index}", get(system_font).layer(compression))
         .route("/manifest.webmanifest", get(manifest))
         .route("/ws", get(device::upgrade))
+        .route("/api/home-link", get(cloud_link::upgrade))
         .route("/cloud/{id}/", axum::routing::any(cloud_hosts::proxy))
         .route("/cloud/{id}/{*rest}", axum::routing::any(cloud_hosts::proxy))
         .fallback(spa)
@@ -218,11 +231,11 @@ fn router(state: AppState) -> Router {
 }
 
 pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
-    let config = config::watch(&args.config)?;
+    let config = config::watch(&args.config, args.cloud.is_some())?;
     let cloud_hosts = Arc::new(cloud_hosts::CloudHosts::load(&args.data_dir)?);
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
     let port = listener.local_addr()?.port();
-    let epics = Arc::new(Epics::load(&args.data_dir)?);
+    let epics = Arc::new(Epics::load(&args.data_dir, args.cloud)?);
     let pr_reviews = Arc::new(pr_reviews::PrReviews::load(&args.data_dir)?);
     let requests = cli::bind(&args.data_dir)?;
     let delegations = chats::bind_delegations(&args.data_dir)?;
@@ -232,9 +245,12 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let layouts = Arc::new(Layouts::load(&args.data_dir)?);
     let browsers = Arc::new(browser::Browsers::new(port));
     let attention = Arc::new(Feed::default());
-    push::spawn(Arc::clone(&push), &attention);
+    let home_link = args.cloud.map(|_| Arc::new(cloud_link::HomeLink::new(&attention)));
+    if home_link.is_none() {
+        push::spawn(Arc::clone(&push), &attention);
+    }
     let usage = Arc::new(Usage::default());
-    let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage)));
+    let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage), args.cloud));
     let rigs = config.borrow().rigs.clone();
     let terminals = Arc::new(Terminals::new(args.data_dir.clone()));
     terminals.restore().await?;
@@ -270,7 +286,8 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     if args.cloud.is_some() {
         std::fs::write(args.data_dir.join("port"), port.to_string())?;
     }
-    let state = AppState { cloud_hosts, media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, pr_reviews, runs, devices, origin };
+    let state = AppState { cloud: args.cloud, cloud_hosts, media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, home_link, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, pr_reviews, runs, devices, origin };
+    cloud_link::spawn(state.clone());
     let listener = listener.tap_io(|stream| {
         let _ = stream.set_nodelay(true);
     });
@@ -278,6 +295,17 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
         if std::env::var_os("STAMPEDE_TEST_OWNER").is_none() { std::future::pending::<()>().await; }
         while holder::test_owner_alive() { tokio::time::sleep(std::time::Duration::from_millis(100)).await; }
     }).await
+}
+
+async fn refuse(_: Request, _: Next) -> files::Failure {
+    (StatusCode::FORBIDDEN, cloud::HOLDS_ONE_WORKTREE.to_owned())
+}
+
+async fn refuse_writes(request: Request, next: Next) -> Response {
+    if request.method().is_safe() {
+        return next.run(request).await;
+    }
+    (StatusCode::FORBIDDEN, cloud::SETTINGS_FROM_HOME).into_response()
 }
 
 async fn version() -> Json<Value> {

@@ -14,7 +14,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, atomic::{AtomicUsize, Ordering}},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -24,12 +24,13 @@ use base64ct::{Base64, Encoding};
 use tokio::sync::{
     broadcast,
     mpsc::{self, UnboundedReceiver, UnboundedSender},
-    oneshot,
+    oneshot, watch,
 };
 use uuid::Uuid;
 
 use crate::{
     attention::{Attention, Feed, Source, Tab},
+    cloud::Service,
     config::{Agent, AgentSettings, Rig},
     projects::Project,
     templates,
@@ -945,7 +946,11 @@ pub struct Chats {
     lifecycle: broadcast::Sender<Lifecycle>,
     views: Mutex<HashMap<Uuid, (Option<String>, Vec<String>)>>,
     attention: Arc<Feed>,
+    busy: watch::Sender<bool>,
+    /// Chats whose background work has ended but not yet been announced.
+    settling: AtomicUsize,
     usage: Arc<Usage>,
+    cloud: Option<Service>,
 }
 
 struct Entry {
@@ -975,7 +980,7 @@ struct Handoff {
 }
 
 impl Chats {
-    pub fn new(data_dir: PathBuf, attention: Arc<Feed>, usage: Arc<Usage>) -> Self {
+    pub fn new(data_dir: PathBuf, attention: Arc<Feed>, usage: Arc<Usage>, cloud: Option<Service>) -> Self {
         Self {
             data_dir,
             chats: Mutex::default(),
@@ -983,12 +988,20 @@ impl Chats {
             lifecycle: broadcast::Sender::new(256),
             views: Mutex::default(),
             attention,
+            busy: watch::Sender::default(),
+            settling: AtomicUsize::default(),
             usage,
+            cloud,
         }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Change> {
         self.changed.subscribe()
+    }
+
+    /// Whether any Chat is working or has background work.
+    pub fn busy(&self) -> watch::Receiver<bool> {
+        self.busy.subscribe()
     }
 
     pub fn lifecycle(&self) -> broadcast::Receiver<Lifecycle> {
@@ -1011,7 +1024,7 @@ impl Chats {
                 let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
             }
         }
-        self.refresh_attention();
+        self.refresh();
         Ok(())
     }
 
@@ -1037,7 +1050,7 @@ impl Chats {
         }
         let _ = self.changed.send(Change::Chats(to.to_owned()));
         let _ = self.changed.send(Change::Chats(from.to_owned()));
-        self.refresh_attention();
+        self.refresh();
     }
 
     /// Starts a Chat owned by `project` that runs in `cwd`: the Project's own directory, or a Ticket Worktree.
@@ -1050,6 +1063,9 @@ impl Chats {
     }
 
     async fn start(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>, parent: Option<String>, duty: Option<Duty>) -> io::Result<Chat> {
+        if self.cloud.is_some() && !matches!(rig.agent, Agent::ClaudeCode | Agent::Codex) {
+            return Err(io::Error::other("A Cloud Host runs only Claude Code and Codex."));
+        }
         if session.is_some() && self.chats.lock().unwrap().iter().any(|entry| entry.chat.lock().unwrap().agent_session.as_deref() == session) {
             return Err(io::Error::other("Another Chat is still running that conversation."));
         }
@@ -1164,7 +1180,7 @@ impl Chats {
                 Err(error) => eprintln!("cannot restore chat {}: {error}", chat.id),
             }
         }
-        self.refresh_attention();
+        self.refresh();
         Ok(())
     }
 
@@ -1581,7 +1597,7 @@ impl Chats {
         let _ = fs::remove_dir(crate::canvas::dir(&self.data_dir, &id));
         let project_id = entry.chat.lock().unwrap().project_id.clone();
         let _ = self.changed.send(Change::Chats(project_id));
-        self.refresh_attention();
+        self.refresh();
         let _ = self.lifecycle.send(Lifecycle::Ended(Box::new(entry.chat.lock().unwrap().clone())));
     }
 
@@ -1604,10 +1620,10 @@ impl Chats {
         self.save(entry, chat);
         let _ = self.changed.send(Change::Status(id.clone(), status));
         let _ = self.lifecycle.send(Lifecycle::Status(id.clone(), status));
-        self.refresh_attention();
         if status != Status::Working && let Some(item) = item {
             self.attention.call(item, self.showing(&id));
         }
+        self.refresh();
     }
 
     fn resolve(&self, transcript: &mut Transcript, chat_id: &str, request_id: &str) -> bool {
@@ -1910,7 +1926,7 @@ impl Chats {
             let project_id = chat.project_id.clone();
             self.save(&entry, chat);
             let _ = self.changed.send(Change::Chats(project_id));
-            self.refresh_attention();
+            self.refresh();
         }
         entry.driver.close();
     }
@@ -1946,7 +1962,7 @@ impl Chats {
             }
         }
         if viewed {
-            self.refresh_attention();
+            self.refresh();
         }
     }
 
@@ -1977,12 +1993,15 @@ impl Chats {
         if !changed {
             return;
         }
-        self.refresh_attention();
+        if finished { self.settling.fetch_add(1, Ordering::Relaxed); }
+        self.refresh();
         if finished {
             let (chats, entry, turns) = (self.clone(), entry.clone(), transcript.turns);
             tokio::spawn(async move {
                 tokio::time::sleep(RESUMING).await;
                 chats.alert(&entry, turns);
+                chats.settling.fetch_sub(1, Ordering::Relaxed);
+                chats.refresh();
             });
         }
     }
@@ -2000,9 +2019,16 @@ impl Chats {
         self.attention.call(item, self.showing(&id));
     }
 
-    fn refresh_attention(&self) {
+    fn refresh(&self) {
         let items = self.list().iter().filter(|chat| chat.needs_attention()).map(Chat::attention).collect();
         self.attention.publish(Source::Chats, items);
+        self.busy.send_if_modified(|current| {
+            let busy = self.settling.load(Ordering::Relaxed) > 0 || self.chats.lock().unwrap().iter().any(|entry| {
+                let chat = entry.chat.lock().unwrap();
+                chat.status == Status::Working || chat.background
+            });
+            std::mem::replace(current, busy) != busy
+        });
     }
 
     fn get(&self, id: &str) -> Option<Arc<Entry>> {
@@ -2032,6 +2058,7 @@ impl Chat {
 
     fn attention(&self) -> Attention {
         Attention {
+            host: None,
             project_id: self.project_id.clone(),
             tab: Tab::Chat { chat_id: self.id.clone() },
             label: self.rig.clone(),

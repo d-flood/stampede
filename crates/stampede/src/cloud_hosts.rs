@@ -1,14 +1,14 @@
-use std::{collections::HashMap, convert::Infallible, fs, io, path::{Path as FsPath, PathBuf}, time::Duration};
+use std::{collections::HashMap, convert::Infallible, fs, io, path::{Path as FsPath, PathBuf}, sync::{self, Arc}, time::Duration};
 
 use axum::{body::Body, extract::{FromRequestParts, Request, State, WebSocketUpgrade}, http::{StatusCode, header}, response::{IntoResponse, Response}};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::{sync::{Mutex, mpsc, watch}, time::{sleep, timeout}};
+use tokio::{sync::{Mutex, Notify, mpsc, watch}, time::{sleep, timeout}};
 use tokio_tungstenite::{connect_async, tungstenite::{Message, client::IntoClientRequest}};
 use uuid::Uuid;
 
-use crate::{AppState, Creation, browser, cloud::{self, Forward, Service}, git, runs};
+use crate::{AppState, Creation, browser, cloud::{self, Forward, Service}, config, device::Devices, git, runs};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -38,8 +38,18 @@ pub struct CloudHosts {
     file: PathBuf,
     records: watch::Sender<Vec<CloudHost>>,
     creating: Mutex<()>,
-    forwards: Mutex<HashMap<String, Forward>>,
+    reaches: sync::Mutex<HashMap<String, Arc<Reach>>>,
     client: reqwest::Client,
+}
+
+/// How a Cloud Host is reached now, and by whom.
+#[derive(Default)]
+pub struct Reach {
+    pub forward: Mutex<Option<Forward>>,
+    /// The Devices connected to it through the proxy.
+    pub devices: Devices,
+    /// Wakes the Home link when a Device reaches the Cloud Host, if only for one request.
+    pub reached: Notify,
 }
 
 impl CloudHosts {
@@ -62,7 +72,7 @@ impl CloudHosts {
             Err(error) => return Err(error),
         };
         Ok(Self {
-            home_id, file, records: watch::Sender::new(records), creating: Mutex::new(()), forwards: Mutex::default(),
+            home_id, file, records: watch::Sender::new(records), creating: Mutex::new(()), reaches: sync::Mutex::default(),
             client: reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build().map_err(io::Error::other)?,
         })
     }
@@ -89,17 +99,20 @@ impl CloudHosts {
         Ok(())
     }
 
-    async fn port(&self, id: &str) -> Result<u16, String> {
-        let mut forwards = self.forwards.lock().await;
-        if let Some(forward) = forwards.get_mut(id) && forward.running() {
+    pub fn reach(&self, id: &str) -> Arc<Reach> {
+        Arc::clone(self.reaches.lock().unwrap().entry(id.to_owned()).or_default())
+    }
+
+    pub async fn port(&self, id: &str) -> Result<u16, String> {
+        let reach = self.reach(id);
+        let mut held = reach.forward.lock().await;
+        if let Some(forward) = held.as_mut() && forward.running() {
             return Ok(forward.port);
         }
-        forwards.remove(id);
+        *held = None;
         let remote_port = remote_port(id).await?;
         let forward = cloud::forward(id, remote_port).await?;
-        let port = forward.port;
-        forwards.insert(id.to_owned(), forward);
-        Ok(port)
+        Ok(held.insert(forward).port)
     }
 }
 
@@ -154,6 +167,8 @@ async fn provision(state: &AppState, project_id: &str, creation: Creation, servi
         let binary = format!("{home}/.local/bin/stampede");
         cloud::push(&id, &std::env::current_exe().map_err(|error| error.to_string())?, FsPath::new(&binary)).await?;
         remote(&id, &["chmod", "+x", &binary], None).await?;
+        let shared = config::shared(&state.config_path).map_err(|error| error.to_string())?;
+        remote(&id, &["sh", "-c", "mkdir -p \"$HOME/.config/stampede\" && cat > \"$HOME/.config/stampede/config.toml\""], Some(shared.as_bytes())).await?;
         remote(&id, &["sprite-env", "services", "create", "stampede", "--cmd", &binary, "--args", "serve,--cloud,sprite,--port,0"], None).await?;
         step("repository");
         let path = format!("{home}/{name}");
@@ -204,10 +219,9 @@ async fn provision(state: &AppState, project_id: &str, creation: Creation, servi
         let path = remote(&id, &["git", "-C", &path, "rev-parse", "--show-toplevel"], None).await?;
         let project = open_project(forward.port, &path).await?;
         let host = CloudHost { id: id.clone(), service, parent: parent.clone(), branch: branch.to_owned(), existing, project, path, setup: Setup::Ready, tip: Some(tip), in_sync: true };
-        let mut forwards = state.cloud_hosts.forwards.lock().await;
-        forwards.insert(id.clone(), forward);
+        *state.cloud_hosts.reach(&id).forward.lock().await = Some(forward);
         if let Err(error) = state.cloud_hosts.record(host.clone()) {
-            forwards.remove(&id);
+            state.cloud_hosts.reaches.lock().unwrap().remove(&id);
             return Err(error);
         }
         Ok(host)
@@ -244,6 +258,7 @@ pub async fn proxy(State(state): State<AppState>, request: Request) -> Result<Re
         return Err((StatusCode::NOT_FOUND, format!("Unknown Cloud Host {id}")));
     }
     let port = state.cloud_hosts.port(id).await.map_err(bad_gateway)?;
+    let reach = state.cloud_hosts.reach(id);
     let target = format!("127.0.0.1:{port}/{rest}");
     let (mut parts, body) = request.into_parts();
     if parts.headers.get(header::UPGRADE).is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket")) {
@@ -256,12 +271,18 @@ pub async fn proxy(State(state): State<AppState>, request: Request) -> Result<Re
         }
         let (upstream, response) = timeout(Duration::from_secs(10), connect_async(request)).await.map_err(|error| bad_gateway(error.to_string()))?.map_err(|error| bad_gateway(error.to_string()))?;
         let protocol = response.headers().get(header::SEC_WEBSOCKET_PROTOCOL).and_then(|value| value.to_str().ok());
-        return Ok(upgrade.protocols(protocol.into_iter().map(str::to_owned)).on_upgrade(move |socket| browser::bridge(socket, upstream)));
+        let connected = reach.devices.connect();
+        reach.reached.notify_one();
+        return Ok(upgrade.protocols(protocol.into_iter().map(str::to_owned)).on_upgrade(async move |socket| {
+            let _connected = connected;
+            browser::bridge(socket, upstream).await;
+        }));
     }
     let mut headers = parts.headers;
     browser::clean(&mut headers);
     headers.remove(header::HOST);
     let response = state.cloud_hosts.client.request(parts.method, format!("http://{target}")).headers(headers).body(reqwest::Body::wrap_stream(body.into_data_stream())).send().await.map_err(|error| bad_gateway(error.to_string()))?;
+    reach.reached.notify_one();
     let status = response.status();
     let mut headers = response.headers().clone();
     browser::clean(&mut headers);

@@ -13,12 +13,12 @@
 		{ id: 'epics', label: 'Epics' }
 	];
 
-	export function available(git?: Git) {
-		return sections.filter(({ id }) => id === 'files' || git?.isRepo);
+	export function available(git?: Git, host?: string) {
+		return sections.filter(({ id }) => id === 'files' || (git?.isRepo && !(host && id === 'epics')));
 	}
 
-	export function showing(section: Section, git?: Git) {
-		return available(git).find(({ id }) => id === section) ?? sections[0];
+	export function showing(section: Section, git?: Git, host?: string) {
+		return available(git, host).find(({ id }) => id === section) ?? sections[0];
 	}
 
 	const moved: Record<string, Section> = { changes: 'git', history: 'git', search: 'files' };
@@ -99,8 +99,8 @@
 	let switching = $state(false);
 	let files = $state<Files>();
 	const Picker = $derived(picker());
-	const shown = $derived(available(git));
-	const current = $derived(showing(section, git).id);
+	const shown = $derived(available(git, project?.host));
+	const current = $derived(showing(section, git, project?.host).id);
 	const id = $props.id();
 	let viewport = $state(window.innerWidth);
 	let width = $state(280);

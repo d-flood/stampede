@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{io::{self, AsyncWriteExt}, net::TcpStream, process::{Child, Command}, time::{Instant, sleep}};
 
+pub(crate) const HOLDS_ONE_WORKTREE: &str = "A Cloud Host holds one worktree and nothing else.";
+pub(crate) const SETTINGS_FROM_HOME: &str = "Settings come from the Home Host.";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Service {

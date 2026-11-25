@@ -193,6 +193,33 @@ async fn a_cloud_worktree_is_created_and_served_on_its_own_host() {
     assert!(remote_home.join(format!(".local/share/stampede/chats/{chat_id}.json")).exists());
     control(&mut cloud_socket, json!({ "type": "chat.close", "chatId": chat_id })).await;
 
+    let refusal = "A Cloud Host holds one worktree and nothing else.";
+    let cloud_http = format!("{home_http}/cloud/{host}/api");
+    let projects = format!("{cloud_http}/projects/{}", project.as_str().unwrap());
+    let client = reqwest::Client::new();
+    for request in [
+        client.post(format!("{projects}/worktrees")).body(r#"{"branch":"nested","from":"HEAD"}"#),
+        client.get(format!("{projects}/prs")),
+        client.get(format!("{projects}/pr-reviews")),
+        client.post(format!("{projects}/pr-reviews/1/worktree")),
+        client.post(format!("{projects}/pr-reviews/1/drafts")).body("{}"),
+    ] {
+        let response = request.header("content-type", "application/json").send().await.unwrap();
+        assert_eq!((response.status().as_u16(), response.text().await.unwrap().as_str()), (403, refusal));
+    }
+    let recorded = client.post(format!("{cloud_http}/epics/none")).header("content-type", "application/json").body(r#"{"kind":"epic.archived"}"#).send().await.unwrap();
+    assert_eq!((recorded.status().as_u16(), recorded.text().await.unwrap().as_str()), (400, refusal));
+    let mut add = Command::new(env!("CARGO_BIN_EXE_stampede"));
+    add.args(["epic", "add", "none", "--title", "None", "--brief", "committed", "--data-dir"]).arg(remote_home.join(".local/share/stampede")).current_dir(&path);
+    let added = add.output().await.unwrap();
+    assert!(!added.status.success() && String::from_utf8_lossy(&added.stderr).contains(refusal), "{added:?}");
+
+    control(&mut cloud_socket, json!({ "type": "chat.resume", "projectId": project, "agent": "antigravity", "sessionId": "session" })).await;
+    control(&mut cloud_socket, json!({ "type": "chat.create", "projectId": project, "rig": "Claude Code" })).await;
+    let chat = next_control(&mut cloud_socket, "chat.created").await["chat"].clone();
+    assert_eq!(chat["agent"], "claude-code");
+    control(&mut cloud_socket, json!({ "type": "chat.move", "chatId": chat["id"], "branch": "nested" })).await;
+    assert_eq!(next_control(&mut cloud_socket, "chat.move.error").await["error"], refusal);
     let url = format!("{home_http}/cloud/{host}/api/projects/{}/git", project.as_str().unwrap());
     let get = || async { reqwest::get(&url).await.unwrap() };
     assert_eq!(serde_json::from_str::<Value>(&get().await.text().await.unwrap()).unwrap()["branch"], "feat/cloud");
@@ -200,15 +227,88 @@ async fn a_cloud_worktree_is_created_and_served_on_its_own_host() {
     drop(cloud_socket);
     drop(view);
     drop(socket);
+    // Fail the forward before the restarted Home Host links the Cloud Host and holds one.
+    fs::write(root.join("sprite-fail"), "proxy\nFly refused the forward\n").unwrap();
     server.restart().await;
     let (mut socket, _) = connect_async(&home_ws).await.unwrap();
     control(&mut socket, json!({ "type": "projects.list" })).await;
     assert!(next_control(&mut socket, "projects.changed").await["projects"].as_array().unwrap().contains(&entry));
-    fs::write(root.join("sprite-fail"), "proxy\nFly refused the forward\n").unwrap();
     let failure = get().await;
     assert_eq!(failure.status(), 502);
     assert_eq!(failure.text().await.unwrap(), "Fly refused the forward");
     fs::remove_file(root.join("sprite-fail")).unwrap();
     assert_eq!(get().await.status(), 200);
     assert!(sprite(&["destroy", "--force", host]).status().await.unwrap().success());
+}
+
+#[tokio::test]
+async fn the_home_host_links_each_cloud_host_for_its_settings_attention_and_push() {
+    use crate::common::{control, next_control, pushed, subscribe};
+    use tokio_tungstenite::{connect_async, tungstenite::Message};
+    use futures_util::StreamExt;
+
+    let gates = tempfile::tempdir().unwrap();
+    let fixture = format!("{}/tests/fixtures/chats/claude-code/background-shell-idle.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
+    let config = format!("[[rig]]\nname = \"Gated\"\nagent = \"claude-code\"\nenv = {{ STAMPEDE_FAKE_FIXTURE = {fixture:?}, STAMPEDE_FAKE_GATES = {:?} }}\n", gates.path());
+    let mut server = Server::with_config("cloud-link-", &config).await;
+    let root = server.root.path().to_owned();
+    fs::write(root.join("sprite.json"), r#"{"organization":"test-org"}"#).unwrap();
+    let repo = init(&root, "repo");
+    git(&repo, &["commit", "--allow-empty", "-m", "Starting commit"]);
+    let mut pushes = subscribe(&server, &["away"]).await;
+    let home_ws = format!("ws://127.0.0.1:{}/ws", server.port);
+    let home_http = format!("http://127.0.0.1:{}", server.port);
+    let (mut socket, _) = connect_async(&home_ws).await.unwrap();
+    control(&mut socket, json!({ "type": "project.open", "path": repo })).await;
+    let parent = next_control(&mut socket, "project.opened").await["projectId"].as_str().unwrap().to_owned();
+    drop(socket);
+    let client = reqwest::Client::new();
+    let created = client.post(format!("{home_http}/api/projects/{parent}/worktrees")).header("content-type", "application/json")
+        .body(json!({ "cloud": "sprite", "branch": "feat/link", "from": "HEAD" }).to_string()).send().await.unwrap().text().await.unwrap();
+    let created: Value = serde_json::from_str(created.lines().last().unwrap()).unwrap();
+    let (host, project) = (created["host"].as_str().unwrap_or_else(|| panic!("{created}")), &created["projectId"]);
+    let cloud_http = format!("{home_http}/cloud/{host}/api");
+
+    let rig = json!({ "name": "Linked", "agent": "codex", "mode": "full-access" });
+    let saved = client.put(format!("{home_http}/api/rigs")).header("content-type", "application/json").body(rig.to_string()).send().await.unwrap();
+    assert_eq!(saved.status(), 200);
+    timeout(Duration::from_secs(20), async {
+        loop {
+            let rigs: Value = serde_json::from_str(&client.get(format!("{cloud_http}/rigs")).send().await.unwrap().text().await.unwrap()).unwrap();
+            let names: Vec<_> = rigs.as_array().unwrap().iter().map(|rig| rig["name"].clone()).collect();
+            if names == [json!("Gated"), json!("Linked")] { break; }
+            sleep(Duration::from_millis(100)).await;
+        }
+    }).await.expect("the Home Host's Rigs never reached the Cloud Host");
+    let refused = client.put(format!("{cloud_http}/theme")).header("content-type", "application/json").body(r#""Shale""#).send().await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap().as_str()), (403, "Settings come from the Home Host."));
+
+    let (mut cloud, _) = connect_async(format!("ws://127.0.0.1:{}/cloud/{host}/ws", server.port)).await.unwrap();
+    control(&mut cloud, json!({ "type": "chat.create", "projectId": project, "rig": "Gated" })).await;
+    let chat_id = next_control(&mut cloud, "chat.created").await["chat"]["id"].as_str().unwrap().to_owned();
+    control(&mut cloud, json!({ "type": "chat.send", "chatId": chat_id, "text": "Greet the reader" })).await;
+    let gate = gates.path().join("shell");
+    timeout(Duration::from_secs(20), async { while !gate.exists() { sleep(Duration::from_millis(20)).await; } }).await.unwrap();
+    drop(cloud);
+    sleep(Duration::from_secs(1)).await;
+    fs::remove_file(&gate).unwrap();
+    let item = json!({ "host": host, "projectId": project, "chatId": chat_id, "label": "Gated", "status": "done" });
+    assert_eq!(pushed(&mut pushes).await, ("away".into(), item.clone()));
+    let listed = || async {
+        let (mut socket, _) = connect_async(&home_ws).await.unwrap();
+        control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+        timeout(Duration::from_secs(20), async {
+            loop {
+                let Message::Text(text) = socket.next().await.unwrap().unwrap() else { continue };
+                let message: Value = serde_json::from_str(&text).unwrap();
+                if message["type"] == "attention.changed" && message["items"] == json!([item]) { break; }
+            }
+        }).await.expect("the Home Host never listed the Cloud Host's Chat");
+    };
+    listed().await;
+    sleep(Duration::from_secs(2)).await;
+    assert!(pushes.try_recv().is_err(), "the Chat was announced twice");
+
+    server.restart().await;
+    listed().await;
 }

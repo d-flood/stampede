@@ -1,5 +1,5 @@
 import { ago, logos } from '#lib/chat/sessions.ts';
-import type { Rig } from '#lib/config.svelte.ts';
+import { runsOn, type Rig } from '#lib/config.svelte.ts';
 import type { Session, Setting, Settings } from '#lib/device.svelte.ts';
 import type { Component } from 'svelte';
 import FileCode from '~icons/ph/file-code';
@@ -21,10 +21,10 @@ type Actions = {
 	search(): void;
 };
 
-export function tabItems(rigs: Rig[], sessions: Session[], actions: Actions): TabItems {
+export function tabItems(rigs: Rig[], sessions: Session[], actions: Actions, host?: string): TabItems {
 	const recent = sessions.slice(0, RECENT);
 	return {
-		rigs: rigs.map((rig, index) => ({
+		rigs: rigs.map((rig, index): RigItem => ({
 			rig,
 			label: rig.name,
 			icon: logos[rig.agent],
@@ -32,7 +32,7 @@ export function tabItems(rigs: Rig[], sessions: Session[], actions: Actions): Ta
 			model: [rig.model, rig.effort].filter(Boolean).join(', '),
 			onselect: () => actions.launch(rig),
 			onprompt: (text, settings) => actions.launch(rig, text, settings)
-		})),
+		})).filter(({ rig }) => runsOn(host, rig.agent)),
 		tools: [
 			{ label: 'Terminal', shortcut: 'Ctrl+Shift+T', icon: TerminalWindow, onselect: actions.terminal },
 			{ label: 'Browser', icon: Globe, onselect: actions.browser },

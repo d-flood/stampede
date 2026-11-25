@@ -56,7 +56,7 @@
 		...(trunk
 			? [{ label: `Pull ${trunk.branch}`, icon: ArrowDown, hint: `${trunk.behind} new`, disabled: !!progress[project.id], onselect: () => perform(project.id, 'trunk', () => pullTrunk(project.id)) }]
 			: []),
-		...(root ? [{ label: 'New worktree…', onselect: () => onworktree(project) }] : []),
+		...(root && !project.host ? [{ label: 'New worktree…', onselect: () => onworktree(project) }] : []),
 		{ label: 'Close', onselect: () => onclose(project.id) }
 	]} onopen={() => onmenu(project.id)}>
 		{#snippet trigger(props)}

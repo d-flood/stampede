@@ -1,5 +1,6 @@
 import type { ClientMessage, Device, ServerMessage } from '#lib/device.svelte.ts';
 import type { Session } from '#lib/editor/lsp-editor.ts';
+import { hostOf } from '#lib/host.ts';
 import type { Compartment } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 
@@ -15,19 +16,19 @@ export class LanguageServers {
 	switches = $state<Record<string, boolean>>({});
 	states = $state<Record<string, State>>({});
 	sessions = new Map<string, Session>();
-	#device: Device;
+	#device: (projectId: string) => Device;
 	#root: (projectId: string) => string | undefined;
 	#open: (projectId: string, path: string) => void;
 	#waiting = new Map<string, (view: EditorView | null) => void>();
 
-	constructor(device: Device, root: (projectId: string) => string | undefined, open: (projectId: string, path: string) => void) {
+	constructor(device: (projectId: string) => Device, root: (projectId: string) => string | undefined, open: (projectId: string, path: string) => void) {
 		this.#device = device;
 		this.#root = root;
 		this.#open = open;
 	}
 
-	send(message: ClientMessage) {
-		this.#device.send(message);
+	send(projectId: string, message: ClientMessage) {
+		this.#device(projectId).send(message);
 	}
 
 	root(projectId: string) {
@@ -35,19 +36,19 @@ export class LanguageServers {
 	}
 
 	toggle(projectId: string) {
-		this.send({ type: 'lsp.switch', projectId, on: !this.switches[projectId] });
+		this.send(projectId, { type: 'lsp.switch', projectId, on: !this.switches[projectId] });
 	}
 
-	message(message: ServerMessage) {
+	message(message: ServerMessage, host?: string) {
 		switch (message.type) {
 			case 'hello':
-				for (const session of this.sessions.values()) session.update('off');
+				for (const session of this.sessions.values()) if (hostOf(session.projectId) === host) session.update('off');
 				break;
 			case 'lsp.switch':
 				this.switches[message.projectId] = message.on;
 				for (const session of this.sessions.values()) {
 					if (message.on && session.projectId === message.projectId && session.shown) {
-						this.send({ type: 'lsp.open', channel: session.channel });
+						this.send(session.projectId, { type: 'lsp.open', channel: session.channel });
 					}
 				}
 				break;

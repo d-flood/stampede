@@ -31,6 +31,7 @@ use crate::{
     attention::{Attention, Feed},
     canvas::Canvases,
     chats::{self, Builtin, Chats},
+    cloud::{self, Service},
     cloud_hosts::CloudHosts,
     config::{Agent, Config},
     epics::Epics,
@@ -53,8 +54,8 @@ const QUEUED_BYTES: u32 = 64 << 20;
 const QUEUED_OUTPUT: u32 = 1 << 20;
 const BATCHED_OUTPUT: usize = 64 << 10;
 const BRIEF_OUTPUT: usize = 2 << 10;
-const PING_EVERY: Duration = Duration::from_secs(20);
-const SILENT_FOR: Duration = Duration::from_secs(60);
+pub(crate) const PING_EVERY: Duration = Duration::from_secs(20);
+pub(crate) const SILENT_FOR: Duration = Duration::from_secs(60);
 
 /// Choices made on the Launchpad that override the Rig for the Chat it starts.
 #[derive(Deserialize, Default)]
@@ -176,14 +177,14 @@ impl Devices {
         self.0.subscribe()
     }
 
-    fn connect(&self) -> Connected {
+    pub fn connect(&self) -> Connected {
         self.0.send_modify(|count| *count += 1);
         Connected(self.clone())
     }
 }
 
 /// Counts one Device as connected until it drops, however its connection ends.
-struct Connected(Devices);
+pub struct Connected(Devices);
 
 impl Drop for Connected {
     fn drop(&mut self) {
@@ -192,6 +193,7 @@ impl Drop for Connected {
 }
 
 struct Device {
+    cloud: Option<Service>,
     id: String,
     browser: Option<String>,
     connection: Uuid,
@@ -223,7 +225,7 @@ struct Device {
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, chats, attention, usage, projects, cloud_hosts, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
+    AppState { cloud, terminals, chats, attention, usage, projects, cloud_hosts, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
 ) {
     let _connected = devices.connect();
     let (mut sink, mut stream) = socket.split();
@@ -253,6 +255,7 @@ async fn connect(
     let mut epic_changes = epics.subscribe();
     let mut review_changes = pr_reviews.subscribe();
     let mut device = Device {
+        cloud,
         id: Uuid::new_v4().to_string(),
         browser: None,
         connection: Uuid::new_v4(),
@@ -567,6 +570,9 @@ impl Device {
                         Err(error) => send(&outgoing, json!({ "type": "chat.handoff.error", "chatId": chat_id, "error": error.to_string() })),
                     }
                 });
+            }
+            Control::MoveChat { chat_id, .. } if self.cloud.is_some() => {
+                send(&self.outgoing, json!({ "type": "chat.move.error", "chatId": chat_id, "error": cloud::HOLDS_ONE_WORKTREE }));
             }
             Control::MoveChat { chat_id, branch } => {
                 let runs = Arc::clone(&self.runs);
