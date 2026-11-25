@@ -35,6 +35,9 @@
 	/* Zero specificity lets callers tint an icon, such as a running Shell. */
 	:where(.chip) :global(svg) {
 		flex: none;
+	}
+
+	:where(.chip) :global(svg:not([color])) {
 		color: var(--muted-fg);
 	}
 

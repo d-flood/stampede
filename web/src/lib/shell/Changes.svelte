@@ -385,7 +385,7 @@
 				/>
 				<div class="buttons">
 					{#if elapsed >= 2}<span class="elapsed" title="Time spent committing">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}</span>{/if}
-					<Button variant="ghost" title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || committing || !git.staged.length} onclick={draftMessage}>
+					<Button variant="ghost" title={git.staged.length ? `Draft a message with ${commitRig() ?? 'the commit Rig'}` : 'Stage changes to draft a message'} disabled={drafting || committing || !git.staged.length} onclick={draftMessage}>
 						<Sparkle />{drafting ? 'Drafting…' : 'Draft'}
 					</Button>
 					<Button variant="primary" title="Commit (Ctrl+Enter)" disabled={!committable && !committing} busy={committing} onclick={commitStaged}>

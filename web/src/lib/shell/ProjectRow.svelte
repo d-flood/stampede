@@ -199,7 +199,7 @@
 		touch-action: none;
 	}
 
-	.compact .project:not(.focused):has(:global(.monogram)) {
+	.compact .project:has(:global(.monogram)) {
 		border-color: color-mix(in oklab, var(--hue) 38%, var(--color-bg));
 	}
 
@@ -244,6 +244,11 @@
 	.compact .worktree.focused .tile::before {
 		opacity: 1;
 		scale: 1;
+	}
+
+	.compact .project.focused {
+		--tile-base: var(--surface-1);
+		background: none;
 	}
 
 	.compact .project.focused .square {
