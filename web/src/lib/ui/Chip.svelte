@@ -20,9 +20,9 @@
 		max-width: 100%;
 		min-height: var(--target-min);
 		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--border);
+		border: var(--border-width) solid transparent;
 		border-radius: var(--radius-pill);
-		background: var(--surface-1);
+		background: var(--surface-2);
 		color: var(--color-fg);
 		font: inherit;
 		font-size: var(--font-size-sm);
@@ -61,8 +61,13 @@
 
 	button:hover:not(:disabled),
 	button[data-state='open'] {
-		background: var(--hover);
+		background: var(--surface-3);
 		color: var(--color-fg);
+	}
+
+	button.ghost:hover:not(:disabled),
+	button.ghost[data-state='open'] {
+		background: var(--hover);
 	}
 
 	button:focus-visible {

@@ -28,7 +28,6 @@
 		inset: calc((var(--target-min) - var(--control-min)) / 2 - var(--space-1)) 0;
 		border-radius: calc(var(--radius-md) + var(--space-1));
 		background: var(--surface-2);
-		box-shadow: inset 0 0 0 var(--border-width) var(--border);
 		content: '';
 	}
 
@@ -96,6 +95,6 @@
 
 	[aria-checked='true'] > span {
 		background: var(--raised);
-		box-shadow: 0 0 0 var(--border-width) var(--border);
+		box-shadow: var(--shadow-lift);
 	}
 </style>
