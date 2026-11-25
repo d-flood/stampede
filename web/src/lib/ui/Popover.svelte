@@ -46,7 +46,8 @@
 		padding: var(--space-3) var(--space-4);
 		border: var(--border-width) solid var(--border-strong);
 		border-radius: var(--radius-lg);
-		background: var(--surface-2);
+		--hover: color-mix(in lab, var(--float) 90%, var(--color-fg));
+		background: var(--float);
 		box-shadow: var(--shadow-float);
 		color: var(--color-fg);
 		font-family: var(--font-ui);

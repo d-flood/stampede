@@ -411,7 +411,7 @@
 		min-width: 0;
 		padding: var(--space-4) var(--space-6) var(--space-6);
 		overflow: auto;
-		mask-image: linear-gradient(#000 calc(100% - var(--space-6)), transparent);
+		mask-image: linear-gradient(#000 calc(100% - 2 * var(--space-6)), transparent);
 	}
 
 	h3 {

@@ -93,7 +93,7 @@
 
 	.percent {
 		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
+		font-size: calc(var(--font-size-sm) - 1px);
 		letter-spacing: -0.06em;
 		font-variant-numeric: tabular-nums;
 	}
