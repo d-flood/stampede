@@ -22,6 +22,9 @@
 			: directories
 	);
 
+	const parents = $derived(new Set(matches.map((path) => path.slice(0, path.lastIndexOf('/')))));
+	const shared = $derived(parents.size === 1 && matches.length > 1 ? [...parents][0].replace(/^(?:\/home|\/Users)\/[^/]+/, '~') : undefined);
+
 	function name(path: string) {
 		return path.slice(path.lastIndexOf('/') + 1);
 	}
@@ -58,14 +61,14 @@
 							{/snippet}
 						</Command.Item>
 					{/if}
-					{#if !typed && matches.length}<ListLabel element="p">Folders</ListLabel>{/if}
+					{#if !typed && matches.length}<ListLabel element="p">{#if shared}<span class="shared">Folders in <bdi>{shared}</bdi></span>{:else}Folders{/if}</ListLabel>{/if}
 					{#each matches as path (path)}
 						{@const cut = path.lastIndexOf('/') + 1}
 						<Command.Item value={path} onSelect={() => open(path)}>
 							{#snippet child({ props })}
 								<ListItem {...props} aria-label={path}>
 									<FolderSimple aria-hidden="true" />
-									<span class="folder"><span class="parent"><bdi>{path.slice(0, cut)}</bdi></span><span class="name">{path.slice(cut)}</span></span>
+									<span class="folder">{#if !shared}<span class="parent"><bdi>{path.slice(0, cut)}</bdi></span>{/if}<span class="name">{path.slice(cut)}</span></span>
 								</ListItem>
 							{/snippet}
 						</Command.Item>
@@ -101,6 +104,13 @@
 
 	.parent {
 		color: var(--muted-fg);
+	}
+
+	.shared {
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	/* Reverses visually so the folder name leads, while the path stays in reading order. */

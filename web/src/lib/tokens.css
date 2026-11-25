@@ -68,6 +68,8 @@
 	/* The window ground and side chrome: darker than content in dark schemes so content panes read as raised. */
 	--canvas: var(--surface-2);
 	--chrome: var(--surface-1);
+	/* A control lifted off a surface-2 track: lighter than the track in either scheme. */
+	--raised: var(--color-bg);
 
 	--accent: var(--ansi-4);
 	--selected-bg: color-mix(in oklab, var(--accent) 14%, transparent);
@@ -158,6 +160,7 @@
 	--surface-3: color-mix(in lab, var(--color-bg) 86%, var(--color-fg));
 	--canvas: rgb(from var(--color-bg) calc(r * 0.72) calc(g * 0.72) calc(b * 0.72));
 	--chrome: var(--canvas);
+	--raised: var(--surface-3);
 }
 
 @media (pointer: coarse) {

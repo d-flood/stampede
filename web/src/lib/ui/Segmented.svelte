@@ -95,7 +95,7 @@
 	}
 
 	[aria-checked='true'] > span {
-		background: var(--color-bg);
+		background: var(--raised);
 		box-shadow: 0 0 0 var(--border-width) var(--border);
 	}
 </style>

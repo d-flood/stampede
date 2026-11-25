@@ -1825,7 +1825,10 @@
 
 	/* Marks which side of a Split has focus. */
 	.current :global([role='tab'][aria-selected='true']) {
-		box-shadow: inset 0 calc(2 * var(--border-width)) 0 var(--accent);
+		background-image: linear-gradient(var(--accent), var(--accent));
+		background-position: top center;
+		background-repeat: no-repeat;
+		background-size: calc(100% - 2 * var(--radius-lg)) calc(2 * var(--border-width));
 	}
 
 	.bottom [role='tablist'] {
