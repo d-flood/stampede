@@ -55,9 +55,10 @@
 		background: var(--hover);
 	}
 
+	/* Hover stays a step weaker than the current item's fill, so the two never read as two selections. */
 	@media (hover: hover) {
 		.hoverable:hover:not(:disabled) {
-			background: var(--hover);
+			background: color-mix(in oklab, var(--hover) 55%, transparent);
 		}
 	}
 

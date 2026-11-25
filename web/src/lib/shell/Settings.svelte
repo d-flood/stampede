@@ -344,7 +344,7 @@
 					<section aria-label="Rigs">
 						{#if !editingRig}
 							<h3>Rigs</h3>
-							<p class="lede">Starting settings for new chats. Order sets the Ctrl+Shift shortcuts. {@render scope(true)}</p>
+							<p class="lede">Starting settings for new chats. Order sets the Ctrl ⇧ shortcuts. {@render scope(true)}</p>
 						{/if}
 						{#if open}<RigEditor bind:editing={editingRig} />{/if}
 					</section>
