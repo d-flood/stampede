@@ -58,13 +58,16 @@
 	--color-editor-selection: var(--light-editor-selection);
 	--muted-fg: var(--light-muted-fg);
 
-	/* Surfaces use oklab so they stay near black on a pure black background; lab keeps borders and hover visible there. Both spaces agree on other backgrounds. */
-	--surface-1: color-mix(in oklab, var(--color-bg) 96%, var(--color-fg));
-	--surface-2: color-mix(in oklab, var(--color-bg) 92%, var(--color-fg));
-	--surface-3: color-mix(in oklab, var(--color-bg) 86%, var(--color-fg));
-	--border: color-mix(in lab, var(--color-bg) 86%, var(--color-fg));
+	/* Lab keeps surfaces, borders and hover visibly layered on a pure black background, where oklab collapses them to black. */
+	--surface-1: color-mix(in lab, var(--color-bg) 95%, var(--color-fg));
+	--surface-2: color-mix(in lab, var(--color-bg) 90%, var(--color-fg));
+	--surface-3: color-mix(in lab, var(--color-bg) 84%, var(--color-fg));
+	--border: color-mix(in lab, var(--color-bg) 88%, var(--color-fg));
 	--border-strong: color-mix(in lab, var(--color-bg) 76%, var(--color-fg));
 	--hover: color-mix(in lab, var(--color-bg) 90%, var(--color-fg));
+	/* The window ground and side chrome: darker than content in dark schemes so content panes read as raised. */
+	--canvas: var(--surface-2);
+	--chrome: var(--surface-1);
 
 	--accent: var(--ansi-4);
 	--selected-bg: color-mix(in oklab, var(--accent) 14%, transparent);
@@ -105,22 +108,22 @@
 	--space-3: 9px;
 	--space-4: 12px;
 	--space-6: 18px;
-	--font-size-base: var(--ui-size, 16px);
-	--font-size-chat: var(--chat-size, 16px);
-	--font-size-code: var(--code-size, 16px);
+	--font-size-base: var(--ui-size, 13px);
+	--font-size-chat: var(--chat-size, 15px);
+	--font-size-code: var(--code-size, 13px);
 	--font-size-sm: calc(var(--font-size-base) - 2px);
 	--font-size-md: var(--font-size-base);
 	--font-size-lg: calc(var(--font-size-base) + 2px);
 	--border-width: 1px;
 	--shadow-lift: 0 1px 2px color-mix(in oklab, var(--ansi-0) 28%, transparent);
 	--shadow-float: 0 1px 2px color-mix(in oklab, var(--ansi-0) 30%, transparent),
-		0 14px 36px -12px color-mix(in oklab, var(--ansi-0) 55%, transparent);
+		0 10px 28px -12px color-mix(in oklab, var(--ansi-0) 45%, transparent);
 	--gutter: 6px;
 	--dur-fast: 100ms;
 	--dur-med: 200ms;
 	--ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
 	--pulse: infinite;
-	--target-min: 26px;
+	--target-min: 24px;
 	--control-min: 20px;
 	--tile: calc(var(--target-min) + 10px);
 }
@@ -149,6 +152,11 @@
 	--color-selection-fg: var(--dark-selection-fg);
 	--color-editor-selection: var(--dark-editor-selection);
 	--muted-fg: var(--dark-muted-fg);
+	--surface-1: color-mix(in lab, var(--color-bg) 96%, var(--color-fg));
+	--surface-2: color-mix(in lab, var(--color-bg) 92%, var(--color-fg));
+	--surface-3: color-mix(in lab, var(--color-bg) 86%, var(--color-fg));
+	--canvas: rgb(from var(--color-bg) calc(r * 0.72) calc(g * 0.72) calc(b * 0.72));
+	--chrome: var(--canvas);
 }
 
 @media (pointer: coarse) {
@@ -160,7 +168,9 @@
 
 @media (pointer: coarse) and (max-width: 767px) {
 	:root {
+		--font-size-base: var(--ui-size, 16px);
 		--font-size-chat: var(--chat-size, 17px);
+		--font-size-code: var(--code-size, 16px);
 	}
 }
 

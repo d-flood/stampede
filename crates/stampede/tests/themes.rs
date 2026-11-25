@@ -90,7 +90,7 @@ async fn stampede_themes_are_listed_and_resolve_while_catalog_themes_stay_intact
     for (name, background, accent) in [
         ("Vellum", "#f2ede5", "#2f4e9e"),
         ("Walnut", "#1e1915", "#93aaf0"),
-        ("Limestone", "#eff2f3", "#0c6a70"),
+        ("Limestone", "#f9fafa", "#0c6a70"),
         ("Shale", "#141a1f", "#6cc3be"),
         ("Jet", "#000000", "#7fb2ff"),
     ] {
@@ -106,16 +106,16 @@ async fn stampede_themes_are_listed_and_resolve_while_catalog_themes_stay_intact
 }
 
 #[tokio::test]
-async fn a_missing_theme_defaults_to_limestone_and_jet_and_a_configured_one_is_kept() {
+async fn a_missing_theme_defaults_to_limestone_and_shale_and_a_configured_one_is_kept() {
     let original = "# no theme\nrig = []\n[editor]\nkeymap = 'vim'\n";
     let mut server = Server::with_config("themes-default-", original).await;
     let client = reqwest::Client::new();
     let api = format!("http://127.0.0.1:{}/api", server.port);
     let theme = get(&client, &format!("{api}/theme")).await;
     assert_eq!(theme["light"]["name"], "Limestone");
-    assert_eq!(theme["light"]["background"], "#eff2f3");
-    assert_eq!(theme["dark"]["name"], "Jet");
-    assert_eq!(theme["dark"]["background"], "#000000");
+    assert_eq!(theme["light"]["background"], "#f9fafa");
+    assert_eq!(theme["dark"]["name"], "Shale");
+    assert_eq!(theme["dark"]["background"], "#141a1f");
     let config = server.root.path().join("config.toml");
     assert_eq!(fs::read_to_string(&config).unwrap(), original);
 

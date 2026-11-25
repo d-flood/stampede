@@ -13,7 +13,7 @@ struct Stampede;
 #[folder = "vendor/ghostty-themes/themes"]
 struct Bundled;
 
-const DEFAULT: &str = "light:Limestone,dark:Jet";
+const DEFAULT: &str = "light:Limestone,dark:Shale";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,7 +60,7 @@ impl Default for Theme {
             let palette = parse(std::str::from_utf8(&file.data).unwrap()).unwrap();
             Palette { name: Some(name.to_owned()), ..palette }
         };
-        Self { name: Some(DEFAULT.to_owned()), light: own("Limestone"), dark: own("Jet") }
+        Self { name: Some(DEFAULT.to_owned()), light: own("Limestone"), dark: own("Shale") }
     }
 }
 
