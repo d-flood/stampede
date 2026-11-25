@@ -1,5 +1,5 @@
 import { Chunk, getChunks, getOriginalDoc } from '@codemirror/merge';
-import { Prec, StateEffect, StateField, type ChangeDesc, type Text } from '@codemirror/state';
+import { Prec, RangeSetBuilder, StateEffect, StateField, type ChangeDesc, type EditorState, type RangeSet, type Text } from '@codemirror/state';
 import {
 	Decoration,
 	EditorView,
@@ -7,6 +7,7 @@ import {
 	ViewPlugin,
 	WidgetType,
 	gutter,
+	gutterLineClass,
 	keymap,
 	type ViewUpdate
 } from '@codemirror/view';
@@ -287,4 +288,32 @@ export function originalNumbers() {
 			lineMarkerChange: (update) => update.docChanged || update.transactions.some((transaction) => transaction.effects.length > 0)
 		})
 	);
+}
+
+class ChangedRow extends GutterMarker {
+	elementClass = 'cm-diffChangedRow';
+}
+
+const changedRow = new ChangedRow();
+
+/** Tints every gutter cell on a changed line, so the row reads as one band with its code. */
+export function diffRows(side: 'a' | 'b') {
+	const rows = (state: EditorState) => {
+		const builder = new RangeSetBuilder<GutterMarker>();
+		const doc = state.doc;
+		for (const chunk of getChunks(state)?.chunks ?? []) {
+			const [from, to] = side === 'a' ? [chunk.fromA, chunk.toA] : [chunk.fromB, chunk.toB];
+			for (let pos = from; pos < Math.min(to, doc.length + 1); ) {
+				const line = doc.lineAt(Math.min(pos, doc.length));
+				builder.add(line.from, line.from, changedRow);
+				pos = line.to + 1;
+			}
+		}
+		return builder.finish();
+	};
+	return StateField.define<RangeSet<GutterMarker>>({
+		create: rows,
+		update: (value, transaction) => (transaction.docChanged || transaction.effects.length > 0 ? rows(transaction.state) : value),
+		provide: (field) => gutterLineClass.from(field)
+	});
 }

@@ -95,6 +95,8 @@ export const diffTheme = (whole: boolean) => EditorView.theme({
 	'&.cm-merge-a .cm-changedLineGutter, & .cm-deletedLineGutter': { background: 'var(--git-deleted)' },
 	'&.cm-merge-b .cm-changedLineGutter': { background: 'var(--git-added)' },
 	'& .cm-inlineChangedLineGutter': { background: 'var(--git-modified)' },
+	'&.cm-merge-a .cm-diffChangedRow:not(.cm-changedLineGutter)': { backgroundColor: whole ? 'transparent' : removed(12) },
+	'&:not(.cm-merge-a) .cm-diffChangedRow:not(.cm-changedLineGutter, .cm-inlineChangedLineGutter)': { backgroundColor: whole ? 'transparent' : added(12) },
 	'& .cm-originalNumbers .cm-gutterElement': { minWidth: '3ch', paddingInline: 'var(--space-2) var(--space-1)', textAlign: 'right' },
 	'& .cm-diffSigns .cm-gutterElement': { minWidth: '1.5ch', paddingInline: 'var(--space-1)', fontFamily: 'var(--font-mono)', textAlign: 'center' },
 	'& .cm-diffSigns-a .cm-gutterElement': { color: 'var(--git-deleted)' },

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Device, ServerMessage } from '#lib/device.svelte.ts';
-	import { diffConfig, diffSigns, originalNumbers } from '#lib/editor/changes.ts';
+	import { diffConfig, diffRows, diffSigns, originalNumbers } from '#lib/editor/changes.ts';
 	import { find } from '#lib/editor/find.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { languageServer } from '#lib/editor/lsp-editor.ts';
@@ -511,8 +511,8 @@
 		if (layout === 'split') {
 			const view = new MergeView({
 				parent: container,
-				a: { doc: a, extensions: [shared, diffSigns('a'), EditorState.readOnly.of(true), commenting('target', false)] },
-				b: { doc: b, extensions: [working, diffSigns('b'), commenting('source', false)] },
+				a: { doc: a, extensions: [shared, diffSigns('a'), diffRows('a'), EditorState.readOnly.of(true), commenting('target', false)] },
+				b: { doc: b, extensions: [working, diffSigns('b'), diffRows('b'), commenting('source', false)] },
 				revertControls: editable ? 'a-to-b' : undefined,
 				highlightChanges: !whole,
 				collapseUnchanged: {},
@@ -543,6 +543,7 @@
 					working,
 					originalNumbers(),
 					diffSigns('b'),
+					diffRows('b'),
 					commenting('source', true),
 					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {}, diffConfig })
 				]
