@@ -15,6 +15,8 @@
 		agent?: Agent;
 		against?: string;
 		status?: Status;
+		/** Never run yet, so a done status means ready rather than finished. */
+		fresh?: boolean;
 		active?: boolean;
 		dirty?: boolean;
 		deleted?: boolean;
@@ -32,6 +34,7 @@
 		agent = 'claude-code',
 		against = 'HEAD',
 		status,
+		fresh = false,
 		active = false,
 		dirty = false,
 		deleted = false,
@@ -72,8 +75,8 @@
 	>
 		<TabIcon {variant} {agent} {label} />
 		<span class="label">{label}</span>
-		{#if variant === 'diff'}<span class="vs">↔ {against}</span>{/if}
-		<TabMarks {status} {dirty} />
+		{#if variant === 'diff'}<span class="vs">· {against}</span>{/if}
+		<TabMarks {status} {dirty} {fresh} />
 	</button>
 {/snippet}
 
@@ -108,8 +111,8 @@
 		position: relative;
 		display: inline-flex;
 		flex: 0 1 auto;
-		min-width: 8rem;
-		max-width: 14rem;
+		min-width: 5rem;
+		max-width: 18rem;
 		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 	}
 
@@ -158,7 +161,20 @@
 	}
 
 	.bottom .active {
-		border-color: var(--border);
+		border-color: transparent;
+		background: none;
+	}
+
+	.bottom .active::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		left: 50%;
+		width: calc(2 * var(--tile));
+		height: calc(2 * var(--border-width));
+		border-radius: var(--radius-pill);
+		background: var(--accent);
+		translate: -50%;
 	}
 
 	.closable .select {

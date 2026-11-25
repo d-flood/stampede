@@ -96,8 +96,6 @@
 
 	[aria-checked='true'] > span {
 		background: var(--color-bg);
-		box-shadow:
-			var(--shadow-lift),
-			0 0 0 var(--border-width) var(--border);
+		box-shadow: 0 0 0 var(--border-width) var(--border);
 	}
 </style>

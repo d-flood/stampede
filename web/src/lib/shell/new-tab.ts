@@ -28,7 +28,7 @@ export function tabItems(rigs: Rig[], sessions: Session[], actions: Actions): Ta
 			label: rig.name,
 			icon: logos[rig.agent],
 			hint: index < 9 ? `Ctrl+Shift+${index + 1}` : `${index + 1}`,
-			model: [rig.model ?? 'Default model', rig.effort].filter(Boolean).join(', '),
+			model: [rig.model, rig.effort].filter(Boolean).join(', '),
 			onselect: () => actions.launch(rig)
 		})),
 		tools: [
@@ -44,7 +44,7 @@ export function tabItems(rigs: Rig[], sessions: Session[], actions: Actions): Ta
 export function menuItems({ rigs, tools, sessions, search }: TabItems) {
 	return [
 		...(rigs.length ? [{ heading: 'Rigs', items: rigs }] : []),
-		...tools,
+		{ heading: 'Open', items: tools },
 		...(search ? [{ heading: 'Sessions', items: [...sessions, search] }] : [])
 	];
 }

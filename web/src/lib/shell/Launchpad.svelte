@@ -5,7 +5,6 @@
 	import type { TabItems } from '#lib/shell/new-tab.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Card from '#lib/ui/Card.svelte';
-	import Kbd from '#lib/ui/Kbd.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import { untrack } from 'svelte';
@@ -18,13 +17,11 @@
 	const id = $props.id();
 	const phone = $derived(form() === 'phone');
 	const changes = $derived(git?.isRepo ? git.changes.length : undefined);
-	const where = $derived(
-		[path, git?.branch, changes === undefined ? undefined : `${changes} changed file${changes === 1 ? '' : 's'}`].filter(Boolean).join(', ')
-	);
+	const meta = $derived([git?.branch, changes === undefined ? undefined : `${changes} changed file${changes === 1 ? '' : 's'}`].filter(Boolean).join(' · '));
 
 	function enter(node: HTMLElement) {
 		untrack(onread);
-		if (!document.activeElement?.closest('input, textarea, select, [contenteditable], dialog[open]')) node.querySelector<HTMLElement>('.primary')?.focus();
+		if (!document.activeElement?.closest('input, textarea, select, [contenteditable], dialog[open]')) node.querySelector<HTMLElement>('.primary')?.focus({ focusVisible: false } as FocusOptions);
 	}
 
 </script>
@@ -32,17 +29,18 @@
 <section class="launchpad" class:phone aria-labelledby="{id}-name" {@attach enter}>
 	<div class="pad">
 		<h2 id="{id}-name">{name}</h2>
-		<p class="where">{where}</p>
+		<p class="where" title={path}><span class="path"><bdi>{path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>{#if meta}<span class="meta">{meta}</span>{/if}</p>
+		<h3>Rigs</h3>
 		<div class="rigs">
 			{#each items.rigs as { label, icon: Icon, model, hint, onselect }, index (label)}
-				<Card primary={index === 0} aria-labelledby="{id}-rig-{index}" aria-describedby="{id}-model-{index}" onclick={onselect}>
+				<Card primary={index === 0} aria-labelledby="{id}-rig-{index}" aria-describedby={model ? `${id}-model-${index}` : undefined} onclick={onselect}>
 					<span class="rig">
 						{#if Icon}<span class="logo"><Icon /></span>{/if}
 						<span class="meta">
 							<span class="label" id="{id}-rig-{index}">{label}</span>
-							<span class="model" id="{id}-model-{index}">{model}</span>
+							{#if model}<span class="model" id="{id}-model-{index}">{model}</span>{/if}
 						</span>
-						{#if hint && !phone}<Kbd aria-hidden="true">{hint}</Kbd>{/if}
+						{#if hint && !phone}<span class="hint" aria-hidden="true">{hint}</span>{/if}
 					</span>
 				</Card>
 			{:else}
@@ -57,12 +55,13 @@
 				</Card>
 			{/each}
 		</div>
+		<h3 class="open">Open</h3>
 		<div class="tools">
 			{#each items.tools as { label, icon: Icon, hint, onselect } (label)}
 				<button class="tool" onclick={onselect}>
 					{#if Icon}<Icon />{/if}
 					<span class="label">{label}</span>
-					{#if hint && !phone}<Kbd aria-hidden="true">{hint}</Kbd>{/if}
+					{#if hint && !phone}<span class="hint" aria-hidden="true">{hint}</span>{/if}
 				</button>
 			{/each}
 		</div>
@@ -97,7 +96,7 @@
 	}
 
 	.pad {
-		width: min(34rem, 100%);
+		width: min(36rem, 100%);
 	}
 
 	h2 {
@@ -107,9 +106,25 @@
 	}
 
 	.where {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
 		margin: var(--space-1) 0 var(--space-6);
 		color: var(--muted-fg);
-		overflow-wrap: anywhere;
+		white-space: nowrap;
+	}
+
+	/* Right-to-left moves the ellipsis to the path's start, keeping its meaningful tail. */
+	.path {
+		min-width: 0;
+		overflow: hidden;
+		direction: rtl;
+		text-align: left;
+		text-overflow: ellipsis;
+	}
+
+	.meta {
+		flex: none;
 	}
 
 	button {
@@ -127,14 +142,12 @@
 
 	.rigs {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
-		gap: var(--space-3);
+		gap: var(--space-2);
 	}
 
 	.rig {
 		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
+		align-items: center;
 		gap: var(--space-3);
 		height: 100%;
 	}
@@ -142,7 +155,7 @@
 	.logo {
 		display: grid;
 		place-items: center;
-		font-size: 1.375rem;
+		font-size: var(--font-size-lg);
 	}
 
 	.meta {
@@ -162,26 +175,32 @@
 	}
 
 
-	.rig > :global(kbd) {
-		margin-top: auto;
+	.hint {
+		margin-left: auto;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		white-space: nowrap;
 	}
 
 	.tools {
-		display: flex;
-		flex-wrap: wrap;
+		display: grid;
 		gap: var(--space-2);
-		margin-top: var(--space-3);
+	}
+
+	.open {
+		margin-top: var(--space-4);
 	}
 
 	.tool {
-		display: inline-flex;
+		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-		min-height: 2.25rem;
-		padding: 0 var(--space-4);
+		min-width: 0;
+		padding: var(--space-3);
 		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-md);
+		border-radius: var(--radius-lg);
 	}
+
 
 	.tool:hover {
 		background: var(--hover);

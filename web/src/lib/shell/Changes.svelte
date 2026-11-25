@@ -385,7 +385,7 @@
 				/>
 				<div class="buttons">
 					{#if elapsed >= 2}<span class="elapsed" title="Time spent committing">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}</span>{/if}
-					<Button title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || committing || !git.staged.length} onclick={draftMessage}>
+					<Button variant="ghost" title={`Draft a message with ${commitRig() ?? 'the commit Rig'}`} disabled={drafting || committing || !git.staged.length} onclick={draftMessage}>
 						<Sparkle />{drafting ? 'Drafting…' : 'Draft'}
 					</Button>
 					<Button variant="primary" title="Commit (Ctrl+Enter)" disabled={!committable && !committing} busy={committing} onclick={commitStaged}>
@@ -611,6 +611,13 @@
 		display: grid;
 		gap: var(--space-2);
 		padding: var(--space-1) var(--space-3) var(--space-2);
+	}
+
+	.commit :global(textarea) {
+		min-height: calc(3lh + 2 * var(--space-1));
+		max-height: 12lh;
+		resize: none;
+		field-sizing: content;
 	}
 
 	.buttons {

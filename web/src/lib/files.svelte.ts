@@ -135,7 +135,8 @@ export class OpenDiff extends OpenFile {
 	get versus() {
 		const { against } = this;
 		if (comparing(against)) return 'pr' in against ? `#${against.pr}` : against.target;
-		return typeof against === 'string' ? against : against.short;
+		const named: Record<string, string> = { index: 'Unstaged', staged: 'Staged', disk: 'Unsaved' };
+		return typeof against === 'string' ? (named[against] ?? against) : against.short;
 	}
 }
 

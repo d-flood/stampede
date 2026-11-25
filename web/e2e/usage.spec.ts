@@ -1,6 +1,6 @@
 import type { Reading, ResetCredits, ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
-import { showProjects } from './shell.ts';
+import { openProject, showProjects } from './shell.ts';
 
 test('Codex resets show in the Usage row and retry a redemption safely from its popover', async ({ page }, { project }) => {
 	const now = Date.now();
@@ -27,11 +27,12 @@ test('Codex resets show in the Usage row and retry a redemption safely from its 
 		update();
 		await route.fulfill({ json: 'reset' });
 	});
-	await page.goto('/');
 	let usage = page.getByRole('region', { name: 'Usage windows' });
 	if (project.name === 'pixel') {
+		await page.goto('/');
 		await showProjects(page);
 	} else {
+		await openProject(page, 'alpha');
 		const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
 		await expect(sidebar).toBeVisible();
 		usage = sidebar.getByRole('region', { name: 'Usage windows' });

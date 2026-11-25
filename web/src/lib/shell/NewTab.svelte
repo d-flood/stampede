@@ -31,12 +31,18 @@
 	</li>
 {/snippet}
 
-<Dialog bind:open full title="New Tab" oncloseautofocus={(event) => started && (event.preventDefault(), (started = false))}>
-	<section class="list" {@attach () => untrack(onread)}>
+<Dialog bind:open sheet title="New Tab" oncloseautofocus={(event) => started && (event.preventDefault(), (started = false))}>
+	<section class="list" aria-labelledby="{id}-rigs" {@attach () => untrack(onread)}>
+		<ListLabel element="h3" id="{id}-rigs">Rigs</ListLabel>
 		<NavList element="ul">
 			{#each items.rigs as rig, index (rig.label)}
 				{@render item(rig, `rig-${index}`, rig.model)}
 			{/each}
+		</NavList>
+	</section>
+	<section class="list" aria-labelledby="{id}-tools">
+		<ListLabel element="h3" id="{id}-tools">Open</ListLabel>
+		<NavList element="ul">
 			{#each items.tools as tool, index (tool.label)}
 				{@render item(tool, `tool-${index}`)}
 			{/each}

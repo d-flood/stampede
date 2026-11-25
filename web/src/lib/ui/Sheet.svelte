@@ -63,6 +63,7 @@
 
 	.scrim.shown {
 		opacity: 1;
+		backdrop-filter: blur(2px);
 	}
 
 	.sheet {

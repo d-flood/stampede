@@ -468,6 +468,15 @@
 		}
 	}
 
+	/* Percent signs need the room that reset times give up below 299px. */
+	@container (270px <= width < 299px) or (width >= 330px) {
+		.number::after {
+			content: '%';
+			color: var(--muted-fg);
+			font-weight: 400;
+		}
+	}
+
 	@container (width < 330px) {
 		.phone .remaining {
 			display: none;

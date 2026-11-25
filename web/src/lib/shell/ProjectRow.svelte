@@ -82,7 +82,7 @@
 				</span>
 				<span class="text">
 					<strong>{label}</strong>
-					<span class="path">{project.path}</span>
+					<span class="path"><bdi>{project.path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>
 					{#each runs as epic (epic.slug)}
 						{@const tally = counts(epic)}
 						<span class="run">Run {epic.slug} · <span class="resolved">{tally.merged + tally.skipped} of {epic.tickets.length}</span></span>
@@ -219,9 +219,9 @@
 	}
 
 	.project.focused {
-		--tile-base: var(--surface-3);
-		border-color: color-mix(in oklab, var(--color-fg) 38%, var(--color-bg));
-		background: var(--surface-3);
+		--tile-base: var(--selected-bg);
+		border-color: var(--selected-border);
+		background: var(--selected-bg);
 		color: var(--color-fg);
 	}
 
@@ -410,9 +410,12 @@
 		white-space: nowrap;
 	}
 
+	/* Right-to-left moves the ellipsis to the path's start, keeping its distinguishing tail. */
 	.path {
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
+		direction: rtl;
+		text-align: left;
 	}
 
 	.run {

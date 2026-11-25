@@ -162,7 +162,7 @@
 		width: var(--tile);
 		height: var(--tile);
 		padding: 0;
-		border: var(--border-width) dashed var(--border-strong);
+		border: var(--border-width) solid transparent;
 		border-radius: var(--radius-tile);
 		background: none;
 		color: var(--muted-fg);

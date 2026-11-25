@@ -42,6 +42,20 @@
 		cursor: pointer;
 	}
 
+	/* Keeps the touch target at full size while the pill itself stays slim. */
+	@media (pointer: coarse) {
+		button.chip {
+			position: relative;
+			min-height: var(--control-min);
+		}
+
+		button.chip::after {
+			content: '';
+			position: absolute;
+			inset: calc((var(--control-min) - var(--target-min)) / 2) 0;
+		}
+	}
+
 	button:hover:not(:disabled),
 	button[data-state='open'] {
 		background: var(--hover);

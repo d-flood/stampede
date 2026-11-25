@@ -15,7 +15,5 @@
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
 	}
 </style>

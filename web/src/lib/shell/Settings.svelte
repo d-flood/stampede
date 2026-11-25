@@ -24,7 +24,6 @@
 	import ThemeCards from '#lib/shell/ThemeCards.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
 	import { defaultSizes, selectTextSize, typography } from '#lib/typography.svelte.ts';
-	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -36,11 +35,9 @@
 	import TextField from '#lib/ui/TextField.svelte';
 	import type { Component } from 'svelte';
 	import BookmarkSimple from '~icons/ph/bookmark-simple';
-	import Browser from '~icons/ph/browser';
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
 	import Check from '~icons/ph/check-bold';
-	import Devices from '~icons/ph/devices';
 	import Gear from '~icons/ph/gear';
 	import PaintBrush from '~icons/ph/paint-brush';
 	import Robot from '~icons/ph/robot';
@@ -164,17 +161,13 @@
 </script>
 
 {#snippet scope(everywhere: boolean)}
-	<span class="scope">
-		<Badge tone="outline" title={everywhere ? 'Saved on every device' : 'Saved in this browser'}>
-			{#if everywhere}<Devices /> All devices{:else}<Browser /> This browser{/if}
-		</Badge>
-	</span>
+	{#if !everywhere}<span class="scope" title="Saved in this browser only; other settings apply on every device">This browser</span>{/if}
 {/snippet}
 
 <IconButton label={unseen ? 'Settings, Stampede update available' : 'Settings'} title={unseen ? 'Stampede update available' : undefined} aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}>
 	<span class="gear"><Gear />{#if unseen}<span class="dot"></span>{/if}</span>
 </IconButton>
-<Dialog bind:open full={phone} wide title="Settings" oncloseautofocus={dock}>
+<Dialog bind:open full={phone} wide closeButton={false} title="Settings" oncloseautofocus={dock}>
 	<div class="settings" class:phone>
 		{#if !phone || !current}
 			<div class="sections">
@@ -365,7 +358,7 @@
 		{/if}
 	</div>
 	{#snippet actions()}
-		<Button onclick={() => (open = false)}>Done</Button>
+		<Button variant="primary" onclick={() => (open = false)}>Done</Button>
 	{/snippet}
 </Dialog>
 
@@ -417,6 +410,7 @@
 		min-width: 0;
 		padding: var(--space-4) var(--space-6) var(--space-6);
 		overflow: auto;
+		mask-image: linear-gradient(#000 calc(100% - var(--space-6)), transparent);
 	}
 
 	h3 {
@@ -509,6 +503,9 @@
 
 	.scope {
 		margin-left: var(--space-2);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		font-weight: 400;
 	}
 
 	.control {

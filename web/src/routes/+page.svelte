@@ -69,6 +69,7 @@
 	import Power from '~icons/ph/power';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
 	import TerminalWindow from '~icons/ph/terminal-window';
+	import X from '~icons/ph/x';
 	import WifiSlash from '~icons/ph/wifi-slash';
 
 	const editor = () => import('#lib/shell/Editor.svelte');
@@ -1012,7 +1013,7 @@
 {#snippet sidebarPanel()}
 	<Sidebar
 		bind:this={sidebarView}
-		open={phone || sidebar}
+		open={phone || (sidebar && !!focused)}
 		project={focused}
 		{label}
 		git={focused && git.get(focused.id)}
@@ -1059,16 +1060,17 @@
 			`minmax(0, ${split.ratio}fr) var(--border-width) minmax(0, ${1 - split.ratio}fr)`}
 	>
 		<TooltipGroup>
-			{#each groups as group, index (index)}
+			{#each focused || phone ? groups : [] as group, index (index)}
 				<div
 					class="strip"
+					class:current={!!split && group.active === activeTab}
 					role="presentation"
 					style:grid-column={index * 2 + 1}
 					onfocusin={() => focused && group.active && choose(focused.id, group.active)}
 					onpointerdown={grab}
 					{@attach phone && blocksTabStripHistory}
 				>
-					{#if !phone && !sidebar && sidebarPosition.side === 'left' && index === 0}
+					{#if !phone && !sidebar && focused && sidebarPosition.side === 'left' && index === 0}
 						{@render sidebarToggle(false)}
 					{/if}
 					<div
@@ -1120,6 +1122,7 @@
 												variant="agent"
 												agent={chat.agent}
 												status={chatStatus(chat)}
+												fresh={!chat.title}
 												label={chat.title ?? chat.rig}
 												tooltip={chat.title && `${chat.title}\n${chat.rig}`}
 												active={id === group.active}
@@ -1196,7 +1199,8 @@
 							{/snippet}
 						</Menu>
 					{/if}
-					{#if !phone && !sidebar && sidebarPosition.side === 'right' && index === groups.length - 1}
+					<span class="fill"></span>
+					{#if !phone && !sidebar && focused && sidebarPosition.side === 'right' && index === groups.length - 1}
 						{@render sidebarToggle(false)}
 					{/if}
 				</div>
@@ -1370,7 +1374,9 @@
 				{@render launchpad(focused)}
 			{:else if !focused && listed && !picking}
 				<div class="empty">
+					<img class="mark" src="/icons/icon.svg" alt="" />
 					<h2>Open a Project</h2>
+					<p class="lede">Choose a folder to work in. Its Chats, Terminals and Git stay together as a Project.</p>
 					{#await import('#lib/shell/Picker.svelte') then { default: Picker }}
 						<Picker {directories} onopen={open} autofocus={!phone} />
 					{/await}
@@ -1433,7 +1439,13 @@
 	</Sheet>
 	{#if focused}
 		<Sheet label="Sidebar" side="right" open={panel === 'sidebar'} pull={Math.max(-pull, 0)} onclose={closePanel}>
-			{#if panel === 'sidebar' || pull < 0 || warm()}{@render sidebarPanel()}{/if}
+			{#if panel === 'sidebar' || pull < 0 || warm()}
+				<div class="sheet-header">
+					<h2>{label}</h2>
+					<IconButton label="Close Sidebar" onclick={closePanel}><X /></IconButton>
+				</div>
+				{@render sidebarPanel()}
+			{/if}
 		</Sheet>
 	{/if}
 {:else}
@@ -1644,7 +1656,7 @@
 		box-sizing: border-box;
 		height: 100dvh;
 		padding: var(--gutter) var(--gutter) var(--gutter) 0;
-		background: var(--surface-2);
+		background: var(--canvas);
 	}
 
 	.shell > main {
@@ -1783,7 +1795,7 @@
 
 	[role='tablist'] {
 		display: flex;
-		flex: 1;
+		flex: 0 1 auto;
 		align-self: stretch;
 		align-items: flex-end;
 		gap: 2px;
@@ -1796,6 +1808,15 @@
 		overflow-x: auto;
 		overflow-y: hidden;
 		scrollbar-width: none;
+	}
+
+	.fill {
+		flex: 1;
+	}
+
+	/* Marks which side of a Split has focus. */
+	.current :global([role='tab'][aria-selected='true']) {
+		box-shadow: inset 0 calc(2 * var(--border-width)) 0 var(--accent);
 	}
 
 	.bottom [role='tablist'] {
@@ -1898,8 +1919,20 @@
 	}
 
 	.empty h2 {
-		margin: 0 0 var(--space-4);
+		margin: 0;
 		font: 500 1.875rem/1.15 var(--font-chat);
+	}
+
+	.lede {
+		margin: var(--space-2) 0 var(--space-4);
+		color: var(--muted-fg);
+	}
+
+	.mark {
+		display: block;
+		width: calc(1.5 * var(--tile));
+		height: calc(1.5 * var(--tile));
+		margin-bottom: var(--space-4);
 	}
 
 	.reconnecting {

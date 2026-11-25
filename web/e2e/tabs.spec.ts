@@ -31,7 +31,7 @@ test('active tabs expose a close button and preserve unsaved edits', async ({ pa
 	await expect(close).toBeVisible();
 	await expect.poll(async () => {
 		const box = await close.boundingBox();
-		return box && box.width >= 26 && box.height >= 26;
+		return box && box.width >= 24 && box.height >= 24;
 	}).toBe(true);
 	await page.locator('.editor:not([hidden]) .cm-content').click();
 	await page.keyboard.type('unsaved');
@@ -62,7 +62,7 @@ test('terminal and drawer tabs close directly on desktop and tablet', async ({ p
 	const close = tabs.getByRole('button', { name: /^Close / });
 	await expect.poll(async () => {
 		const box = await close.boundingBox();
-		return box && box.width >= (project.name === 'pixel' ? 48 : 26) && box.height >= (project.name === 'pixel' ? 48 : 26);
+		return box && box.width >= (project.name === 'pixel' ? 48 : 24) && box.height >= (project.name === 'pixel' ? 48 : 24);
 	}).toBe(true);
 	if (project.name === 'pixel') await close.tap();
 	else await close.click();

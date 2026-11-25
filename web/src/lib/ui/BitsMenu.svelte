@@ -100,7 +100,7 @@
 			{/snippet}
 		</ContextMenu.Trigger>
 		<ContextMenu.Portal>
-			<ContextMenu.Content onCloseAutoFocus={oncloseautofocus} child={content} />
+			<ContextMenu.Content collisionPadding={8} onCloseAutoFocus={oncloseautofocus} child={content} />
 		</ContextMenu.Portal>
 	</ContextMenu.Root>
 {:else}
@@ -111,7 +111,7 @@
 			{/snippet}
 		</DropdownMenu.Trigger>
 		<DropdownMenu.Portal>
-			<DropdownMenu.Content {side} {align} sideOffset={4} onCloseAutoFocus={oncloseautofocus} child={content} />
+			<DropdownMenu.Content {side} {align} sideOffset={4} collisionPadding={8} onCloseAutoFocus={oncloseautofocus} child={content} />
 		</DropdownMenu.Portal>
 	</DropdownMenu.Root>
 {/if}
@@ -167,6 +167,7 @@
 
 	.hint {
 		flex: none;
+		margin-left: var(--space-4);
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 	}

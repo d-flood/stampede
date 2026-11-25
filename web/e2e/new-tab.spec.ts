@@ -59,12 +59,11 @@ test('the Launchpad offers the New Tab items and comes back focused when the las
 	});
 	await openProject(page, 'alpha');
 	const launchpad = page.getByRole('region', { name: 'alpha', exact: true });
-	await expect(launchpad.getByText(/, main, \d+ changed files?$/)).toBeVisible();
+	await expect(launchpad.getByText(/^main · \d+ changed files?$/)).toBeVisible();
 	const offered = ['Claude Code', 'Codex', 'Terminal', 'Browser', 'Open file', 'Continue the collation', 'Search sessions…'];
 	await expect(launchpad.getByRole('button', { name: 'Continue the collation', exact: true })).toBeVisible();
 	await expect(launchpad.getByRole('button')).toHaveCount(offered.length);
 	for (const [index, label] of offered.entries()) await expect(launchpad.getByRole('button').nth(index)).toHaveAccessibleName(label);
-	await expect(launchpad.getByRole('button', { name: 'Claude Code', exact: true })).toHaveAccessibleDescription('Default model');
 
 	if (!phone) {
 		await page.getByRole('button', { name: 'New Tab', exact: true }).click();

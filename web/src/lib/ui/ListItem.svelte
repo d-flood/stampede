@@ -51,9 +51,14 @@
 	}
 
 	.item[data-highlighted],
-	.item[data-selected],
-	.hoverable:hover:not(:disabled) {
+	.item[data-selected] {
 		background: var(--hover);
+	}
+
+	@media (hover: hover) {
+		.hoverable:hover:not(:disabled) {
+			background: var(--hover);
+		}
 	}
 
 	.item[aria-current]:not([aria-current='false']) {

@@ -101,7 +101,7 @@
 	const current = $derived(showing(section, git).id);
 	const id = $props.id();
 	let viewport = $state(window.innerWidth);
-	let width = $state(320);
+	let width = $state(280);
 	let drag = $state<{ x: number; width: number }>();
 	const maximum = $derived(Math.min(640, viewport * 0.6));
 	const minimum = $derived(Math.min(160, maximum));
@@ -217,10 +217,10 @@
 		position: relative;
 		display: flex;
 		flex: none;
-		width: 20rem;
+		width: 280px;
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-xl);
-		background: var(--surface-1);
+		background: var(--chrome);
 		transition:
 			width var(--dur-med) var(--ease-out),
 			margin var(--dur-med) var(--ease-out);

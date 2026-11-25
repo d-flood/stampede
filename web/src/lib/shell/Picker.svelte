@@ -3,6 +3,7 @@
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command, computeCommandScore } from 'bits-ui';
+	import FolderSimple from '~icons/ph/folder-simple';
 
 	let { directories, onopen, autofocus = true }: { directories: string[]; onopen(path: string): Promise<string | undefined>; autofocus?: boolean } =
 		$props();
@@ -57,12 +58,14 @@
 							{/snippet}
 						</Command.Item>
 					{/if}
+					{#if !typed && matches.length}<ListLabel element="p">Folders</ListLabel>{/if}
 					{#each matches as path (path)}
 						{@const cut = path.lastIndexOf('/') + 1}
 						<Command.Item value={path} onSelect={() => open(path)}>
 							{#snippet child({ props })}
-								<ListItem {...props}>
-									<span class="path"><span class="parent">{path.slice(0, cut)}</span>{path.slice(cut)}</span>
+								<ListItem {...props} aria-label={path}>
+									<FolderSimple aria-hidden="true" />
+									<span class="folder"><span class="parent"><bdi>{path.slice(0, cut)}</bdi></span><span class="name">{path.slice(cut)}</span></span>
 								</ListItem>
 							{/snippet}
 						</Command.Item>
@@ -98,6 +101,33 @@
 
 	.parent {
 		color: var(--muted-fg);
+	}
+
+	/* Reverses visually so the folder name leads, while the path stays in reading order. */
+	.folder {
+		display: flex;
+		flex-direction: row-reverse;
+		justify-content: flex-end;
+		align-items: baseline;
+		gap: var(--space-2);
+		min-width: 0;
+		white-space: nowrap;
+	}
+
+	.folder .name {
+		flex: none;
+		font-weight: 500;
+	}
+
+	/* Right-to-left moves the ellipsis to the path's start, keeping the segments that tell folders apart. */
+	.folder .parent {
+		min-width: 0;
+		overflow: hidden;
+		direction: rtl;
+		font-family: var(--font-mono);
+		font-size: var(--font-size-sm);
+		text-align: left;
+		text-overflow: ellipsis;
 	}
 
 </style>
