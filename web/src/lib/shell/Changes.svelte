@@ -627,6 +627,10 @@
 		gap: var(--space-2);
 	}
 
+	.buttons > :global(button:last-child) {
+		flex: 1;
+	}
+
 	.elapsed {
 		color: var(--muted-fg);
 		font-family: var(--font-mono);

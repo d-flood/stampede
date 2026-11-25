@@ -1325,6 +1325,8 @@
 								project={projectLabels.get(chat.projectId)}
 								root={projects.find(({ id }) => id === chat.projectId)?.path}
 								branch={git.get(chat.projectId)?.branch}
+								changes={git.get(chat.projectId)?.changes.length ?? 0}
+								ongit={() => ((section = 'git'), (sidebar = true))}
 								{codexResets}
 								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}
 								onfile={(path, cursor) => openFile(chat.projectId, path, cursor)}

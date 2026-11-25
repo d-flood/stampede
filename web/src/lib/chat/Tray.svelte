@@ -13,12 +13,13 @@
 	import { untrack } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import CheckCircle from '~icons/ph/check-circle';
+	import GitBranch from '~icons/ph/git-branch';
 
 	const DELAY = 1500;
 	const LINGER = 1000;
 	const DOTS = 3;
 
-	let { items, todos = [], canvases = [], onopen, onattend, oncanvas }: { items: Item[]; todos?: Todo[]; canvases?: string[]; onopen(path: string[]): void; onattend(subagent: string): void; oncanvas(canvas: string): void } = $props();
+	let { items, todos = [], canvases = [], changes = 0, branch, ongit, onopen, onattend, oncanvas }: { items: Item[]; todos?: Todo[]; canvases?: string[]; changes?: number; branch?: string; ongit?(): void; onopen(path: string[]): void; onattend(subagent: string): void; oncanvas(canvas: string): void } = $props();
 	const completed = $derived(todos.length > 0 && todos.every((todo) => todo.status === 'done'));
 
 	const all = $derived(commands(items));
@@ -90,8 +91,11 @@
 	</Chip>
 {/snippet}
 
-{#if subagents.length || shells.length || canvases.length || completed}
+{#if subagents.length || shells.length || canvases.length || completed || (changes && ongit)}
 	<section class="tray" aria-label="Tray">
+		{#if changes && ongit}
+			<Chip title="Review and commit in Git" onclick={ongit}><GitBranch aria-hidden="true" /><span>{branch ? `${branch} · ` : ''}{changes} changed {changes === 1 ? 'file' : 'files'}</span></Chip>
+		{/if}
 		{#if completed}
 			<section aria-label="Todos">
 				<Menu side="top" items={[{ heading: 'Todos', items: todos.map((todo) => ({ label: todo.text, checked: true, onselect: () => {} })) }]}>
