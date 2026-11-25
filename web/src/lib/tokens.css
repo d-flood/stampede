@@ -118,7 +118,7 @@
 	--font-size-base: var(--ui-size, 13px);
 	--font-size-chat: var(--chat-size, 15px);
 	--font-size-code: var(--code-size, 13px);
-	--font-size-sm: calc(var(--font-size-base) - 2px);
+	--font-size-sm: calc(var(--font-size-base) - 1px);
 	--font-size-md: var(--font-size-base);
 	--font-size-lg: calc(var(--font-size-base) + 2px);
 	--font-size-xl: calc(var(--font-size-base) + 6px);
@@ -182,6 +182,7 @@
 		--font-size-base: var(--ui-size, 16px);
 		--font-size-chat: var(--chat-size, 17px);
 		--font-size-code: var(--code-size, 16px);
+		--font-size-sm: calc(var(--font-size-base) - 2px);
 	}
 }
 

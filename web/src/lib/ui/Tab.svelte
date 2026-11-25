@@ -112,7 +112,7 @@
 		display: inline-flex;
 		flex: 0 1 auto;
 		min-width: 5rem;
-		max-width: 18rem;
+		max-width: 13rem;
 		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 	}
 

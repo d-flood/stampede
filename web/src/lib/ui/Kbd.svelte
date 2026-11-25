@@ -13,10 +13,8 @@
 		flex: none;
 		min-width: 1.6em;
 		padding: 0 var(--space-1);
-		border: var(--border-width) solid var(--border);
-		border-bottom-width: calc(2 * var(--border-width));
 		border-radius: var(--radius-sm);
-		background: var(--color-bg);
+		background: var(--surface-2);
 		color: var(--muted-fg);
 		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
