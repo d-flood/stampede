@@ -400,6 +400,17 @@ export function modes(agent: Agent): Mode[] {
 	return offeredModes[agent] ?? [];
 }
 
+export function defaultMode(agent: Agent) {
+	return { 'claude-code': 'auto', codex: 'approve-for-me', copilot: 'default', antigravity: 'default' }[agent];
+}
+
+/** What a Rig starts Chats with, e.g. "opus · high · Default mode". */
+export function rigSummary(rig: Rig) {
+	const value = rig.mode ?? defaultMode(rig.agent);
+	const label = modes(rig.agent).find((choice) => choice.value === value)?.label ?? value;
+	return [rig.model ?? 'Default model', rig.effort, label && `${label[0].toUpperCase()}${label.slice(1)} mode`, rig.speed !== 'standard' && rig.speed !== 'default' && rig.speed, rig.ultracode === 'on' && 'Ultracode on'].filter(Boolean).join(' · ');
+}
+
 export async function saveModes(agent: Agent, values: string[]) {
 	const response = await fetch('/api/modes', {
 		method: 'PUT',

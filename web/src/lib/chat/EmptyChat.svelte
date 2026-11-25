@@ -48,7 +48,7 @@
 		gap: var(--space-3);
 		margin: 0 0 var(--space-1);
 		color: var(--color-fg);
-		font: 500 1.5rem var(--font-chat);
+		font: 600 calc(1.5 * var(--font-size-base)) var(--font-ui);
 		overflow-wrap: anywhere;
 	}
 

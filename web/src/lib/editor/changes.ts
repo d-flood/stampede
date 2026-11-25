@@ -19,6 +19,16 @@ type Kind = 'added' | 'modified' | 'deleted';
 type Changes = { baseline: Text | null; chunks: readonly Chunk[]; open: number | null };
 
 const DEBOUNCE = 250;
+
+/** Lines added and removed across a merge view's chunks. */
+export function diffCounts(chunks: readonly Chunk[], original: Text, doc: Text) {
+	const lines = (text: Text, from: number, to: number) => {
+		if (to <= from) return 0;
+		const slice = text.sliceString(from, to);
+		return slice.split('\n').length - (slice.endsWith('\n') ? 1 : 0);
+	};
+	return chunks.reduce((sum, chunk) => ({ added: sum.added + lines(doc, chunk.fromB, chunk.toB), removed: sum.removed + lines(original, chunk.fromA, chunk.toA) }), { added: 0, removed: 0 });
+}
 export const diffConfig = { scanLimit: 10_000, timeout: 20 };
 
 export const setBaseline = StateEffect.define<Text | null>();

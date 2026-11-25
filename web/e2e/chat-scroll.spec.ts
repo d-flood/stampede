@@ -102,7 +102,7 @@ test('the initial message stays below the navigator at the top of a chat', async
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 	await settings.getByRole('combobox', { name: 'UI font size', exact: true }).selectOption('22');
 	await settings.getByRole('combobox', { name: 'Chat font size', exact: true }).selectOption('26');
-	await settings.getByRole('button', { name: 'Done', exact: true }).click();
+	await settings.getByRole('button', { name: 'Close', exact: true }).click();
 	await closeSheet(page);
 	await expect(nav).toHaveCSS('opacity', '0');
 	await unobscured();

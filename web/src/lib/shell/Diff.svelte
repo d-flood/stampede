@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Device, ServerMessage } from '#lib/device.svelte.ts';
-	import { diffConfig, diffRows, diffSigns, originalNumbers } from '#lib/editor/changes.ts';
+	import { diffConfig, diffCounts, diffRows, diffSigns, originalNumbers } from '#lib/editor/changes.ts';
 	import { find } from '#lib/editor/find.ts';
 	import { language } from '#lib/editor/languages.ts';
 	import { languageServer } from '#lib/editor/lsp-editor.ts';
@@ -67,13 +67,7 @@
 		revision;
 		const chunks = shown && getChunks(shown.b.state)?.chunks;
 		if (!shown || !chunks) return;
-		const lines = (doc: Text, from: number, to: number) => {
-			if (to <= from) return 0;
-			const text = doc.sliceString(from, to);
-			return text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
-		};
-		const [b, a] = [shown.b.state.doc, shown.original];
-		return chunks.reduce((sum, chunk) => ({ added: sum.added + lines(b, chunk.fromB, chunk.toB), removed: sum.removed + lines(a, chunk.fromA, chunk.toA) }), { added: 0, removed: 0 });
+		return diffCounts(chunks, shown.original, shown.b.state.doc);
 	});
 	const recount = EditorView.updateListener.of((update) => {
 		// Dispatches often run inside effects, so a tracked read here would make them depend on what they write.
@@ -709,7 +703,6 @@
 		display: inline-flex;
 		flex: none;
 		gap: var(--space-1);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-variant-numeric: tabular-nums;
 	}

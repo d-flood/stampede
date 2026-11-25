@@ -140,6 +140,21 @@ export class OpenDiff extends OpenFile {
 	}
 }
 
+/** Every uncommitted change in a Project, stacked file by file. */
+export class OpenChanges extends OpenFile {
+	constructor(projectId: string) {
+		super(projectId, '');
+	}
+
+	get id() {
+		return `changes:${this.projectId}`;
+	}
+
+	get name() {
+		return 'Changes';
+	}
+}
+
 export class RequestError extends Error {
 	status: number;
 

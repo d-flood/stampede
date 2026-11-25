@@ -67,6 +67,7 @@
 		onopen(path: string, cursor?: Cursor): void;
 		onrename(from: string, to: string): void;
 		ondiff(change: Change, against: Against, draft?: string, replace?: boolean): void;
+		onchanges(projectId: string): void;
 		onepic(slug: string): void;
 		onfocus(projectId: string): void;
 		toggle?: Snippet;
@@ -89,6 +90,7 @@
 		onopen,
 		onrename,
 		ondiff,
+		onchanges,
 		onepic,
 		onfocus,
 		toggle
@@ -172,7 +174,7 @@
 				{#if current === 'git'}
 					{#key project.id}
 						{#if git}
-							<Changes projectId={project.id} {git} {trunk} {device} onopen={(path) => onopen(path)} {ondiff}>
+							<Changes projectId={project.id} {git} {trunk} {device} onopen={(path) => onopen(path)} {ondiff} onchanges={() => onchanges(project.id)}>
 								<History projectId={project.id} {device} onopen={ondiff} />
 							</Changes>
 						{/if}

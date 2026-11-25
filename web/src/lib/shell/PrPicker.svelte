@@ -124,7 +124,6 @@
 
 	.number {
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-code);
 	}
 

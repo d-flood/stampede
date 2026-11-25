@@ -60,7 +60,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await dialog.getByRole('button', { name: 'Apply theme', exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByRole('button', { name: 'More Ghostty themes' })).toHaveAttribute('title', 'Theme: Light: Dracula · Dark: Shale');
-	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
+	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.theme?.background)).toBe('#282a36');
 	await expect.poll(() => screen(page)).toMatch(/^theme-before$/m);
@@ -86,7 +86,7 @@ test('theme selection updates the UI, editor, and running Terminal and survives 
 	await expect(dialog).toBeHidden();
 	await expect.poll(() => page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(40, 42, 54)');
 	await expect.poll(() => page.evaluate(() => window.terminal?.options.theme?.background)).toBe('#282a36');
-	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
+	await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
 
 	const sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'greeting.ts', exact: true }).click();

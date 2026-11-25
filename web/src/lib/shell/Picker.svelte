@@ -44,7 +44,7 @@
 		spellcheck={false}
 	>
 		{#snippet child({ props })}
-			<TextField {...props} mono bind:value={query} {@attach (element) => { if (autofocus) element.focus(); }} />
+			<TextField {...props} bind:value={query} {@attach (element) => { if (autofocus) element.focus(); }} />
 		{/snippet}
 	</Command.Input>
 	{#if error}
@@ -97,7 +97,6 @@
 
 	.path {
 		overflow: hidden;
-		font-family: var(--font-mono);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}

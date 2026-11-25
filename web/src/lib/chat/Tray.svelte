@@ -19,7 +19,7 @@
 	const LINGER = 1000;
 	const DOTS = 3;
 
-	let { items, todos = [], canvases = [], changes = 0, branch, ongit, onopen, onattend, oncanvas }: { items: Item[]; todos?: Todo[]; canvases?: string[]; changes?: number; branch?: string; ongit?(): void; onopen(path: string[]): void; onattend(subagent: string): void; oncanvas(canvas: string): void } = $props();
+	let { items, todos = [], canvases = [], changes = 0, branch, onchanges, onopen, onattend, oncanvas }: { items: Item[]; todos?: Todo[]; canvases?: string[]; changes?: number; branch?: string; onchanges?(): void; onopen(path: string[]): void; onattend(subagent: string): void; oncanvas(canvas: string): void } = $props();
 	const completed = $derived(todos.length > 0 && todos.every((todo) => todo.status === 'done'));
 
 	const all = $derived(commands(items));
@@ -91,10 +91,10 @@
 	</Chip>
 {/snippet}
 
-{#if subagents.length || shells.length || canvases.length || completed || (changes && ongit)}
+{#if subagents.length || shells.length || canvases.length || completed || (changes && onchanges)}
 	<section class="tray" aria-label="Tray">
-		{#if changes && ongit}
-			<Chip title="Review and commit in Git" onclick={ongit}><GitBranch aria-hidden="true" /><span>{branch ? `${branch} · ` : ''}{changes} changed {changes === 1 ? 'file' : 'files'}</span></Chip>
+		{#if changes && onchanges}
+			<Chip title="Review changes" onclick={onchanges}><GitBranch aria-hidden="true" /><span>{branch ? `${branch} · ` : ''}{changes} changed {changes === 1 ? 'file' : 'files'}</span></Chip>
 		{/if}
 		{#if completed}
 			<section aria-label="Todos">

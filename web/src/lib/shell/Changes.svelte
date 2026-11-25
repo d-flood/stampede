@@ -57,6 +57,7 @@
 	import CloudArrowUp from '~icons/ph/cloud-arrow-up';
 	import Copy from '~icons/ph/copy';
 	import DotsThree from '~icons/ph/dots-three';
+	import GitDiff from '~icons/ph/git-diff';
 	import Minus from '~icons/ph/minus';
 	import Plus from '~icons/ph/plus';
 	import Sparkle from '~icons/ph/sparkle';
@@ -72,10 +73,11 @@
 		device: Device;
 		onopen(path: string): void;
 		ondiff(change: Change, against: 'index' | 'staged'): void;
+		onchanges(): void;
 		children: Snippet;
 	};
 
-	let { projectId, git, trunk, device, onopen, ondiff, children }: Props = $props();
+	let { projectId, git, trunk, device, onopen, ondiff, onchanges, children }: Props = $props();
 
 	const LARGE = 200;
 	const collapsed = new SvelteSet<string>();
@@ -347,7 +349,6 @@
 		{#if trunk && trunk.branch !== git.branch}
 			<Chip
 				variant="ghost"
-				mono
 				aria-label="Pull {trunk.branch}"
 				title="Pull {trunk.behind} new from origin/{trunk.branch} into {trunk.branch} without switching"
 				disabled={busy && running?.action !== 'trunk'}
@@ -357,6 +358,7 @@
 				{trunk.branch}{@render motion('trunk', ArrowDown)}{trunk.behind}
 			</Chip>
 		{/if}
+		{#if git.changes.length}<IconButton label="Review all changes" title="Review all changes" onclick={onchanges}><GitDiff /></IconButton>{/if}
 		<Menu
 			items={[
 				{ label: 'Stash All Changes', icon: Archive, hint: 's', disabled: busy || !git.changes.length, onselect: () => run('stash', () => stash(projectId)) },
@@ -633,7 +635,6 @@
 
 	.elapsed {
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-variant-numeric: tabular-nums;
 	}
@@ -750,7 +751,6 @@
 	.count {
 		flex: none;
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 	}
 

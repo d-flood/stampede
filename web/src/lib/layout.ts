@@ -2,7 +2,7 @@ import { claimDeviceId, deviceId, earlyLayout, type Chat, type Terminal } from '
 import { OpenBrowser } from '#lib/browser.svelte.ts';
 import { OpenCanvas } from '#lib/canvas.svelte.ts';
 import { OpenEpic } from '#lib/epics.svelte.ts';
-import { OpenConfig, OpenDiff, OpenFile, type Against, type Layout as DiffMode, type Reviewing, type Selection } from '#lib/files.svelte.ts';
+import { OpenConfig, OpenDiff, OpenFile, OpenChanges, type Against, type Layout as DiffMode, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 import type { Section } from '#lib/shell/Sidebar.svelte';
 import type { Split, TabGroup } from '#lib/split.ts';
 
@@ -84,6 +84,7 @@ export function sendClosing(layout: Layout) {
 
 function ref(file: OpenFile): TabRef | null {
 	if (file instanceof OpenConfig) return { kind: 'config' };
+	if (file instanceof OpenChanges) return null;
 	if (!(file instanceof OpenDiff)) return { kind: 'file', path: file.path };
 	if (file.against === 'disk') return null;
 	return { kind: 'diff', path: file.path, against: file.against, from: file.from };

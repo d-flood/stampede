@@ -152,7 +152,7 @@ test('Ctrl+Shift+T opens terminals in the focused area and ignores repeats and d
 
 test('Ctrl+Shift+O opens Open File, as the Launchpad hints', { tag: '@desktop' }, async ({ page }) => {
 	await openProject(page, 'beta');
-	await expect(page.getByRole('region', { name: 'beta', exact: true }).getByRole('button', { name: 'Open file', exact: true })).toContainText('Ctrl+Shift+O');
+	await expect(page.getByRole('region', { name: 'beta', exact: true }).getByRole('button', { name: 'Open file', exact: true })).toContainText('Ctrl ⇧ O');
 	await page.keyboard.press('Control+Shift+O');
 	const files = page.getByRole('dialog', { name: 'Open File', exact: true });
 	await expect(files.getByRole('combobox')).toBeFocused();

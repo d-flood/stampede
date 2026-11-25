@@ -24,7 +24,7 @@
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { heldBy, OpenEpic } from '#lib/epics.svelte.ts';
-	import { comparing, image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, RequestError, type Against, type Cursor, type Reviewing, type Selection } from '#lib/files.svelte.ts';
+	import { comparing, image, invalidate, listing, OpenConfig, OpenDiff, OpenFile, OpenChanges, RequestError, type Against, type Cursor, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { deleteWorktree, status, type Change, type Git, type Trunk, type Update } from '#lib/git.ts';
 	import type { PrReview } from '#lib/pr-reviews.ts';
@@ -825,7 +825,7 @@
 		const terminal = tabs.find((tab) => tab.id === id);
 		const file = fileTabs.find((file) => file.id === id);
 		const close = { label: terminal && terminal.state !== 'live' ? 'Dismiss' : 'Close', onselect: () => closeAny(id) };
-		if (!file || file instanceof OpenDiff || file instanceof OpenConfig) return [close];
+		if (!file || file instanceof OpenDiff || file instanceof OpenConfig || file instanceof OpenChanges) return [close];
 		return [close, { label: 'Rename', onselect: () => renamer?.start(file.path, false) }];
 	}
 
@@ -970,7 +970,7 @@
 		const open = files[projectId] ?? [];
 		const ids = new Map<string, string>();
 		for (const file of open) {
-			if (file instanceof OpenDiff || file instanceof OpenConfig || (file.path !== from && !file.path.startsWith(`${from}/`))) continue;
+			if (file instanceof OpenDiff || file instanceof OpenConfig || file instanceof OpenChanges || (file.path !== from && !file.path.startsWith(`${from}/`))) continue;
 			const moved = new OpenFile(projectId, to + file.path.slice(from.length));
 			if (open.some((other) => other.id === moved.id)) continue;
 			ids.set(file.id, moved.id);
@@ -1038,6 +1038,7 @@
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		onrename={(from, to) => focused && retarget(focused.id, from, to)}
 		ondiff={(change, against, draft, replace) => focused && openDiff(focused.id, change, against, draft, replace)}
+		onchanges={(projectId) => openTab(new OpenChanges(projectId))}
 		onepic={(slug) => focused && openEpic(focused.id, slug)}
 		onfocus={focus}
 	>
@@ -1180,10 +1181,10 @@
 												{...props}
 												data-tab={id}
 												bottom={phone}
-												variant={file instanceof OpenDiff ? 'diff' : 'editor'}
+												variant={file instanceof OpenDiff || file instanceof OpenChanges ? 'diff' : 'editor'}
 												against={file instanceof OpenDiff ? file.versus : undefined}
 												label={file.name}
-												tooltip={file.deleted ? `${file.path} (deleted on disk)` : file.path}
+												tooltip={file instanceof OpenChanges ? 'Uncommitted changes' : file.deleted ? `${file.path} (deleted on disk)` : file.path}
 												dirty={file.dirty}
 												deleted={file.deleted}
 												active={id === group.active}
@@ -1326,7 +1327,7 @@
 								root={projects.find(({ id }) => id === chat.projectId)?.path}
 								branch={git.get(chat.projectId)?.branch}
 								changes={git.get(chat.projectId)?.changes.length ?? 0}
-								ongit={() => ((section = 'git'), (sidebar = true))}
+								onchanges={() => openTab(new OpenChanges(chat.projectId))}
 								{codexResets}
 								ondiff={(path) => openTab(new OpenDiff(chat.projectId, path, 'HEAD'))}
 								onfile={(path, cursor) => openFile(chat.projectId, path, cursor)}
@@ -1347,7 +1348,11 @@
 						onfocusin={() => choose(file.projectId, file.id)}
 					>
 						{#if active || warm()}
-							{#if file instanceof OpenDiff}
+							{#if file instanceof OpenChanges}
+								{#await import('#lib/shell/ChangesTab.svelte') then { default: ChangesTab }}
+									<ChangesTab tab={file} git={git.get(file.projectId)} {active} onopen={(path) => openFile(file.projectId, path)} />
+								{/await}
+							{:else if file instanceof OpenDiff}
 								{#await import('#lib/shell/Diff.svelte') then { default: Diff }}
 									<Diff diff={file} git={git.get(file.projectId)} reviews={prReviews[file.projectId]} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
 								{/await}
@@ -1940,7 +1945,7 @@
 
 	.empty h2 {
 		margin: 0;
-		font: 500 1.875rem/1.15 var(--font-chat);
+		font: 600 calc(2 * var(--font-size-base))/1.2 var(--font-ui);
 	}
 
 	.lede {

@@ -35,7 +35,7 @@ test('Clips made in Settings insert at the caret of a Chat Composer and send as 
 	const config = readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8');
 	expect(config.indexOf('name = "review"')).toBeLessThan(config.indexOf('name = "verify"'));
 	expect(config).toContain('text = """\nRun the tests.\nThen commit."""');
-	await settings.getByRole('button', { name: 'Done', exact: true }).click();
+	await settings.getByRole('button', { name: 'Close', exact: true }).click();
 
 	await openProject(page, 'beta');
 	await newTab(page, 'Fake Claude');

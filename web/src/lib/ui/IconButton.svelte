@@ -18,7 +18,6 @@
 		border-radius: var(--radius-sm);
 		background: none;
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		white-space: nowrap;
 		cursor: pointer;

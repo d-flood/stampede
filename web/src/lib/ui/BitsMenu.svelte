@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ContextMenu, DropdownMenu } from 'bits-ui';
-	import Kbd from '#lib/ui/Kbd.svelte';
+	import Shortcut from '#lib/ui/Shortcut.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
@@ -36,7 +36,7 @@
 			{#if Icon}<Icon />{/if}
 			<span class="label" class:checked>{label}</span>
 			{#if hint}<span class="hint" aria-hidden="true">{hint}</span>{/if}
-			{#if shortcut}<span class="hint" aria-hidden="true"><Kbd>{shortcut}</Kbd></span>{/if}
+			{#if shortcut}<span class="hint" aria-hidden="true"><Shortcut keys={shortcut} /></span>{/if}
 			{#if checked}<span class="check" aria-hidden="true">✓</span>{/if}
 		{/if}
 	</ListItem>

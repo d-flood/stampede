@@ -73,11 +73,11 @@
 		<div class="chips">
 			{#each edits as edit (`${edit.canvas}:${edit.path}`)}
 				{#if edit.canvas}
-					<Chip mono title={edit.path} onclick={() => oncanvas(edit.path)}>{@render chip(edit)}</Chip>
+					<Chip title={edit.path} onclick={() => oncanvas(edit.path)}>{@render chip(edit)}</Chip>
 				{:else if edit.path.startsWith('/')}
-					<Chip element="span" mono title={edit.path}>{@render chip(edit)}</Chip>
+					<Chip element="span" title={edit.path}>{@render chip(edit)}</Chip>
 				{:else}
-					<Chip mono title={edit.path} onclick={() => ondiff(edit.path)}>{@render chip(edit)}</Chip>
+					<Chip title={edit.path} onclick={() => ondiff(edit.path)}>{@render chip(edit)}</Chip>
 				{/if}
 			{/each}
 		</div>

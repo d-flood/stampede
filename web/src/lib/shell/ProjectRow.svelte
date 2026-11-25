@@ -75,7 +75,7 @@
 			>
 				<span class="square squircle">
 					<ProjectIcon {project} />
-					{#if needs}<span class="attention">{needs}</span>{/if}
+					{#if needs}<span class="attention" title="{needs} {needs === 1 ? 'needs' : 'need'} attention"><span class="assistive">{needs}</span></span>{/if}
 					{#if trunk}<span class="behind" class:pulling class:failed title={failed ?? `${trunk.behind} new on origin/${trunk.branch}`}><ArrowDownBold /></span>{/if}
 					{#if tiles.length}<span class="count" title="{tiles.length} {tiles.length === 1 ? 'worktree' : 'worktrees'}">{tiles.length}</span>{/if}
 					{#if working}<span class="spinner" title="working"><WorkingMark /></span>{:else if background}<span class="shell" title="background"><ShellMark /></span>{/if}
@@ -110,7 +110,7 @@
 						>
 							<span class="tile squircle {tile.status ?? ''}">
 								{tile.mark}
-								{#if tile.needs}<span class="attention">{tile.needs}</span>{/if}
+								{#if tile.needs}<span class="attention" title="{tile.needs} {tile.needs === 1 ? 'needs' : 'need'} attention"><span class="assistive">{tile.needs}</span></span>{/if}
 								{#if tile.status === 'working'}<span class="spinner" title="working"><WorkingMark /></span>{:else if tile.status === 'background'}<span class="shell" title="background"><ShellMark /></span>{/if}
 							</span>
 							<span class="name">{name}</span>
@@ -200,7 +200,7 @@
 	}
 
 	.compact .project:has(:global(.monogram)) {
-		border-color: color-mix(in oklab, var(--hue) 38%, var(--color-bg));
+		border-color: var(--border);
 	}
 
 	.card .project {
@@ -247,12 +247,30 @@
 	}
 
 	.compact .project.focused {
-		--tile-base: var(--surface-1);
+		--tile-base: var(--hover);
+		border-color: var(--border-strong);
 		background: none;
 	}
 
-	.compact .project.focused .square {
-		box-shadow: 0 0 0 calc(2 * var(--border-width)) var(--accent);
+	.compact .project::before {
+		content: '';
+		position: absolute;
+		top: 22%;
+		bottom: 22%;
+		left: calc(-1 * var(--space-3) - var(--border-width));
+		width: 4px;
+		border-radius: 0 4px 4px 0;
+		background: var(--color-fg);
+		opacity: 0;
+		scale: 1 0;
+		transition:
+			opacity var(--dur-fast),
+			scale var(--dur-med) var(--ease-out);
+	}
+
+	.compact .project.focused::before {
+		opacity: 1;
+		scale: 1;
 	}
 
 	.project:focus-visible,
@@ -330,10 +348,21 @@
 	}
 
 	.attention {
-		top: calc(-1 * var(--space-1) - var(--border-width));
-		right: calc(-1 * var(--space-1) - var(--border-width));
+		top: calc(-1 * var(--space-1) / 2);
+		right: calc(-1 * var(--space-1) / 2);
+		min-width: 0;
+		width: var(--space-3);
+		height: var(--space-3);
+		padding: 0;
 		background: var(--status-waiting);
-		color: var(--color-bg);
+	}
+
+	.assistive {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
 	}
 
 	.behind {
@@ -432,7 +461,6 @@
 
 	.progress {
 		color: var(--status-done);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-variant-numeric: tabular-nums;
 	}

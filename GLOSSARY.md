@@ -305,6 +305,10 @@ _Avoid_: WYSIWYG, rich text, live mode
 A Tab comparing a file against a commit or across a Comparison; editable when showing Uncommitted changes, read-only for history.
 _Avoid_: diff view, diff tile
 
+**Changes tab**:
+A read-only Tab stacking every file's Uncommitted changes against HEAD, each under a header with its counts; opened from the Tray or the Git section.
+_Avoid_: review tab, multi-diff
+
 **Split**:
 Two Tabs shown side by side in the main window.
 _Avoid_: tile, pane

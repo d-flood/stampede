@@ -83,7 +83,6 @@
 	.letter {
 		flex: none;
 		color: var(--git, var(--muted-fg));
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-weight: 700;
 	}

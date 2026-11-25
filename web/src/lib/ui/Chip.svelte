@@ -1,12 +1,12 @@
 <script lang="ts">
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	type Props = HTMLButtonAttributes & { element?: 'button' | 'span'; variant?: 'default' | 'ghost'; mono?: boolean; pending?: boolean; pressed?: boolean };
+	type Props = HTMLButtonAttributes & { element?: 'button' | 'span'; variant?: 'default' | 'ghost'; pending?: boolean; pressed?: boolean };
 
-	let { element = 'button', variant = 'default', mono = false, pending = false, pressed, children, ...rest }: Props = $props();
+	let { element = 'button', variant = 'default', pending = false, pressed, children, ...rest }: Props = $props();
 </script>
 
-<svelte:element this={element} type={element === 'button' ? 'button' : undefined} class={['chip', variant, { mono, pending }]} aria-pressed={pressed} {...rest}>
+<svelte:element this={element} type={element === 'button' ? 'button' : undefined} class={['chip', variant, { pending }]} aria-pressed={pressed} {...rest}>
 	{@render children?.()}
 </svelte:element>
 
@@ -84,10 +84,6 @@
 		border-color: transparent;
 		background: none;
 		color: var(--muted-fg);
-	}
-
-	.mono {
-		font-family: var(--font-mono);
 	}
 
 	.pending {

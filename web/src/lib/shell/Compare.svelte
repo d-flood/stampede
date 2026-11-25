@@ -414,7 +414,6 @@
 		min-width: 0;
 		overflow: hidden;
 		color: var(--color-fg);
-		font-family: var(--font-mono);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
@@ -502,7 +501,6 @@
 	}
 
 	.entry .name {
-		font-family: var(--font-mono);
 		font-size: var(--font-size-code);
 	}
 
@@ -526,7 +524,6 @@
 	.count {
 		flex: none;
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 	}
 
@@ -570,7 +567,6 @@
 	.number {
 		flex: none;
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-weight: 400;
 	}
 
@@ -670,7 +666,6 @@
 	}
 
 	.displaced .name {
-		font-family: var(--font-mono);
 		font-size: var(--font-size-code);
 	}
 

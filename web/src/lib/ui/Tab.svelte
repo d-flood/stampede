@@ -32,7 +32,7 @@
 		label,
 		tooltip,
 		agent = 'claude-code',
-		against = 'HEAD',
+		against,
 		status,
 		fresh = false,
 		active = false,
@@ -75,7 +75,7 @@
 	>
 		<TabIcon {variant} {agent} {label} />
 		<span class="label">{label}</span>
-		{#if variant === 'diff'}<span class="vs">· {against}</span>{/if}
+		{#if variant === 'diff' && against}<span class="vs">· {against}</span>{/if}
 		<TabMarks {status} {dirty} {fresh} />
 	</button>
 {/snippet}

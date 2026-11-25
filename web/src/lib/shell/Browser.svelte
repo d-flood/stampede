@@ -103,7 +103,7 @@
 <div class="browser" role="tabpanel" aria-label="Browser">
 	<form onsubmit={(event) => { event.preventDefault(); navigate(); }}>
 		<IconButton label="Reload preview" type="button" disabled={!src || pending} onclick={reloadPreview}><ArrowClockwise /></IconButton>
-		<TextField mono aria-label="Host address" bind:value={address} placeholder="http://localhost:5173" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="url" {@attach (element) => { if (focused) element.focus(); }} />
+		<TextField aria-label="Host address" bind:value={address} placeholder="http://localhost:5173" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="url" {@attach (element) => { if (focused) element.focus(); }} />
 		<Button type="submit" disabled={pending}>{pending ? 'Opening…' : 'Go'}</Button>
 		<IconButton label="Open preview in new window" type="button" disabled={!src} onclick={() => window.open(src, '_blank', 'noopener')}><ArrowSquareOut /></IconButton>
 	</form>

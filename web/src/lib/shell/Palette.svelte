@@ -188,7 +188,6 @@
 		display: flex;
 		min-width: 0;
 		overflow: hidden;
-		font-family: var(--font-mono);
 		white-space: nowrap;
 	}
 

@@ -227,7 +227,7 @@
 						{#each hottest(agent) as meter (meter.name)}
 							<span class="meter {meter.window}" class:high={meter.percent >= high} role="meter" aria-label="{label} · {meter.name}" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter.percent} aria-valuetext={`${meter.percent}% used. ${details(meter.reading)}`}>
 								<span class="period">{meter.short}</span>
-								<svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="track" cx="10" cy="10" r="8" /><circle class="arc" cx="10" cy="10" r="8" pathLength="100" stroke-dasharray="{Math.min(meter.percent, 100)} 100" transform="rotate(-90 10 10)" /></svg>
+								<span class="gauge" aria-hidden="true"><span class="level" style:width="{Math.min(meter.percent, 100)}%"></span></span>
 								<span class="number">{meter.percent}</span>
 								{#if meter.reading.resetsAt !== undefined}
 									<span class="remaining">{remaining(meter.reading.resetsAt)}</span>
@@ -285,8 +285,8 @@
 	}
 
 	.row {
-		--number: 11px;
-		--label: 10px;
+		--number: var(--font-size-sm);
+		--label: var(--font-size-sm);
 		--logo: 14px;
 		position: relative;
 		display: grid;
@@ -367,27 +367,26 @@
 		padding-inline: var(--space-3) var(--space-1);
 	}
 
-	.ring {
+	.gauge {
 		align-self: center;
-		width: var(--logo);
-		height: var(--logo);
-		margin-right: var(--space-1);
-		fill: none;
-		stroke-width: 3.5;
+		width: calc(1.5 * var(--logo));
+		height: calc(4 * var(--border-width));
+		margin-right: var(--space-2);
+		overflow: hidden;
+		border-radius: var(--radius-pill);
+		background: color-mix(in oklab, var(--brand) 22%, var(--surface-3));
 	}
 
-	.ring .track {
-		stroke: color-mix(in oklab, var(--brand) 22%, var(--surface-3));
+	.level {
+		display: block;
+		height: 100%;
+		border-radius: inherit;
+		background: var(--brand);
+		transition: width calc(4 * var(--dur-med)) var(--ease-out);
 	}
 
-	.ring .arc {
-		stroke: var(--brand);
-		stroke-linecap: round;
-		transition: stroke-dasharray calc(4 * var(--dur-med)) var(--ease-out);
-	}
-
-	.high .ring .arc {
-		stroke: var(--status-waiting);
+	.high .level {
+		background: var(--status-waiting);
 	}
 
 	.number {
@@ -461,6 +460,11 @@
 		font-size: var(--number);
 	}
 
+	.count :global(svg) {
+		width: var(--logo);
+		height: var(--logo);
+	}
+
 	.assistive {
 		position: absolute;
 		width: 1px;
@@ -469,14 +473,14 @@
 		clip-path: inset(50%);
 	}
 
-	@container (width < 299px) {
+	@container (width < 340px) {
 		.remaining {
 			display: none;
 		}
 	}
 
-	/* Percent signs need the room that reset times give up below 299px. */
-	@container (270px <= width < 299px) or (width >= 330px) {
+	/* Percent signs need the room that reset times give up below 340px. */
+	@container (260px <= width < 340px) or (width >= 380px) {
 		.number::after {
 			content: '%';
 			color: var(--muted-fg);
@@ -495,7 +499,12 @@
 			padding-inline: var(--space-3);
 		}
 
-		.row .ring {
+		.meter .period,
+		.count {
+			padding-left: var(--space-2);
+		}
+
+		.row .gauge {
 			display: none;
 		}
 	}
@@ -505,7 +514,7 @@
 			padding-inline: var(--space-3);
 		}
 
-		.phone .ring {
+		.phone .gauge {
 			display: none;
 		}
 	}

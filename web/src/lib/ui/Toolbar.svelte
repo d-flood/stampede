@@ -35,7 +35,6 @@
 		flex: 1;
 		overflow: hidden;
 		color: var(--muted-fg);
-		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		text-overflow: ellipsis;
 		white-space: nowrap;

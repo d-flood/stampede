@@ -12,6 +12,8 @@
 		wide?: boolean;
 		/** False when the dialog's own actions already close it. */
 		closeButton?: boolean;
+		/** With `wide`, sizes to the content between a floor and a ceiling instead of a fixed height. */
+		fit?: boolean;
 		/** Sizes a wide dialog to its content, up to its usual height. */
 		title: string;
 		description?: string;
@@ -20,7 +22,7 @@
 		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, title, description, children, actions, oncloseautofocus }: Props = $props();
+	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, fit = false, title, description, children, actions, oncloseautofocus }: Props = $props();
 </script>
 
 <Dialog.Root bind:open>
@@ -32,7 +34,7 @@
 		</Dialog.Overlay>
 	<Dialog.Content onCloseAutoFocus={oncloseautofocus}>
 			{#snippet child({ props })}
-				<div {...props} class="dialog" class:wide class:full class:sheet class:footed={!!actions}>
+				<div {...props} class="dialog" class:wide class:full class:sheet class:fit class:footed={!!actions}>
 					<div class="heading">
 						<Dialog.Title>
 							{#snippet child({ props })}
@@ -102,6 +104,12 @@
 		height: min(42rem, calc(100dvh - 2 * var(--space-4)));
 		padding: 0;
 		overflow: hidden;
+	}
+
+	.wide.fit:not(.full) {
+		height: auto;
+		min-height: min(28rem, calc(100dvh - 2 * var(--space-4)));
+		max-height: min(42rem, calc(100dvh - 2 * var(--space-4)));
 	}
 
 	.wide .heading {

@@ -35,7 +35,7 @@
 	import GitBranch from '~icons/ph/git-branch';
 	import GitFork from '~icons/ph/git-fork';
 
-	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, changes = 0, ongit, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; changes?: number; ongit?(): void; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
+	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, changes = 0, onchanges, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; changes?: number; onchanges?(): void; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
 		$props();
 
 	const subagents = $derived(flatten(items));
@@ -299,7 +299,7 @@
 			</div>
 		{/if}
 		{#if selected}<Activity status={selected.status} activity={selected.activity} />{/if}
-		<Tray {items} todos={selected ? [] : chat.todos} {canvases} changes={selected || chat.status !== 'done' || form() === 'phone' ? 0 : changes} {branch} {ongit} onopen={open} onattend={attend} {oncanvas} />
+		<Tray {items} todos={selected ? [] : chat.todos} {canvases} changes={selected || chat.status !== 'done' || form() === 'phone' ? 0 : changes} {branch} {onchanges} onopen={open} onattend={attend} {oncanvas} />
 		{#if request}
 			{#key request.id}
 				<RequestCard bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} onattach={(files) => composer?.attach(files)} />

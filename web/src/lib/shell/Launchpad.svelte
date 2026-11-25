@@ -7,7 +7,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Card from '#lib/ui/Card.svelte';
 	import Chip from '#lib/ui/Chip.svelte';
-	import Kbd from '#lib/ui/Kbd.svelte';
+	import Shortcut from '#lib/ui/Shortcut.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
@@ -58,6 +58,7 @@
 							</Chip>
 						{/snippet}
 					</Menu>
+					<span class="summary">{rig.summary}</span>
 					<span class="fill"></span>
 					<Button variant="primary" round aria-label="Send" disabled={!text.trim()} onmousedown={(event) => event.preventDefault()} onclick={() => start(text) && clear()}>
 						<PaperPlaneRight />
@@ -82,7 +83,7 @@
 				<button class="tool" onclick={onselect}>
 					{#if Icon}<Icon />{/if}
 					<span class="label">{label}</span>
-					{#if shortcut && !phone}<span class="hint" aria-hidden="true"><Kbd>{shortcut}</Kbd></span>{/if}
+					{#if shortcut && !phone}<span class="hint" aria-hidden="true"><Shortcut keys={shortcut} /></span>{/if}
 				</button>
 			{/each}
 		</div>
@@ -140,7 +141,7 @@
 
 	h2 {
 		margin: 0;
-		font: 500 1.875rem/1.15 var(--font-chat);
+		font: 600 calc(2 * var(--font-size-base))/1.2 var(--font-ui);
 		overflow-wrap: anywhere;
 	}
 
@@ -235,6 +236,15 @@
 
 	.fill {
 		flex: 1;
+	}
+
+	.summary {
+		min-width: 0;
+		overflow: hidden;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.tool {

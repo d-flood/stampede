@@ -9,7 +9,7 @@ test('Fira Sans loads for the UI, Literata for chat text and JetBrains Mono for 
 	const settings = await openSettings(page, 'Appearance');
 	for (const element of [
 		page.locator('body'), settings, settings.locator('h2'),
-		settings.getByRole('button', { name: 'Done', exact: true }), settings.locator('.preview span:first-child')
+		settings.getByRole('radio', { name: 'System', exact: true }), settings.locator('.preview span:first-child')
 	]) {
 		await expect(element).toHaveCSS('font-family', /^"?Fira Sans/);
 	}
@@ -70,7 +70,7 @@ test('UI, chat and code sizes default per device, change, persist, and reset', a
 	await expect(samples.chat).toHaveCSS('font-size', '24px');
 	await expect(samples.code).toHaveCSS('font-size', '18px');
 	await expect.poll(() => settings.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await settings.getByRole('button', { name: 'Done', exact: true }).click();
+	await settings.getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(settings).toBeHidden();
 	await page.reload();
 	await expect(page.locator('body')).toHaveCSS('font-size', '22px');
@@ -105,7 +105,7 @@ test('code size updates a running terminal and the editor', { tag: '@desktop' },
 	await expect.poll(() => page.evaluate(() => window.terminal!.cols)).toBeLessThan(columns);
 	await expect(page.locator('.cm-editor')).toHaveCSS('font-size', '20px');
 	await expect.poll(() => screen(page)).toMatch(/^size-before$/m);
-	await settings.getByRole('button', { name: 'Done', exact: true }).click();
+	await settings.getByRole('button', { name: 'Close', exact: true }).click();
 	await input.focus();
 	await page.keyboard.type('echo size-after');
 	await page.keyboard.press('Enter');
@@ -154,7 +154,7 @@ test('spinners switch between custom and standard in this browser', { tag: '@des
 	const style = settings.getByRole('radiogroup', { name: 'Spinners' });
 	await expect(style.getByRole('radio', { name: 'Custom', exact: true })).toBeChecked();
 	await style.getByRole('radio', { name: 'Standard', exact: true }).click();
-	await settings.getByRole('button', { name: 'Done', exact: true }).click();
+	await settings.getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(working).toHaveAttribute('viewBox', '0 0 256 256');
 
 	await page.reload();
@@ -176,7 +176,7 @@ test('available modes are chosen per Agent and limit a Chat\'s mode menu', { tag
 	await copilot.getByRole('checkbox', { name: 'full access', exact: true }).uncheck();
 	await expect(copilot.getByRole('checkbox', { name: 'default', exact: true })).toBeDisabled();
 	await expect.poll(() => dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 
 	await newTab(page, 'Fake Claude');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
