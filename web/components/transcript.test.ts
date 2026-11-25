@@ -29,7 +29,7 @@ test('messages stay visible while Activity groups update and retain their open s
 	await expect.element(view.getByText('3 notes.txt', { exact: true })).toBeVisible();
 	await expect.element(view.getByText('The file has three lines.', { exact: true })).toBeVisible();
 	await page.elementLocator(summaries(view.container)[1]).click();
-	await expect.poll(() => summaries(view.container)[0].getBoundingClientRect().height).toBeGreaterThanOrEqual(matchMedia('(pointer: coarse)').matches ? 48 : 26);
+	await expect.poll(() => summaries(view.container)[0].getBoundingClientRect().height).toBeGreaterThanOrEqual(matchMedia('(pointer: coarse)').matches ? 48 : 24);
 	await expect.poll(() => view.container.scrollWidth <= view.container.clientWidth).toBe(true);
 });
 

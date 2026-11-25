@@ -21,14 +21,14 @@
 	let landing: number | undefined;
 	const phone = $derived(form() === 'phone');
 	const position = $derived(messages.findIndex(({ index }) => index === current));
-	const shown = $derived(phone ? away && !atTop : revealed && current !== undefined);
+	const shown = $derived(!atTop && (phone ? away : revealed && current !== undefined));
 
 	function bottom() {
 		return nav ? nav.offsetTop + nav.offsetHeight : 0;
 	}
 
 	function edge() {
-		return scroller!.getBoundingClientRect().top + bottom();
+		return (nav?.offsetParent ?? scroller!).getBoundingClientRect().top + bottom();
 	}
 
 	function entries() {
@@ -105,9 +105,9 @@
 {/if}
 
 <style>
-	nav { position: absolute; z-index: 1; top: 0; right: var(--gutter); left: 0; border-bottom: var(--border-width) solid var(--border); background: var(--surface-1); box-shadow: var(--shadow-float); font-size: var(--font-size-sm); opacity: 0; transform: translateY(-100%); pointer-events: none; transition: transform var(--dur-med) ease, opacity var(--dur-med) ease; }
+	nav { position: absolute; z-index: 2; top: 0; right: var(--gutter); left: 0; border-bottom: var(--border-width) solid var(--border); background: var(--surface-1); box-shadow: var(--shadow-float); font-size: var(--font-size-sm); opacity: 0; transform: translateY(-100%); pointer-events: none; transition: transform var(--dur-med) ease, opacity var(--dur-med) ease; }
 	nav.shown { opacity: 1; transform: none; pointer-events: auto; }
-	.row { display: flex; align-items: center; gap: var(--space-1); max-width: 760px; margin: 0 auto; padding: 0 var(--space-4); }
+	.row { display: flex; align-items: center; gap: var(--space-1); max-width: 760px; margin: 0 auto; padding: var(--space-1) var(--space-4); }
 	.current { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--target-min); padding: 0 var(--space-2); border: none; border-radius: var(--radius-md); background: none; color: var(--color-fg); font: inherit; text-align: left; cursor: pointer; }
 	.current:hover, .current[data-state='open'] { background: var(--hover); }
 	.current:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-inset); }

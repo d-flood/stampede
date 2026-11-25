@@ -37,6 +37,7 @@
 	.role { flex: none; }
 	.task { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--color-fg); text-overflow: ellipsis; }
 	.state { flex: none; font-variant-numeric: tabular-nums; }
+	.state::before { content: '·'; margin-inline-end: var(--space-2); }
 	.waiting .state { color: var(--status-waiting); }
 	.failed .state { color: var(--ansi-1); }
 </style>

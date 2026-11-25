@@ -58,7 +58,7 @@
 			{#snippet trigger(props)}
 				<Chip
 					{...props}
-					variant={phone ? 'default' : 'ghost'}
+					variant="ghost"
 					pending={later}
 					aria-label="Model: {parts.join(' ')}{later ? ', next turn' : ''}"
 					title={later ? 'Takes effect on the next turn' : undefined}
@@ -74,7 +74,7 @@
 			{#snippet trigger(props)}
 				<Chip
 					{...props}
-					variant={phone ? 'default' : 'ghost'}
+					variant="ghost"
 					pending={pending('mode')}
 					aria-label="Mode: {label('mode')}{pending('mode') ? ', next turn' : ''}"
 					title={pending('mode') ? 'Takes effect on the next turn' : undefined}
@@ -118,6 +118,10 @@
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.label::first-letter {
+		text-transform: uppercase;
 	}
 
 	.model {

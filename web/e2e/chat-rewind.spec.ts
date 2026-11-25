@@ -44,7 +44,7 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		const before = await column.evaluate((node) => ({ left: node.getBoundingClientRect().left, width: node.getBoundingClientRect().width }));
 		const opacity = () => nav.evaluate((node) => getComputedStyle(node).opacity);
 		const message = (number: number) => panel.getByRole('region', { name: `User message ${number}`, exact: true });
-		const landed = (number: number) => expect.poll(() => message(number).evaluate((node) => Math.abs(node.getBoundingClientRect().top - node.closest('.conversation')!.querySelector('nav')!.getBoundingClientRect().bottom))).toBeLessThan(2);
+		const landed = (number: number) => expect.poll(() => message(number).evaluate((node) => Math.abs(node.getBoundingClientRect().top - node.closest('.panel')!.querySelector('nav[aria-label="User messages"]')!.getBoundingClientRect().bottom))).toBeLessThan(2);
 		await expect.poll(opacity).toBe('0');
 		await expect.poll(() => transcript.evaluate((node) => node.getBoundingClientRect().width === node.parentElement!.getBoundingClientRect().width)).toBe(true);
 		await transcript.evaluate((node) => { node.scrollTop -= 250; });
@@ -74,16 +74,15 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await expect.poll(opacity).toBe('1');
 		await nav.getByRole('button', { name: 'Message 6 of 6: Prompt 6', exact: true }).click();
 		await page.getByRole('menuitemcheckbox', { name: '1. Prompt 1', exact: true }).click();
-		// The phone navigator floats over the transcript, so the first message tops out above its edge.
-		const first = () => project.name === 'pixel' ? expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(0) : landed(1);
+		// The navigator floats over the transcript, so the first message tops out above its edge.
+		const first = () => expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(0);
 		await first();
 		await transcript.evaluate((node) => { node.scrollTop = 0; });
 		await first();
-		if (project.name === 'pixel') {
-			await expect.poll(opacity).toBe('0');
-			await transcript.evaluate((node) => { node.scrollTop = 100; });
-			await expect.poll(opacity).toBe('1');
-		}
+		await expect.poll(opacity).toBe('0');
+		await transcript.evaluate((node) => new Promise((resolve) => { node.addEventListener('scroll', resolve, { once: true }); node.scrollTop = 200; }));
+		await transcript.evaluate((node) => { node.scrollTop = 100; });
+		await expect.poll(opacity).toBe('1');
 		await nav.getByRole('button', { name: 'Message 1 of 6: Prompt 1', exact: true }).click();
 		await page.getByRole('menuitemcheckbox', { name: '3. Prompt 3', exact: true }).click();
 		await landed(3);

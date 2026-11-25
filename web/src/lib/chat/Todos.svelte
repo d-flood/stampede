@@ -1,15 +1,16 @@
 <script lang="ts">
 	import type { Todo } from '#lib/device.svelte.ts';
+	import Caret from '#lib/ui/Caret.svelte';
 
 	let { todos }: { todos: Todo[] } = $props();
 	const done = $derived(todos.filter((todo) => todo.status === 'done').length);
 	const current = $derived(todos.find((todo) => todo.status === 'active')?.text);
 </script>
 
-{#if todos.length}
+{#if todos.length && done < todos.length}
 	<section aria-label="Todos">
 		<details>
-			<summary><strong>Todos {done} of {todos.length}</strong>{#if current}<span>{' · '}{current}</span>{/if}</summary>
+			<summary><Caret /><strong>Todos {done} of {todos.length}</strong>{#if current}<span>{' · '}{current}</span>{/if}</summary>
 			<ul>
 				{#each todos as todo, index (index)}
 					<li class:active={todo.status === 'active'} class:done={todo.status === 'done'}>
@@ -25,7 +26,7 @@
 <style>
 	section {
 		flex: none;
-		padding: var(--space-2) var(--space-4);
+		padding: var(--space-1) var(--space-4);
 		background: var(--surface-1);
 		border-bottom: var(--border-width) solid var(--border);
 	}
@@ -37,6 +38,7 @@
 	summary {
 		display: flex;
 		align-items: center;
+		gap: var(--space-1);
 		cursor: pointer;
 		min-height: var(--target-min);
 	}

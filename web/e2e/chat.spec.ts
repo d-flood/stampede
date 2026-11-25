@@ -471,7 +471,7 @@ for (const agent of ['Claude', 'Codex']) {
 		await expect(card.getByText('-beta')).toBeVisible();
 
 		await chip.click();
-		await expectCurrent(page, 'notes.txt ↔ HEAD');
+		await expectCurrent(page, 'notes.txt · HEAD');
 		const diff = page.locator('.diff:not([hidden])');
 		await expect(diff.locator('.path')).toHaveText('notes.txt');
 		await expect(diff.locator('.cm-changedLine', { hasText: /^BETA$/ })).toBeVisible();
@@ -552,11 +552,12 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 });
 
 test('four Usage window meters show their readings and warn from 80%', async ({ page }, { project }) => {
-	await page.goto('/');
 	let usage = page.getByRole('region', { name: 'Usage windows' });
 	if (project.name === 'pixel') {
+		await page.goto('/');
 		await expect(await showProjects(page)).toBeInViewport();
 	} else {
+		await openProject(page, 'alpha');
 		await expect(page.getByRole('button', { name: 'Sidebar' })).toBeVisible();
 		usage = (await showSidebar(page)).getByRole('region', { name: 'Usage windows' });
 	}
@@ -724,7 +725,7 @@ test('a Chat pins todos and counts its completed subagent in the Tray', async ({
 	await expect(todos.getByRole('listitem').first()).toBeInViewport();
 	unlinkSync(`${root}/subagent-${project.name}/todos`);
 	await expect(tab.getByTitle('done')).toBeVisible();
-	await expect(todos.locator('summary')).toHaveText('Todos 3 of 3');
+	await expect(todos.getByRole('button')).toHaveText('3 todos done');
 	await expect(panel.getByText('Explore · Find file mentioning needle')).toHaveCount(0);
 	const picker = page.getByRole('combobox', { name: /^Session in/ });
 	const subagents = panel.getByRole('region', { name: 'Subagents' });

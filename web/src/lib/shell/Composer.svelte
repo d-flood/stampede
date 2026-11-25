@@ -24,10 +24,9 @@
 		/** Replaces Insert and Send, and boxes the Composer in a Chat's column. */
 		actions?: Snippet<[text: string, clear: () => void]>;
 		border?: Snippet<[text: string]>;
-		footer?: Snippet;
 	};
 
-	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], mark, onsend, actions, border, footer, menu, onkeydown, onpaste }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], mark, onsend, actions, border, menu, onkeydown, onpaste }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
@@ -138,37 +137,32 @@
 <div class="composer" class:boxed={actions} class:phone>
 	{@render menu?.(text, replace, caret)}
 	<ClipMenu bind:this={clipMenu} {text} {caret} {replace} />
-	{#if actions && phone}
+	{#if actions}
 		<div class="card">
 			<div class="field">{@render editor()}</div>
 			<div class="actions">{@render actions(text, clear)}</div>
 			{#if border}<div class="outline">{@render border(text)}</div>{/if}
 		</div>
-		{#if footer}<div class="footer">{@render footer()}</div>{/if}
 	{:else}
 		<div class="field">
 			{@render editor()}
 			{@render border?.(text)}
 		</div>
 		<div class="actions">
-			{#if !actions && text.trim()}
+			{#if text.trim()}
 				<Button aria-label="Save as Clip" tip="Save as Clip" onmousedown={(event) => event.preventDefault()} onclick={() => (clipping = true)}><BookmarkSimple /></Button>
 			{/if}
-			{#if actions}
-				{@render actions(text, clear)}
-			{:else}
-				<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
-					Insert
-				</Button>
-				<Button
-					variant="primary"
-					disabled={!text || disabled}
-					onmousedown={(event) => event.preventDefault()}
-					onclick={() => submit(true)}
-				>
-					Send
-				</Button>
-			{/if}
+			<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
+				Insert
+			</Button>
+			<Button
+				variant="primary"
+				disabled={!text || disabled}
+				onmousedown={(event) => event.preventDefault()}
+				onclick={() => submit(true)}
+			>
+				Send
+			</Button>
 		</div>
 	{/if}
 </div>
@@ -254,17 +248,15 @@
 	.boxed textarea {
 		min-height: 2lh;
 		max-height: 40vh;
-		border: var(--border-width) solid var(--border-strong);
-		border-radius: var(--radius-xl);
-		background: var(--surface-1);
-		box-shadow: var(--shadow-lift);
 		outline: none;
 		field-sizing: content;
 	}
 
 	.boxed .actions {
 		align-items: center;
-		flex-wrap: wrap;
+		flex-wrap: nowrap;
+		gap: var(--space-1);
+		padding: 0 var(--space-2) var(--space-2);
 	}
 
 	.boxed.phone {
@@ -280,30 +272,24 @@
 		background: var(--surface-1);
 	}
 
+	.card textarea, .card .mirror {
+		border: 0;
+		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+		background: none;
+	}
+
 	.outline {
 		position: absolute;
 		inset: calc(-1 * var(--border-width));
 		pointer-events: none;
 	}
 
-	.footer {
-		display: flex;
-		align-items: center;
-		min-width: 0;
-	}
 
 	.boxed.phone .actions {
-		justify-content: space-between;
-		flex-wrap: nowrap;
 		gap: var(--space-2);
-		padding: 0 var(--space-2) var(--space-2);
 	}
 
 	.boxed.phone textarea, .boxed.phone .mirror {
-		border: 0;
-		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-		background: none;
-		box-shadow: none;
 		font-size: var(--font-size-lg);
 	}
 

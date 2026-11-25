@@ -87,6 +87,10 @@
 		background: var(--surface-2);
 	}
 
+	.user :global(.text) {
+		font-family: var(--font-ui);
+	}
+
 	details.user {
 		padding-block: 0;
 	}

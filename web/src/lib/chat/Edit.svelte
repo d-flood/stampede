@@ -10,7 +10,7 @@
 <details class="edit">
 	<summary>
 		<span class="title">Edited <span class="path" title={item.path}>{form() === 'phone' ? item.path.split('/').at(-1) : item.path}</span></span>
-		<span class="counts"><span class="added">+{item.added}</span> <span class="removed">−{item.removed}</span></span>
+		<span class="counts">{#if item.added}<span class="added">+{item.added}</span>{/if}{#if item.added && item.removed}{" "}{/if}{#if item.removed}<span class="removed">−{item.removed}</span>{/if}</span>
 	</summary>
 	{#if item.diff}
 		<div class="diff">

@@ -84,7 +84,7 @@
 	}
 
 	.track {
-		stroke: var(--border);
+		stroke: var(--border-strong);
 	}
 
 	.fill {
@@ -93,7 +93,8 @@
 
 	.percent {
 		font-family: var(--font-mono);
-		font-size: 9px;
+		font-size: var(--font-size-sm);
+		letter-spacing: -0.06em;
 		font-variant-numeric: tabular-nums;
 	}
 

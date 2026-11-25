@@ -30,7 +30,8 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await expect.poll(() => panel.locator('.composer .actions').evaluate((element) => {
 			const buttons = ['Attach image', 'More', 'Send'].map((label) => element.querySelector(`button[aria-label="${label}"]`)?.getBoundingClientRect());
 			const row = element.getBoundingClientRect();
-			return buttons.every((button) => button && Math.abs(button.top - buttons[0]!.top) < 1 && button.left >= row.left && button.right <= row.right);
+			const middle = (button: DOMRect) => button.top + button.height / 2;
+			return buttons.every((button) => button && Math.abs(middle(button) - middle(buttons[0]!)) < 1 && button.left >= row.left && button.right <= row.right);
 		})).toBe(true);
 		await panel.getByRole('textbox', { name: 'Composer' }).fill('Discuss authentication.');
 		await panel.getByRole('button', { name: 'Send', exact: true }).click();
