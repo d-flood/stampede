@@ -160,7 +160,7 @@
 	--surface-3: color-mix(in lab, var(--color-bg) 86%, var(--color-fg));
 	--canvas: rgb(from var(--color-bg) calc(r * 0.72) calc(g * 0.72) calc(b * 0.72));
 	--chrome: var(--canvas);
-	--raised: var(--surface-3);
+	--raised: color-mix(in lab, var(--color-bg) 80%, var(--color-fg));
 }
 
 @media (pointer: coarse) {

@@ -1936,7 +1936,7 @@
 	}
 
 	.lede {
-		margin: var(--space-2) 0 var(--space-4);
+		margin: var(--space-2) 0 var(--space-6);
 		color: var(--muted-fg);
 	}
 
@@ -1944,7 +1944,7 @@
 		display: block;
 		width: calc(1.5 * var(--tile));
 		height: calc(1.5 * var(--tile));
-		margin-bottom: var(--space-4);
+		margin-bottom: var(--space-6);
 	}
 
 	.reconnecting {

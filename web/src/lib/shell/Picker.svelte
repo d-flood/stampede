@@ -127,7 +127,6 @@
 	.folder .name {
 		flex: none;
 		margin-right: auto;
-		font-weight: 500;
 	}
 
 	/* Right-to-left moves the ellipsis to the path's start, keeping the segments that tell folders apart. */

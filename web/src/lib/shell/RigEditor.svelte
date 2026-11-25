@@ -3,6 +3,7 @@
 	import { agentNames, deleteRig, modes, reorderRigs, rigs, saveRig, type Agent, type Rig } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Caret from '#lib/ui/Caret.svelte';
 	import Checkbox from '#lib/ui/Checkbox.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Kbd from '#lib/ui/Kbd.svelte';
@@ -315,7 +316,7 @@
 							<span class="name" id="rig-{index}-name">{rig.name}</span>
 							<span class="detail" id="rig-{index}-detail">{summary(rig)}{#if index < 9}<span class="sr">, Ctrl+Shift+{index + 1}</span>{/if}</span>
 						</span>
-						{#if phone}<CaretRight />{:else if index < 9}<Kbd aria-hidden="true">Ctrl+Shift+{index + 1}</Kbd>{/if}
+						{#if phone}<CaretRight />{:else}{#if index < 9}<Kbd aria-hidden="true">Ctrl+Shift+{index + 1}</Kbd>{/if}<Caret />{/if}
 					</button>
 				</div>
 				{#if selected === rig.name && !phone}{@render editor()}{/if}
