@@ -705,7 +705,7 @@
 		top: 0;
 		z-index: 1;
 		border-block: var(--border-width) solid var(--border);
-		background: var(--surface-2);
+		background: var(--chrome);
 	}
 
 	.heading + .heading {

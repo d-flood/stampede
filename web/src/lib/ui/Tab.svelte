@@ -140,7 +140,6 @@
 		background: none;
 		color: var(--muted-fg);
 		font: inherit;
-		font-size: var(--font-size-sm);
 		white-space: nowrap;
 		cursor: pointer;
 		transition:
@@ -154,6 +153,7 @@
 	}
 
 	.bottom .select {
+		font-size: var(--font-size-sm);
 		margin-top: calc(-1 * var(--border-width));
 		margin-bottom: 0;
 		border: var(--border-width) solid transparent;

@@ -333,7 +333,7 @@
 		z-index: 2;
 		margin-top: calc(-1 * var(--border-width));
 		border-block: var(--border-width) solid var(--border);
-		background: var(--surface-2);
+		background: var(--chrome);
 	}
 
 	.pinned {
