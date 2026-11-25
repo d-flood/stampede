@@ -95,11 +95,13 @@
 		{#if rig}
 			<Composer id="launchpad:{path}" placeholder="Message {rig.label}" onsend={start}>
 				{#snippet actions(text, clear)}
-					<Menu side="top" align="start" items={rigMenu}>
-						{#snippet trigger(props)}
-							<Chip {...props} variant="ghost" aria-label="Rig: {rig.label}"><span>{rig.label}</span><CaretDown aria-hidden="true" /></Chip>
-						{/snippet}
-					</Menu>
+					<span class="rig">
+						<Menu side="top" align="start" items={rigMenu}>
+							{#snippet trigger(props)}
+								<Chip {...props} variant="ghost" aria-label="Rig: {rig.label}"><span>{rig.label}</span><CaretDown aria-hidden="true" /></Chip>
+							{/snippet}
+						</Menu>
+					</span>
 					<!-- svelte-ignore a11y_no_static_element_interactions (Hover and focus only start loading the model list.) -->
 					<span class="chips" onpointerenter={reach} onfocusin={reach}>
 						<Chips agent={rig.rig.agent} {settings} ready={!!options} {choices} onrun={(setting, value) => value !== 'default' && (overrides = { ...overrides, [setting]: value })} />
@@ -287,6 +289,16 @@
 		display: flex;
 		flex: 1;
 		min-width: 0;
+	}
+
+	/* The Rig decides everything after it, so it leads in weight. */
+	.rig {
+		display: contents;
+	}
+
+	.rig :global(.chip) {
+		color: var(--color-fg);
+		font-weight: 500;
 	}
 
 	.tool {
