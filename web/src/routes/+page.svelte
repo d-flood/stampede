@@ -1072,7 +1072,7 @@
 			{#each focused || phone ? groups : [] as group, index (index)}
 				<div
 					class="strip"
-					class:current={!!split && group.active === activeTab}
+					class:current={!phone && group.active === activeTab}
 					role="presentation"
 					style:grid-column={index * 2 + 1}
 					onfocusin={() => focused && group.active && choose(focused.id, group.active)}

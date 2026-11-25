@@ -418,13 +418,13 @@
 							{@const waiting = row.kind === 'file' ? pending.has(row.change.path) : row.changes.every(({ path }) => pending.has(path))}
 							<li class="row" class:pending={waiting} aria-busy={waiting || undefined}>
 								{#if row.kind === 'folder'}
-									<TreeRow data-key={row.key} name={row.folder.name} depth={row.depth + 1} open={row.open} title={row.folder.path} onclick={() => toggle(row.key, row.changes.length > LARGE ? opened : collapsed)} />
+									<TreeRow data-key={row.key} name={row.folder.name} depth={row.depth} open={row.open} muted title={row.folder.path} onclick={() => toggle(row.key, row.changes.length > LARGE ? opened : collapsed)} />
 								{:else}
 									{@const { change } = row}
 									<TreeRow
 										data-key={row.key}
 										name={split(change.path).name}
-										depth={row.depth + 1}
+										depth={row.depth}
 										git={change.kind}
 										letter={waiting ? undefined : letters[change.kind]}
 										title={change.from ? `${change.from} → ${change.path}` : change.path}

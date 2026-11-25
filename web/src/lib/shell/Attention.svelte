@@ -162,7 +162,7 @@
 		width: 0.5em;
 		height: 0.5em;
 		border-radius: 50%;
-		background: var(--accent);
+		background: var(--status-waiting);
 	}
 
 	.label {

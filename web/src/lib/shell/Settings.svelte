@@ -24,6 +24,7 @@
 	import ThemeCards from '#lib/shell/ThemeCards.svelte';
 	import ThemeSwitcher from '#lib/shell/ThemeSwitcher.svelte';
 	import { defaultSizes, selectTextSize, typography } from '#lib/typography.svelte.ts';
+	import Badge from '#lib/ui/Badge.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -161,7 +162,7 @@
 </script>
 
 {#snippet scope(everywhere: boolean)}
-	{#if !everywhere}<span class="scope" title="Saved in this browser only; other settings apply on every device">This browser</span>{/if}
+	{#if !everywhere}<span class="scope" title="Saved in this browser only; other settings apply on every device"><Badge tone="outline">This browser</Badge></span>{/if}
 {/snippet}
 
 <IconButton label={unseen ? 'Settings, Stampede update available' : 'Settings'} title={unseen ? 'Stampede update available' : undefined} aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}>
@@ -503,9 +504,8 @@
 
 	.scope {
 		margin-left: var(--space-2);
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
 		font-weight: 400;
+		vertical-align: text-bottom;
 	}
 
 	.control {

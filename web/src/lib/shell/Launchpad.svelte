@@ -45,7 +45,7 @@
 <section class="launchpad" class:phone aria-labelledby="{id}-name" {@attach enter}>
 	<div class="pad">
 		<h2 id="{id}-name">{name}</h2>
-		<p class="where" title={path}><span class="path"><bdi>{path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>{#if meta}<span class="meta">{meta}</span>{/if}</p>
+		<p class="where" title={path}>{#if phone}<span class="path"><bdi>{path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>{/if}{#if meta}<span class="meta">{meta}</span>{/if}</p>
 		{#if rig}
 			{@const Logo = rig.icon}
 			<Composer id="launchpad:{path}" placeholder="Message {rig.label}" onsend={start}>
