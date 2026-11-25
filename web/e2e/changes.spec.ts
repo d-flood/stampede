@@ -203,10 +203,13 @@ test('both sides of an open Diff fold alike when staging changes the index', { t
 
 test('Review all changes stacks every changed file with its counts and stages one', { tag: '@desktop' }, async ({ page }) => {
 	const { root, git } = repository('review');
-	writeFileSync(`${root}/kept.ts`, 'export const kept = 1;\nexport const other = 2;\n');
+	const lines = ['kept = 1', 'b = 2', 'c = 3', 'd = 4', 'e = 5', 'f = 6'].map((line) => `export const ${line};`);
+	writeFileSync(`${root}/kept.ts`, `${lines.join('\n')}\n`);
 	git('add', '.');
 	git('commit', '-qm', 'Initial commit');
-	writeFileSync(`${root}/kept.ts`, 'export const kept = 3;\nexport const other = 2;\n');
+	lines[0] = 'export const kept = 3;';
+	lines.splice(5, 0, 'export const inserted = 0;');
+	writeFileSync(`${root}/kept.ts`, `${lines.join('\n')}\n`);
 	writeFileSync(`${root}/fresh.ts`, 'export const fresh = true;\nexport const more = 1;\n');
 	const sidebar = await changesPanel(page, 'review');
 	await sidebar.getByRole('button', { name: 'Review all changes', exact: true }).click();
@@ -214,7 +217,10 @@ test('Review all changes stacks every changed file with its counts and stages on
 	await expect(page.getByRole('tab', { name: 'Changes', exact: true })).toHaveAttribute('aria-selected', 'true');
 	const kept = review.getByRole('article', { name: 'kept.ts' });
 	const fresh = review.getByRole('article', { name: 'fresh.ts' });
-	await expect(kept.locator('header')).toContainText('+1 −1');
+	await expect(kept.locator('header')).toContainText('+2 −1');
+	const original = await kept.locator('.cm-originalNumbers .cm-gutterElement').allTextContents();
+	const numbers = original.filter(Boolean);
+	expect(new Set(numbers).size).toBe(numbers.length);
 	await expect(fresh.locator('header')).toContainText('+2');
 	await expect(fresh.locator('.cm-changedLine', { hasText: 'fresh = true' })).toBeVisible();
 	await fresh.getByRole('button', { name: 'Stage fresh.ts', exact: true }).click();

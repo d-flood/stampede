@@ -92,9 +92,8 @@
 	}
 
 	.percent {
-		font-family: var(--font-mono);
+		font-family: var(--font-ui);
 		font-size: calc(var(--font-size-sm) - 1px);
-		letter-spacing: -0.06em;
 		font-variant-numeric: tabular-nums;
 	}
 

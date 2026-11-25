@@ -10,6 +10,7 @@ import {
 	gutterLineClass,
 	gutterWidgetClass,
 	keymap,
+	type BlockInfo,
 	type DecorationSet,
 	type ViewUpdate
 } from '@codemirror/view';
@@ -273,7 +274,7 @@ export function diffSigns(side: 'a' | 'b') {
 			return inside ? signs[side] : null;
 		},
 		// Unified views draw deletions as a block widget above the line they precede.
-		widgetMarker: (_view, widget) => (side === 'b' && deletion(widget) ? deletedSign : null),
+		widgetMarker: (view, widget, block) => (side === 'b' && removal(view, widget, block) ? deletedSign : null),
 		lineMarkerChange: (update) => update.docChanged || update.transactions.some((transaction) => transaction.effects.length > 0)
 	});
 }
@@ -310,8 +311,7 @@ export function originalNumbers() {
 				return new OriginalNumber(b.lineAt(line.from).number + shift);
 			},
 			widgetMarker(view, widget, block) {
-				if (!deletion(widget)) return null;
-				const chunk = getChunks(view.state)?.chunks.find((chunk) => chunk.fromB === block.from || (chunk.toB > chunk.fromB && block.from >= chunk.fromB && block.from < chunk.toB));
+				const chunk = removal(view, widget, block);
 				return chunk ? new OriginalNumber(getOriginalDoc(view.state).lineAt(chunk.fromA).number) : null;
 			},
 			lineMarkerChange: (update) => update.docChanged || update.transactions.some((transaction) => transaction.effects.length > 0)
@@ -340,6 +340,12 @@ const deletedRow = new DeletedRow();
 /** Merge keeps its widgets private: the collapse widget counts hidden lines in a numeric `lines`, the deletion widget builds lazily. */
 const collapse = (widget: WidgetType) => typeof (widget as { lines?: unknown }).lines === 'number';
 const deletion = (widget: WidgetType) => typeof (widget as { buildDOM?: unknown }).buildDOM === 'function';
+
+/** The chunk a deletion widget shows, when it removes lines; every chunk gets one, empty for pure insertions. */
+function removal(view: EditorView, widget: WidgetType, block: BlockInfo) {
+	if (!deletion(widget)) return undefined;
+	return getChunks(view.state)?.chunks.find((chunk) => chunk.fromB === block.from && chunk.toA > chunk.fromA);
+}
 const wholeLine = Decoration.line({ class: 'cm-diffWholeLine' });
 
 /** Tints every gutter cell on a changed line, so the row reads as one band with its code, and marks lines whose chunk has nothing on the other side. */
@@ -369,7 +375,7 @@ export function diffRows(side: 'a' | 'b') {
 		provide: (field) => [
 			gutterLineClass.from(field, (value) => value.gutters),
 			EditorView.decorations.from(field, (value) => value.lines),
-			gutterWidgetClass.of((_view, widget) => (collapse(widget) ? collapsedRow : deletion(widget) ? deletedRow : null))
+			gutterWidgetClass.of((view, widget, block) => (collapse(widget) ? collapsedRow : removal(view, widget, block) ? deletedRow : null))
 		]
 	});
 }
