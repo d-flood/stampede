@@ -162,7 +162,7 @@
 </script>
 
 {#snippet scope(everywhere: boolean)}
-	{#if !everywhere}<span class="scope" title="Saved in this browser only; other settings apply on every device"><Badge tone="outline">This browser</Badge></span>{/if}
+	{#if !everywhere}<span class="scope" title="Saved in this browser only; other settings apply on every device"><Badge tone="soft">This browser</Badge></span>{/if}
 {/snippet}
 
 <IconButton label={unseen ? 'Settings, Stampede update available' : 'Settings'} title={unseen ? 'Stampede update available' : undefined} aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}>
@@ -504,8 +504,9 @@
 
 	.scope {
 		margin-left: var(--space-2);
+		color: var(--muted-fg);
 		font-weight: 400;
-		vertical-align: text-bottom;
+		vertical-align: middle;
 	}
 
 	.control {

@@ -28,4 +28,9 @@
 		font-family: var(--font-ui);
 		font-size: var(--font-size-md);
 	}
+
+	:global(::placeholder) {
+		color: var(--muted-fg);
+		opacity: 1;
+	}
 </style>
