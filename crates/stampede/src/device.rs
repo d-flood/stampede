@@ -55,6 +55,14 @@ const BRIEF_OUTPUT: usize = 2 << 10;
 const PING_EVERY: Duration = Duration::from_secs(20);
 const SILENT_FOR: Duration = Duration::from_secs(60);
 
+/// Choices made on the Launchpad that override the Rig for the Chat it starts.
+#[derive(Deserialize, Default)]
+struct Overrides {
+    model: Option<String>,
+    effort: Option<String>,
+    mode: Option<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all_fields = "camelCase")]
 enum Control {
@@ -75,7 +83,7 @@ enum Control {
     #[serde(rename = "terminal.detach")]
     Detach { channel: u32 },
     #[serde(rename = "chat.create")]
-    CreateChat { project_id: String, rig: String },
+    CreateChat { project_id: String, rig: String, #[serde(default)] settings: Overrides },
     #[serde(rename = "chat.handoff")]
     HandoffChat { chat_id: String, rig: String, #[serde(default)] focus: String },
     #[serde(rename = "chat.move")]
@@ -506,14 +514,17 @@ impl Device {
                     attachment.abort();
                 }
             }
-            Control::CreateChat { project_id, rig } => {
+            Control::CreateChat { project_id, rig, settings } => {
                 let projects = self.projects.list();
                 let Some(project) = projects.iter().find(|project| project.id == project_id) else {
                     return eprintln!("cannot create a chat in {project_id}: not open");
                 };
-                let Some(rig) = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned() else {
+                let Some(mut rig) = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned() else {
                     return eprintln!("cannot launch rig {rig} as a chat: not in the config");
                 };
+                rig.model = settings.model.or(rig.model);
+                rig.effort = settings.effort.or(rig.effort);
+                rig.mode = settings.mode.or(rig.mode);
                 match self.chats.create(project, Path::new(&project.path), &rig, None, None).await {
                     Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
                     Err(error) => eprintln!("cannot create a chat: {error}"),

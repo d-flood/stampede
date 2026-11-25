@@ -46,6 +46,11 @@ test('New Tab shows session loading and fits the loaded sessions', async ({ page
 
 test('the Launchpad offers the New Tab items and comes back focused when the last Tab closes', async ({ page }, { project }) => {
 	const phone = project.name === 'pixel';
+	const created: Record<string, unknown>[] = [];
+	page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {
+		const message = typeof payload === 'string' && JSON.parse(payload);
+		if (message?.type === 'chat.create') created.push(message);
+	}));
 	await page.routeWebSocket('**/ws', (socket) => {
 		const server = socket.connectToServer();
 		server.onMessage((message) => {
@@ -79,11 +84,20 @@ test('the Launchpad offers the New Tab items and comes back focused when the las
 		await page.keyboard.press('Escape');
 	}
 
+	const mode = launchpad.getByRole('button', { name: /^Mode: / });
+	await mode.click();
+	const other = page.getByRole('menu').getByRole('menuitemcheckbox', { checked: false }).last();
+	const label = (await other.textContent())!.trim();
+	await other.click();
+	await expect(mode).toHaveAccessibleName(`Mode: ${label}`);
+	const value = await page.evaluate(() => fetch('/api/modes').then((response) => response.json()));
+
 	const composer = launchpad.getByRole('textbox', { name: 'Composer' });
 	await composer.fill('Start from the Launchpad');
 	await launchpad.getByRole('button', { name: 'Send', exact: true }).click();
 	await expect(launchpad).toHaveCount(0);
 	await expect(page.getByRole('region', { name: 'User message 1', exact: true })).toContainText('Start from the Launchpad');
+	expect(created.at(-1)?.settings).toEqual({ mode: value['claude-code'].find((mode: { label: string }) => mode.label === label).value });
 	await page.getByRole('tablist', { name: 'Tabs' }).getByRole('button', { name: /^Close / }).click();
 	await expect(launchpad).toBeVisible();
 	if (!phone) await expect(composer).toBeFocused();

@@ -20,6 +20,7 @@
 		type ResetCredits,
 		type ServerMessage,
 		type Session,
+		type Setting,
 		type Terminal
 	} from '#lib/device.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
@@ -653,7 +654,7 @@
 
 	function newTab(projectId: string) {
 		return tabItems(rigs(), sessions[projectId] ?? [], {
-			launch: (rig, text) => launch(rig, projectId, text),
+			launch: (rig, text, settings) => launch(rig, projectId, text, settings),
 			terminal: () => device.send({ type: 'terminal.create', projectId }),
 			browser: () => openBrowser(projectId),
 			files: () => openPalette('files'),
@@ -669,10 +670,10 @@
 	/** A first message waiting for its Chat, which the server creates before it can take input. */
 	let prompting: { projectId: string; rig: string; text: string } | undefined;
 
-	function launch(rig: Rig, projectId = focused?.id, text?: string) {
+	function launch(rig: Rig, projectId = focused?.id, text?: string, settings?: Partial<Record<Setting, string>>) {
 		if (!projectId) return;
 		prompting = text ? { projectId, rig: rig.name, text } : undefined;
-		device.send({ type: 'chat.create', projectId, rig: rig.name });
+		device.send({ type: 'chat.create', projectId, rig: rig.name, settings });
 	}
 
 	function jump(index: number) {

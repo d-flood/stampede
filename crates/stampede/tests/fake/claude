@@ -159,6 +159,9 @@ if Path('.fake-slow-exit').exists():
     signal.signal(signal.SIGTERM, slow_exit)
 
 args = sys.argv[1:]
+if launched := os.environ.get('STAMPEDE_FAKE_ARGS'):
+    with open(launched, 'a') as output:
+        output.write(json.dumps(args) + '\n')
 if (capture := os.environ.get('STAMPEDE_FAKE_ENVIRONMENT')) and os.environ.get('STAMPEDE_SCRATCH'):
     with open(capture, 'a') as output:
         json.dump({name: os.environ.get(name) for name in ['TMPDIR', 'CLAUDE_CODE_TMPDIR', 'NODE_COMPILE_CACHE', 'CARGO_TARGET_DIR', 'PATH']}, output)

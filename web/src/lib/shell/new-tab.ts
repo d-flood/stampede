@@ -1,6 +1,6 @@
 import { ago, logos } from '#lib/chat/sessions.ts';
-import { rigSummary, type Rig } from '#lib/config.svelte.ts';
-import type { Session } from '#lib/device.svelte.ts';
+import type { Rig } from '#lib/config.svelte.ts';
+import type { Session, Setting, Settings } from '#lib/device.svelte.ts';
 import type { Component } from 'svelte';
 import FileCode from '~icons/ph/file-code';
 import Globe from '~icons/ph/globe';
@@ -9,11 +9,11 @@ import TerminalWindow from '~icons/ph/terminal-window';
 const RECENT = 5;
 
 export type TabItem = { label: string; icon?: Component; hint?: string; shortcut?: string; onselect: () => void };
-export type RigItem = TabItem & { model: string; summary: string; onprompt(text: string): void };
+export type RigItem = TabItem & { rig: Rig; model: string; onprompt(text: string, settings?: Settings): void };
 export type TabItems = { rigs: RigItem[]; tools: TabItem[]; sessions: TabItem[]; search?: TabItem };
 
 type Actions = {
-	launch(rig: Rig, text?: string): void;
+	launch(rig: Rig, text?: string, settings?: Partial<Record<Setting, string>>): void;
 	terminal(): void;
 	browser(): void;
 	files(): void;
@@ -25,13 +25,13 @@ export function tabItems(rigs: Rig[], sessions: Session[], actions: Actions): Ta
 	const recent = sessions.slice(0, RECENT);
 	return {
 		rigs: rigs.map((rig, index) => ({
+			rig,
 			label: rig.name,
 			icon: logos[rig.agent],
 			shortcut: index < 9 ? `Ctrl+Shift+${index + 1}` : undefined,
 			model: [rig.model, rig.effort].filter(Boolean).join(', '),
-			summary: rigSummary(rig),
 			onselect: () => actions.launch(rig),
-			onprompt: (text) => actions.launch(rig, text)
+			onprompt: (text, settings) => actions.launch(rig, text, settings)
 		})),
 		tools: [
 			{ label: 'Terminal', shortcut: 'Ctrl+Shift+T', icon: TerminalWindow, onselect: actions.terminal },

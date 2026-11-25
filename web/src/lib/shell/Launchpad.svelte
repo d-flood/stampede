@@ -1,4 +1,25 @@
+<script lang="ts" module>
+	type Options = { models: { value: string; label: string; efforts: string[] }[]; settings?: { model?: string; effort?: string } };
+
+	/** Listing models starts the provider's CLI, so each Rig asks once per session, and only when someone reaches for the chips. */
+	const listings = new Map<string, Promise<Options>>();
+
+	function list(agent: string, rig: string) {
+		const key = `${agent}:${rig}`;
+		let listing = listings.get(key);
+		if (!listing) {
+			listing = fetch(`/api/rigs/options?${new URLSearchParams({ agent, rig })}`).then((response) => (response.ok ? response.json() : Promise.reject(new Error('options'))));
+			listing.catch(() => listings.delete(key));
+			listings.set(key, listing);
+		}
+		return listing;
+	}
+</script>
+
 <script lang="ts">
+	import Chips from '#lib/chat/Chips.svelte';
+	import { defaultMode, modes } from '#lib/config.svelte.ts';
+	import type { Setting, Settings } from '#lib/device.svelte.ts';
 	import type { Git } from '#lib/git.ts';
 	import { form } from '#lib/form.ts';
 	import { openSettings } from '#lib/shell/Settings.svelte';
@@ -27,8 +48,32 @@
 	const meta = $derived([git?.branch, changes === undefined ? undefined : changes ? `${changes} changed file${changes === 1 ? '' : 's'}` : 'clean'].filter(Boolean).join(' · '));
 
 	let chosen = $state(0);
+	let overrides = $state<Settings>({});
+	let options = $state.raw<Options>();
 	const rig = $derived(items.rigs[Math.min(chosen, items.rigs.length - 1)]);
-	const rigMenu = $derived([{ heading: 'Rigs', items: items.rigs.map((entry, index) => ({ label: entry.label, icon: entry.icon, shortcut: entry.shortcut, checked: entry === rig, onselect: () => (chosen = index) })) }]);
+	const rigMenu = $derived([{ heading: 'Rigs', items: items.rigs.map((entry, index) => ({ label: entry.label, icon: entry.icon, shortcut: entry.shortcut, checked: entry === rig, onselect: () => pick(index) })) }]);
+	const settings = $derived<Settings>(
+		rig ? { model: rig.rig.model ?? options?.settings?.model ?? 'default', effort: rig.rig.effort ?? options?.settings?.effort, mode: rig.rig.mode ?? defaultMode(rig.rig.agent), ...overrides } : {}
+	);
+	const choices = $derived<Record<Setting, { value: string; label: string }[]>>({
+		model: options?.models.map(({ value, label }) => ({ value, label })) ?? [{ value: 'default', label: 'Default model' }],
+		effort: (options?.models.find(({ value }) => value === settings.model)?.efforts ?? []).map((value) => ({ value, label: value })),
+		speed: [],
+		ultracode: [],
+		mode: rig ? modes(rig.rig.agent).filter(({ available }) => available).map(({ value, label }) => ({ value, label })) : []
+	});
+
+	function pick(index: number) {
+		chosen = index;
+		overrides = {};
+		options = undefined;
+	}
+
+	function reach() {
+		if (!rig || options) return;
+		const current = rig;
+		list(current.rig.agent, current.rig.name).then((listed) => current === rig && (options = listed), () => {});
+	}
 
 	function enter(node: HTMLElement) {
 		untrack(onread);
@@ -37,7 +82,7 @@
 
 	function start(text: string) {
 		if (!rig || !text.trim()) return false;
-		rig.onprompt(text);
+		rig.onprompt(text, overrides);
 		return true;
 	}
 
@@ -48,17 +93,17 @@
 		<h2 id="{id}-name">{name}</h2>
 		<p class="where" title={path}>{#if phone}<span class="path"><bdi>{path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>{/if}{#if meta}<span class="meta">{#if git?.branch}<GitBranch aria-hidden="true" />{/if}{meta}</span>{/if}</p>
 		{#if rig}
-			{@const Logo = rig.icon}
 			<Composer id="launchpad:{path}" placeholder="Message {rig.label}" onsend={start}>
 				{#snippet actions(text, clear)}
 					<Menu side="top" align="start" items={rigMenu}>
 						{#snippet trigger(props)}
-							<Chip {...props} variant="ghost" aria-label="Rig: {rig.label}">
-								{#if Logo}<Logo aria-hidden="true" />{/if}<span>{rig.label}</span><CaretDown aria-hidden="true" />
-							</Chip>
+							<Chip {...props} variant="ghost" aria-label="Rig: {rig.label}"><span>{rig.label}</span><CaretDown aria-hidden="true" /></Chip>
 						{/snippet}
 					</Menu>
-					<span class="summary">{rig.summary}</span>
+					<!-- svelte-ignore a11y_no_static_element_interactions (Hover and focus only start loading the model list.) -->
+					<span class="chips" onpointerenter={reach} onfocusin={reach}>
+						<Chips agent={rig.rig.agent} {settings} ready={!!options} {choices} onrun={(setting, value) => value !== 'default' && (overrides = { ...overrides, [setting]: value })} />
+					</span>
 					<span class="fill"></span>
 					<Button variant="primary" round aria-label="Send" disabled={!text.trim()} onmousedown={(event) => event.preventDefault()} onclick={() => start(text) && clear()}>
 						<PaperPlaneRight />
@@ -238,13 +283,10 @@
 		flex: 1;
 	}
 
-	.summary {
+	.chips {
+		display: flex;
+		flex: 1;
 		min-width: 0;
-		overflow: hidden;
-		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	.tool {

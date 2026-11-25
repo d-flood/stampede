@@ -174,6 +174,43 @@ async fn claude_speed_and_ultracode_reach_the_agent_as_flag_settings() {
 }
 
 #[tokio::test]
+async fn launchpad_choices_override_the_rig_for_the_chat_they_start() {
+    let directory = tempfile::tempdir().unwrap();
+    let launched = directory.path().join("args.jsonl");
+    let config = r#"
+[[rig]]
+name = "agent"
+agent = "claude-code"
+command = "claude-code"
+env = { STAMPEDE_FAKE_FIXTURE = "simple-turn" }
+"#;
+    let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());
+    let env = vec![("PATH", path.into()), ("CLAUDE_CONFIG_DIR", directory.path().into()), ("STAMPEDE_FAKE_ARGS", launched.clone().into())];
+    let server = Server::with_env("chat-overrides", config, env).await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    control(&mut socket, json!({ "type": "project.open", "path": "~" })).await;
+    let project_id = next_control(&mut socket, "project.opened").await["projectId"].clone();
+    control(&mut socket, json!({ "type": "chat.create", "projectId": project_id, "rig": "agent", "settings": { "model": "sonnet", "mode": "plan" } })).await;
+    let chat_id = next_control(&mut socket, "chat.created").await["chat"]["id"].as_str().unwrap().to_owned();
+    // The usage reader also starts claude, so find the Chat's launch by its MCP config.
+    let args: Vec<String> = timeout(Duration::from_secs(10), async {
+        loop {
+            let launches = fs::read_to_string(&launched).unwrap_or_default();
+            if let Some(args) = launches.lines().map(|line| serde_json::from_str::<Vec<String>>(line).unwrap()).find(|args| args.iter().any(|arg| arg == "--mcp-config")) {
+                break args;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    }).await.expect("the Chat never started claude");
+    for pair in [["--model", "sonnet"], ["--permission-mode", "plan"]] {
+        assert!(args.windows(2).any(|window| window == pair), "{pair:?} is missing from {args:?}");
+    }
+    close_chat(&mut socket, server.root.path(), &chat_id).await;
+}
+
+#[tokio::test]
 async fn a_finished_workflow_wakes_claude_for_a_turn_nobody_sent() {
     let config = tempfile::tempdir().unwrap();
     let env = vec![("CLAUDE_CONFIG_DIR", config.path().into())];

@@ -276,7 +276,7 @@ export type ClientMessage =
 	| { type: 'terminal.resize'; terminalId: string; cols: number; rows: number }
 	| { type: 'terminal.focus'; terminalId: string }
 	| { type: 'terminal.detach'; channel: number }
-	| { type: 'chat.create'; projectId: string; rig: string }
+	| { type: 'chat.create'; projectId: string; rig: string; settings?: Partial<Record<'model' | 'effort' | 'mode', string>> }
 	| { type: 'chat.handoff'; chatId: string; rig: string; focus: string }
 	| { type: 'chat.move'; chatId: string; branch: string }
 	| { type: 'chat.fork'; chatId: string; index: number }
