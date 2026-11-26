@@ -751,6 +751,7 @@ async fn exec(dir: &Path, args: &[&str]) -> Result<String, String> {
 
 fn git(dir: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
+    command.envs(crate::cloud_logins::github_environment());
     command
         .arg("-C")
         .arg(dir)

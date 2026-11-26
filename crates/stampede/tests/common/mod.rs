@@ -121,6 +121,7 @@ async fn spawn(root: &Path, port: u16, env: &[(&str, OsString)]) -> Child {
         .env("PATH", format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap()))
         .env("SHELL", "/bin/bash")
         .env("HOME", root.join("home"))
+        .env_remove("CODEX_HOME")
         .env_remove("STAMPEDE_SCRATCH")
         .env_remove("STAMPEDE_CACHE")
         .env_remove("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING")

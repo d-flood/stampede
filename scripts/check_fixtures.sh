@@ -14,6 +14,8 @@ echo 'export const greeting = "hello";' > "$STAMPEDE_E2E_ROOT/projects/alpha/gre
 printf 'one\ntwo\nthree\n' | tee "$STAMPEDE_E2E_ROOT/projects/alpha/"{desktop,pixel}.txt > /dev/null
 mkdir "$STAMPEDE_E2E_ROOT/projects/alpha/ignored"
 echo 'ignored/' > "$STAMPEDE_E2E_ROOT/projects/alpha/.gitignore"
+mkdir "$STAMPEDE_E2E_ROOT/projects/alpha/.stampede"
+echo 'run = "true"' > "$STAMPEDE_E2E_ROOT/projects/alpha/.stampede/cloud-setup.toml"
 for form in desktop pixel; do
     echo 'initial ignored contents' > "$STAMPEDE_E2E_ROOT/projects/alpha/ignored/$form.txt"
     touch "$STAMPEDE_E2E_ROOT/projects/alpha/empty-$form.ts"

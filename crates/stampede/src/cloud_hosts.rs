@@ -8,7 +8,7 @@ use tokio::{sync::{Mutex, Notify, mpsc, watch}, time::{sleep, timeout}};
 use tokio_tungstenite::{connect_async, tungstenite::{Message, client::IntoClientRequest}};
 use uuid::Uuid;
 
-use crate::{AppState, Creation, browser, cloud::{self, Forward, Service}, config, device::Devices, git, runs};
+use crate::{AppState, Creation, browser, cloud::{self, Forward, Service}, cloud_setup, cloud_link, config, device::Devices, files, git, projects::Project, runs};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -29,6 +29,8 @@ pub struct CloudHost {
     pub project: String,
     pub path: String,
     pub setup: Setup,
+    #[serde(default)]
+    pub setup_terminal: Option<String>,
     pub tip: Option<String>,
     pub in_sync: bool,
 }
@@ -85,13 +87,25 @@ impl CloudHosts {
         self.records.borrow().iter().map(|host| json!({
             "id": host.project, "host": host.id, "path": host.path,
             "worktree": { "parent": host.parent, "branch": host.branch },
-            "cloud": { "setup": host.setup, "state": "awake", "reason": null, "inSync": host.in_sync, "setupTerminal": null },
+            "cloud": { "setup": host.setup, "state": "awake", "reason": null, "inSync": host.in_sync, "setupTerminal": host.setup_terminal },
         })).collect()
     }
 
     fn record(&self, host: CloudHost) -> Result<(), String> {
         let mut records = self.records.borrow().clone();
         records.push(host);
+        self.save(records)
+    }
+
+    pub fn set_setup(&self, id: &str, setup: Setup, terminal: Option<String>) -> Result<(), String> {
+        let mut records = self.records.borrow().clone();
+        let Some(host) = records.iter_mut().find(|host| host.id == id) else { return Ok(()) };
+        host.setup = setup;
+        host.setup_terminal = terminal.or(host.setup_terminal.take());
+        self.save(records)
+    }
+
+    fn save(&self, records: Vec<CloudHost>) -> Result<(), String> {
         let temporary = self.file.with_extension("json.tmp");
         fs::write(&temporary, serde_json::to_vec_pretty(&records).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
         fs::rename(temporary, &self.file).map_err(|error| error.to_string())?;
@@ -114,6 +128,20 @@ impl CloudHosts {
         let forward = cloud::forward(id, remote_port).await?;
         Ok(held.insert(forward).port)
     }
+    pub async fn replace_build(&self, id: &str) -> Result<(), String> {
+        let reach = self.reach(id);
+        let mut forward = reach.forward.lock().await;
+        let home = remote(id, &["sh", "-c", "printf '%s' \"$HOME\""], None).await?;
+        let binary = format!("{home}/.local/bin/stampede");
+        let next = format!("{binary}.next");
+        cloud::push(id, &std::env::current_exe().map_err(|error| error.to_string())?, FsPath::new(&next)).await?;
+        remote(id, &["chmod", "+x", &next], None).await?;
+        remote(id, &["mv", "-f", &next, &binary], None).await?;
+        remote(id, &["rm", "-f", &format!("{home}/.local/share/stampede/port")], None).await?;
+        forward.take();
+        remote(id, &["sprite-env", "services", "restart", "stampede"], None).await?;
+        Ok(())
+    }
 }
 
 async fn remote(id: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<String, String> {
@@ -125,10 +153,14 @@ async fn remote_port(id: &str) -> Result<u16, String> {
     remote(id, &["sh", "-c", "cat \"$HOME/.local/share/stampede/port\""], None).await?.parse::<u16>().map_err(|error| error.to_string())
 }
 
-pub fn create(state: AppState, project_id: String, creation: Creation, service: Service) -> Response {
+pub async fn create(state: AppState, project_id: String, creation: Creation, service: Service) -> Result<Response, files::Failure> {
+    let refuse = |error: String| (StatusCode::BAD_REQUEST, error);
+    let project = state.runs.repository_root(&project_id).await.map_err(refuse)?;
+    let tip = git::run(FsPath::new(&project.path), &["rev-parse", "--verify", &format!("{}^{{commit}}", creation.from)]).await.map_err(refuse)?;
+    let setup = cloud_setup::read(FsPath::new(&project.path), &tip, &creation.from).await.map_err(refuse)?;
     let (sender, receiver) = mpsc::unbounded_channel();
     tokio::spawn(async move {
-        let result = provision(&state, &project_id, creation, service, &sender).await;
+        let result = provision(&state, project, tip, setup, creation, service, &sender).await;
         let _ = sender.send(match result {
             Ok(host) => json!({ "projectId": host.project, "host": host.id }),
             Err(error) => json!({ "error": error }),
@@ -137,15 +169,13 @@ pub fn create(state: AppState, project_id: String, creation: Creation, service: 
     let lines = futures_util::stream::unfold(receiver, |mut receiver| async move {
         receiver.recv().await.map(|line| (Ok::<_, Infallible>(format!("{line}\n")), receiver))
     });
-    ([(header::CONTENT_TYPE, "application/x-ndjson")], Body::from_stream(lines)).into_response()
+    Ok(([(header::CONTENT_TYPE, "application/x-ndjson")], Body::from_stream(lines)).into_response())
 }
 
-async fn provision(state: &AppState, project_id: &str, creation: Creation, service: Service, sender: &mpsc::UnboundedSender<Value>) -> Result<CloudHost, String> {
+async fn provision(state: &AppState, project: Project, tip: String, setup: cloud_setup::File, creation: Creation, service: Service, sender: &mpsc::UnboundedSender<Value>) -> Result<CloudHost, String> {
     let _turn = state.cloud_hosts.creating.lock().await;
-    let project = state.runs.repository_root(project_id).await?;
     let checkout = FsPath::new(&project.path);
     let (branch, existing, track) = runs::branch_spec(checkout, creation.branch.as_deref(), &creation.from).await?;
-    let tip = git::run(checkout, &["rev-parse", "--verify", &format!("{}^{{commit}}", creation.from)]).await?;
     let parent = project.worktree.as_ref().map_or(&project.id, |worktree| &worktree.parent);
     let projects = state.projects.list();
     let parent_project = projects.iter().find(|project| project.id == *parent).ok_or("The parent Project is not open")?;
@@ -200,7 +230,17 @@ async fn provision(state: &AppState, project_id: &str, creation: Creation, servi
                 remote(&id, &["git", "-C", &path, "config", key, &value], None).await?;
             }
         }
-        remote(&id, &["git", "-C", &path, "submodule", "update", "--init", "--recursive"], None).await?;
+        step("carry");
+        let mut skipped = Vec::new();
+        for carried in &setup.carry {
+            if fs::symlink_metadata(FsPath::new(&parent_project.path).join(carried)).is_err() {
+                skipped.push(carried.clone());
+                continue;
+            }
+            let archive = tokio::process::Command::new("tar").arg("-C").arg(&parent_project.path).args(["-cf", "-", "--", carried]).output().await.map_err(|error| error.to_string())?;
+            let archive = cloud::checked(archive)?.stdout;
+            remote(&id, &["tar", "-xf", "-", "-C", &path], Some(&archive)).await?;
+        }
         let home_name = state.config.borrow().name.clone().unwrap_or_else(|| "Stampede".to_owned());
         let label = if projects.iter().any(|other| other.id != *parent && other.worktree.is_none() && FsPath::new(&other.path).file_name() == Some(name.as_ref())) {
             FsPath::new(&parent_project.path).parent().and_then(FsPath::file_name).map_or_else(|| name.to_owned(), |dir| format!("{}/{name}", dir.to_string_lossy()))
@@ -216,9 +256,40 @@ async fn provision(state: &AppState, project_id: &str, creation: Creation, servi
             }
         };
         let forward = cloud::forward(&id, port).await?;
+        step("toolkit");
+        let logins = cloud_link::provision_logins(state, forward.port).await?;
+        let codex = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| crate::home().join(".codex"));
+        match fs::read(codex.join("auth.json")) {
+            Ok(auth) => {
+                let output = cloud::exec(&id, &["sh", "-c", "umask 077; dir=${CODEX_HOME:-$HOME/.codex}; mkdir -p \"$dir\" && cat > \"$dir/auth.json\" && chmod 600 \"$dir/auth.json\""], &[], Some(&auth)).await;
+                if !output.is_ok_and(|output| output.status.success()) { return Err("Could not provision Codex login.".to_owned()); }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err("Could not read Codex login.".to_owned()),
+        }
+        if let Some(token) = &logins.gh {
+            let input = format!("{token}\n");
+            let output = cloud::exec(&id, &["sh", "-c", "IFS= read -r GH_TOKEN; export GH_TOKEN; exec git -C \"$1\" submodule update --init --recursive", "sh", &path], &[], Some(input.as_bytes())).await;
+            if !output.is_ok_and(|output| output.status.success()) { return Err("Could not initialize submodules.".to_owned()); }
+        } else {
+            remote(&id, &["git", "-C", &path, "submodule", "update", "--init", "--recursive"], None).await?;
+        }
+        for agent in ["claude", "codex"] {
+            let _ = cloud::exec(&id, &[agent, "update"], &[], None).await;
+        }
         let path = remote(&id, &["git", "-C", &path, "rev-parse", "--show-toplevel"], None).await?;
         let project = open_project(forward.port, &path).await?;
-        let host = CloudHost { id: id.clone(), service, parent: parent.clone(), branch: branch.to_owned(), existing, project, path, setup: Setup::Ready, tip: Some(tip), in_sync: true };
+        let start = json!({ "projectId": project, "command": setup.run, "skipped": skipped });
+        let started = state.cloud_hosts.client.post(format!("http://127.0.0.1:{}/api/cloud-setup", forward.port))
+            .header(header::CONTENT_TYPE, "application/json").body(start.to_string()).send().await.map_err(|error| error.to_string())?;
+        if !started.status().is_success() {
+            return Err(started.text().await.unwrap_or_default());
+        }
+        let started: cloud_setup::Run = serde_json::from_slice(&started.bytes().await.map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        let host = CloudHost {
+            id: id.clone(), service, parent: parent.clone(), branch: branch.to_owned(), existing, project, path,
+            setup: Setup::Running, setup_terminal: Some(started.terminal_id), tip: Some(tip), in_sync: true,
+        };
         *state.cloud_hosts.reach(&id).forward.lock().await = Some(forward);
         if let Err(error) = state.cloud_hosts.record(host.clone()) {
             state.cloud_hosts.reaches.lock().unwrap().remove(&id);
@@ -257,6 +328,7 @@ pub async fn proxy(State(state): State<AppState>, request: Request) -> Result<Re
     if !state.cloud_hosts.records.borrow().iter().any(|host| host.id == id) {
         return Err((StatusCode::NOT_FOUND, format!("Unknown Cloud Host {id}")));
     }
+    if rest.split('?').next() == Some("api/home-link") { return Err((StatusCode::NOT_FOUND, String::new())); }
     let port = state.cloud_hosts.port(id).await.map_err(bad_gateway)?;
     let reach = state.cloud_hosts.reach(id);
     let target = format!("127.0.0.1:{port}/{rest}");

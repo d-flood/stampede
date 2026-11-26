@@ -17,6 +17,7 @@ use tokio::{
 
 use crate::{
     chats::{Chat, Duty},
+    cloud_setup::CloudSetup,
     epics::{Author, Epic, Epics, Event, Tag},
     git,
     pr_reviews::{self, PrReviews},
@@ -115,6 +116,13 @@ pub enum CliCommand {
         /// The commit message for whatever is left uncommitted. Quote it so that it reaches the command as one argument.
         #[arg(short, long)]
         message: String,
+        #[command(flatten)]
+        connection: Connection,
+    },
+    /// Report the Cloud Setup's exit status to this Cloud Host's Stampede.
+    #[command(hide = true)]
+    CloudSetupExit {
+        status: i32,
         #[command(flatten)]
         connection: Connection,
     },
@@ -384,6 +392,8 @@ enum Request {
     Tool { chat: String, arguments: Value },
     #[serde(rename = "pr-review")]
     PrReview { chat: String, rig: String, cwd: PathBuf, arguments: Value },
+    #[serde(rename = "cloud-setup.exit")]
+    CloudSetupExit { status: i32 },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -400,7 +410,7 @@ fn socket_path(data_dir: &Path) -> PathBuf {
 pub fn cli(command: CliCommand) -> Result<(), String> {
     let (connection, request) = request(command)?;
     match exchange(&connection.data_dir, &request)? {
-        text if text.ends_with('\n') => print!("{text}"),
+        text if text.is_empty() || text.ends_with('\n') => print!("{text}"),
         text => println!("{text}"),
     }
     Ok(())
@@ -552,6 +562,7 @@ fn request(command: CliCommand) -> Result<(Connection, Request), String> {
         }
         CliCommand::Reviewed { epic, connection } => (connection, Request::Reviewed { epic, cwd: cwd()? }),
         CliCommand::Remediated { epic, message, connection } => (connection, Request::Remediated { epic, message, cwd: cwd()? }),
+        CliCommand::CloudSetupExit { status, connection } => (connection, Request::CloudSetupExit { status }),
     })
 }
 
@@ -579,12 +590,12 @@ pub fn bind(data_dir: &Path) -> io::Result<UnixListener> {
     UnixListener::bind(&address)
 }
 
-pub fn listen(listener: UnixListener, epics: Arc<Epics>, runs: Arc<Runs>, reviews: Arc<PrReviews>) {
+pub fn listen(listener: UnixListener, epics: Arc<Epics>, runs: Arc<Runs>, reviews: Arc<PrReviews>, setup: Arc<CloudSetup>) {
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
-                    tokio::spawn(respond(stream, Arc::clone(&epics), Arc::clone(&runs), Arc::clone(&reviews)));
+                    tokio::spawn(respond(stream, Arc::clone(&epics), Arc::clone(&runs), Arc::clone(&reviews), Arc::clone(&setup)));
                 }
                 Err(error) => eprintln!("cannot accept a CLI connection: {error}"),
             }
@@ -592,14 +603,14 @@ pub fn listen(listener: UnixListener, epics: Arc<Epics>, runs: Arc<Runs>, review
     });
 }
 
-async fn respond(stream: tokio::net::UnixStream, epics: Arc<Epics>, runs: Arc<Runs>, reviews: Arc<PrReviews>) {
+async fn respond(stream: tokio::net::UnixStream, epics: Arc<Epics>, runs: Arc<Runs>, reviews: Arc<PrReviews>, setup: Arc<CloudSetup>) {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
     if tokio::io::BufReader::new(reader).read_line(&mut line).await.is_err() {
         return;
     }
     let handled = match serde_json::from_str(&line) {
-        Ok(request) => handle(&epics, &runs, &reviews, request).await,
+        Ok(request) => handle(&epics, &runs, &reviews, &setup, request).await,
         Err(error) => Err(format!("cannot read the request: {error}")),
     };
     let response = handled.map_or_else(Response::Error, Response::Output);
@@ -608,7 +619,7 @@ async fn respond(stream: tokio::net::UnixStream, epics: Arc<Epics>, runs: Arc<Ru
     let _ = writer.write_all(&reply).await;
 }
 
-async fn handle(epics: &Epics, runs: &Runs, reviews: &PrReviews, request: Request) -> Result<String, String> {
+async fn handle(epics: &Epics, runs: &Runs, reviews: &PrReviews, setup: &CloudSetup, request: Request) -> Result<String, String> {
     match request {
         Request::ListEpics { cwd } => {
             let project = git::common_dir(&cwd)
@@ -675,8 +686,9 @@ async fn handle(epics: &Epics, runs: &Runs, reviews: &PrReviews, request: Reques
         Request::Judge { epic, finding, accepted, reason, cwd } => runs.judge(&epic, finding, accepted, &reason, &cwd),
         Request::Reviewed { epic, cwd } => runs.reviewed(&epic, &cwd),
         Request::Remediated { epic, message, cwd } => runs.remediated(&epic, &cwd, &message).await,
-        Request::Tool { chat, arguments } => Box::pin(handle(epics, runs, reviews, on_behalf(epics, &chat, arguments)?)).await,
+        Request::Tool { chat, arguments } => Box::pin(handle(epics, runs, reviews, setup, on_behalf(epics, &chat, arguments)?)).await,
         Request::PrReview { chat, rig, cwd, arguments } => pr_reviews::act(reviews, &chat, &rig, &cwd, arguments).await,
+        Request::CloudSetupExit { status } => setup.exit(status),
     }
 }
 

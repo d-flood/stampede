@@ -3,7 +3,7 @@
 	import { OpenBrowser } from '#lib/browser.svelte.ts';
 	import { OpenCanvas } from '#lib/canvas.svelte.ts';
 	import Browser from '#lib/shell/Browser.svelte';
-	import { same, subagents } from '#lib/chat/agents.ts';
+	import { clock, same, subagents } from '#lib/chat/agents.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
 	import { hostName, rigs, runsOn, type Rig } from '#lib/config.svelte.ts';
@@ -20,7 +20,8 @@
 		type ServerMessage,
 		type Session,
 		type Setting,
-		type Terminal
+		type Terminal,
+		type CloudSetup
 	} from '#lib/device.svelte.ts';
 	import { Devices } from '#lib/devices.svelte.ts';
 	import { LanguageServers } from '#lib/editor/lsp.svelte.ts';
@@ -29,7 +30,7 @@
 	import { form } from '#lib/form.ts';
 	import { deleteWorktree, status, type Change, type Git, type Trunk, type Update } from '#lib/git.ts';
 	import type { PrReview } from '#lib/pr-reviews.ts';
-	import { hostOf } from '#lib/host.ts';
+	import { hostOf, hostUrl } from '#lib/host.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
 	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { closePanel, openPanel, panel as phonePanel } from '#lib/phone.svelte.ts';
@@ -57,6 +58,7 @@
 	import { arrange, neighbor, type Side, type Split } from '#lib/split.ts';
 	import { scrolls, settleInto, swipe } from '#lib/swipe.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import TabMarks from '#lib/ui/TabMarks.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import FloatingBar from '#lib/ui/FloatingBar.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -107,6 +109,7 @@
 	const staleGit = new SvelteSet<string>();
 	let chosen = $state(restored.chosen);
 	let chosenTabs = $state<Record<string, string>>(restored.chosenTabs);
+	let setups = $state<Record<string, CloudSetup>>({});
 	/** A closed worktree's selected Chat, which its parent selects once it lists it. */
 	let adopting: { projectId: string; tabId: string } | undefined;
 	let splits = $state<Record<string, Split>>(restored.splits);
@@ -296,6 +299,9 @@
 			case 'attention.changed':
 				attentionList = message.items;
 				break;
+			case 'cloud.setup':
+				setups[message.projectId] = message;
+				break;
 			case 'usage.changed':
 				usage = message.readings;
 				codexResets = message.codexResets ?? null;
@@ -444,7 +450,10 @@
 				projects = message.projects;
 				listed = true;
 				if (!projects.length) home.send({ type: 'picker.list' });
-				for (const project of opened) staleGit.add(project.id);
+				for (const project of opened) {
+					staleGit.add(project.id);
+					if (project.cloud?.setupTerminal) chosenTabs[project.id] ??= project.cloud.setupTerminal;
+				}
 				if (left?.worktree && !projects.some((project) => project.id === left.id)) {
 					const { parent } = left.worktree;
 					if (selected && chats[left.id]?.some(({ id }) => id === selected)) adopting = { projectId: parent, tabId: selected };
@@ -811,6 +820,14 @@
 		else if (next) show(projectId, next);
 	}
 
+	function terminalLabel(terminal: Terminal) {
+		return terminal.id === focused?.cloud?.setupTerminal ? 'Cloud Setup' : terminal.label;
+	}
+
+	function runSetupAgain(projectId: string) {
+		fetch(hostUrl(hostOf(projectId), '/api/cloud-setup/again'), { method: 'POST' });
+	}
+
 	function closeTab(projectId: string, terminalId: string, confirmed = false) {
 		const terminal = terminals[projectId]?.find((terminal) => terminal.id === terminalId);
 		if (!confirmed && terminal && running(terminal)) {
@@ -1144,7 +1161,7 @@
 								{@const canvas = canvasTabs.find((canvas) => canvas.id === id)}
 								{@const epic = openEpics.find((epic) => epic.id === id)}
 								{#if tab?.state === 'closing'}
-									<Tab variant="terminal" label={tab.label} bottom={phone} closing />
+									<Tab variant="terminal" label={terminalLabel(tab)} bottom={phone} closing />
 								{:else if chat?.closing}
 									<Tab variant="agent" agent={chat.agent} label={chat.title ?? chat.rig} bottom={phone} closing />
 								{:else if tab}
@@ -1156,7 +1173,7 @@
 												bottom={phone}
 												variant="terminal"
 												ended={tab.state === 'ended'}
-												label={tab.label}
+												label={terminalLabel(tab)}
 												active={id === group.active}
 												onclose={() => closeTab(projectId, id)}
 												onclick={() => {
@@ -1318,6 +1335,7 @@
 				{@const project = projects.find((project) => project.id === projectId)}
 				{#each owned as terminal (terminal.id)}
 					{@const ended = terminal.state === 'ended'}
+					{@const setup = setups[projectId]?.terminalId === terminal.id ? setups[projectId] : undefined}
 					<div
 						class="view"
 						hidden={!showing(terminal.id)}
@@ -1342,6 +1360,17 @@
 										<span class="message"><Power /> Lost to a Host reboot; showing its last output.</span>
 										<div class="choices">
 											<Button onclick={() => closeTab(projectId, terminal.id)}>Dismiss</Button>
+										</div>
+									</div>
+								{:else if setup?.state === 'running'}
+									<div class="ended" role="status">
+										<span class="message"><TabMarks status="working" /> Cloud Setup running · {clock(setup.startedAt)}</span>
+									</div>
+								{:else if setup?.state === 'failed'}
+									<div class="ended failed" role="status">
+										<span class="message">Cloud Setup failed, exit {setup.status}. Fix it in this Terminal or in a Chat, then run it again.</span>
+										<div class="choices">
+											<Button size="sm" onclick={() => runSetupAgain(projectId)}>Run again</Button>
 										</div>
 									</div>
 								{/if}
@@ -2038,6 +2067,10 @@
 		border-bottom: var(--border-width) solid var(--border);
 		background: var(--surface-1);
 		color: var(--muted-fg);
+	}
+
+	.failed {
+		border-left: var(--space-1) solid var(--ansi-1);
 	}
 
 	.message {

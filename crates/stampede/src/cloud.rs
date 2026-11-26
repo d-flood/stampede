@@ -1,6 +1,6 @@
 use std::{io::ErrorKind, net::{Ipv4Addr, TcpListener}, path::Path, process::{Output, Stdio}, time::Duration};
 
-use axum::Json;
+use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{io::{self, AsyncWriteExt}, net::TcpStream, process::{Child, Command}, time::{Instant, sleep}};
@@ -69,12 +69,14 @@ pub async fn availability() -> Availability {
     }
 }
 
-pub async fn status() -> Json<Value> {
-    Json(match availability().await {
+pub(crate) async fn status(State(state): State<crate::AppState>) -> Json<Value> {
+    let mut status = match availability().await {
         Availability::Missing => json!({ "cli": "missing" }),
         Availability::SignedOut(_) => json!({ "cli": "signed-out" }),
         Availability::Ready { organization } => json!({ "cli": "ready", "organization": organization }),
-    })
+    };
+    status["claudeToken"] = json!(crate::cloud_logins::Logins::read(&state.logins.data).is_ok_and(|logins| logins.claude.is_some()));
+    Json(status)
 }
 
 pub async fn list() -> Result<Vec<Listed>, String> {

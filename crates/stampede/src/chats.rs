@@ -1109,10 +1109,10 @@ impl Chats {
             disabled_tools: rig.disabled_tools.clone(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
-        let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, cwd, &rig.env).await?;
+        let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, cwd, &rig.env).await?;
         write_record(&self.data_dir, &chat)?;
         let started = match rig.agent {
-            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen, session)
+            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen, session, self.cloud.is_some())
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             Agent::Codex if session.is_some() => codex::resume(&self.data_dir, &chat, &storage.env)
@@ -1154,13 +1154,13 @@ impl Chats {
         chats.sort_by_key(|chat| chat.created);
         for chat in chats {
             let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
-            let storage = match crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, &chat.cwd, &env).await {
+            let storage = match crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, &chat.cwd, &env).await {
                 Ok(storage) => storage,
                 Err(error) => { eprintln!("cannot restore storage for chat {}: {error}", chat.id); continue }
             };
             let env = &storage.env;
             let reattached = match chat.agent {
-                Agent::ClaudeCode => match claude::reattach(&self.data_dir, &chat, env).await {
+                Agent::ClaudeCode => match claude::reattach(&self.data_dir, &chat, env, self.cloud.is_some()).await {
                     Err(error)
                         if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused) =>
                     {
@@ -1186,7 +1186,7 @@ impl Chats {
 
     async fn resume(&self, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Box<dyn Driver>, UnboundedReceiver<Event>)> {
         match chat.agent {
-            Agent::ClaudeCode => claude::resume(&self.data_dir, chat, env)
+            Agent::ClaudeCode => claude::resume(&self.data_dir, chat, env, self.cloud.is_some())
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             // A first-turn fork, or a Chat Codex never started, has no thread yet, while a Run's Chat without one lost it.
@@ -1251,7 +1251,7 @@ impl Chats {
 
     pub async fn reopen(self: &Arc<Self>, chat: Chat, rigs: &[Rig]) -> io::Result<Chat> {
         let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
-        let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, &chat.cwd, &env).await?;
+        let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, &chat.cwd, &env).await?;
         self.open(chat, storage).await
     }
 
@@ -1304,7 +1304,7 @@ impl Chats {
             shell_context: Vec::new(),
             ..source
         };
-        let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, &chat.cwd, &env).await?;
+        let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, &chat.cwd, &env).await?;
         match chat.agent {
             Agent::ClaudeCode => {
                 if let Some(parent) = claude::parent(&storage.env, &session, &checkpoint).await? {

@@ -6,7 +6,9 @@ import { incoming, outgoing } from '#lib/host-messages.ts';
 import type { PrReview } from '#lib/pr-reviews.ts';
 import { on } from 'svelte/events';
 
-export type Project = { id: string; host?: string; path: string; icon?: string; worktree?: Worktree };
+export type Project = { id: string; host?: string; path: string; icon?: string; worktree?: Worktree; cloud?: { setup: 'creating' | CloudSetup['state']; setupTerminal: string | null } };
+
+export type CloudSetup = { projectId: string; state: 'running' | 'ready' | 'failed'; status?: number; terminalId: string; startedAt: number };
 
 export type Worktree = { parent: string } & ({ epic: string; role: 'integration' | { ticket: number } | { reviewer: number } } | { branch: string } | { commit: string });
 
@@ -247,6 +249,7 @@ export type ServerMessage =
 	| { type: 'config.changed' }
 	| { type: 'pong' }
 	| { type: 'projects.changed'; projects: Project[] }
+	| ({ type: 'cloud.setup' } & CloudSetup)
 	| { type: 'project.opened'; projectId: string }
 	| { type: 'project.error'; path: string; error: string }
 	| { type: 'picker.listed'; directories: string[] }

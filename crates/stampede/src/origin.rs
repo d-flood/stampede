@@ -135,6 +135,7 @@ async fn fetch(list: &[Project], git: &Git) {
             continue;
         }
         let mut command = Command::new("git");
+        command.envs(crate::cloud_logins::github_environment());
         command
             .arg("-C")
             .arg(&dir)

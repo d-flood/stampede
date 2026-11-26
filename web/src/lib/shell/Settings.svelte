@@ -55,8 +55,12 @@
 	let modesRefusal = $state<string | null>(null);
 	let fetchRefusal = $state<string | null>(null);
 	let editingRig = $state(false);
-	let cloud = $state<{ cli: 'missing' | 'signed-out' | 'ready'; organization?: string }>();
+	let cloud = $state<{ cli: 'missing' | 'signed-out' | 'ready'; organization?: string; claudeToken: boolean }>();
 	let cloudError = $state(false);
+	let claudeToken = $state('');
+	let replacingToken = $state(false);
+	let savingToken = $state(false);
+	let tokenRefusal = $state<string | null>(null);
 	let docking: ThemeChoice | undefined;
 	const agents = Object.keys(agentNames) as Agent[];
 	const phone = $derived(form() === 'phone');
@@ -101,7 +105,12 @@
 	});
 
 	$effect(() => {
-		if (!open) return;
+		if (!open) {
+			claudeToken = '';
+			replacingToken = false;
+			tokenRefusal = null;
+			return;
+		}
 		const controller = new AbortController();
 		cloud = undefined;
 		cloudError = false;
@@ -115,6 +124,24 @@
 		});
 		return () => controller.abort();
 	});
+
+	async function saveClaudeToken(token: string | null) {
+		savingToken = true;
+		try {
+			const response = await fetch('/api/cloud/claude-token', {
+				method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(token)
+			});
+			if (!response.ok) throw new Error(await response.text());
+			if (cloud) cloud.claudeToken = !!token;
+			claudeToken = '';
+			replacingToken = false;
+			tokenRefusal = null;
+		} catch (error) {
+			tokenRefusal = (error as Error).message;
+		} finally {
+			savingToken = false;
+		}
+	}
 
 	function storedSeen() {
 		try {
@@ -381,6 +408,32 @@
 							</div>
 							{#if cloud?.cli === 'ready'}<span class="cloud-status"><span class="ready-dot"></span>Ready</span>{/if}
 						</section>
+						<section class="row" aria-labelledby="claude-login-label">
+							<div class="text">
+								<label id="claude-login-label" for="claude-token">Claude Code login</label>
+								<p>Paste the token from <code>claude setup-token</code>. It is stored on this Host and never shown again.</p>
+								{#if tokenRefusal}<p role="alert">{tokenRefusal}</p>{/if}
+							</div>
+							{#if cloud}
+								<div class="control cloud-login">
+									{#if cloud.claudeToken && !replacingToken}
+										<TextField id="claude-token" type="password" value="" placeholder="••••••••••••" disabled />
+										<Button onclick={() => (replacingToken = true)}>Replace</Button>
+									{:else}
+										<TextField id="claude-token" type="password" bind:value={claudeToken} placeholder="Token" autocomplete="off" spellcheck={false} disabled={savingToken} />
+										<Button disabled={savingToken || !claudeToken.trim()} onclick={() => saveClaudeToken(claudeToken.trim())}>Save</Button>
+										{#if replacingToken}<Button disabled={savingToken} onclick={() => saveClaudeToken(null)}>Clear</Button>{/if}
+									{/if}
+								</div>
+							{/if}
+						</section>
+						<section class="row" aria-labelledby="automatic-logins-label">
+							<div class="text">
+								<span id="automatic-logins-label" class="label">Codex and GitHub logins</span>
+								<p>Copied from this Host each time a Cloud Host is created.</p>
+							</div>
+							<Badge tone="outline">Automatic</Badge>
+						</section>
 					</div>
 				{:else if current === 'rigs'}
 					<section aria-label="Rigs">
@@ -567,6 +620,12 @@
 		box-sizing: border-box;
 		flex: 0 1 15rem;
 		min-width: 0;
+	}
+
+	.cloud-login {
+		display: flex;
+		gap: var(--space-2);
+		align-items: center;
 	}
 
 	.cards {

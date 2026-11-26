@@ -30,6 +30,7 @@ type Frames = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 
 pub struct Terminals {
     data_dir: PathBuf,
+    cloud: bool,
     terminals: Mutex<Vec<(String, Slot)>>,
     changed: broadcast::Sender<Owner>,
     titles: broadcast::Sender<(String, String)>,
@@ -113,9 +114,10 @@ impl Output {
 }
 
 impl Terminals {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(data_dir: PathBuf, cloud: bool) -> Self {
         Self {
             data_dir,
+            cloud,
             terminals: Mutex::default(),
             changed: broadcast::Sender::new(64),
             titles: broadcast::Sender::new(64),
@@ -226,6 +228,7 @@ impl Terminals {
         for key in ["STAMPEDE_HOOK_URL", "STAMPEDE_TERMINAL_ID", "STAMPEDE_DATA_DIR"] {
             command.env_remove(key);
         }
+        if self.cloud { command.envs(crate::cloud_logins::Logins::read(&self.data_dir)?.environment()); }
         command.arg("hold").arg("--data-dir").arg(&self.data_dir).arg("--id").arg(&id);
         command.arg("--scrollback").arg(scrollback.to_string());
         command.arg("--cwd").arg(cwd);

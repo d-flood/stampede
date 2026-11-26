@@ -1,4 +1,4 @@
-use std::{env, fs, path::PathBuf, time::Duration};
+use std::{env, fs, os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
 
 use serde_json::{Value, json};
 use stampede::cloud::{self, Availability};
@@ -12,9 +12,9 @@ async fn cli_seam() {
         let server = Server::start("cloud-").await;
         let url = format!("http://127.0.0.1:{}/api/cloud", server.port);
         let status = || async { serde_json::from_str::<Value>(&reqwest::get(&url).await.unwrap().text().await.unwrap()).unwrap() };
-        assert_eq!(status().await, json!({"cli": "signed-out"}));
+        assert_eq!(status().await, json!({"cli": "signed-out", "claudeToken": false}));
         fs::write(server.root.path().join("sprite.json"), r#"{"organization":"test-org"}"#).unwrap();
-        assert_eq!(status().await, json!({"cli": "ready", "organization": "test-org"}));
+        assert_eq!(status().await, json!({"cli": "ready", "organization": "test-org", "claudeToken": false}));
 
         // Isolate PATH and HOME from the other integration tests running concurrently.
         let result = Command::new(env::current_exe().unwrap())
@@ -108,32 +108,53 @@ async fn a_cloud_worktree_is_created_and_served_on_its_own_host() {
     let repo = init(&root, "repo with spaces");
     git(&repo, &["config", "user.name", "Cloud Author"]);
     git(&repo, &["config", "user.email", "cloud@example.invalid"]);
+    git(&repo, &["commit", "--allow-empty", "-m", "Without a Cloud Setup"]);
+    let setup = |run: &str| {
+        fs::create_dir_all(repo.join(".stampede")).unwrap();
+        fs::write(repo.join(".stampede/cloud-setup.toml"), format!("carry = [\".env\", \"absent.toml\"]\nrun = {run:?}\n")).unwrap();
+        git(&repo, &["add", ".stampede"]);
+        git(&repo, &["commit", "-m", "Cloud Setup"]);
+    };
+    git(&repo, &["switch", "-c", "broken"]);
+    setup("test -e fixed || exit 3");
+    git(&repo, &["switch", "-"]);
     fs::write(repo.join("committed"), "at the starting commit").unwrap();
-    git(&repo, &["add", "committed"]);
-    git(&repo, &["commit", "-m", "Starting commit"]);
+    fs::write(repo.join(".gitignore"), ".env\nmarker\nfixed\n").unwrap();
+    git(&repo, &["add", "committed", ".gitignore"]);
+    setup("test -f .env && printf marked > marker");
     let tip = Command::new("git").arg("-C").arg(&repo).args(["rev-parse", "HEAD"]).output().await.unwrap().stdout;
     fs::write(repo.join("uncommitted"), "not carried").unwrap();
+    fs::write(repo.join(".env"), "carried").unwrap();
     let home_ws = format!("ws://127.0.0.1:{}/ws", server.port);
     let (mut socket, _) = connect_async(&home_ws).await.unwrap();
     control(&mut socket, json!({ "type": "project.open", "path": repo })).await;
     let parent = next_control(&mut socket, "project.opened").await["projectId"].clone();
     next_control(&mut socket, "projects.changed").await;
     let home_http = format!("http://127.0.0.1:{}", server.port);
-    let create = |branch: &str| {
+    let request = |branch: &str, from: &str| {
         let url = format!("{home_http}/api/projects/{}/worktrees", parent.as_str().unwrap());
-        let body = json!({ "cloud": "sprite", "branch": branch, "from": "HEAD" }).to_string();
+        let body = json!({ "cloud": "sprite", "branch": branch, "from": from }).to_string();
+        reqwest::Client::new().post(url).header("content-type", "application/json").body(body).send()
+    };
+    let create_from = |branch: &str, from: &str| {
+        let response = request(branch, from);
         async move {
-            let response = reqwest::Client::new().post(url).header("content-type", "application/json").body(body).send().await.unwrap();
+            let response = response.await.unwrap();
             assert_eq!(response.status(), 200);
             assert_eq!(response.headers()["content-type"], "application/x-ndjson");
             response.text().await.unwrap().lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>()
         }
     };
+    let create = |branch: &str| create_from(branch, "HEAD");
     let sprite = |args: &[&str]| {
         let mut command = Command::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake/sprite"));
         command.env("STAMPEDE_TEST_ROOT", &root).args(args);
         command
     };
+    let refused = request("bare", "HEAD~1").await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap().as_str()), (400, "HEAD~1 has no Cloud Setup. Type /cloud-setup in a Chat to draft one."));
+    let listed: Value = serde_json::from_slice(&sprite(&["list", "--json"]).output().await.unwrap().stdout).unwrap();
+    assert_eq!(listed["sprites"], json!([]));
     fs::write(root.join("sprite-fail"), "push\nFly refused the upload\n").unwrap();
     assert_eq!(create("refused").await, [json!({"step":"create"}), json!({"step":"install"}), json!({"error":"Fly refused the upload"})]);
     let listed: Value = serde_json::from_slice(&sprite(&["list", "--json"]).output().await.unwrap().stdout).unwrap();
@@ -143,20 +164,39 @@ async fn a_cloud_worktree_is_created_and_served_on_its_own_host() {
     assert!(!root.join("data/cloud-hosts.json").exists());
     fs::remove_file(root.join("sprite-fail")).unwrap();
 
+    let client = reqwest::Client::new();
+    let token_route = format!("{home_http}/api/cloud/claude-token");
+    let token = "fake-claude-setup-token";
+    assert_eq!(client.put(&token_route).header("content-type", "application/json").body(json!(token).to_string()).send().await.unwrap().status(), 204);
+    let cloud_status = reqwest::get(format!("{home_http}/api/cloud")).await.unwrap().text().await.unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&cloud_status).unwrap()["claudeToken"], true);
+    assert!(!cloud_status.contains(token));
+    assert!(!reqwest::get(format!("{home_http}/api/config/file")).await.unwrap().text().await.unwrap().contains(token));
+    assert!(!fs::read_to_string(root.join("config.toml")).unwrap().contains(token));
+    assert_eq!(fs::metadata(root.join("data/cloud-logins.json")).unwrap().permissions().mode() & 0o777, 0o600);
+    fs::write(root.join("gh.json"), r#"{"token":"fake-github-token","user":"cloud-test","repo":{},"prs":[]}"#).unwrap();
+    fs::create_dir_all(root.join("home/.codex")).unwrap();
+    fs::write(root.join("home/.codex/auth.json"), r#"{"fake":true}"#).unwrap();
     let lines = create("feat/cloud").await;
-    assert_eq!(&lines[..3], [json!({"step":"create"}), json!({"step":"install"}), json!({"step":"repository"})]);
-    assert_eq!(lines.len(), 4, "{lines:?}");
-    let host = lines[3]["host"].as_str().unwrap_or_else(|| panic!("{lines:?}"));
-    let project = &lines[3]["projectId"];
+    assert_eq!(&lines[..5], [json!({"step":"create"}), json!({"step":"install"}), json!({"step":"repository"}), json!({"step":"carry"}), json!({"step":"toolkit"})]);
+    assert_eq!(lines.len(), 6, "{lines:?}");
+    let host = lines[5]["host"].as_str().unwrap_or_else(|| panic!("{lines:?}"));
+    let project = &lines[5]["projectId"];
     let home_id = fs::read_to_string(root.join("data/host-id")).unwrap();
     assert!(host.starts_with(&format!("stampede-{}-", &home_id[..8])));
     let remote_home = root.join("sprites").join(host).join("home");
     let path = remote_home.join("repo with spaces");
-    let entry = json!({ "id": project, "host": host, "path": path, "worktree": { "parent": parent, "branch": "feat/cloud" },
-        "cloud": { "setup": "ready", "state": "awake", "reason": null, "inSync": true, "setupTerminal": null } });
-    let changed = next_control(&mut socket, "projects.changed").await;
-    assert!(changed["projects"].as_array().unwrap().contains(&entry), "{changed}");
+    let auth = remote_home.join(".codex/auth.json");
+    assert_eq!(fs::read_to_string(&auth).unwrap(), r#"{"fake":true}"#);
+    assert_eq!(fs::metadata(auth).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(fs::metadata(remote_home.join(".local/share/stampede/cloud-logins.json")).unwrap().permissions().mode() & 0o777, 0o600);
+    let entry = setup_reaches(&mut socket, project, "ready").await;
+    let setup_terminal = entry["cloud"]["setupTerminal"].as_str().unwrap().to_owned();
+    assert_eq!(entry, json!({ "id": project, "host": host, "path": path, "worktree": { "parent": parent, "branch": "feat/cloud" },
+        "cloud": { "setup": "ready", "state": "awake", "reason": null, "inSync": true, "setupTerminal": setup_terminal } }));
     assert_eq!(fs::read_to_string(path.join("committed")).unwrap(), "at the starting commit");
+    assert_eq!(fs::read_to_string(path.join(".env")).unwrap(), "carried");
+    assert_eq!(fs::read_to_string(path.join("marker")).unwrap(), "marked");
     assert!(!path.join("uncommitted").exists());
     let identity: Value = serde_json::from_slice(&fs::read(remote_home.join(".stampede-cloud.json")).unwrap()).unwrap();
     assert_eq!(identity, json!({ "homeId": home_id, "homeName": "Stampede", "project": "repo with spaces", "branch": "feat/cloud" }));
@@ -172,6 +212,30 @@ async fn a_cloud_worktree_is_created_and_served_on_its_own_host() {
     assert_eq!(git_output(&["remote"]).output().await.unwrap().stdout, b"");
 
     let cloud_ws = format!("ws://127.0.0.1:{}/cloud/{host}/ws", server.port);
+    let mut view = View::open_url(&cloud_ws, "device", Some(&setup_terminal)).await;
+    view.settle(|text| text.contains("Skipped absent.toml: not on the Home Host")).await;
+    assert!(!view.text().contains("Skipped .env"), "{}", view.text());
+    view.send("printf 'login:%s:%s\\n' \"$CLAUDE_CODE_OAUTH_TOKEN\" \"$GH_TOKEN\"\r").await;
+    view.settle(|text| text.contains("login:fake-claude-setup-token:fake-github-token")).await;
+    drop(view);
+
+    let lines = create_from("feat/broken", "broken").await;
+    let broken = lines.last().unwrap()["host"].as_str().unwrap_or_else(|| panic!("{lines:?}")).to_owned();
+    let broken_project = &lines.last().unwrap()["projectId"];
+    setup_reaches(&mut socket, broken_project, "failed").await;
+    let (mut broken_socket, _) = connect_async(format!("ws://127.0.0.1:{}/cloud/{broken}/ws", server.port)).await.unwrap();
+    control(&mut broken_socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    let failed = next_control(&mut broken_socket, "cloud.setup").await;
+    assert_eq!((&failed["state"], &failed["status"], &failed["command"]), (&json!("failed"), &json!(3), &json!("test -e fixed || exit 3")));
+    let listed: Value = serde_json::from_slice(&sprite(&["list", "--json"]).output().await.unwrap().stdout).unwrap();
+    assert!(listed["sprites"].as_array().unwrap().iter().any(|listed| listed["name"] == *broken), "{listed}");
+    fs::write(root.join("sprites").join(&broken).join("home/repo with spaces/fixed"), "").unwrap();
+    let again = reqwest::Client::new().post(format!("{home_http}/cloud/{broken}/api/cloud-setup/again")).send().await.unwrap();
+    assert_eq!(again.status(), 200);
+    assert_eq!(setup_reaches(&mut socket, broken_project, "ready").await["cloud"]["setupTerminal"], failed["terminalId"]);
+    drop(broken_socket);
+    assert!(sprite(&["destroy", "--force", &broken]).status().await.unwrap().success());
+
     let (mut cloud_socket, _) = connect_async(&cloud_ws).await.unwrap();
     control(&mut cloud_socket, json!({ "type": "projects.list" })).await;
     let remote_projects = next_control(&mut cloud_socket, "projects.changed").await;
@@ -192,6 +256,7 @@ async fn a_cloud_worktree_is_created_and_served_on_its_own_host() {
     assert!(items.iter().any(|item| item["text"] == "Hello and **welcome**! 👋"), "{items:?}");
     assert!(remote_home.join(format!(".local/share/stampede/chats/{chat_id}.json")).exists());
     control(&mut cloud_socket, json!({ "type": "chat.close", "chatId": chat_id })).await;
+    assert_eq!(client.put(&token_route).header("content-type", "application/json").body("null").send().await.unwrap().status(), 204);
 
     let refusal = "A Cloud Host holds one worktree and nothing else.";
     let cloud_http = format!("{home_http}/cloud/{host}/api");
@@ -254,7 +319,10 @@ async fn the_home_host_links_each_cloud_host_for_its_settings_attention_and_push
     let root = server.root.path().to_owned();
     fs::write(root.join("sprite.json"), r#"{"organization":"test-org"}"#).unwrap();
     let repo = init(&root, "repo");
-    git(&repo, &["commit", "--allow-empty", "-m", "Starting commit"]);
+    fs::create_dir(repo.join(".stampede")).unwrap();
+    fs::write(repo.join(".stampede/cloud-setup.toml"), "run = \"true\"\n").unwrap();
+    git(&repo, &["add", ".stampede"]);
+    git(&repo, &["commit", "-m", "Starting commit"]);
     let mut pushes = subscribe(&server, &["away"]).await;
     let home_ws = format!("ws://127.0.0.1:{}/ws", server.port);
     let home_http = format!("http://127.0.0.1:{}", server.port);
@@ -311,4 +379,16 @@ async fn the_home_host_links_each_cloud_host_for_its_settings_attention_and_push
 
     server.restart().await;
     listed().await;
+}
+
+/// Waits for the Home Host to list `project` with its Cloud Setup in `state`, and returns its entry.
+async fn setup_reaches(socket: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>, project: &Value, state: &str) -> Value {
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let changed = crate::common::next_control(socket, "projects.changed").await;
+            if let Some(entry) = changed["projects"].as_array().unwrap().iter().find(|entry| entry["id"] == *project && entry["cloud"]["setup"] == state) {
+                return entry.clone();
+            }
+        }
+    }).await.unwrap_or_else(|_| panic!("the Cloud Setup of {project} never became {state}"))
 }

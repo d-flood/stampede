@@ -33,6 +33,7 @@ use crate::{
     chats::{self, Builtin, Chats},
     cloud::{self, Service},
     cloud_hosts::CloudHosts,
+    cloud_setup::Run,
     config::{Agent, Config},
     epics::Epics,
     git,
@@ -206,6 +207,7 @@ struct Device {
     usage: Arc<Usage>,
     projects: Arc<Projects>,
     cloud_hosts: Arc<CloudHosts>,
+    cloud_setup: watch::Receiver<Option<Run>>,
     config: watch::Receiver<Arc<Config>>,
     outgoing: Outgoing,
     resyncs: mpsc::UnboundedSender<u32>,
@@ -225,7 +227,7 @@ struct Device {
 
 async fn connect(
     socket: WebSocket,
-    AppState { cloud, terminals, chats, attention, usage, projects, cloud_hosts, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
+    AppState { cloud, terminals, chats, attention, usage, projects, cloud_hosts, cloud_setup, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
 ) {
     let _connected = devices.connect();
     let (mut sink, mut stream) = socket.split();
@@ -243,6 +245,8 @@ async fn connect(
     let mut heard = Instant::now();
     let mut list = projects.subscribe();
     let mut cloud_list = cloud_hosts.subscribe();
+    let mut setup = cloud_setup.subscribe();
+    setup.mark_unchanged();
     let mut changes = terminals.subscribe();
     let mut titles = terminals.subscribe_titles();
     let mut chat_changes = chats.subscribe();
@@ -268,6 +272,7 @@ async fn connect(
         usage,
         projects,
         cloud_hosts,
+        cloud_setup: setup.clone(),
         config: config.clone(),
         outgoing,
         resyncs,
@@ -322,6 +327,10 @@ async fn connect(
                 device.review_projects.retain(|project_id, _| projects.iter().any(|project| project.id == *project_id));
             }
             Ok(()) = cloud_list.changed() => device.projects_changed(),
+            Ok(()) = setup.changed() => {
+                setup.mark_unchanged();
+                device.setup_changed();
+            }
             changed = changes.recv() => match changed {
                 Ok(owner) => device.terminals_changed(&owner),
                 Err(RecvError::Lagged(_)) => {
@@ -467,6 +476,14 @@ async fn connect(
 }
 
 impl Device {
+    fn setup_changed(&self) {
+        if let Some(run) = self.cloud_setup.borrow().as_ref() {
+            let mut message = json!(run);
+            message["type"] = json!("cloud.setup");
+            send(&self.outgoing, message);
+        }
+    }
+
     fn projects_changed(&self) {
         let mut projects: Vec<Value> = self.projects.list().iter().map(|project| json!(project)).collect();
         projects.extend(self.cloud_hosts.projects());
@@ -491,6 +508,7 @@ impl Device {
                 self.usage_changed(&self.usage.snapshot());
                 send(&self.outgoing, json!(*self.origin.borrow()));
                 self.send_switches();
+                self.setup_changed();
             }
             Control::Create { project_id, owner } => {
                 let projects = self.projects.list();

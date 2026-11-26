@@ -7,6 +7,8 @@ mod clips;
 pub mod cloud;
 mod cloud_hosts;
 mod cloud_link;
+mod cloud_logins;
+mod cloud_setup;
 mod config;
 mod device;
 mod epics;
@@ -109,6 +111,8 @@ struct AppState {
     usage: Arc<Usage>,
     projects: Arc<Projects>,
     cloud_hosts: Arc<cloud_hosts::CloudHosts>,
+    logins: Arc<cloud_logins::Store>,
+    cloud_setup: Arc<cloud_setup::CloudSetup>,
     config: watch::Receiver<Arc<Config>>,
     config_path: PathBuf,
     disk: broadcast::Sender<watcher::Changed>,
@@ -129,6 +133,7 @@ fn router(state: AppState) -> Router {
     let compression = CompressionLayer::new().compress_when(DefaultPredicate::new().and(NotForContentType::const_new("font/woff")));
     let mut home_only = Router::new()
         .route("/api/projects/{id}/worktrees", post(create_worktree))
+        .route("/api/projects/{id}/cloud-setup", get(cloud_setup::check))
         .route("/api/projects/{id}/prs", get(pr_reviews::prs))
         .route("/api/projects/{id}/pr-reviews", get(pr_reviews::list).post(pr_reviews::open))
         .route("/api/projects/{id}/pr-reviews/{number}", delete(pr_reviews::discard))
@@ -152,15 +157,21 @@ fn router(state: AppState) -> Router {
         .route("/api/clips", get(clips::list).put(clips::save).delete(clips::delete))
         .route("/api/clips/order", put(clips::reorder))
         .route("/api/config/file", get(files::read_config).put(files::write_config));
+    let mut cloud_only = Router::new();
     if state.cloud.is_some() {
         home_only = home_only.route_layer(middleware::from_fn(refuse));
         settings = settings.route_layer(middleware::from_fn(refuse_writes));
+        cloud_only = cloud_only
+            .route("/api/cloud-setup", post(cloud_setup::start))
+            .route("/api/cloud-setup/again", post(cloud_setup::again));
     }
     Router::new()
         .merge(home_only)
         .merge(settings)
+        .merge(cloud_only)
         .route("/api/version", get(version))
         .route("/api/cloud", get(cloud::status))
+        .route("/api/cloud/claude-token", axum::routing::put(cloud_logins::set_claude))
         .route("/api/browser", post(browser::open))
         .route("/api/themes", get(theme_names))
         .route("/api/themes/{name}", get(preview_theme))
@@ -231,8 +242,10 @@ fn router(state: AppState) -> Router {
 }
 
 pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
+    if args.cloud.is_some() { cloud_logins::set_cloud_data(&args.data_dir); }
     let config = config::watch(&args.config, args.cloud.is_some())?;
     let cloud_hosts = Arc::new(cloud_hosts::CloudHosts::load(&args.data_dir)?);
+    let cloud_setup = Arc::new(cloud_setup::CloudSetup::load(&args.data_dir)?);
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
     let port = listener.local_addr()?.port();
     let epics = Arc::new(Epics::load(&args.data_dir, args.cloud)?);
@@ -252,7 +265,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let usage = Arc::new(Usage::default());
     let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage), args.cloud));
     let rigs = config.borrow().rigs.clone();
-    let terminals = Arc::new(Terminals::new(args.data_dir.clone()));
+    let terminals = Arc::new(Terminals::new(args.data_dir.clone(), args.cloud.is_some()));
     terminals.restore().await?;
     chats.restore(&rigs).await?;
     chats::listen_delegations(delegations, Arc::clone(&chats), Arc::clone(&terminals), config.clone());
@@ -267,7 +280,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
         Arc::clone(&attention),
         Arc::clone(&usage),
     )?;
-    cli::listen(requests, Arc::clone(&epics), Arc::clone(&runs), Arc::clone(&pr_reviews));
+    cli::listen(requests, Arc::clone(&epics), Arc::clone(&runs), Arc::clone(&pr_reviews), Arc::clone(&cloud_setup));
     let devices = device::Devices::default();
     usage::spawn(Arc::clone(&usage), config.clone(), devices.subscribe(), Arc::clone(&epics));
     terminals.scrollback(config.borrow().scrollback);
@@ -286,7 +299,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     if args.cloud.is_some() {
         std::fs::write(args.data_dir.join("port"), port.to_string())?;
     }
-    let state = AppState { cloud: args.cloud, cloud_hosts, media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, home_link, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, pr_reviews, runs, devices, origin };
+    let state = AppState { cloud: args.cloud, logins: Arc::new(cloud_logins::Store::new(args.data_dir.clone())), cloud_hosts, cloud_setup, media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, home_link, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, pr_reviews, runs, devices, origin };
     cloud_link::spawn(state.clone());
     let listener = listener.tap_io(|stream| {
         let _ = stream.set_nodelay(true);
@@ -428,7 +441,7 @@ struct Creation {
 
 async fn create_worktree(State(state): State<AppState>, Path(id): Path<String>, Json(creation): Json<Creation>) -> Result<Response, files::Failure> {
     if let Some(service) = creation.cloud {
-        return Ok(cloud_hosts::create(state, id, creation, service));
+        return cloud_hosts::create(state, id, creation, service).await;
     }
     let project_id = state.runs.create_worktree(&id, creation.branch.as_deref(), &creation.from).await.map_err(|error| (StatusCode::BAD_REQUEST, error))?;
     Ok(Json(json!({ "projectId": project_id })).into_response())

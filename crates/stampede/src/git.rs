@@ -436,6 +436,7 @@ async fn locate(dir: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
 /// Runs git in `dir`, giving its trimmed output, or what it printed when it failed.
 pub async fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
+        .envs(crate::cloud_logins::github_environment())
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -462,6 +463,7 @@ pub async fn run_alone(dir: &Path, args: &[&str]) -> Result<String, String> {
 
 async fn git(dir: &Path, args: &[&str]) -> Option<Vec<u8>> {
     let output = Command::new("git")
+        .envs(crate::cloud_logins::github_environment())
         .arg("--no-optional-locks")
         .arg("-C")
         .arg(dir)
