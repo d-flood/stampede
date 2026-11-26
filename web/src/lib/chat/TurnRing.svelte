@@ -120,7 +120,7 @@
 	.legend { --tone: var(--status-working); position: absolute; top: calc(var(--border-width) / 2); left: 50%; z-index: 1; display: flex; align-items: center; gap: var(--space-1); max-width: calc(100% - 4 * var(--radius-xl)); padding: 0 var(--space-4); translate: -50% -50%; color: var(--status-working); font-size: var(--font-size-sm); line-height: 1.4; white-space: nowrap; pointer-events: none; }
 	.legend :global(svg) { flex: none; }
 	.legend::before, .trace { --feather: linear-gradient(90deg, transparent, #000 var(--space-3), #000 calc(100% - var(--space-3)), transparent); position: absolute; inset: 0; mask: var(--feather); pointer-events: none; }
-	.legend::before { content: ''; z-index: -1; background: linear-gradient(var(--color-bg) 50%, var(--surface-1) 0); }
+	.legend::before { content: ''; z-index: -1; background: linear-gradient(var(--color-bg) 50%, var(--card) 0); }
 	.trace { background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--tone) 60%, transparent)) -5em 50% / 5em 1.5px no-repeat; }
 	.lit { position: relative; display: flex; min-width: 0; }
 	.label { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--tone), var(--color-fg) 35%) 60%, color-mix(in oklab, var(--tone), var(--color-fg) 85%) 92%, transparent) -7em 0 / 7em 100% no-repeat, var(--tone); background-clip: text; color: transparent; }

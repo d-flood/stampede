@@ -274,10 +274,10 @@
 		position: relative;
 		display: flex;
 		flex-direction: column;
-		border: var(--border-width) solid var(--border-strong);
+		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-xl);
 		background: var(--card);
-		box-shadow: var(--shadow-lift);
+		box-shadow: var(--shadow-card);
 	}
 
 	.card textarea, .card .mirror {

@@ -391,7 +391,7 @@
 		max-width: calc(100% - 2 * var(--radius-xl));
 		padding: 0 var(--space-2);
 		translate: 0 -50%;
-		background: linear-gradient(var(--color-bg) 50%, var(--surface-1) 0);
+		background: linear-gradient(var(--color-bg) 50%, var(--card) 0);
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		line-height: 1.4;
