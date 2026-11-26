@@ -19,6 +19,7 @@ pub const ENVIRONMENT: [&str; 9] = ["TMPDIR", "TMP", "TEMP", "CLAUDE_CODE_TMPDIR
 pub struct Storage {
     data: PathBuf,
     root: PathBuf,
+    cloud: bool,
 }
 
 pub struct Session {
@@ -60,8 +61,10 @@ fn path_with_stampede(configured: Option<&String>) -> Option<String> {
 
 impl Storage {
     pub fn new(data: &Path) -> Self {
-        Self { data: data.to_owned(), root: data.join("storage") }
+        Self { data: data.to_owned(), root: data.join("storage"), cloud: false }
     }
+
+    pub fn on_cloud(mut self, cloud: bool) -> Self { self.cloud = cloud; self }
 
     pub async fn prepare(&self, owner: &str, cwd: &Path, overrides: &BTreeMap<String, String>) -> io::Result<Session> {
         let repository = git::common_dir(cwd).await;
@@ -100,6 +103,7 @@ impl Storage {
             let _ = fs::create_dir_all(&target);
             env.insert("CARGO_TARGET_DIR".to_owned(), target.to_string_lossy().into_owned());
         }
+        if self.cloud { env.extend(crate::cloud_logins::Logins::read(&self.data)?.environment()); }
         env.extend(overrides.clone());
         if let Some(path) = path_with_stampede(env.get("PATH")) {
             env.insert("PATH".to_owned(), path);

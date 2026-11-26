@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	type Page = 'general' | 'appearance' | 'agents' | 'rigs' | 'clips';
+	type Page = 'general' | 'appearance' | 'agents' | 'rigs' | 'clips' | 'cloud-hosts';
 
 	let open = $state(false);
 	let chosen = $state<Page>();
@@ -13,6 +13,7 @@
 <script lang="ts">
 	import { agentNames, autoFetch, clips, commitInstructions, commitRig, fontNames, hostName, modes, rigs, saveAutoFetch, saveCommitInstructions, saveCommitRig, saveHostName, saveModes, themeLabel, type Agent, type FontRole } from '#lib/config.svelte.ts';
 	import type { Update } from '#lib/git.ts';
+	import { ago } from '#lib/chat/sessions.ts';
 	import { form } from '#lib/form.ts';
 	import { colorScheme, selectScheme, type Scheme } from '#lib/scheme.svelte.ts';
 	import { selectSidebarSide, sidebarPosition, type SidebarSide } from '#lib/sidebar.svelte.ts';
@@ -40,13 +41,58 @@
 	import CaretLeft from '~icons/ph/caret-left';
 	import CaretRight from '~icons/ph/caret-right';
 	import Check from '~icons/ph/check-bold';
+	import Cloud from '~icons/ph/cloud';
 	import Gear from '~icons/ph/gear';
 	import PaintBrush from '~icons/ph/paint-brush';
 	import Robot from '~icons/ph/robot';
 	import RocketLaunch from '~icons/ph/rocket-launch';
 	import SlidersHorizontal from '~icons/ph/sliders-horizontal';
 
-	let { update }: { update?: Update } = $props();
+	let { update, ondeletehost }: { update?: Update; ondeletehost?: (id: string) => void } = $props();
+
+	type Listed = { id: string; createdAt: string; worktree?: { project: string; branch: string }; state?: 'awake' | 'asleep' | 'unreachable'; home: { name: string; own: boolean } };
+	let hosts = $state<Listed[]>();
+	let listError = $state<string>();
+	let destroying = $state<string>();
+	let foreign = $state<Listed>();
+
+	async function loadHosts(signal?: AbortSignal) {
+		try {
+			const response = await fetch('/api/cloud-hosts', { signal });
+			if (!response.ok) throw new Error(await response.text());
+			const entries: Listed[] = await response.json();
+			if (!signal?.aborted) { hosts = entries; listError = undefined; }
+		} catch (error) {
+			if (!signal?.aborted) listError = (error as Error).message;
+		}
+	}
+
+	$effect(() => {
+		if (!open || current !== 'cloud-hosts' || cloud?.cli !== 'ready') return;
+		const controller = new AbortController();
+		hosts = undefined;
+		void loadHosts(controller.signal);
+		return () => controller.abort();
+	});
+
+	async function destroyHost(item: Listed, confirmed = false) {
+		if (item.home.own && item.worktree) {
+			open = false;
+			ondeletehost?.(item.id);
+			return;
+		}
+		if (!item.home.own && !confirmed) { foreign = item; return; }
+		destroying = item.id;
+		try {
+			const response = await fetch(`/api/cloud-hosts/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+			if (!response.ok) throw new Error(await response.text());
+			foreign = undefined;
+			await loadHosts();
+		} catch (error) {
+			foreign = undefined;
+			listError = (error as Error).message;
+		} finally { destroying = undefined; }
+	}
 
 	const seenKey = 'stampede.update-seen';
 	let seen = $state(storedSeen());
@@ -55,6 +101,12 @@
 	let modesRefusal = $state<string | null>(null);
 	let fetchRefusal = $state<string | null>(null);
 	let editingRig = $state(false);
+	let cloud = $state<{ cli: 'missing' | 'signed-out' | 'ready'; organization?: string; claudeToken: boolean }>();
+	let cloudError = $state(false);
+	let claudeToken = $state('');
+	let replacingToken = $state(false);
+	let savingToken = $state(false);
+	let tokenRefusal = $state<string | null>(null);
 	let docking: ThemeChoice | undefined;
 	const agents = Object.keys(agentNames) as Agent[];
 	const phone = $derived(form() === 'phone');
@@ -67,7 +119,8 @@
 		{ id: 'appearance', label: 'Appearance', icon: PaintBrush, summary: () => themeLabel() },
 		{ id: 'agents', label: 'Agents', icon: Robot, summary: () => 'Commit messages and modes' },
 		{ id: 'rigs', label: 'Rigs', icon: RocketLaunch, summary: () => count(rigs().length, 'Rig') },
-		{ id: 'clips', label: 'Clips', icon: BookmarkSimple, summary: () => count(clips().length, 'Clip') }
+		{ id: 'clips', label: 'Clips', icon: BookmarkSimple, summary: () => count(clips().length, 'Clip') },
+		{ id: 'cloud-hosts', label: 'Cloud Hosts', icon: Cloud, summary: () => cloud?.cli === 'ready' ? 'Ready' : 'Not set up' }
 	];
 	const page = $derived(pages.find(({ id }) => id === current));
 	const roles: { role: FontRole; description: string }[] = [
@@ -97,6 +150,45 @@
 			localStorage.setItem(seenKey, seen);
 		} catch {}
 	});
+
+	$effect(() => {
+		if (!open) {
+			claudeToken = '';
+			replacingToken = false;
+			tokenRefusal = null;
+			return;
+		}
+		const controller = new AbortController();
+		cloud = undefined;
+		cloudError = false;
+		fetch('/api/cloud', { signal: controller.signal }).then((response) => {
+			if (!response.ok) throw new Error();
+			return response.json();
+		}).then((status) => {
+			if (!controller.signal.aborted) cloud = status;
+		}).catch(() => {
+			if (!controller.signal.aborted) cloudError = true;
+		});
+		return () => controller.abort();
+	});
+
+	async function saveClaudeToken(token: string | null) {
+		savingToken = true;
+		try {
+			const response = await fetch('/api/cloud/claude-token', {
+				method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(token)
+			});
+			if (!response.ok) throw new Error(await response.text());
+			if (cloud) cloud.claudeToken = !!token;
+			claudeToken = '';
+			replacingToken = false;
+			tokenRefusal = null;
+		} catch (error) {
+			tokenRefusal = (error as Error).message;
+		} finally {
+			savingToken = false;
+		}
+	}
 
 	function storedSeen() {
 		try {
@@ -343,6 +435,71 @@
 							</div>
 						</section>
 					</div>
+				{:else if current === 'cloud-hosts'}
+					{#if !phone}<p class="lede">A worktree can run on a Fly.io Sprite that is created for it and destroyed with it.</p>{/if}
+					<div class="group">
+						<section class="row" aria-labelledby="fly-label">
+							<div class="text">
+								<span class="label" id="fly-label">Fly.io</span>
+								{#if cloud?.cli === 'ready'}
+									<p>The <code>sprite</code> CLI, signed in to {cloud.organization}.</p>
+								{:else if cloud?.cli === 'signed-out'}
+									<p>The <code>sprite</code> CLI is installed but signed out. Run <code>sprite login</code>.</p>
+								{:else if cloud?.cli === 'missing'}
+									<p>Install the <code>sprite</code> CLI and sign in to use Cloud Hosts.</p>
+								{:else if cloudError}
+									<p>Could not check the <code>sprite</code> CLI.</p>
+								{:else}
+									<p>Checking the <code>sprite</code> CLI…</p>
+								{/if}
+							</div>
+							{#if cloud?.cli === 'ready'}<span class="cloud-status"><span class="ready-dot"></span>Ready</span>{/if}
+						</section>
+						<section class="row" aria-labelledby="claude-login-label">
+							<div class="text">
+								<label id="claude-login-label" for="claude-token">Claude Code login</label>
+								<p>Paste the token from <code>claude setup-token</code>. It is stored on this Host and never shown again.</p>
+								{#if tokenRefusal}<p role="alert">{tokenRefusal}</p>{/if}
+							</div>
+							{#if cloud}
+								<div class="control cloud-login">
+									{#if cloud.claudeToken && !replacingToken}
+										<TextField id="claude-token" type="password" value="" placeholder="••••••••••••" disabled />
+										<Button onclick={() => (replacingToken = true)}>Replace</Button>
+									{:else}
+										<TextField id="claude-token" type="password" bind:value={claudeToken} placeholder="Token" autocomplete="off" spellcheck={false} disabled={savingToken} />
+										<Button disabled={savingToken || !claudeToken.trim()} onclick={() => saveClaudeToken(claudeToken.trim())}>Save</Button>
+										{#if replacingToken}<Button disabled={savingToken} onclick={() => saveClaudeToken(null)}>Clear</Button>{/if}
+									{/if}
+								</div>
+							{/if}
+						</section>
+						<section class="row" aria-labelledby="automatic-logins-label">
+							<div class="text">
+								<span id="automatic-logins-label" class="label">Codex and GitHub logins</span>
+								<p>Copied from this Host each time a Cloud Host is created.</p>
+							</div>
+							<Badge tone="outline">Automatic</Badge>
+						</section>
+					</div>
+					{#if cloud?.cli === 'ready'}
+						<h4>Cloud Hosts on Fly.io</h4>
+						{#if listError}<p role="alert">{listError}</p>{/if}
+						<div class="group">
+							{#each hosts ?? [] as item (item.id)}
+								<section class="row cloud-host">
+									<div class="text">
+										<span class="label">{item.worktree?.branch ?? item.id}</span>
+										<p class:waiting={!item.worktree}>{item.worktree?.project ?? 'No worktree uses it'}{item.state ? ` · ${item.state}` : ''} · created {ago(Date.parse(item.createdAt))}</p>
+										{#if !item.home.own}<p>{item.home.name}</p>{/if}
+									</div>
+									<Button variant="danger" size="sm" disabled={!!destroying} onclick={() => destroyHost(item)}>Destroy</Button>
+								</section>
+							{:else}
+								<p class="row">{hosts ? 'No Cloud Hosts' : listError ? 'Could not list Cloud Hosts' : 'Listing Cloud Hosts…'}</p>
+							{/each}
+						</div>
+					{/if}
 				{:else if current === 'rigs'}
 					<section aria-label="Rigs">
 						{#if !editingRig}
@@ -360,8 +517,25 @@
 		{/if}
 	</div>
 </Dialog>
+<Dialog bind:open={() => !!foreign, (open) => !open && (foreign = undefined)} title="Destroy Cloud Host?" description={foreign && `${foreign.id} was made by ${foreign.home.name}. Destroy it anyway?`}>
+	{#snippet actions()}
+		<Button disabled={!!destroying} onclick={() => (foreign = undefined)}>Cancel</Button>
+		<Button variant="danger" disabled={!!destroying} onclick={() => foreign && destroyHost(foreign, true)}>Destroy</Button>
+	{/snippet}
+</Dialog>
 
 <style>
+	.cloud-host {
+		flex-wrap: nowrap;
+		gap: var(--space-3);
+	}
+	.cloud-host .text {
+		overflow-wrap: anywhere;
+	}
+	.waiting {
+		color: var(--status-waiting);
+	}
+
 	.settings {
 		display: flex;
 		flex: 1;
@@ -507,6 +681,21 @@
 		vertical-align: middle;
 	}
 
+	.cloud-status {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.ready-dot {
+		width: var(--space-2);
+		height: var(--space-2);
+		border-radius: var(--radius-pill);
+		background: var(--status-done);
+	}
+
 	.control {
 		display: flex;
 		justify-content: flex-end;
@@ -515,6 +704,12 @@
 		min-width: 0;
 		max-width: 100%;
 		margin-left: auto;
+	}
+
+	.cloud-login {
+		display: flex;
+		gap: var(--space-2);
+		align-items: center;
 	}
 
 	.cards {

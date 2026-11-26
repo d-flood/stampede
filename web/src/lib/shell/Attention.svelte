@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { logos } from '#lib/chat/sessions.ts';
+	import { rigs } from '#lib/config.svelte.ts';
 	import { tabOf, type Attention, type Chat } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { disable, enable, notifications, type Notifications } from '#lib/push.ts';
@@ -38,8 +39,8 @@
 
 	function icon(item: Attention) {
 		if (!('chatId' in item)) return Article;
-		const chat = chats.find(({ id }) => id === item.chatId);
-		return chat && logos[chat.agent];
+		const agent = chats.find(({ id }) => id === item.chatId)?.agent ?? rigs().find(({ name }) => name === item.label)?.agent;
+		return agent && logos[agent];
 	}
 
 	const labels = { off: 'Enable notifications', on: 'Disable notifications', blocked: 'Notifications blocked' };

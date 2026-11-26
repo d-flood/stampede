@@ -128,3 +128,15 @@ Use a throwaway Project and repeat with each available real Agent, Claude Code a
 2026-10-17: real Codex verification passed planning, parallel 2, approval/question cards, kept-session lifecycle, simulated reboot recovery and deduplication, Resolver merging, and Landing. Claude was unavailable at its session limit; phone UI checks used Pixel 8 Pro emulation, with the physical Pixel and installed PWA unverified.
 
 Run results, observations and unavailable checks: `epic/loop/16-manual-checklist.md`.
+
+## 7. Cloud Hosts on a real Sprite
+
+- [ ] Sign in with `sprite login`. Settings › Cloud Hosts shows Ready.
+- [ ] Paste a token from `claude setup-token` there and save it.
+- [ ] From a branch with a Cloud Setup, create a worktree on a Cloud Host. The dialog names each step, then the new Project opens on its Cloud Setup Tab.
+- [ ] Run a Claude Code turn and a Codex turn there.
+- [ ] Leave it. Its tile shows Asleep within a minute; reopening it finds its Terminal where it was.
+- [ ] Commit there. The commit appears in the parent's Git section.
+- [ ] Regroup there. The Home Host's copy of the branch follows.
+- [ ] Rebuild and reinstall the Home Host. The Cloud Host takes the new build with its Terminal alive.
+- [ ] Delete the worktree. `sprite list` is empty.

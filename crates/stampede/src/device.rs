@@ -31,6 +31,9 @@ use crate::{
     attention::{Attention, Feed},
     canvas::Canvases,
     chats::{self, Builtin, Chats},
+    cloud::{self, Service},
+    cloud_hosts::CloudHosts,
+    cloud_setup::Run,
     config::{Agent, Config},
     epics::Epics,
     git,
@@ -52,8 +55,8 @@ const QUEUED_BYTES: u32 = 64 << 20;
 const QUEUED_OUTPUT: u32 = 1 << 20;
 const BATCHED_OUTPUT: usize = 64 << 10;
 const BRIEF_OUTPUT: usize = 2 << 10;
-const PING_EVERY: Duration = Duration::from_secs(20);
-const SILENT_FOR: Duration = Duration::from_secs(60);
+pub(crate) const PING_EVERY: Duration = Duration::from_secs(20);
+pub(crate) const SILENT_FOR: Duration = Duration::from_secs(60);
 
 /// Choices made on the Launchpad that override the Rig for the Chat it starts.
 #[derive(Deserialize, Default)]
@@ -175,14 +178,14 @@ impl Devices {
         self.0.subscribe()
     }
 
-    fn connect(&self) -> Connected {
+    pub fn connect(&self) -> Connected {
         self.0.send_modify(|count| *count += 1);
         Connected(self.clone())
     }
 }
 
 /// Counts one Device as connected until it drops, however its connection ends.
-struct Connected(Devices);
+pub struct Connected(Devices);
 
 impl Drop for Connected {
     fn drop(&mut self) {
@@ -191,6 +194,7 @@ impl Drop for Connected {
 }
 
 struct Device {
+    cloud: Option<Service>,
     id: String,
     browser: Option<String>,
     connection: Uuid,
@@ -202,6 +206,8 @@ struct Device {
     attention: Arc<Feed>,
     usage: Arc<Usage>,
     projects: Arc<Projects>,
+    cloud_hosts: Arc<CloudHosts>,
+    cloud_setup: watch::Receiver<Option<Run>>,
     config: watch::Receiver<Arc<Config>>,
     outgoing: Outgoing,
     resyncs: mpsc::UnboundedSender<u32>,
@@ -221,7 +227,7 @@ struct Device {
 
 async fn connect(
     socket: WebSocket,
-    AppState { terminals, chats, attention, usage, projects, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
+    AppState { cloud, terminals, chats, attention, usage, projects, cloud_hosts, cloud_setup, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
 ) {
     let _connected = devices.connect();
     let (mut sink, mut stream) = socket.split();
@@ -238,6 +244,11 @@ async fn connect(
     let mut heartbeat = interval_at(Instant::now() + PING_EVERY, PING_EVERY);
     let mut heard = Instant::now();
     let mut list = projects.subscribe();
+    let mut cloud_list = cloud_hosts.subscribe();
+    let mut cloud_held = cloud_hosts.subscribe_held();
+    let mut cloud_failures = cloud_hosts.subscribe_failures();
+    let mut setup = cloud_setup.subscribe();
+    setup.mark_unchanged();
     let mut changes = terminals.subscribe();
     let mut titles = terminals.subscribe_titles();
     let mut chat_changes = chats.subscribe();
@@ -250,6 +261,7 @@ async fn connect(
     let mut epic_changes = epics.subscribe();
     let mut review_changes = pr_reviews.subscribe();
     let mut device = Device {
+        cloud,
         id: Uuid::new_v4().to_string(),
         browser: None,
         connection: Uuid::new_v4(),
@@ -261,6 +273,8 @@ async fn connect(
         attention,
         usage,
         projects,
+        cloud_hosts,
+        cloud_setup: setup.clone(),
         config: config.clone(),
         outgoing,
         resyncs,
@@ -309,10 +323,17 @@ async fn connect(
             }
             Ok(()) = list.changed() => {
                 let projects = list.borrow_and_update().clone();
-                send(&device.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
+                device.projects_changed();
                 device.stop_servers(|project_id| !projects.iter().any(|project| project.id == project_id));
                 device.epic_projects.retain(|project_id, _| projects.iter().any(|project| project.id == *project_id));
                 device.review_projects.retain(|project_id, _| projects.iter().any(|project| project.id == *project_id));
+            }
+            Ok(()) = cloud_list.changed() => device.projects_changed(),
+            Ok(()) = cloud_held.changed() => device.projects_changed(),
+            Ok(()) = cloud_failures.changed() => device.projects_changed(),
+            Ok(()) = setup.changed() => {
+                setup.mark_unchanged();
+                device.setup_changed();
             }
             changed = changes.recv() => match changed {
                 Ok(owner) => device.terminals_changed(&owner),
@@ -459,6 +480,21 @@ async fn connect(
 }
 
 impl Device {
+    fn setup_changed(&self) {
+        if let Some(run) = self.cloud_setup.borrow().as_ref() {
+            let mut message = json!(run);
+            message["type"] = json!("cloud.setup");
+            send(&self.outgoing, message);
+        }
+    }
+
+    fn projects_changed(&self) {
+        let list = self.projects.list();
+        let mut projects: Vec<Value> = list.iter().map(|project| json!(project)).collect();
+        projects.extend(self.cloud_hosts.projects(&list));
+        send(&self.outgoing, json!({ "type": "projects.changed", "projects": projects }));
+    }
+
     async fn control(&mut self, control: Control) {
         match control {
             Control::Hello { device_id, browser_id } => {
@@ -477,6 +513,7 @@ impl Device {
                 self.usage_changed(&self.usage.snapshot());
                 send(&self.outgoing, json!(*self.origin.borrow()));
                 self.send_switches();
+                self.setup_changed();
             }
             Control::Create { project_id, owner } => {
                 let projects = self.projects.list();
@@ -557,6 +594,9 @@ impl Device {
                     }
                 });
             }
+            Control::MoveChat { chat_id, .. } if self.cloud.is_some() => {
+                send(&self.outgoing, json!({ "type": "chat.move.error", "chatId": chat_id, "error": cloud::HOLDS_ONE_WORKTREE }));
+            }
             Control::MoveChat { chat_id, branch } => {
                 let runs = Arc::clone(&self.runs);
                 let outgoing = self.outgoing.clone();
@@ -613,8 +653,7 @@ impl Device {
                 }
             }
             Control::ListProjects {} => {
-                let projects = self.projects.list();
-                send(&self.outgoing, json!({ "type": "projects.changed", "projects": *projects }));
+                self.projects_changed();
             }
             Control::OpenProject { path } => match self.projects.open(&path) {
                 Ok(project_id) => {

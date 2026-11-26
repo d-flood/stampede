@@ -29,6 +29,12 @@ def fields(record, names):
 def main(args):
     root, data = fixture()
     match args[:2]:
+        case ['auth', 'token']:
+            if 'token' not in data:
+                fail('No token')
+            print(data['token'])
+        case ['auth', 'setup-git']:
+            pass
         case ['auth', 'status']:
             print(f"github.com\n  ✓ Logged in to github.com account {data['user']}")
         case ['repo', 'view']:

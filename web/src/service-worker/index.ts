@@ -1,12 +1,14 @@
 import { self } from '$app/service-worker';
+import { projectId } from '#lib/host.ts';
 
-type Item = { projectId: string; label: string; status: 'waiting' | 'done' } & ({ chatId: string } | { epic: string });
+type Item = { projectId: string; host?: string; label: string; status: 'waiting' | 'done' } & ({ chatId: string } | { epic: string });
 
 self.addEventListener('install', () => self.skipWaiting());
 
 self.addEventListener('push', (event) => {
 	const item: Item = event.data?.json();
-	event.waitUntil(self.registration.showNotification(`${item.label} — ${item.status}`, { data: item }));
+	const data = { ...item, projectId: projectId(item.projectId, item.host) };
+	event.waitUntil(self.registration.showNotification(`${item.label} — ${item.status}`, { data }));
 });
 
 self.addEventListener('notificationclick', (event) => {

@@ -1,10 +1,14 @@
 import { loadConfig, type Agent } from '#lib/config.svelte.ts';
 import type { State } from '#lib/editor/lsp.svelte.ts';
 import type { Trunk, Update } from '#lib/git.ts';
+import { hostUrl } from '#lib/host.ts';
+import { incoming, outgoing } from '#lib/host-messages.ts';
 import type { PrReview } from '#lib/pr-reviews.ts';
 import { on } from 'svelte/events';
 
-export type Project = { id: string; path: string; icon?: string; worktree?: Worktree };
+export type Project = { id: string; host?: string; path: string; icon?: string; worktree?: Worktree; cloud?: { setup: 'creating' | CloudSetup['state']; setupTerminal: string | null; state: 'awake' | 'asleep' | 'unreachable' | 'gone'; reason: string | null; tip: string | null; inSync: boolean } };
+
+export type CloudSetup = { projectId: string; state: 'running' | 'ready' | 'failed'; status?: number; terminalId: string; startedAt: number };
 
 export type Worktree = { parent: string } & ({ epic: string; role: 'integration' | { ticket: number } | { reviewer: number } } | { branch: string } | { commit: string });
 
@@ -196,7 +200,7 @@ export type Finding = {
 	judgment?: { accepted: boolean; reason: string; at: number };
 };
 
-export type Attention = { projectId: string; label: string; status: Status } & ({ chatId: string } | { epic: string });
+export type Attention = { projectId: string; host?: string; label: string; status: Status } & ({ chatId: string } | { epic: string });
 
 export function tabOf(item: Attention): string {
 	return 'chatId' in item ? item.chatId : `epic:${item.projectId}:${item.epic}`;
@@ -247,6 +251,7 @@ export type ServerMessage =
 	| { type: 'config.changed' }
 	| { type: 'pong' }
 	| { type: 'projects.changed'; projects: Project[] }
+	| ({ type: 'cloud.setup' } & CloudSetup)
 	| { type: 'project.opened'; projectId: string }
 	| { type: 'project.error'; path: string; error: string }
 	| { type: 'picker.listed'; directories: string[] }
@@ -318,6 +323,7 @@ export type Device = {
 	send(message: ClientMessage): void;
 	input(channel: number, data: string): void;
 	listen(listener: Listener): () => void;
+	open(): void;
 	close(): void;
 };
 
@@ -375,7 +381,7 @@ let layout: Promise<Response> | undefined;
 /** Opens the connection and requests the saved layout while the page code is still loading; connect() and earlyLayout() then adopt them. */
 export function preconnect() {
 	claimDeviceId().then(() => {
-		early ??= establish();
+		early ??= home();
 		layout ??= fetch(`/api/devices/${deviceId()}/layout`);
 	});
 }
@@ -387,26 +393,46 @@ export function earlyLayout() {
 }
 
 export function connect(): Device {
-	const device = early ?? establish();
+	const device = early ?? home();
 	early = undefined;
 	return device;
 }
 
-function establish(): Device {
+function home(): Device {
+	const device = establish();
+	device.open();
+	return device;
+}
+
+export function establish(host?: string): Device {
 	const id = deviceId();
 	const listeners = new Set<Listener>();
-	let socket: WebSocket;
-	let connection = $state<Connection>('connected');
+	let socket: WebSocket | undefined;
+	let connection = $state<Connection>(host ? 'reconnecting' : 'connected');
 	let delay = FIRST_RETRY;
 	let patience = FIRST_PATIENCE;
 	let retry: ReturnType<typeof setTimeout> | undefined;
 	let deadline: ReturnType<typeof setTimeout> | undefined;
 	let backlog: (string | ArrayBuffer)[] | undefined = [];
 	let flushing: ReturnType<typeof setTimeout> | undefined;
+	let off: (() => void)[] = [];
 
 	function open() {
+		if (off.length) return;
+		off = [
+			// A socket can outlive its network for minutes, so going offline drops it at once.
+			on(window, 'offline', drop),
+			on(window, 'online', wake),
+			on(document, 'visibilitychange', () => document.visibilityState === 'visible' && wake())
+		];
+		delay = FIRST_RETRY;
+		patience = FIRST_PATIENCE;
+		dial();
+	}
+
+	function dial() {
 		clearTimeout(retry);
-		socket = new WebSocket(new URL('/ws', location.href.replace(/^http/, 'ws')));
+		socket = new WebSocket(new URL(hostUrl(host, '/ws'), location.href.replace(/^http/, 'ws')));
 		socket.binaryType = 'arraybuffer';
 		socket.onopen = () => send({ type: 'hello', deviceId: id, browserId: browserId() });
 		awaitReply(patience);
@@ -421,7 +447,8 @@ function establish(): Device {
 
 	function deliver(data: string | ArrayBuffer) {
 		if (typeof data === 'string') {
-			const message: ServerMessage = JSON.parse(data);
+			const message = incoming(JSON.parse(data), host);
+			if (!message) return;
 			if (message.type === 'hello') {
 				connection = 'connected';
 				delay = FIRST_RETRY;
@@ -446,31 +473,35 @@ function establish(): Device {
 		}, within);
 	}
 
-	function drop() {
+	function hangUp() {
+		if (!socket) return;
 		socket.onclose = null;
 		socket.close();
+	}
+
+	function drop() {
+		hangUp();
 		connection = 'reconnecting';
 		clearTimeout(deadline);
 		clearTimeout(retry);
-		retry = setTimeout(open, delay);
+		retry = setTimeout(dial, delay);
 		delay = Math.min(delay * 2, LAST_RETRY);
 	}
 
 	function reopen() {
-		socket.onclose = null;
-		socket.close();
-		open();
+		hangUp();
+		dial();
 	}
 
 	function wake() {
 		delay = FIRST_RETRY;
-		if (socket.readyState !== WebSocket.OPEN) return reopen();
+		if (socket?.readyState !== WebSocket.OPEN) return reopen();
 		send({ type: 'ping' });
 		awaitReply(PONG_WITHIN);
 	}
 
 	function send(message: ClientMessage) {
-		if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+		if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(outgoing(message, host)));
 	}
 
 	function input(channel: number, data: string) {
@@ -480,7 +511,7 @@ function establish(): Device {
 		view.setUint8(0, INPUT);
 		view.setUint32(1, channel);
 		frame.set(bytes, 5);
-		if (socket.readyState === WebSocket.OPEN) socket.send(frame);
+		if (socket?.readyState === WebSocket.OPEN) socket.send(frame);
 	}
 
 	// Messages that arrive before anyone listens wait until the listeners registered in the same mount have all subscribed.
@@ -496,19 +527,13 @@ function establish(): Device {
 
 	function close() {
 		off.forEach((listener) => listener());
+		off = [];
 		clearTimeout(retry);
 		clearTimeout(deadline);
-		socket.onclose = null;
-		socket.close();
+		hangUp();
+		connection = 'reconnecting';
 	}
 
-	open();
-	const off = [
-		// A socket can outlive its network for minutes, so going offline drops it at once.
-		on(window, 'offline', drop),
-		on(window, 'online', wake),
-		on(document, 'visibilitychange', () => document.visibilityState === 'visible' && wake())
-	];
 	return {
 		get connection() {
 			return connection;
@@ -516,6 +541,7 @@ function establish(): Device {
 		send,
 		input,
 		listen,
+		open,
 		close
 	};
 }

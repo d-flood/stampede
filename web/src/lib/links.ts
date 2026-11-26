@@ -1,3 +1,4 @@
+import { projectUrl } from '#lib/host.ts';
 import type { Project } from '#lib/device.svelte.ts';
 import type { Cursor } from '#lib/files.svelte.ts';
 import { OSC8LinkProvider, type ILink, type Terminal } from 'ghostty-web';
@@ -16,7 +17,7 @@ function exists(projectId: string, path: string): Promise<boolean> {
 	const checked = checks.get(key);
 	if (checked && performance.now() - checked.at < FRESH_MS) return checked.exists;
 	const query = new URLSearchParams({ path });
-	const found = fetch(`/api/projects/${projectId}/file?${query}`, { method: 'HEAD' }).then(
+	const found = fetch(projectUrl(projectId, `file?${query}`), { method: 'HEAD' }).then(
 		(response) => response.ok,
 		() => false
 	);

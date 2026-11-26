@@ -1,17 +1,17 @@
 <script lang="ts">
-	import { leader, rigs, type Rig } from '#lib/config.svelte.ts';
+	import { leader, rigs, runsOn, type Rig } from '#lib/config.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import FloatingBar from '#lib/ui/FloatingBar.svelte';
 	import Kbd from '#lib/ui/Kbd.svelte';
 
-	type Props = { ontab(index: number): void; onnew(): void; onterminal(): void; onfiles(): void; onsearch(): void; onclose(): void; onpalette(): void; onrig(rig: Rig): void; onsplit(): void };
+	type Props = { host?: string; ontab(index: number): void; onnew(): void; onterminal(): void; onfiles(): void; onsearch(): void; onclose(): void; onpalette(): void; onrig(rig: Rig): void; onsplit(): void };
 
-	let { ontab, onnew, onterminal, onfiles, onsearch, onclose, onpalette, onrig, onsplit }: Props = $props();
+	let { host, ontab, onnew, onterminal, onfiles, onsearch, onclose, onpalette, onrig, onsplit }: Props = $props();
 
 	const modifiers = ['Control', 'Shift', 'Alt', 'AltGraph', 'Meta'];
 	let pending = $state<'leader' | 'rig'>();
 
-	const shortcuts = $derived(rigs().filter((rig) => rig.shortcut));
+	const shortcuts = $derived(rigs().filter((rig) => rig.shortcut && runsOn(host, rig.agent)));
 	const chord = $derived.by(() => {
 		const parts = leader().toLowerCase().split('+');
 		const key = parts.pop();
@@ -40,7 +40,7 @@
 			else if (key === 'k') onpalette();
 			else {
 				const rig = rigs()[Number(event.code.slice(-1)) - 1];
-				if (rig) onrig(rig);
+				if (rig && runsOn(host, rig.agent)) onrig(rig);
 			}
 			return;
 		}

@@ -425,6 +425,10 @@ export function rigs(): Rig[] {
 	return configured;
 }
 
+export function runsOn(host: string | undefined, agent: Agent): boolean {
+	return !host || agent === 'claude-code' || agent === 'codex';
+}
+
 export async function saveRig(settings: { original?: string; name: string; agent: Agent; model?: string; effort?: string; speed?: string; ultracode?: string; mode: string; disabled_tools: string[] }) {
 	const response = await fetch('/api/rigs', {
 		method: 'PUT',

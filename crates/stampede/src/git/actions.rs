@@ -23,6 +23,8 @@ use tokio::{
 use super::{Commit, Kind, Operation, Status, common_dir, inside, read, run_alone, sha, trunk};
 use crate::{
     AppState,
+    cloud_logins::{self, Logins},
+    config::Agent,
     files::{Failure, root},
     origin, rigs, templates,
 };
@@ -423,11 +425,22 @@ pub async fn draft(State(state): State<AppState>, Param(id): Param<String>) -> R
     if status.staged.is_empty() {
         return Err(refuse("Stage changes to draft a message for them."));
     }
-    let (rig, instructions) = {
+    let (mut rig, instructions) = {
         let config = state.config.borrow();
         let rig = config.commit_rig().cloned().ok_or_else(|| refuse("Add a Rig in Settings first."))?;
         (rig, config.commit_instructions().to_owned())
     };
+    if state.cloud.is_some() {
+        if !matches!(rig.agent, Agent::ClaudeCode | Agent::Codex) {
+            return Err(refuse("A Cloud Host runs only Claude Code and Codex."));
+        }
+        let mut env = Logins::read(&state.logins.data).map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?.environment();
+        env.extend(rig.env);
+        if rig.agent == Agent::ClaudeCode && !Logins::has_claude(&env) {
+            return Err(refuse(cloud_logins::CLAUDE_LOGIN_HINT));
+        }
+        rig.env = env;
+    }
     let (summary, diff, recent) = tokio::join!(
         exec(&dir, &["diff", "--cached", "--stat"]),
         exec(&dir, &["diff", "--cached", "--no-color", "--no-ext-diff"]),
@@ -515,6 +528,7 @@ pub async fn publish(State(state): State<AppState>, Param(id): Param<String>) ->
 pub async fn pull_trunk(State(state): State<AppState>, Param(id): Param<String>) -> Result<StatusCode, Failure> {
     let dir = root(&state, &id)?;
     let branch = origin::default_branch(&dir).await.ok_or_else(|| refuse("origin has no default branch."))?;
+    state.cloud_hosts.guard_branch(&state.projects, &dir, &branch).await.map_err(refuse)?;
     let worktrees = run_alone(&dir, &["worktree", "list", "--porcelain"]).await.map_err(|output| (StatusCode::BAD_REQUEST, output))?;
     let line = format!("branch refs/heads/{branch}");
     let checkout = worktrees.split("\n\n").find(|block| block.lines().any(|entry| entry == line)).and_then(|block| block.lines().next()?.strip_prefix("worktree "));
@@ -537,7 +551,9 @@ pub async fn pull_trunk(State(state): State<AppState>, Param(id): Param<String>)
 
 /// Checks out a local branch, or a remote one as the local branch of its name, tracking it when new.
 pub async fn switch(State(state): State<AppState>, Param(id): Param<String>, Json(Branch { branch }): Json<Branch>) -> Result<StatusCode, Failure> {
-    let dir = movable(&state, &id).await?;
+    let dir = root(&state, &id)?;
+    state.cloud_hosts.guard_branch(&state.projects, &dir, &branch).await.map_err(refuse)?;
+    movable(&state, &id).await?;
     if exists(&dir, "heads", &branch).await {
         return change(&state, &id, &dir, &["switch", "-q", &branch]).await;
     }
@@ -545,6 +561,7 @@ pub async fn switch(State(state): State<AppState>, Param(id): Param<String>, Jso
         Some((_, local)) if local != "HEAD" && exists(&dir, "remotes", &branch).await => local,
         _ => return Err((StatusCode::NOT_FOUND, format!("No branch {branch}"))),
     };
+    state.cloud_hosts.guard_branch(&state.projects, &dir, local).await.map_err(refuse)?;
     if exists(&dir, "heads", local).await {
         return change(&state, &id, &dir, &["switch", "-q", local]).await;
     }
@@ -553,6 +570,7 @@ pub async fn switch(State(state): State<AppState>, Param(id): Param<String>, Jso
 
 pub async fn branch(State(state): State<AppState>, Param(id): Param<String>, Json(Branch { branch }): Json<Branch>) -> Result<StatusCode, Failure> {
     let dir = movable(&state, &id).await?;
+    state.cloud_hosts.guard_branch(&state.projects, &dir, &branch).await.map_err(refuse)?;
     change(&state, &id, &dir, &["switch", "-q", "-c", &branch]).await
 }
 
@@ -751,6 +769,7 @@ async fn exec(dir: &Path, args: &[&str]) -> Result<String, String> {
 
 fn git(dir: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
+    command.envs(crate::cloud_logins::github_environment());
     command
         .arg("-C")
         .arg(dir)

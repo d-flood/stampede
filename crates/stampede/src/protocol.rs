@@ -17,6 +17,7 @@ const RESIZE: u8 = 6;
 const HANGUP: u8 = 7;
 const TITLE_CHANGED: u8 = 10;
 const SCROLLBACK: u8 = 11;
+const PRINTED: u8 = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Size {
@@ -50,6 +51,8 @@ pub enum Message {
     Hangup,
     TitleChanged(Title),
     Scrollback(usize),
+    /// The program printed, sent to unattached connections at most once per `holder::PRINTED_EVERY`.
+    Printed,
 }
 
 pub fn encode(message: &Message) -> Vec<u8> {
@@ -63,6 +66,7 @@ pub fn encode(message: &Message) -> Vec<u8> {
         Message::Hangup => (HANGUP, Vec::new()),
         Message::TitleChanged(title) => (TITLE_CHANGED, serde_json::to_vec(title).unwrap()),
         Message::Scrollback(lines) => (SCROLLBACK, serde_json::to_vec(lines).unwrap()),
+        Message::Printed => (PRINTED, Vec::new()),
     };
     let mut frame = Vec::with_capacity(5 + payload.len());
     frame.extend_from_slice(&(payload.len() as u32 + 1).to_be_bytes());
@@ -91,6 +95,7 @@ pub fn decode(frame: &[u8]) -> io::Result<Option<Message>> {
         },
         TITLE_CHANGED => Message::TitleChanged(serde_json::from_slice(payload)?),
         SCROLLBACK => Message::Scrollback(serde_json::from_slice(payload)?),
+        PRINTED => Message::Printed,
         _ => return Ok(None),
     }))
 }

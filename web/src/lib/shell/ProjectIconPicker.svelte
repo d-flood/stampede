@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { projectUrl } from '#lib/host.ts';
 	import type { Project } from '#lib/device.svelte.ts';
 	import { image, list, type Entry } from '#lib/files.svelte.ts';
 	import { monogram } from '#lib/projects.ts';
@@ -89,7 +90,7 @@
 
 	async function save(initials = false) {
 		await run(async () => {
-			await response(await fetch(`/api/projects/${project.id}/icon`, initials ? { method: 'DELETE' } : {
+			await response(await fetch(projectUrl(project.id, 'icon'), initials ? { method: 'DELETE' } : {
 				method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: selected!.blob
 			}));
 			onclose();
@@ -137,12 +138,12 @@
 					<Card disabled={busy} title={entry.path} onclick={() => {
 						if (entry.dir) browse(entry.path);
 						else run(async () => {
-							const result = await response(await fetch(`/api/projects/${project.id}/image?${new URLSearchParams({ path: entry.path })}`));
+							const result = await response(await fetch(projectUrl(project.id, `image?${new URLSearchParams({ path: entry.path })}`)));
 							await select(await result.blob());
 						});
 					}}>
 						<span class="file">
-							{#if entry.dir}<Folder />{:else}<img src="/api/projects/{project.id}/image?{new URLSearchParams({ path: entry.path })}" alt="" loading="lazy" />{/if}
+							{#if entry.dir}<Folder />{:else}<img src={projectUrl(project.id, `image?${new URLSearchParams({ path: entry.path })}`)} alt="" loading="lazy" />{/if}
 							<span>{entry.name}</span>
 						</span>
 					</Card>

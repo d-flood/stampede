@@ -14,7 +14,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, atomic::{AtomicUsize, Ordering}},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -24,12 +24,13 @@ use base64ct::{Base64, Encoding};
 use tokio::sync::{
     broadcast,
     mpsc::{self, UnboundedReceiver, UnboundedSender},
-    oneshot,
+    oneshot, watch,
 };
 use uuid::Uuid;
 
 use crate::{
     attention::{Attention, Feed, Source, Tab},
+    cloud::Service,
     config::{Agent, AgentSettings, Rig},
     projects::Project,
     templates,
@@ -917,6 +918,11 @@ pub enum Status {
     Done,
 }
 
+/// Whether a Chat is at work: its turn, a Subagent, or background work. One waiting on David is not.
+pub fn working(status: Status, background: bool) -> bool {
+    status == Status::Working || background
+}
+
 /// A step in a Chat's life, the same for every Agent: what the loop follows instead of the drivers' events.
 #[derive(Clone)]
 #[expect(dead_code, reason = "scheduling needs only which Chat changed; releasing and recovering Chats read what changed")]
@@ -945,7 +951,11 @@ pub struct Chats {
     lifecycle: broadcast::Sender<Lifecycle>,
     views: Mutex<HashMap<Uuid, (Option<String>, Vec<String>)>>,
     attention: Arc<Feed>,
+    busy: watch::Sender<bool>,
+    /// Chats whose background work has ended but not yet been announced.
+    settling: AtomicUsize,
     usage: Arc<Usage>,
+    cloud: Option<Service>,
 }
 
 struct Entry {
@@ -975,7 +985,7 @@ struct Handoff {
 }
 
 impl Chats {
-    pub fn new(data_dir: PathBuf, attention: Arc<Feed>, usage: Arc<Usage>) -> Self {
+    pub fn new(data_dir: PathBuf, attention: Arc<Feed>, usage: Arc<Usage>, cloud: Option<Service>) -> Self {
         Self {
             data_dir,
             chats: Mutex::default(),
@@ -983,12 +993,20 @@ impl Chats {
             lifecycle: broadcast::Sender::new(256),
             views: Mutex::default(),
             attention,
+            busy: watch::Sender::default(),
+            settling: AtomicUsize::default(),
             usage,
+            cloud,
         }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Change> {
         self.changed.subscribe()
+    }
+
+    /// Whether any Chat is working or has background work.
+    pub fn busy(&self) -> watch::Receiver<bool> {
+        self.busy.subscribe()
     }
 
     pub fn lifecycle(&self) -> broadcast::Receiver<Lifecycle> {
@@ -1011,7 +1029,7 @@ impl Chats {
                 let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
             }
         }
-        self.refresh_attention();
+        self.refresh();
         Ok(())
     }
 
@@ -1037,7 +1055,7 @@ impl Chats {
         }
         let _ = self.changed.send(Change::Chats(to.to_owned()));
         let _ = self.changed.send(Change::Chats(from.to_owned()));
-        self.refresh_attention();
+        self.refresh();
     }
 
     /// Starts a Chat owned by `project` that runs in `cwd`: the Project's own directory, or a Ticket Worktree.
@@ -1050,6 +1068,9 @@ impl Chats {
     }
 
     async fn start(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>, parent: Option<String>, duty: Option<Duty>) -> io::Result<Chat> {
+        if self.cloud.is_some() && !matches!(rig.agent, Agent::ClaudeCode | Agent::Codex) {
+            return Err(io::Error::other("A Cloud Host runs only Claude Code and Codex."));
+        }
         if session.is_some() && self.chats.lock().unwrap().iter().any(|entry| entry.chat.lock().unwrap().agent_session.as_deref() == session) {
             return Err(io::Error::other("Another Chat is still running that conversation."));
         }
@@ -1093,10 +1114,10 @@ impl Chats {
             disabled_tools: rig.disabled_tools.clone(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
-        let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, cwd, &rig.env).await?;
+        let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, cwd, &rig.env).await?;
         write_record(&self.data_dir, &chat)?;
         let started = match rig.agent {
-            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen, session)
+            Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen, session, self.cloud.is_some())
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             Agent::Codex if session.is_some() => codex::resume(&self.data_dir, &chat, &storage.env)
@@ -1138,13 +1159,13 @@ impl Chats {
         chats.sort_by_key(|chat| chat.created);
         for chat in chats {
             let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
-            let storage = match crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, &chat.cwd, &env).await {
+            let storage = match crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, &chat.cwd, &env).await {
                 Ok(storage) => storage,
                 Err(error) => { eprintln!("cannot restore storage for chat {}: {error}", chat.id); continue }
             };
             let env = &storage.env;
             let reattached = match chat.agent {
-                Agent::ClaudeCode => match claude::reattach(&self.data_dir, &chat, env).await {
+                Agent::ClaudeCode => match claude::reattach(&self.data_dir, &chat, env, self.cloud.is_some()).await {
                     Err(error)
                         if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused) =>
                     {
@@ -1164,13 +1185,13 @@ impl Chats {
                 Err(error) => eprintln!("cannot restore chat {}: {error}", chat.id),
             }
         }
-        self.refresh_attention();
+        self.refresh();
         Ok(())
     }
 
     async fn resume(&self, chat: &Chat, env: &BTreeMap<String, String>) -> io::Result<(Box<dyn Driver>, UnboundedReceiver<Event>)> {
         match chat.agent {
-            Agent::ClaudeCode => claude::resume(&self.data_dir, chat, env)
+            Agent::ClaudeCode => claude::resume(&self.data_dir, chat, env, self.cloud.is_some())
                 .await
                 .map(|(driver, events)| (Box::new(driver) as Box<dyn Driver>, events)),
             // A first-turn fork, or a Chat Codex never started, has no thread yet, while a Run's Chat without one lost it.
@@ -1235,7 +1256,7 @@ impl Chats {
 
     pub async fn reopen(self: &Arc<Self>, chat: Chat, rigs: &[Rig]) -> io::Result<Chat> {
         let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
-        let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, &chat.cwd, &env).await?;
+        let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, &chat.cwd, &env).await?;
         self.open(chat, storage).await
     }
 
@@ -1288,7 +1309,7 @@ impl Chats {
             shell_context: Vec::new(),
             ..source
         };
-        let storage = crate::storage::Storage::new(&self.data_dir).prepare(&chat.id, &chat.cwd, &env).await?;
+        let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, &chat.cwd, &env).await?;
         match chat.agent {
             Agent::ClaudeCode => {
                 if let Some(parent) = claude::parent(&storage.env, &session, &checkpoint).await? {
@@ -1581,7 +1602,7 @@ impl Chats {
         let _ = fs::remove_dir(crate::canvas::dir(&self.data_dir, &id));
         let project_id = entry.chat.lock().unwrap().project_id.clone();
         let _ = self.changed.send(Change::Chats(project_id));
-        self.refresh_attention();
+        self.refresh();
         let _ = self.lifecycle.send(Lifecycle::Ended(Box::new(entry.chat.lock().unwrap().clone())));
     }
 
@@ -1604,10 +1625,10 @@ impl Chats {
         self.save(entry, chat);
         let _ = self.changed.send(Change::Status(id.clone(), status));
         let _ = self.lifecycle.send(Lifecycle::Status(id.clone(), status));
-        self.refresh_attention();
         if status != Status::Working && let Some(item) = item {
             self.attention.call(item, self.showing(&id));
         }
+        self.refresh();
     }
 
     fn resolve(&self, transcript: &mut Transcript, chat_id: &str, request_id: &str) -> bool {
@@ -1910,7 +1931,7 @@ impl Chats {
             let project_id = chat.project_id.clone();
             self.save(&entry, chat);
             let _ = self.changed.send(Change::Chats(project_id));
-            self.refresh_attention();
+            self.refresh();
         }
         entry.driver.close();
     }
@@ -1946,7 +1967,7 @@ impl Chats {
             }
         }
         if viewed {
-            self.refresh_attention();
+            self.refresh();
         }
     }
 
@@ -1977,12 +1998,15 @@ impl Chats {
         if !changed {
             return;
         }
-        self.refresh_attention();
+        if finished { self.settling.fetch_add(1, Ordering::Relaxed); }
+        self.refresh();
         if finished {
             let (chats, entry, turns) = (self.clone(), entry.clone(), transcript.turns);
             tokio::spawn(async move {
                 tokio::time::sleep(RESUMING).await;
                 chats.alert(&entry, turns);
+                chats.settling.fetch_sub(1, Ordering::Relaxed);
+                chats.refresh();
             });
         }
     }
@@ -2000,9 +2024,16 @@ impl Chats {
         self.attention.call(item, self.showing(&id));
     }
 
-    fn refresh_attention(&self) {
+    fn refresh(&self) {
         let items = self.list().iter().filter(|chat| chat.needs_attention()).map(Chat::attention).collect();
         self.attention.publish(Source::Chats, items);
+        self.busy.send_if_modified(|current| {
+            let busy = self.settling.load(Ordering::Relaxed) > 0 || self.chats.lock().unwrap().iter().any(|entry| {
+                let chat = entry.chat.lock().unwrap();
+                working(chat.status, chat.background)
+            });
+            std::mem::replace(current, busy) != busy
+        });
     }
 
     fn get(&self, id: &str) -> Option<Arc<Entry>> {
@@ -2032,6 +2063,7 @@ impl Chat {
 
     fn attention(&self) -> Attention {
         Attention {
+            host: None,
             project_id: self.project_id.clone(),
             tab: Tab::Chat { chat_id: self.id.clone() },
             label: self.rig.clone(),

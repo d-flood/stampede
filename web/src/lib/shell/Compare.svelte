@@ -3,6 +3,7 @@
 	import type { Device } from '#lib/device.svelte.ts';
 	import { branches, comparing, type OpenDiff, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { hostOf } from '#lib/host.ts';
 	import { letters, refs, split, type Change, type Git, type Refs } from '#lib/git.ts';
 	import { deleteDraft, discardReview, openWorktree, prs, refreshReview, setViewed, viewedState, type Availability, type DraftComment, type PrReview } from '#lib/pr-reviews.ts';
 	import BranchPicker from '#lib/shell/BranchPicker.svelte';
@@ -44,6 +45,7 @@
 	let { projectId, git, device, selection, reviews, activeDiff, onselect, onopen, onfocus }: Props = $props();
 
 	const collapsed = new SvelteSet<string>();
+	const reviewable = $derived(!hostOf(projectId));
 	let listed = $state.raw<Refs>();
 	let availability = $state.raw<Availability>();
 	let picking = $state<Side>();
@@ -51,7 +53,7 @@
 	let sending = $state(false);
 	let acting = $state(false);
 	let actionError = $state<string>();
-	const reviewing = $derived(selection && 'pr' in selection ? selection.pr : undefined);
+	const reviewing = $derived(reviewable && selection && 'pr' in selection ? selection.pr : undefined);
 	const plain = $derived(selection && 'target' in selection ? selection : undefined);
 	const review = $derived(reviewing === undefined ? undefined : reviews?.find((review) => review.number === reviewing));
 	const target = $derived(plain?.target ?? listed?.default);
@@ -80,7 +82,7 @@
 
 	onMount(() => {
 		refs(projectId).then((refs) => (listed = refs), () => {});
-		prs(projectId).then((found) => (availability = found), () => {});
+		if (reviewable) prs(projectId).then((found) => (availability = found), () => {});
 		return device.listen({
 			message(message) {
 				if (message.type === 'hello' || (message.type === 'git.changed' && message.projectId === projectId)) compared?.load();
@@ -273,7 +275,7 @@
 		<div class="refs">
 			{@render picker('target', 'Target', target)}
 			{@render picker('source', 'Source', source)}
-			{#if availability && !(!availability.available && availability.hidden)}
+			{#if reviewable && availability && !(!availability.available && availability.hidden)}
 				{#if reason && form() === 'desktop'}
 					<Tooltip text={reason} delayDuration={0}>
 						{#snippet children(trigger)}
@@ -286,7 +288,7 @@
 				{#if reason && form() !== 'desktop'}<p class="reason">{reason}</p>{/if}
 			{/if}
 		</div>
-		{#if reviews?.length}
+		{#if reviewable && reviews?.length}
 			<div class="heading">
 				<span class="name"><Eyebrow>PR reviews in progress</Eyebrow></span>
 			</div>

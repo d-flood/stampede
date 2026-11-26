@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { projectUrl } from '#lib/host.ts';
 	import type { Device, ServerMessage } from '#lib/device.svelte.ts';
 	import { diffConfig, diffCounts, diffRows, diffSigns, originalNumbers } from '#lib/editor/changes.ts';
 	import { find } from '#lib/editor/find.ts';
@@ -108,7 +109,7 @@
 	const pictures = $derived.by((): ImageSide[] | undefined => {
 		if (!raster && !(svg && rendered)) return;
 		const { projectId, path, against } = diff;
-		const disk: ImageSide = { label: 'disk', url: `/api/projects/${projectId}/image?${new URLSearchParams({ path })}`, live: 'disk' };
+		const disk: ImageSide = { label: 'disk', url: projectUrl(projectId, `image?${new URLSearchParams({ path })}`), live: 'disk' };
 		const staged: ImageSide = { label: 'index', url: indexUrl(projectId, path), live: 'index' };
 		const committed: ImageSide = { label: 'HEAD', url: head && showUrl(projectId, head, from ?? path) };
 		if (against === 'HEAD') return loaded ? [committed, disk] : undefined;

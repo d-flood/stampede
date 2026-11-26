@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { agentNames, rigs } from '#lib/config.svelte.ts';
+	import { agentNames, rigs, runsOn } from '#lib/config.svelte.ts';
 	import type { Chat, Device } from '#lib/device.svelte.ts';
+	import { hostOf } from '#lib/host.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Select from '#lib/ui/Select.svelte';
@@ -14,7 +15,7 @@
 	let preparing = $state(false);
 	let error = $state('');
 	const live = $derived(device.connection === 'connected');
-	const configured = $derived(rigs());
+	const configured = $derived(rigs().filter((rig) => runsOn(hostOf(chat.projectId), rig.agent)));
 	const ready = $derived(live && available && chat.status === 'done' && !chat.queued.length && !preparing);
 
 	onMount(() => device.listen({ message(message) {

@@ -1,13 +1,16 @@
 <script lang="ts" generics="T">
+	import type { Component } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
 
-	let { options, value = $bindable(), ...rest }: HTMLAttributes<HTMLDivElement> & { options: { value: T; label: string; busy?: boolean }[]; value: T } = $props();
+	type Option = { value: T; label: string; icon?: Component; busy?: boolean; disabled?: boolean };
+
+	let { options, value = $bindable(), disabled = false, ...rest }: HTMLAttributes<HTMLDivElement> & { options: Option[]; value: T; disabled?: boolean } = $props();
 </script>
 
 <div class="segmented" role="radiogroup" {...rest}>
 	{#each options as option (option.value)}
-		<button type="button" role="radio" aria-checked={option.value === value} aria-busy={option.busy || undefined} onclick={() => (value = option.value)}>
-			<span><span class="label">{option.label}{#if option.busy}<i class="busy" aria-hidden="true"></i>{/if}</span></span>
+		<button type="button" role="radio" aria-checked={option.value === value} aria-busy={option.busy || undefined} disabled={disabled || option.disabled} onclick={() => (value = option.value)}>
+			<span>{#if option.icon}<option.icon aria-hidden="true" />{/if}<span class="label">{option.label}{#if option.busy}<i class="busy" aria-hidden="true"></i>{/if}</span></span>
 		</button>
 	{/each}
 </div>
@@ -48,14 +51,20 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		gap: var(--space-1);
 		height: var(--control-min);
 		padding: 0 var(--space-3);
 		border-radius: var(--radius-md);
 		white-space: nowrap;
 	}
 
-	button:hover {
+	button:hover:enabled {
 		color: var(--color-fg);
+	}
+
+	button:disabled {
+		cursor: default;
+		opacity: 0.5;
 	}
 
 	.label {

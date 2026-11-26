@@ -42,6 +42,7 @@ const SAVE_INTERVAL: Duration = Duration::from_secs(2);
 const CLOSING: Duration = Duration::from_secs(5);
 const QUEUED_EVENTS: usize = 16;
 const QUEUED_BYTES: usize = 4 << 20;
+pub const PRINTED_EVERY: Duration = Duration::from_secs(30);
 
 #[derive(clap::Args)]
 pub struct HoldArgs {
@@ -325,6 +326,7 @@ fn run(
     let mut saved = Instant::now();
     let mut deadline = None;
     let mut exited = false;
+    let mut printed: Option<Instant> = None;
     for event in received {
         match event {
             Event::Output(bytes) => {
@@ -336,6 +338,11 @@ fn run(
                 }
                 let frame = protocol::encode(&Message::Output(bytes));
                 conns.retain(|_, conn| !conn.attached || conn.send(frame.clone()));
+                if printed.is_none_or(|at| at.elapsed() >= PRINTED_EVERY) {
+                    printed = Some(Instant::now());
+                    let frame = protocol::encode(&Message::Printed);
+                    conns.retain(|_, conn| conn.attached || conn.send(frame.clone()));
+                }
             }
             Event::Exited if deadline.is_none() || !signal_descendants(None) => break,
             Event::Exited => exited = true,

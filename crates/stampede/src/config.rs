@@ -506,6 +506,14 @@ impl Config {
         };
         Ok(Self::parse(&text)?)
     }
+
+    /// Reads the Home Host's config on a Cloud Host, whose disk may lack the theme and font files it names.
+    fn load_received(path: &Path) -> Result<Self, Error> {
+        let mut document: toml::Table = toml::from_str(&fs::read_to_string(path)?)?;
+        document.remove("theme");
+        document.remove("font");
+        Ok(Self::parse(&toml::to_string(&document)?)?)
+    }
 }
 
 #[derive(Serialize)]
@@ -518,6 +526,11 @@ pub fn check(text: &str) -> Option<Invalid> {
     let error = Config::parse(text).err()?;
     let line = error.span().map(|span| text[..span.start].matches('\n').count() + 1);
     Some(Invalid { line, message: error.message().to_owned() })
+}
+
+/// The config as a Cloud Host is sent it.
+pub fn shared(path: &Path) -> Result<String, Error> {
+    with_host_name(fs::read_to_string(path)?, None)
 }
 
 pub fn write_theme(path: &Path, name: &str) -> Result<Theme, Error> {
@@ -935,9 +948,11 @@ pub fn face(path: PathBuf, url: String) -> Result<Face, Error> {
     Ok(Face { path, url, weight, style, stretch })
 }
 
-pub fn watch(path: &Path) -> io::Result<watch::Receiver<Arc<Config>>> {
+pub fn watch(path: &Path, cloud: bool) -> io::Result<watch::Receiver<Arc<Config>>> {
     let path = std::path::absolute(path)?;
-    let config = Config::seed_rigs(&path).and_then(|()| Config::load(&path)).unwrap_or_else(|error| {
+    let load = if cloud { Config::load_received } else { Config::load };
+    let seeded = if cloud && path.exists() { Ok(()) } else { Config::seed_rigs(&path) };
+    let config = seeded.and_then(|()| load(&path)).unwrap_or_else(|error| {
         eprintln!("config {}: {error}", path.display());
         Config::default()
     });
@@ -961,7 +976,7 @@ pub fn watch(path: &Path) -> io::Result<watch::Receiver<Arc<Config>>> {
             // Editors save in several events; read once they settle.
             tokio::time::sleep(Duration::from_millis(50)).await;
             while pending.try_recv().is_ok() {}
-            match Config::load(&path) {
+            match load(&path) {
                 Ok(config) => {
                     sender.send_if_modified(|current| {
                         let changed = **current != config;

@@ -73,7 +73,7 @@ test.each([
 	{ kind: 'command', id: 'command', words: [['printf', 'hello world', '$HOME']], suggestion: [], sessionPrefixes: true },
 	{ kind: 'command', id: 'python', words: [['python3', '-c', "print('hi')"]], suggestion: [], sessionPrefixes: true }
 ] satisfies Request[])('approval cards highlight $id requests', async (request) => {
-	const view = await render(RequestCard, { request, agent: 'Claude', disabled: false, onanswer: vi.fn() });
+	const view = await render(RequestCard, { host: undefined, request, agent: 'Claude', disabled: false, onanswer: vi.fn() });
 	if (request.id === 'edit') await colored(view.container, 'true', '--ansi-3');
 	else if (request.id === 'command') await colored(view.container, "'hello world'", '--ansi-2');
 	else {

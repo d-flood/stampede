@@ -16,6 +16,7 @@ use tokio::{
     },
     process::Command,
     sync::{broadcast, mpsc, watch},
+    time::Instant,
 };
 use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
 use uuid::Uuid;
@@ -30,9 +31,11 @@ type Frames = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 
 pub struct Terminals {
     data_dir: PathBuf,
+    cloud: bool,
     terminals: Mutex<Vec<(String, Slot)>>,
     changed: broadcast::Sender<Owner>,
     titles: broadcast::Sender<(String, String)>,
+    printed: watch::Sender<Option<Instant>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -113,12 +116,14 @@ impl Output {
 }
 
 impl Terminals {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(data_dir: PathBuf, cloud: bool) -> Self {
         Self {
             data_dir,
+            cloud,
             terminals: Mutex::default(),
             changed: broadcast::Sender::new(64),
             titles: broadcast::Sender::new(64),
+            printed: watch::Sender::default(),
         }
     }
 
@@ -170,6 +175,11 @@ impl Terminals {
 
     pub fn subscribe_titles(&self) -> broadcast::Receiver<(String, String)> {
         self.titles.subscribe()
+    }
+
+    /// When any Terminal last printed, to within `holder::PRINTED_EVERY`.
+    pub fn printed(&self) -> watch::Receiver<Option<Instant>> {
+        self.printed.subscribe()
     }
 
     pub fn list(&self) -> Vec<Terminal> {
@@ -226,6 +236,7 @@ impl Terminals {
         for key in ["STAMPEDE_HOOK_URL", "STAMPEDE_TERMINAL_ID", "STAMPEDE_DATA_DIR"] {
             command.env_remove(key);
         }
+        if self.cloud { command.envs(crate::cloud_logins::Logins::read(&self.data_dir)?.environment()); }
         command.arg("hold").arg("--data-dir").arg(&self.data_dir).arg("--id").arg(&id);
         command.arg("--scrollback").arg(scrollback.to_string());
         command.arg("--cwd").arg(cwd);
@@ -291,6 +302,9 @@ impl Terminals {
                                 if entry.running(running) {
                                     let _ = terminals.changed.send(owner.clone());
                                 }
+                            }
+                            Ok(Some(Message::Printed)) => {
+                                terminals.printed.send_replace(Some(Instant::now()));
                             }
                             _ => {}
                         }

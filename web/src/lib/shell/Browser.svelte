@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { OpenBrowser } from '#lib/browser.svelte.ts';
+	import { hostOf } from '#lib/host.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -83,7 +84,7 @@
 			const response = await fetch('/api/browser', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ url: address.trim() }),
+				body: JSON.stringify({ url: address.trim(), host: hostOf(browser.projectId) }),
 				signal: request.signal
 			});
 			if (!response.ok) throw new Error(await response.text());

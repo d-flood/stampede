@@ -12,6 +12,7 @@
 		wide?: boolean;
 		/** False when the dialog's own actions already close it. */
 		closeButton?: boolean;
+		dismissible?: boolean;
 		/** Sizes a wide dialog to its content, up to its usual height, without shrinking while open. */
 		fit?: boolean;
 		title: string;
@@ -24,7 +25,7 @@
 		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, fit = false, title, nav, heading, description, children, actions, oncloseautofocus }: Props = $props();
+	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, dismissible = true, fit = false, title, nav, heading, description, children, actions, oncloseautofocus }: Props = $props();
 
 	function hold(node: HTMLElement) {
 		let tallest = 0;
@@ -77,7 +78,11 @@
 				<div {...props} class="overlay"></div>
 			{/snippet}
 		</Dialog.Overlay>
-	<Dialog.Content onCloseAutoFocus={oncloseautofocus}>
+	<Dialog.Content
+		onCloseAutoFocus={oncloseautofocus}
+		escapeKeydownBehavior={dismissible ? 'close' : 'ignore'}
+		interactOutsideBehavior={dismissible ? 'close' : 'ignore'}
+	>
 			{#snippet child({ props })}
 				<div {...props} class="dialog" class:wide class:full class:sheet class:fit class:navigated={!!nav} class:footed={!!actions} {@attach wide && fit && !full && hold}>
 					{#if nav}

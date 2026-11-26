@@ -80,6 +80,7 @@ async fn gh(dir: &Path, args: &[&str]) -> Result<Vec<u8>, Failure> {
 
 async fn gh_with(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, Failure> {
     let mut command = Command::new("gh");
+    command.envs(crate::cloud_logins::github_environment());
     command
         .current_dir(dir)
         .args(args)

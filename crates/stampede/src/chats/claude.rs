@@ -175,8 +175,9 @@ pub async fn start(
     env: &BTreeMap<String, String>,
     settings: &AgentSettings,
     session: Option<&str>,
+    cloud: bool,
 ) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
-    let (frames, writer, transcript, received) = launch(data_dir, id, cwd, env, settings, session, None, false, None).await?;
+    let (frames, writer, transcript, received) = launch(data_dir, id, cwd, env, settings, session, None, false, None, cloud).await?;
     Ok((drive(frames, writer, transcript), received))
 }
 
@@ -184,11 +185,12 @@ pub async fn resume(
     data_dir: &Path,
     chat: &Chat,
     env: &BTreeMap<String, String>,
+    cloud: bool,
 ) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
     let _ = fs::remove_file(holder::socket_path(data_dir, &chat.id));
     let session = chat.agent_session.as_deref();
     let (frames, writer, mut transcript, received) =
-        launch(data_dir, &chat.id, &chat.cwd, env, &chat.settings.chosen, session, chat.resume_at.as_deref(), chat.forking, None).await?;
+        launch(data_dir, &chat.id, &chat.cwd, env, &chat.settings.chosen, session, chat.resume_at.as_deref(), chat.forking, None, cloud).await?;
     transcript.window = chat.context.map(|context| context.window);
     if chat.status != Status::Done {
         if chat.status == Status::Working { let _ = transcript.events.send(Event::Recoverable); }
@@ -209,6 +211,7 @@ async fn launch(
     at: Option<&str>,
     fork: bool,
     sender: Option<UnboundedSender<Event>>,
+    cloud: bool,
 ) -> io::Result<(Frames, OwnedWriteHalf, Transcript, UnboundedReceiver<Event>)> {
     let variables = [("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"), ("CLAUDE_CODE_ARTIFACT", "1")].into_iter()
         .chain(env.iter().map(|(name, value)| (name.as_str(), value.as_str())))
@@ -229,13 +232,16 @@ async fn launch(
     let (frames, mut writer, _) = holder::connect(data_dir, id).await?;
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(sender.unwrap_or(events), cwd);
-    transcript.location = Some(Location { data_dir: data_dir.to_owned(), id: id.to_owned(), env: env.clone() });
+    transcript.location = Some(Location { data_dir: data_dir.to_owned(), id: id.to_owned(), env: env.clone(), cloud });
     transcript.session = session.map(str::to_owned);
     transcript.forking = fork.is_some();
     if let Some(session) = session {
         transcript = transcript.replay(env, session, at, true).await?;
         transcript.stop_commands();
         transcript.retitle();
+    }
+    if cloud && !crate::cloud_logins::Logins::has_claude(env) {
+        transcript.push(Item::Notice { notice: Notice::Error, text: crate::cloud_logins::CLAUDE_LOGIN_HINT.to_owned() });
     }
     transcript.settings.chosen = settings.clone();
     transcript.discover(&mut writer).await?;
@@ -250,6 +256,7 @@ pub async fn reattach(
     data_dir: &Path,
     chat: &Chat,
     env: &BTreeMap<String, String>,
+    cloud: bool,
 ) -> io::Result<(Claude, UnboundedReceiver<Event>)> {
     let (mut frames, mut writer, buffered) = holder::connect(data_dir, &chat.id).await?;
     let mut replay = Vec::with_capacity(buffered);
@@ -263,7 +270,7 @@ pub async fn reattach(
     });
     let (events, received) = mpsc::unbounded_channel();
     let mut transcript = Transcript::new(events, &chat.cwd);
-    transcript.location = Some(Location { data_dir: data_dir.to_owned(), id: chat.id.clone(), env: env.clone() });
+    transcript.location = Some(Location { data_dir: data_dir.to_owned(), id: chat.id.clone(), env: env.clone(), cloud });
     transcript.session = chat.agent_session.clone();
     transcript.forking = chat.forking;
     transcript.replaying = true;
@@ -492,7 +499,7 @@ async fn rewind(
     let _ = events.send(Event::Reset);
     let _ = events.send(Event::ShellContext(Vec::new()));
     let (frames, writer, mut fresh, _) = launch(&location.data_dir, &location.id, &transcript.cwd,
-        &location.env, &transcript.settings.chosen, parent.as_ref().map(|_| session.as_str()), parent.as_deref(), transcript.forking, Some(events)).await?;
+        &location.env, &transcript.settings.chosen, parent.as_ref().map(|_| session.as_str()), parent.as_deref(), transcript.forking, Some(events), location.cloud).await?;
     let _ = fresh.events.send(Event::ResumeAt(parent));
     fresh.push(Item::Notice { notice: Notice::Rewound, text: "Selected message and everything after it removed; tracked edits restored. Changes made through Bash or subagents may remain. External actions are not undone.".to_owned() });
     fresh.report(Status::Done);
@@ -984,6 +991,7 @@ fn interrupted(content: &Value) -> bool {
 
 #[derive(Clone)]
 struct Location {
+    cloud: bool,
     data_dir: PathBuf,
     id: String,
     env: BTreeMap<String, String>,
@@ -1448,6 +1456,15 @@ impl Transcript {
             let index = self.push(item);
             self.delegated.insert(id, index);
         }
+    }
+
+    fn login_error(&self, code: &str, text: String) -> String {
+        let Some(location) = self.location.as_ref().filter(|location| location.cloud) else { return text; };
+        let text = crate::cloud_logins::Logins::redact(&location.env, text);
+        let lower = text.to_lowercase();
+        if code.contains("auth") || ["authentication", "not logged in", "invalid token", "invalid oauth", "invalid api key", "401", "please run /login"].iter().any(|hint| lower.contains(hint)) {
+            format!("{text}\n\n{}", crate::cloud_logins::CLAUDE_LOGIN_HINT)
+        } else { text }
     }
 
     fn push(&mut self, item: Item) -> usize {
@@ -2091,6 +2108,7 @@ impl Transcript {
                 {
                     let errors = message["errors"].as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join("\n");
                     let text = if errors.is_empty() { format!("Claude Code did not complete the turn: {}", message["subtype"].as_str().unwrap_or("error")) } else { errors };
+                    let text = self.login_error(message["subtype"].as_str().unwrap_or_default(), text);
                     self.push(Item::Notice { notice: Notice::Error, text });
                 }
                 self.total(&message["modelUsage"]);
@@ -2302,7 +2320,8 @@ impl Transcript {
             self.error_reported |= streamed;
             let text: Vec<&str> = blocks.filter_map(|block| block["text"].as_str()).collect();
             let notice = if error == "rate_limit" { Notice::Limit } else { Notice::Error };
-            self.push(Item::Notice { notice, text: text.join("\n") });
+            let text = self.login_error(error, text.join("\n"));
+            self.push(Item::Notice { notice, text });
             return;
         }
         for block in blocks {
@@ -2873,7 +2892,7 @@ mod subagent_tests {
     fn live(files: &Files) -> (Transcript, UnboundedReceiver<Event>) {
         let (events, received) = mpsc::unbounded_channel();
         let mut transcript = Transcript::new(events, Path::new("/project"));
-        transcript.location = Some(Location { data_dir: files.root.path().to_owned(), id: "chat".to_owned(), env: files.env.clone() });
+        transcript.location = Some(Location { data_dir: files.root.path().to_owned(), id: "chat".to_owned(), env: files.env.clone(), cloud: false });
         transcript.session = Some("session".to_owned());
         (transcript, received)
     }

@@ -46,9 +46,9 @@ test('a Subagent keeps its spawn-order color on its transcript line, menu row an
 	const parent = agent('parent', 'Find the file', { items: [{ kind: 'text', text: 'Looking.', phase: 'commentary', streaming: false }, nested] });
 	const main: Item[] = [parent, agent('sibling', 'Review the diff', { status: 'working', outcome: undefined })];
 
-	const transcript = await render(Transcript, { items: parent.items, main, path: ['parent'], ...callbacks() });
+	const transcript = await render(Transcript, { host: undefined, items: parent.items, main, path: ['parent'], ...callbacks() });
 	expect(dot(transcript.getByRole('button', { name: /Search deeper/ }).element())).toBe('var(--subagent-2)');
-	const top = await render(Transcript, { items: main, ...callbacks() });
+	const top = await render(Transcript, { host: undefined, items: main, ...callbacks() });
 	expect(dot(top.getByRole('button', { name: /Find the file/ }).element())).toBe('var(--subagent-1)');
 	expect(dot(top.getByRole('button', { name: /Review the diff/ }).element())).toBe('var(--subagent-3)');
 
@@ -67,7 +67,7 @@ test('a Subagent keeps its spawn-order color on its transcript line, menu row an
 
 test('seven Subagents cycle back to the first color', async () => {
 	const main = Array.from({ length: 7 }, (_, index) => agent(`agent-${index}`, `Task ${index}`));
-	const view = await render(Transcript, { items: main, ...callbacks() });
+	const view = await render(Transcript, { host: undefined, items: main, ...callbacks() });
 	const lines = view.getByRole('button', { name: /^Task \d/ }).elements();
 	expect(lines.map(dot)).toEqual([1, 2, 3, 4, 5, 6, 1].map((index) => `var(--subagent-${index})`));
 });
@@ -80,7 +80,7 @@ test('a transcript line states its Subagent outcome and a waiting line attends i
 		agent('fresh', 'New task', { status: 'working', outcome: undefined }),
 		agent('waiting', 'Review the file', { name: 'Reviewer', role: 'reviewer', agent: 'codex', status: 'waiting', outcome: undefined })
 	];
-	const view = await render(Transcript, { items, onopen, onattend, ...rest });
+	const view = await render(Transcript, { host: undefined, items, onopen, onattend, ...rest });
 	const line = (task: string) => view.getByRole('button', { name: new RegExp(task) });
 	expect(words(line('Old task'))).toBe('Explore Old task finished in 48s, 11 tools');
 	expect(words(line('Broken task'))).toBe('Broken task failed');

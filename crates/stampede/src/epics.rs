@@ -11,7 +11,11 @@ use std::{
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::sync::broadcast;
 
-use crate::{config::Agent, usage::Window};
+use crate::{
+    cloud::{HOLDS_ONE_WORKTREE, Service},
+    config::Agent,
+    usage::Window,
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -1170,10 +1174,11 @@ pub struct Epics {
     /// Held from an event's check until it applies, so readers of `epics` never wait on the write.
     appending: Mutex<()>,
     changes: broadcast::Sender<String>,
+    cloud: Option<Service>,
 }
 
 impl Epics {
-    pub fn load(data_dir: &Path) -> io::Result<Self> {
+    pub fn load(data_dir: &Path, cloud: Option<Service>) -> io::Result<Self> {
         let dir = data_dir.join("epics");
         fs::create_dir_all(&dir)?;
         let mut epics = BTreeMap::new();
@@ -1190,7 +1195,11 @@ impl Epics {
                 Err(error) => eprintln!("cannot read {}: {error}", path.display()),
             }
         }
-        Ok(Self { dir, epics: Mutex::new(epics), appending: Mutex::default(), changes: broadcast::channel(64).0 })
+        Ok(Self { dir, epics: Mutex::new(epics), appending: Mutex::default(), changes: broadcast::channel(64).0, cloud })
+    }
+
+    fn allowed(&self) -> Result<(), String> {
+        if self.cloud.is_some() { Err(HOLDS_ONE_WORKTREE.to_owned()) } else { Ok(()) }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
@@ -1267,6 +1276,7 @@ impl Epics {
     }
 
     pub fn add(&self, slug: &str, title: &str, brief: &str, project: &Path) -> Result<(), String> {
+        self.allowed()?;
         if !valid_slug(slug) {
             return Err(format!("{slug:?} is not a valid slug; use lowercase letters, digits and hyphens, such as chat-ui"));
         }
@@ -1311,6 +1321,7 @@ impl Epics {
 
     /// Records the event `make` builds from the Epic, in the same step as the event itself, and gives it back.
     pub fn record_from(&self, slug: &str, make: impl FnOnce(&Epic) -> Result<Event, String>) -> Result<Event, String> {
+        self.allowed()?;
         tokio::task::block_in_place(|| {
             let _appending = self.appending.lock().unwrap();
             let event = {
@@ -1386,7 +1397,7 @@ mod tests {
     #[test]
     fn renaming_a_rig_preserves_run_ticket_and_claim_choices_after_reload() {
         let dir = tempfile::tempdir().unwrap();
-        let epics = Epics::load(dir.path()).unwrap();
+        let epics = Epics::load(dir.path(), None).unwrap();
         epics.add("loop", "The loop", "Brief", Path::new("/repo")).unwrap();
         epics.record("loop", Event::SetupSet { command: String::new() }).unwrap();
         for ticket in 1..=3 {
@@ -1398,7 +1409,7 @@ mod tests {
         epics.record("loop", Event::Claimed { ticket: 1, chat: "chat".to_owned(), rig: "Original".to_owned(), worktree: PathBuf::from("/repo/1") }).unwrap();
         epics.record("loop", Event::RunStarted { rig: "Original".to_owned(), parallel: 2, reviewers: vec![], remediator: None }).unwrap();
         epics.rename_rig("Original", "Reviewer").unwrap();
-        let reloaded = Epics::load(dir.path()).unwrap();
+        let reloaded = Epics::load(dir.path(), None).unwrap();
         for epics in [&epics, &reloaded] {
             let epic = epics.get("loop").unwrap();
             assert_eq!(epic.run.unwrap().rig, "Reviewer");

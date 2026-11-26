@@ -6,7 +6,7 @@
 
 <script lang="ts">
 	import { ago, logos } from '#lib/chat/sessions.ts';
-	import { rigs, type Rig } from '#lib/config.svelte.ts';
+	import { rigs, runsOn, type Rig } from '#lib/config.svelte.ts';
 	import type { Chat, Project, Session } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
@@ -82,7 +82,7 @@
 		},
 		{
 			heading: 'Rigs',
-			entries: find(all && focused ? rigs() : [], (rig) => rig.name)
+			entries: find(all && focused ? rigs().filter((rig) => runsOn(focused.host, rig.agent)) : [], (rig) => rig.name)
 				.map((rig) => {
 					const index = rigs().indexOf(rig);
 					return {

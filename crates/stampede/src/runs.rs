@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::{
     attention::{Attention, Feed, Source, Tab},
     chats::{self, Chat, Chats, Duty, Lifecycle},
+    cloud_hosts::CloudHosts,
     config::{Config, Rig},
     epics::{Author, Call, Continuation, Epic, Epics, Event, Keep, Pause, Review, Run, Status},
     git,
@@ -33,6 +34,8 @@ use crate::{
 mod landing;
 mod submodules;
 mod worktrees;
+pub(crate) use submodules::checked_out;
+pub(crate) use worktrees::{branch_spec, discard_warning};
 
 pub use worktrees::Refusal;
 
@@ -48,6 +51,7 @@ pub struct Runs {
     chats: Arc<Chats>,
     terminals: Arc<Terminals>,
     projects: Arc<Projects>,
+    cloud_hosts: Arc<CloudHosts>,
     config: watch::Receiver<Arc<Config>>,
     attention: Arc<Feed>,
     usage: Arc<Usage>,
@@ -68,6 +72,7 @@ impl Runs {
         chats: Arc<Chats>,
         terminals: Arc<Terminals>,
         projects: Arc<Projects>,
+        cloud_hosts: Arc<CloudHosts>,
         config: watch::Receiver<Arc<Config>>,
         attention: Arc<Feed>,
         usage: Arc<Usage>,
@@ -84,6 +89,7 @@ impl Runs {
             chats,
             terminals,
             projects,
+            cloud_hosts,
             config,
             attention,
             usage,
@@ -657,7 +663,7 @@ impl Runs {
     async fn item(&self, slug: &str, status: chats::Status) -> Result<Attention, String> {
         let project = self.project(&self.epics.get(slug)?).await?;
         let (tab, label) = (Tab::Epic { epic: slug.to_owned() }, format!("Epic {slug}"));
-        Ok(Attention { project_id: project.id, tab, label, status })
+        Ok(Attention { host: None, project_id: project.id, tab, label, status })
     }
 
     /// The open Project that checks out the Epic's repository, its main checkout before any other worktree,

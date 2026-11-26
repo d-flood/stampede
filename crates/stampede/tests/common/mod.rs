@@ -121,6 +121,7 @@ async fn spawn(root: &Path, port: u16, env: &[(&str, OsString)]) -> Child {
         .env("PATH", format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap()))
         .env("SHELL", "/bin/bash")
         .env("HOME", root.join("home"))
+        .env_remove("CODEX_HOME")
         .env_remove("STAMPEDE_SCRATCH")
         .env_remove("STAMPEDE_CACHE")
         .env_remove("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING")
@@ -164,7 +165,11 @@ pub struct View {
 
 impl View {
     pub async fn open(port: u16, device_id: &str, terminal_id: Option<&str>) -> Self {
-        let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await.unwrap();
+        Self::open_url(&format!("ws://127.0.0.1:{port}/ws"), device_id, terminal_id).await
+    }
+
+    pub async fn open_url(url: &str, device_id: &str, terminal_id: Option<&str>) -> Self {
+        let (mut socket, _) = connect_async(url).await.unwrap();
         control(&mut socket, json!({ "type": "hello", "deviceId": device_id })).await;
         let hello = next_control(&mut socket, "hello").await;
         let listed = match terminal_id {
