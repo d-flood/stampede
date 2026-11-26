@@ -16,6 +16,8 @@
 		/** Open Chats, listed under their own heading before the sessions. */
 		chats?: Chat[];
 		status?(chat: Chat): Status;
+		/** Open Chats that need attention, which lead the list under their own heading. */
+		waiting?: Set<string>;
 		/** Wraps titles instead of truncating them. */
 		full?: boolean;
 		/** Holds the list at the recent sessions' height while searching, so nothing around it moves. */
@@ -24,11 +26,19 @@
 		onsession(session: Session): void;
 	};
 
-	let { label, sessions, reading, chats, status, full = false, steady = false, onchat, onsession }: Props = $props();
+	let { label, sessions, reading, chats, status, waiting, full = false, steady = false, onchat, onsession }: Props = $props();
 
 	let query = $state('');
 	let height = $state(0);
 	const open = $derived(find(chats ?? [], (chat) => chat.title ?? chat.rig));
+	const groups = $derived.by(() => {
+		if (query) return [{ name: 'Open Chats', chats: open }];
+		const attention = open.filter((chat) => waiting?.has(chat.id));
+		const running = open.filter((chat) => !waiting?.has(chat.id) && (status?.(chat) === 'working' || status?.(chat) === 'background'));
+		const rest = open.filter((chat) => !attention.includes(chat) && !running.includes(chat));
+		const shown = [{ name: 'Waiting', chats: attention }, { name: 'Running', chats: running }, { name: 'Open', chats: rest }].filter((group) => group.chats.length);
+		return shown.length > 1 ? shown : [{ name: 'Open Chats', chats: open }];
+	});
 	const past = $derived(query ? find(sessions, (session) => session.title) : sessions.slice(0, RECENT));
 	const days = $derived.by(() => {
 		if (query) return [{ day: '', sessions: past }];
@@ -48,7 +58,7 @@
 {#snippet heading(text: string)}
 	<Command.GroupHeading>
 		{#snippet child({ props })}
-			<ListLabel {...props}>{text}</ListLabel>
+			<ListLabel {...props} size="md">{text}</ListLabel>
 		{/snippet}
 	</Command.GroupHeading>
 {/snippet}
@@ -65,16 +75,18 @@
 			{#snippet child({ props })}
 				<div {...props} class="list" style:height={steady && query ? `${height}px` : undefined} bind:clientHeight={null, (value: number) => { if (!query) height = value; }}>
 					<Command.Viewport>
-						{#if open.length}
-							<Command.Group>
-								{@render heading('Open Chats')}
-								<Command.GroupItems>
-									{#each open as chat (chat.id)}
-										<ChatItem value="chat:{chat.id}" agent={chat.agent} title={chat.title ?? chat.rig} time={chat.created / 1e6} status={status?.(chat)} fresh={!chat.title} size="md" {full} onselect={() => onchat?.(chat)} />
-									{/each}
-								</Command.GroupItems>
-							</Command.Group>
-						{/if}
+						{#each groups as group (group.name)}
+							{#if group.chats.length}
+								<Command.Group>
+									{@render heading(group.name)}
+									<Command.GroupItems>
+										{#each group.chats as chat (chat.id)}
+											<ChatItem value="chat:{chat.id}" agent={chat.agent} title={chat.title ?? chat.rig} time={chat.created / 1e6} status={status?.(chat)} fresh={!chat.title} size="md" {full} onselect={() => onchat?.(chat)} />
+										{/each}
+									</Command.GroupItems>
+								</Command.Group>
+							{/if}
+						{/each}
 						{#if past.length}
 							<Command.Group>
 								{#if chats}{@render heading('Recent sessions')}{/if}

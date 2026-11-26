@@ -13,11 +13,13 @@
 		flex: none;
 		min-width: 1.6em;
 		padding: 0 var(--space-1);
+		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-sm);
-		background: var(--surface-2);
-		color: var(--muted-fg);
+		color: color-mix(in oklab, var(--muted-fg) 80%, transparent);
+		font: inherit;
 		font-size: var(--font-size-sm);
-		line-height: 1.5;
+		font-variant-numeric: tabular-nums;
+		line-height: 1.4;
 		text-align: center;
 		white-space: nowrap;
 	}

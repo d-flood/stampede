@@ -34,6 +34,7 @@
 	import Select from '#lib/ui/Select.svelte';
 	import TextArea from '#lib/ui/TextArea.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
+	import Toggle from '#lib/ui/Toggle.svelte';
 	import type { Component } from 'svelte';
 	import BookmarkSimple from '~icons/ph/bookmark-simple';
 	import CaretLeft from '~icons/ph/caret-left';
@@ -68,6 +69,7 @@
 		{ id: 'rigs', label: 'Rigs', icon: RocketLaunch, summary: () => count(rigs().length, 'Rig') },
 		{ id: 'clips', label: 'Clips', icon: BookmarkSimple, summary: () => count(clips().length, 'Clip') }
 	];
+	const page = $derived(pages.find(({ id }) => id === current));
 	const roles: { role: FontRole; description: string }[] = [
 		{ role: 'ui', description: 'Menus, buttons, tabs and labels.' },
 		{ role: 'chat', description: 'Rendered markdown: chat messages, Epic briefs and markdown previews.' },
@@ -168,26 +170,29 @@
 <IconButton label={unseen ? 'Settings, Stampede update available' : 'Settings'} title={unseen ? 'Stampede update available' : undefined} aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}>
 	<span class="gear"><Gear />{#if unseen}<span class="dot"></span>{/if}</span>
 </IconButton>
-<Dialog bind:open full={phone} wide fit title="Settings" oncloseautofocus={dock}>
+{#snippet sections()}
+	<NavList aria-label="Settings sections">
+		{#each pages as { id, label, icon: Icon, summary } (id)}
+			<ListItem element="button" size="md" aria-current={current === id ? 'page' : undefined} onclick={() => (chosen = id)}>
+				<span class="icon" class:current={current === id}><Icon /></span>
+				<span class="title">{label}{#if phone}<small>{summary()}</small>{/if}</span>
+				{#if phone}<span class="chevron"><CaretRight /></span>{/if}
+			</ListItem>
+		{/each}
+	</NavList>
+{/snippet}
+
+<Dialog bind:open full={phone} wide fit title="Settings" nav={phone ? undefined : sections} heading={page?.label} oncloseautofocus={dock}>
 	<div class="settings" class:phone>
-		{#if !phone || !current}
-			<div class="sections">
-				<NavList aria-label="Settings sections">
-					{#each pages as { id, label, icon: Icon, summary } (id)}
-						<ListItem element="button" size="md" aria-current={current === id ? 'page' : undefined} onclick={() => (chosen = id)}>
-							<span class="icon" class:current={current === id}><Icon /></span>
-							<span class="title">{label}{#if phone}<small>{summary()}</small>{/if}</span>
-							{#if phone}<span class="chevron"><CaretRight /></span>{/if}
-						</ListItem>
-					{/each}
-				</NavList>
-			</div>
-		{/if}
-		{#if current}
+		{#if phone && !current}
+			<div class="sections">{@render sections()}</div>
+		{:else if current}
 			<div class="pane">
-				{#if phone && !editingRig}<Button variant="link" aria-label="All settings" onclick={() => (chosen = undefined)}><CaretLeft /> Settings</Button>{/if}
+				{#if phone && !editingRig}
+					<Button variant="link" aria-label="All settings" onclick={() => (chosen = undefined)}><CaretLeft /> Settings</Button>
+					<h3>{page?.label}</h3>
+				{/if}
 				{#if current === 'general'}
-					<h3>General</h3>
 					{#if update}
 						<section class="group row update" aria-labelledby="update-label">
 							<div class="text">
@@ -207,7 +212,7 @@
 								<p id="host-name-help">Names the installed app and windows. Installed apps pick up a new name within about a day.</p>
 								{#if refusal}<p role="alert">{refusal}</p>{/if}
 							</div>
-							<div class="control"><TextField id="host-name" placeholder="Stampede" value={hostName() ?? ''} onchange={(event) => rename(event.currentTarget)} aria-describedby="host-name-help" /></div>
+							<div class="control wide"><TextField id="host-name" placeholder="Stampede" value={hostName() ?? ''} onchange={(event) => rename(event.currentTarget)} aria-describedby="host-name-help" /></div>
 						</section>
 						<section class="row" aria-labelledby="sidebar-side-label">
 							<div class="text">
@@ -224,16 +229,15 @@
 						<section class="row" aria-labelledby="auto-fetch-label">
 							<div class="text">
 								<span class="label" id="auto-fetch-label">Check origin</span>{@render scope(true)}
-								<p>Fetches each Project's origin every half hour and marks default branches a pull would fast-forward. Never pulls.</p>
+								<p id="auto-fetch-help">Fetches each Project's origin every half hour and marks default branches a pull would fast-forward. Never pulls.</p>
 								{#if fetchRefusal}<p role="alert">{fetchRefusal}</p>{/if}
 							</div>
 							<div class="control">
-								<Segmented aria-labelledby="auto-fetch-label" options={[{ value: true, label: 'On' }, { value: false, label: 'Off' }]} bind:value={autoFetch, chooseAutoFetch} />
+								<Toggle aria-labelledby="auto-fetch-label" aria-describedby="auto-fetch-help" bind:checked={autoFetch, chooseAutoFetch} />
 							</div>
 						</section>
 					</div>
 				{:else if current === 'appearance'}
-					<h3>Appearance</h3>
 					<div class="group">
 						<section class="row" aria-labelledby="scheme-label">
 							<div class="text">
@@ -294,7 +298,6 @@
 						</div>
 					</section>
 				{:else if current === 'agents'}
-					<h3>Agents</h3>
 					<div class="group">
 						<section class="row" aria-labelledby="commit-rig-label">
 							<div class="text">
@@ -343,14 +346,12 @@
 				{:else if current === 'rigs'}
 					<section aria-label="Rigs">
 						{#if !editingRig}
-							<h3>Rigs</h3>
 							<p class="lede">Starting settings for new chats. Order sets the Ctrl ⇧ shortcuts. {@render scope(true)}</p>
 						{/if}
 						{#if open}<RigEditor bind:editing={editingRig} />{/if}
 					</section>
 				{:else}
-					<section aria-labelledby="clips-label">
-						<h3 id="clips-label">Clips</h3>
+					<section aria-label="Clips">
 						<p class="lede">Text to reuse in any Composer: type ; and a Clip's name to insert it, then edit before sending. {@render scope(true)}</p>
 						<div class="group padded">{#if open}<ClipEditor />{/if}</div>
 					</section>
@@ -362,23 +363,16 @@
 
 <style>
 	.settings {
-		display: grid;
+		display: flex;
 		flex: 1;
-		grid-template-columns: 12rem minmax(0, 1fr);
+		flex-direction: column;
 		min-height: 0;
 	}
 
 	.sections {
-		padding: var(--space-3) var(--space-2);
-		overflow: auto;
-		border-right: var(--border-width) solid var(--border);
-		background: var(--canvas);
-		color: var(--muted-fg);
+		flex: 1;
+		padding: var(--space-2) var(--space-4);
 	}
-
-
-
-
 
 	.icon {
 		display: inline-flex;
@@ -406,8 +400,10 @@
 	}
 
 	.pane {
+		flex: 1;
 		min-width: 0;
-		padding: var(--space-4) var(--space-6) var(--space-6);
+		min-height: 0;
+		padding: 0 var(--space-6) calc(var(--space-6) + var(--space-2));
 		overflow: auto;
 		mask-image: linear-gradient(#000 calc(100% - var(--space-6)), transparent);
 	}
@@ -427,6 +423,10 @@
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		line-height: 1.5;
+	}
+
+	.lede:first-child {
+		margin-top: 0;
 	}
 
 	.group {
@@ -509,6 +509,12 @@
 
 	.control {
 		box-sizing: border-box;
+		flex: none;
+		max-width: 100%;
+		margin-left: auto;
+	}
+
+	.wide {
 		flex: 0 1 15rem;
 		min-width: 0;
 	}
@@ -520,12 +526,10 @@
 
 	.font {
 		display: flex;
-		flex-basis: 21rem;
 		gap: var(--space-2);
 	}
 
-	.font > :global(.select) {
-		flex: none;
+	.control > :global(.select) {
 		width: auto;
 	}
 
@@ -637,22 +641,6 @@
 		font-size: var(--font-size-code);
 	}
 
-	.phone {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.phone .sections {
-		flex: 1;
-		padding: var(--space-2) var(--space-4);
-		border: none;
-		background: none;
-		color: var(--color-fg);
-	}
-
-
-
-
 	.phone .icon {
 		display: grid;
 		place-items: center;
@@ -673,7 +661,7 @@
 		padding: 0 var(--space-4) var(--space-6);
 	}
 
-	.phone .control {
+	.phone .wide {
 		flex-basis: 100%;
 	}
 </style>

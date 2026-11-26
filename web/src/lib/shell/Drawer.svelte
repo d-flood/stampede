@@ -284,7 +284,8 @@
 	.strip {
 		display: flex;
 		align-items: center;
-		padding: 0 var(--space-1);
+		gap: var(--space-1);
+		padding: 0 var(--space-2);
 		border-bottom: var(--border-width) solid var(--border);
 		background: var(--surface-1);
 	}
@@ -293,11 +294,10 @@
 		display: flex;
 		flex: 0 1 auto;
 		align-self: stretch;
-		align-items: flex-end;
-		gap: 2px;
+		align-items: center;
+		gap: var(--space-1);
 		min-width: 0;
-		min-height: calc(var(--target-min) + var(--space-2));
-		padding-top: var(--space-2);
+		min-height: calc(var(--target-min) + 2 * var(--space-2));
 	}
 
 	.fill {

@@ -192,3 +192,32 @@ test('a worktree tile carries the shell and attention marks of its Chats, and it
 	route!.send(JSON.stringify({ type: 'chats.changed', projectId: parent, chats: [{ ...chat!, projectId: parent }] }));
 	await expectSelected(tab);
 });
+
+test('a Launchpad lists Chats waiting in its worktrees and opens the chosen one', { tag: '@desktop' }, async ({ page }) => {
+	let route: WebSocketRoute;
+	let chat: Chat;
+	await page.routeWebSocket('**/ws', (socket) => {
+		route = socket;
+		const server = socket.connectToServer();
+		server.onMessage((data) => {
+			if (typeof data === 'string') {
+				const message: ServerMessage = JSON.parse(data);
+				if (message.type === 'chat.created') chat = message.chat;
+			}
+			socket.send(data);
+		});
+	});
+	await openProject(page, 'alpha');
+	await mint(page, 'waits');
+	await newTab(page, 'Fake Claude');
+	const tab = await pinned(page.getByRole('tab', { name: /^Fake Claude/ }));
+	await expect(tab.getByTitle('done')).toBeVisible();
+	const rail = page.getByRole('navigation', { name: 'Projects' });
+	await rail.getByRole('button', { name: 'alpha', exact: true }).click();
+	const waiting = page.getByRole('region', { name: 'alpha', exact: true }).getByRole('region', { name: 'Waiting' });
+	await expect(waiting).toHaveCount(0);
+	route!.send(JSON.stringify({ type: 'attention.changed', items: [{ projectId: chat!.projectId, chatId: chat!.id, label: 'Fake Claude', status: 'done' }] }));
+	await waiting.getByRole('button', { name: /waits/ }).click();
+	await expectSelected(tab);
+	await expect(rail.getByRole('group', { name: 'Worktrees of alpha' }).getByRole('button', { name: /^waits/ })).toHaveAttribute('aria-current', 'true');
+});

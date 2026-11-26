@@ -6,6 +6,7 @@
 	import { same, subagents } from '#lib/chat/agents.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
+	import MessageNav from '#lib/chat/MessageNav.svelte';
 	import { hostName, rigs, type Rig } from '#lib/config.svelte.ts';
 	import { previewThemes, themeBar } from '#lib/themes.svelte.ts';
 	import {
@@ -82,6 +83,7 @@
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let chats = $state<Record<string, Chat[]>>({});
 	let chatItems = $state<Record<string, Item[]>>({});
+	let transcripts = $state<Record<string, HTMLElement | null>>({});
 	let htmlPreview = $state<HtmlItem>();
 	let htmlDialog = $state<HTMLDialogElement>();
 	setHtmlPreview((item) => htmlPreview = item);
@@ -165,6 +167,7 @@
 		new Set(projects.filter((project) => chats[project.id]?.some((chat) => chatStatus(chat) === 'background')).map((project) => project.worktree?.parent ?? project.id))
 	);
 	const needs = $derived(attentionList.reduce((map, item) => map.set(item.projectId, (map.get(item.projectId) ?? 0) + 1), new Map<string, number>()));
+	const waitingChats = $derived(new Set(attentionList.flatMap((item) => ('chatId' in item ? [item.chatId] : []))));
 	const nested = $derived(worktrees(projects, epics, allChats, chatStatus, needs));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
 	const tabs = $derived((focused && terminals[focused.id]) || []);
@@ -1019,8 +1022,11 @@
 			items={newTab(project.id)}
 			sessions={sessions[project.id] ?? []}
 			reading={!!readingSessions[project.id]}
+			waiting={allChats.filter((chat) => waitingChats.has(chat.id) && projects.find((other) => other.id === chat.projectId)?.worktree?.parent === project.id)}
+			labels={projectLabels}
 			onread={() => readSessions(project.id)}
 			onsession={(session) => reopen(project.id, session)}
+			onchat={(chat) => attend(chat.projectId, chat.id)}
 		/>
 	{/key}
 {/snippet}
@@ -1214,7 +1220,7 @@
 						<Menu items={menuItems(newTab(projectId))} resize loading={readingSessions[projectId] ? 'Reading sessions…' : undefined} onopen={() => readSessions(projectId)}>
 							{#snippet trigger(props)}
 								{#if group.tabs.length}
-									<IconButton {...props} label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></IconButton>
+									<Button {...props} variant="ghost" size="sm" aria-label="New Tab" title="New tab (Ctrl/Cmd+T)"><Plus /></Button>
 								{:else}
 									<Button {...props} variant="ghost" size="sm" title="New tab (Ctrl/Cmd+T)"><Plus />New Tab</Button>
 								{/if}
@@ -1222,11 +1228,15 @@
 						</Menu>
 					{/if}
 					<span class="fill"></span>
+					{#if !phone && group.active && chatIds.has(group.active) && !openSubagents[group.active]?.length}
+						<MessageNav items={chatItems[group.active] ?? []} scroller={transcripts[group.active]} />
+					{/if}
 					{#if focused && index === groups.length - 1}
 						{@const projectId = focused.id}
 						<ChatList
 							chats={chatTabs.filter((chat) => !chat.closing)}
 							status={chatStatus}
+							waiting={waitingChats}
 							sessions={sessions[projectId] ?? []}
 							reading={!!readingSessions[projectId]}
 							onopen={() => readSessions(projectId)}
@@ -1344,6 +1354,7 @@
 								items={chatItems[chat.id] ?? []}
 								saved={[...saved].filter((canvas) => canvas.startsWith(`${chat.id}/`))}
 								opened={openSubagents[chat.id] ?? []}
+								bind:scroller={transcripts[chat.id]}
 								onopen={(path) => (openSubagents[chat.id] = path)}
 								active={showing(chat.id)}
 								focused={chat.id === activeTab}
@@ -1803,17 +1814,13 @@
 		display: flex;
 		grid-row: 1;
 		align-items: center;
+		gap: var(--space-1);
 		min-width: 0;
-		padding: 0 var(--space-1);
+		padding: 0 var(--space-2);
 		border-bottom: var(--border-width) solid var(--border);
 		background: var(--surface-1);
 		user-select: none;
-	}
-
-	/* Centres strip controls on the Tabs, which hang from the strip's bottom edge. */
-	main:not(.bottom) .strip > :global(:not([role='tablist'])) {
-		align-self: flex-end;
-		margin-bottom: calc((var(--space-2) - 2 * var(--border-width)) / 2);
+		container-type: inline-size;
 	}
 
 	main.bottom {
@@ -1822,6 +1829,7 @@
 
 	.bottom .strip {
 		grid-row: 2;
+		padding-bottom: var(--space-2);
 		border-top: var(--border-width) solid var(--border);
 		border-bottom: none;
 	}
@@ -1846,14 +1854,10 @@
 		display: flex;
 		flex: 0 1 auto;
 		align-self: stretch;
-		align-items: flex-end;
-		gap: 2px;
+		align-items: center;
+		gap: var(--space-1);
 		min-width: 0;
-		min-height: calc(var(--target-min) + var(--space-2));
-		/* Extend over the strip's border so the active Tab still covers it once scrolling clips overflow. */
-		margin-bottom: calc(-1 * var(--border-width));
-		padding-top: var(--space-2);
-		padding-bottom: var(--border-width);
+		min-height: calc(var(--target-min) + 2 * var(--space-2));
 		overflow-x: auto;
 		overflow-y: hidden;
 		scrollbar-width: none;
@@ -1872,27 +1876,13 @@
 		background: var(--border-strong);
 	}
 
-	/* Marks which side of a Split has focus. */
+	/* Leaves the accent fill to the Split side that has focus. */
 	main:not(.bottom) .strip:not(.current) :global([role='tab'][aria-selected='true']) {
-		background-image: linear-gradient(var(--border-strong), var(--border-strong));
-		background-position: top center;
-		background-repeat: no-repeat;
-		background-size: calc(100% - 2 * var(--radius-lg)) calc(2 * var(--border-width));
-	}
-
-	.current :global([role='tab'][aria-selected='true']) {
-		background-image: linear-gradient(var(--accent), var(--accent));
-		background-position: top center;
-		background-repeat: no-repeat;
-		background-size: calc(100% - 2 * var(--radius-lg)) calc(2 * var(--border-width));
+		--pill: color-mix(in oklab, var(--hover) 55%, transparent);
 	}
 
 	.bottom [role='tablist'] {
-		align-items: flex-start;
-		margin-top: calc(-1 * var(--border-width));
-		margin-bottom: 0;
-		padding-top: var(--border-width);
-		padding-bottom: var(--space-2);
+		min-height: 0;
 		overscroll-behavior-x: contain;
 		touch-action: pan-x;
 	}

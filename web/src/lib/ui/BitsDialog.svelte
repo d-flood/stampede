@@ -15,13 +15,16 @@
 		/** Sizes a wide dialog to its content, up to its usual height, without shrinking while open. */
 		fit?: boolean;
 		title: string;
+		/** A navigation column down the dialog's full height, titled by `title`, beside content headed by `heading`. */
+		nav?: Snippet;
+		heading?: string;
 		description?: string;
 		children?: Snippet;
 		actions?: Snippet;
 		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, fit = false, title, description, children, actions, oncloseautofocus }: Props = $props();
+	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, fit = false, title, nav, heading, description, children, actions, oncloseautofocus }: Props = $props();
 
 	function hold(node: HTMLElement) {
 		let tallest = 0;
@@ -35,6 +38,38 @@
 	}
 </script>
 
+{#snippet titled()}
+	<Dialog.Title>
+		{#snippet child({ props })}
+			<h2 {...props}>{title}</h2>
+		{/snippet}
+	</Dialog.Title>
+{/snippet}
+
+{#snippet close()}
+	{#if (full || sheet || wide) && closeButton}
+		<Dialog.Close>
+			{#snippet child({ props })}
+				<IconButton {...props} data-state={undefined} label="Close"><X /></IconButton>
+			{/snippet}
+		</Dialog.Close>
+	{/if}
+{/snippet}
+
+{#snippet body()}
+	{#if description}
+		<Dialog.Description>
+			{#snippet child({ props })}
+				<p {...props}>{description}</p>
+			{/snippet}
+		</Dialog.Description>
+	{/if}
+	{@render children?.()}
+	{#if actions}
+		<footer>{@render actions()}</footer>
+	{/if}
+{/snippet}
+
 <Dialog.Root bind:open>
 	<Dialog.Portal>
 		<Dialog.Overlay>
@@ -44,31 +79,25 @@
 		</Dialog.Overlay>
 	<Dialog.Content onCloseAutoFocus={oncloseautofocus}>
 			{#snippet child({ props })}
-				<div {...props} class="dialog" class:wide class:full class:sheet class:fit class:footed={!!actions} {@attach wide && fit && !full && hold}>
-					<div class="heading">
-						<Dialog.Title>
-							{#snippet child({ props })}
-								<h2 {...props}>{title}</h2>
-							{/snippet}
-						</Dialog.Title>
-						{#if (full || sheet || wide) && closeButton}
-							<Dialog.Close>
-								{#snippet child({ props })}
-									<IconButton {...props} data-state={undefined} label="Close"><X /></IconButton>
-								{/snippet}
-							</Dialog.Close>
-						{/if}
-					</div>
-					{#if description}
-						<Dialog.Description>
-							{#snippet child({ props })}
-								<p {...props}>{description}</p>
-							{/snippet}
-						</Dialog.Description>
-					{/if}
-					{@render children?.()}
-					{#if actions}
-						<footer>{@render actions()}</footer>
+				<div {...props} class="dialog" class:wide class:full class:sheet class:fit class:navigated={!!nav} class:footed={!!actions} {@attach wide && fit && !full && hold}>
+					{#if nav}
+						<div class="nav">
+							{@render titled()}
+							{@render nav()}
+						</div>
+						<div class="main">
+							<div class="heading">
+								<h3>{heading}</h3>
+								{@render close()}
+							</div>
+							{@render body()}
+						</div>
+					{:else}
+						<div class="heading">
+							{@render titled()}
+							{@render close()}
+						</div>
+						{@render body()}
 					{/if}
 				</div>
 			{/snippet}
@@ -127,6 +156,55 @@
 		margin: 0;
 		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-6);
 		border-bottom: var(--border-width) solid var(--border);
+	}
+
+	.navigated {
+		flex-direction: row;
+	}
+
+	.nav {
+		display: flex;
+		flex: none;
+		flex-direction: column;
+		box-sizing: border-box;
+		width: 12rem;
+		padding: 0 var(--space-2) var(--space-3);
+		overflow: auto;
+		border-right: var(--border-width) solid var(--border);
+		background: var(--canvas);
+		color: var(--muted-fg);
+	}
+
+	.nav h2,
+	.main .heading {
+		display: flex;
+		align-items: center;
+		box-sizing: border-box;
+		min-height: calc(var(--target-min) + 2 * var(--space-4));
+	}
+
+	.nav h2 {
+		padding: 0 var(--space-3);
+		font-size: var(--font-size-sm);
+		font-weight: 600;
+	}
+
+	.main {
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	.main .heading {
+		margin: 0;
+		padding: 0 var(--space-4) 0 var(--space-6);
+		border: none;
+	}
+
+	h3 {
+		margin: 0;
+		font-size: var(--font-size-xl);
 	}
 
 	.wide footer {

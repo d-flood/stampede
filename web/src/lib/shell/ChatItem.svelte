@@ -18,27 +18,37 @@
 		size?: 'md';
 		/** Wraps the title instead of truncating it. */
 		full?: boolean;
+		/** Renders a button for lists outside a Command menu. */
+		plain?: boolean;
 		onselect(): void;
 	};
 
-	let { value, agent, title, time, project, status, fresh = false, size, full = false, onselect }: Props = $props();
+	let { value, agent, title, time, project, status, fresh = false, size, full = false, plain = false, onselect }: Props = $props();
 
 	const Icon = $derived(logos[agent]);
 </script>
 
-<Command.Item {value} onSelect={onselect}>
-	{#snippet child({ props })}
-		<ListItem {...props} {size}>
-			<Icon />
-			<span class="title" class:full>{title}</span>
-			{#if status}<TabMarks {status} {fresh} />{/if}
-			<span class="meta">
-				{#if project}<span class="project">{project}</span><span aria-hidden="true">·</span>{/if}
-				<span aria-hidden="true">{ago(time)}</span>
-			</span>
-		</ListItem>
-	{/snippet}
-</Command.Item>
+{#snippet row(props: Record<string, unknown>)}
+	<ListItem {...props} {size}>
+		<Icon />
+		<span class="title" class:full>{title}</span>
+		{#if status}<TabMarks {status} {fresh} />{/if}
+		<span class="meta">
+			{#if project}<span class="project">{project}</span><span aria-hidden="true">·</span>{/if}
+			<span aria-hidden="true">{ago(time)}</span>
+		</span>
+	</ListItem>
+{/snippet}
+
+{#if plain}
+	{@render row({ element: 'button', onclick: onselect })}
+{:else}
+	<Command.Item {value} onSelect={onselect}>
+		{#snippet child({ props })}
+			{@render row(props)}
+		{/snippet}
+	</Command.Item>
+{/if}
 
 <style>
 	.title {

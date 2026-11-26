@@ -27,7 +27,7 @@ test('the Rig list is in shortcut order, and dragging or moving a Rig moves its 
 		return configured.map((rig) => rig.name);
 	};
 	expect((await shortcuts()).slice(0, 3)).toEqual(['Fake Claude', 'Fake Claude (steer)', 'Fake Codex']);
-	await expect(rows.nth(2).locator('kbd')).toHaveText('Ctrl ⇧ 3');
+	await expect(rows.nth(2).locator('kbd').first()).toHaveText('Ctrl ⇧ 3');
 	await row(dialog, 'Fake Codex').click();
 	const name = dialog.getByRole('textbox', { name: 'Name', exact: true });
 	await name.fill('Unsaved name');
@@ -45,7 +45,7 @@ test('the Rig list is in shortcut order, and dragging or moving a Rig moves its 
 	}
 	await expect(up).toBeDisabled();
 	await expect(name).toHaveValue('Unsaved name');
-	await expect(rows.nth(0).locator('kbd')).toHaveText('Ctrl ⇧ 1');
+	await expect(rows.nth(0).locator('kbd').first()).toHaveText('Ctrl ⇧ 1');
 	await dialog.getByRole('button', { name: 'Move down', exact: true }).click();
 	await expect(rows.nth(1).locator('.name')).toHaveText('Fake Codex');
 	await expect(row(dialog, 'Fake Codex')).toHaveAttribute('aria-expanded', 'true');
@@ -64,7 +64,7 @@ test('the Rig list is in shortcut order, and dragging or moving a Rig moves its 
 	await expect(page.getByRole('menuitem', { name: 'Fake Claude', exact: true })).toContainText('Ctrl ⇧ 2');
 	await page.keyboard.press('Escape');
 	await openSettings(page, 'Rigs');
-	await expect(rows.nth(0).locator('kbd')).toHaveText('Ctrl ⇧ 1');
+	await expect(rows.nth(0).locator('kbd').first()).toHaveText('Ctrl ⇧ 1');
 	await expect(rows.nth(0).locator('.name')).toHaveText('Fake Codex');
 });
 
@@ -91,7 +91,7 @@ test('a Rig edits in place below its row, one at a time', { tag: '@desktop' }, a
 	await dialog.getByRole('button', { name: 'New Rig', exact: true }).click();
 	await expect(dialog.getByRole('textbox', { name: 'Name', exact: true })).toHaveCount(1);
 	await expect(list(dialog).getByRole('listitem').last().getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('');
-	await expect(dialog.getByRole('button', { name: 'New Rig', exact: true })).toBeDisabled();
+	await expect(dialog.getByRole('button', { name: 'New Rig', exact: true })).toHaveCount(0);
 });
 
 test('on phone a Rig opens a full-screen editor and back returns to the list', { tag: '@phone' }, async ({ page }) => {

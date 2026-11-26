@@ -3,14 +3,16 @@
 
 	type Props = Omit<HTMLAttributes<HTMLElement>, 'class'> & {
 		element?: 'div' | 'p' | 'h3' | 'li';
-		/** Labels a run of `md` ListItems within a group, in line with their titles. */
+		/** Heads a group of `md` ListItems, in line with their marks. */
+		size?: 'md';
+		/** Labels a run of `md` ListItems within a group, a step quieter than the group's heading. */
 		sub?: boolean;
 	};
 
-	let { element = 'div', sub = false, children, ...rest }: Props = $props();
+	let { element = 'div', size, sub = false, children, ...rest }: Props = $props();
 </script>
 
-<svelte:element this={element} class={['caption', { sub }]} {...rest}>{@render children?.()}</svelte:element>
+<svelte:element this={element} class={['caption', size, { sub }]} {...rest}>{@render children?.()}</svelte:element>
 
 <style>
 	.caption {
@@ -25,10 +27,17 @@
 		font-weight: normal;
 	}
 
-	/* Icons render at 1.2em of the row's text, so this lands on an md ListItem's title. */
+	.md,
+	.sub {
+		padding-inline: var(--space-3);
+	}
+
+	.md {
+		font-weight: 500;
+	}
+
 	.sub {
 		min-height: var(--control-min);
-		padding-inline-start: calc(2 * var(--space-3) + 1.2 * var(--font-size-md));
 		color: color-mix(in oklab, var(--muted-fg) 75%, transparent);
 	}
 </style>

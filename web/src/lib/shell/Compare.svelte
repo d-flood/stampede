@@ -156,6 +156,10 @@
 	</button>
 {/snippet}
 
+{#snippet preview(body: string)}
+	<span class="body">{#each body.trim().split('\n')[0].split(/`([^`]+)`/) as part, index (index)}{#if index % 2}<code>{part}</code>{:else}{part}{/if}{/each}</span>
+{/snippet}
+
 {#snippet draftList(label: string, drafts: DraftComment[])}
 	<div class="heading">
 		<span class="name"><Eyebrow>{label}</Eyebrow></span>
@@ -171,7 +175,7 @@
 						{#if draft.side === 'target'}<span class="side">Target</span>{/if}
 						{#if draft.suggested}<span class="side">{draft.suggested.rig}</span>{/if}
 					</span>
-					<span class="body">{draft.body.trim().split('\n')[0]}</span>
+					{@render preview(draft.body)}
 				</button>
 			</li>
 		{/each}
@@ -180,7 +184,7 @@
 
 {#snippet displacedList(pr: number, drafts: DraftComment[])}
 	<div class="heading">
-		<span class="name">Displaced</span>
+		<span class="name"><Eyebrow>Displaced</Eyebrow></span>
 		<span class="count">{drafts.length}</span>
 	</div>
 	<ul class="drafts" aria-label="Displaced">
@@ -191,7 +195,7 @@
 					<span class="name" title="{draft.path}, was line {lines}">{draft.path}:{lines}</span>
 					{#if draft.side === 'target'}<span class="side">Target</span>{/if}
 				</span>
-				<span class="body">{draft.body.trim().split('\n')[0]}</span>
+				{@render preview(draft.body)}
 				<span class="draft-actions">
 					<Button title="Choose a new line for this draft" disabled={acting} onclick={() => showDraft(draft, true)}>Re-place</Button>
 					<Button variant="danger" disabled={acting} onclick={() => removeDraft(pr, draft.id)}>Delete</Button>
@@ -446,8 +450,7 @@
 		gap: var(--space-1);
 		min-height: var(--target-min);
 		padding: 0 var(--space-2) 0 var(--space-3);
-		border-block: var(--border-width) solid var(--border);
-		background: var(--surface-2);
+		border-top: var(--border-width) solid var(--border);
 	}
 
 	.list {
@@ -659,6 +662,10 @@
 		white-space: nowrap;
 	}
 
+	.body code {
+		font-family: var(--font-mono);
+	}
+
 	.displaced {
 		display: grid;
 		gap: var(--space-1);
@@ -677,7 +684,11 @@
 	.send {
 		display: grid;
 		gap: var(--space-1);
-		padding: var(--space-2);
+		padding: var(--space-2) var(--space-3) var(--space-4);
+	}
+
+	.send > :global(button) {
+		justify-self: end;
 	}
 
 	.state {

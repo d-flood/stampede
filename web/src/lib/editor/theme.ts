@@ -12,6 +12,19 @@ const chrome = EditorView.theme({
 	'&.cm-focused': { outline: 'none' },
 	'.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.5' },
 	'.cm-content': { caretColor: 'var(--color-cursor)', fontVariantLigatures: 'none' },
+	'.cm-content:not(.cm-lineWrapping)': { paddingRight: 'var(--space-6)' },
+	// Fades lines running past the pane's right edge instead of cutting them mid-glyph.
+	'.cm-scroller:not(:has(> .cm-lineWrapping))::after': {
+		content: '""',
+		position: 'sticky',
+		right: 0,
+		flex: 'none',
+		alignSelf: 'stretch',
+		width: 'var(--space-6)',
+		marginLeft: 'calc(-1 * var(--space-6))',
+		background: 'linear-gradient(to right, transparent, var(--color-bg))',
+		pointerEvents: 'none'
+	},
 	'.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-cursor)' },
 	'.cm-fat-cursor': { background: 'var(--color-cursor)', color: 'var(--color-bg)' },
 	'&:not(.cm-focused) .cm-fat-cursor': { background: 'none', outline: 'var(--border-width) solid var(--color-cursor)' },
@@ -19,8 +32,9 @@ const chrome = EditorView.theme({
 		{ backgroundColor: 'var(--color-editor-selection)' },
 	'.cm-activeLine': { backgroundColor: 'color-mix(in oklab, var(--hover) 50%, transparent)' },
 	'.cm-gutters': { backgroundColor: 'var(--color-bg)', color: 'color-mix(in oklab, var(--muted-fg) 70%, var(--color-bg))', border: 'none' },
+	'.cm-gutter:first-child .cm-gutterElement': { paddingLeft: 'var(--space-4)' },
 	'.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--color-fg)' },
-	'.cm-foldGutter .cm-gutterElement': { padding: '0 var(--space-1)' },
+	'.cm-foldGutter .cm-gutterElement': { padding: 0 },
 	'.cm-foldGutter .cm-gutterElement > *': { opacity: 0, transition: 'opacity var(--dur-fast)' },
 	'.cm-gutters:hover .cm-foldGutter .cm-gutterElement > *': { opacity: 1 },
 	'.cm-foldPlaceholder': { backgroundColor: 'var(--surface-2)', border: 'none', color: 'var(--muted-fg)' },
@@ -90,10 +104,10 @@ export const diffTheme = (whole: boolean) => EditorView.theme({
 	'&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': { backgroundColor: whole ? 'transparent' : removed(12) },
 	'&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': { backgroundColor: whole ? 'transparent' : added(12) },
 	'&.cm-merge-a .cm-changedText, & .cm-deletedChunk .cm-deletedText, &.cm-merge-b .cm-deletedText': {
-		background: removed(14)
+		background: removed(8)
 	},
-	'&.cm-merge-b .cm-changedText': { background: added(14) },
-	'&.cm-merge-a .cm-diffWholeLine .cm-changedText, &.cm-merge-b .cm-diffWholeLine .cm-changedText, & .cm-diffWholeLine .cm-changedText': { background: 'none' },
+	'&.cm-merge-b .cm-changedText': { background: added(8) },
+	'&.cm-merge-a .cm-diffWholeLine .cm-changedText, &.cm-merge-b .cm-diffWholeLine .cm-changedText, & .cm-diffWholeLine .cm-changedText, &.cm-merge-a .cm-changedSpace .cm-changedText, &.cm-merge-b .cm-changedSpace .cm-changedText, & .cm-changedSpace .cm-changedText': { background: 'none' },
 	'&.cm-merge-a .cm-changedLineGutter, & .cm-deletedLineGutter': { background: whole ? 'var(--git-deleted)' : removed(12) },
 	'&:not(.cm-merge-a) .cm-changedLineGutter': { background: whole ? 'var(--git-added)' : added(12) },
 	'& .cm-inlineChangedLineGutter': { background: 'var(--git-modified)' },
@@ -101,6 +115,8 @@ export const diffTheme = (whole: boolean) => EditorView.theme({
 	'&:not(.cm-merge-a) .cm-diffChangedRow:not(.cm-changedLineGutter, .cm-inlineChangedLineGutter)': { backgroundColor: whole ? 'transparent' : added(12) },
 	'&.cm-merge-a .cm-lineNumbers .cm-diffChangedRow, & .cm-originalNumbers .cm-diffDeletedRow': { color: 'var(--git-deleted)' },
 	'&:not(.cm-merge-a) .cm-lineNumbers .cm-diffChangedRow': { color: 'var(--git-added)' },
+	// Equal number columns give both sides of a split view the same width, so unchanged lines wrap alike.
+	'& .cm-lineNumbers .cm-gutterElement': { minWidth: '3ch' },
 	'& .cm-originalNumbers .cm-gutterElement': { minWidth: '3ch', paddingInline: 'var(--space-2) var(--space-3)', textAlign: 'right' },
 	'& .cm-diffSigns .cm-gutterElement': { minWidth: '1.5ch', paddingInline: 'var(--space-1)', fontFamily: 'var(--font-mono)', textAlign: 'center' },
 	'& .cm-diffSigns-a .cm-gutterElement': { color: 'var(--git-deleted)' },

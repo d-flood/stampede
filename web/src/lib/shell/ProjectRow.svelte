@@ -50,7 +50,7 @@
 	}
 </script>
 
-<li class={compact ? 'compact' : 'card'} class:tray={compact && listed}>
+<li class={compact ? 'compact' : 'card'}>
 	<Menu context items={[
 		{ label: 'Change project icon…', onselect: () => onicon(project) },
 		...(trunk
@@ -92,6 +92,7 @@
 			</button>
 		{/snippet}
 	</Menu>
+	<div class="unit" class:boxed={compact && listed}>
 	{#if tiles.length}
 		<div class="worktrees" class:shut={!listed} role="group" aria-label="Worktrees of {label}">
 			{#each tiles as tile (tile.id)}
@@ -128,6 +129,7 @@
 			</span>
 		{/each}
 	{/if}
+	</div>
 </li>
 
 <style>
@@ -159,11 +161,33 @@
 		}
 	}
 
-	.tray {
-		margin: calc(-1 * var(--space-1));
-		padding: var(--space-1);
+	/* Lays its worktrees and Run progress out as the Project's own children until it boxes them. */
+	.unit {
+		display: contents;
+	}
+
+	/* Sits clear of the count badge on the Project's corner, tied to the Project by a stem. */
+	.boxed {
+		--drop: calc(var(--space-3) + var(--space-1));
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: var(--space-1);
+		margin-top: var(--space-3);
+		padding: calc((var(--square) - var(--target-min)) / 2) 0;
+		border-radius: var(--radius-tile);
 		background: var(--color-bg);
 		box-shadow: inset 0 0 0 var(--border-width) var(--border-strong);
+	}
+
+	.boxed::before {
+		content: '';
+		position: absolute;
+		bottom: 100%;
+		left: calc(50% - var(--border-width) / 2);
+		height: var(--drop);
+		border-left: var(--border-width) solid var(--border-strong);
 	}
 
 	.project {
@@ -230,7 +254,7 @@
 		position: absolute;
 		top: 22%;
 		bottom: 22%;
-		left: calc(-1 * var(--space-3) - var(--square) + var(--target-min));
+		left: calc(-1 * var(--space-3) - (var(--square) - var(--target-min)) / 2);
 		width: 4px;
 		border-radius: 0 4px 4px 0;
 		background: var(--color-fg);
@@ -399,11 +423,16 @@
 		}
 	}
 
+	/* Centred on the corner, so it rides the tile's edge instead of the icon. */
 	.count {
 		z-index: 1;
-		bottom: calc(-1 * var(--space-1) - var(--border-width));
-		left: calc(-1 * var(--space-1) - var(--border-width));
+		bottom: calc(-0.7em - var(--border-width));
+		left: calc(-0.7em - var(--border-width));
 		color: var(--muted-fg);
+	}
+
+	.compact:has(.count) {
+		margin-bottom: var(--space-2);
 	}
 
 	.spinner,
@@ -460,9 +489,11 @@
 	}
 
 	.progress {
+		align-self: center;
 		color: var(--status-done);
 		font-size: var(--font-size-sm);
 		font-variant-numeric: tabular-nums;
+		line-height: 1;
 	}
 
 	.worktrees {
@@ -470,7 +501,7 @@
 		flex-direction: column;
 		gap: var(--space-1);
 		min-height: 0;
-		padding-left: calc(var(--square) - var(--target-min));
+		align-items: center;
 		clip-path: inset(calc(-1 * var(--space-1) - var(--border-width)) -100vmax);
 		transition:
 			height var(--dur-med) var(--ease-out),
@@ -481,6 +512,7 @@
 	}
 
 	.card .worktrees {
+		align-items: stretch;
 		margin-left: calc(var(--space-2) + var(--square) / 2);
 		padding-left: var(--space-3);
 	}
@@ -524,8 +556,8 @@
 		padding: 0 var(--space-2) 0 0;
 	}
 
-	.worktree::before,
-	.worktree:not(:last-child)::after {
+	.card .worktree::before,
+	.card .worktree:not(:last-child)::after {
 		content: '';
 		position: absolute;
 		left: calc(-1 * var(--space-2));

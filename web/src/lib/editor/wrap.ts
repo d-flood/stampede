@@ -27,7 +27,7 @@ function hangDeletions(view: EditorView) {
 	view.requestMeasure({
 		read: () => null,
 		write: () => {
-			for (const line of view.dom.querySelectorAll<HTMLElement>('.cm-deletedLine')) {
+			for (const line of view.dom.querySelectorAll<HTMLElement>('.cm-deletedChunk .cm-deletedLine')) {
 				const columns = countColumn(/^[\t ]*/.exec(line.textContent ?? '')![0], view.state.tabSize);
 				line.style.setProperty('--hang', `${columns}ch`);
 			}
@@ -53,7 +53,8 @@ export const indentedWrap = [
 		{ decorations: (plugin) => plugin.decorations }
 	),
 	EditorView.theme({
+		'& > .cm-scroller > .cm-content': { paddingRight: 'var(--space-4)' },
 		'.cm-line': { paddingLeft: 'calc(var(--space-2) + var(--hang, 0ch))', textIndent: 'calc(-1 * var(--hang, 0ch))' },
-		'.cm-deletedLine': { paddingLeft: 'var(--hang, 0ch)', textIndent: 'calc(-1 * var(--hang, 0ch))' }
+		'.cm-deletedChunk .cm-deletedLine': { paddingLeft: 'var(--hang, 0ch)', textIndent: 'calc(-1 * var(--hang, 0ch))' }
 	})
 ];

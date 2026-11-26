@@ -156,7 +156,7 @@ const debounce = ViewPlugin.fromClass(
 );
 
 const style = EditorView.theme({
-	'.cm-changeGutter': { width: 'var(--space-3)' },
+	'.cm-changeGutter': { width: 'var(--space-2)' },
 	'.cm-changeGutter .cm-gutterElement': { position: 'relative' },
 	'.cm-change-added, .cm-change-modified, .cm-change-deleted': { cursor: 'pointer' },
 	'.cm-change-added': { boxShadow: 'inset 3px 0 var(--git-added)' },
@@ -347,12 +347,57 @@ function removal(view: EditorView, widget: WidgetType, block: BlockInfo) {
 	return getChunks(view.state)?.chunks.find((chunk) => chunk.fromB === block.from && chunk.toA > chunk.fromA);
 }
 const wholeLine = Decoration.line({ class: 'cm-diffWholeLine' });
+const space = Decoration.mark({ class: 'cm-changedSpace' });
 
-/** Tints every gutter cell on a changed line, so the row reads as one band with its code, and marks lines whose chunk has nothing on the other side. */
+const highlighted = (node: Node): node is HTMLElement => node instanceof HTMLElement && node.classList.contains('cm-deletedText');
+
+/** Moves whitespace at one edge of a highlighted span out of the highlight; true when the whole span was whitespace. */
+function unhighlight(span: HTMLElement, edge: 'start' | 'end') {
+	const text = span.textContent ?? '';
+	const length = (edge === 'start' ? /^\s+/ : /\s+$/).exec(text)?.[0].length ?? 0;
+	if (length === text.length) span.classList.remove('cm-deletedText');
+	if (!length || length === text.length) return length > 0;
+	const plain = span.cloneNode() as HTMLElement;
+	plain.classList.remove('cm-deletedText');
+	plain.textContent = edge === 'start' ? text.slice(0, length) : text.slice(-length);
+	span.textContent = edge === 'start' ? text.slice(length) : text.slice(0, -length);
+	span[edge === 'start' ? 'before' : 'after'](plain);
+	return false;
+}
+
+/** Merge draws a unified view's deletions as plain DOM in a widget, out of reach of decorations, so whitespace leaves their word highlights here. */
+const trimDeletions = ViewPlugin.define((view) => {
+	const trim = () =>
+		view.requestMeasure({
+			read: () => null,
+			write: () => {
+				for (const chunk of view.dom.querySelectorAll<HTMLElement>('.cm-deletedChunk:not([data-trimmed])')) {
+					chunk.dataset.trimmed = '';
+					for (const line of chunk.querySelectorAll('.cm-deletedLine > del')) {
+						const nodes = [...line.childNodes];
+						for (let start = 0; start < nodes.length; start++) {
+							if (!highlighted(nodes[start])) continue;
+							let end = start;
+							while (end + 1 < nodes.length && highlighted(nodes[end + 1])) end++;
+							let first = start;
+							while (first <= end && unhighlight(nodes[first] as HTMLElement, 'start')) first++;
+							for (let last = end; last >= first && unhighlight(nodes[last] as HTMLElement, 'end'); last--);
+							start = end;
+						}
+					}
+				}
+			}
+		});
+	trim();
+	return { update: trim };
+});
+
+/** Tints every gutter cell on a changed line, so the row reads as one band with its code, marks lines whose chunk has nothing on the other side, and keeps word highlights off whitespace at the edges of each change. */
 export function diffRows(side: 'a' | 'b') {
 	const rows = (state: EditorState) => {
 		const gutters = new RangeSetBuilder<GutterMarker>();
 		const lines = new RangeSetBuilder<Decoration>();
+		const spaces = new RangeSetBuilder<Decoration>();
 		const doc = state.doc;
 		for (const chunk of getChunks(state)?.chunks ?? []) {
 			const [from, to] = side === 'a' ? [chunk.fromA, chunk.toA] : [chunk.fromB, chunk.toB];
@@ -366,15 +411,30 @@ export function diffRows(side: 'a' | 'b') {
 				if (alone || covered(line.from, line.to)) lines.add(line.from, line.from, wholeLine);
 				pos = line.to + 1;
 			}
+			for (const change of chunk.changes) {
+				const end = Math.min(doc.length, from + (side === 'a' ? change.toA : change.toB));
+				for (let pos = from + (side === 'a' ? change.fromA : change.fromB); pos < end; ) {
+					const line = doc.lineAt(pos);
+					const text = doc.sliceString(pos, Math.min(end, line.to));
+					const lead = text.length - text.trimStart().length;
+					const trail = lead === text.length ? 0 : text.length - text.trimEnd().length;
+					if (lead) spaces.add(pos, pos + lead, space);
+					if (trail) spaces.add(pos + text.length - trail, pos + text.length, space);
+					pos = line.to + 1;
+				}
+			}
 		}
-		return { gutters: gutters.finish(), lines: lines.finish() };
+		return { gutters: gutters.finish(), lines: lines.finish(), spaces: spaces.finish() };
 	};
-	return StateField.define<{ gutters: RangeSet<GutterMarker>; lines: DecorationSet }>({
+	return StateField.define<{ gutters: RangeSet<GutterMarker>; lines: DecorationSet; spaces: DecorationSet }>({
 		create: rows,
 		update: (value, transaction) => (transaction.docChanged || transaction.effects.length > 0 ? rows(transaction.state) : value),
 		provide: (field) => [
 			gutterLineClass.from(field, (value) => value.gutters),
 			EditorView.decorations.from(field, (value) => value.lines),
+			// Merge's own highlights sit at low precedence; lowest wraps them, so whitespace inside can drop its background.
+			Prec.lowest(EditorView.decorations.from(field, (value) => value.spaces)),
+			trimDeletions,
 			gutterWidgetClass.of((view, widget, block) => (collapse(widget) ? collapsedRow : removal(view, widget, block) ? deletedRow : null))
 		]
 	});

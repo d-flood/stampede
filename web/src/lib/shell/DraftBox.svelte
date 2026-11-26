@@ -56,14 +56,15 @@
 	}
 </script>
 
-<div class="draft">
+<div class="draft" class:saved>
 	{#if caption}<p class="caption">{caption}</p>{/if}
 	{#key generation}
 		<MarkdownEditor bind:text {label} autofocus={autofocus || generation > 0} caretAtEnd onsave={save} />
 	{/key}
-	<div class="actions">
+	<!-- svelte-ignore a11y_no_static_element_interactions (Keeps focus in the note, whose reflow on blur would move a button out from under the click.) -->
+	<div class="actions" onmousedown={(event) => event.preventDefault()}>
 		{#if suggestion !== undefined}
-			<Button variant="ghost" disabled={busy} onclick={suggest}>Suggest a change</Button>
+			<Button disabled={busy} onclick={suggest}>Suggest a change</Button>
 		{/if}
 		{#if error}<span class="error" role="alert">{error}</span>{/if}
 		<span class="gap"></span>
@@ -85,7 +86,7 @@
 		display: grid;
 		gap: var(--space-2);
 		max-width: 60rem;
-		padding: var(--space-2);
+		padding: var(--space-3);
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg);
 		background: var(--card);
@@ -98,11 +99,17 @@
 		font-size: var(--font-size-sm);
 	}
 
+	/* Pulls the text out to the card's padding, so the edit frame shown on focus surrounds it. */
 	.draft :global(.cm-editor) {
-		min-height: 3lh;
-		border: var(--border-width) solid var(--border);
+		margin-inline: calc(-1 * (var(--border-width) + var(--space-2)));
+		border: var(--border-width) solid transparent;
 		border-radius: var(--radius-md);
 		background: none;
+		transition: border-color var(--dur-fast);
+	}
+
+	.draft:not(.saved) :global(.cm-editor) {
+		min-height: 3lh;
 	}
 
 	.draft :global(.cm-editor:not(.cm-focused) .cm-activeLine) {

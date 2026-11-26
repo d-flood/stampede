@@ -35,7 +35,7 @@
 	import GitBranch from '~icons/ph/git-branch';
 	import GitFork from '~icons/ph/git-fork';
 
-	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, changes = 0, onchanges, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; changes?: number; onchanges?(): void; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
+	let { device, chat, chats, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, changes = 0, onchanges, codexResets = null, ondiff, onfile, oncanvas, scroller = $bindable() }: { device: Device; chat: Chat; chats: Chat[]; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; changes?: number; onchanges?(): void; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void; scroller?: HTMLElement | null } =
 		$props();
 
 	const subagents = $derived(flatten(items));
@@ -70,7 +70,6 @@
 	let rewinding = $state(false);
 	let preview = $state<{ path: string; line?: number; anchor: DOMRect }>();
 	let rewindTarget = $state<number>();
-	let scroller = $state<HTMLElement>();
 	const rewindUnavailable = $derived.by(() => {
 		if (!live) return 'Reconnect to rewind.';
 		if (!attached) return 'Loading the conversation…';
@@ -265,7 +264,6 @@
 	{:else}
 		<SubagentHeader subagent={selected} path={opened} {trail} main={items} onopen={open} />
 	{/if}
-	{#if form() === 'desktop' && !selected}<MessageNav {items} {scroller} />{/if}
 	<div class="conversation" hidden={!!selected}>
 		<div class="transcript" bind:this={scroller} {@attach (node) => follow(node, (bottom) => (ended = bottom))}>
 			<div class="column">
@@ -329,8 +327,8 @@
 	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }
 	.report .label { font-size: var(--font-size-sm); }
 	.conversation { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
-	.conversation::before, .conversation::after { content: ''; position: absolute; z-index: 1; right: 0; left: 0; height: calc(4 * var(--space-2)); pointer-events: none; }
-	.conversation::before { top: 0; background: linear-gradient(var(--color-bg), transparent); }
+	.phone .conversation::before, .conversation::after { content: ''; position: absolute; z-index: 1; right: 0; left: 0; height: calc(4 * var(--space-2)); pointer-events: none; }
+	.phone .conversation::before { top: 0; background: linear-gradient(var(--color-bg), transparent); }
 	.conversation::after { bottom: 0; background: linear-gradient(transparent, var(--color-bg)); }
 	.conversation[hidden] { display: none; }
 	.latest { position: absolute; z-index: 2; right: 0; bottom: calc(100% + var(--space-2)); border-radius: var(--radius-pill); box-shadow: var(--shadow-float); }

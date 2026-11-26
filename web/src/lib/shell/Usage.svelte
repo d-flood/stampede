@@ -337,7 +337,7 @@
 	}
 
 	.codex {
-		--brand: #52669e;
+		--brand: #10a37f;
 	}
 
 	.antigravity {
@@ -346,10 +346,6 @@
 
 	.copilot {
 		--brand: var(--color-fg);
-	}
-
-	:global([data-scheme='dark']) .codex {
-		--brand: #b7c5ee;
 	}
 
 	.brand {

@@ -59,8 +59,10 @@
 	let container: HTMLDivElement;
 	let moving = $state(false);
 	let width = $state(0);
+	let columns = $state(0);
 	const narrow = $derived(width > 0 && width < 720);
 	const layout = $derived(narrow ? 'unified' : diff.layout);
+	const wrapped = $derived(layout === 'unified' ? narrow : width > 0 && width < 2 * columns);
 	let shown = $state.raw<Shown>();
 	let revision = $state(0);
 	const counts = $derived.by(() => {
@@ -247,9 +249,9 @@
 	});
 
 	$effect(() => {
-		const wrap = narrow;
+		const wrap = wrapped;
 		untrack(() => {
-			if (shown?.views.length === 1) shown.b.dispatch({ effects: wrapping.reconfigure(wrap ? indentedWrap : []) });
+			for (const view of shown?.views ?? []) view.dispatch({ effects: wrapping.reconfigure(wrap ? indentedWrap : []) });
 		});
 	});
 
@@ -528,8 +530,8 @@
 		if (layout === 'split') {
 			const view = new MergeView({
 				parent: container,
-				a: { doc: a, extensions: [shared, diffSigns('a'), diffRows('a'), EditorState.readOnly.of(true), commenting('target', false)] },
-				b: { doc: b, extensions: [working, diffSigns('b'), diffRows('b'), commenting('source', false)] },
+				a: { doc: a, extensions: [shared, diffSigns('a'), diffRows('a'), EditorState.readOnly.of(true), commenting('target', false), wrapping.of(wrapped ? indentedWrap : [])] },
+				b: { doc: b, extensions: [working, diffSigns('b'), diffRows('b'), commenting('source', false), wrapping.of(wrapped ? indentedWrap : [])] },
 				revertControls: editable ? 'a-to-b' : undefined,
 				highlightChanges: !whole,
 				collapseUnchanged: {},
@@ -562,7 +564,7 @@
 					diffSigns('b'),
 					diffRows('b'),
 					commenting('source', true),
-					wrapping.of(narrow ? indentedWrap : []),
+					wrapping.of(wrapped ? indentedWrap : []),
 					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {}, diffConfig })
 				]
 			});
@@ -660,7 +662,8 @@
 		</div>
 	{/if}
 	<Conflict {sync} onshowdiff={(disk) => shown && onshowdiff(disk, shown.b.state.doc.toString())} />
-	<div class="content" class:narrow bind:this={container} bind:clientWidth={width} hidden={!!pictures}>
+	<div class="content" class:wrapped bind:this={container} bind:clientWidth={width} hidden={!!pictures}>
+		<span class="probe" aria-hidden="true"><span bind:clientWidth={columns}></span></span>
 		{#if note}<p>{note}</p>{/if}
 	</div>
 	{#if pictures}
@@ -695,19 +698,26 @@
 		}
 	}
 
-	/* An overlay rather than a mask, so Draft comments can sit above the fade. */
-	.content:not(.narrow) > :global(.cm-editor > .cm-scroller::after),
-	.content:not(.narrow) :global(.cm-mergeViewEditor > .cm-editor > .cm-scroller::after) {
-		content: '';
-		position: sticky;
-		top: 0;
-		right: 0;
-		flex: none;
-		align-self: stretch;
+	/* Lengthens the editor's fade, an overlay rather than a mask so Draft comments can sit above it. */
+	.content:not(.wrapped) > :global(.cm-editor > .cm-scroller::after),
+	.content:not(.wrapped) :global(.cm-mergeViewEditor > .cm-editor > .cm-scroller::after) {
 		width: calc(3 * var(--space-6));
 		margin-left: calc(-3 * var(--space-6));
-		background: linear-gradient(to right, transparent, var(--color-bg));
-		pointer-events: none;
+	}
+
+	/* Measures a hundred columns of code, past which a side by side view stops wrapping. */
+	.probe {
+		position: absolute;
+		width: 0;
+		height: 0;
+		overflow: hidden;
+	}
+
+	.probe > span {
+		display: block;
+		width: 100ch;
+		font-family: var(--font-mono);
+		font-size: var(--font-size-code);
 	}
 
 	.counts {

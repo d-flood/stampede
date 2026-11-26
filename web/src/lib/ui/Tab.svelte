@@ -113,7 +113,6 @@
 		flex: 0 1 auto;
 		min-width: 5rem;
 		max-width: 13rem;
-		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 	}
 
 	.tab.closable {
@@ -122,60 +121,52 @@
 
 	.bottom {
 		min-width: 8rem;
-		border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 	}
 
+	/* The button keeps the full touch target; ::before paints the pill inside it. */
 	.select {
+		--pill: none;
 		position: relative;
+		isolation: isolate;
 		display: inline-flex;
 		flex: 1;
 		align-items: center;
 		gap: var(--space-2);
 		min-width: 0;
-		min-height: calc(var(--target-min) + var(--space-2));
-		margin-bottom: calc(-1 * var(--border-width));
+		min-height: calc(var(--target-min) + var(--space-1));
 		padding: 0 var(--space-3);
-		border: var(--border-width) solid transparent;
-		border-bottom: none;
-		border-radius: inherit;
+		border: none;
+		border-radius: var(--radius-md);
 		background: none;
 		color: var(--muted-fg);
 		font: inherit;
 		white-space: nowrap;
 		cursor: pointer;
-		transition:
-			background var(--dur-fast),
-			color var(--dur-fast);
+		transition: color var(--dur-fast);
+	}
+
+	.select::before {
+		content: '';
+		position: absolute;
+		z-index: -1;
+		inset: 0;
+		border-radius: var(--radius-md);
+		background: var(--pill);
+		transition: background var(--dur-fast);
 	}
 
 	.select:not(.active, .closing):hover {
-		background: var(--hover);
+		--pill: color-mix(in oklab, var(--hover) 55%, transparent);
 		color: var(--color-fg);
 	}
 
 	.bottom .select {
+		min-height: var(--target-min);
 		font-size: var(--font-size-sm);
-		margin-top: calc(-1 * var(--border-width));
-		margin-bottom: 0;
-		border: var(--border-width) solid transparent;
-		border-top: none;
 	}
 
-	.bottom .active {
-		border-color: transparent;
-		background: none;
-	}
-
-	.bottom .active::before {
-		content: '';
-		position: absolute;
-		top: 0;
-		left: 50%;
-		width: calc(2 * var(--tile));
-		height: calc(2 * var(--border-width));
-		border-radius: var(--radius-pill);
-		background: var(--accent);
-		translate: -50%;
+	.bottom .select::before {
+		inset: calc((var(--target-min) - var(--control-min)) / 2) 0;
 	}
 
 	.closable .select {
@@ -215,8 +206,7 @@
 	}
 
 	.active {
-		border-color: var(--border);
-		background: var(--color-bg);
+		--pill: var(--selected-bg);
 		color: var(--color-fg);
 	}
 
@@ -249,7 +239,7 @@
 		font-weight: 400;
 	}
 
-	.waiting {
-		background: color-mix(in oklab, var(--status-waiting) 16%, transparent);
+	.select.waiting:not(.active) {
+		--pill: color-mix(in oklab, var(--status-waiting) 16%, transparent);
 	}
 </style>

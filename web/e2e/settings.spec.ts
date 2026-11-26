@@ -118,12 +118,13 @@ test('code size updates a running terminal and the editor', { tag: '@desktop' },
 test('checking origin in the background is on until turned off in the config', { tag: '@desktop' }, async ({ page }) => {
 	await page.goto('/');
 	const settings = await openSettings(page, 'General');
-	const checking = settings.getByRole('radiogroup', { name: 'Check origin' });
-	await expect(checking.getByRole('radio', { name: 'On', exact: true })).toBeChecked();
-	await checking.getByRole('radio', { name: 'Off', exact: true }).click();
-	await expect(checking.getByRole('radio', { name: 'Off', exact: true })).toBeChecked();
+	const checking = settings.getByRole('switch', { name: 'Check origin' });
+	await expect(checking).toBeChecked();
+	await checking.click();
+	await expect(checking).not.toBeChecked();
 	await expect.poll(() => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).toMatch(/^auto_fetch = false$/m);
-	await checking.getByRole('radio', { name: 'On', exact: true }).click();
+	await checking.press('Space');
+	await expect(checking).toBeChecked();
 	await expect.poll(() => readFileSync(`${process.env.STAMPEDE_E2E_ROOT}/config.toml`, 'utf8')).not.toContain('auto_fetch');
 });
 

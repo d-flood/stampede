@@ -1,21 +1,21 @@
 <script lang="ts">
+	import Kbd from '#lib/ui/Kbd.svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
 
 	const glyphs: Record<string, string> = { Shift: '⇧' };
 
 	let { keys, ...rest }: HTMLAttributes<HTMLElement> & { keys: string } = $props();
-	const shown = $derived(keys.split('+').map((key) => glyphs[key] ?? key).join(' '));
+	const shown = $derived(keys.split('+').map((key) => glyphs[key] ?? key));
 </script>
 
-<kbd {...rest}>{shown}</kbd>
+<kbd {...rest}>{#each shown as key, index (index)}{#if index}{' '}{/if}<Kbd>{key}</Kbd>{/each}</kbd>
 
 <style>
 	kbd {
+		display: inline-flex;
 		flex: none;
-		color: var(--muted-fg);
+		gap: 2px;
 		font: inherit;
-		font-size: var(--font-size-sm);
-		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
 	}
 </style>

@@ -19,10 +19,11 @@
 <script lang="ts">
 	import Chips from '#lib/chat/Chips.svelte';
 	import { defaultMode, modes } from '#lib/config.svelte.ts';
-	import type { Session, Setting, Settings } from '#lib/device.svelte.ts';
+	import type { Chat, Session, Setting, Settings } from '#lib/device.svelte.ts';
 	import type { Git } from '#lib/git.ts';
 	import { form } from '#lib/form.ts';
 	import ChatFinder from '#lib/shell/ChatFinder.svelte';
+	import ChatItem from '#lib/shell/ChatItem.svelte';
 	import { openSettings } from '#lib/shell/Settings.svelte';
 	import type { TabItems } from '#lib/shell/new-tab.ts';
 	import Composer from '#lib/shell/Composer.svelte';
@@ -37,9 +38,22 @@
 	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Plus from '~icons/ph/plus';
 
-	type Props = { name: string; path: string; git?: Git; items: TabItems; sessions: Session[]; reading: boolean; onread: () => void; onsession(session: Session): void };
+	type Props = {
+		name: string;
+		path: string;
+		git?: Git;
+		items: TabItems;
+		sessions: Session[];
+		reading: boolean;
+		/** Chats in this Project's worktrees that need attention. */
+		waiting: Chat[];
+		labels: Map<string, string>;
+		onread: () => void;
+		onsession(session: Session): void;
+		onchat(chat: Chat): void;
+	};
 
-	let { name, path, git, items, sessions, reading, onread, onsession }: Props = $props();
+	let { name, path, git, items, sessions, reading, waiting, labels, onread, onsession, onchat }: Props = $props();
 
 	const id = $props.id();
 	const phone = $derived(form() === 'phone');
@@ -133,6 +147,16 @@
 				</button>
 			{/each}
 		</div>
+		{#if waiting.length}
+			<section class="recent" aria-labelledby="{id}-waiting">
+				<h3 id="{id}-waiting">Waiting</h3>
+				<div class="waiting">
+					{#each waiting as chat (chat.id)}
+						<ChatItem plain value="chat:{chat.id}" agent={chat.agent} title={chat.title ?? chat.rig} time={chat.created / 1e6} project={labels.get(chat.projectId)} status={chat.status} fresh={!chat.title} size="md" onselect={() => onchat(chat)} />
+					{/each}
+				</div>
+			</section>
+		{/if}
 		{#if reading || sessions.length}
 			<section class="recent" aria-labelledby="{id}-recent">
 				<h3 id="{id}-recent">Recent sessions</h3>
@@ -306,6 +330,12 @@
 
 	.recent {
 		margin-top: 1.75rem;
+	}
+
+	.waiting {
+		display: flex;
+		flex-direction: column;
+		margin: 0 calc(-1 * var(--space-3));
 	}
 
 	h3 {

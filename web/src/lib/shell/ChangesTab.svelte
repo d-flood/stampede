@@ -87,7 +87,7 @@
 
 <section class="stack" aria-label="Changes">
 	<header class="summary">
-		<span>{changes.length} changed {changes.length === 1 ? 'file' : 'files'}</span>
+		<h2>{changes.length} changed {changes.length === 1 ? 'file' : 'files'}</h2>
 		{#if totals.added}<span class="added">+{totals.added}</span>{/if}
 		{#if totals.removed}<span class="removed">−{totals.removed}</span>{/if}
 		<span class="fill"></span>
@@ -127,16 +127,25 @@
 		box-sizing: border-box;
 	}
 
+	/* Last baselines line up the title with a button's label rather than its leading icon. */
 	.summary {
 		display: flex;
-		align-items: baseline;
+		align-items: last baseline;
 		gap: var(--space-2);
 		max-width: var(--measure);
-		margin: 0 auto var(--space-4);
+		margin: 0 auto var(--space-6);
+		padding-right: calc(var(--space-1) + var(--border-width));
+		box-sizing: border-box;
+	}
+
+	h2 {
+		margin: 0;
+		font-size: var(--font-size-xl);
 		font-weight: 600;
 	}
 
 	.file {
+		box-sizing: border-box;
 		max-width: var(--measure);
 		margin: 0 auto var(--space-4);
 		overflow: clip;
