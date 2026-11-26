@@ -528,7 +528,7 @@
 		padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
 		border: var(--border-width) solid color-mix(in oklab, var(--c) 45%, var(--border));
 		border-radius: var(--radius-lg);
-		background: var(--color-bg);
+		background: var(--card);
 	}
 
 	.card::before {

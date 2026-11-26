@@ -72,6 +72,8 @@
 	--raised: var(--color-bg);
 	/* A card floating on content, such as the Composer: never darker than the content it sits on. */
 	--card: var(--color-bg);
+	/* A step below --card in either scheme: the ground a wide dialog's grouped cards sit on, or a well inside one. */
+	--plane: var(--surface-1);
 	/* Menus and popovers floating over everything else: the lightest surface in light schemes. */
 	--float: var(--color-bg);
 	/* Scales diff tints: pale greens and reds need more weight on a light background. */
@@ -169,6 +171,7 @@
 	--chrome: color-mix(in lab, var(--canvas) 55%, var(--color-bg));
 	--raised: color-mix(in lab, var(--color-bg) 80%, var(--color-fg));
 	--card: var(--surface-1);
+	--plane: var(--color-bg);
 	--float: var(--surface-3);
 	--diff-tint: 1;
 }

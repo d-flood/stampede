@@ -1,10 +1,17 @@
 <script lang="ts">
 	import type { HTMLInputAttributes } from 'svelte/elements';
+	import MagnifyingGlass from '~icons/ph/magnifying-glass';
 
-	let { value = $bindable(), ref = $bindable(), mono = false, ...rest }: HTMLInputAttributes & { ref?: HTMLInputElement; mono?: boolean } = $props();
+	let { value = $bindable(), ref = $bindable(), mono = false, search = false, ...rest }: HTMLInputAttributes & { ref?: HTMLInputElement; mono?: boolean; search?: boolean } = $props();
 </script>
 
-<input bind:this={ref} bind:value class:mono {...rest} />
+{#snippet field()}<input bind:this={ref} bind:value class:mono class:search {...rest} />{/snippet}
+
+{#if search}
+	<span class="searchbox"><MagnifyingGlass aria-hidden="true" />{@render field()}</span>
+{:else}
+	{@render field()}
+{/if}
 
 <style>
 	input {
@@ -26,6 +33,27 @@
 
 	.mono::placeholder {
 		font-family: var(--font-ui);
+	}
+
+	.searchbox {
+		position: relative;
+		display: block;
+		min-width: 0;
+	}
+
+	.searchbox > :global(svg) {
+		position: absolute;
+		top: 50%;
+		left: var(--space-2);
+		color: var(--muted-fg);
+		pointer-events: none;
+		translate: 0 -50%;
+	}
+
+	.search {
+		padding-left: calc(var(--space-2) + 1.35em);
+		border-color: var(--border);
+		background: color-mix(in oklab, var(--hover) 55%, transparent);
 	}
 
 	input:focus-visible {

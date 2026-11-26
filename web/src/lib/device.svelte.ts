@@ -111,6 +111,8 @@ export type Chat = {
 	rig: string;
 	agent: Agent;
 	status: Status;
+	/** Nanoseconds since the epoch. */
+	created: number;
 	closing?: true;
 	agentSession?: string;
 	title?: string;

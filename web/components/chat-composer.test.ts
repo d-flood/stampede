@@ -11,7 +11,7 @@ const capabilities: Capabilities = { ready: false, rewindsFiles: false, forks: t
 
 async function mount(overrides: Partial<Chat> = {}) {
 	const send = vi.fn();
-	const chat: Chat = { id: crypto.randomUUID(), projectId: 'project', rig: 'Fake Claude', agent: 'claude-code', status: 'done', context: null, tokens: null, queued: [], queueRevision: 0, todos: [], answeredQuestions: [], settings: {}, ...overrides };
+	const chat: Chat = { id: crypto.randomUUID(), projectId: 'project', rig: 'Fake Claude', agent: 'claude-code', status: 'done', created: 0, context: null, tokens: null, queued: [], queueRevision: 0, todos: [], answeredQuestions: [], settings: {}, ...overrides };
 	const view = await render(ChatComposer, {
 		device: { send } as unknown as Device,
 		chat,

@@ -4,11 +4,16 @@ export type TabGroup = { tabs: string[]; active?: string };
 
 export type Split = { left: TabGroup; right: TabGroup; ratio: number };
 
-export function arrange(split: Split | undefined, tabIds: string[], active: string | undefined, closing: Set<string>): Split | undefined {
+/** Puts Chat Tabs first, keeping the order within each group. */
+export function grouped(tabs: string[], chat: (id: string) => boolean): string[] {
+	return [...tabs.filter(chat), ...tabs.filter((id) => !chat(id))];
+}
+
+export function arrange(split: Split | undefined, tabIds: string[], active: string | undefined, closing: Set<string>, chat: (id: string) => boolean): Split | undefined {
 	if (!split) return;
-	const right = split.right.tabs.filter((id) => tabIds.includes(id));
+	const right = grouped(split.right.tabs.filter((id) => tabIds.includes(id)), chat);
 	const listed = split.left.tabs.filter((id) => tabIds.includes(id) && !right.includes(id));
-	const left = [...listed, ...tabIds.filter((id) => !listed.includes(id) && !right.includes(id))];
+	const left = grouped([...listed, ...tabIds.filter((id) => !listed.includes(id) && !right.includes(id))], chat);
 	if (!left.length || !right.length) return;
 	return { left: group(left, closing, active, split.left.active), right: group(right, closing, active, split.right.active), ratio: split.ratio };
 }

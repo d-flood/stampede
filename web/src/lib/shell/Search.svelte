@@ -10,7 +10,6 @@
 	import { onMount } from 'svelte';
 	import Eye from '~icons/ph/eye';
 	import EyeSlash from '~icons/ph/eye-slash';
-	import MagnifyingGlass from '~icons/ph/magnifying-glass';
 	import SlidersHorizontal from '~icons/ph/sliders-horizontal';
 	import X from '~icons/ph/x';
 
@@ -150,11 +149,11 @@
 >
 	<div class="query">
 		<div class="box">
-			<MagnifyingGlass aria-hidden="true" />
 			<TextField
 				bind:ref={input}
 				bind:value={query}
 				mono
+				search
 				oninput={schedule}
 				placeholder="Search in files"
 				aria-label="Search in files"
@@ -252,17 +251,8 @@
 		min-width: 0;
 	}
 
-	.box > :global(svg) {
-		position: absolute;
-		top: 50%;
-		left: var(--space-2);
-		color: var(--muted-fg);
-		pointer-events: none;
-		translate: 0 -50%;
-	}
-
 	.box :global(input) {
-		padding-inline: calc(var(--space-2) + 1.35em) var(--target-min);
+		padding-right: var(--target-min);
 	}
 
 	.box :global(button) {

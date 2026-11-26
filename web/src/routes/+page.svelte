@@ -35,6 +35,7 @@
 	import { labels, worktrees } from '#lib/projects.ts';
 	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
 	import AttentionList from '#lib/shell/Attention.svelte';
+	import ChatList from '#lib/shell/ChatList.svelte';
 	import SchemeToggle from '#lib/shell/SchemeToggle.svelte';
 	import ThemeBar from '#lib/shell/ThemeBar.svelte';
 	import Settings from '#lib/shell/Settings.svelte';
@@ -172,9 +173,10 @@
 	const browserTabs = $derived((focused && browsers[focused.id]) || []);
 	const canvasTabs = $derived((focused && canvases[focused.id]) || []);
 	const openEpics = $derived((focused && epicTabs[focused.id]) || []);
+	const chatIds = $derived(new Set(chatTabs.map((chat) => chat.id)));
 	const tabIds = $derived([
-		...tabs.map((tab) => tab.id),
 		...chatTabs.map((chat) => chat.id),
+		...tabs.map((tab) => tab.id),
 		...browserTabs.map((browser) => browser.id),
 		...canvasTabs.map((canvas) => canvas.id),
 		...openEpics.map((epic) => epic.id),
@@ -183,7 +185,7 @@
 	const closingTabs = $derived(new Set([...tabs.filter((tab) => tab.state === 'closing'), ...chatTabs.filter((chat) => chat.closing)].map(({ id }) => id)));
 	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? ''] && !closingTabs.has(id)) ?? tabIds.findLast((id) => !closingTabs.has(id)));
 	const whole = $derived({ tabs: tabIds, active: activeTab });
-	const layout = $derived(focused && arrange(splits[focused.id], tabIds, activeTab, closingTabs));
+	const layout = $derived(focused && arrange(splits[focused.id], tabIds, activeTab, closingTabs, (id) => chatIds.has(id)));
 	const side: Side = $derived(layout && layout.right.active === activeTab ? 'right' : 'left');
 	const split = $derived(form() === 'desktop' ? layout : undefined);
 	const groups = $derived(split ? [split.left, split.right] : [whole]);
@@ -683,6 +685,7 @@
 
 	function openPalette(scope: Scope) {
 		if (focused) listing(focused.id).refresh();
+		if (scope === 'all') for (const project of projects) readSessions(project.id);
 		palette = scope;
 	}
 
@@ -1014,8 +1017,10 @@
 			path={project.path}
 			git={git.get(project.id)}
 			items={newTab(project.id)}
+			sessions={sessions[project.id] ?? []}
 			reading={!!readingSessions[project.id]}
 			onread={() => readSessions(project.id)}
+			onsession={(session) => reopen(project.id, session)}
 		/>
 	{/key}
 {/snippet}
@@ -1094,7 +1099,9 @@
 					>
 						{#if focused}
 							{@const projectId = focused.id}
-							{#each group.tabs as id (id)}
+							{@const others = group.tabs.findIndex((id) => !chatIds.has(id))}
+							{#each group.tabs as id, position (id)}
+								{#if position && position === others}<span class="separator" aria-hidden="true"></span>{/if}
 								{@const tab = tabs.find((tab) => tab.id === id)}
 								{@const chat = chatTabs.find((chat) => chat.id === id)}
 								{@const file = fileTabs.find((file) => file.id === id)}
@@ -1215,6 +1222,18 @@
 						</Menu>
 					{/if}
 					<span class="fill"></span>
+					{#if focused && index === groups.length - 1}
+						{@const projectId = focused.id}
+						<ChatList
+							chats={chatTabs.filter((chat) => !chat.closing)}
+							status={chatStatus}
+							sessions={sessions[projectId] ?? []}
+							reading={!!readingSessions[projectId]}
+							onopen={() => readSessions(projectId)}
+							onchat={(chat) => choose(projectId, chat.id)}
+							onsession={(session) => reopen(projectId, session)}
+						/>
+					{/if}
 					{#if !phone && !sidebar && focused && sidebarPosition.side === 'right' && index === groups.length - 1}
 						{@render sidebarToggle(false)}
 					{/if}
@@ -1552,12 +1571,15 @@
 					labels={projectLabels}
 					{focused}
 					actions={palette === 'tabs' ? tabActions : [{ label: 'Open config', run: openConfig }, { label: 'Preview themes', run: () => ((afterPalette = previewThemes), (palette = undefined)) }]}
-					sessions={focused && sessions[focused.id]}
+					chats={allChats.filter((chat) => !chat.closing)}
+					status={chatStatus}
+					{sessions}
 					loadingSessions={!!readingSessions[palette === 'tabs' ? tabTarget ?? '' : focused?.id ?? '']}
 					onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
 					onrig={(launcher) => (launch(launcher), (palette = undefined))}
 					onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
-					onsession={(session) => focused && (reopen(focused.id, session), (palette = undefined))}
+					onchat={(chat) => ((afterPalette = () => attend(chat.projectId, chat.id)), (palette = undefined))}
+					onsession={(projectId, session) => ((chosen = projectId), reopen(projectId, session), (palette = undefined))}
 				/>
 			{/key}
 		{/await}
@@ -1839,6 +1861,15 @@
 
 	.fill {
 		flex: 1;
+	}
+
+	.separator {
+		flex: none;
+		align-self: center;
+		width: var(--border-width);
+		height: 1.25em;
+		margin-inline: var(--space-1);
+		background: var(--border-strong);
 	}
 
 	/* Marks which side of a Split has focus. */

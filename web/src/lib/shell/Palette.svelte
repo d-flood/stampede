@@ -7,13 +7,15 @@
 <script lang="ts">
 	import { ago, logos } from '#lib/chat/sessions.ts';
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
-	import type { Project, Session } from '#lib/device.svelte.ts';
+	import type { Chat, Project, Session } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { split } from '#lib/git.ts';
+	import ChatItem from '#lib/shell/ChatItem.svelte';
 	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
+	import type { Status } from '#lib/ui/TabMarks.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
 	import fuzzysort, { type Key } from 'fuzzysort';
@@ -24,20 +26,31 @@
 		labels: Map<string, string>;
 		focused?: Project;
 		actions?: Action[];
-		sessions?: Session[];
+		/** Open Chats across every open Project. */
+		chats?: Chat[];
+		status?(chat: Chat): Status;
+		/** Past sessions read so far, by Project. */
+		sessions?: Record<string, Session[]>;
 		loadingSessions?: boolean;
 		onproject(projectId: string): void;
 		onrig(rig: Rig): void;
 		onfile(path: string): void;
-		onsession(session: Session): void;
+		onchat?(chat: Chat): void;
+		onsession(projectId: string, session: Session): void;
 	};
 	type Entry = { value: string; label: string; parent?: string; icon?: Component; hint?: string; onselect(): void };
 
-	let { scope, projects, labels, focused, actions = [], sessions = [], loadingSessions = false, onproject, onrig, onfile, onsession }: Props = $props();
+	let { scope, projects, labels, focused, actions = [], chats = [], status, sessions = {}, loadingSessions = false, onproject, onrig, onfile, onchat, onsession }: Props = $props();
 
 	let query = $state('');
 
 	const all = $derived(scope === 'all');
+	const open = $derived(all ? ranked(chats.toSorted((a, b) => b.created - a.created), (chat) => chat.title ?? chat.rig, 5) : []);
+	const past = $derived.by(() => {
+		if (!all) return [];
+		const listed = projects.flatMap((project) => (sessions[project.id] ?? []).map((session) => ({ session, projectId: project.id })));
+		return ranked(listed.toSorted((a, b) => b.session.updatedAt - a.session.updatedAt), ({ session }) => session.title, 3);
+	});
 	const reading = $derived(loadingSessions && (scope === 'tabs' || scope === 'sessions'));
 	const files = $derived.by(() => {
 		const snapshot = focused && listing(focused.id).snapshot;
@@ -78,12 +91,12 @@
 		{ heading: 'Files', entries: files },
 		{
 			heading: 'Sessions',
-			entries: find(scope === 'sessions' ? sessions : [], (session) => session.title).map((session) => ({
+			entries: find(scope === 'sessions' && focused ? sessions[focused.id] ?? [] : [], (session) => session.title).map((session) => ({
 				value: `session:${session.sessionId}`,
 				label: session.title,
 				icon: logos[session.agent],
 				hint: ago(session.updatedAt),
-				onselect: () => onsession(session)
+				onselect: () => focused && onsession(focused.id, session)
 			}))
 		},
 		{
@@ -99,12 +112,25 @@
 	function find<T>(items: T[], key: Key<T>): T[] {
 		return fuzzysort.go(query, items, { key, limit: 0, threshold: 0 }).map((result) => result.obj);
 	}
+
+	/** Keeps the newest few until a query searches them all. */
+	function ranked<T>(items: T[], key: (item: T) => string, newest: number): T[] {
+		return query ? find(items, key).slice(0, 50) : items.slice(0, newest);
+	}
 </script>
+
+{#snippet heading(text: string)}
+	<Command.GroupHeading>
+		{#snippet child({ props })}
+			<ListLabel {...props}>{text}</ListLabel>
+		{/snippet}
+	</Command.GroupHeading>
+{/snippet}
 
 <Command.Root label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[scope]} shouldFilter={false} loop>
 	<Command.Input
 		value={query}
-		placeholder={{ all: 'Switch Project, launch a Rig, or open a file', files: 'Find a file', sessions: 'Find a session by title', tabs: 'Choose what to open' }[scope]}
+		placeholder={{ all: 'Find a Chat, Project, Rig or file', files: 'Find a file', sessions: 'Find a session by title', tabs: 'Choose what to open' }[scope]}
 		autocomplete="off"
 		spellcheck={false}
 	>
@@ -119,14 +145,30 @@
 		{#snippet child({ props })}
 			<div {...props} class="list">
 				<Command.Viewport>
-					{#each groups as { heading, entries } (heading)}
+					{#if open.length}
+						<Command.Group>
+							{@render heading('Open Chats')}
+							<Command.GroupItems>
+								{#each open as chat (chat.id)}
+									<ChatItem value="chat:{chat.id}" agent={chat.agent} title={chat.title ?? chat.rig} time={chat.created / 1e6} project={labels.get(chat.projectId)} status={status?.(chat)} fresh={!chat.title} onselect={() => onchat?.(chat)} />
+								{/each}
+							</Command.GroupItems>
+						</Command.Group>
+					{/if}
+					{#if past.length}
+						<Command.Group>
+							{@render heading('Recent sessions')}
+							<Command.GroupItems>
+								{#each past as { session, projectId } (`${projectId}:${session.agent}:${session.sessionId}`)}
+									<ChatItem value="session:{projectId}:{session.agent}:{session.sessionId}" agent={session.agent} title={session.title} time={session.updatedAt} project={labels.get(projectId)} onselect={() => onsession(projectId, session)} />
+								{/each}
+							</Command.GroupItems>
+						</Command.Group>
+					{/if}
+					{#each groups as { heading: text, entries } (text)}
 						{#if entries.length}
 							<Command.Group>
-								<Command.GroupHeading>
-									{#snippet child({ props })}
-										<ListLabel {...props}>{heading}</ListLabel>
-									{/snippet}
-								</Command.GroupHeading>
+								{@render heading(text)}
 								<Command.GroupItems>
 									{#each entries as { value, label, parent, icon: Icon, hint, onselect } (value)}
 										<Command.Item {value} onSelect={onselect}>
@@ -148,8 +190,8 @@
 							</Command.Group>
 						{/if}
 					{/each}
-					{#if !reading && groups.every(({ entries }) => !entries.length)}
-						<ListLabel element="p">{query ? 'No matches' : scope === 'sessions' ? 'No past sessions' : 'Type to find a file'}</ListLabel>
+					{#if !reading && !open.length && !past.length && groups.every(({ entries }) => !entries.length)}
+						<ListLabel element="p">{query ? 'No matches' : scope === 'sessions' ? 'No past sessions' : 'Type to find a Chat or file'}</ListLabel>
 					{/if}
 				</Command.Viewport>
 			</div>

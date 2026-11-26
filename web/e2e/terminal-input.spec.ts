@@ -28,7 +28,7 @@ async function terminal(page: Page) {
 	return input;
 }
 
-test('terminal paste and Shift Enter send bracketed input from either focus target and keyboard layout', { tag: '@desktop' }, async ({ page, context }) => {
+test('terminal paste, Shift Enter and Ctrl+K reach the shell from either focus target and keyboard layout; Ctrl+Shift+K opens the Palette', { tag: '@desktop' }, async ({ page, context }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 	const input = await terminal(page);
 	const text = 'first line\nsecond line';
@@ -67,6 +67,20 @@ test('terminal paste and Shift Enter send bracketed input from either focus targ
 	input.length = 0;
 	await page.keyboard.press('Enter');
 	await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify('\r'));
+
+	input.length = 0;
+	await page.keyboard.press('Control+K');
+	await expect.poll(() => JSON.stringify(input.join(''))).toBe(JSON.stringify('\x0b'));
+	const palette = page.getByRole('dialog', { name: 'Command Palette' });
+	await expect(palette).toBeHidden();
+	await page.keyboard.press('Control+Shift+K');
+	await expect(palette.getByRole('combobox')).toBeFocused();
+	await page.keyboard.press('Escape');
+	await expect(palette).toBeHidden();
+	await page.getByRole('tab', { selected: true }).focus();
+	await page.keyboard.press('Control+K');
+	await expect(palette.getByRole('combobox')).toBeFocused();
+	expect(input.join('')).toBe('\x0b');
 });
 
 test('Paste and Newline buttons preserve input, and blocked clipboard access opens a focused Composer', { tag: '@phone' }, async ({ page, context }) => {

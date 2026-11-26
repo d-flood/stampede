@@ -97,7 +97,8 @@
 		color: var(--muted-fg);
 	}
 
-	.ghost:hover:not(:disabled) {
+	.ghost:hover:not(:disabled),
+	.ghost[data-state='open'] {
 		background: var(--hover);
 		color: var(--color-fg);
 	}

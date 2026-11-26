@@ -168,7 +168,7 @@
 <IconButton label={unseen ? 'Settings, Stampede update available' : 'Settings'} title={unseen ? 'Stampede update available' : undefined} aria-haspopup="dialog" aria-expanded={open} onclick={() => ((open = true), phone && (chosen = undefined))}>
 	<span class="gear"><Gear />{#if unseen}<span class="dot"></span>{/if}</span>
 </IconButton>
-<Dialog bind:open full={phone} wide title="Settings" oncloseautofocus={dock}>
+<Dialog bind:open full={phone} wide fit title="Settings" oncloseautofocus={dock}>
 	<div class="settings" class:phone>
 		{#if !phone || !current}
 			<div class="sections">
@@ -372,6 +372,7 @@
 		padding: var(--space-3) var(--space-2);
 		overflow: auto;
 		border-right: var(--border-width) solid var(--border);
+		background: var(--canvas);
 		color: var(--muted-fg);
 	}
 
@@ -408,7 +409,7 @@
 		min-width: 0;
 		padding: var(--space-4) var(--space-6) var(--space-6);
 		overflow: auto;
-		mask-image: linear-gradient(#000 calc(100% - 2 * var(--space-6)), transparent);
+		mask-image: linear-gradient(#000 calc(100% - var(--space-6)), transparent);
 	}
 
 	h3 {
@@ -431,7 +432,7 @@
 	.group {
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg);
-		background: var(--color-bg);
+		background: var(--card);
 	}
 
 	.update {
@@ -621,7 +622,7 @@
 		margin: 0 var(--space-4) var(--space-4);
 		padding: var(--space-3) var(--space-4);
 		border-radius: var(--radius-md);
-		background: var(--surface-1);
+		background: var(--plane);
 		line-height: 1.5;
 		overflow-wrap: anywhere;
 	}
@@ -645,6 +646,7 @@
 		flex: 1;
 		padding: var(--space-2) var(--space-4);
 		border: none;
+		background: none;
 		color: var(--color-fg);
 	}
 

@@ -19,9 +19,10 @@
 <script lang="ts">
 	import Chips from '#lib/chat/Chips.svelte';
 	import { defaultMode, modes } from '#lib/config.svelte.ts';
-	import type { Setting, Settings } from '#lib/device.svelte.ts';
+	import type { Session, Setting, Settings } from '#lib/device.svelte.ts';
 	import type { Git } from '#lib/git.ts';
 	import { form } from '#lib/form.ts';
+	import ChatFinder from '#lib/shell/ChatFinder.svelte';
 	import { openSettings } from '#lib/shell/Settings.svelte';
 	import type { TabItems } from '#lib/shell/new-tab.ts';
 	import Composer from '#lib/shell/Composer.svelte';
@@ -29,8 +30,6 @@
 	import Card from '#lib/ui/Card.svelte';
 	import Chip from '#lib/ui/Chip.svelte';
 	import Shortcut from '#lib/ui/Shortcut.svelte';
-	import ListItem from '#lib/ui/ListItem.svelte';
-	import Loading from '#lib/ui/Loading.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import { untrack } from 'svelte';
 	import CaretDown from '~icons/ph/caret-down';
@@ -38,9 +37,9 @@
 	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Plus from '~icons/ph/plus';
 
-	type Props = { name: string; path: string; git?: Git; items: TabItems; reading: boolean; onread: () => void };
+	type Props = { name: string; path: string; git?: Git; items: TabItems; sessions: Session[]; reading: boolean; onread: () => void; onsession(session: Session): void };
 
-	let { name, path, git, items, reading, onread }: Props = $props();
+	let { name, path, git, items, sessions, reading, onread, onsession }: Props = $props();
 
 	const id = $props.id();
 	const phone = $derived(form() === 'phone');
@@ -134,21 +133,11 @@
 				</button>
 			{/each}
 		</div>
-		{#if reading || items.sessions.length}
-			<div class="recent">
-				<h3>Recent sessions</h3>
-				{#if reading}<Loading label="Reading sessions…" />{/if}
-				<div class="sessions">
-					{#each items.sessions as { label, icon: Icon, hint, onselect }, index (index)}
-						<ListItem element="button" size="md" onclick={onselect}>
-							{#if Icon}<Icon />{/if}
-							<span class="title">{label}</span>
-							{#if hint}<span class="ago" aria-hidden="true">{hint}</span>{/if}
-						</ListItem>
-					{/each}
-				</div>
-				{#if items.search}<Button variant="link" onclick={items.search.onselect}>{items.search.label}</Button>{/if}
-			</div>
+		{#if reading || sessions.length}
+			<section class="recent" aria-labelledby="{id}-recent">
+				<h3 id="{id}-recent">Recent sessions</h3>
+				<ChatFinder label="Search sessions" {sessions} {reading} steady {onsession} />
+			</section>
 		{/if}
 	</div>
 </section>
@@ -259,8 +248,7 @@
 		font-weight: 500;
 	}
 
-	.model,
-	.ago {
+	.model {
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 	}
@@ -321,21 +309,9 @@
 	}
 
 	h3 {
-		margin: 0 0 var(--space-2);
+		margin: 0 0 var(--space-4);
 		color: var(--muted-fg);
 		font: 500 var(--font-size-sm) var(--font-ui);
-	}
-
-	.sessions {
-		margin: 0 calc(-1 * var(--space-3));
-	}
-
-	.title {
-		flex: 1;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	button:focus-visible {

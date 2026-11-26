@@ -6,7 +6,7 @@ import FileCode from '~icons/ph/file-code';
 import Globe from '~icons/ph/globe';
 import TerminalWindow from '~icons/ph/terminal-window';
 
-const RECENT = 5;
+export const RECENT = 5;
 
 export type TabItem = { label: string; icon?: Component; hint?: string; shortcut?: string; onselect: () => void };
 export type RigItem = TabItem & { rig: Rig; model: string; onprompt(text: string, settings?: Settings): void };

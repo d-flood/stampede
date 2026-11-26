@@ -28,7 +28,7 @@ test('New Tab shows session loading and fits the loaded sessions', async ({ page
 	await expect.poll(() => release !== undefined).toBe(true);
 	release!();
 	await expect(menu.getByRole('status')).toHaveCount(0);
-	await expect(menu.getByRole(item, { name: /Continue investigating/ })).toBeVisible();
+	await expect(menu.getByRole(phone ? 'option' : 'menuitem', { name: /Continue investigating/ })).toBeVisible();
 	await expect.poll(() => menu.evaluate((element) => {
 		const bounds = element.getBoundingClientRect();
 		return bounds.left >= 0 && bounds.right <= innerWidth;
@@ -67,8 +67,10 @@ test('the Launchpad offers the New Tab items and comes back focused when the las
 	await expect(launchpad.getByText(/^main · (clean|\d+ changed files?)$/)).toBeVisible();
 	const rigs = ['Claude Code', 'Codex'];
 	const tools = ['Terminal', 'Browser', 'Open file', 'Continue the collation', 'Search sessions…'];
-	await expect(launchpad.getByRole('button', { name: 'Continue the collation', exact: true })).toBeVisible();
-	for (const label of tools) await expect(launchpad.getByRole('button', { name: new RegExp(`^${label}`) })).toBeVisible();
+	for (const label of tools.slice(0, 3)) await expect(launchpad.getByRole('button', { name: new RegExp(`^${label}`) })).toBeVisible();
+	const recent = launchpad.getByRole('region', { name: 'Recent sessions' });
+	await expect(recent.getByRole('combobox', { name: 'Search sessions' })).toBeVisible();
+	await expect(recent.getByRole('option', { name: /^Continue the collation/ })).toBeVisible();
 	const chip = launchpad.getByRole('button', { name: 'Rig: Claude Code', exact: true });
 	await chip.click();
 	const choices = page.getByRole('menu').getByRole('menuitemcheckbox');

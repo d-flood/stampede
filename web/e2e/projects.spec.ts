@@ -31,5 +31,5 @@ test('with no Project open, one click on a folder in the inline picker opens it'
 	const picker = page.getByRole('main').getByRole('option', { name: /\/beta$/ });
 	await picker.click();
 	await expect(page.getByRole('region', { name: 'beta', exact: true })).toBeVisible();
-	await expect(page.getByRole('main').getByRole('combobox')).toHaveCount(0);
+	await expect(page.getByRole('main').getByPlaceholder('Find a folder, or type a path')).toHaveCount(0);
 });

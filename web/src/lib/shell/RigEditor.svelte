@@ -348,7 +348,7 @@
 		overflow: hidden;
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg);
-		background: var(--color-bg);
+		background: var(--card);
 		list-style: none;
 	}
 
@@ -361,7 +361,7 @@
 	}
 
 	li.open {
-		background: var(--surface-1);
+		background: var(--plane);
 	}
 
 	li.dragged {

@@ -534,7 +534,7 @@ test('a Chat that finishes unseen needs attention and opens from the Attention l
 
 	// An unknown Tab falls back to the last one, so another Chat keeps this one from being chosen by default.
 	await newTab(page, 'Fake Claude');
-	if (project.name !== 'pixel') await expect(page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab').last()).toHaveAttribute('aria-selected', 'true');
+	if (project.name !== 'pixel') await expect(page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab', { name: /^Fake Claude/ }).last()).toHaveAttribute('aria-selected', 'true');
 	await expectShown(page, chatId, false);
 	const notification = { projectId, chatId, label: 'Fake Claude', status: 'done' };
 	await page.evaluate((data) => navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data })), notification);
@@ -610,7 +610,7 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 
 	await page.keyboard.press('Control+;');
 	await page.keyboard.press('p');
-	await page.getByPlaceholder('Switch Project, launch a Rig, or open a file').fill('Fake Claude');
+	await page.getByPlaceholder('Find a Chat, Project, Rig or file').fill('Fake Claude');
 	await page.getByRole('option', { name: 'Fake Claude', exact: true }).click();
 	await chats(2);
 
@@ -640,27 +640,34 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 	await openProject(page, name);
 
 	const phone = project.name === 'pixel';
+	const recent = page.getByRole('region', { name, exact: true }).getByRole('region', { name: 'Recent sessions' });
+	const search = recent.getByRole('combobox', { name: 'Search sessions' });
+	await expect(recent.getByRole('option')).toHaveText([/Palette study/, /Reply with exactly: ok/, /Say hi in three words\./]);
+	await search.fill('three');
+	await expect(recent.getByRole('option')).toHaveText([/Say hi in three words\./]);
+	await search.fill('');
+	await expect(recent.getByRole('option')).toHaveCount(3);
 	const sessionItems = async () => {
 		if (phone && (await tabCount(page))) return (await openNewTab(page)).getByRole('region', { name: 'Recent sessions' }).getByRole('button');
-		if (phone) return page.getByRole('region', { name, exact: true }).locator('.recent').getByRole('button');
+		if (phone) return recent.getByRole('option');
 		await page.getByRole('button', { name: 'New Tab' }).click();
 		return page.getByRole('group', { name: 'Sessions' }).getByRole('menuitem');
 	};
 	let listed = await sessionItems();
-	await expect(listed).toHaveText([/Palette study/, /Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
 	if (!phone) {
+		await expect(listed).toHaveText([/Palette study/, /Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
 		await expect
 			.poll(() => page.getByRole('menu').evaluate((menu) => menu.getBoundingClientRect().bottom <= window.innerHeight))
 			.toBe(true);
+		await listed.getByText('Search sessions…').click();
+		const palette = page.getByRole('dialog', { name: 'Past Sessions' });
+		await palette.getByPlaceholder('Find a session by title').fill('palette');
+		await expect(palette.getByRole('option')).toHaveText([/Palette study/]);
+		await palette.getByPlaceholder('Find a session by title').fill('three');
+		await expect(palette.getByRole('option')).toHaveText([/Say hi in three words\./]);
+		await page.keyboard.press('Escape');
+		await expect(palette).toBeHidden();
 	}
-	await listed.getByText('Search sessions…').click();
-	const palette = page.getByRole('dialog', { name: 'Past Sessions' });
-	await palette.getByPlaceholder('Find a session by title').fill('palette');
-	await expect(palette.getByRole('option')).toHaveText([/Palette study/]);
-	await palette.getByPlaceholder('Find a session by title').fill('three');
-	await expect(palette.getByRole('option')).toHaveText([/Say hi in three words\./]);
-	await page.keyboard.press('Escape');
-	await expect(palette).toBeHidden();
 
 	listed = await sessionItems();
 	await listed.filter({ hasText: 'Palette study' }).click();

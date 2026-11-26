@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { closeProject, closeTab, expectCurrent, newTab, openProject, showSidebar } from './shell.ts';
+import { closeProject, closeTab, expectCurrent, newTab, openProject, pinned, showSidebar } from './shell.ts';
 
 async function chooseNewTab(page: Page, label: string) {
 	await page.keyboard.press('Control+T');
@@ -268,5 +268,60 @@ test('new tab picker matches the menu and focuses the selected content', { tag: 
 	await expect(files.getByRole('combobox')).toBeFocused();
 	await expect(files.getByRole('combobox')).toHaveValue('');
 	await page.keyboard.press('Escape');
+	await closeProject(page, folder);
+});
+
+test('the Chats list switches to a Chat in whichever pane holds it', { tag: '@desktop' }, async ({ page }) => {
+	const folder = 'chats-list';
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${folder}`, { recursive: true });
+	await openProject(page, folder);
+	const tabs = page.getByRole('tablist', { name: 'Tabs', exact: true }).getByRole('tab');
+	const opened = [];
+	for (const [index, item] of ['Fake Claude', 'Terminal', 'Fake Claude'].entries()) {
+		await newTab(page, item);
+		await expect(tabs).toHaveCount(index + 1);
+		opened.push(await pinned(page.getByRole('tab', { selected: true })));
+	}
+	const [chat, terminal, other] = opened;
+	await page.keyboard.press('Control+;');
+	await page.keyboard.press('s');
+	await expect(page.getByRole('tablist', { name: 'Right Tabs' }).getByRole('tab')).toHaveCount(1);
+	await terminal.click();
+	await other.click();
+	await expect(chat).toHaveAttribute('aria-selected', 'false');
+	await page.getByRole('button', { name: 'Chats', exact: true }).click();
+	const list = page.getByRole('dialog', { name: 'Chats' });
+	await expect(list.getByRole('combobox', { name: 'Find a Chat or session' })).toBeFocused();
+	await list.getByRole('group', { name: 'Open Chats' }).getByRole('option').first().click();
+	await expect(list).toBeHidden();
+	await expect(page.getByRole('tablist', { name: 'Left Tabs' }).locator(`[data-tab="${await chat.getAttribute('data-tab')}"]`)).toHaveAttribute('aria-selected', 'true');
+	await expect(page.getByRole('textbox', { name: 'Composer' }).first()).toBeFocused();
+	await closeProject(page, folder);
+});
+
+test('Chat Tabs lead the strip behind a separator, and the order survives a reload', { tag: '@desktop' }, async ({ page }) => {
+	const folder = 'tab-groups';
+	mkdirSync(`${process.env.STAMPEDE_E2E_ROOT}/projects/${folder}`, { recursive: true });
+	await openProject(page, folder);
+	const strip = page.getByRole('tablist', { name: 'Tabs', exact: true });
+	const tabs = strip.getByRole('tab');
+	const opened: string[] = [];
+	for (const [index, item] of ['Terminal', 'Fake Claude', 'Fake Claude'].entries()) {
+		await newTab(page, item);
+		await expect(tabs).toHaveCount(index + 1);
+		opened.push((await page.getByRole('tab', { selected: true }).getAttribute('data-tab'))!);
+		await expect(strip.locator('.separator')).toHaveCount(index ? 1 : 0);
+	}
+	const [terminal, chat, other] = opened;
+	const grouped = [chat, other, terminal];
+	const shown = () => tabs.evaluateAll((all) => all.map((tab) => tab.getAttribute('data-tab')));
+	await expect.poll(shown).toEqual(grouped);
+	await expect.poll(() => page.evaluate(async () => {
+		const layout = await (await fetch(`/api/devices/${sessionStorage.getItem('deviceId')}/layout`)).json();
+		return Object.values(layout?.projects ?? {}).flatMap((project) => (project as { tabs: { id?: string }[] }).tabs.map((tab) => tab.id));
+	})).toEqual(grouped);
+	await page.reload();
+	await expect.poll(shown).toEqual(grouped);
+	await expect(strip.locator('.separator')).toHaveCount(1);
 	await closeProject(page, folder);
 });

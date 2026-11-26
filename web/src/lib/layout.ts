@@ -4,7 +4,7 @@ import { OpenCanvas } from '#lib/canvas.svelte.ts';
 import { OpenEpic } from '#lib/epics.svelte.ts';
 import { OpenConfig, OpenDiff, OpenFile, OpenChanges, type Against, type Layout as DiffMode, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 import type { Section } from '#lib/shell/Sidebar.svelte';
-import type { Split, TabGroup } from '#lib/split.ts';
+import { grouped, type Split, type TabGroup } from '#lib/split.ts';
 
 export type TabRef =
 	| { kind: 'browser'; id: string; url: string }
@@ -130,16 +130,17 @@ export function capture(workspace: Workspace): Layout {
 			if (file) return ref(file);
 			return chats.some((chat) => chat.id === id) ? { kind: 'chat', id } : { kind: 'terminal', id };
 		};
+		const chat = (id: string) => chats.some((chat) => chat.id === id);
 		const half = ({ tabs, active }: TabGroup): Half => ({
-			tabs: tabs.flatMap((id) => find(id) ?? []),
+			tabs: grouped(tabs, chat).flatMap((id) => find(id) ?? []),
 			active: active ? find(active) : null
 		});
 		const active = workspace.chosenTabs[projectId];
 		const split = workspace.splits[projectId];
 		projects[projectId] = {
 			tabs: [
-				...terminals.map(({ id }): TabRef => ({ kind: 'terminal', id })),
 				...chats.map(({ id }): TabRef => ({ kind: 'chat', id })),
+				...terminals.map(({ id }): TabRef => ({ kind: 'terminal', id })),
 				...browsers.map(({ id, url }): TabRef => ({ kind: 'browser', id, url })),
 				...canvases.map(({ canvas }): TabRef => ({ kind: 'canvas', canvas })),
 				...epics.map(({ slug }): TabRef => ({ kind: 'epic', slug })),

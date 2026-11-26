@@ -271,7 +271,7 @@ test('Editor markers and Agent file changes preserve explicit edits', async ({ p
 	}).toContain('with unsaved edits');
 });
 
-test('find panel searches, steps, replaces and closes', { tag: '@desktop' }, async ({ page }, { project }) => {
+test('find panel searches, steps, replaces and closes, and Ctrl+Shift+K still deletes a line', { tag: '@desktop' }, async ({ page }, { project }) => {
 	const name = `find-${project.name}`;
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
 	mkdirSync(root);
@@ -300,4 +300,6 @@ test('find panel searches, steps, replaces and closes', { tag: '@desktop' }, asy
 	await expect(find).toBeFocused();
 	await page.keyboard.press('Escape');
 	await expect(panel).toBeHidden();
+	await page.keyboard.press('ControlOrMeta+Shift+K');
+	await expect(editor.locator('.cm-line')).toHaveCount(2);
 });

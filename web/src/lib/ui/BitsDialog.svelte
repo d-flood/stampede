@@ -12,7 +12,8 @@
 		wide?: boolean;
 		/** False when the dialog's own actions already close it. */
 		closeButton?: boolean;
-		/** Sizes a wide dialog to its content, up to its usual height. */
+		/** Sizes a wide dialog to its content, up to its usual height, without shrinking while open. */
+		fit?: boolean;
 		title: string;
 		description?: string;
 		children?: Snippet;
@@ -20,7 +21,18 @@
 		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, title, description, children, actions, oncloseautofocus }: Props = $props();
+	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, fit = false, title, description, children, actions, oncloseautofocus }: Props = $props();
+
+	function hold(node: HTMLElement) {
+		let tallest = 0;
+		const observer = new ResizeObserver(() => {
+			if (node.offsetHeight <= tallest) return;
+			tallest = node.offsetHeight;
+			node.style.setProperty('--tallest', `${tallest}px`);
+		});
+		observer.observe(node);
+		return () => observer.disconnect();
+	}
 </script>
 
 <Dialog.Root bind:open>
@@ -32,7 +44,7 @@
 		</Dialog.Overlay>
 	<Dialog.Content onCloseAutoFocus={oncloseautofocus}>
 			{#snippet child({ props })}
-				<div {...props} class="dialog" class:wide class:full class:sheet class:footed={!!actions}>
+				<div {...props} class="dialog" class:wide class:full class:sheet class:fit class:footed={!!actions} {@attach wide && fit && !full && hold}>
 					<div class="heading">
 						<Dialog.Title>
 							{#snippet child({ props })}
@@ -102,6 +114,13 @@
 		height: min(42rem, calc(100dvh - 2 * var(--space-4)));
 		padding: 0;
 		overflow: hidden;
+		background: var(--plane);
+	}
+
+	.wide.fit:not(.full) {
+		height: auto;
+		min-height: min(var(--tallest, 0px), calc(100dvh - 2 * var(--space-4)));
+		max-height: min(42rem, calc(100dvh - 2 * var(--space-4)));
 	}
 
 	.wide .heading {

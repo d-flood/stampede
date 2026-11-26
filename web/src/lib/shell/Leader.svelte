@@ -28,25 +28,29 @@
 	function keydown(event: KeyboardEvent) {
 		if (event.isComposing || event.defaultPrevented) return;
 		const key = event.key.toLowerCase();
-		if (!pending && event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && (key === 't' || key === 'o' || key === 'f' || /^Digit[1-9]$/.test(event.code))) {
+		// Ctrl+K is the shell's kill-line, so a focused Terminal opens the palette with Ctrl+Shift+K instead.
+		const terminal = event.target instanceof Element && !!event.target.closest('[aria-label="Terminal input"]');
+		if (!pending && event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && (key === 't' || key === 'o' || key === 'f' || (key === 'k' && terminal) || /^Digit[1-9]$/.test(event.code))) {
 			event.preventDefault();
 			event.stopPropagation();
 			if (event.repeat || (event.target instanceof Element && event.target.closest('[role="dialog"], [role="alertdialog"], [role="menu"]'))) return;
 			if (key === 't') onterminal();
 			else if (key === 'o') onfiles();
 			else if (key === 'f') onsearch();
+			else if (key === 'k') onpalette();
 			else {
 				const rig = rigs()[Number(event.code.slice(-1)) - 1];
 				if (rig) onrig(rig);
 			}
 			return;
 		}
-		if (!pending && (event.ctrlKey !== event.metaKey) && !event.altKey && !event.shiftKey && (key === 't' || key === 'w')) {
+		if (!pending && (event.ctrlKey !== event.metaKey) && !event.altKey && !event.shiftKey && (key === 't' || key === 'w' || (key === 'k' && !(event.ctrlKey && terminal)))) {
 			event.preventDefault();
 			event.stopPropagation();
 			if (event.repeat || (event.target instanceof Element && event.target.closest('[role="dialog"], [role="alertdialog"], [role="menu"]'))) return;
 			if (key === 't') onnew();
-			else onclose();
+			else if (key === 'w') onclose();
+			else onpalette();
 			return;
 		}
 		if (!pending && !pressed(event)) return;
