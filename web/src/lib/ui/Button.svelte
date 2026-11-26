@@ -90,12 +90,11 @@
 		color: color-mix(in oklab, var(--muted-fg) 65%, transparent);
 	}
 
-	/* A send disc stays a filled accent when idle, so the Composer keeps its focal point. */
+	/* A send disc stays a solid opaque neutral when idle, never washed out. */
 	.primary.round:disabled {
 		border-color: transparent;
-		background: var(--fill);
+		background: color-mix(in oklab, var(--muted-fg) 75%, var(--color-bg));
 		color: var(--color-bg);
-		opacity: 0.4;
 	}
 
 	.outline {

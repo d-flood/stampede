@@ -234,6 +234,14 @@
 		flex: 1;
 	}
 
+	.body :global(.cm-content) {
+		padding-block: 0;
+	}
+
+	.body :global(.cm-foldGutter) {
+		display: none !important;
+	}
+
 	.binary,
 	.empty {
 		margin: 0;

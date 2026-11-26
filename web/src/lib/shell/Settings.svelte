@@ -471,7 +471,7 @@
 		flex-wrap: wrap;
 		align-items: center;
 		justify-content: space-between;
-		gap: var(--space-3) var(--space-6);
+		gap: var(--space-3) calc(2 * var(--space-6));
 		padding: var(--space-4);
 	}
 
@@ -508,15 +508,13 @@
 	}
 
 	.control {
+		display: flex;
+		justify-content: flex-end;
 		box-sizing: border-box;
-		flex: none;
-		max-width: 100%;
-		margin-left: auto;
-	}
-
-	.wide {
 		flex: 0 1 15rem;
 		min-width: 0;
+		max-width: 100%;
+		margin-left: auto;
 	}
 
 	.cards {
@@ -525,12 +523,18 @@
 	}
 
 	.font {
-		display: flex;
+		flex-basis: 21rem;
 		gap: var(--space-2);
 	}
 
-	.control > :global(.select) {
+	.control > :global(.select),
+	.control:not(.font) > :global(button) {
 		width: auto;
+		max-width: 100%;
+	}
+
+	.font > :global(.select) {
+		flex: none;
 	}
 
 	.field {
@@ -659,6 +663,14 @@
 	.phone .pane {
 		flex: 1;
 		padding: 0 var(--space-4) var(--space-6);
+	}
+
+	.phone .row {
+		gap: var(--space-3) var(--space-6);
+	}
+
+	.phone .control {
+		flex: none;
 	}
 
 	.phone .wide {

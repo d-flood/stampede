@@ -106,20 +106,27 @@
 		<h2 id="{id}-name">{name}</h2>
 		<p class="where" title={path}>{#if phone}<span class="path"><bdi>{path.replace(/^(?:\/home|\/Users)\/[^/]+/, '~')}</bdi></span>{/if}{#if meta}<span class="meta">{#if git?.branch}<GitBranch aria-hidden="true" />{/if}{meta}</span>{/if}</p>
 		{#if rig}
-			<Composer id="launchpad:{path}" placeholder="Message {rig.label}" onsend={start}>
-				{#snippet actions(text, clear)}
-					<span class="rig">
+			{#snippet rigChips()}
+				<!-- svelte-ignore a11y_no_static_element_interactions (Hover and focus only start loading the model list.) -->
+				<span class="chips" onpointerenter={reach} onfocusin={reach}>
+					<Chips agent={rig.rig.agent} {settings} ready={!!options} {choices} onrun={(setting, value) => value !== 'default' && (overrides = { ...overrides, [setting]: value })} />
+				</span>
+			{/snippet}
+			<Composer id="launchpad:{path}" placeholder="Message {rig.label}" footer={phone ? rigChips : undefined} onsend={start}>
+				{#snippet leading()}
+					<span class="rig-picker">
 						<Menu side="top" align="start" items={rigMenu}>
 							{#snippet trigger(props)}
-								<Chip {...props} variant="ghost" aria-label="Rig: {rig.label}"><span>{rig.label}</span><CaretDown aria-hidden="true" /></Chip>
+								<Chip {...props} variant="ghost" aria-label="Rig: {rig.label}">
+									<span class="rig-name">{rig.label}</span>
+									<span class="caret"><CaretDown aria-hidden="true" /></span>
+								</Chip>
 							{/snippet}
 						</Menu>
 					</span>
-					<!-- svelte-ignore a11y_no_static_element_interactions (Hover and focus only start loading the model list.) -->
-					<span class="chips" onpointerenter={reach} onfocusin={reach}>
-						<Chips agent={rig.rig.agent} {settings} ready={!!options} {choices} onrun={(setting, value) => value !== 'default' && (overrides = { ...overrides, [setting]: value })} />
-					</span>
-					<span class="fill"></span>
+				{/snippet}
+				{#snippet actions(text, clear)}
+					{#if !phone}{@render rigChips()}{/if}
 					<Button variant="primary" round aria-label="Send" disabled={!text.trim()} onmousedown={(event) => event.preventDefault()} onclick={() => start(text) && clear()}>
 						<PaperPlaneRight />
 					</Button>
@@ -293,22 +300,39 @@
 		font-size: var(--font-size-sm);
 	}
 
-	.fill {
-		flex: 1;
-	}
-
 	.chips {
 		display: flex;
-		flex: 1;
+		flex: 0 1 auto;
 		min-width: 0;
 	}
 
-	.rig {
-		display: contents;
+	.phone .chips {
+		flex: 1;
 	}
 
-	.rig :global(.chip) {
+	.rig-picker {
+		display: flex;
+		flex: 0 1 auto;
+		min-width: 0;
+	}
+
+	.rig-picker :global(.chip) {
 		color: var(--color-fg);
+	}
+
+	.rig-name {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.caret {
+		display: inline-flex;
+	}
+
+	.caret :global(svg) {
+		width: 0.85em;
+		height: 0.85em;
 	}
 
 	.tool {

@@ -84,7 +84,7 @@
 		padding: var(--space-3) var(--space-4);
 		border: var(--border-width) solid transparent;
 		border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
-		background: var(--surface-2);
+		background: var(--surface-1);
 	}
 
 	.user :global(.text) {

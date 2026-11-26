@@ -1,7 +1,7 @@
 <script lang="ts" module>
 	import type { Component } from 'svelte';
 	export type Scope = 'all' | 'files' | 'sessions' | 'tabs';
-	export type Action = { label: string; run(): void; group?: string; icon?: Component; hint?: string };
+	export type Action = { label: string; run(): void; group?: string; icon?: Component; hint?: string; shortcut?: string };
 </script>
 
 <script lang="ts">
@@ -9,12 +9,14 @@
 	import { rigs, type Rig } from '#lib/config.svelte.ts';
 	import type { Chat, Project, Session } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
+	import { form } from '#lib/form.ts';
 	import { split } from '#lib/git.ts';
 	import ChatItem from '#lib/shell/ChatItem.svelte';
 	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
+	import Shortcut from '#lib/ui/Shortcut.svelte';
 	import type { Status } from '#lib/ui/TabMarks.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
@@ -38,7 +40,7 @@
 		onchat?(chat: Chat): void;
 		onsession(projectId: string, session: Session): void;
 	};
-	type Entry = { value: string; label: string; parent?: string; icon?: Component; hint?: string; onselect(): void };
+	type Entry = { value: string; label: string; parent?: string; icon?: Component; hint?: string; shortcut?: string; onselect(): void };
 
 	let { scope, projects, labels, focused, actions = [], chats = [], status, sessions = {}, loadingSessions = false, onproject, onrig, onfile, onchat, onsession }: Props = $props();
 
@@ -65,7 +67,7 @@
 		for (const [index, action] of find(actions, (action) => action.label).entries()) {
 			const heading = action.group ?? 'Tabs';
 			if (!groups.has(heading)) groups.set(heading, []);
-			groups.get(heading)!.push({ value: `tab:${index}`, label: action.label, icon: action.icon, hint: action.hint, onselect: action.run });
+			groups.get(heading)!.push({ value: `tab:${index}`, label: action.label, icon: action.icon, hint: action.hint, shortcut: action.shortcut, onselect: action.run });
 		}
 		return Array.from(groups, ([heading, entries]) => ({ heading, entries }));
 	});
@@ -81,12 +83,16 @@
 		{
 			heading: 'Rigs',
 			entries: find(all && focused ? rigs() : [], (rig) => rig.name)
-				.map((rig) => ({
-					value: `rig:${rig.name}`,
-					label: rig.name,
-					hint: rigs().indexOf(rig) < 9 ? `Ctrl+Shift+${rigs().indexOf(rig) + 1}` : `${rigs().indexOf(rig) + 1}`,
-					onselect: () => onrig(rig)
-				}))
+				.map((rig) => {
+					const index = rigs().indexOf(rig);
+					return {
+						value: `rig:${rig.name}`,
+						label: rig.name,
+						shortcut: index < 9 ? `Ctrl+Shift+${index + 1}` : undefined,
+						hint: index < 9 ? undefined : `${index + 1}`,
+						onselect: () => onrig(rig)
+					};
+				})
 		},
 		{ heading: 'Files', entries: files },
 		{
@@ -170,7 +176,7 @@
 							<Command.Group>
 								{@render heading(text)}
 								<Command.GroupItems>
-									{#each entries as { value, label, parent, icon: Icon, hint, onselect } (value)}
+									{#each entries as { value, label, parent, icon: Icon, hint, shortcut, onselect } (value)}
 										<Command.Item {value} onSelect={onselect}>
 											{#snippet child({ props })}
 												<ListItem {...props}>
@@ -178,6 +184,7 @@
 													{#if parent === undefined}
 														<span class="label">{label}</span>
 														{#if hint}<span class="hint" aria-hidden="true">{hint}</span>{/if}
+														{#if shortcut && form() !== 'phone'}<span class="hint" aria-hidden="true"><Shortcut keys={shortcut} /></span>{/if}
 													{:else}
 														<FileIcon path={label} />
 														<span class="path"><span class="parent">{parent}</span><span class="name">{label}</span></span>

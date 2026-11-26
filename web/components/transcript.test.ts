@@ -61,6 +61,7 @@ test('Activity summaries count every action in order and keep failures quiet unt
 	expect(view.container.textContent).not.toContain('pnpm test parse');
 	await page.elementLocator(summary).click();
 	expect(summary.getAttribute('aria-expanded')).toBe('true');
+	expect(view.container.querySelectorAll('.chip')).toHaveLength(0);
 	expect(view.container.querySelectorAll('.rail > .step')).toHaveLength(8);
 	expect(view.container.querySelectorAll('.rail details')).toHaveLength(4);
 	const failed = view.container.querySelector('.rail details.failed')!;

@@ -12,17 +12,17 @@ const chrome = EditorView.theme({
 	'&.cm-focused': { outline: 'none' },
 	'.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.5' },
 	'.cm-content': { caretColor: 'var(--color-cursor)', fontVariantLigatures: 'none' },
-	'.cm-content:not(.cm-lineWrapping)': { paddingRight: 'var(--space-6)' },
-	// Fades lines running past the pane's right edge instead of cutting them mid-glyph.
+	'.cm-content:not(.cm-lineWrapping)': { paddingRight: 'calc(2 * var(--space-6) + var(--space-4))' },
+	// Fades lines running past the pane's right edge into a right inset instead of cutting them mid-glyph.
 	'.cm-scroller:not(:has(> .cm-lineWrapping))::after': {
 		content: '""',
 		position: 'sticky',
 		right: 0,
 		flex: 'none',
 		alignSelf: 'stretch',
-		width: 'var(--space-6)',
-		marginLeft: 'calc(-1 * var(--space-6))',
-		background: 'linear-gradient(to right, transparent, var(--color-bg))',
+		width: 'calc(2 * var(--space-6) + var(--space-4))',
+		marginLeft: 'calc(-2 * var(--space-6) - var(--space-4))',
+		background: 'linear-gradient(to right, transparent, var(--color-bg) calc(100% - var(--space-4)))',
 		pointerEvents: 'none'
 	},
 	'.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-cursor)' },
@@ -115,14 +115,20 @@ export const diffTheme = (whole: boolean) => EditorView.theme({
 	'&:not(.cm-merge-a) .cm-diffChangedRow:not(.cm-changedLineGutter, .cm-inlineChangedLineGutter)': { backgroundColor: whole ? 'transparent' : added(12) },
 	'&.cm-merge-a .cm-lineNumbers .cm-diffChangedRow, & .cm-originalNumbers .cm-diffDeletedRow': { color: 'var(--git-deleted)' },
 	'&:not(.cm-merge-a) .cm-lineNumbers .cm-diffChangedRow': { color: 'var(--git-added)' },
-	// Equal number columns give both sides of a split view the same width, so unchanged lines wrap alike.
-	'& .cm-lineNumbers .cm-gutterElement': { minWidth: '3ch' },
-	'& .cm-originalNumbers .cm-gutterElement': { minWidth: '3ch', paddingInline: 'var(--space-2) var(--space-3)', textAlign: 'right' },
+	'&:not(.cm-focused) .cm-activeLine': { backgroundColor: 'transparent' },
+	'&:not(.cm-focused) .cm-activeLineGutter': { color: 'inherit' },
+	// Equal number columns align cards and keep both sides of a split view wrapping alike.
+	'& .cm-lineNumbers .cm-gutterElement': { minWidth: 'calc(3ch + var(--space-1) + var(--space-2))', paddingInline: 'var(--space-1) var(--space-2)' },
+	'& .cm-gutter:first-child.cm-lineNumbers .cm-gutterElement': { minWidth: 'calc(3ch + var(--space-4) + var(--space-2))', paddingLeft: 'var(--space-4)' },
+	'& .cm-originalNumbers .cm-gutterElement': { minWidth: 'calc(3ch + var(--space-4) + var(--space-3))', paddingInline: 'var(--space-4) var(--space-3)', textAlign: 'right' },
 	'& .cm-diffSigns .cm-gutterElement': { minWidth: '1.5ch', paddingInline: 'var(--space-1)', fontFamily: 'var(--font-mono)', textAlign: 'center' },
 	'& .cm-diffSigns-a .cm-gutterElement': { color: 'var(--git-deleted)' },
 	'& .cm-diffSigns-b .cm-gutterElement': { color: 'var(--git-added)' },
 	'& .cm-diffSigns .cm-diffDeletedSign': { color: 'var(--git-deleted)' },
-	'& .cm-mergeSpacer': { backgroundImage: 'repeating-linear-gradient(-45deg, var(--border) 0 var(--border-width), transparent var(--border-width) var(--space-2))' },
+	'& .cm-mergeSpacer': {
+		backgroundColor: 'color-mix(in lab, var(--color-bg) 97%, var(--color-fg))',
+		backgroundImage: 'repeating-linear-gradient(-45deg, color-mix(in oklab, var(--border) 38%, transparent) 0 var(--border-width), transparent var(--border-width) var(--space-3))'
+	},
 	'& .cm-diffCollapsedRow': { background: 'var(--surface-1)' },
 	'& .cm-diffDeletedRow': { background: whole ? 'transparent' : removed(12) },
 	'& .cm-changeGutter': { paddingLeft: 0 },

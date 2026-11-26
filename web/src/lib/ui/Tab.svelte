@@ -156,7 +156,7 @@
 	}
 
 	.select:not(.active, .closing):hover {
-		--pill: color-mix(in oklab, var(--hover) 55%, transparent);
+		--pill: var(--surface-1);
 		color: var(--color-fg);
 	}
 
@@ -200,14 +200,23 @@
 		transform: translateY(-50%);
 	}
 
+	.close :global(button:not(:hover, :focus-visible)) {
+		color: color-mix(in oklab, var(--muted-fg) 80%, transparent);
+	}
+
+	.close :global(svg) {
+		font-size: var(--font-size-sm);
+	}
+
 	.label {
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 
 	.active {
-		--pill: var(--selected-bg);
+		--pill: var(--hover);
 		color: var(--color-fg);
+		font-weight: 500;
 	}
 
 	.deleted .label {
@@ -240,6 +249,10 @@
 	}
 
 	.select.waiting:not(.active) {
-		--pill: color-mix(in oklab, var(--status-waiting) 16%, transparent);
+		color: var(--color-fg);
+	}
+
+	.select.waiting:not(.active)::before {
+		box-shadow: inset 0 0 0 var(--border-width) color-mix(in oklab, var(--status-waiting) 42%, var(--border));
 	}
 </style>

@@ -46,8 +46,7 @@
 	.heading {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-4);
+		gap: var(--space-2);
 		min-height: var(--target-min);
 	}
 

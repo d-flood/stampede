@@ -63,7 +63,7 @@
 					aria-label="Model: {parts.join(' ')}{later ? ', next turn' : ''}"
 					title={later ? 'Takes effect on the next turn' : undefined}
 				>
-					<span class="label"><span class="model">{parts[0]}</span>{parts.slice(1).map((part) => ` ${part}`).join('')}</span>
+					<span class="label">{parts.join(' ')}</span>
 					<span class="caret"><CaretDown aria-hidden="true" /></span>
 				</Chip>
 			{/snippet}
@@ -79,31 +79,34 @@
 					aria-label="Mode: {label('mode')}{pending('mode') ? ', next turn' : ''}"
 					title={pending('mode') ? 'Takes effect on the next turn' : undefined}
 				>
-					<span class="label">{label('mode')}{phone ? '' : ' mode'}</span>
+					<span class="label">{label('mode')}{#if !phone}<span class="suffix">{' '}mode</span>{/if}</span>
 					<span class="caret"><CaretDown aria-hidden="true" /></span>
 				</Chip>
 			{/snippet}
 		</Menu>
 	{/if}
-	<span class="end">{@render children?.()}</span>
+	{#if children}<span class="end">{@render children()}</span>{/if}
 </div>
 
 <style>
 	.chips {
 		display: flex;
-		flex: 1;
+		flex: 0 1 auto;
 		align-items: center;
 		gap: var(--space-1);
 		min-width: 0;
-		padding-left: var(--space-2);
 		font-size: var(--font-size-sm);
+	}
+
+	.chips:not(.phone) :global(.chip) {
+		flex: 0 1 auto;
 	}
 
 	.end {
 		display: flex;
 		flex: none;
 		align-items: center;
-		margin-left: var(--space-1);
+		margin-inline: var(--space-1);
 	}
 
 	.agent {
@@ -125,10 +128,6 @@
 		text-transform: uppercase;
 	}
 
-	.model {
-		color: var(--color-fg);
-	}
-
 	.caret {
 		display: inline-flex;
 	}
@@ -138,13 +137,20 @@
 		height: 0.85em;
 	}
 
+	@container (width < 28rem) {
+		.suffix {
+			display: none;
+		}
+	}
+
 	.phone {
 		--target-min: var(--control-min);
+		flex: 1;
 		gap: var(--space-2);
 		padding: 0 var(--space-1);
 	}
 
 	.phone .end {
-		margin-left: auto;
+		margin: 0 0 0 auto;
 	}
 </style>

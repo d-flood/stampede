@@ -361,8 +361,8 @@
 		{#if git.changes.length}<IconButton label="Review all changes" title="Review all changes" onclick={onchanges}><GitDiff /></IconButton>{/if}
 		<Menu
 			items={[
-				{ label: 'Stash All Changes', icon: Archive, hint: 's', disabled: busy || !git.changes.length, onselect: () => run('stash', () => stash(projectId)) },
-				{ label: 'Undo Last Commit', icon: ArrowUUpLeft, hint: 'z', disabled: busy, onselect: undoCommit }
+				{ label: 'Stash All Changes', icon: Archive, shortcut: 's', disabled: busy || !git.changes.length, onselect: () => run('stash', () => stash(projectId)) },
+				{ label: 'Undo Last Commit', icon: ArrowUUpLeft, shortcut: 'z', disabled: busy, onselect: undoCommit }
 			]}
 		>
 			{#snippet trigger(props)}

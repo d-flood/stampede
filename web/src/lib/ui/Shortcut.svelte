@@ -8,14 +8,4 @@
 	const shown = $derived(keys.split('+').map((key) => glyphs[key] ?? key));
 </script>
 
-<kbd {...rest}>{#each shown as key, index (index)}{#if index}{' '}{/if}<Kbd>{key}</Kbd>{/each}</kbd>
-
-<style>
-	kbd {
-		display: inline-flex;
-		flex: none;
-		gap: 2px;
-		font: inherit;
-		white-space: nowrap;
-	}
-</style>
+<Kbd {...rest}>{#each shown as key, index (index)}{#if index}{' '}{/if}<span>{key}</span>{/each}</Kbd>

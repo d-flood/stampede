@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	type Props = HTMLButtonAttributes & { element?: 'button' | 'span'; variant?: 'default' | 'ghost'; pending?: boolean; pressed?: boolean };
+	type Props = HTMLButtonAttributes & { element?: 'button' | 'span'; variant?: 'default' | 'outline' | 'ghost'; pending?: boolean; pressed?: boolean };
 
 	let { element = 'button', variant = 'default', pending = false, pressed, children, ...rest }: Props = $props();
 </script>
@@ -65,6 +65,12 @@
 		color: var(--color-fg);
 	}
 
+	button.outline:hover:not(:disabled),
+	button.outline[data-state='open'] {
+		background: var(--surface-1);
+		color: var(--color-fg);
+	}
+
 	button.ghost:hover:not(:disabled),
 	button.ghost[data-state='open'] {
 		background: var(--hover);
@@ -78,6 +84,12 @@
 	button:disabled {
 		opacity: 0.5;
 		cursor: default;
+	}
+
+	.outline {
+		border-color: var(--border);
+		background: none;
+		color: var(--muted-fg);
 	}
 
 	.ghost {

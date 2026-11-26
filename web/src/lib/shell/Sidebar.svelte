@@ -30,11 +30,10 @@
 
 <script lang="ts">
 	import type { Device, Epic, Project, Reading, ResetCredits } from '#lib/device.svelte.ts';
-	import type { Cursor, Reviewing, Selection } from '#lib/files.svelte.ts';
+	import type { Against, Cursor, OpenDiff, Reviewing, Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { progress } from '#lib/git-busy.svelte.ts';
 	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
-	import type { Against } from '#lib/files.svelte.ts';
 	import type { Change } from '#lib/git.ts';
 	import type { PrReview } from '#lib/pr-reviews.ts';
 	import Changes from '#lib/shell/Changes.svelte';
@@ -63,6 +62,7 @@
 		epics?: Epic[];
 		comparison?: Selection | Reviewing;
 		reviews?: PrReview[];
+		activeDiff?: OpenDiff;
 		oncompare(selection?: Selection | Reviewing): void;
 		onopen(path: string, cursor?: Cursor): void;
 		onrename(from: string, to: string): void;
@@ -86,6 +86,7 @@
 		epics,
 		comparison,
 		reviews,
+		activeDiff,
 		oncompare,
 		onopen,
 		onrename,
@@ -181,7 +182,7 @@
 					{/key}
 				{:else if current === 'compare'}
 					{#key project.id}
-						{#if git}<Compare projectId={project.id} {git} {device} selection={comparison} {reviews} onselect={oncompare} onopen={ondiff} {onfocus} />{/if}
+						{#if git}<Compare projectId={project.id} {git} {device} selection={comparison} {reviews} {activeDiff} onselect={oncompare} onopen={ondiff} {onfocus} />{/if}
 					{/key}
 				{:else if current === 'epics'}
 					<Epics epics={epics ?? []} onopen={onepic} />

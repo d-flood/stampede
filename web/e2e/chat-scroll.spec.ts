@@ -83,9 +83,7 @@ test('the initial message stays below the navigator at the top of a chat', async
 	await newTab(page, 'Fake Claude');
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	const transcript = panel.locator('.transcript');
-	const nav = page.getByRole('navigation', { name: 'User messages', exact: true });
-	// Desktop's navigator lives in the Tab strip and needs a second message to step to.
-	const hidden = () => phone ? expect(nav).toHaveCSS('opacity', '0') : expect(nav).toHaveCount(0);
+	const nav = panel.getByRole('navigation', { name: 'User messages', exact: true });
 	const message = panel.getByRole('region', { name: 'User message 1', exact: true });
 	await expect(message).toBeAttached();
 	await expect.poll(() => transcript.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThan(2);
@@ -95,17 +93,17 @@ test('the initial message stays below the navigator at the top of a chat', async
 		await expect(nav).toHaveCSS('opacity', '1');
 	}
 	await transcript.evaluate((node) => { node.scrollTop = 0; });
-	await hidden();
-	// The navigator never pushes the transcript down: the phone's floats over it and hides at the top.
+	await expect(nav).toHaveCSS('opacity', '0');
+	// The navigator floats over the transcript instead of pushing it down, so it hides at the top.
 	const unobscured = () => expect.poll(() => transcript.evaluate((node) => getComputedStyle(node).paddingTop === getComputedStyle(node).getPropertyValue('--space-6').trim())).toBe(true);
 	await unobscured();
-	if (phone) await expect(nav.getByRole('button', { name: 'Previous message', exact: true })).toBeDisabled();
+	await expect(nav.getByRole('button', { name: 'Previous message', exact: true })).toBeDisabled();
 	await openSettings(page, 'Appearance');
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 	await settings.getByRole('combobox', { name: 'UI font size', exact: true }).selectOption('22');
 	await settings.getByRole('combobox', { name: 'Chat font size', exact: true }).selectOption('26');
 	await settings.getByRole('button', { name: 'Close', exact: true }).click();
 	await closeSheet(page);
-	await hidden();
+	await expect(nav).toHaveCSS('opacity', '0');
 	await unobscured();
 });

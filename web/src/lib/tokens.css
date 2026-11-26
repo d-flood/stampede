@@ -80,7 +80,7 @@
 	--diff-tint: 1.5;
 
 	--accent: var(--ansi-4);
-	--selected-bg: color-mix(in oklab, var(--accent) 14%, transparent);
+	--selected-bg: color-mix(in oklab, var(--accent) 9%, transparent);
 	--selected-border: color-mix(in oklab, var(--accent) 55%, var(--border));
 	--focus-ring: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
 	--focus-offset: 1px;
@@ -129,9 +129,8 @@
 	--font-size-xl: calc(var(--font-size-base) + 6px);
 	--border-width: 1px;
 	--shadow-lift: 0 1px 2px color-mix(in oklab, var(--ansi-0) 28%, transparent);
-	/* A card resting on content, such as the Composer: an ambient lift rather than an outline. */
-	--shadow-card: 0 1px 2px color-mix(in oklab, var(--ansi-0) 6%, transparent),
-		0 6px 20px -6px color-mix(in oklab, var(--ansi-0) 16%, transparent);
+	/* A card resting on content, such as the Composer: a whisper of lift beside its hairline edge. */
+	--shadow-card: 0 1px 2px color-mix(in oklab, var(--ansi-0) 4%, transparent);
 	--shadow-float: 0 1px 2px color-mix(in oklab, var(--ansi-0) 30%, transparent),
 		0 14px 36px -12px color-mix(in oklab, var(--ansi-0) 55%, transparent);
 	--gutter: 6px;
@@ -175,7 +174,7 @@
 	--chrome: color-mix(in lab, var(--canvas) 55%, var(--color-bg));
 	--raised: color-mix(in lab, var(--color-bg) 80%, var(--color-fg));
 	--card: var(--surface-1);
-	--shadow-card: 0 1px 2px rgb(from var(--canvas) r g b / 60%), 0 8px 24px -8px rgb(from var(--canvas) r g b / 80%);
+	--shadow-card: none;
 	--plane: var(--color-bg);
 	--float: var(--surface-3);
 	--diff-tint: 1;

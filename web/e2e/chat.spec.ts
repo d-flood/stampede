@@ -463,6 +463,7 @@ for (const agent of ['Claude', 'Codex']) {
 		const chip = panel.locator('.calls .chip', { hasText: 'notes.txt' });
 		await expect(chip).toHaveText('notes.txt+1−1');
 		await panel.locator('.calls .summary').click();
+		await expect(chip).toBeHidden();
 		await expect(card).toContainText('+1 −1');
 		const added = card.getByText('+BETA');
 		await expect(added).toBeHidden();
@@ -470,7 +471,7 @@ for (const agent of ['Claude', 'Codex']) {
 		await expect(added).toBeVisible();
 		await expect(card.getByText('-beta')).toBeVisible();
 
-		await chip.click();
+		await card.getByRole('button', { name: 'Open diff', exact: true }).click();
 		await expectCurrent(page, 'notes.txt · HEAD');
 		const diff = page.locator('.diff:not([hidden])');
 		await expect(diff.locator('.path')).toHaveText('notes.txt');

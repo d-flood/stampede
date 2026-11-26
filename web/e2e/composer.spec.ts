@@ -130,7 +130,7 @@ test('desktop Chats dock the settings and actions under the Composer', { tag: '@
 		await page.setViewportSize({ width, height: 800 });
 		await expect.poll(async () => {
 			const [text, setting, action] = await Promise.all([composer, mode, attach].map((locator) => locator.boundingBox()));
-			return !!text && !!setting && !!action && setting.y >= text.y + text.height && setting.x < action.x
+			return !!text && !!setting && !!action && setting.y >= text.y + text.height && action.x < setting.x
 				&& Math.abs(setting.y + setting.height / 2 - (action.y + action.height / 2)) < 1;
 		}).toBe(true);
 	}

@@ -31,7 +31,7 @@
 {/snippet}
 
 {#snippet chip(props: Record<string, unknown>)}
-	<Chip {...props}><span class="icon" class:running><Terminal /></span><span>{shells.length} {shells.length === 1 ? 'shell' : 'shells'}</span></Chip>
+	<Chip {...props} variant="outline"><span class="icon" class:running><Terminal /></span><span>{shells.length} {shells.length === 1 ? 'shell' : 'shells'}</span></Chip>
 {/snippet}
 
 <section class="tray-shells" aria-label="Shells">

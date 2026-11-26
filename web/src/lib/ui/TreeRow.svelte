@@ -67,7 +67,6 @@
 		flex: 1;
 		min-width: 0;
 		overflow: hidden;
-		color: var(--git, currentColor);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
@@ -82,8 +81,8 @@
 
 	.letter {
 		flex: none;
-		color: var(--git, var(--muted-fg));
-		font-size: var(--font-size-sm);
-		font-weight: 700;
+		color: color-mix(in oklab, var(--git, var(--muted-fg)) 68%, var(--muted-fg));
+		font-size: calc(var(--font-size-sm) - 1px);
+		font-weight: 500;
 	}
 </style>

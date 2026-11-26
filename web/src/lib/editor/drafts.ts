@@ -1,7 +1,7 @@
 import type { DraftComment, Hunks, Placement, Side } from '#lib/pr-reviews.ts';
 import { getChunks, getOriginalDoc } from '@codemirror/merge';
-import { Facet, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state';
-import { BlockType, Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, type BlockInfo, type ViewUpdate } from '@codemirror/view';
+import { Facet, RangeSet, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state';
+import { BlockType, Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, gutterLineClass, type BlockInfo, type ViewUpdate } from '@codemirror/view';
 
 /** Fills a draft widget's DOM, giving back what tears it down. `fresh` is false when scrolling brought the widget back. */
 export type Render = (dom: HTMLElement, shown: { placement: Placement; draft?: DraftComment; lines?: string; fresh: boolean; close(): void }) => () => void;
@@ -146,12 +146,33 @@ const commentableLines = EditorView.decorations.compute([drafting], (state) => {
 	return Decoration.set(hunks[state.facet(config).side].flatMap(([from, to]) => lineMarks(state, commentableLine, from, to)), true);
 });
 
+class RowMark extends GutterMarker {
+	constructor(readonly elementClass: string) {
+		super();
+	}
+}
+
+const savedRow = new RowMark('cm-draftRangeRow');
+const selectedRow = new RowMark('cm-draftSelectedRow');
+
+function gutterMarks(state: EditorState, mark: GutterMarker, from: number, to: number) {
+	return Array.from({ length: Math.max(0, Math.min(to, state.doc.lines) - from + 1) }, (_, index) => mark.range(state.doc.line(from + index).from));
+}
+
 const rangeLines = EditorView.decorations.compute([drafting, selecting], (state) => {
 	const { side } = state.facet(config);
 	const current = active(state);
-	const ranges = state.field(drafting).drafts.flatMap((draft) => (draft.side === side && draft.startLine ? lineMarks(state, savedRange, draft.startLine, draft.line) : []));
+	const ranges = state.field(drafting).drafts.flatMap((draft) => (draft.side === side ? lineMarks(state, savedRange, firstLine(draft), draft.line) : []));
 	if (current?.side === side) ranges.push(...lineMarks(state, selectedRange, firstLine(current), current.line));
 	return Decoration.set(ranges, true);
+});
+
+const rangeGutters = gutterLineClass.compute([drafting, selecting], (state) => {
+	const { side } = state.facet(config);
+	const current = active(state);
+	const ranges = state.field(drafting).drafts.flatMap((draft) => (draft.side === side ? gutterMarks(state, savedRow, firstLine(draft), draft.line) : []));
+	if (current?.side === side) ranges.push(...gutterMarks(state, selectedRow, firstLine(current), current.line));
+	return RangeSet.of(ranges, true);
 });
 
 const replacingClass = EditorView.editorAttributes.compute([drafting], (state) => ({ class: state.field(drafting).replacing ? 'cm-draftReplacing' : '' }));
@@ -422,12 +443,13 @@ const style = EditorView.theme({
 	'.cm-draftAdds > .cm-draftAdd.cm-draftAddHover, .cm-draftAdds > .cm-draftAdd:hover, .cm-draftAdds > .cm-draftAdd.cm-draftAddOn': { background: 'var(--accent)', color: 'var(--color-bg)', opacity: 1 },
 	'.cm-lineNumbers .cm-gutterElement': { cursor: 'pointer' },
 	'.cm-draftCommentable': { boxShadow: 'inset 3px 0 var(--accent)' },
-	'.cm-draftRange': { backgroundImage: tint(10) },
-	'.cm-draftSelected': { backgroundImage: tint(22), boxShadow: 'inset 3px 0 var(--accent)' },
+	'.cm-draftRange, .cm-draftRangeRow': { backgroundImage: tint(14) },
+	'.cm-draftSelected, .cm-draftSelectedRow': { backgroundImage: tint(22) },
+	'.cm-gutter:first-child .cm-draftRangeRow, .cm-gutter:first-child .cm-draftSelectedRow': { boxShadow: 'inset 3px 0 var(--accent)' },
 	'.cm-draftComment': {
 		position: 'relative',
 		zIndex: 1,
-		padding: 'var(--space-2) var(--space-3)',
+		padding: '0 var(--space-3) var(--space-2)',
 		whiteSpace: 'normal',
 		boxSizing: 'border-box',
 		maxWidth: 'var(--draft-width)'
@@ -444,6 +466,7 @@ export function draftComments(side: Side, unified: boolean, hunks: Hunks, drafts
 		widgets,
 		commentableLines,
 		rangeLines,
+		rangeGutters,
 		replacingClass,
 		adds,
 		pressing,

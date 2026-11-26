@@ -202,12 +202,12 @@
 			{#each commits ?? [] as commit, index (commit.sha)}
 				{@const open = expanded.has(commit.sha)}
 				{@const items = [
-					{ label: 'Edit Message…', icon: PencilSimple, hint: 'r', onselect: () => edit([commit]) },
-					...(index > 0 ? [{ label: 'Squash Newer Commits Into This…', icon: GitMerge, hint: 'q', onselect: () => squashInto(commit) }] : []),
-					...(index > 0 ? [{ label: 'Regroup From Here…', icon: Stack, hint: 'g', onselect: () => regroupFrom(commit) }] : []),
-					{ label: 'Copy Short Hash', icon: Copy, hint: 'y', onselect: () => copy(commit.short) },
-					{ label: 'Copy Full Hash', icon: Copy, hint: 'Y', onselect: () => copy(commit.sha) },
-					...(index === 0 ? [{ label: 'Undo Last Commit', icon: ArrowUUpLeft, hint: 'z', onselect: undoCommit }] : [])
+					{ label: 'Edit Message…', icon: PencilSimple, shortcut: 'r', onselect: () => edit([commit]) },
+					...(index > 0 ? [{ label: 'Squash Newer Commits Into This…', icon: GitMerge, shortcut: 'q', onselect: () => squashInto(commit) }] : []),
+					...(index > 0 ? [{ label: 'Regroup From Here…', icon: Stack, shortcut: 'g', onselect: () => regroupFrom(commit) }] : []),
+					{ label: 'Copy Short Hash', icon: Copy, shortcut: 'y', onselect: () => copy(commit.short) },
+					{ label: 'Copy Full Hash', icon: Copy, shortcut: 'Y', onselect: () => copy(commit.sha) },
+					...(index === 0 ? [{ label: 'Undo Last Commit', icon: ArrowUUpLeft, shortcut: 'z', onselect: undoCommit }] : [])
 				]}
 				<li>
 					<div class="row">
@@ -478,9 +478,9 @@
 	.letter {
 		flex: none;
 		width: 1ch;
-		color: var(--git);
-		font-size: var(--font-size-sm);
-		font-weight: 700;
+		color: color-mix(in oklab, var(--git) 68%, var(--muted-fg));
+		font-size: calc(var(--font-size-sm) - 1px);
+		font-weight: 500;
 	}
 
 	.deleted .name {

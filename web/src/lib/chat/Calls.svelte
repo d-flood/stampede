@@ -69,7 +69,7 @@
 			</button>
 		{/if}
 	</div>
-	{#if edits.length}
+	{#if !expanded && edits.length}
 		<div class="chips">
 			{#each edits as edit (`${edit.canvas}:${edit.path}`)}
 				{#if edit.canvas}

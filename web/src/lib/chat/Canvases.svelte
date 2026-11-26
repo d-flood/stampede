@@ -9,11 +9,11 @@
 
 <section class="canvases" aria-label="Canvases">
 	{#if canvases.length === 1}
-		<Chip title="Open canvas" onclick={() => oncanvas(canvases[0])}><Browsers /><span class="name">{canvasName(canvases[0])}</span></Chip>
+		<Chip variant="outline" title="Open canvas" onclick={() => oncanvas(canvases[0])}><Browsers /><span class="name">{canvasName(canvases[0])}</span></Chip>
 	{:else}
 		<Menu side="top" items={[{ heading: 'Canvases', items: canvases.map((canvas) => ({ label: canvasName(canvas), icon: Browsers, onselect: () => oncanvas(canvas) })) }]}>
 			{#snippet trigger(props)}
-				<Chip {...props}><Browsers /><span>{canvases.length} canvases</span></Chip>
+				<Chip {...props} variant="outline"><Browsers /><span>{canvases.length} canvases</span></Chip>
 			{/snippet}
 		</Menu>
 	{/if}

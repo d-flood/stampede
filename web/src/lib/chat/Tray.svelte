@@ -82,7 +82,7 @@
 {/snippet}
 
 {#snippet trigger(props: Record<string, unknown>)}
-	<Chip {...props} aria-label={['Subagents', summary].filter(Boolean).join(': ')}>
+	<Chip {...props} variant="outline" aria-label={['Subagents', summary].filter(Boolean).join(': ')}>
 		<span class="dots">
 			{#each shown.slice(0, DOTS) as { path, subagent } (path.join('/'))}<SubagentDot color={color(items, path)} pulse={subagent.status !== 'done'} />{/each}
 		</span>
@@ -94,13 +94,13 @@
 {#if subagents.length || shells.length || canvases.length || completed || (changes && onchanges)}
 	<section class="tray" aria-label="Tray">
 		{#if changes && onchanges}
-			<Chip title="Review changes" onclick={onchanges}><GitBranch aria-hidden="true" /><span>{branch ? `${branch} · ` : ''}{changes} changed {changes === 1 ? 'file' : 'files'}</span></Chip>
+			<Chip variant="outline" title="Review changes" onclick={onchanges}><GitBranch aria-hidden="true" /><span>{branch ? `${branch} · ` : ''}{changes} changed {changes === 1 ? 'file' : 'files'}</span></Chip>
 		{/if}
 		{#if completed}
 			<section aria-label="Todos">
 				<Menu side="top" items={[{ heading: 'Todos', items: todos.map((todo) => ({ label: todo.text, checked: true, onselect: () => {} })) }]}>
 					{#snippet trigger(props)}
-						<Chip {...props}><CheckCircle aria-hidden="true" /><span>{todos.length} todos done</span></Chip>
+						<Chip {...props} variant="outline"><CheckCircle aria-hidden="true" /><span>{todos.length} todos done</span></Chip>
 					{/snippet}
 				</Menu>
 			</section>
@@ -114,7 +114,7 @@
 					<Menu items={menuGroups} row={subagentRow} {trigger} side="top" />
 				{/if}
 				{#if waiting.length}
-					<Chip onclick={() => onattend(waiting[0].subagent.id)}><span class="waiting">{waiting.length} waiting</span></Chip>
+					<Chip variant="outline" onclick={() => onattend(waiting[0].subagent.id)}><span class="waiting">{waiting.length} waiting</span></Chip>
 				{/if}
 			</section>
 		{/if}
@@ -124,7 +124,7 @@
 {/if}
 
 <style>
-	.tray { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; font-size: var(--font-size-sm); }
+	.tray { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; margin-bottom: var(--space-1); font-size: var(--font-size-sm); }
 	.subagents { display: flex; flex: none; gap: var(--space-1); }
 	.dots { display: inline-flex; gap: 3px; margin-inline-end: var(--space-1); }
 	.more { color: var(--muted-fg); font-variant-numeric: tabular-nums; }

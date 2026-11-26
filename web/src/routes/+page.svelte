@@ -6,7 +6,6 @@
 	import { same, subagents } from '#lib/chat/agents.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
-	import MessageNav from '#lib/chat/MessageNav.svelte';
 	import { hostName, rigs, type Rig } from '#lib/config.svelte.ts';
 	import { previewThemes, themeBar } from '#lib/themes.svelte.ts';
 	import {
@@ -83,7 +82,6 @@
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let chats = $state<Record<string, Chat[]>>({});
 	let chatItems = $state<Record<string, Item[]>>({});
-	let transcripts = $state<Record<string, HTMLElement | null>>({});
 	let htmlPreview = $state<HtmlItem>();
 	let htmlDialog = $state<HTMLDialogElement>();
 	setHtmlPreview((item) => htmlPreview = item);
@@ -187,6 +185,10 @@
 	]);
 	const closingTabs = $derived(new Set([...tabs.filter((tab) => tab.state === 'closing'), ...chatTabs.filter((chat) => chat.closing)].map(({ id }) => id)));
 	const activeTab = $derived(tabIds.find((id) => id === chosenTabs[focused?.id ?? ''] && !closingTabs.has(id)) ?? tabIds.findLast((id) => !closingTabs.has(id)));
+	const activeDiff = $derived.by(() => {
+		const open = fileTabs.find((file) => file.id === activeTab);
+		return open instanceof OpenDiff ? open : undefined;
+	});
 	const whole = $derived({ tabs: tabIds, active: activeTab });
 	const layout = $derived(focused && arrange(splits[focused.id], tabIds, activeTab, closingTabs, (id) => chatIds.has(id)));
 	const side: Side = $derived(layout && layout.right.active === activeTab ? 'right' : 'left');
@@ -1046,6 +1048,7 @@
 		epics={focused && epics[focused.id]}
 		comparison={focused && comparisons[focused.id]}
 		reviews={focused && prReviews[focused.id]}
+		{activeDiff}
 		oncompare={(selection) => focused && compare(focused.id, selection)}
 		onopen={(path, cursor) => focused && openFile(focused.id, path, cursor)}
 		onrename={(from, to) => focused && retarget(focused.id, from, to)}
@@ -1228,9 +1231,6 @@
 						</Menu>
 					{/if}
 					<span class="fill"></span>
-					{#if !phone && group.active && chatIds.has(group.active) && !openSubagents[group.active]?.length}
-						<MessageNav items={chatItems[group.active] ?? []} scroller={transcripts[group.active]} />
-					{/if}
 					{#if focused && index === groups.length - 1}
 						{@const projectId = focused.id}
 						<ChatList
@@ -1354,7 +1354,6 @@
 								items={chatItems[chat.id] ?? []}
 								saved={[...saved].filter((canvas) => canvas.startsWith(`${chat.id}/`))}
 								opened={openSubagents[chat.id] ?? []}
-								bind:scroller={transcripts[chat.id]}
 								onopen={(path) => (openSubagents[chat.id] = path)}
 								active={showing(chat.id)}
 								focused={chat.id === activeTab}
@@ -1818,9 +1817,8 @@
 		min-width: 0;
 		padding: 0 var(--space-2);
 		border-bottom: var(--border-width) solid var(--border);
-		background: var(--surface-1);
+		background: var(--color-bg);
 		user-select: none;
-		container-type: inline-size;
 	}
 
 	main.bottom {
@@ -1876,9 +1874,11 @@
 		background: var(--border-strong);
 	}
 
-	/* Leaves the accent fill to the Split side that has focus. */
+	/* Quiets the unfocused Split's active Tab so focus reads without colour noise. */
 	main:not(.bottom) .strip:not(.current) :global([role='tab'][aria-selected='true']) {
-		--pill: color-mix(in oklab, var(--hover) 55%, transparent);
+		--pill: var(--surface-1);
+		color: color-mix(in oklab, var(--color-fg) 55%, var(--muted-fg));
+		font-weight: 400;
 	}
 
 	.bottom [role='tablist'] {

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { comparison } from '#lib/compare.svelte.ts';
 	import type { Device } from '#lib/device.svelte.ts';
-	import { branches, type Reviewing, type Selection } from '#lib/files.svelte.ts';
+	import { branches, comparing, type OpenDiff, type Reviewing, type Selection } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { letters, refs, split, type Change, type Git, type Refs } from '#lib/git.ts';
 	import { deleteDraft, discardReview, openWorktree, prs, refreshReview, setViewed, viewedState, type Availability, type DraftComment, type PrReview } from '#lib/pr-reviews.ts';
@@ -35,12 +35,13 @@
 		device: Device;
 		selection?: Selection | Reviewing;
 		reviews?: PrReview[];
+		activeDiff?: OpenDiff;
 		onselect(selection?: Selection | Reviewing): void;
 		onopen(change: Change, against: Selection | Reviewing, draft?: string, replace?: boolean): void;
 		onfocus(projectId: string): void;
 	};
 
-	let { projectId, git, device, selection, reviews, onselect, onopen, onfocus }: Props = $props();
+	let { projectId, git, device, selection, reviews, activeDiff, onselect, onopen, onfocus }: Props = $props();
 
 	const collapsed = new SvelteSet<string>();
 	let listed = $state.raw<Refs>();
@@ -56,6 +57,12 @@
 	const target = $derived(plain?.target ?? listed?.default);
 	const source = $derived(plain?.source ?? (git.detached ? undefined : git.branch));
 	const against = $derived<Selection | Reviewing | undefined>(reviewing !== undefined ? { pr: reviewing } : target && source ? { target, source } : undefined);
+	const currentPath = $derived.by(() => {
+		if (!activeDiff || !against || !comparing(activeDiff.against)) return undefined;
+		const a = branches(activeDiff.against);
+		const b = branches(against);
+		return a.target === b.target && a.source === b.source ? activeDiff.path : undefined;
+	});
 	const compared = $derived(against ? comparison(projectId, branches(against)) : undefined);
 	const files = $derived(compared?.result?.files);
 	const rows = $derived(files ? treeRows(files, 'compare', (key) => !collapsed.has(key)) : []);
@@ -311,7 +318,8 @@
 		</div>
 		<ul class="list" aria-label="Compared files">
 			{#each rows as row (row.key)}
-				<li class="row">
+				{@const selected = row.kind === 'file' && row.change.path === currentPath}
+				<li class="row" class:selected>
 					{#if row.kind === 'folder'}
 						<TreeRow name={row.folder.name} depth={row.depth} open={row.open} title={row.folder.path} onclick={() => toggle(row.key)} />
 					{:else}
@@ -323,6 +331,7 @@
 							git={change.kind}
 							letter={letters[change.kind]}
 							faded={mark === 'viewed'}
+							aria-current={selected ? 'true' : undefined}
 							title={change.from ? `${change.from} → ${change.path}` : change.path}
 							onclick={() => against && onopen(change, against)}
 						>
@@ -468,8 +477,16 @@
 		border-radius: var(--radius-md);
 	}
 
-	.row:hover {
+	.row:not(.selected):hover {
 		background: var(--hover);
+	}
+
+	.row.selected {
+		background: var(--selected-bg);
+	}
+
+	.row.selected :global(.name) {
+		font-weight: 600;
 	}
 
 	.entry {

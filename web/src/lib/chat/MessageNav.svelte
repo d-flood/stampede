@@ -1,36 +1,35 @@
 <script lang="ts">
 	import type { Item } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import Toolbar from '#lib/ui/Toolbar.svelte';
 	import { on } from 'svelte/events';
 	import CaretDown from '~icons/ph/caret-down';
 	import CaretUp from '~icons/ph/caret-up';
+	import ListNumbers from '~icons/ph/list-numbers';
 
-	let { items, scroller }: { items: Item[]; scroller?: HTMLElement | null } = $props();
+	let { items, scroller, height = $bindable(0) }: { items: Item[]; scroller?: HTMLElement; height?: number } = $props();
 	const messages = $derived(items.flatMap((item, index) => item.kind === 'user' ? [{ index, summary: item.text.trim().split('\n')[0] || `${item.images} attached image${item.images === 1 ? '' : 's'}` }] : []));
 	let nav = $state<HTMLElement>();
 	let current = $state<number>();
 	let above = $state(false);
 	let below = $state(false);
+	let revealed = $state(false);
 	let away = $state(false);
 	let atTop = $state(false);
 	let gutter = $state(0);
-	let inset = 0;
+	let landing: number | undefined;
 	const phone = $derived(form() === 'phone');
 	const position = $derived(messages.findIndex(({ index }) => index === current));
-	const shown = $derived(!atTop && away);
-	const label = $derived(position < 0 ? `${messages.length} user messages` : `Message ${position + 1} of ${messages.length}: ${messages[position].summary}`);
-	const menu = $derived(messages.map((message, number) => ({ label: `${number + 1}. ${message.summary}`, checked: message.index === current, onselect: () => jump(scroller?.querySelector<HTMLElement>(`[data-user-message="${message.index}"]`)) })));
+	const shown = $derived(!atTop && (phone ? away : revealed && current !== undefined));
 
 	function bottom() {
 		return nav ? nav.offsetTop + nav.offsetHeight : 0;
 	}
 
-	/** Where a message rests once reached: under the phone's floating pill, or at the transcript's own top padding. */
 	function edge() {
-		return phone ? (nav?.offsetParent ?? scroller!).getBoundingClientRect().top + bottom() : scroller!.getBoundingClientRect().top + inset;
+		return (nav?.offsetParent ?? scroller!).getBoundingClientRect().top + bottom();
 	}
 
 	function entries() {
@@ -48,7 +47,7 @@
 	}
 
 	function watch(element: HTMLElement) {
-		inset = parseFloat(getComputedStyle(element).paddingTop);
+		let last = element.scrollTop;
 		const observer = new ResizeObserver(update);
 		observer.observe(element);
 		if (element.firstElementChild) observer.observe(element.firstElementChild);
@@ -58,17 +57,22 @@
 			atTop = element.scrollTop < bottom();
 		};
 		const off = on(element, 'scroll', () => {
+			const top = element.scrollTop;
+			if (top !== landing && top !== last) revealed = top < last;
+			landing = undefined;
+			last = top;
 			measure();
 			update();
 		});
 		measure();
 		update();
-		return () => { observer.disconnect(); off(); away = false; };
+		return () => { observer.disconnect(); off(); revealed = false; away = false; };
 	}
 
 	function jump(node?: HTMLElement | null) {
 		if (!node || !scroller) return;
 		scroller.scrollTop += node.getBoundingClientRect().top - edge();
+		landing = scroller.scrollTop;
 	}
 
 	function step(direction: -1 | 1) {
@@ -78,45 +82,49 @@
 	}
 </script>
 
-{#if phone && messages.length && scroller}
-	<nav bind:this={nav} aria-label="User messages" class="pill" class:shown style:--gutter="{gutter}px" inert={!shown} {@attach () => watch(scroller!)}>
-		<IconButton label="Previous message" disabled={!above} onclick={() => step(-1)}><CaretUp /></IconButton>
-		<Menu items={menu}>
-			{#snippet trigger(props)}
-				<button {...props} class="current" aria-label={label}>
-					{#if position < 0}{messages.length} message{messages.length === 1 ? '' : 's'}{:else}<span class="count">{position + 1}/{messages.length}</span>{/if}
-				</button>
-			{/snippet}
-		</Menu>
-		<IconButton label="Next message" disabled={!below} onclick={() => step(1)}><CaretDown /></IconButton>
-	</nav>
-{:else if !phone && messages.length > 1 && scroller}
-	<nav aria-label="User messages" class="controls" {@attach () => watch(scroller!)}>
-		<Menu items={menu} align="end">
-			{#snippet trigger(props)}
-				<Button {...props} variant="ghost" size="sm" aria-label={label} title={label}>
-					<span class="count">{position < 0 ? '–' : position + 1}/{messages.length}</span>
-				</Button>
-			{/snippet}
-		</Menu>
-		<span class="steps">
-			<Button variant="ghost" size="sm" aria-label="Previous message" title="Previous message" disabled={!above} onclick={() => step(-1)}><CaretUp /></Button>
-			<Button variant="ghost" size="sm" aria-label="Next message" title="Next message" disabled={!below} onclick={() => step(1)}><CaretDown /></Button>
-		</span>
+{#snippet controls()}
+	{#if phone}<IconButton label="Previous message" disabled={!above} onclick={() => step(-1)}><CaretUp /></IconButton>{/if}
+	<Menu items={messages.map((message, number) => ({ label: `${number + 1}. ${message.summary}`, checked: message.index === current, onselect: () => jump(scroller?.querySelector<HTMLElement>(`[data-user-message="${message.index}"]`)) }))}>
+		{#snippet trigger(props)}
+			<button {...props} class="current" aria-label={position < 0 ? `${messages.length} user messages` : `Message ${position + 1} of ${messages.length}: ${messages[position].summary}`}>
+				{#if !phone}<ListNumbers aria-hidden="true" />{/if}
+				{#if position < 0}
+					<span class="summary">{messages.length} message{messages.length === 1 ? '' : 's'}</span>
+				{:else}
+					<span class="count">{position + 1}/{messages.length}</span>
+					{#if !phone}<span class="summary">{messages[position].summary}</span>{/if}
+				{/if}
+			</button>
+		{/snippet}
+	</Menu>
+	{#if !phone}<IconButton label="Previous message" disabled={!above} onclick={() => step(-1)}><CaretUp /></IconButton>{/if}
+	<IconButton label="Next message" disabled={!below} onclick={() => step(1)}><CaretDown /></IconButton>
+{/snippet}
+
+{#if messages.length && scroller}
+	<nav bind:this={nav} bind:offsetHeight={height} aria-label="User messages" class:shown class:phone style:--gutter="{gutter}px" inert={!shown} {@attach () => watch(scroller!)}>
+		{#if phone}
+			<div class="row">{@render controls()}</div>
+		{:else}
+			<Toolbar><div class="row">{@render controls()}</div></Toolbar>
+		{/if}
 	</nav>
 {/if}
 
 <style>
-	.controls { display: flex; flex: none; align-items: center; }
-	.steps { display: contents; }
-	/* A narrow pane keeps its Tabs readable; the count's menu still reaches every message. */
-	@container (width < 26rem) { .steps { display: none; } }
-	.count { font-variant-numeric: tabular-nums; }
-	.pill { position: absolute; z-index: 2; top: var(--space-2); right: calc(var(--gutter) + var(--space-2)); display: flex; align-items: center; border: var(--border-width) solid var(--border); border-radius: var(--radius-pill); background: var(--color-bg); box-shadow: var(--shadow-float); opacity: 0; transform: translateY(calc(-1 * var(--space-2))); pointer-events: none; transition: transform var(--dur-med) ease, opacity var(--dur-med) ease; }
-	.pill.shown { opacity: 1; transform: none; pointer-events: auto; }
-	.pill :global(button) { border-radius: var(--radius-pill); }
-	.current { display: flex; flex: none; align-items: center; justify-content: center; min-width: var(--target-min); min-height: var(--target-min); padding: 0 var(--space-1); border: none; background: none; color: var(--color-fg); font: inherit; cursor: pointer; }
+	nav { position: absolute; z-index: 2; top: 0; right: var(--gutter); left: 0; background: var(--color-bg); font-size: var(--font-size-sm); opacity: 0; transform: translateY(-100%); pointer-events: none; transition: transform var(--dur-med) ease, opacity var(--dur-med) ease; }
+	nav.shown { opacity: 1; transform: none; pointer-events: auto; }
+	/* With the Toolbar's own uneven padding, insets the row by space-4 a side. */
+	.row { display: flex; flex: 1; align-items: center; gap: var(--space-1); max-width: var(--measure); margin: 0 auto; padding: 0 var(--space-3) 0 var(--space-1); }
+	.current { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--target-min); padding: 0 var(--space-2); border: none; border-radius: var(--radius-md); background: none; color: var(--color-fg); font: inherit; text-align: left; cursor: pointer; }
 	.current:hover, .current[data-state='open'] { background: var(--hover); }
 	.current:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-inset); }
-	.pill .count { color: var(--muted-fg); }
+	.current :global(svg) { flex: none; color: var(--muted-fg); }
+	.count { flex: none; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+	.summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	nav.phone { top: var(--space-2); right: calc(var(--gutter) + var(--space-2)); left: auto; border: var(--border-width) solid var(--border); border-radius: var(--radius-pill); box-shadow: var(--shadow-float); font-size: var(--font-size-md); transform: translateY(calc(-1 * var(--space-2))); }
+	nav.phone.shown { transform: none; }
+	.phone .row { gap: 0; padding: 0; }
+	.phone .current { flex: none; justify-content: center; min-width: var(--target-min); padding: 0 var(--space-1); border-radius: 0; }
+	.phone :global(button) { border-radius: var(--radius-pill); }
 </style>

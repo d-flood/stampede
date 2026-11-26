@@ -274,67 +274,65 @@
 		{@render editor()}
 	</div>
 {:else}
-	<div class="card" class:phone>
-		<ol class="rigs" class:empty={!rigs().length && selected !== ''} aria-label="Rigs">
-			{#each rigs() as rig, index (rig.name)}
-				{@const Logo = logos[rig.agent]}
-				<li
-					class:open={selected === rig.name}
-					class:dragged={dragging === rig.name}
-					class:before={over === index && from > index}
-					class:after={over === index && from >= 0 && from < index}
-					ondragover={(event) => { if (dragging === undefined) return; event.preventDefault(); over = index; }}
-					ondrop={(event) => { event.preventDefault(); drop(index); }}
-				>
-					<div class="row">
-						{#if !phone}
-							<span
-								class="grip"
-								draggable={!busy}
-								title="Drag to reorder"
-								aria-hidden="true"
-								ondragstart={(event) => {
-									dragging = rig.name;
-									event.dataTransfer?.setData('text/plain', rig.name);
-									const row = event.currentTarget.closest('li');
-									if (row) event.dataTransfer?.setDragImage(row, 16, 16);
-								}}
-								ondragend={() => (dragging = over = undefined)}
-							><DotsSixVertical /></span>
-						{/if}
-						<button class="item" aria-expanded={selected === rig.name} aria-labelledby="rig-{index}-name" aria-describedby="rig-{index}-detail" disabled={busy} onclick={() => (selected === rig.name ? close() : choose(rig.name))}>
-							<span class="logo"><Logo /></span>
-							<span class="text">
-								<span class="name" id="rig-{index}-name">{rig.name}</span>
-								<span class="detail" id="rig-{index}-detail">{rigSummary(rig)}{#if index < 9}<span class="sr">, Ctrl+Shift+{index + 1}</span>{/if}</span>
-							</span>
-							{#if phone}<CaretRight />{:else}{#if index < 9}<Shortcut aria-hidden="true" keys="Ctrl+Shift+{index + 1}" />{/if}<Caret />{/if}
-						</button>
-					</div>
-					{#if selected === rig.name && !phone}{@render editor()}{/if}
-				</li>
-			{/each}
-			{#if selected === '' && !phone}
-				{@const Logo = logos[agent]}
-				<li class="open">
-					<div class="row">
-						<span class="grip"></span>
-						<button class="item" aria-expanded="true" onclick={close}>
-							<span class="logo"><Logo /></span>
-							<span class="text"><span class="name">New Rig</span><span class="detail">Not saved yet</span></span>
-						</button>
-					</div>
-					{@render editor()}
-				</li>
-			{/if}
-		</ol>
+	<div class="list" class:phone>
+		<div class="card" class:empty={!rigs().length && selected !== ''}>
+			<ol class="rigs" aria-label="Rigs">
+				{#each rigs() as rig, index (rig.name)}
+					{@const Logo = logos[rig.agent]}
+					<li
+						class:open={selected === rig.name}
+						class:dragged={dragging === rig.name}
+						class:before={over === index && from > index}
+						class:after={over === index && from >= 0 && from < index}
+						ondragover={(event) => { if (dragging === undefined) return; event.preventDefault(); over = index; }}
+						ondrop={(event) => { event.preventDefault(); drop(index); }}
+					>
+						<div class="row">
+							{#if !phone}
+								<span
+									class="grip"
+									draggable={!busy}
+									title="Drag to reorder"
+									aria-hidden="true"
+									ondragstart={(event) => {
+										dragging = rig.name;
+										event.dataTransfer?.setData('text/plain', rig.name);
+										const row = event.currentTarget.closest('li');
+										if (row) event.dataTransfer?.setDragImage(row, 16, 16);
+									}}
+									ondragend={() => (dragging = over = undefined)}
+								><DotsSixVertical /></span>
+							{/if}
+							<button class="item" aria-expanded={selected === rig.name} aria-labelledby="rig-{index}-name" aria-describedby="rig-{index}-detail" disabled={busy} onclick={() => (selected === rig.name ? close() : choose(rig.name))}>
+								<span class="logo"><Logo /></span>
+								<span class="text">
+									<span class="name" id="rig-{index}-name">{rig.name}</span>
+									<span class="detail" id="rig-{index}-detail">{rigSummary(rig)}{#if index < 9}<span class="sr">, Ctrl+Shift+{index + 1}</span>{/if}</span>
+								</span>
+								{#if phone}<CaretRight />{:else}{#if index < 9}<Shortcut aria-hidden="true" keys="Ctrl+Shift+{index + 1}" />{/if}<Caret />{/if}
+							</button>
+						</div>
+						{#if selected === rig.name && !phone}{@render editor()}{/if}
+					</li>
+				{/each}
+				{#if selected === '' && !phone}
+					{@const Logo = logos[agent]}
+					<li class="open">
+						<div class="row">
+							<span class="grip"></span>
+							<button class="item" aria-expanded="true" onclick={close}>
+								<span class="logo"><Logo /></span>
+								<span class="text"><span class="name">New Rig</span><span class="detail">Not saved yet</span></span>
+							</button>
+						</div>
+						{@render editor()}
+					</li>
+				{/if}
+			</ol>
+		</div>
 		{#if selected !== '' || phone}
-			<div class="row new">
-				{#if !phone}<span class="grip"></span>{/if}
-				<button class="item" disabled={busy} onclick={() => choose('')}>
-					<span class="logo"><Plus /></span>
-					<span class="text">New Rig</span>
-				</button>
+			<div class="add">
+				<Button variant="link" disabled={busy} onclick={() => choose('')}><Plus /> New Rig</Button>
 			</div>
 		{/if}
 	</div>
@@ -350,18 +348,22 @@
 </Dialog>
 
 <style>
-	/* Where a Rig's name starts, so dividers begin under the names rather than at the card's edge. */
-	.card {
+	/* Where a Rig's name starts, so dividers and the add action line up with the names. */
+	.list {
 		--names: calc(var(--grip) + 2 * var(--space-1) + 1.2 * var(--font-size-lg) + var(--space-3));
 		--grip: 1.75rem;
+		margin-top: calc(var(--space-6) + var(--space-2));
+	}
+
+	.list.phone {
+		--names: calc(2 * var(--space-3) + 1.2 * var(--font-size-lg));
+	}
+
+	.card {
 		overflow: hidden;
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius-lg);
 		background: var(--card);
-	}
-
-	.card.phone {
-		--names: calc(2 * var(--space-3) + 1.2 * var(--font-size-lg));
 	}
 
 	.rigs {
@@ -378,8 +380,7 @@
 		position: relative;
 	}
 
-	li + li::before,
-	.new::before {
+	li + li::before {
 		content: '';
 		position: absolute;
 		top: 0;
@@ -388,12 +389,15 @@
 		border-top: var(--border-width) solid var(--border);
 	}
 
-	.new {
-		position: relative;
+	.add {
+		margin-top: var(--space-3);
+		padding-left: calc(var(--border-width) + var(--names));
+		font-weight: 500;
 	}
 
-	.rigs:not(:has(li)) + .new::before {
-		display: none;
+	.card.empty + .add {
+		margin-top: 0;
+		padding-left: 0;
 	}
 
 	li.open {
@@ -424,14 +428,17 @@
 		width: var(--grip);
 		padding-left: var(--space-1);
 		color: var(--muted-fg);
-		opacity: 0.35;
+		opacity: 0.65;
 		cursor: grab;
-		transition: opacity var(--dur-fast);
+		transition:
+			color var(--dur-fast),
+			opacity var(--dur-fast);
 	}
 
 	.row:hover .grip,
 	.row:focus-within .grip,
 	li.open .grip {
+		color: var(--color-fg);
 		opacity: 1;
 	}
 
@@ -442,7 +449,7 @@
 		gap: var(--space-3);
 		min-width: 0;
 		min-height: calc(var(--target-min) + var(--space-2));
-		padding: var(--space-3) var(--space-4) var(--space-3) var(--space-1);
+		padding: var(--space-2) var(--space-4) var(--space-2) var(--space-1);
 		border: none;
 		background: none;
 		color: var(--color-fg);
@@ -482,23 +489,6 @@
 	.name {
 		font-weight: 600;
 		line-height: 1.2;
-	}
-
-	.new .item {
-		color: var(--muted-fg);
-	}
-
-	.new .item:hover:enabled {
-		color: var(--color-fg);
-	}
-
-	.new .logo {
-		justify-content: center;
-		width: calc(1.2 * var(--font-size-lg));
-	}
-
-	.new .item:disabled {
-		opacity: 0.5;
 	}
 
 	.item > :global(kbd) {

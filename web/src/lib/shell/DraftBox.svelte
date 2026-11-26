@@ -88,7 +88,8 @@
 		max-width: 60rem;
 		padding: var(--space-3);
 		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-lg);
+		border-top: calc(2 * var(--border-width)) solid var(--selected-border);
+		border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 		background: var(--card);
 		font-family: var(--font-ui);
 	}

@@ -287,7 +287,7 @@
 		gap: var(--space-1);
 		padding: 0 var(--space-2);
 		border-bottom: var(--border-width) solid var(--border);
-		background: var(--surface-1);
+		background: var(--color-bg);
 	}
 
 	[role='tablist'] {
