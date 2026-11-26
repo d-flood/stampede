@@ -71,9 +71,9 @@ while True:
     method = request.get('method', '')
     params = request.get('params', {})
     if method == 'connect':
-        reply(request, {'ok': True, 'protocolVersion': 3, 'version': '1.0.100'})
+        reply(request, {'ok': True, 'protocolVersion': 4, 'version': '1.0.116'})
     elif method == 'ping':
-        reply(request, {'message': '', 'timestamp': '2026-10-19T12:00:00Z', 'protocolVersion': 3})
+        reply(request, {'message': '', 'timestamp': '2026-10-19T12:00:00Z', 'protocolVersion': 4})
     elif method == 'auth.getStatus':
         reply(request, {'isAuthenticated': fixture != 'unauthenticated'})
     elif method in ['session.quota.refresh', 'session.quota.get']:
@@ -87,7 +87,7 @@ while True:
         path = state / f'{session}.json'
         history = json.loads(path.read_text()) if path.exists() else []
         model = params.get('model', model)
-        effort = params.get('reasoningEffort', effort)
+        effort = params.get('inference', {}).get('reasoningEffort', effort)
         reply(request, {'sessionId': session})
     elif method == 'session.model.list':
         models = [{'id': 'claude-sonnet-4.6', 'name': 'Claude Sonnet 4.6', 'supportedReasoningEfforts': ['low', 'medium', 'high']}]

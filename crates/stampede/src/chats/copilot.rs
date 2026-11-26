@@ -8,9 +8,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use github_copilot_sdk::{
-    Attachment, Client, MessageOptions, PermissionRequestData, PermissionRequestKind, RequestId, ResumeSessionConfig,
-    SessionConfig, SessionEvent, SessionId, SessionListFilter, SetModelOptions, SystemMessageConfig,
+use copilot_sdk::{
+    Attachment, Client, ClientMode, CreateSessionOptions, MessageOptions, PermissionRequestData, PermissionRequestKind, RequestId,
+    ResumeSessionOptions, SessionEvent, SessionId, SessionListFilter, SetModelOptions, SystemMessageConfig,
     handler::{PermissionHandler, PermissionResult, UserInputHandler, UserInputResponse},
     session::Session as CopilotSession,
     rpc::{EventsReadDirection, ModelListRequest, SessionsForkRequest, SessionsReadPersistedEventsRequest},
@@ -98,7 +98,7 @@ impl Connection {
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
             .kill_on_drop(true).spawn()
             .map_err(|error| io::Error::new(error.kind(), format!("Cannot start GitHub Copilot CLI: {error}. Install Copilot CLI and run `copilot login`.")))?;
-        let client = Client::from_streams(child.stdout.take().unwrap(), child.stdin.take().unwrap(), cwd.to_owned()).map_err(io::Error::other)?;
+        let client = Client::from_streams(ClientMode::CodingAgent, child.stdout.take().unwrap(), child.stdin.take().unwrap(), cwd.to_owned()).map_err(io::Error::other)?;
         rpc(client.verify_protocol_version()).await?;
         if !rpc(client.get_auth_status()).await?.is_authenticated {
             return Err(io::Error::other("GitHub Copilot is not signed in. Run `copilot login` on the Stampede host, then try again."));
@@ -112,16 +112,16 @@ impl Connection {
     }
 }
 
-async fn rpc<T>(future: impl std::future::Future<Output = Result<T, github_copilot_sdk::Error>>) -> io::Result<T> {
+async fn rpc<T>(future: impl std::future::Future<Output = Result<T, copilot_sdk::Error>>) -> io::Result<T> {
     timeout(RPC_TIMEOUT, future).await.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "GitHub Copilot took too long to respond"))?.map_err(io::Error::other)
 }
 
 pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &AgentSettings) -> io::Result<(Vec<Value>, AgentSettings)> {
     let mut connection = Connection::open(cwd, env).await?;
     let result = async {
-        let mut config = SessionConfig::default().deny_all_permissions().with_working_directory(cwd);
+        let mut config = CreateSessionOptions::default().with_permissions(|group| group.deny_all_permissions()).with_working_directory(cwd);
         if let Some(model) = &settings.model { config = config.with_model(model); }
-        if let Some(effort) = &settings.effort { config = config.with_reasoning_effort(effort); }
+        if let Some(effort) = &settings.effort { config = config.with_inference(|group| group.with_reasoning_effort(effort)); }
         let session = rpc(connection.client.create_session(config)).await?;
         let result = async {
             let models = models(&session).await?;
@@ -149,7 +149,7 @@ async fn models(session: &CopilotSession) -> io::Result<Vec<Value>> {
 pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
     let mut connection = Connection::open(&crate::home(), env).await?;
     let result = async {
-        let session = rpc(connection.client.create_session(SessionConfig::default().deny_all_permissions().with_working_directory(crate::home()))).await?;
+        let session = rpc(connection.client.create_session(CreateSessionOptions::default().with_permissions(|group| group.deny_all_permissions()).with_working_directory(crate::home()))).await?;
         let result = rpc(session.rpc().quota().refresh()).await.map(|quota| readings(quota.provider_quotas.as_deref().unwrap_or_default()));
         let _ = rpc(session.disconnect()).await;
         let _ = rpc(connection.client.delete_session(session.id())).await;
@@ -313,18 +313,20 @@ async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: A
     let servers = serde_json::from_value(json!({ html::SERVER: server }))?;
     let stampede = SystemMessageConfig::new().with_content(html::instructions(data_dir, Some(&chat.id), &chat.disabled_tools));
     if let Some(id) = &chat.agent_session {
-        let mut config = ResumeSessionConfig::new(SessionId::new(id))
-            .with_working_directory(&chat.cwd).with_streaming(true).with_mcp_servers(servers).with_system_message(stampede).with_excluded_tools(["ask_user"])
-            .with_permission_handler(handlers.clone()).with_user_input_handler(handlers);
+        let mut config = ResumeSessionOptions::new(SessionId::new(id))
+            .with_working_directory(&chat.cwd).with_events(|group| group.with_streaming(true)).with_mcp(|group| group.with_servers(servers))
+            .with_system_message(stampede).with_tools(|group| group.with_excluded_tools(["ask_user"]))
+            .with_permissions(|group| group.with_on_request(handlers.clone())).with_interaction(|group| group.with_on_user_input_request(handlers));
         if let Some(model) = &chat.settings.chosen.model { config = config.with_model(model); }
-        if let Some(effort) = &chat.settings.chosen.effort { config = config.with_reasoning_effort(effort); }
+        if let Some(effort) = &chat.settings.chosen.effort { config = config.with_inference(|group| group.with_reasoning_effort(effort)); }
         rpc(client.resume_session(config)).await
     } else {
-        let mut config = SessionConfig::default()
-            .with_working_directory(&chat.cwd).with_streaming(true).with_mcp_servers(servers).with_system_message(stampede).with_excluded_tools(["ask_user"])
-            .with_permission_handler(handlers.clone()).with_user_input_handler(handlers);
+        let mut config = CreateSessionOptions::default()
+            .with_working_directory(&chat.cwd).with_events(|group| group.with_streaming(true)).with_mcp(|group| group.with_servers(servers))
+            .with_system_message(stampede).with_tools(|group| group.with_excluded_tools(["ask_user"]))
+            .with_permissions(|group| group.with_on_request(handlers.clone())).with_interaction(|group| group.with_on_user_input_request(handlers));
         if let Some(model) = &chat.settings.chosen.model { config = config.with_model(model); }
-        if let Some(effort) = &chat.settings.chosen.effort { config = config.with_reasoning_effort(effort); }
+        if let Some(effort) = &chat.settings.chosen.effort { config = config.with_inference(|group| group.with_reasoning_effort(effort)); }
         rpc(client.create_session(config)).await
     }
 }
@@ -504,7 +506,7 @@ async fn ready_metadata(pending: &mut Option<oneshot::Receiver<Metadata>>) -> Op
 async fn drive(
     mut connection: Connection,
     session: Arc<CopilotSession>,
-    mut subscribed: github_copilot_sdk::subscription::EventSubscription,
+    mut subscribed: copilot_sdk::subscription::EventSubscription,
     mut transcript: Transcript,
     mut interactions: UnboundedReceiver<Interaction>,
     mut actions: UnboundedReceiver<Action>,
@@ -661,7 +663,7 @@ async fn run(session: &CopilotSession, transcript: &mut Transcript, builtin: Bui
         Builtin::Rewind(index) if transcript.status == Status::Done => {
             let event_id = transcript.user_events.get(&index).ok_or_else(|| io::Error::other("Choose a user message to rewind to"))?.clone();
             transcript.status(Status::Working);
-            rpc(session.rpc().history().truncate(github_copilot_sdk::rpc::HistoryTruncateRequest { event_id })).await?;
+            rpc(session.rpc().history().truncate(copilot_sdk::rpc::HistoryTruncateRequest { event_id })).await?;
             let history = rpc(session.get_events()).await?;
             transcript.reset();
             for event in history { transcript.read(&event, true); }

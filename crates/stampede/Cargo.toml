@@ -10,12 +10,12 @@ async-trait = "0.1.92"
 axum = { version = "0.8.9", features = ["ws"] }
 base64ct = { version = "1.8.3", features = ["alloc"] }
 clap = { version = "4.6.9", features = ["derive"] }
+copilot-sdk = { version = "2.0.3", default-features = false }
 flate2 = "1.1.11"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
 grep-matcher = "0.1.10"
 grep-regex = "0.1.15"
 grep-searcher = "0.1.18"
-github-copilot-sdk = { version = "1.0.35", default-features = false }
 ignore = "0.4.35"
 inotify = { version = "0.11.5", default-features = false }
 libghostty-vt = { git = "https://github.com/uzaaft/libghostty-rs", rev = "483ea3d5247b214060da58ef6037a95f30ae89fb" }

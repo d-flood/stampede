@@ -215,13 +215,13 @@ async fn copilot_streams_using_existing_cli_auth_and_closes_its_process() {
     assert_eq!(items(&mut socket, &chat).await["items"], json!(transcript));
     close_chat(&mut socket, server.root.path(), id).await;
     let received = received(&server);
-    let create = received.iter().find(|message| message["method"] == "session.create" && message["params"]["streaming"] == true).unwrap();
-    assert_eq!(create["params"]["streaming"], true);
-    assert_eq!(create["params"]["requestPermission"], true);
+    let create = received.iter().find(|message| message["method"] == "session.create" && message["params"]["events"]["streaming"] == true).unwrap();
+    assert_eq!(create["params"]["events"]["streaming"], true);
+    assert_eq!(create["params"]["permissions"]["request"], true);
     assert_eq!(create["params"]["workingDirectory"], server.root.path().join("home").display().to_string());
-    assert!(create["params"]["mcpServers"].is_object());
+    assert!(create["params"]["mcp"]["servers"].is_object());
     assert!(create["params"]["systemMessage"]["content"].as_str().unwrap().contains(&format!("canvases/{id}")));
-    assert_eq!(create["params"]["excludedTools"], json!(["ask_user"]));
+    assert_eq!(create["params"]["tools"]["excludedTools"], json!(["ask_user"]));
     assert!(received.iter().any(|message| message["method"] == "session.detach"));
 }
 
