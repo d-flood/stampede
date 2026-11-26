@@ -1,3 +1,4 @@
+import { canvasUrl, hostOf } from '#lib/host.ts';
 import type { Item } from '#lib/device.svelte.ts';
 
 export class OpenCanvas {
@@ -20,7 +21,7 @@ export class OpenCanvas {
 	async load(version: number | undefined) {
 		const request = ++this.#request;
 		this.version = version;
-		const response = await fetch(`/api/canvases/${this.canvas}${version ? `?version=${version}` : ''}`).catch(() => undefined);
+		const response = await fetch(canvasUrl(hostOf(this.projectId), this.canvas, version)).catch(() => undefined);
 		const html = response?.ok ? await response.text() : undefined;
 		if (request !== this.#request) return;
 		this.missing = html === undefined;

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Text from '#lib/chat/Text.svelte';
+	import { attachmentUrl } from '#lib/host.ts';
 	import type { Item } from '#lib/device.svelte.ts';
 	import ArrowCounterClockwise from '~icons/ph/arrow-counter-clockwise';
 	import ArrowsSplit from '~icons/ph/arrows-split';
@@ -7,7 +8,7 @@
 	import Caret from '#lib/ui/Caret.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 
-	let { item, first, index, number, onrewind, onfork }: { item: Extract<Item, { kind: 'user' }>; first: boolean; index: number; number: number; onrewind?(index: number): void; onfork?(index: number): void } = $props();
+	let { host, item, first, index, number, onrewind, onfork }: { host: string | undefined; item: Extract<Item, { kind: 'user' }>; first: boolean; index: number; number: number; onrewind?(index: number): void; onfork?(index: number): void } = $props();
 
 	const lines = $derived(item.text.split('\n'));
 	const actions = $derived([
@@ -55,7 +56,8 @@
 		<div class="images" aria-label="Attached images">
 			{#if !item.text}{@render more()}{/if}
 			<span class="label">{item.images} image{item.images === 1 ? '' : 's'}</span>
-			{#each item.imageUrls ?? [] as src, index}
+			{#each item.imageUrls ?? [] as url, index}
+				{@const src = attachmentUrl(host, url)}
 				<a href={src} target="_blank" rel="noreferrer" aria-label="Open attached image {index + 1}">
 					<img {src} alt="Attached image {index + 1}" loading="lazy" />
 				</a>

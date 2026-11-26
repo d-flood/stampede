@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
 
-use crate::{AppState, cloud_hosts::Setup, files, git};
+use crate::{AppState, cloud_hosts::Setup, files, git, terminals::Terminals};
 
 pub const PATH: &str = ".stampede/cloud-setup.toml";
 
@@ -104,13 +104,14 @@ impl CloudSetup {
 
     /// Writes the script the Terminal runs, so that the line typed there is short and means the same in any shell.
     fn script(&self, run: &Run, root: &str) -> io::Result<PathBuf> {
-        let mut script = String::new();
+        let mut script = format!("report() {{ {} cloud-setup-exit \"$1\" --data-dir {}; exit \"$1\"; }}\n",
+            quote(&self.exe.to_string_lossy()), quote(&self.data_dir.to_string_lossy()));
+        // Ctrl-C or closing the Tab would otherwise end the script before it reports.
+        script += "trap 'report 129' HUP\ntrap 'report 130' INT\ntrap 'report 143' TERM\n";
         for path in &run.skipped {
             script += &format!("printf '%s\\n' {}\n", quote(&format!("Skipped {path}: not on the Home Host")));
         }
-        script += &format!("cd {} && sh -c {}\nstatus=$?\n", quote(root), quote(&run.command));
-        script += &format!("{} cloud-setup-exit \"$status\" --data-dir {}\nexit \"$status\"\n",
-            quote(&self.exe.to_string_lossy()), quote(&self.data_dir.to_string_lossy()));
+        script += &format!("cd {} && sh -c {}\nreport $?\n", quote(root), quote(&run.command));
         let path = self.data_dir.join("cloud-setup.sh");
         fs::write(&path, script)?;
         Ok(path)
@@ -143,6 +144,14 @@ impl CloudSetup {
         let run = self.save(run).map_err(|error| error.to_string())?;
         state.terminals.input(&run.terminal_id, "", format!("sh {}\r", quote(&script.to_string_lossy())).into_bytes());
         Ok(run)
+    }
+
+    /// Fails a run whose Terminal didn't survive a cold stop, since it can no longer report.
+    pub fn interrupted(&self, terminals: &Terminals) -> io::Result<()> {
+        let Some(mut run) = self.run.borrow().clone().filter(|run| run.running() && !terminals.live(&run.terminal_id)) else { return Ok(()) };
+        run.state = Setup::Failed;
+        run.status = None;
+        self.save(run).map(drop)
     }
 
     pub fn exit(&self, status: i32) -> Result<String, String> {

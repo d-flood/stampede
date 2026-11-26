@@ -3,12 +3,12 @@
 	import Media from '#lib/chat/Media.svelte';
 	import type { Question } from '#lib/device.svelte.ts';
 
-	let { option }: { option: Question['options'][number] } = $props();
+	let { host, option }: { host: string | undefined; option: Question['options'][number] } = $props();
 </script>
 
 <strong>{option.label}{#if option.recommended}<span class="recommended">Recommended</span>{/if}</strong>
 {#if option.description}<div class="description"><Text item={{ kind: 'text', text: option.description, streaming: false, phase: 'final' }} /></div>{/if}
-{#if option.image}<Media item={{ kind: 'media', ...option.image }} />{/if}
+{#if option.image}<Media {host} item={{ kind: 'media', ...option.image }} />{/if}
 {#if option.preview}<span class="preview">{option.preview}</span>{/if}
 
 <style>

@@ -1,6 +1,8 @@
 import type { Chat, Epic, Project, Status, Worktree } from '#lib/device.svelte.ts';
 
-export type Tile = { id: string; mark: string; status?: Status | 'background' | 'stopping'; needs?: number };
+export type Cloud = Pick<NonNullable<Project['cloud']>, 'setup' | 'state' | 'inSync'>;
+
+export type Tile = { id: string; mark: string; status?: Status | 'background' | 'stopping'; needs?: number; cloud?: Cloud };
 
 function segments(path: string): string[] {
 	return path.split('/').filter(Boolean);
@@ -47,15 +49,15 @@ export function worktrees(projects: Project[], epics: Record<string, Epic[]>, ch
 		if ('ticket' in worktree.role) return worktree.role.ticket;
 		return 1e9 + worktree.role.reviewer;
 	};
-	const nested = projects.flatMap(({ id, path, worktree }) => (worktree ? [{ id, path, worktree }] : []));
+	const nested = projects.flatMap(({ id, path, worktree, cloud }) => (worktree ? [{ id, path, worktree, cloud }] : []));
 	const tiles = new Map<string, Tile[]>();
-	for (const { id, path, worktree } of nested.sort((a, b) => rank(a.worktree) - rank(b.worktree))) {
+	for (const { id, path, worktree, cloud } of nested.sort((a, b) => rank(a.worktree) - rank(b.worktree))) {
 		const statuses = chats.filter(({ projectId }) => projectId === id).map(statusOf);
 		// Waiting shows through the attention count, so it yields to the activity marks.
 		const active = (['working', 'background', 'waiting'] as const).find((status) => statuses.includes(status));
 		if (!('epic' in worktree)) {
 			const mark = monogram('branch' in worktree ? worktree.branch : path);
-			tiles.set(worktree.parent, [...(tiles.get(worktree.parent) ?? []), { id, mark, status: active, needs: needs.get(id) }]);
+			tiles.set(worktree.parent, [...(tiles.get(worktree.parent) ?? []), { id, mark, status: active, needs: needs.get(id), ...(cloud && { cloud: { setup: cloud.setup, state: cloud.state, inSync: cloud.inSync } }) }]);
 			continue;
 		}
 		const { parent, epic: slug, role } = worktree;

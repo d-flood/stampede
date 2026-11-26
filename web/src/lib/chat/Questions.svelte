@@ -7,7 +7,7 @@
 	import Caret from '#lib/ui/Caret.svelte';
 	import Check from '~icons/ph/check';
 
-	let { record }: { record: AnsweredQuestions } = $props();
+	let { host, record }: { host: string | undefined; record: AnsweredQuestions } = $props();
 
 	const entries = $derived(record.questions.map((question, index) => {
 		const item = normalized(question, index);
@@ -39,14 +39,14 @@
 			<section>
 				{#if item.header}<h3>{item.header}</h3>{/if}
 				<Text item={{ kind: 'text', text: item.question, streaming: false, phase: 'final' }} />
-				{#if item.image}<Media item={{ kind: 'media', ...item.image }} />{/if}
+				{#if item.image}<Media {host} item={{ kind: 'media', ...item.image }} />{/if}
 				{#if item.options.length}
 					<div class="options">
 						{#each item.options as option}
 							{@const selected = !!response?.selected.includes(option.id!)}
 							<div class="option" class:selected>
 								<span class="mark">{#if selected}<Check aria-label="Selected" />{/if}</span>
-								<div class="details"><QuestionOption {option} /></div>
+								<div class="details"><QuestionOption {host} {option} /></div>
 							</div>
 						{/each}
 					</div>
@@ -57,7 +57,7 @@
 		{/each}
 	</div>
 </details>
-{#each record.images ?? [] as image}<Media item={{ kind: 'media', ...image }} />{/each}
+{#each record.images ?? [] as image}<Media {host} item={{ kind: 'media', ...image }} />{/each}
 {#if record.instruction}<div class="instruction"><Text item={{ kind: 'text', text: record.instruction, streaming: false, phase: 'final' }} /></div>{/if}
 
 <style>

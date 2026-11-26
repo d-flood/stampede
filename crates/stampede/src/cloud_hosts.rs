@@ -158,8 +158,9 @@ impl CloudHosts {
         self.records.borrow().iter().any(|host| host.id == id)
     }
 
-    pub fn projects(&self) -> Vec<Value> {
-        self.records.borrow().iter().map(|host| {
+    /// The Project entries of the records whose parent Project is open, since a tile shows only under its parent.
+    pub fn projects(&self, open: &[Project]) -> Vec<Value> {
+        self.records.borrow().iter().filter(|host| open.iter().any(|project| project.id == host.parent)).map(|host| {
             let (state, reason) = self.state(&host.id);
             json!({
                 "id": host.project, "host": host.id, "path": host.path,
@@ -273,33 +274,45 @@ impl CloudHosts {
         let (host, parent) = self.parent(&state.projects, id).ok_or_else(|| Refused("Open the parent Project before deleting its Cloud Host worktree.".to_owned()))?;
         let checkout = FsPath::new(&parent.path);
         let branch = (!host.existing).then_some(host.branch.as_str());
+        let (mut dirty, mut elsewhere) = (false, 0);
         if !self.gone(id) {
             let checked = async {
                 let tip = remote(id, &["git", "-C", &host.path, "rev-parse", "--verify", &format!("refs/heads/{}", host.branch)], None).await?;
                 self.mirror(state, id, &tip, true).await?;
-                let dirty = remote(id, &["git", "-C", &host.path, "status", "--porcelain", "--ignore-submodules=none"], None).await?;
+                self.push_branches(&state.projects, id, &mut None).await?;
+                let status = remote(id, &["git", "-C", &host.path, "status", "--porcelain", "--ignore-submodules=none"], None).await?;
                 let inside = remote(id, &["git", "-C", &host.path, "submodule", "foreach", "--quiet", "git status --porcelain"], None).await?;
-                let ahead = if let Some(branch) = branch {
-                    git::run(checkout, &["rev-list", "--count", &format!("refs/heads/{branch}"), "--not", &format!("--exclude={branch}"), "--branches", "--remotes"]).await?.parse::<usize>().map_err(|error| error.to_string())?
-                } else { 0 };
-                Ok::<_, String>(runs::discard_warning(!dirty.is_empty() || !inside.is_empty(), ahead, branch))
+                // Only the worktree's branch is mirrored; home/* holds the Home Host's branches there.
+                let others = remote(id, &["git", "-C", &host.path, "rev-list", "--count", &format!("--exclude={}", host.branch), "--branches", "--not", "--remotes"], None).await?;
+                Ok::<_, String>((!status.is_empty() || !inside.is_empty(), others.parse::<usize>().map_err(|error| error.to_string())?))
             }.await;
-            if !force && checked.is_ok() && self.records.borrow().iter().any(|host| host.id == id && !host.in_sync) {
-                return Err(Unmerged("Its Cloud Host's branch is out of sync. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
-            }
             match checked {
-                Ok(Some(warning)) if !force => return Err(Unmerged(warning)),
+                Ok(_) if !force && self.records.borrow().iter().any(|host| host.id == id && !host.in_sync) => {
+                    return Err(Unmerged("Its Cloud Host's branch is out of sync. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
+                }
+                Ok(found) => (dirty, elsewhere) = found,
                 Err(reason) => {
                     self.failed(id, reason).await;
                     if !force && !self.gone(id) {
                         return Err(Unmerged("Its Cloud Host can't be reached, so its work can't be checked. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
                     }
                 }
-                _ => {}
             }
-            if !self.gone(id) {
-                cloud::destroy(id).await.map_err(Refused)?;
+        }
+        if !force {
+            let mirrored = match branch {
+                Some(branch) if git::run(checkout, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).await.is_ok() => {
+                    let count = git::run(checkout, &["rev-list", "--count", &format!("refs/heads/{branch}"), "--not", &format!("--exclude={branch}"), "--branches", "--remotes"]).await.map_err(Refused)?;
+                    count.parse::<usize>().map_err(|error| Refused(error.to_string()))?
+                }
+                _ => 0,
+            };
+            if let Some(warning) = runs::discard_warning(dirty, mirrored + elsewhere, branch) {
+                return Err(Unmerged(warning));
             }
+        }
+        if !self.gone(id) {
+            cloud::destroy(id).await.map_err(Refused)?;
         }
         {
             let _saving = self.saving.lock().unwrap();
@@ -309,6 +322,7 @@ impl CloudHosts {
         }
         self.connected(id);
         reach.forward.lock().await.take();
+        state.browsers.release(id).await;
         state.attention.publish(crate::attention::Source::Cloud(id.to_owned()), vec![]);
         if let Some(branch) = branch {
             if let Err(error) = git::run_alone(checkout, &["branch", "-D", branch]).await {
@@ -354,7 +368,7 @@ impl CloudHosts {
         remote(id, &["rm", "-f", &format!("{home}/.local/share/stampede/port")], None).await?;
         forward.take();
         remote(id, &["sprite-env", "services", "restart", "stampede"], None).await?;
-        Ok(())
+        started_port(id).await.map(drop)
     }
 }
 
@@ -363,8 +377,29 @@ async fn remote(id: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<String,
     Ok(String::from_utf8_lossy(&output.stdout).trim_end().to_owned())
 }
 
-async fn remote_port(id: &str) -> Result<u16, String> {
+pub(crate) async fn remote_port(id: &str) -> Result<u16, String> {
     remote(id, &["sh", "-c", "cat \"$HOME/.local/share/stampede/port\""], None).await?.parse::<u16>().map_err(|error| error.to_string())
+}
+
+/// Checks out submodules in the repository at `path` there. The GitHub token travels on stdin to stay out of process lists.
+async fn update_submodules(id: &str, path: &str, token: Option<&str>, args: &[&str]) -> Result<(), String> {
+    let mut command = vec!["sh", "-c", "IFS= read -r GH_TOKEN; [ -n \"$GH_TOKEN\" ] && export GH_TOKEN; dir=$1; shift; exec git -C \"$dir\" submodule update --init \"$@\"", "sh", path];
+    command.extend(args);
+    let input = format!("{}\n", token.unwrap_or_default());
+    remote(id, &command, Some(input.as_bytes())).await.map(drop)
+        .map_err(|error| match token { Some(token) => error.replace(token, "[redacted]"), None => error })
+}
+
+/// Waits for a Stampede that was just started there to record its port.
+async fn started_port(id: &str) -> Result<u16, String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        match remote_port(id).await {
+            Ok(port) => return Ok(port),
+            Err(error) if tokio::time::Instant::now() >= deadline => return Err(error),
+            Err(_) => sleep(Duration::from_millis(100)).await,
+        }
+    }
 }
 
 pub async fn create(state: AppState, project_id: String, creation: Creation, service: Service) -> Result<Response, files::Failure> {
@@ -372,6 +407,9 @@ pub async fn create(state: AppState, project_id: String, creation: Creation, ser
     let project = state.runs.repository_root(&project_id).await.map_err(refuse)?;
     let tip = git::run(FsPath::new(&project.path), &["rev-parse", "--verify", &format!("{}^{{commit}}", creation.from)]).await.map_err(refuse)?;
     let setup = cloud_setup::read(FsPath::new(&project.path), &tip, &creation.from).await.map_err(refuse)?;
+    if git::run(FsPath::new(&project.path), &["remote"]).await.map_err(refuse)?.lines().any(|name| name == "home") {
+        return Err(refuse("A Cloud Host keeps the remote name home for the Home Host's branches. Rename this Project's remote home to use one.".to_owned()));
+    }
     let (sender, receiver) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         let result = provision(&state, project, tip, setup, creation, service, &sender).await;
@@ -438,6 +476,16 @@ async fn provision(state: &AppState, project: Project, tip: String, setup: cloud
         if track == "--track" {
             remote(&id, &["git", "-C", &path, "update-ref", &format!("refs/remotes/{}", creation.from), &tip], None).await?;
             remote(&id, &["git", "-C", &path, "branch", &format!("--set-upstream-to={}", creation.from), branch], None).await?;
+        } else if existing
+            && let Ok(upstream) = git::run(checkout, &["config", "--get", &format!("branch.{branch}.remote")]).await
+            && upstream != "."
+            && let Ok(merge) = git::run(checkout, &["config", "--get", &format!("branch.{branch}.merge")]).await
+        {
+            remote(&id, &["git", "-C", &path, "config", &format!("branch.{branch}.remote"), &upstream], None).await?;
+            remote(&id, &["git", "-C", &path, "config", &format!("branch.{branch}.merge"), &merge], None).await?;
+            if let Ok(tracking) = git::run(checkout, &["rev-parse", "--symbolic-full-name", &format!("{branch}@{{upstream}}")]).await {
+                git::run(checkout, &["-c", "protocol.ext.allow=always", "push", "-q", &cloud::git_remote(&id, &path), &format!("{tracking}:{tracking}")]).await?;
+            }
         }
         for key in ["user.name", "user.email"] {
             if let Ok(value) = git::run(checkout, &["config", "--get", key]).await {
@@ -461,15 +509,7 @@ async fn provision(state: &AppState, project: Project, tip: String, setup: cloud
         } else { name.to_owned() };
         let identity = json!({ "homeId": state.cloud_hosts.home_id, "homeName": home_name, "project": label, "branch": branch });
         remote(&id, &["sh", "-c", "cat > \"$HOME/.stampede-cloud.json\""], Some(identity.to_string().as_bytes())).await?;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        let port = loop {
-            match remote_port(&id).await {
-                Ok(port) => break port,
-                Err(error) if tokio::time::Instant::now() >= deadline => return Err(error),
-                Err(_) => sleep(Duration::from_millis(100)).await,
-            }
-        };
-        let forward = cloud::forward(&id, port).await?;
+        let forward = cloud::forward(&id, started_port(&id).await?).await?;
         step("toolkit");
         let logins = cloud_link::provision_logins(state, forward.port).await?;
         let codex = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| crate::home().join(".codex"));
@@ -481,12 +521,21 @@ async fn provision(state: &AppState, project: Project, tip: String, setup: cloud
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(_) => return Err("Could not read Codex login.".to_owned()),
         }
-        if let Some(token) = &logins.gh {
-            let input = format!("{token}\n");
-            let output = cloud::exec(&id, &["sh", "-c", "IFS= read -r GH_TOKEN; export GH_TOKEN; exec git -C \"$1\" submodule update --init --recursive", "sh", &path], &[], Some(input.as_bytes())).await;
-            if !output.is_ok_and(|output| output.status.success()) { return Err("Could not initialize submodules.".to_owned()); }
-        } else {
-            remote(&id, &["git", "-C", &path, "submodule", "update", "--init", "--recursive"], None).await?;
+        let submodules = runs::checked_out(checkout).await?;
+        if !submodules.is_empty() {
+            let token = logins.gh.as_deref();
+            let paths: Vec<&str> = submodules.iter().map(String::as_str).collect();
+            if update_submodules(&id, &path, token, &[&["--"], &paths[..]].concat()).await.is_err() {
+                let mut tree = vec!["ls-tree", "-z", &tip, "--"];
+                tree.extend(&paths);
+                for entry in git::run(checkout, &tree).await?.split('\0') {
+                    let Some((meta, sub)) = entry.split_once('\t') else { continue };
+                    let ["160000", _, commit] = meta.split(' ').collect::<Vec<_>>()[..] else { continue };
+                    let Ok(clone) = remote(&id, &["sh", "-c", "test -e \"$1/.git\" && git -C \"$1\" rev-parse --absolute-git-dir", "sh", &format!("{path}/{sub}")], None).await else { continue };
+                    let _ = git::run(&checkout.join(sub), &["-c", "protocol.ext.allow=always", "push", "-q", &cloud::git_remote(&id, &clone), &format!("{commit}:refs/stampede/submodule")]).await;
+                }
+                update_submodules(&id, &path, token, &[&["--no-fetch", "--"], &paths[..]].concat()).await?;
+            }
         }
         for agent in ["claude", "codex"] {
             let _ = cloud::exec(&id, &[agent, "update"], &[], None).await;

@@ -4,13 +4,15 @@
 	import { counts } from '#lib/epics.svelte.ts';
 	import { failures, perform, progress } from '#lib/git-busy.svelte.ts';
 	import { pullTrunk, type Trunk } from '#lib/git.ts';
-	import { hue, type Tile } from '#lib/projects.ts';
+	import { hue, type Cloud, type Tile } from '#lib/projects.ts';
 	import ShellMark from '#lib/ui/ShellMark.svelte';
 	import { WorkingMark } from '#lib/ui/spinners.ts';
 	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
 	import ArrowDown from '~icons/ph/arrow-down';
 	import ArrowDownBold from '~icons/ph/arrow-down-bold';
+	import CloudBold from '~icons/ph/cloud-bold';
+	import CloudFill from '~icons/ph/cloud-fill';
 
 	type Props = {
 		project: Project;
@@ -29,12 +31,13 @@
 		onfocus(id: string): void;
 		onclose(id: string): void;
 		ondelete(id: string): void;
+		onsetup(id: string): void;
 		onworktree(project: Project): void;
 		onmenu(id: string): void;
 		onicon(project: Project): void;
 	};
 
-	let { project, label, labels, tiles, epics, root, working = false, background = false, needs = 0, trunk, compact = false, focused, dragging = false, onfocus, onclose, ondelete, onworktree, onmenu, onicon }: Props =
+	let { project, label, labels, tiles, epics, root, working = false, background = false, needs = 0, trunk, compact = false, focused, dragging = false, onfocus, onclose, ondelete, onsetup, onworktree, onmenu, onicon }: Props =
 		$props();
 
 	const runs = $derived(epics.filter((epic) => epic.run && !epic.archived));
@@ -43,6 +46,15 @@
 	const tint = $derived(hue(project.path));
 	const pulling = $derived(progress[project.id]?.action === 'trunk');
 	const failed = $derived(failures[project.id]?.action === 'trunk' ? failures[project.id].text : undefined);
+
+	function look({ setup, state, inSync }: Cloud): { text?: string; tone?: 'failed' | 'waiting'; tile?: 'lost' | 'failed'; hollow?: boolean; spinning?: boolean } {
+		if (state === 'gone' || state === 'unreachable') return { text: state, tile: 'lost', hollow: true };
+		if (setup === 'failed') return { text: 'setup failed', tone: 'failed', tile: 'failed' };
+		if (setup !== 'ready') return { text: 'setting up', spinning: true };
+		if (!inSync) return { text: 'out of sync', tone: 'waiting' };
+		if (state === 'asleep') return { text: 'asleep', hollow: true };
+		return {};
+	}
 
 	function select(event: MouseEvent & { currentTarget: HTMLElement }, id: string) {
 		// A long-press opens the menu on a timer, and its release still clicks.
@@ -96,24 +108,33 @@
 		<div class="worktrees" class:shut={!listed} role="group" aria-label="Worktrees of {label}">
 			{#each tiles as tile (tile.id)}
 				{@const name = labels.get(tile.id) ?? tile.mark}
-				<Menu context items={[{ label: 'Delete worktree', onselect: () => ondelete(tile.id) }]}>
+				{@const cloud = tile.cloud && look(tile.cloud)}
+				{@const description = [name, cloud && 'on a Cloud Host', cloud?.text, tile.status].filter(Boolean).join(', ')}
+				<Menu
+					context
+					items={[
+						...(tile.cloud?.setup === 'failed' ? [{ label: 'Run Cloud Setup again', onselect: () => onsetup(tile.id) }] : []),
+						{ label: 'Delete worktree', onselect: () => ondelete(tile.id) }
+					]}
+				>
 					{#snippet trigger(props)}
 						<button
 							{...props}
 							tabindex={0}
 							class="worktree"
 							class:focused={tile.id === focused}
-							aria-label={tile.status ? `${name}, ${tile.status}` : name}
+							aria-label={description}
 							aria-current={tile.id === focused}
-							title={tile.status ? `${name} ${tile.status}` : name}
+							title={cloud ? description : tile.status ? `${name} ${tile.status}` : name}
 							onclick={(event) => select(event, tile.id)}
 						>
-							<span class="tile squircle {tile.status ?? ''}">
+							<span class="tile squircle {cloud?.tile ?? tile.status ?? ''}">
 								{tile.mark}
+								{#if cloud}<span class="cloud" class:hollow={cloud.hollow}>{#if cloud.hollow}<CloudBold />{:else}<CloudFill />{/if}</span>{/if}
 								{#if tile.needs}<span class="attention" title="{tile.needs} {tile.needs === 1 ? 'needs' : 'need'} attention"><span class="assistive">{tile.needs}</span></span>{/if}
-								{#if tile.status === 'working'}<span class="spinner" title="working"><WorkingMark /></span>{:else if tile.status === 'background'}<span class="shell" title="background"><ShellMark /></span>{/if}
+								{#if cloud?.spinning}<span class="spinner" title="setting up"><WorkingMark /></span>{:else if tile.status === 'working'}<span class="spinner" title="working"><WorkingMark /></span>{:else if tile.status === 'background'}<span class="shell" title="background"><ShellMark /></span>{/if}
 							</span>
-							<span class="name">{name}</span>
+							<span class="name"><span class="label">{name}</span>{#if cloud?.text}<span class="state {cloud.tone ?? ''}">· {cloud.text}</span>{/if}</span>
 						</button>
 					{/snippet}
 				</Menu>
@@ -324,6 +345,7 @@
 	.attention,
 	.behind,
 	.count,
+	.cloud,
 	.spinner,
 	.shell {
 		position: absolute;
@@ -403,6 +425,17 @@
 		z-index: 1;
 		bottom: calc(-1 * var(--space-1) - var(--border-width));
 		left: calc(-1 * var(--space-1) - var(--border-width));
+		color: var(--muted-fg);
+	}
+
+	.cloud {
+		bottom: calc(-1 * var(--space-1) - var(--border-width));
+		left: calc(-1 * var(--space-1) - var(--border-width));
+		color: var(--color-fg);
+		transition: color var(--dur-fast);
+	}
+
+	.cloud.hollow {
 		color: var(--muted-fg);
 	}
 
@@ -623,21 +656,30 @@
 	}
 
 	.tile .attention,
+	.tile .cloud,
 	.tile .spinner,
 	.tile .shell {
 		font-size: 8px;
 	}
 
-	.tile.stopping {
+	.tile.failed {
+		border-width: 2px;
+		border-color: currentColor;
+		color: var(--ansi-1);
+	}
+
+	.tile.stopping,
+	.tile.lost {
 		border-style: dashed;
 		color: var(--muted-fg);
 	}
 
 	.name {
+		display: flex;
+		gap: var(--space-1);
 		min-width: 0;
 		overflow: hidden;
 		font-size: var(--font-size-sm);
-		text-overflow: ellipsis;
 		white-space: nowrap;
 		opacity: 0;
 		transition: opacity calc(var(--dur-fast) / 2) linear;
@@ -646,5 +688,25 @@
 	.card .name {
 		opacity: 1;
 		transition: opacity var(--dur-med) var(--dur-fast);
+	}
+
+	.label {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.state {
+		flex: none;
+		color: var(--muted-fg);
+		transition: color var(--dur-fast);
+	}
+
+	.state.failed {
+		color: var(--ansi-1);
+	}
+
+	.state.waiting {
+		color: var(--status-waiting);
 	}
 </style>

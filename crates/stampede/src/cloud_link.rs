@@ -198,7 +198,7 @@ pub fn spawn(state: AppState) {
     });
 }
 
-enum Follow { Idle, Restarted }
+enum Follow { Idle, Restarted, Dropped }
 
 async fn hold(state: AppState, id: String) {
     let reach = state.cloud_hosts.reach(&id);
@@ -212,6 +212,7 @@ async fn hold(state: AppState, id: String) {
                 let mut forward = reach.forward.lock().await;
                 if !state.cloud_hosts.awake(&id) {
                     forward.take();
+                    state.browsers.release(&id).await;
                 }
                 drop(forward);
                 tokio::select! {
@@ -219,6 +220,10 @@ async fn hold(state: AppState, id: String) {
                     _ = logins.changed() => {},
                 }
                 wait = RETRY_FIRST;
+            }
+            Ok(Follow::Dropped) => {
+                let _ = timeout(wait, reach.reached.notified()).await;
+                wait = (wait * 2).min(RETRY_LAST);
             }
             Err(error) => {
                 eprintln!("no link to {id}: {error}");
@@ -231,12 +236,14 @@ async fn hold(state: AppState, id: String) {
     }
 }
 
-/// Follows a Cloud Host until it is neither busy nor shown, or fails if the link drops before that.
+/// Follows a Cloud Host until it is neither busy nor shown, or until the link drops.
 async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, replaced: &mut bool, logins: &mut watch::Receiver<u64>) -> Result<Follow, String> {
     let mut socket = connect(state, id, reach).await?;
     let _held = state.cloud_hosts.hold(id);
     let mut devices = reach.devices.subscribe();
     let mut disk = state.disk.subscribe();
+    let mut projects = state.projects.subscribe();
+    let mut tip = None;
     let mut sent_branches = None;
     let mut config = state.config.clone();
     config.mark_unchanged();
@@ -257,7 +264,7 @@ async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, 
                 heard = Instant::now();
                 match message {
                     Some(Ok(Message::Text(text))) => match serde_json::from_str(&text) {
-                        Ok(CloudLink::Hello { build_id, busy: now, tip }) => {
+                        Ok(CloudLink::Hello { build_id, busy: now, tip: now_tip }) => {
                             if build_id != env!("STAMPEDE_BUILD_ID") {
                                 if *replaced { return Err("Cloud Host still reports a different build after replacement".to_owned()); }
                                 drop(socket);
@@ -272,11 +279,13 @@ async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, 
                             state.cloud_hosts.connected(id);
                             config.mark_changed();
                             logins.mark_changed();
-                            if let Some(tip) = tip { mirror_tip(state, id, &tip).await; }
+                            if let Some(tip) = &now_tip { mirror_tip(state, id, tip).await; }
+                            tip = now_tip;
                             push_branches(state, id, &mut sent_branches).await;
                         }
                         Ok(CloudLink::Tip { commit }) => {
                             mirror_tip(state, id, &commit).await;
+                            tip = Some(commit);
                             push_branches(state, id, &mut sent_branches).await;
                         }
                         Ok(CloudLink::Busy { busy: now }) => busy = now,
@@ -298,7 +307,7 @@ async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, 
                         Ok(CloudLink::Logins { .. } | CloudLink::Config { .. }) | Err(_) => {}
                     },
                     Some(Ok(Message::Close(_)) | Err(_)) | None => {
-                        return if closing && !busy { Ok(Follow::Idle) } else { Err("it closed".to_owned()) };
+                        return Ok(if closing && !busy { Follow::Idle } else { Follow::Dropped });
                     }
                     Some(Ok(_)) => {}
                 }
@@ -306,6 +315,12 @@ async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, 
             // A reach while closing is left to ask for the next link.
             () = reach.reached.notified(), if !closing => {}
             Ok(()) = devices.changed(), if !closing => {}
+            // A tip heard while its parent Project was closed is mirrored once it reopens.
+            Ok(()) = projects.changed(), if greeted && !closing => {
+                projects.borrow_and_update();
+                if let Some(tip) = &tip { mirror_tip(state, id, tip).await; }
+                push_branches(state, id, &mut sent_branches).await;
+            }
             changed = disk.recv(), if greeted && !closing => match changed {
                 Ok(change) if change.git && state.cloud_hosts.is_parent(id, &change.project_id) => push_branches(state, id, &mut sent_branches).await,
                 Err(RecvError::Lagged(_)) => push_branches(state, id, &mut sent_branches).await,
@@ -326,7 +341,7 @@ async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, 
             }
             _ = heartbeat.tick() => {
                 if heard.elapsed() > SILENT_FOR {
-                    return Err("it went silent".to_owned());
+                    return Ok(Follow::Dropped);
                 }
                 if !closing {
                     socket.send(Message::Ping(Bytes::new())).await.map_err(|error| error.to_string())?;

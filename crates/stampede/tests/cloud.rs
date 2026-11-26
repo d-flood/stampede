@@ -2,7 +2,7 @@ use std::{env, fs, os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
 
 use serde_json::{Value, json};
 use stampede::cloud::{self, Availability};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, process::Command, time::{sleep, timeout}};
+use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, net::{TcpListener, TcpStream}, process::Command, time::{sleep, timeout}};
 
 use crate::common::{Server, git, init};
 
@@ -210,6 +210,34 @@ async fn a_cloud_worktree_is_created_and_served_on_its_own_host() {
     assert_eq!(git_output(&["config", "user.email"]).output().await.unwrap().stdout, b"cloud@example.invalid\n");
     assert_eq!(git_output(&["status", "--porcelain"]).output().await.unwrap().stdout, b"");
     assert_eq!(git_output(&["remote"]).output().await.unwrap().stdout, b"");
+
+    // The dev server sees the Host it would locally.
+    let mut page = sprite(&["exec", "-s", host, "--no-port-forward", "--stdin", "--", "python3", "-u", "-c", r#"
+from http.server import HTTPServer, BaseHTTPRequestHandler
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        if self.headers['Host'] == f'127.0.0.1:{self.server.server_port}':
+            self.wfile.write(f'Cloud page: {self.path}'.encode())
+server = HTTPServer(('127.0.0.1', 0), Handler)
+print(server.server_port)
+server.serve_forever()
+"#]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).kill_on_drop(true).spawn().unwrap();
+    let port = timeout(Duration::from_secs(5), BufReader::new(page.stdout.take().unwrap()).lines().next_line()).await.unwrap().unwrap().unwrap();
+    let preview: Value = serde_json::from_str(&client.post(format!("{home_http}/api/browser"))
+        .header("origin", &home_http).header("content-type", "application/json")
+        .body(json!({"host":host,"url":format!("http://127.0.0.1:{port}/page?q=cloud")}).to_string())
+        .send().await.unwrap().error_for_status().unwrap().text().await.unwrap()).unwrap();
+    assert_eq!(client.get(preview["src"].as_str().unwrap()).send().await.unwrap().text().await.unwrap(), "Cloud page: /page?q=cloud");
+    // Fake Hosts share loopback, so only the relay's own record shows the page came through a forward.
+    let relayed = fs::read_dir(root.join("sprites").join(host)).unwrap().filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("proxy-"))
+        .filter_map(|entry| serde_json::from_slice::<Value>(&fs::read(entry.path()).ok()?).ok())
+        .filter_map(|record| fs::read(format!("/proc/{}/cmdline", record["pid"])).ok())
+        .any(|cmdline| cmdline.split(|byte| *byte == 0).any(|arg| arg.ends_with(format!(":{port}").as_bytes())));
+    assert!(relayed, "the preview did not go through a forward to port {port}");
+    drop(page);
 
     let cloud_ws = format!("ws://127.0.0.1:{}/cloud/{host}/ws", server.port);
     let mut view = View::open_url(&cloud_ws, "device", Some(&setup_terminal)).await;
@@ -556,6 +584,11 @@ async fn cloud_deletion_checks_work_and_keeps_unreachable_and_gone_records_visib
     git(&cloud_repo, &["commit", "-m", "Only on the Cloud Host"]);
     let refused = delete(host, false).await.unwrap();
     assert_eq!((refused.status().as_u16(), refused.text().await.unwrap()), (409, "It has 1 commit no other branch has. Deleting it and dirty discards them.".to_owned()));
+    git(&cloud_repo, &["switch", "-q", "-c", "other"]);
+    git(&cloud_repo, &["commit", "--allow-empty", "-m", "Only on another Cloud branch"]);
+    git(&cloud_repo, &["switch", "-q", "dirty"]);
+    let refused = delete(host, false).await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap()), (409, "It has 2 commits no other branch has. Deleting it and dirty discards them.".to_owned()));
     fs::write(root.join("sprite-fail"), "destroy\nFly refused the destruction\n").unwrap();
     let refused = delete(host, true).await.unwrap();
     assert_eq!((refused.status().as_u16(), refused.text().await.unwrap()), (400, "Fly refused the destruction".to_owned()));
@@ -588,10 +621,18 @@ async fn cloud_deletion_checks_work_and_keeps_unreachable_and_gone_records_visib
     let host = created["host"].as_str().unwrap_or_else(|| panic!("{created}"));
     setup_reaches(&mut socket, &created["projectId"], "ready").await;
     state_reaches(&mut socket, &created["projectId"], "asleep").await;
+    let cloud_repo = root.join("sprites").join(host).join("home/repo");
+    git(&cloud_repo, &["commit", "--allow-empty", "-m", "Mirrored before its Cloud Host went"]);
+    let tip = |dir: &std::path::Path| String::from_utf8(std::process::Command::new("git").arg("-C").arg(dir).args(["rev-parse", "refs/heads/gone"]).output().unwrap().stdout).unwrap();
+    let committed = tip(&cloud_repo);
+    assert_eq!(client.post(format!("{api}/cloud-hosts/{host}/retry")).send().await.unwrap().status(), 204);
+    timeout(Duration::from_secs(20), async { while tip(&repo) != committed { sleep(Duration::from_millis(50)).await } }).await.expect("the Cloud commit never reached the Home Host");
     assert!(sprite(&["destroy", "--force", host]).status().await.unwrap().success());
     assert_eq!(client.post(format!("{api}/cloud-hosts/{host}/retry")).send().await.unwrap().status(), 204);
     state_reaches(&mut socket, &created["projectId"], "gone").await;
-    assert_eq!(delete(host, false).await.unwrap().status(), 204);
+    let refused = delete(host, false).await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap()), (409, "It has 1 commit no other branch has. Deleting it and gone discards them.".to_owned()));
+    assert_eq!(delete(host, true).await.unwrap().status(), 204);
 
     let home_id = fs::read_to_string(root.join("data/host-id")).unwrap();
     let stray = format!("stampede-{}-stray", &home_id[..8]);

@@ -1,21 +1,38 @@
 <script lang="ts">
+	import { hostName } from '#lib/config.svelte.ts';
 	import type { Project } from '#lib/device.svelte.ts';
-	import { createWorktree, refs, type Refs } from '#lib/git.ts';
+	import { createWorktree, refs, type CloudStep, type Refs } from '#lib/git.ts';
+	import { projectUrl } from '#lib/host.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import Segmented from '#lib/ui/Segmented.svelte';
 	import Select from '#lib/ui/Select.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount } from 'svelte';
+	import Cloud from '~icons/ph/cloud';
 
-	type Props = { project: Project; current?: string; oncreate(projectId: string): void; oncancel(): void };
+	type Props = { project: Project; current?: string; creating?: boolean; oncreate(projectId: string): void; oncancel(): void };
 
-	let { project, current, oncreate, oncancel }: Props = $props();
+	let { project, current, creating = $bindable(false), oncreate, oncancel }: Props = $props();
+
+	const steps: Record<CloudStep, string> = {
+		create: 'Creating Cloud Host…',
+		install: 'Installing Stampede…',
+		repository: 'Copying repository…',
+		carry: 'Copying files…',
+		toolkit: 'Adding logins…'
+	};
 
 	let listed = $state<Refs>();
 	let from = $state('');
 	let branch = $state('');
 	let error = $state<string>();
-	let creating = $state(false);
+	let step = $state<CloudStep>();
+	let host = $state<'home' | 'cloud'>('home');
+	let cli = $state<'missing' | 'signed-out' | 'ready'>();
+	let setup = $state<{ from: string; present: boolean; error?: string }>();
 	let fresh = $derived(!!branch.trim());
+	let checked = $derived(setup?.from === from);
+	let unavailable = $derived(cli !== 'ready' || (setup && !setup.present));
 
 	onMount(() => {
 		refs(project.id).then(
@@ -25,6 +42,24 @@
 			},
 			(cause: Error) => (error = cause.message)
 		);
+		fetch('/api/cloud').then(async (response) => {
+			if (response.ok) cli = (await response.json()).cli;
+		});
+	});
+
+	$effect(() => {
+		if (!from) return;
+		const asked = from;
+		const controller = new AbortController();
+		fetch(projectUrl(project.id, `cloud-setup?${new URLSearchParams({ from: asked })}`), { signal: controller.signal })
+			.then(async (response) => {
+				if (!response.ok) return;
+				const result = { from: asked, ...(await response.json()) };
+				setup = result;
+				if (!result.present) host = 'home';
+			})
+			.catch(() => {});
+		return () => controller.abort();
 	});
 
 	async function create(event: SubmitEvent) {
@@ -33,11 +68,12 @@
 		creating = true;
 		error = undefined;
 		try {
-			oncreate(await createWorktree(project.id, from, branch.trim() || undefined));
+			oncreate(await createWorktree(project.id, from, branch.trim() || undefined, host === 'cloud' ? (next) => (step = next) : undefined));
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : String(cause);
 		} finally {
 			creating = false;
+			step = undefined;
 		}
 	}
 </script>
@@ -66,11 +102,33 @@
 		spellcheck="false"
 		disabled={creating}
 	/>
+	<span class="label" id="worktree-host">Host</span>
+	<Segmented
+		aria-labelledby="worktree-host"
+		aria-describedby="worktree-host-hint"
+		options={[
+			{ value: 'home', label: hostName() ?? 'Stampede' },
+			{ value: 'cloud', label: 'Cloud Host', icon: Cloud, disabled: unavailable }
+		]}
+		bind:value={host}
+		disabled={creating}
+	/>
+	{#if cli === 'missing'}
+		<p class="hint" id="worktree-host-hint">Install the sprite CLI and sign in to use Cloud Hosts.</p>
+	{:else if cli === 'signed-out'}
+		<p class="hint" id="worktree-host-hint">The sprite CLI is signed out. Run <code>sprite login</code>.</p>
+	{:else if setup && !setup.present}
+		<p class="hint" id="worktree-host-hint">
+			{#if setup.error?.startsWith(`${setup.from} has no Cloud Setup`)}{setup.from} has no Cloud Setup. Type <code>/cloud-setup</code> in a Chat to draft one.{:else}{setup.error}{/if}
+		</p>
+	{:else if host === 'cloud'}
+		<p class="hint" id="worktree-host-hint">Created for this worktree and destroyed with it. Runs the Cloud Setup from {from}.</p>
+	{/if}
 	{#if error}<p role="alert">{error}</p>{/if}
 	<div class="actions">
 		<Button type="button" disabled={creating} onclick={oncancel}>Cancel</Button>
-		<Button type="submit" variant="primary" disabled={creating || !from}>
-			{#if fresh}{creating ? 'Creating…' : 'Create'}{:else}{creating ? 'Opening…' : 'Open'}{/if}
+		<Button type="submit" variant="primary" busy={step && true} disabled={creating || !from || (host === 'cloud' && !checked)}>
+			{#if step}{steps[step]}{:else if fresh}{creating ? 'Creating…' : 'Create'}{:else}{creating ? 'Opening…' : 'Open'}{/if}
 		</Button>
 	</div>
 </form>
@@ -82,7 +140,8 @@
 		min-width: 0;
 	}
 
-	label {
+	label,
+	.label {
 		margin-top: var(--space-2);
 		font-size: var(--font-size-sm);
 	}
@@ -90,6 +149,18 @@
 	p {
 		margin: var(--space-2) 0;
 		overflow-wrap: anywhere;
+	}
+
+	.hint {
+		margin: 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	code {
+		font-family: var(--font-mono);
+		font-size: inherit;
+		white-space: nowrap;
 	}
 
 	.actions {

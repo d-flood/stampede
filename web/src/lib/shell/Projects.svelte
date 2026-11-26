@@ -20,13 +20,14 @@
 		onfocus(id: string): void;
 		onclose(id: string): void;
 		ondelete(id: string): void;
+		onsetup(id: string): void;
 		onworktree(project: Project): void;
 		onmenu(id: string): void;
 		onpick(): void;
 		onicon(project: Project): void;
 	};
 
-	let { projects, labels, worktrees, epics, roots, working, background, needs, trunks, focused, onfocus, onclose, ondelete, onworktree, onmenu, onpick, onicon }: Props = $props();
+	let { projects, labels, worktrees, epics, roots, working, background, needs, trunks, focused, onfocus, onclose, ondelete, onsetup, onworktree, onmenu, onpick, onicon }: Props = $props();
 </script>
 
 <nav aria-label="Projects">
@@ -47,6 +48,7 @@
 				{onfocus}
 				{onclose}
 				{ondelete}
+				{onsetup}
 				{onworktree}
 				{onmenu}
 				{onicon}

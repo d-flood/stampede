@@ -489,8 +489,9 @@ impl Device {
     }
 
     fn projects_changed(&self) {
-        let mut projects: Vec<Value> = self.projects.list().iter().map(|project| json!(project)).collect();
-        projects.extend(self.cloud_hosts.projects());
+        let list = self.projects.list();
+        let mut projects: Vec<Value> = list.iter().map(|project| json!(project)).collect();
+        projects.extend(self.cloud_hosts.projects(&list));
         send(&self.outgoing, json!({ "type": "projects.changed", "projects": projects }));
     }
 

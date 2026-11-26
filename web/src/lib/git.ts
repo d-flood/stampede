@@ -1,4 +1,4 @@
-import { hostOf, projectUrl } from '#lib/host.ts';
+import { hostOf, projectId as hostedId, projectUrl } from '#lib/host.ts';
 import { json, RequestError } from '#lib/files.svelte.ts';
 
 export type Kind = 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
@@ -185,9 +185,27 @@ export async function refs(projectId: string): Promise<Refs> {
 	return json(await fetch(projectUrl(projectId, 'git/refs')));
 }
 
-export async function createWorktree(projectId: string, from: string, branch?: string): Promise<string> {
-	const init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ branch, from }) };
-	return (await json<{ projectId: string }>(await fetch(projectUrl(projectId, 'worktrees'), init))).projectId;
+export type CloudStep = 'create' | 'install' | 'repository' | 'carry' | 'toolkit';
+
+type CloudLine = { step: CloudStep } | { error: string } | { projectId: string; host: string };
+
+/** Resolves to the new Project's id; with `onstep`, creates it on a Cloud Host and reports each step. */
+export async function createWorktree(projectId: string, from: string, branch?: string, onstep?: (step: CloudStep) => void): Promise<string> {
+	const init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ branch, from, cloud: onstep && 'sprite' }) };
+	const response = await fetch(projectUrl(projectId, 'worktrees'), init);
+	if (!onstep) return (await json<{ projectId: string }>(response)).projectId;
+	if (!response.ok || !response.body) throw new RequestError(response.status, await response.text());
+	let pending = '';
+	for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
+		const lines = (pending + chunk).split('\n');
+		pending = lines.pop()!;
+		for (const line of lines.filter(Boolean).map((text) => JSON.parse(text) as CloudLine)) {
+			if ('step' in line) onstep(line.step);
+			else if ('error' in line) throw new Error(line.error);
+			else return hostedId(line.projectId, line.host);
+		}
+	}
+	throw new Error('Creating the Cloud Host stopped without an answer.');
 }
 
 export async function deleteWorktree(projectId: string, force: boolean): Promise<void> {

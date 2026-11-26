@@ -17,7 +17,7 @@
 	import QuestionOption from '#lib/chat/QuestionOption.svelte';
 	import CaretDown from '~icons/ph/caret-down';
 
-	let { id, questions, disabled, onanswer, onattach }: { id: string; questions: Question[]; disabled: boolean; onanswer(answer: Answer): void; onattach?(files: File[]): void } = $props();
+	let { host, id, questions, disabled, onanswer, onattach }: { host: string | undefined; id: string; questions: Question[]; disabled: boolean; onanswer(answer: Answer): void; onattach?(files: File[]): void } = $props();
 	const items = $derived(questions.map(normalized));
 	const responses = new SvelteMap<string, QuestionResponse>(Object.entries(untrack(() => loadDraft(id))));
 	const isDone = (item: Question) => answered(responses.get(item.id));
@@ -150,14 +150,14 @@
 	{@const response = responses.get(item.id)}
 	{@const tiles = item.options.length > 1 && item.options.every((option) => option.image)}
 	<Text item={{ kind: 'text', text: item.question, streaming: false, phase: 'final' }} />
-	{#if item.image}<Media item={{ kind: 'media', ...item.image }} />{/if}
+	{#if item.image}<Media {host} item={{ kind: 'media', ...item.image }} />{/if}
 	{#if item.options.length}
 		<div class="options" class:tiles role={item.type === 'multiple' ? 'group' : 'radiogroup'} aria-label={item.type === 'multiple' ? 'Choose any options' : 'Choose one option'}>
 			{#each item.options as option, index}
 				<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (The input inside handles keys; this only tells a pointer pick apart from an arrow key.) -->
 				<label class="option" onclick={(event) => clicked(item, event)}>
 					<Checkbox type={item.type === 'multiple' ? 'checkbox' : 'radio'} tone="waiting" name="{id}/{item.id}" checked={!!response?.selected.includes(option.id!)} {disabled} aria-label={option.recommended ? `${option.label}, recommended` : option.label} onchange={() => choose(item, option.id!)} />
-					<div class="details"><QuestionOption {option} /></div>
+					<div class="details"><QuestionOption {host} {option} /></div>
 					{#if !phone && !tiles && index < 9}<span class="key" aria-hidden="true">{index + 1}</span>{/if}
 				</label>
 			{/each}

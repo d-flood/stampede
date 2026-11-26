@@ -11,7 +11,7 @@ test('messages stay visible while Activity groups update and retain their open s
 		{ kind: 'text', text: 'I’ll read the files.', phase: 'commentary', streaming: false },
 		{ kind: 'tools', calls: [{ kind: 'read', name: 'Read', detail: 'notes.txt' }] }
 	];
-	const view = await render(Transcript, { items, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
+	const view = await render(Transcript, { host: undefined, items, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
 	await expect.element(view.getByText('I’ll read the files.', { exact: true })).toBeVisible();
 	expect(summaries(view.container).map((element) => element.textContent)).toEqual(['Read 1 file']);
 	expect(getComputedStyle(summaries(view.container)[0]).fontFamily).toContain('Fira Sans');
@@ -46,7 +46,7 @@ test('Activity summaries count every action in order and keep failures quiet unt
 		{ kind: 'command', command: 'pnpm lint', status: 'ok', output: 'clean' },
 		{ kind: 'command', command: 'pnpm test parse', status: 'failed', output: '', elided: true }
 	];
-	const view = await render(Transcript, { items, onexpand, onopen: vi.fn(), onattend: vi.fn(), ondiff, oncanvas: vi.fn() });
+	const view = await render(Transcript, { host: undefined, items, onexpand, onopen: vi.fn(), onattend: vi.fn(), ondiff, oncanvas: vi.fn() });
 	const [summary] = summaries(view.container);
 	expect(summary.textContent).toBe('Edited 1 file, ran 2 commands, read 3 files, 1 failed');
 	const segments = [...summary.querySelectorAll('.segment')];
@@ -78,7 +78,7 @@ test('Activity summaries count every action in order and keep failures quiet unt
 test('opening an elided command requests its original item index', async () => {
 	const onexpand = vi.fn();
 	const items: Item[] = [{ kind: 'text', text: 'Output follows.', phase: 'final', streaming: false }, { kind: 'command', command: 'cat notes.txt', status: 'ok', output: '', elided: true }];
-	const view = await render(Transcript, { items, onexpand, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
+	const view = await render(Transcript, { host: undefined, items, onexpand, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
 	await page.elementLocator(summaries(view.container)[0]).click();
 	await expect.poll(() => onexpand.mock.calls).toEqual([[1]]);
 	await view.rerender({ items: [items[0], { kind: 'command', command: 'cat notes.txt', status: 'ok', output: 'Full command output' }] });
@@ -102,7 +102,7 @@ test('tool arguments expand faithfully, copy their source, and retain expansion 
 }`;
 	const plain = 'Arguments without JSON\n<img src=x onerror=alert(1)>';
 	const calls = [{ kind: 'mcp', name: 'mcp__documents__read_document', detail }, { kind: 'other', name: 'Custom', detail: plain }] as const;
-	const view = await render(Transcript, { items: [{ kind: 'tools', calls: [...calls] }], onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
+	const view = await render(Transcript, { host: undefined, items: [{ kind: 'tools', calls: [...calls] }], onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
 	const tools = () => [...view.container.querySelectorAll<HTMLDetailsElement>('.tool')];
 	await page.elementLocator(summaries(view.container)[0]).click();
 	expect(tools().map((tool) => tool.open)).toEqual([false, false]);
@@ -138,7 +138,7 @@ test('turns are spaced further apart than the entries within them', async () => 
 		{ kind: 'user', text: 'Check phone width too.', images: 0 },
 		{ kind: 'text', text: 'Capturing it now.', phase: 'commentary', streaming: false }
 	];
-	const view = await render(Transcript, { items, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
+	const view = await render(Transcript, { host: undefined, items, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
 	const blocks = [...view.container.querySelectorAll('.block')];
 	const gaps = blocks.slice(1).map((block, index) => Math.round(block.getBoundingClientRect().top - blocks[index].getBoundingClientRect().bottom));
 	const between = matchMedia('(pointer: coarse) and (max-width: 767px)').matches ? 32 : 44;
@@ -155,7 +155,7 @@ test('the prompt’s ⋯ menu opens Rewind without reserving layout space', asyn
 		{ kind: 'user', text: Array.from({ length: 20 }, (_, index) => `Line ${index + 1}`).join('\n'), images: 0 },
 		{ kind: 'user', text: '/create-epic', template: 'create-epic', images: 0 }
 	];
-	const view = await render(Transcript, { items, onrewind, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
+	const view = await render(Transcript, { host: undefined, items, onrewind, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
 	const templated = view.getByRole('region', { name: 'User message 3', exact: true }).element();
 	expect(templated.querySelector('.template')!.getBoundingClientRect().bottom).toBeLessThan(templated.querySelector('.user')!.getBoundingClientRect().bottom);
 	const message = view.getByRole('region', { name: 'User message 1', exact: true });
@@ -194,7 +194,7 @@ test('the live Activity reveals the current command or tool arguments on demand 
 	const command = `cd web && rg -n 'a|b' src | sort`;
 	const formatted = `cd web &&\n  rg -n 'a|b' src |\n  sort`;
 	const items: Item[] = [{ kind: 'command', command, status: 'running', output: '', startedAt: Date.now() }];
-	const view = await render(Transcript, { ...handlers, items: [...items], activity: `Running ${command}` });
+	const view = await render(Transcript, { host: undefined, ...handlers, items: [...items], activity: `Running ${command}` });
 	const live = () => view.container.querySelector<HTMLButtonElement>('.calls button.live')!;
 	expect(view.container.querySelector('.current-command')).toBeNull();
 	await page.elementLocator(live()).click();
@@ -234,7 +234,7 @@ test('every summary segment stays readable beside a long Activity on a narrow sc
 		{ kind: 'command', command: 'pnpm lint', status: 'failed', output: '' },
 		{ kind: 'command', command: script, status: 'running', output: '' }
 	];
-	const view = await render(Transcript, { ...handlers, items, activity: `Running ${script}` });
+	const view = await render(Transcript, { host: undefined, ...handlers, items, activity: `Running ${script}` });
 	const summary = summaries(view.container)[0];
 	const live = view.container.querySelector<HTMLElement>('.calls .live')!;
 	await expect.poll(() => summary.getBoundingClientRect().right).toBeLessThanOrEqual(360);
@@ -252,7 +252,7 @@ test('every summary segment stays readable beside a long Activity on a narrow sc
 
 test('only the label of a command in this group is highlighted', async () => {
 	const items: Item[] = [{ kind: 'command', command: 'cargo test', status: 'running', output: '' }];
-	const view = await render(Transcript, { ...handlers, items, activity: 'Running the tests' });
+	const view = await render(Transcript, { host: undefined, ...handlers, items, activity: 'Running the tests' });
 	const live = () => view.container.querySelector('.calls .live')!;
 	expect(live().textContent).toBe(' · Running the tests');
 	expect(live().querySelector('.syntax')).toBeNull();
@@ -270,7 +270,7 @@ test('approval reviews stay in Activity, stay quiet when approved, and surface d
 		{ kind: 'command', command: 'cargo test', status: 'ok', output: 'ok' },
 		{ kind: 'tools', calls: [{ kind: 'approval', name: 'denied', detail: 'touch /elsewhere', rationale: 'Writes outside the workspace.' }] }
 	];
-	const view = await render(Transcript, { ...handlers, items });
+	const view = await render(Transcript, { host: undefined, ...handlers, items });
 	expect(summaries(view.container).map((element) => element.textContent)).toEqual(['Ran 1 command, 1 approval denied']);
 	await page.elementLocator(summaries(view.container)[0]).click();
 	const approvals = [...view.container.querySelectorAll<HTMLDetailsElement>('.rail .approval')];

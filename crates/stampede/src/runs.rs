@@ -34,6 +34,7 @@ use crate::{
 mod landing;
 mod submodules;
 mod worktrees;
+pub(crate) use submodules::checked_out;
 pub(crate) use worktrees::{branch_spec, discard_warning};
 
 pub use worktrees::Refusal;

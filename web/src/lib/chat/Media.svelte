@@ -1,9 +1,10 @@
 <script lang="ts">
+	import { mediaUrl } from '#lib/host.ts';
 	import type { Item } from '#lib/device.svelte.ts';
 
-	let { item }: { item: Extract<Item, { kind: 'media' }> } = $props();
+	let { host, item }: { host: string | undefined; item: Extract<Item, { kind: 'media' }> } = $props();
 	let failed = $state(false);
-	const src = $derived(`/api/media/${encodeURIComponent(item.asset)}`);
+	const src = $derived(mediaUrl(host, item.asset));
 	const video = $derived(/\.(mp4|webm)$/.test(item.asset));
 </script>
 

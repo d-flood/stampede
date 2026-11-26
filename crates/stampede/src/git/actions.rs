@@ -23,6 +23,8 @@ use tokio::{
 use super::{Commit, Kind, Operation, Status, common_dir, inside, read, run_alone, sha, trunk};
 use crate::{
     AppState,
+    cloud_logins::{self, Logins},
+    config::Agent,
     files::{Failure, root},
     origin, rigs, templates,
 };
@@ -423,11 +425,22 @@ pub async fn draft(State(state): State<AppState>, Param(id): Param<String>) -> R
     if status.staged.is_empty() {
         return Err(refuse("Stage changes to draft a message for them."));
     }
-    let (rig, instructions) = {
+    let (mut rig, instructions) = {
         let config = state.config.borrow();
         let rig = config.commit_rig().cloned().ok_or_else(|| refuse("Add a Rig in Settings first."))?;
         (rig, config.commit_instructions().to_owned())
     };
+    if state.cloud.is_some() {
+        if !matches!(rig.agent, Agent::ClaudeCode | Agent::Codex) {
+            return Err(refuse("A Cloud Host runs only Claude Code and Codex."));
+        }
+        let mut env = Logins::read(&state.logins.data).map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?.environment();
+        env.extend(rig.env);
+        if rig.agent == Agent::ClaudeCode && !Logins::has_claude(&env) {
+            return Err(refuse(cloud_logins::CLAUDE_LOGIN_HINT));
+        }
+        rig.env = env;
+    }
     let (summary, diff, recent) = tokio::join!(
         exec(&dir, &["diff", "--cached", "--stat"]),
         exec(&dir, &["diff", "--cached", "--no-color", "--no-ext-diff"]),

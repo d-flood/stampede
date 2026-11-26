@@ -24,6 +24,7 @@
 	import { agentNames, modes } from '#lib/config.svelte.ts';
 	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ResetCredits, ServerMessage } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
+	import { hostOf } from '#lib/host.ts';
 	import { form } from '#lib/form.ts';
 	import { fileLink, relative } from '#lib/links.ts';
 	import { painted } from '#lib/paint.svelte.ts';
@@ -38,6 +39,7 @@
 	let { device, chat, chats, movable = true, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, changes = 0, onchanges, codexResets = null, ondiff, onfile, oncanvas }: { device: Device; chat: Chat; chats: Chat[]; movable?: boolean; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; changes?: number; onchanges?(): void; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void } =
 		$props();
 
+	const host = $derived(hostOf(chat.projectId));
 	const subagents = $derived(flatten(items));
 	const canvases = $derived([...new Set([...written(items), ...saved])]);
 	const shell = $derived(chat.background ? commands(items).findLast(({ item }) => item.status === 'running')?.item.command : undefined);
@@ -270,7 +272,7 @@
 		<div class="transcript" bind:this={scroller} {@attach (node) => follow(node, (bottom) => (ended = bottom))}>
 			<div class="column">
 				{#if attached && !items.length && !chat.queued.length}<EmptyChat rig={chat.rig} agent={chat.agent} {project} {branch} />{/if}
-				<Transcript {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={capabilities.rewinds ? (index) => run('rewind', index) : undefined} onfork={live && attached && capabilities.forks ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
+				<Transcript {host} {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={capabilities.rewinds ? (index) => run('rewind', index) : undefined} onfork={live && attached && capabilities.forks ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
 			</div>
 		</div>
@@ -281,7 +283,7 @@
 			<div class="transcript" {@attach follow}>
 				<div class="column">
 					{#if selected.prompt}<Prompt prompt={selected.prompt} />{/if}
-					<Transcript items={selected.items} main={items} {active} activity={selected.activity} path={opened} agent={selected.agent ?? chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} />
+					<Transcript {host} items={selected.items} main={items} {active} activity={selected.activity} path={opened} agent={selected.agent ?? chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} />
 					{#if selected.report}
 						<section class="report" aria-label="Report">
 							<span class="label">Report</span>
@@ -302,7 +304,7 @@
 		<Tray {items} todos={selected ? [] : chat.todos} {canvases} changes={selected || chat.status !== 'done' || form() === 'phone' ? 0 : changes} {branch} {onchanges} onopen={open} onattend={attend} {oncanvas} />
 		{#if request}
 			{#key request.id}
-				<RequestCard bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} onattach={(files) => composer?.attach(files)} />
+				<RequestCard {host} bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} onattach={(files) => composer?.attach(files)} />
 			{/key}
 		{/if}
 		{#if !selected}

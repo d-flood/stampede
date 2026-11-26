@@ -22,7 +22,7 @@ const legacy: Question[] = [
 const request = (list: Question[], id = 'questions'): Request => ({ kind: 'question', id, questions: list });
 async function open(list: Question[], { id = 'questions', disabled = false } = {}) {
 	const onanswer = vi.fn();
-	const view = await render(RequestCard, { request: request(list, id), agent: 'Claude', disabled, onanswer });
+	const view = await render(RequestCard, { host: undefined, request: request(list, id), agent: 'Claude', disabled, onanswer });
 	return { view, onanswer, row: (title: string) => view.getByRole('button', { name: new RegExp(`^${title}`) }), send: view.getByRole('button', { name: /^Send/ }) };
 }
 
@@ -208,7 +208,7 @@ const responses: Record<string, QuestionResponse> = {
 };
 
 test('history shows answers while collapsed and every option when open', async () => {
-	const view = await render(Questions, { record: { after: 1, questions, answers: [], responses } });
+	const view = await render(Questions, { host: undefined, record: { after: 1, questions, answers: [], responses } });
 	const group = view.getByRole('group', { name: 'Answered questions', exact: true });
 	const summary = view.container.querySelector('summary')!;
 	expect(summary.textContent).toContain('3 of 4 answered');
@@ -223,23 +223,23 @@ test('history shows answers while collapsed and every option when open', async (
 });
 
 test('history records dismissals and instructions', async () => {
-	const dismissed = await render(Questions, { record: { after: 1, questions, answers: [], cancelled: true } });
+	const dismissed = await render(Questions, { host: undefined, record: { after: 1, questions, answers: [], cancelled: true } });
 	await expect.element(dismissed.getByRole('group', { name: 'Unanswered questions', exact: true })).toBeVisible();
 	expect(dismissed.container.querySelector('summary')!.textContent).toContain('4 questions dismissed');
 	expect(dismissed.container.querySelector('.instruction')).toBeNull();
 	await dismissed.unmount();
 
-	const redirected = await render(Questions, { record: { after: 1, questions, answers: [], responses: { storage: responses.storage }, cancelled: true, instruction: 'Use the defaults.' } });
+	const redirected = await render(Questions, { host: undefined, record: { after: 1, questions, answers: [], responses: { storage: responses.storage }, cancelled: true, instruction: 'Use the defaults.' } });
 	expect(redirected.container.querySelector('summary')!.textContent).toContain('1 of 4 answered');
 	await expect.element(redirected.getByText('Use the defaults.', { exact: true })).toBeVisible();
 	await redirected.unmount();
 
-	const unanswered = await render(Questions, { record: { after: 1, questions: [single], answers: [], cancelled: true, instruction: 'Never mind.' } });
+	const unanswered = await render(Questions, { host: undefined, record: { after: 1, questions: [single], answers: [], cancelled: true, instruction: 'Never mind.' } });
 	expect(unanswered.container.querySelector('summary')!.textContent).toContain('1 question not answered');
 });
 
 test('history reads older records that stored answers by label', async () => {
-	const view = await render(Questions, { record: { after: 1, questions: legacy, answers: [['Red'], ['Circle', 'Triangle']] } });
+	const view = await render(Questions, { host: undefined, record: { after: 1, questions: legacy, answers: [['Red'], ['Circle', 'Triangle']] } });
 	const summary = view.container.querySelector('summary')!;
 	expect(summary.textContent).toContain('2 questions answered');
 	expect(summary.textContent).toContain('Color: Red');

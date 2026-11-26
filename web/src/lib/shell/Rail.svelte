@@ -25,6 +25,7 @@
 		onreorder(order: string[]): void;
 		onclose(id: string): void;
 		ondelete(id: string): void;
+		onsetup(id: string): void;
 		onworktree(project: Project): void;
 		onmenu(id: string): void;
 		onpick(): void;
@@ -32,7 +33,7 @@
 		attention?: Snippet;
 	};
 
-	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, background, needs, trunks, focused, onfocus, onreorder, onclose, ondelete, onworktree, onmenu, onpick, onicon, attention }: Props = $props();
+	let { open = $bindable(false), projects, labels, worktrees, epics, roots, working, background, needs, trunks, focused, onfocus, onreorder, onclose, ondelete, onsetup, onworktree, onmenu, onpick, onicon, attention }: Props = $props();
 
 	let list: HTMLOListElement;
 	let drag = $state<{ id: string; y: number; order: string[]; moved: boolean }>();
@@ -106,6 +107,7 @@
 				}}
 				{onclose}
 				{ondelete}
+				{onsetup}
 				{onworktree}
 				{onmenu}
 				{onicon}

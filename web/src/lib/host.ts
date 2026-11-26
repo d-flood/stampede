@@ -17,3 +17,15 @@ export function hostUrl(host: string | undefined, path: string): string {
 export function projectUrl(projectId: string, path: string): string {
 	return hostUrl(hostOf(projectId), `/api/projects/${remoteId(projectId)}/${path}`);
 }
+
+export function mediaUrl(host: string | undefined, asset: string): string {
+	return hostUrl(host, `/api/media/${encodeURIComponent(asset)}`);
+}
+
+export function attachmentUrl(host: string | undefined, src: string): string {
+	return src.startsWith('/api/media/') ? hostUrl(host, src) : src;
+}
+
+export function canvasUrl(host: string | undefined, canvas: string, version?: number): string {
+	return hostUrl(host, `/api/canvases/${canvas}${version ? `?version=${version}` : ''}`);
+}

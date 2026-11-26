@@ -137,6 +137,7 @@
 	let picking = $state(false);
 	let iconProject = $state<Project>();
 	let branching = $state<Project>();
+	let creatingWorktree = $state(false);
 	let palette = $state<Scope>();
 	let tabTarget = $state<string>();
 	let afterPalette: (() => void) | undefined;
@@ -257,7 +258,7 @@
 	);
 
 	$effect(() => {
-		if (connectableHost) return devices.show(connectableHost);
+		if (connectableHost && visible) return devices.show(connectableHost);
 	});
 	$effect(() => {
 		view();
@@ -583,6 +584,11 @@
 		return !hostOf(projectId) || !!terminals[projectId];
 	}
 
+	/** Whether a hidden Tab may mount early; a Cloud Host Project's waits for focus, since mounting wakes its Cloud Host. */
+	function warms(projectId: string) {
+		return warm() && (!hostOf(projectId) || projectId === focused?.id);
+	}
+
 	function elsewhere<T>(owned: Record<string, T>, host?: string): Record<string, T> {
 		return Object.fromEntries(Object.entries(owned).filter(([projectId]) => hostOf(projectId) !== host));
 	}
@@ -839,8 +845,12 @@
 		return terminal.id === focused?.cloud?.setupTerminal ? 'Cloud Setup' : terminal.label;
 	}
 
-	function runSetupAgain(projectId: string) {
-		fetch(hostUrl(hostOf(projectId), '/api/cloud-setup/again'), { method: 'POST' });
+	async function runSetupAgain(projectId: string) {
+		const response = await fetch(hostUrl(hostOf(projectId), '/api/cloud-setup/again'), { method: 'POST' });
+		if (!response.ok) return;
+		const { terminalId }: CloudSetup = await response.json();
+		focus(projectId);
+		choose(projectId, terminalId);
 	}
 
 	function closeTab(projectId: string, terminalId: string, confirmed = false) {
@@ -1324,12 +1334,12 @@
 		<div class="tabs" class:unavailable>
 			{#each Object.values(browsers).flat() as browser (browser.id)}
 				<div class="view" hidden={!showing(browser.id)} style:grid-column={column(browser.id)} onfocusin={() => choose(browser.projectId, browser.id)}>
-					{#if showing(browser.id) || warm()}<Browser {browser} focused={browser.id === activeTab} />{/if}
+					{#if showing(browser.id) || warms(browser.projectId)}<Browser {browser} focused={browser.id === activeTab} />{/if}
 				</div>
 			{/each}
 			{#each Object.values(canvases).flat() as canvas (canvas.id)}
 				<div class="view" hidden={!showing(canvas.id)} style:grid-column={column(canvas.id)} onfocusin={() => choose(canvas.projectId, canvas.id)}>
-					{#if showing(canvas.id) || warm()}
+					{#if showing(canvas.id) || warms(canvas.projectId)}
 						{#await import('#lib/chat/CanvasView.svelte') then { default: CanvasView }}
 							<CanvasView {canvas} />
 						{/await}
@@ -1394,7 +1404,7 @@
 									</div>
 								{:else if setup?.state === 'failed'}
 									<div class="ended failed" role="status">
-										<span class="message">Cloud Setup failed, exit {setup.status}. Fix it in this Terminal or in a Chat, then run it again.</span>
+										<span class="message">Cloud Setup failed{setup.status != null ? `, exit ${setup.status}` : ''}. Fix it in this Terminal or in a Chat, then run it again.</span>
 										<div class="choices">
 											<Button size="sm" onclick={() => runSetupAgain(projectId)}>Run again</Button>
 										</div>
@@ -1548,6 +1558,7 @@
 				onfocus={focus}
 				onclose={(projectId) => closeProject(projectId)}
 				ondelete={(projectId) => removeWorktree(projectId)}
+				onsetup={runSetupAgain}
 				onworktree={(project) => (branching = project)}
 				onmenu={freshen}
 				onpick={pick}
@@ -1584,6 +1595,7 @@
 			onreorder={reorder}
 			onclose={(projectId) => closeProject(projectId)}
 			ondelete={(projectId) => removeWorktree(projectId)}
+			onsetup={runSetupAgain}
 			onworktree={(project) => (branching = project)}
 			onmenu={freshen}
 			onpick={pick}
@@ -1687,6 +1699,7 @@
 <Dialog
 	bind:open={() => !!branching, (open) => !open && (branching = undefined)}
 	title="New worktree"
+	dismissible={!creatingWorktree}
 	description={branching && `A branch of ${projectLabels.get(branching.id)}, checked out in its own worktree beside it.`}
 >
 	{#if branching}
@@ -1694,7 +1707,8 @@
 			<NewWorktree
 				project={branching}
 				current={git.get(branching.id)?.branch}
-				oncreate={(projectId) => ((branching = undefined), focus(projectId))}
+				bind:creating={creatingWorktree}
+				oncreate={(projectId) => ((creatingWorktree = false), (branching = undefined), focus(projectId))}
 				oncancel={() => (branching = undefined)}
 			/>
 		{/await}

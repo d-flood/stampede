@@ -2,7 +2,7 @@ use std::{collections::HashMap, process::Stdio, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
-    body::Body,
+    body::{Body, Bytes},
     extract::{
         FromRequestParts, Request, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
@@ -21,21 +21,24 @@ use tokio::{
     process::{Child, Command},
     sync::Mutex,
     task::JoinHandle,
-    time::timeout,
+    time::{Instant, interval_at, timeout},
 };
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message as UpstreamMessage, client::IntoClientRequest},
 };
 
-use crate::AppState;
+use crate::{
+    AppState, cloud, cloud_hosts,
+    device::{PING_EVERY, SILENT_FOR},
+};
 
 type Failure = (StatusCode, String);
 
 pub struct Browsers {
     port: u16,
     client: Client,
-    previews: Mutex<HashMap<String, Preview>>,
+    previews: Mutex<HashMap<(String, String, Option<String>), Preview>>,
 }
 
 struct Preview {
@@ -43,6 +46,7 @@ struct Preview {
     port: u16,
     task: JoinHandle<()>,
     tailscale: Option<Child>,
+    forward: Option<cloud::Forward>,
 }
 
 impl Drop for Preview {
@@ -54,6 +58,8 @@ impl Drop for Preview {
 #[derive(Clone)]
 struct Proxy {
     target: Url,
+    // Differs from `target` for Cloud Hosts, whose dev servers Home reaches through a local forward.
+    logical: Url,
     origin: String,
     parent_origin: String,
     client: Client,
@@ -64,6 +70,7 @@ const CONSOLE_PATH: &str = "/__stampede/console.js";
 #[derive(Deserialize)]
 pub struct Open {
     url: String,
+    host: Option<String>,
 }
 
 impl Browsers {
@@ -80,22 +87,29 @@ impl Browsers {
         }
     }
 
-    async fn open(&self, target: &Url, device: &Url) -> Result<String, Failure> {
+    async fn open(
+        &self,
+        target: &Url,
+        device: &Url,
+        host: Option<String>,
+    ) -> Result<String, Failure> {
         let mut previews = self.previews.lock().await;
         let target_port = target.port_or_known_default().unwrap();
-        if target_port == self.port || previews.values().any(|preview| preview.port == target_port)
+        if host.is_none()
+            && (target_port == self.port || previews.values().any(|preview| preview.port == target_port))
         {
             return Err(bad(
                 "Choose a development server port, rather than a Stampede port.",
             ));
         }
-        let key = format!(
-            "{} {}",
+        let key = (
             device.origin().ascii_serialization(),
-            target.origin().ascii_serialization()
+            target.origin().ascii_serialization(),
+            host,
         );
         if let Some(preview) = previews.get_mut(&key) {
             let alive = !preview.task.is_finished()
+                && preview.forward.as_mut().is_none_or(cloud::Forward::running)
                 && preview
                     .tailscale
                     .as_mut()
@@ -105,6 +119,14 @@ impl Browsers {
             }
         }
         previews.remove(&key);
+        let cloud_forward = if let Some(host) = &key.2 {
+            if cloud_hosts::remote_port(host).await.map_err(upstream)? == target_port {
+                return Err(bad("Choose a development server port, rather than a Stampede port."));
+            }
+            Some(cloud::forward(host, target_port).await.map_err(upstream)?)
+        } else {
+            None
+        };
         let listener = TcpListener::bind("127.0.0.1:0").await.map_err(upstream)?;
         let port = listener.local_addr().map_err(upstream)?.port();
         let (origin, tailscale) = if device.scheme() == "http" && loopback(device) {
@@ -121,12 +143,18 @@ impl Browsers {
                 "Browser previews require Stampede over local HTTP or Tailscale HTTPS.",
             ));
         };
-        let mut base = target.clone();
-        base.set_path("/");
-        base.set_query(None);
-        base.set_fragment(None);
+        let mut logical = target.clone();
+        logical.set_path("/");
+        logical.set_query(None);
+        logical.set_fragment(None);
+        let mut base = logical.clone();
+        if let Some(forward) = &cloud_forward {
+            base.set_host(Some("127.0.0.1")).unwrap();
+            base.set_port(Some(forward.port)).unwrap();
+        }
         let proxy = Proxy {
             target: base,
+            logical,
             origin: origin.clone(),
             parent_origin: device.origin().ascii_serialization(),
             client: self.client.clone(),
@@ -145,9 +173,17 @@ impl Browsers {
                 port,
                 task,
                 tailscale,
+                forward: cloud_forward,
             },
         );
         Ok(origin)
+    }
+
+    pub async fn release(&self, host: &str) {
+        self.previews
+            .lock()
+            .await
+            .retain(|(_, _, key), _| key.as_deref() != Some(host));
     }
 }
 
@@ -189,7 +225,10 @@ pub async fn open(
             "Open previews from Stampede.".into(),
         ));
     }
-    let preview = state.browsers.open(&target, &origin).await?;
+    if input.host.as_ref().is_some_and(|host| !state.cloud_hosts.contains(host)) {
+        return Err(bad("Cloud Host not found."));
+    }
+    let preview = state.browsers.open(&target, &origin, input.host).await?;
     let mut src = Url::parse(&preview).unwrap();
     src.set_path(target.path());
     src.set_query(target.query());
@@ -295,7 +334,11 @@ async fn forward(State(proxy): State<Arc<Proxy>>, request: Request) -> Result<Re
         }
         request.headers_mut().insert(
             header::ORIGIN,
-            HeaderValue::from_str(&proxy.target.origin().ascii_serialization()).unwrap(),
+            HeaderValue::from_str(&proxy.logical.origin().ascii_serialization()).unwrap(),
+        );
+        request.headers_mut().insert(
+            header::HOST,
+            HeaderValue::from_str(proxy.logical.authority()).unwrap(),
         );
         let (upstream, response) = timeout(Duration::from_secs(5), connect_async(request))
             .await
@@ -310,7 +353,10 @@ async fn forward(State(proxy): State<Arc<Proxy>>, request: Request) -> Result<Re
     }
     let mut headers = parts.headers;
     clean(&mut headers);
-    headers.remove(header::HOST);
+    headers.insert(
+        header::HOST,
+        HeaderValue::from_str(proxy.logical.authority()).unwrap(),
+    );
     headers.insert(
         header::ACCEPT_ENCODING,
         HeaderValue::from_static("identity"),
@@ -321,7 +367,7 @@ async fn forward(State(proxy): State<Arc<Proxy>>, request: Request) -> Result<Re
                 .strip_prefix(&proxy.origin)
                 .filter(|suffix| suffix.is_empty() || suffix.starts_with('/'))
             {
-                let value = format!("{}{suffix}", proxy.target.origin().ascii_serialization());
+                let value = format!("{}{suffix}", proxy.logical.origin().ascii_serialization());
                 headers.insert(name, HeaderValue::from_str(&value).map_err(upstream)?);
             }
         }
@@ -343,7 +389,7 @@ async fn forward(State(proxy): State<Arc<Proxy>>, request: Request) -> Result<Re
         .and_then(|value| value.to_str().ok())
     {
         if let Ok(url) = Url::parse(value) {
-            if loopback(&url) && url.port_or_known_default() == proxy.target.port_or_known_default()
+            if loopback(&url) && url.port_or_known_default() == proxy.logical.port_or_known_default()
             {
                 let mut location = Url::parse(&proxy.origin).unwrap();
                 location.set_path(url.path());
@@ -501,7 +547,7 @@ pub(crate) async fn bridge(
     let (mut write, mut read) = socket.split();
     let (mut upstream_write, mut upstream_read) = upstream.split();
     let send = async {
-        while let Some(Ok(message)) = read.next().await {
+        while let Ok(Some(Ok(message))) = timeout(SILENT_FOR, read.next()).await {
             let message = match message {
                 Message::Text(value) => UpstreamMessage::Text(value.as_str().into()),
                 Message::Binary(value) => UpstreamMessage::Binary(value),
@@ -520,17 +566,25 @@ pub(crate) async fn bridge(
         let _ = upstream_write.close().await;
     };
     let receive = async {
-        while let Some(Ok(message)) = upstream_read.next().await {
-            let message = match message {
-                UpstreamMessage::Text(value) => Message::Text(value.as_str().into()),
-                UpstreamMessage::Binary(value) => Message::Binary(value),
-                UpstreamMessage::Close(value) => {
-                    Message::Close(value.map(|value| axum::extract::ws::CloseFrame {
-                        code: value.code.into(),
-                        reason: value.reason.as_str().into(),
-                    }))
+        // Ping the browser so `send` hears from it; Home's upstream client answers the Cloud Host's pings itself.
+        let mut heartbeat = interval_at(Instant::now() + PING_EVERY, PING_EVERY);
+        loop {
+            let message = tokio::select! {
+                message = upstream_read.next() => {
+                    let Some(Ok(message)) = message else { break };
+                    match message {
+                        UpstreamMessage::Text(value) => Message::Text(value.as_str().into()),
+                        UpstreamMessage::Binary(value) => Message::Binary(value),
+                        UpstreamMessage::Close(value) => {
+                            Message::Close(value.map(|value| axum::extract::ws::CloseFrame {
+                                code: value.code.into(),
+                                reason: value.reason.as_str().into(),
+                            }))
+                        }
+                        _ => continue,
+                    }
                 }
-                _ => continue,
+                _ = heartbeat.tick() => Message::Ping(Bytes::new()),
             };
             if write.send(message).await.is_err() {
                 break;

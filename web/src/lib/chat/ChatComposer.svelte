@@ -13,6 +13,7 @@
 	import TurnRing from '#lib/chat/TurnRing.svelte';
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
+	import { hostOf } from '#lib/host.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
@@ -211,7 +212,7 @@
 		{/if}
 	{/snippet}
 	{#snippet menu(text, replace, caret)}
-		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} {replace} {onrun} />
+		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} cloud={!!hostOf(chat.projectId)} {replace} {onrun} />
 		{#if !slash?.isOpen()}
 			<FileMenu bind:this={files} {text} {caret} projectId={chat.projectId} {replace} />
 		{/if}

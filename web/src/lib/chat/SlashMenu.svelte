@@ -13,6 +13,7 @@
 		capabilities: Capabilities;
 		choices: Record<Setting, Choice[]>;
 		working: boolean;
+		cloud?: boolean;
 		replace(text: string): void;
 		onrun(command: Builtin, value?: string | number): void;
 	};
@@ -26,7 +27,8 @@
 		choose(): void;
 	};
 
-	let { text, agent, settings, capabilities, choices, working, replace: replaceText, onrun }: Props = $props();
+	let { text, agent, settings, capabilities, choices, working, cloud = false, replace: replaceText, onrun }: Props = $props();
+	const homeOnly = ['create-epic', 'cloud-setup'];
 	let browsing = $state<string>();
 	const query = $derived(browsing === text ? '/' : text);
 	const typed = $derived(query.match(/^\/(\S*)$/)?.[1]);
@@ -61,6 +63,7 @@
 		}
 		if (typed === undefined) return [];
 		const model = choices.model.find((choice) => choice.value === settings.model);
+		const usable = templates().filter(({ name }) => !cloud || !homeOnly.includes(name));
 		const stampede: Row[] = [
 			{ label: '/effort', choices: choices.effort, current: settings.effort, choose: () => replace('/effort ') },
 			{ label: '/model', detail: model?.label ?? settings.model ?? '', choose: () => replace('/model ') },
@@ -72,9 +75,9 @@
 			})),
 			{ label: '/mode', choices: choices.mode, current: settings.mode, choose: () => replace('/mode ') },
 			...(['compact', 'rewind'] as const).filter((command) => builtins(capabilities).includes(command)).map(now),
-			...templates().map(({ name, description }) => ({ label: `/${name}`, detail: description, choose: () => replace(`/${name} `) }))
+			...usable.map(({ name, description }) => ({ label: `/${name}`, detail: description, choose: () => replace(`/${name} `) }))
 		];
-		const taken = [...builtins(capabilities), ...templates().map((template) => template.name)];
+		const taken = [...builtins(capabilities), ...usable.map((template) => template.name)];
 		const commands = capabilities.commands.filter((command) => !taken.includes(command.name));
 		const own = commands.map((command) => ({
 			label: `/${command.name}`,

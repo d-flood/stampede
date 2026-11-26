@@ -272,6 +272,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let rigs = config.borrow().rigs.clone();
     let terminals = Arc::new(Terminals::new(args.data_dir.clone(), args.cloud.is_some()));
     terminals.restore().await?;
+    cloud_setup.interrupted(&terminals)?;
     chats.restore(&rigs).await?;
     if let Some(cloud::Service::Sprite) = args.cloud {
         keep_awake::spawn(busy, chats.busy(), cloud_setup.subscribe(), terminals.printed());
@@ -291,7 +292,9 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     )?;
     cli::listen(requests, Arc::clone(&epics), Arc::clone(&runs), Arc::clone(&pr_reviews), Arc::clone(&cloud_setup));
     let devices = device::Devices::default();
-    usage::spawn(Arc::clone(&usage), config.clone(), devices.subscribe(), Arc::clone(&epics));
+    if args.cloud.is_none() {
+        usage::spawn(Arc::clone(&usage), config.clone(), devices.subscribe(), Arc::clone(&epics));
+    }
     terminals.scrollback(config.borrow().scrollback);
     let mut settings = config.clone();
     let configured_terminals = Arc::clone(&terminals);
