@@ -16,6 +16,7 @@ use tokio::{
     },
     process::Command,
     sync::{broadcast, mpsc, watch},
+    time::Instant,
 };
 use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
 use uuid::Uuid;
@@ -34,6 +35,7 @@ pub struct Terminals {
     terminals: Mutex<Vec<(String, Slot)>>,
     changed: broadcast::Sender<Owner>,
     titles: broadcast::Sender<(String, String)>,
+    printed: watch::Sender<Option<Instant>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -121,6 +123,7 @@ impl Terminals {
             terminals: Mutex::default(),
             changed: broadcast::Sender::new(64),
             titles: broadcast::Sender::new(64),
+            printed: watch::Sender::default(),
         }
     }
 
@@ -172,6 +175,11 @@ impl Terminals {
 
     pub fn subscribe_titles(&self) -> broadcast::Receiver<(String, String)> {
         self.titles.subscribe()
+    }
+
+    /// When any Terminal last printed, to within `holder::PRINTED_EVERY`.
+    pub fn printed(&self) -> watch::Receiver<Option<Instant>> {
+        self.printed.subscribe()
     }
 
     pub fn list(&self) -> Vec<Terminal> {
@@ -294,6 +302,9 @@ impl Terminals {
                                 if entry.running(running) {
                                     let _ = terminals.changed.send(owner.clone());
                                 }
+                            }
+                            Ok(Some(Message::Printed)) => {
+                                terminals.printed.send_replace(Some(Instant::now()));
                             }
                             _ => {}
                         }

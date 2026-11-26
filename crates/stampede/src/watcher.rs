@@ -140,7 +140,7 @@ fn start(project: Project, changes: broadcast::Sender<Changed>) -> io::Result<mp
 
 struct Tree {
     root: PathBuf,
-    git: Option<WatchDescriptor>,
+    git: HashMap<WatchDescriptor, (PathBuf, bool)>,
     watches: Watches,
     dirs: HashMap<WatchDescriptor, PathBuf>,
     opened: HashSet<PathBuf>,
@@ -149,23 +149,27 @@ struct Tree {
 }
 
 impl Tree {
-    fn new(root: PathBuf, mut watches: Watches) -> Self {
-        let git = git_dir(&root).and_then(|dir| {
-            watches.add(&dir, CHANGES).inspect_err(|error| eprintln!("cannot watch {}: {error}", dir.display())).ok()
-        });
+    fn new(root: PathBuf, watches: Watches) -> Self {
         let mut exclude = GitignoreBuilder::new(&root);
         exclude.add(root.join(".git/info/exclude"));
         let exclude = exclude.build().unwrap_or_else(|_| Gitignore::empty());
         let global = GitignoreBuilder::new(&root).build_global().0;
         let mut tree = Self {
             root,
-            git,
+            git: HashMap::new(),
             watches,
             dirs: HashMap::new(),
             opened: HashSet::new(),
             ignores: HashMap::new(),
             excludes: [exclude, global],
         };
+        if let Some(dir) = git_dir(&tree.root) {
+            let common = fs::read_to_string(dir.join("commondir")).ok().map(|path| dir.join(path.trim()));
+            for dir in std::iter::once(dir).chain(common).filter_map(|dir| fs::canonicalize(dir).ok()) {
+                tree.watch_git(&dir, true);
+                tree.watch_refs(&dir.join("refs"));
+            }
+        }
         tree.scan(&tree.root.clone());
         tree
     }
@@ -177,10 +181,25 @@ impl Tree {
         for Event { wd, mask, name } in batch {
             if mask.contains(EventMask::IGNORED) {
                 self.dirs.remove(&wd);
+                self.git.remove(&wd);
                 continue;
             }
-            if self.git.as_ref() == Some(&wd) {
-                git |= name.is_some_and(|name| name == "HEAD" || name == "index" || name == "config");
+            if let Some((dir, metadata)) = self.git.get(&wd).cloned() {
+                if let Some(name) = name {
+                    if metadata {
+                        git |= name == "HEAD" || name == "index" || name == "config" || name == "packed-refs" || name == "refs";
+                        if name == "refs" {
+                            self.watch_refs(&dir.join(name));
+                        }
+                    } else if !name.to_string_lossy().ends_with(".lock") {
+                        git = true;
+                        if mask.contains(EventMask::ISDIR) {
+                            self.watch_refs(&dir.join(name));
+                        }
+                    }
+                } else if mask.intersects(EventMask::DELETE_SELF | EventMask::MOVE_SELF) {
+                    git = true;
+                }
                 continue;
             }
             let Some(parent) = self.dirs.get(&wd) else { continue };
@@ -273,8 +292,23 @@ impl Tree {
     }
 
     fn close(mut self) {
-        for wd in self.dirs.into_keys().chain(self.git) {
+        for wd in self.dirs.into_keys().chain(self.git.into_keys()) {
             let _ = self.watches.remove(wd);
+        }
+    }
+
+    fn watch_git(&mut self, dir: &Path, metadata: bool) {
+        match self.watches.add(dir, CHANGES) {
+            Ok(wd) => { self.git.insert(wd, (dir.to_owned(), metadata)); }
+            Err(error) => eprintln!("cannot watch {}: {error}", dir.display()),
+        }
+    }
+
+    fn watch_refs(&mut self, dir: &Path) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        self.watch_git(dir, false);
+        for entry in entries.flatten().filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir())) {
+            self.watch_refs(&entry.path());
         }
     }
 

@@ -918,6 +918,11 @@ pub enum Status {
     Done,
 }
 
+/// Whether a Chat is at work: its turn, a Subagent, or background work. One waiting on David is not.
+pub fn working(status: Status, background: bool) -> bool {
+    status == Status::Working || background
+}
+
 /// A step in a Chat's life, the same for every Agent: what the loop follows instead of the drivers' events.
 #[derive(Clone)]
 #[expect(dead_code, reason = "scheduling needs only which Chat changed; releasing and recovering Chats read what changed")]
@@ -2025,7 +2030,7 @@ impl Chats {
         self.busy.send_if_modified(|current| {
             let busy = self.settling.load(Ordering::Relaxed) > 0 || self.chats.lock().unwrap().iter().any(|entry| {
                 let chat = entry.chat.lock().unwrap();
-                chat.status == Status::Working || chat.background
+                working(chat.status, chat.background)
             });
             std::mem::replace(current, busy) != busy
         });

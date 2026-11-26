@@ -245,6 +245,8 @@ async fn connect(
     let mut heard = Instant::now();
     let mut list = projects.subscribe();
     let mut cloud_list = cloud_hosts.subscribe();
+    let mut cloud_held = cloud_hosts.subscribe_held();
+    let mut cloud_failures = cloud_hosts.subscribe_failures();
     let mut setup = cloud_setup.subscribe();
     setup.mark_unchanged();
     let mut changes = terminals.subscribe();
@@ -327,6 +329,8 @@ async fn connect(
                 device.review_projects.retain(|project_id, _| projects.iter().any(|project| project.id == *project_id));
             }
             Ok(()) = cloud_list.changed() => device.projects_changed(),
+            Ok(()) = cloud_held.changed() => device.projects_changed(),
+            Ok(()) = cloud_failures.changed() => device.projects_changed(),
             Ok(()) = setup.changed() => {
                 setup.mark_unchanged();
                 device.setup_changed();

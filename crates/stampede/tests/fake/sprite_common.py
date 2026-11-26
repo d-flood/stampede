@@ -20,7 +20,8 @@ def option(args, name, default=None):
 
 
 def environment(home, values=''):
-    env = dict(os.environ, HOME=str(home), CODEX_HOME=str(home / '.codex'), STAMPEDE_FAKE_SPRITE=str(home))
+    env = dict(os.environ, HOME=str(home), CODEX_HOME=str(home / '.codex'), STAMPEDE_FAKE_SPRITE=str(home),
+               STAMPEDE_SPRITE_API=str(home / '.sprite/api.sock'))
     if values:
         env.update(pair.split('=', 1) for pair in values.split(','))
     return env

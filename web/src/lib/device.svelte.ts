@@ -6,7 +6,7 @@ import { incoming, outgoing } from '#lib/host-messages.ts';
 import type { PrReview } from '#lib/pr-reviews.ts';
 import { on } from 'svelte/events';
 
-export type Project = { id: string; host?: string; path: string; icon?: string; worktree?: Worktree; cloud?: { setup: 'creating' | CloudSetup['state']; setupTerminal: string | null } };
+export type Project = { id: string; host?: string; path: string; icon?: string; worktree?: Worktree; cloud?: { setup: 'creating' | CloudSetup['state']; setupTerminal: string | null; state: 'awake' | 'asleep' | 'unreachable' | 'gone'; reason: string | null; tip: string | null; inSync: boolean } };
 
 export type CloudSetup = { projectId: string; state: 'running' | 'ready' | 'failed'; status?: number; terminalId: string; startedAt: number };
 

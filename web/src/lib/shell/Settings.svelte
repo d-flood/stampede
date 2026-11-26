@@ -13,6 +13,7 @@
 <script lang="ts">
 	import { agentNames, autoFetch, clips, commitInstructions, commitRig, fontNames, hostName, modes, rigs, saveAutoFetch, saveCommitInstructions, saveCommitRig, saveHostName, saveModes, themeLabel, type Agent, type FontRole } from '#lib/config.svelte.ts';
 	import type { Update } from '#lib/git.ts';
+	import { ago } from '#lib/chat/sessions.ts';
 	import { form } from '#lib/form.ts';
 	import { colorScheme, selectScheme, type Scheme } from '#lib/scheme.svelte.ts';
 	import { selectSidebarSide, sidebarPosition, type SidebarSide } from '#lib/sidebar.svelte.ts';
@@ -46,7 +47,51 @@
 	import RocketLaunch from '~icons/ph/rocket-launch';
 	import SlidersHorizontal from '~icons/ph/sliders-horizontal';
 
-	let { update }: { update?: Update } = $props();
+	let { update, ondeletehost }: { update?: Update; ondeletehost?: (id: string) => void } = $props();
+
+	type Listed = { id: string; createdAt: string; worktree?: { project: string; branch: string }; state?: 'awake' | 'asleep' | 'unreachable'; home: { name: string; own: boolean } };
+	let hosts = $state<Listed[]>();
+	let listError = $state<string>();
+	let destroying = $state<string>();
+	let foreign = $state<Listed>();
+
+	async function loadHosts(signal?: AbortSignal) {
+		try {
+			const response = await fetch('/api/cloud-hosts', { signal });
+			if (!response.ok) throw new Error(await response.text());
+			const entries: Listed[] = await response.json();
+			if (!signal?.aborted) { hosts = entries; listError = undefined; }
+		} catch (error) {
+			if (!signal?.aborted) listError = (error as Error).message;
+		}
+	}
+
+	$effect(() => {
+		if (!open || current !== 'cloud-hosts' || cloud?.cli !== 'ready') return;
+		const controller = new AbortController();
+		hosts = undefined;
+		void loadHosts(controller.signal);
+		return () => controller.abort();
+	});
+
+	async function destroyHost(item: Listed, confirmed = false) {
+		if (item.home.own && item.worktree) {
+			open = false;
+			ondeletehost?.(item.id);
+			return;
+		}
+		if (!item.home.own && !confirmed) { foreign = item; return; }
+		destroying = item.id;
+		try {
+			const response = await fetch(`/api/cloud-hosts/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+			if (!response.ok) throw new Error(await response.text());
+			foreign = undefined;
+			await loadHosts();
+		} catch (error) {
+			foreign = undefined;
+			listError = (error as Error).message;
+		} finally { destroying = undefined; }
+	}
 
 	const seenKey = 'stampede.update-seen';
 	let seen = $state(storedSeen());
@@ -435,6 +480,24 @@
 							<Badge tone="outline">Automatic</Badge>
 						</section>
 					</div>
+					{#if cloud?.cli === 'ready'}
+						<h4>Cloud Hosts on Fly.io</h4>
+						{#if listError}<p role="alert">{listError}</p>{/if}
+						<div class="group">
+							{#each hosts ?? [] as item (item.id)}
+								<section class="row cloud-host">
+									<div class="text">
+										<span class="label">{item.worktree?.branch ?? item.id}</span>
+										<p class:waiting={!item.worktree}>{item.worktree?.project ?? 'No worktree uses it'}{item.state ? ` · ${item.state}` : ''} · created {ago(Date.parse(item.createdAt))}</p>
+										{#if !item.home.own}<p>{item.home.name}</p>{/if}
+									</div>
+									<Button variant="danger" size="sm" disabled={!!destroying} onclick={() => destroyHost(item)}>Destroy</Button>
+								</section>
+							{:else}
+								<p class="row">{hosts ? 'No Cloud Hosts' : listError ? 'Could not list Cloud Hosts' : 'Listing Cloud Hosts…'}</p>
+							{/each}
+						</div>
+					{/if}
 				{:else if current === 'rigs'}
 					<section aria-label="Rigs">
 						{#if !editingRig}
@@ -454,8 +517,25 @@
 		{/if}
 	</div>
 </Dialog>
+<Dialog bind:open={() => !!foreign, (open) => !open && (foreign = undefined)} title="Destroy Cloud Host?" description={foreign && `${foreign.id} was made by ${foreign.home.name}. Destroy it anyway?`}>
+	{#snippet actions()}
+		<Button disabled={!!destroying} onclick={() => (foreign = undefined)}>Cancel</Button>
+		<Button variant="danger" disabled={!!destroying} onclick={() => foreign && destroyHost(foreign, true)}>Destroy</Button>
+	{/snippet}
+</Dialog>
 
 <style>
+	.cloud-host {
+		flex-wrap: nowrap;
+		gap: var(--space-3);
+	}
+	.cloud-host .text {
+		overflow-wrap: anywhere;
+	}
+	.waiting {
+		color: var(--status-waiting);
+	}
+
 	.settings {
 		display: grid;
 		flex: 1;

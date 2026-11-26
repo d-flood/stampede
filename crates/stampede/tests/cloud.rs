@@ -193,7 +193,7 @@ async fn a_cloud_worktree_is_created_and_served_on_its_own_host() {
     let entry = setup_reaches(&mut socket, project, "ready").await;
     let setup_terminal = entry["cloud"]["setupTerminal"].as_str().unwrap().to_owned();
     assert_eq!(entry, json!({ "id": project, "host": host, "path": path, "worktree": { "parent": parent, "branch": "feat/cloud" },
-        "cloud": { "setup": "ready", "state": "awake", "reason": null, "inSync": true, "setupTerminal": setup_terminal } }));
+        "cloud": { "setup": "ready", "state": "awake", "reason": null, "tip": String::from_utf8_lossy(&tip).trim(), "inSync": true, "setupTerminal": setup_terminal } }));
     assert_eq!(fs::read_to_string(path.join("committed")).unwrap(), "at the starting commit");
     assert_eq!(fs::read_to_string(path.join(".env")).unwrap(), "carried");
     assert_eq!(fs::read_to_string(path.join("marker")).unwrap(), "marked");
@@ -297,7 +297,7 @@ async fn a_cloud_worktree_is_created_and_served_on_its_own_host() {
     server.restart().await;
     let (mut socket, _) = connect_async(&home_ws).await.unwrap();
     control(&mut socket, json!({ "type": "projects.list" })).await;
-    assert!(next_control(&mut socket, "projects.changed").await["projects"].as_array().unwrap().contains(&entry));
+    state_reaches(&mut socket, project, "unreachable").await;
     let failure = get().await;
     assert_eq!(failure.status(), 502);
     assert_eq!(failure.text().await.unwrap(), "Fly refused the forward");
@@ -315,7 +315,7 @@ async fn the_home_host_links_each_cloud_host_for_its_settings_attention_and_push
     let gates = tempfile::tempdir().unwrap();
     let fixture = format!("{}/tests/fixtures/chats/claude-code/background-shell-idle.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
     let config = format!("[[rig]]\nname = \"Gated\"\nagent = \"claude-code\"\nenv = {{ STAMPEDE_FAKE_FIXTURE = {fixture:?}, STAMPEDE_FAKE_GATES = {:?} }}\n", gates.path());
-    let mut server = Server::with_config("cloud-link-", &config).await;
+    let mut server = Server::with_env("cloud-link-", &config, vec![("STAMPEDE_TERMINAL_QUIET_MS", "2000".into())]).await;
     let root = server.root.path().to_owned();
     fs::write(root.join("sprite.json"), r#"{"organization":"test-org"}"#).unwrap();
     let repo = init(&root, "repo");
@@ -376,9 +376,125 @@ async fn the_home_host_links_each_cloud_host_for_its_settings_attention_and_push
     listed().await;
     sleep(Duration::from_secs(2)).await;
     assert!(pushes.try_recv().is_err(), "the Chat was announced twice");
+    let (mut socket, _) = connect_async(&home_ws).await.unwrap();
+    state_reaches(&mut socket, project, "asleep").await;
+    let (cloud, _) = connect_async(format!("ws://127.0.0.1:{}/cloud/{host}/ws", server.port)).await.unwrap();
+    state_reaches(&mut socket, project, "awake").await;
+    drop(cloud);
 
     server.restart().await;
     listed().await;
+}
+
+#[tokio::test]
+async fn a_cloud_branch_mirrors_rewrites_without_overwriting_the_home_hosts_commits() {
+    use crate::common::{control, next_control};
+    use tokio_tungstenite::connect_async;
+
+    fn tip(dir: &std::path::Path, reference: &str) -> Option<String> {
+        let output = std::process::Command::new("git").arg("-C").arg(dir).args(["rev-parse", "--verify", "--quiet", reference]).output().unwrap();
+        output.status.success().then(|| String::from_utf8(output.stdout).unwrap().trim_end().to_owned())
+    }
+    async fn follows(dir: &std::path::Path, reference: &str, expected: &str) {
+        timeout(Duration::from_secs(20), async {
+            while tip(dir, reference).as_deref() != Some(expected) {
+                sleep(Duration::from_millis(50)).await;
+            }
+        }).await.unwrap_or_else(|_| panic!("{reference} at {} never reached {expected}", dir.display()));
+    }
+
+    let mut server = Server::start("cloud-git-").await;
+    let root = server.root.path().to_owned();
+    fs::write(root.join("sprite.json"), r#"{"organization":"test-org"}"#).unwrap();
+    let repo = init(&root, "repo");
+    git(&repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    fs::create_dir(repo.join(".stampede")).unwrap();
+    fs::write(repo.join(".stampede/cloud-setup.toml"), "run = \"while test ! -e .finish; do sleep 0.1; done\"\n").unwrap();
+    git(&repo, &["add", ".stampede"]);
+    git(&repo, &["commit", "-m", "Starting commit"]);
+    let starting = tip(&repo, "HEAD").unwrap();
+    let home_ws = format!("ws://127.0.0.1:{}/ws", server.port);
+    let (mut socket, _) = connect_async(&home_ws).await.unwrap();
+    control(&mut socket, json!({ "type": "project.open", "path": repo })).await;
+    let parent = next_control(&mut socket, "project.opened").await["projectId"].as_str().unwrap().to_owned();
+    let client = reqwest::Client::new();
+    let api = format!("http://127.0.0.1:{}/api/projects/{parent}", server.port);
+    let created = client.post(format!("{api}/worktrees")).header("content-type", "application/json")
+        .body(r#"{"cloud":"sprite","branch":"topic/cloud","from":"main"}"#).send().await.unwrap().text().await.unwrap();
+    let created: Value = serde_json::from_str(created.lines().last().unwrap()).unwrap();
+    let host = created["host"].as_str().unwrap_or_else(|| panic!("{created}"));
+    let cloud_repo = root.join("sprites").join(host).join("home/repo");
+    let branch = "refs/heads/topic/cloud";
+    follows(&repo, branch, &starting).await;
+    follows(&cloud_repo, "refs/remotes/home/main", &starting).await;
+    let refs_url = format!("http://127.0.0.1:{}/cloud/{host}/api/projects/{}/git/refs", server.port, created["projectId"].as_str().unwrap());
+    let refs: Value = serde_json::from_str(&client.get(refs_url).send().await.unwrap().text().await.unwrap()).unwrap();
+    assert!(refs["remote"].as_array().unwrap().contains(&json!("home/main")));
+
+    fs::write(cloud_repo.join("cloud.txt"), "Cloud change").unwrap();
+    git(&cloud_repo, &["add", "cloud.txt"]);
+    git(&cloud_repo, &["commit", "-m", "Cloud commit"]);
+    let committed = tip(&cloud_repo, branch).unwrap();
+    follows(&repo, branch, &committed).await;
+    let comparison: Value = serde_json::from_str(&client.get(format!("{api}/git/compare?target=main&source=topic/cloud")).send().await.unwrap().text().await.unwrap()).unwrap();
+    assert_eq!(comparison["source"], committed);
+    assert_eq!(comparison["files"][0]["path"], "cloud.txt");
+    git(&cloud_repo, &["commit", "--amend", "-m", "Rewritten Cloud commit"]);
+    let rewritten = tip(&cloud_repo, branch).unwrap();
+    assert_ne!(rewritten, committed);
+    follows(&repo, branch, &rewritten).await;
+
+    let refused = client.post(format!("{api}/git/switch")).header("content-type", "application/json")
+        .body(r#"{"branch":"topic/cloud"}"#).send().await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap().as_str()), (409, "topic/cloud is on a Cloud Host."));
+    let refused = client.post(format!("{api}/worktrees")).header("content-type", "application/json")
+        .body(r#"{"from":"topic/cloud"}"#).send().await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap().as_str()), (400, "topic/cloud is on a Cloud Host."));
+    let allowed = client.post(format!("{api}/worktrees")).header("content-type", "application/json")
+        .body(r#"{"from":"topic/cloud","branch":"derived"}"#).send().await.unwrap();
+    assert_eq!(allowed.status(), 200);
+    let derived: Value = serde_json::from_str(&allowed.text().await.unwrap()).unwrap();
+    let refused = client.post(format!("http://127.0.0.1:{}/api/projects/{}/git/switch", server.port, derived["projectId"].as_str().unwrap()))
+        .header("content-type", "application/json").body(r#"{"branch":"topic/cloud"}"#).send().await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap().as_str()), (409, "topic/cloud is on a Cloud Host."));
+    follows(&cloud_repo, "refs/remotes/home/derived", &rewritten).await;
+
+    drop(socket);
+    server.stop().await;
+    git(&cloud_repo, &["commit", "--allow-empty", "-m", "While Home was away"]);
+    let away = tip(&cloud_repo, branch).unwrap();
+    assert_eq!(tip(&repo, branch).as_deref(), Some(rewritten.as_str()));
+    server.restart().await;
+    follows(&repo, branch, &away).await;
+
+    git(&repo, &["commit", "--allow-empty", "-m", "Home commit"]);
+    let home = tip(&repo, "main").unwrap();
+    follows(&cloud_repo, "refs/remotes/home/main", &home).await;
+    git(&repo, &["update-ref", branch, &home]);
+    git(&cloud_repo, &["commit", "--allow-empty", "-m", "Diverged Cloud commit"]);
+    let (mut socket, _) = connect_async(&home_ws).await.unwrap();
+    control(&mut socket, json!({ "type": "projects.list" })).await;
+    timeout(Duration::from_secs(20), async {
+        loop {
+            let changed = next_control(&mut socket, "projects.changed").await;
+            if changed["projects"].as_array().unwrap().iter().any(|entry| entry["host"] == host && entry["cloud"]["inSync"] == false) { break }
+        }
+    }).await.expect("the divergent branch was not reported");
+    assert_eq!(tip(&repo, branch).as_deref(), Some(home.as_str()));
+    git(&repo, &["commit", "--allow-empty", "-m", "Another Home commit"]);
+    follows(&cloud_repo, "refs/remotes/home/main", &tip(&repo, "main").unwrap()).await;
+    fs::write(cloud_repo.join(".finish"), "").unwrap();
+}
+
+/// Waits for the Home Host to list `project` as `state`: awake or asleep.
+async fn state_reaches(socket: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>, project: &Value, state: &str) {
+    crate::common::control(socket, json!({ "type": "projects.list" })).await;
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let changed = crate::common::next_control(socket, "projects.changed").await;
+            if changed["projects"].as_array().unwrap().iter().any(|entry| entry["id"] == *project && entry["cloud"]["state"] == state) { return; }
+        }
+    }).await.unwrap_or_else(|_| panic!("{project} never became {state}"));
 }
 
 /// Waits for the Home Host to list `project` with its Cloud Setup in `state`, and returns its entry.
@@ -391,4 +507,100 @@ async fn setup_reaches(socket: &mut tokio_tungstenite::WebSocketStream<tokio_tun
             }
         }
     }).await.unwrap_or_else(|_| panic!("the Cloud Setup of {project} never became {state}"))
+}
+
+#[tokio::test]
+async fn cloud_deletion_checks_work_and_keeps_unreachable_and_gone_records_visible() {
+    use crate::common::{control, next_control};
+    use tokio_tungstenite::connect_async;
+
+    let server = Server::with_env("cloud-delete-", "", vec![("STAMPEDE_TERMINAL_QUIET_MS", "2000".into())]).await;
+    let root = server.root.path().to_owned();
+    fs::write(root.join("sprite.json"), r#"{"organization":"test-org"}"#).unwrap();
+    let repo = init(&root, "repo");
+    git(&repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    fs::create_dir(repo.join(".stampede")).unwrap();
+    fs::write(repo.join(".stampede/cloud-setup.toml"), "run = \"true\"\n").unwrap();
+    git(&repo, &["add", ".stampede"]);
+    git(&repo, &["commit", "-m", "Starting commit"]);
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({"type":"project.open","path":repo})).await;
+    let parent = next_control(&mut socket, "project.opened").await["projectId"].as_str().unwrap().to_owned();
+    let api = format!("http://127.0.0.1:{}/api", server.port);
+    let client = reqwest::Client::new();
+    let create = |branch: Option<&str>, from: &str| {
+        let request = client.post(format!("{api}/projects/{parent}/worktrees")).header("content-type", "application/json")
+            .body(json!({"cloud":"sprite","branch":branch,"from":from}).to_string());
+        async move {
+            let response = request.send().await.unwrap().text().await.unwrap();
+            serde_json::from_str::<Value>(response.lines().last().unwrap()).unwrap()
+        }
+    };
+    let delete = |host: &str, force: bool| client.delete(format!("{api}/cloud-hosts/{host}?force={force}")).send();
+    let sprite = |args: &[&str]| {
+        let mut command = Command::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake/sprite"));
+        command.env("STAMPEDE_TEST_ROOT", &root).args(args);
+        command
+    };
+    let list = || async {
+        serde_json::from_str::<Value>(&client.get(format!("{api}/cloud-hosts")).send().await.unwrap().text().await.unwrap()).unwrap()
+    };
+    let created = create(Some("dirty"), "main").await;
+    let host = created["host"].as_str().unwrap_or_else(|| panic!("{created}"));
+    setup_reaches(&mut socket, &created["projectId"], "ready").await;
+    let cloud_repo = root.join("sprites").join(host).join("home/repo");
+    fs::write(cloud_repo.join("dirty.txt"), "not committed").unwrap();
+    let refused = delete(host, false).await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap()), (409, "It has uncommitted changes. Deleting it and dirty discards them.".to_owned()));
+    git(&cloud_repo, &["add", "dirty.txt"]);
+    git(&cloud_repo, &["commit", "-m", "Only on the Cloud Host"]);
+    let refused = delete(host, false).await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap()), (409, "It has 1 commit no other branch has. Deleting it and dirty discards them.".to_owned()));
+    fs::write(root.join("sprite-fail"), "destroy\nFly refused the destruction\n").unwrap();
+    let refused = delete(host, true).await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap()), (400, "Fly refused the destruction".to_owned()));
+    assert_eq!(list().await[0]["id"], host);
+    fs::remove_file(root.join("sprite-fail")).unwrap();
+    assert_eq!(delete(host, true).await.unwrap().status(), 204);
+    assert_eq!(list().await, json!([]));
+    assert!(!repo.join(".git/refs/heads/dirty").exists());
+
+    git(&repo, &["branch", "existing"]);
+    let created = create(None, "existing").await;
+    let host = created["host"].as_str().unwrap_or_else(|| panic!("{created}"));
+    setup_reaches(&mut socket, &created["projectId"], "ready").await;
+    state_reaches(&mut socket, &created["projectId"], "asleep").await;
+    fs::write(root.join("sprite-fail"), "exec\nFly refused the wake\n").unwrap();
+    assert_eq!(client.post(format!("{api}/cloud-hosts/{host}/retry")).send().await.unwrap().status(), 204);
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let changed = next_control(&mut socket, "projects.changed").await;
+            if changed["projects"].as_array().unwrap().iter().any(|entry| entry["host"] == host && entry["cloud"]["state"] == "unreachable" && entry["cloud"]["reason"] == "Fly refused the wake") { break; }
+        }
+    }).await.unwrap();
+    let refused = delete(host, false).await.unwrap();
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap()), (409, "Its Cloud Host can't be reached, so its work can't be checked. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
+    assert_eq!(delete(host, true).await.unwrap().status(), 204);
+    assert!(repo.join(".git/refs/heads/existing").exists());
+    fs::remove_file(root.join("sprite-fail")).unwrap();
+
+    let created = create(Some("gone"), "main").await;
+    let host = created["host"].as_str().unwrap_or_else(|| panic!("{created}"));
+    setup_reaches(&mut socket, &created["projectId"], "ready").await;
+    state_reaches(&mut socket, &created["projectId"], "asleep").await;
+    assert!(sprite(&["destroy", "--force", host]).status().await.unwrap().success());
+    assert_eq!(client.post(format!("{api}/cloud-hosts/{host}/retry")).send().await.unwrap().status(), 204);
+    state_reaches(&mut socket, &created["projectId"], "gone").await;
+    assert_eq!(delete(host, false).await.unwrap().status(), 204);
+
+    let home_id = fs::read_to_string(root.join("data/host-id")).unwrap();
+    let stray = format!("stampede-{}-stray", &home_id[..8]);
+    assert!(sprite(&["create", "--skip-console", &stray]).status().await.unwrap().success());
+    let listed = list().await;
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["id"], stray);
+    assert_eq!(listed[0]["home"]["own"], true);
+    assert!(listed[0].get("worktree").is_none());
+    assert_eq!(delete(&stray, false).await.unwrap().status(), 204);
+    assert_eq!(list().await, json!([]));
 }

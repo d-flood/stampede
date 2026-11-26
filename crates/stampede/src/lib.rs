@@ -18,6 +18,7 @@ mod git;
 mod github;
 mod holder;
 mod install;
+mod keep_awake;
 mod language_servers;
 mod layouts;
 mod media;
@@ -132,6 +133,9 @@ struct AppState {
 fn router(state: AppState) -> Router {
     let compression = CompressionLayer::new().compress_when(DefaultPredicate::new().and(NotForContentType::const_new("font/woff")));
     let mut home_only = Router::new()
+        .route("/api/cloud-hosts", get(cloud_hosts::list))
+        .route("/api/cloud-hosts/{id}", delete(cloud_hosts::destroy))
+        .route("/api/cloud-hosts/{id}/retry", post(cloud_hosts::retry))
         .route("/api/projects/{id}/worktrees", post(create_worktree))
         .route("/api/projects/{id}/cloud-setup", get(cloud_setup::check))
         .route("/api/projects/{id}/prs", get(pr_reviews::prs))
@@ -258,7 +262,8 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let layouts = Arc::new(Layouts::load(&args.data_dir)?);
     let browsers = Arc::new(browser::Browsers::new(port));
     let attention = Arc::new(Feed::default());
-    let home_link = args.cloud.map(|_| Arc::new(cloud_link::HomeLink::new(&attention)));
+    let busy = watch::Sender::new(false);
+    let home_link = args.cloud.map(|_| Arc::new(cloud_link::HomeLink::new(&attention, busy.subscribe())));
     if home_link.is_none() {
         push::spawn(Arc::clone(&push), &attention);
     }
@@ -268,6 +273,9 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     let terminals = Arc::new(Terminals::new(args.data_dir.clone(), args.cloud.is_some()));
     terminals.restore().await?;
     chats.restore(&rigs).await?;
+    if let Some(cloud::Service::Sprite) = args.cloud {
+        keep_awake::spawn(busy, chats.busy(), cloud_setup.subscribe(), terminals.printed());
+    }
     chats::listen_delegations(delegations, Arc::clone(&chats), Arc::clone(&terminals), config.clone());
     memory::trim_periodically();
     let runs = Runs::new(
@@ -276,6 +284,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
         Arc::clone(&chats),
         Arc::clone(&terminals),
         Arc::clone(&projects),
+        Arc::clone(&cloud_hosts),
         config.clone(),
         Arc::clone(&attention),
         Arc::clone(&usage),

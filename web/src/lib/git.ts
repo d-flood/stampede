@@ -1,4 +1,4 @@
-import { projectUrl } from '#lib/host.ts';
+import { hostOf, projectUrl } from '#lib/host.ts';
 import { json, RequestError } from '#lib/files.svelte.ts';
 
 export type Kind = 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
@@ -191,7 +191,9 @@ export async function createWorktree(projectId: string, from: string, branch?: s
 }
 
 export async function deleteWorktree(projectId: string, force: boolean): Promise<void> {
-	const response = await fetch(projectUrl(projectId, `worktree?${new URLSearchParams({ force: String(force) })}`), { method: 'DELETE' });
+	const host = hostOf(projectId);
+	const url = host ? `/api/cloud-hosts/${encodeURIComponent(host)}?force=${force}` : projectUrl(projectId, `worktree?force=${force}`);
+	const response = await fetch(url, { method: 'DELETE' });
 	if (!response.ok) throw new RequestError(response.status, await response.text());
 }
 

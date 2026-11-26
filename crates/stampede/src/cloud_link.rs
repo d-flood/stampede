@@ -1,4 +1,4 @@
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, path::Path, time::Duration};
 
 use axum::{extract::{State, WebSocketUpgrade, ws}, http::StatusCode, response::{IntoResponse, Response}};
 use futures_util::{SinkExt, StreamExt};
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{net::TcpStream, sync::{Mutex, broadcast::{Receiver, error::RecvError}, watch}, time::{Instant, interval, timeout}};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::{Bytes, Message}};
 
-use crate::{AppState, attention::{Attention, Feed, Source}, cloud_hosts::{Reach, Setup}, cloud_logins::Logins, cloud_setup::Run, config, device::{PING_EVERY, SILENT_FOR}};
+use crate::{AppState, attention::{Attention, Feed, Source}, cloud_hosts::{Reach, Setup}, cloud_logins::Logins, cloud_setup::Run, config, device::{PING_EVERY, SILENT_FOR}, git};
 
 const CONNECT_WITHIN: Duration = Duration::from_secs(60);
 const RETRY_FIRST: Duration = Duration::from_secs(1);
@@ -15,7 +15,8 @@ const RETRY_LAST: Duration = Duration::from_secs(60);
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", rename_all_fields = "camelCase")]
 enum CloudLink {
-    Hello { build_id: String, busy: bool },
+    Hello { build_id: String, busy: bool, #[serde(default)] tip: Option<String> },
+    Tip { commit: String },
     Busy { busy: bool },
     Attention { items: Vec<Attention> },
     Push { item: Attention, skip: HashSet<String> },
@@ -51,11 +52,12 @@ impl CloudLink {
 pub struct HomeLink {
     calls: Mutex<Receiver<(Attention, HashSet<String>)>>,
     newest: watch::Sender<u64>,
+    busy: watch::Receiver<bool>,
 }
 
 impl HomeLink {
-    pub fn new(attention: &Feed) -> Self {
-        Self { calls: Mutex::new(attention.calls()), newest: watch::Sender::default() }
+    pub fn new(attention: &Feed, busy: watch::Receiver<bool>) -> Self {
+        Self { calls: Mutex::new(attention.calls()), newest: watch::Sender::default(), busy }
     }
 }
 
@@ -77,10 +79,15 @@ pub async fn upgrade(State(state): State<AppState>, upgrade: WebSocketUpgrade) -
 
 async fn report(mut socket: ws::WebSocket, link: &HomeLink, state: &AppState) -> Result<(), axum::Error> {
     let mut calls = link.calls.lock().await;
-    let (mut chats, mut setup, mut attention) = (state.chats.busy(), state.cloud_setup.subscribe(), state.attention.subscribe());
-    let busy = |chats: bool, setup: &Option<Run>| chats || setup.as_ref().is_some_and(Run::running);
-    let mut was = busy(*chats.borrow_and_update(), &setup.borrow_and_update());
-    let hello = CloudLink::Hello { build_id: env!("STAMPEDE_BUILD_ID").to_owned(), busy: was };
+    let (mut busy, mut setup, mut attention) = (link.busy.clone(), state.cloud_setup.subscribe(), state.attention.subscribe());
+    let mut disk = state.disk.subscribe();
+    let mut projects = state.projects.subscribe();
+    let identity = std::fs::read(crate::home().join(".stampede-cloud.json")).ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    let branch = identity.as_ref().and_then(|identity| identity["branch"].as_str());
+    let mut was = *busy.borrow_and_update();
+    let mut tip = branch_tip(state, branch).await;
+    let hello = CloudLink::Hello { build_id: env!("STAMPEDE_BUILD_ID").to_owned(), busy: was, tip: tip.clone() };
     socket.send(ws::Message::Text(hello.text().into())).await?;
     attention.mark_changed();
     if setup.borrow().is_some() {
@@ -97,8 +104,15 @@ async fn report(mut socket: ws::WebSocket, link: &HomeLink, state: &AppState) ->
             },
             Ok(()) = attention.changed() => Some(CloudLink::Attention { items: attention.borrow_and_update().clone() }),
             Ok(()) = setup.changed() => setup.borrow_and_update().as_ref().map(CloudLink::from),
-            Ok(()) = chats.changed() => {
-                chats.borrow_and_update();
+            changed = disk.recv() => match changed {
+                Ok(changed) if changed.git => tip_change(state, branch, &mut tip).await,
+                Err(RecvError::Lagged(_)) => tip_change(state, branch, &mut tip).await,
+                Err(RecvError::Closed) => return Ok(()),
+                _ => None,
+            },
+            Ok(()) = projects.changed() => { projects.borrow_and_update(); tip_change(state, branch, &mut tip).await }
+            Ok(()) = busy.changed() => {
+                busy.borrow_and_update();
                 None
             }
             message = socket.recv() => {
@@ -135,12 +149,27 @@ async fn report(mut socket: ws::WebSocket, link: &HomeLink, state: &AppState) ->
         if let Some(message) = message {
             socket.send(ws::Message::Text(message.text().into())).await?;
         }
-        let now = busy(*chats.borrow(), &setup.borrow());
+        let now = *busy.borrow();
         if now != was {
+            if !now && let Some(message) = tip_change(state, branch, &mut tip).await {
+                socket.send(ws::Message::Text(message.text().into())).await?;
+            }
             was = now;
             socket.send(ws::Message::Text(CloudLink::Busy { busy: now }.text().into())).await?;
         }
     }
+}
+
+async fn branch_tip(state: &AppState, branch: Option<&str>) -> Option<String> {
+    let path = state.projects.list().first()?.path.clone();
+    git::run(Path::new(&path), &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{}", branch?)]).await.ok()
+}
+
+async fn tip_change(state: &AppState, branch: Option<&str>, tip: &mut Option<String>) -> Option<CloudLink> {
+    let current = branch_tip(state, branch).await;
+    if current == *tip { return None }
+    *tip = current;
+    tip.clone().map(|commit| CloudLink::Tip { commit })
 }
 
 /// Links the Home Host to each of its Cloud Hosts, while they have something to say or a Device is showing them.
@@ -152,7 +181,14 @@ pub fn spawn(state: AppState) {
             let ids: Vec<_> = records.borrow_and_update().iter().map(|host| host.id.clone()).collect();
             for id in ids {
                 if linked.insert(id.clone()) {
-                    tokio::spawn(hold(state.clone(), id));
+                    let state = state.clone();
+                    let mut records = records.clone();
+                    tokio::spawn(async move {
+                        tokio::select! {
+                            _ = records.wait_for(|records| !records.iter().any(|host| host.id == id)) => {},
+                            _ = hold(state.clone(), id.clone()) => {},
+                        }
+                    });
                 }
             }
             if records.changed().await.is_err() {
@@ -173,6 +209,11 @@ async fn hold(state: AppState, id: String) {
         match follow(&state, &id, &reach, &mut wait, &mut replaced, &mut logins).await {
             Ok(Follow::Restarted) => continue,
             Ok(Follow::Idle) => {
+                let mut forward = reach.forward.lock().await;
+                if !state.cloud_hosts.awake(&id) {
+                    forward.take();
+                }
+                drop(forward);
                 tokio::select! {
                     () = reach.reached.notified() => {},
                     _ = logins.changed() => {},
@@ -181,6 +222,8 @@ async fn hold(state: AppState, id: String) {
             }
             Err(error) => {
                 eprintln!("no link to {id}: {error}");
+                state.cloud_hosts.failed(&id, error).await;
+                if state.cloud_hosts.gone(&id) { return }
                 let _ = timeout(wait, reach.reached.notified()).await;
                 wait = (wait * 2).min(RETRY_LAST);
             }
@@ -191,7 +234,10 @@ async fn hold(state: AppState, id: String) {
 /// Follows a Cloud Host until it is neither busy nor shown, or fails if the link drops before that.
 async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, replaced: &mut bool, logins: &mut watch::Receiver<u64>) -> Result<Follow, String> {
     let mut socket = connect(state, id, reach).await?;
+    let _held = state.cloud_hosts.hold(id);
     let mut devices = reach.devices.subscribe();
+    let mut disk = state.disk.subscribe();
+    let mut sent_branches = None;
     let mut config = state.config.clone();
     config.mark_unchanged();
     let (mut busy, mut listed, mut closing, mut greeted) = (true, false, false, false);
@@ -202,6 +248,7 @@ async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, 
     let (mut heartbeat, mut heard) = (interval(PING_EVERY), Instant::now());
     loop {
         if !closing && !busy && listed && sent_logins.is_some() && awaiting_logins == 0 && !logins.has_changed().unwrap_or(false) && !config.has_changed().unwrap_or(false) && *devices.borrow() == 0 {
+            push_branches(state, id, &mut sent_branches).await;
             socket.close(None).await.map_err(|error| error.to_string())?;
             closing = true;
         }
@@ -210,7 +257,7 @@ async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, 
                 heard = Instant::now();
                 match message {
                     Some(Ok(Message::Text(text))) => match serde_json::from_str(&text) {
-                        Ok(CloudLink::Hello { build_id, busy: now }) => {
+                        Ok(CloudLink::Hello { build_id, busy: now, tip }) => {
                             if build_id != env!("STAMPEDE_BUILD_ID") {
                                 if *replaced { return Err("Cloud Host still reports a different build after replacement".to_owned()); }
                                 drop(socket);
@@ -222,8 +269,15 @@ async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, 
                             *wait = RETRY_FIRST;
                             busy = now;
                             greeted = true;
+                            state.cloud_hosts.connected(id);
                             config.mark_changed();
                             logins.mark_changed();
+                            if let Some(tip) = tip { mirror_tip(state, id, &tip).await; }
+                            push_branches(state, id, &mut sent_branches).await;
+                        }
+                        Ok(CloudLink::Tip { commit }) => {
+                            mirror_tip(state, id, &commit).await;
+                            push_branches(state, id, &mut sent_branches).await;
                         }
                         Ok(CloudLink::Busy { busy: now }) => busy = now,
                         Ok(CloudLink::Attention { mut items }) => {
@@ -252,6 +306,11 @@ async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, 
             // A reach while closing is left to ask for the next link.
             () = reach.reached.notified(), if !closing => {}
             Ok(()) = devices.changed(), if !closing => {}
+            changed = disk.recv(), if greeted && !closing => match changed {
+                Ok(change) if change.git && state.cloud_hosts.is_parent(id, &change.project_id) => push_branches(state, id, &mut sent_branches).await,
+                Err(RecvError::Lagged(_)) => push_branches(state, id, &mut sent_branches).await,
+                _ => {}
+            },
             Ok(()) = config.changed(), if !closing => {
                 config.mark_unchanged();
                 match config::shared(&state.config_path) {
@@ -274,6 +333,18 @@ async fn follow(state: &AppState, id: &str, reach: &Reach, wait: &mut Duration, 
                 }
             }
         }
+    }
+}
+
+async fn mirror_tip(state: &AppState, id: &str, tip: &str) {
+    if let Err(error) = state.cloud_hosts.mirror_tip(state, id, tip).await {
+        eprintln!("cannot mirror the branch of {id}: {error}");
+    }
+}
+
+async fn push_branches(state: &AppState, id: &str, sent: &mut Option<String>) {
+    if let Err(error) = state.cloud_hosts.push_branches(&state.projects, id, sent).await {
+        eprintln!("cannot send the Home Host's branches to {id}: {error}");
     }
 }
 

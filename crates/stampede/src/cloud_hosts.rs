@@ -1,6 +1,6 @@
 use std::{collections::HashMap, convert::Infallible, fs, io, path::{Path as FsPath, PathBuf}, sync::{self, Arc}, time::Duration};
 
-use axum::{body::Body, extract::{FromRequestParts, Request, State, WebSocketUpgrade}, http::{StatusCode, header}, response::{IntoResponse, Response}};
+use axum::{Json, body::Body, extract::{FromRequestParts, Path, Query, Request, State, WebSocketUpgrade}, http::{StatusCode, header}, response::{IntoResponse, Response}};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -8,7 +8,7 @@ use tokio::{sync::{Mutex, Notify, mpsc, watch}, time::{sleep, timeout}};
 use tokio_tungstenite::{connect_async, tungstenite::{Message, client::IntoClientRequest}};
 use uuid::Uuid;
 
-use crate::{AppState, Creation, browser, cloud::{self, Forward, Service}, cloud_setup, cloud_link, config, device::Devices, files, git, projects::Project, runs};
+use crate::{AppState, Creation, browser, cloud::{self, Forward, Service}, cloud_setup, cloud_link, config, device::Devices, files, git, projects::{Project, Projects}, runs};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -39,14 +39,32 @@ pub struct CloudHosts {
     home_id: String,
     file: PathBuf,
     records: watch::Sender<Vec<CloudHost>>,
+    saving: sync::Mutex<()>,
     creating: Mutex<()>,
     reaches: sync::Mutex<HashMap<String, Arc<Reach>>>,
+    /// How many connections the Home Host holds to each Cloud Host it holds any to.
+    held: watch::Sender<HashMap<String, usize>>,
+    failures: watch::Sender<HashMap<String, Option<String>>>,
     client: reqwest::Client,
+}
+
+/// Counts one connection to a Cloud Host until it drops.
+pub struct Held(watch::Sender<HashMap<String, usize>>, String);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.0.send_if_modified(|held| {
+            let count = held.get_mut(&self.1).unwrap();
+            *count -= 1;
+            *count == 0 && held.remove(&self.1).is_some()
+        });
+    }
 }
 
 /// How a Cloud Host is reached now, and by whom.
 #[derive(Default)]
 pub struct Reach {
+    operation: Mutex<()>,
     pub forward: Mutex<Option<Forward>>,
     /// The Devices connected to it through the proxy.
     pub devices: Devices,
@@ -74,7 +92,7 @@ impl CloudHosts {
             Err(error) => return Err(error),
         };
         Ok(Self {
-            home_id, file, records: watch::Sender::new(records), creating: Mutex::new(()), reaches: sync::Mutex::default(),
+            home_id, file, records: watch::Sender::new(records), saving: sync::Mutex::default(), creating: Mutex::new(()), reaches: sync::Mutex::default(), held: watch::Sender::default(), failures: watch::Sender::default(),
             client: reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build().map_err(io::Error::other)?,
         })
     }
@@ -83,26 +101,222 @@ impl CloudHosts {
         self.records.subscribe()
     }
 
+    pub fn hold(&self, id: &str) -> Held {
+        self.held.send_if_modified(|held| {
+            let count = held.entry(id.to_owned()).or_default();
+            *count += 1;
+            *count == 1
+        });
+        Held(self.held.clone(), id.to_owned())
+    }
+
+    pub fn subscribe_held(&self) -> watch::Receiver<HashMap<String, usize>> {
+        self.held.subscribe()
+    }
+
+    /// Whether the Home Host holds any connection to the Cloud Host, which keeps a Sprite awake.
+    pub fn awake(&self, id: &str) -> bool {
+        self.held.borrow().contains_key(id)
+    }
+
+    pub fn subscribe_failures(&self) -> watch::Receiver<HashMap<String, Option<String>>> {
+        self.failures.subscribe()
+    }
+
+    fn state(&self, id: &str) -> (&'static str, Option<String>) {
+        match self.failures.borrow().get(id) {
+            Some(None) => ("gone", None),
+            Some(Some(reason)) => ("unreachable", Some(reason.clone())),
+            None if self.awake(id) => ("awake", None),
+            None => ("asleep", None),
+        }
+    }
+
+    pub fn gone(&self, id: &str) -> bool {
+        self.state(id).0 == "gone"
+    }
+
+    pub fn connected(&self, id: &str) {
+        self.failures.send_if_modified(|failures| failures.remove(id).is_some());
+    }
+
+    pub async fn failed(&self, id: &str, reason: String) {
+        if self.gone(id) { return }
+        let failure = if cloud::list().await.is_ok_and(|list| !list.iter().any(|host| host.name == id)) {
+            None
+        } else { Some(reason) };
+        if self.contains(id) {
+            self.failures.send_if_modified(|failures| {
+                if failures.get(id) == Some(&failure) { return false }
+                failures.insert(id.to_owned(), failure);
+                true
+            });
+        }
+    }
+
+    pub fn contains(&self, id: &str) -> bool {
+        self.records.borrow().iter().any(|host| host.id == id)
+    }
+
     pub fn projects(&self) -> Vec<Value> {
-        self.records.borrow().iter().map(|host| json!({
-            "id": host.project, "host": host.id, "path": host.path,
-            "worktree": { "parent": host.parent, "branch": host.branch },
-            "cloud": { "setup": host.setup, "state": "awake", "reason": null, "inSync": host.in_sync, "setupTerminal": host.setup_terminal },
-        })).collect()
+        self.records.borrow().iter().map(|host| {
+            let (state, reason) = self.state(&host.id);
+            json!({
+                "id": host.project, "host": host.id, "path": host.path,
+                "worktree": { "parent": host.parent, "branch": host.branch },
+                "cloud": { "setup": host.setup, "state": state, "reason": reason, "tip": host.tip, "inSync": host.in_sync, "setupTerminal": host.setup_terminal },
+            })
+        }).collect()
     }
 
     fn record(&self, host: CloudHost) -> Result<(), String> {
+        let _saving = self.saving.lock().unwrap();
         let mut records = self.records.borrow().clone();
         records.push(host);
         self.save(records)
     }
 
     pub fn set_setup(&self, id: &str, setup: Setup, terminal: Option<String>) -> Result<(), String> {
+        let _saving = self.saving.lock().unwrap();
         let mut records = self.records.borrow().clone();
         let Some(host) = records.iter_mut().find(|host| host.id == id) else { return Ok(()) };
         host.setup = setup;
         host.setup_terminal = terminal.or(host.setup_terminal.take());
         self.save(records)
+    }
+
+    fn set_tip(&self, id: &str, tip: Option<String>, in_sync: bool) -> Result<(), String> {
+        let _saving = self.saving.lock().unwrap();
+        let mut records = self.records.borrow().clone();
+        let Some(host) = records.iter_mut().find(|host| host.id == id) else { return Ok(()) };
+        host.tip = tip;
+        host.in_sync = in_sync;
+        self.save(records)
+    }
+
+    pub async fn guard_branch(&self, projects: &Projects, checkout: &FsPath, branch: &str) -> Result<(), String> {
+        let parents: Vec<_> = self.records.borrow().iter().filter(|host| host.branch == branch).map(|host| host.parent.clone()).collect();
+        if !parents.is_empty() {
+            let common = git::common_dir(checkout).await;
+            for parent in projects.list().iter().filter(|project| parents.contains(&project.id)) {
+                if common.is_some() && git::common_dir(FsPath::new(&parent.path)).await == common {
+                    return Err(format!("{branch} is on a Cloud Host."));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn parent(&self, projects: &Projects, id: &str) -> Option<(CloudHost, Project)> {
+        let host = self.records.borrow().iter().find(|host| host.id == id)?.clone();
+        let parent = projects.list().iter().find(|project| project.id == host.parent)?.clone();
+        Some((host, parent))
+    }
+
+    pub fn is_parent(&self, id: &str, project: &str) -> bool {
+        self.records.borrow().iter().any(|host| host.id == id && host.parent == project)
+    }
+
+    pub async fn mirror_tip(&self, state: &AppState, id: &str, tip: &str) -> Result<(), String> {
+        let reach = self.reach(id);
+        let _operation = reach.operation.lock().await;
+        self.mirror(state, id, tip, false).await
+    }
+
+    async fn mirror(&self, state: &AppState, id: &str, tip: &str, fetch: bool) -> Result<(), String> {
+        let Some((host, parent)) = self.parent(&state.projects, id) else { return Ok(()) };
+        if !host.in_sync { return Ok(()) }
+        let checkout = FsPath::new(&parent.path);
+        let branch = format!("refs/heads/{}", host.branch);
+        let current = git::run(checkout, &["rev-parse", "--verify", "--quiet", &branch]).await.ok();
+        if current.is_some() && current != host.tip {
+            return self.set_tip(id, host.tip, false);
+        }
+        if !fetch && current.as_deref() == Some(tip) { return Ok(()) }
+        let remote = cloud::git_remote(id, &host.path);
+        let incoming = format!("refs/stampede/cloud/{id}");
+        git::run_alone(checkout, &["-c", "protocol.ext.allow=always", "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", &remote, &format!("+{branch}:{incoming}")]).await?;
+        let fetched = git::run(checkout, &["rev-parse", "--verify", &incoming]).await?;
+        let worktrees = git::run_alone(checkout, &["worktree", "list", "--porcelain"]).await?;
+        if worktrees.lines().any(|line| line == format!("branch {branch}")) {
+            let _ = git::run_alone(checkout, &["update-ref", "-d", &incoming, &fetched]).await;
+            return Err(format!("{} is checked out on the Home Host.", host.branch));
+        }
+        // Compare-and-swap even if another git process moved the branch during the fetch.
+        let result = git::run_alone(checkout, &["update-ref", "--no-deref", &branch, &fetched, current.as_deref().unwrap_or("")]).await;
+        let _ = git::run_alone(checkout, &["update-ref", "-d", &incoming, &fetched]).await;
+        if let Err(error) = result {
+            let now = git::run(checkout, &["rev-parse", "--verify", "--quiet", &branch]).await.ok();
+            if now != current { return self.set_tip(id, host.tip, false); }
+            return Err(error);
+        }
+        self.set_tip(id, Some(fetched), true)?;
+        state.git.reread(&parent.id);
+        Ok(())
+    }
+
+    pub async fn push_branches(&self, projects: &Projects, id: &str, sent: &mut Option<String>) -> Result<(), String> {
+        let Some((host, parent)) = self.parent(projects, id) else { return Ok(()) };
+        let checkout = FsPath::new(&parent.path);
+        let refs = git::run(checkout, &["for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"]).await?;
+        if sent.as_ref() == Some(&refs) { return Ok(()) }
+        let remote = cloud::git_remote(id, &host.path);
+        git::run_alone(checkout, &["-c", "protocol.ext.allow=always", "push", "--prune", &remote, "+refs/heads/*:refs/remotes/home/*"]).await?;
+        *sent = Some(refs);
+        Ok(())
+    }
+
+    async fn delete(&self, state: &AppState, id: &str, force: bool) -> Result<(), runs::Refusal> {
+        use runs::Refusal::{Refused, Unmerged};
+        let reach = self.reach(id);
+        let _operation = reach.operation.lock().await;
+        let (host, parent) = self.parent(&state.projects, id).ok_or_else(|| Refused("Open the parent Project before deleting its Cloud Host worktree.".to_owned()))?;
+        let checkout = FsPath::new(&parent.path);
+        let branch = (!host.existing).then_some(host.branch.as_str());
+        if !self.gone(id) {
+            let checked = async {
+                let tip = remote(id, &["git", "-C", &host.path, "rev-parse", "--verify", &format!("refs/heads/{}", host.branch)], None).await?;
+                self.mirror(state, id, &tip, true).await?;
+                let dirty = remote(id, &["git", "-C", &host.path, "status", "--porcelain", "--ignore-submodules=none"], None).await?;
+                let inside = remote(id, &["git", "-C", &host.path, "submodule", "foreach", "--quiet", "git status --porcelain"], None).await?;
+                let ahead = if let Some(branch) = branch {
+                    git::run(checkout, &["rev-list", "--count", &format!("refs/heads/{branch}"), "--not", &format!("--exclude={branch}"), "--branches", "--remotes"]).await?.parse::<usize>().map_err(|error| error.to_string())?
+                } else { 0 };
+                Ok::<_, String>(runs::discard_warning(!dirty.is_empty() || !inside.is_empty(), ahead, branch))
+            }.await;
+            if !force && checked.is_ok() && self.records.borrow().iter().any(|host| host.id == id && !host.in_sync) {
+                return Err(Unmerged("Its Cloud Host's branch is out of sync. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
+            }
+            match checked {
+                Ok(Some(warning)) if !force => return Err(Unmerged(warning)),
+                Err(reason) => {
+                    self.failed(id, reason).await;
+                    if !force && !self.gone(id) {
+                        return Err(Unmerged("Its Cloud Host can't be reached, so its work can't be checked. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
+                    }
+                }
+                _ => {}
+            }
+            if !self.gone(id) {
+                cloud::destroy(id).await.map_err(Refused)?;
+            }
+        }
+        {
+            let _saving = self.saving.lock().unwrap();
+            let mut records = self.records.borrow().clone();
+            records.retain(|host| host.id != id);
+            self.save(records).map_err(Refused)?;
+        }
+        self.connected(id);
+        reach.forward.lock().await.take();
+        state.attention.publish(crate::attention::Source::Cloud(id.to_owned()), vec![]);
+        if let Some(branch) = branch {
+            if let Err(error) = git::run_alone(checkout, &["branch", "-D", branch]).await {
+                eprintln!("cannot delete {branch}: {error}");
+            }
+        }
+        state.git.reread(&parent.id);
+        Ok(())
     }
 
     fn save(&self, records: Vec<CloudHost>) -> Result<(), String> {
@@ -329,7 +543,15 @@ pub async fn proxy(State(state): State<AppState>, request: Request) -> Result<Re
         return Err((StatusCode::NOT_FOUND, format!("Unknown Cloud Host {id}")));
     }
     if rest.split('?').next() == Some("api/home-link") { return Err((StatusCode::NOT_FOUND, String::new())); }
-    let port = state.cloud_hosts.port(id).await.map_err(bad_gateway)?;
+    // Held before the forward is reached, so the Home link cannot stop the forward under this request.
+    let held = state.cloud_hosts.hold(id);
+    let port = match state.cloud_hosts.port(id).await {
+        Ok(port) => port,
+        Err(error) => {
+            state.cloud_hosts.failed(id, error.clone()).await;
+            return Err(bad_gateway(error));
+        }
+    };
     let reach = state.cloud_hosts.reach(id);
     let target = format!("127.0.0.1:{port}/{rest}");
     let (mut parts, body) = request.into_parts();
@@ -346,6 +568,7 @@ pub async fn proxy(State(state): State<AppState>, request: Request) -> Result<Re
         let connected = reach.devices.connect();
         reach.reached.notify_one();
         return Ok(upgrade.protocols(protocol.into_iter().map(str::to_owned)).on_upgrade(async move |socket| {
+            let _held = held;
             let _connected = connected;
             browser::bridge(socket, upstream).await;
         }));
@@ -358,8 +581,70 @@ pub async fn proxy(State(state): State<AppState>, request: Request) -> Result<Re
     let status = response.status();
     let mut headers = response.headers().clone();
     browser::clean(&mut headers);
-    let mut result = Response::new(Body::from_stream(response.bytes_stream()));
+    let mut result = Response::new(Body::from_stream(response.bytes_stream().inspect(move |_| { let _ = &held; })));
     *result.status_mut() = status;
     *result.headers_mut() = headers;
     Ok(result)
+}
+
+pub async fn retry(State(state): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, files::Failure> {
+    if !state.cloud_hosts.contains(&id) {
+        return Err((StatusCode::NOT_FOUND, "Unknown Cloud Host".to_owned()));
+    }
+    state.cloud_hosts.reach(&id).reached.notify_one();
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<Value>>, files::Failure> {
+    let listed = cloud::list().await.map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    let hosts = &state.cloud_hosts;
+    let home_name = state.config.borrow().name.clone().unwrap_or_else(|| "Stampede".to_owned());
+    let prefix = format!("stampede-{}-", &hosts.home_id[..8]);
+    let records = hosts.records.borrow().clone();
+    let projects = state.projects.list();
+    let mut items = Vec::new();
+    for item in listed.into_iter().filter(|item| item.name.starts_with("stampede-")) {
+        let own = item.name.starts_with(&prefix);
+        let mut entry = json!({"id": item.name, "createdAt": item.created, "home": {"name": home_name, "own": own}});
+        if let Some(host) = records.iter().find(|host| host.id == item.name) {
+            let path = projects.iter().find(|project| project.id == host.parent).map_or(host.path.as_str(), |project| project.path.as_str());
+            let project = FsPath::new(path).file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+            entry["worktree"] = json!({"project": project, "branch": host.branch});
+            let status = hosts.state(&item.name).0;
+            if status != "gone" { entry["state"] = json!(status); }
+        } else if !own {
+            match remote(&item.name, &["sh", "-c", "cat \"$HOME/.stampede-cloud.json\""], None).await
+                .and_then(|identity| serde_json::from_str::<Value>(&identity).map_err(|error| error.to_string())) {
+                Ok(identity) => {
+                    entry["home"]["name"] = json!(identity["homeName"].as_str().unwrap_or("Unknown Home Host"));
+                    if let (Some(project), Some(branch)) = (identity["project"].as_str(), identity["branch"].as_str()) {
+                        entry["worktree"] = json!({"project": project, "branch": branch});
+                    }
+                }
+                Err(_) => {
+                    entry["home"]["name"] = json!("Unknown Home Host");
+                    entry["state"] = json!("unreachable");
+                }
+            }
+        }
+        items.push(entry);
+    }
+    Ok(Json(items))
+}
+
+pub async fn destroy(State(state): State<AppState>, Path(id): Path<String>, Query(query): Query<crate::Deletion>) -> Result<StatusCode, files::Failure> {
+    let hosts = &state.cloud_hosts;
+    let _creating = hosts.creating.lock().await;
+    if hosts.contains(&id) {
+        match hosts.delete(&state, &id, query.force).await {
+            Ok(()) => Ok(StatusCode::NO_CONTENT),
+            Err(runs::Refusal::Unmerged(work)) => Err((StatusCode::CONFLICT, work)),
+            Err(runs::Refusal::Refused(reason)) => Err((StatusCode::BAD_REQUEST, reason)),
+        }
+    } else if id.starts_with("stampede-") && cloud::list().await.map_err(|error| (StatusCode::BAD_REQUEST, error))?.iter().any(|item| item.name == id) {
+        cloud::destroy(&id).await.map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, "Unknown Cloud Host".to_owned()))
+    }
 }

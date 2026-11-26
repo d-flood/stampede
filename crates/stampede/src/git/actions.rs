@@ -515,6 +515,7 @@ pub async fn publish(State(state): State<AppState>, Param(id): Param<String>) ->
 pub async fn pull_trunk(State(state): State<AppState>, Param(id): Param<String>) -> Result<StatusCode, Failure> {
     let dir = root(&state, &id)?;
     let branch = origin::default_branch(&dir).await.ok_or_else(|| refuse("origin has no default branch."))?;
+    state.cloud_hosts.guard_branch(&state.projects, &dir, &branch).await.map_err(refuse)?;
     let worktrees = run_alone(&dir, &["worktree", "list", "--porcelain"]).await.map_err(|output| (StatusCode::BAD_REQUEST, output))?;
     let line = format!("branch refs/heads/{branch}");
     let checkout = worktrees.split("\n\n").find(|block| block.lines().any(|entry| entry == line)).and_then(|block| block.lines().next()?.strip_prefix("worktree "));
@@ -537,7 +538,9 @@ pub async fn pull_trunk(State(state): State<AppState>, Param(id): Param<String>)
 
 /// Checks out a local branch, or a remote one as the local branch of its name, tracking it when new.
 pub async fn switch(State(state): State<AppState>, Param(id): Param<String>, Json(Branch { branch }): Json<Branch>) -> Result<StatusCode, Failure> {
-    let dir = movable(&state, &id).await?;
+    let dir = root(&state, &id)?;
+    state.cloud_hosts.guard_branch(&state.projects, &dir, &branch).await.map_err(refuse)?;
+    movable(&state, &id).await?;
     if exists(&dir, "heads", &branch).await {
         return change(&state, &id, &dir, &["switch", "-q", &branch]).await;
     }
@@ -545,6 +548,7 @@ pub async fn switch(State(state): State<AppState>, Param(id): Param<String>, Jso
         Some((_, local)) if local != "HEAD" && exists(&dir, "remotes", &branch).await => local,
         _ => return Err((StatusCode::NOT_FOUND, format!("No branch {branch}"))),
     };
+    state.cloud_hosts.guard_branch(&state.projects, &dir, local).await.map_err(refuse)?;
     if exists(&dir, "heads", local).await {
         return change(&state, &id, &dir, &["switch", "-q", local]).await;
     }
@@ -553,6 +557,7 @@ pub async fn switch(State(state): State<AppState>, Param(id): Param<String>, Jso
 
 pub async fn branch(State(state): State<AppState>, Param(id): Param<String>, Json(Branch { branch }): Json<Branch>) -> Result<StatusCode, Failure> {
     let dir = movable(&state, &id).await?;
+    state.cloud_hosts.guard_branch(&state.projects, &dir, &branch).await.map_err(refuse)?;
     change(&state, &id, &dir, &["switch", "-q", "-c", &branch]).await
 }
 

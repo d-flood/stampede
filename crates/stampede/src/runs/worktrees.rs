@@ -29,6 +29,7 @@ impl Runs {
         let project = self.repository_root(project_id).await?;
         let checkout = Path::new(&project.path);
         let (branch, existing, track) = branch_spec(checkout, branch, from).await?;
+        self.cloud_hosts.guard_branch(&self.projects, checkout, branch).await?;
         let parent = project.worktree.as_ref().map_or(&project.id, |worktree| &worktree.parent);
         let path = format!("{}/_branches/{parent}/{}", self.worktrees, branch.replace('/', "-"));
         if Path::new(&path).exists() {
@@ -230,12 +231,16 @@ async fn unmerged(path: &Path, branch: Option<&str>, since: Option<&str>) -> Opt
             return Some(format!("Stampede could not tell whether it holds work no other branch has: {error}"));
         }
     };
+    discard_warning(!status.is_empty(), ahead, branch)
+}
+
+pub(crate) fn discard_warning(dirty: bool, ahead: usize, branch: Option<&str>) -> Option<String> {
     let commits = match ahead {
         0 => None,
         1 => Some("1 commit no other branch has".to_owned()),
         count => Some(format!("{count} commits no other branch has")),
     };
-    let work = match (status.is_empty(), commits) {
+    let work = match (!dirty, commits) {
         (true, None) => return None,
         (false, None) => "uncommitted changes".to_owned(),
         (true, Some(commits)) => commits,

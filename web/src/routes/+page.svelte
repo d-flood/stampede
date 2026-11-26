@@ -172,6 +172,21 @@
 	const nested = $derived(worktrees(projects, epics, allChats, chatStatus, needs));
 	const focused = $derived(projects.find((project) => project.id === chosen) ?? projects[0]);
 	const host = $derived(focused?.host);
+	const connectableHost = $derived(focused?.cloud?.state === 'gone' ? undefined : host);
+	const unavailable = $derived(focused?.cloud?.state === 'unreachable' || focused?.cloud?.state === 'gone');
+	let retrying = $state(false);
+
+	async function retryCloud() {
+		if (!host) return;
+		retrying = true;
+		try { await fetch(`/api/cloud-hosts/${encodeURIComponent(host)}/retry`, { method: 'POST' }); }
+		finally { retrying = false; }
+	}
+
+	function deleteCloudWorktree(host: string) {
+		const project = projects.find((project) => project.host === host);
+		if (project) removeWorktree(project.id);
+	}
 	const tabs = $derived((focused && terminals[focused.id]) || []);
 	const chatTabs = $derived((focused && chats[focused.id]) || []);
 	const fileTabs = $derived((focused && files[focused.id]) || []);
@@ -242,7 +257,7 @@
 	);
 
 	$effect(() => {
-		if (host) return devices.show(host);
+		if (connectableHost) return devices.show(connectableHost);
 	});
 	$effect(() => {
 		view();
@@ -748,7 +763,7 @@
 	}
 
 	function showing(tabId: string) {
-		return groups.some((group) => group.active === tabId);
+		return !unavailable && groups.some((group) => group.active === tabId);
 	}
 
 	function column(tabId: string) {
@@ -1062,7 +1077,7 @@
 
 {#snippet attention()}
 	<SchemeToggle />
-	<Settings {update} />
+	<Settings {update} ondeletehost={deleteCloudWorktree} />
 	<AttentionList items={attentionList} projects={projectLabels} chats={allChats} onselect={(item) => attend(item.projectId, tabOf(item))} />
 {/snippet}
 
@@ -1126,9 +1141,19 @@
 	<main
 		bind:this={main}
 		class:bottom={phone}
-		style:grid-template-columns={split &&
+		style:grid-template-columns={unavailable ? undefined : split &&
 			`minmax(0, ${split.ratio}fr) var(--border-width) minmax(0, ${1 - split.ratio}fr)`}
 	>
+		{#if unavailable && focused}
+			<div class="cloud-unavailable" role="status">
+				<h2>{focused.cloud?.state === 'gone' ? 'Cloud Host gone' : 'Cloud Host unreachable'}</h2>
+				<p>{focused.cloud?.state === 'gone' ? `This Cloud Host no longer exists. Commits up to ${focused.cloud.tip?.slice(0, 7) ?? 'an unknown commit'} reached the Home Host.` : focused.cloud?.reason}</p>
+				<div class="cloud-actions">
+					{#if focused.cloud?.state === 'unreachable'}<Button variant="primary" busy={retrying} disabled={retrying} onclick={retryCloud}>Retry</Button>{/if}
+					<Button variant="danger" disabled={deleting} onclick={() => removeWorktree(focused!.id)}>Delete worktree</Button>
+				</div>
+			</div>
+		{:else}
 		<TooltipGroup>
 			{#each focused || phone ? groups : [] as group, index (index)}
 				<div
@@ -1295,7 +1320,8 @@
 				onpointermove={resize}
 			></div>
 		{/if}
-		<div class="tabs">
+		{/if}
+		<div class="tabs" class:unavailable>
 			{#each Object.values(browsers).flat() as browser (browser.id)}
 				<div class="view" hidden={!showing(browser.id)} style:grid-column={column(browser.id)} onfocusin={() => choose(browser.projectId, browser.id)}>
 					{#if showing(browser.id) || warm()}<Browser {browser} focused={browser.id === activeTab} />{/if}
@@ -1464,7 +1490,7 @@
 					<div class="zone" class:over={dragging.over === 'right'} style:flex-grow={1 - ratio}></div>
 				</div>
 			{/if}
-			{#if focused && known(focused.id) && tabIds.every((id) => closingTabs.has(id))}
+			{#if !unavailable && focused && known(focused.id) && tabIds.every((id) => closingTabs.has(id))}
 				{@render launchpad(focused)}
 			{:else if !focused && listed && !picking}
 				<div class="empty">
@@ -1506,7 +1532,7 @@
 		{#if panel === 'projects' || pull > 0 || warm()}
 			<div class="sheet-header">
 				<h2>Projects{#if hostName()}{' '}<span class="host">{hostName()}</span>{/if}</h2>
-				<Settings {update} />
+				<Settings {update} ondeletehost={deleteCloudWorktree} />
 				<IconButton label="Drawer" onclick={() => drawer.toggle()}><TerminalWindow /></IconButton>
 			</div>
 			<Usage readings={usage} {codexResets} />
@@ -1590,7 +1616,7 @@
 	</dialog>
 {/if}
 
-{#if home.connection === 'reconnecting' || devices.at(host).connection === 'reconnecting'}
+{#if home.connection === 'reconnecting' || (!unavailable && devices.at(host).connection === 'reconnecting')}
 	<FloatingBar edge="top" tone="waiting" passive role="status"><span class="reconnecting"><WifiSlash /> Reconnecting…</span></FloatingBar>
 {:else if updateAvailable}
 	<FloatingBar edge="top" tone="waiting" role="status">
@@ -1840,6 +1866,33 @@
 		min-width: 0;
 		margin: 0;
 		font-size: var(--font-size-lg);
+	}
+
+	.tabs.unavailable { display: none; }
+
+	.cloud-unavailable {
+		grid-row: 1 / -1;
+		align-self: center;
+		justify-self: center;
+		padding: var(--space-6);
+		text-align: center;
+		overflow-wrap: anywhere;
+		min-width: 0;
+	}
+	.cloud-unavailable h2 {
+		font-size: var(--font-size-xl);
+		margin: 0 0 var(--space-3);
+	}
+	.cloud-unavailable p {
+		color: var(--muted-fg);
+		white-space: pre-wrap;
+	}
+	.cloud-actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: var(--space-2);
+		margin-top: var(--space-4);
 	}
 
 	main {
