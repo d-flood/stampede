@@ -412,20 +412,24 @@ const fitting = ViewPlugin.fromClass(
 			if (update.geometryChanged) this.fit();
 		}
 
-		// Keep widgets within the visible width, since unwrapped long lines widen the content.
+		// Keep widgets within the visible column width and balanced across its left and right edges.
 		fit() {
 			this.view.requestMeasure({
 				key: this,
-				read: (view) => view.scrollDOM.clientWidth - view.contentDOM.offsetLeft,
-				write: (width, view) => view.dom.style.setProperty('--draft-width', `${width}px`)
+				read: (view) => ({ width: view.scrollDOM.clientWidth, gutter: view.contentDOM.offsetLeft }),
+				write: ({ width, gutter }, view) => {
+					view.dom.style.setProperty('--draft-width', `${width}px`);
+					view.dom.style.setProperty('--draft-gutter', `${gutter}px`);
+				}
 			});
 		}
 	}
 );
 
 const style = EditorView.theme({
-	'.cm-draftGutter .cm-gutterElement': { display: 'flex', flexDirection: 'column' },
-	'.cm-draftAdds': { display: 'flex', flex: 1, flexDirection: 'column', width: '1.25em' },
+	'.cm-draftGutter': { marginLeft: 'calc(-1 * var(--diff-sign, 1.25em))' },
+	'& .cm-draftGutter .cm-gutterElement': { display: 'flex', flexDirection: 'column', background: 'none !important' },
+	'.cm-draftAdds': { display: 'flex', flex: 1, flexDirection: 'column', width: 'var(--diff-sign, 1.25em)' },
 	'.cm-draftAdds > div': { flex: 1 },
 	'.cm-draftAdd': {
 		display: 'flex',
@@ -438,23 +442,24 @@ const style = EditorView.theme({
 		transition: 'opacity var(--dur-fast)',
 		userSelect: 'none'
 	},
-	'&.cm-focused .cm-activeLineGutter .cm-draftAdd': { background: 'var(--selected-bg)', color: 'var(--accent)', opacity: 1 },
-	'&.cm-draftReplacing .cm-draftAdd': { color: 'var(--accent)', opacity: 1 },
+	'&.cm-focused .cm-activeLineGutter .cm-draftAdd': { background: 'color-mix(in oklab, var(--accent) 16%, var(--color-bg))', color: 'var(--accent)', opacity: 1 },
+	'&.cm-draftReplacing .cm-draftAdd': { background: 'color-mix(in oklab, var(--accent) 12%, var(--color-bg))', color: 'var(--accent)', opacity: 1 },
 	'.cm-draftAdds > .cm-draftAdd.cm-draftAddHover, .cm-draftAdds > .cm-draftAdd:hover, .cm-draftAdds > .cm-draftAdd.cm-draftAddOn': { background: 'var(--accent)', color: 'var(--color-bg)', opacity: 1 },
 	'.cm-lineNumbers .cm-gutterElement': { cursor: 'pointer' },
 	'.cm-draftCommentable': { boxShadow: 'inset 3px 0 var(--accent)' },
-	'.cm-draftRange, .cm-draftRangeRow': { backgroundImage: tint(14) },
-	'.cm-draftSelected, .cm-draftSelectedRow': { backgroundImage: tint(22) },
+	'.cm-draftRange, & .cm-gutter .cm-draftRangeRow': { backgroundImage: tint(14) },
+	'.cm-draftSelected, & .cm-gutter .cm-draftSelectedRow': { backgroundImage: tint(22) },
 	'.cm-gutter:first-child .cm-draftRangeRow, .cm-gutter:first-child .cm-draftSelectedRow': { boxShadow: 'inset 3px 0 var(--accent)' },
 	'.cm-draftComment': {
-		position: 'relative',
-		zIndex: 1,
-		padding: '0 var(--space-3) var(--space-2)',
+		position: 'sticky',
+		left: 0,
+		zIndex: 201,
+		padding: 'var(--space-2) var(--space-6)',
+		marginLeft: 'calc(-1 * var(--draft-gutter, 0px))',
 		whiteSpace: 'normal',
 		boxSizing: 'border-box',
-		maxWidth: 'var(--draft-width)'
-	},
-	'@media (pointer: coarse)': { '.cm-draftAdds': { width: 'var(--space-6)' } }
+		width: 'var(--draft-width, 100%)'
+	}
 });
 
 /** Draft comments on one side of a PR review's Diff tab, with "+" on the lines GitHub accepts comments on. */

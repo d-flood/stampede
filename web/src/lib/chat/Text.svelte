@@ -98,6 +98,8 @@
 		padding: var(--space-3);
 		border-radius: var(--radius-lg);
 		background: var(--surface-1);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 
 	.text :global(pre code) {

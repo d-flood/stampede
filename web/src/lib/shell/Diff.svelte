@@ -535,6 +535,7 @@
 				b: { doc: b, extensions: [working, diffSigns('b'), diffRows('b'), commenting('source', false), wrapping.of(wrapped ? indentedWrap : [])] },
 				revertControls: editable ? 'a-to-b' : undefined,
 				highlightChanges: !whole,
+				gutter: whole,
 				collapseUnchanged: {},
 				diffConfig
 			});
@@ -566,7 +567,7 @@
 					diffRows('b'),
 					commenting('source', true),
 					wrapping.of(wrapped ? indentedWrap : []),
-					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, collapseUnchanged: {}, diffConfig })
+					unifiedMergeView({ original: a, mergeControls: editable && revert, highlightChanges: !whole, gutter: whole, collapseUnchanged: {}, diffConfig })
 				]
 			});
 			return (shown = {

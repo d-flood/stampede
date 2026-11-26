@@ -52,7 +52,7 @@
 
 	.item[data-highlighted],
 	.item[data-selected] {
-		background: var(--hover);
+		background: var(--selected-bg);
 	}
 
 	/* Hover stays a step weaker than the current item's fill, so the two never read as two selections. */

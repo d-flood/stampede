@@ -446,10 +446,8 @@
 	{/if}
 	{#if pending && !ended}
 		<Composer bind:this={composer} id={`pending:${terminalId}`} draft={pending} code disabled={!live || !filled} onsend={submit}>
-			{#snippet leading()}
-				<span role="status">Review command before running</span>
-			{/snippet}
 			{#snippet actions(text, clear)}
+				<span role="status">Review command before running</span>
 				<Button variant="primary" disabled={!text.trim() || !live || !filled} onclick={() => { if (submit(text)) clear(); }}>Run</Button>
 			{/snippet}
 		</Composer>

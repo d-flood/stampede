@@ -391,7 +391,7 @@
 
 	.add {
 		margin-top: var(--space-3);
-		padding-left: calc(var(--border-width) + var(--names));
+		padding-left: calc(var(--border-width) + var(--names) - var(--space-1));
 		font-weight: 500;
 	}
 

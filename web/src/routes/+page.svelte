@@ -6,6 +6,7 @@
 	import { clock, same, subagents } from '#lib/chat/agents.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
+	import MessageNav from '#lib/chat/MessageNav.svelte';
 	import { hostName, rigs, runsOn, type Rig } from '#lib/config.svelte.ts';
 	import { previewThemes, themeBar } from '#lib/themes.svelte.ts';
 	import {
@@ -73,6 +74,8 @@
 	import Plus from '~icons/ph/plus';
 	import Power from '~icons/ph/power';
 	import SidebarSimple from '~icons/ph/sidebar-simple';
+	import SlidersHorizontal from '~icons/ph/sliders-horizontal';
+	import Swatches from '~icons/ph/swatches';
 	import TerminalWindow from '~icons/ph/terminal-window';
 	import X from '~icons/ph/x';
 	import WifiSlash from '~icons/ph/wifi-slash';
@@ -86,6 +89,7 @@
 	let terminals = $state<Record<string, Terminal[]>>({});
 	let chats = $state<Record<string, Chat[]>>({});
 	let chatItems = $state<Record<string, Item[]>>({});
+	let transcripts = $state<Record<string, HTMLElement | null>>({});
 	let htmlPreview = $state<HtmlItem>();
 	let htmlDialog = $state<HTMLDialogElement>();
 	setHtmlPreview((item) => htmlPreview = item);
@@ -1325,6 +1329,9 @@
 						</Menu>
 					{/if}
 					<span class="fill"></span>
+					{#if !phone && group.active && chatIds.has(group.active) && !openSubagents[group.active]?.length}
+						<MessageNav items={chatItems[group.active] ?? []} scroller={transcripts[group.active]} />
+					{/if}
 					{#if focused && index === groups.length - 1}
 						{@const projectId = focused.id}
 						<ChatList
@@ -1462,6 +1469,7 @@
 								items={chatItems[chat.id] ?? []}
 								saved={[...saved].filter((canvas) => canvas.startsWith(`${chat.id}/`))}
 								opened={openSubagents[chat.id] ?? []}
+								bind:scroller={transcripts[chat.id]}
 								onopen={(path) => (openSubagents[chat.id] = path)}
 								active={showing(chat.id)}
 								focused={chat.id === activeTab}
@@ -1681,6 +1689,7 @@
 
 <Dialog
 	bind:open={() => !!palette, (open) => !open && (palette = undefined)}
+	bare
 	oncloseautofocus={finishTabSelection}
 	title={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[palette ?? 'all']}
 >
@@ -1692,7 +1701,7 @@
 					{projects}
 					labels={projectLabels}
 					{focused}
-					actions={palette === 'tabs' ? tabActions : [{ label: 'Open config', run: openConfig }, { label: 'Preview themes', run: () => ((afterPalette = previewThemes), (palette = undefined)) }]}
+					actions={palette === 'tabs' ? tabActions : [{ label: 'Open config', icon: SlidersHorizontal, run: openConfig }, { label: 'Preview themes', icon: Swatches, run: () => ((afterPalette = previewThemes), (palette = undefined)) }]}
 					chats={allChats.filter((chat) => !chat.closing)}
 					status={chatStatus}
 					{sessions}
@@ -1827,7 +1836,7 @@
 	}
 
 	.shell > main {
-		border: var(--border-width) solid var(--border);
+		border: var(--border-width) solid var(--pane-border);
 		border-radius: var(--radius-xl);
 		background: var(--color-bg);
 		overflow: hidden;
@@ -1890,7 +1899,7 @@
 		flex: 1;
 		flex-direction: column;
 		min-height: 0;
-		border-top: var(--border-width) solid var(--border);
+		border-top: var(--border-width) solid var(--pane-border);
 		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 		background: var(--color-bg);
 		overflow: hidden;
@@ -1960,6 +1969,17 @@
 		border-bottom: var(--border-width) solid var(--border);
 		background: var(--color-bg);
 		user-select: none;
+		container-type: inline-size;
+	}
+
+	.strip :global(.controls:has(+ .trigger))::after {
+		content: '';
+		flex: none;
+		align-self: center;
+		width: var(--border-width);
+		height: 1.15em;
+		margin-left: var(--space-1);
+		background: var(--border);
 	}
 
 	main.bottom {

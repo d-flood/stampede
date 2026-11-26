@@ -168,7 +168,7 @@ test('line wrapping defaults to Markdown and toggles per editor without losing e
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/wrapping`;
 	const content = 'A long line of prose that should wrap inside the editor. '.repeat(80);
 	mkdirSync(root);
-	for (const file of ['notes.MD', 'prose.markdown', 'plain.txt']) writeFileSync(`${root}/${file}`, content);
+	for (const file of ['notes.MD', 'prose.markdown', 'plain.txt', 'narrow.ts']) writeFileSync(`${root}/${file}`, content);
 	await openProject(page, 'wrapping');
 	let sidebar = await showSidebar(page);
 	await sidebar.getByRole('button', { name: 'notes.MD', exact: true }).click();
@@ -209,6 +209,26 @@ test('line wrapping defaults to Markdown and toggles per editor without losing e
 	await sidebar.getByRole('button', { name: 'prose.markdown', exact: true }).click();
 	await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 	await expect.poll(wrapped).toBe(true);
+	sidebar = await showSidebar(page);
+	await sidebar.getByRole('button', { name: 'narrow.ts', exact: true }).click();
+	await sidebar.getByRole('button', { name: 'Sidebar' }).click();
+	await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+	await expect.poll(wrapped).toBe(false);
+	await page.keyboard.press('Control+;');
+	await page.keyboard.press('s');
+	await expect(page.getByRole('tablist', { name: 'Right Tabs' }).getByRole('tab', { name: 'narrow.ts', exact: true })).toBeVisible();
+	const right = page.locator('.editor:not([hidden])').filter({ hasText: 'narrow.ts' });
+	const rightToggle = right.getByRole('button', { name: 'Line wrapping', exact: true });
+	const rightWrapped = () => right.locator('.cm-line').first().evaluate((element) => {
+		const height = element.getBoundingClientRect().height;
+		const lineHeight = parseFloat(getComputedStyle(element).lineHeight);
+		return height > lineHeight * 2;
+	});
+	await expect(rightToggle).toHaveAttribute('aria-pressed', 'true');
+	await expect.poll(rightWrapped).toBe(true);
+	await rightToggle.click();
+	await expect(rightToggle).toHaveAttribute('aria-pressed', 'false');
+	await expect.poll(rightWrapped).toBe(false);
 });
 
 test('Editor markers and Agent file changes preserve explicit edits', async ({ page }, { project }) => {

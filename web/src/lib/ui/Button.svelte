@@ -4,13 +4,13 @@
 	import { mergeProps } from 'bits-ui';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	type Props = HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'outline' | 'ghost' | 'danger' | 'link'; size?: 'sm' | 'lg'; round?: boolean; tip?: string; busy?: boolean };
+	type Props = HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'outline' | 'ghost' | 'danger' | 'link'; tone?: 'danger'; size?: 'sm' | 'lg'; round?: boolean; tip?: string; busy?: boolean };
 
-	let { variant = 'default', size, round = false, tip, busy, children: content, ...rest }: Props = $props();
+	let { variant = 'default', tone, size, round = false, tip, busy, children: content, ...rest }: Props = $props();
 </script>
 
 {#snippet button(props: HTMLButtonAttributes)}
-	<button class={[variant, size, { round, busy, progress: busy !== undefined }]} aria-busy={busy || undefined} {...props}>
+	<button class={[variant, tone, size, { round, busy, progress: busy !== undefined }]} aria-busy={busy || undefined} {...props}>
 		{@render content?.()}
 		{#if busy !== undefined}<ProgressLine active={busy} />{/if}
 	</button>
@@ -90,10 +90,9 @@
 		color: color-mix(in oklab, var(--muted-fg) 65%, transparent);
 	}
 
-	/* A send disc stays a solid opaque neutral when idle, never washed out. */
 	.primary.round:disabled {
 		border-color: transparent;
-		background: color-mix(in oklab, var(--muted-fg) 75%, var(--color-bg));
+		background: var(--fill);
 		color: var(--color-bg);
 	}
 
@@ -144,13 +143,23 @@
 		color: var(--color-fg);
 	}
 
-	.danger:not(:disabled) {
+	.danger:not(.ghost, :disabled) {
 		border-color: color-mix(in oklab, var(--ansi-1) 45%, var(--border-strong));
 		color: var(--ansi-1);
 	}
 
-	.danger:hover:not(:disabled) {
+	.danger:not(.ghost):hover:not(:disabled) {
 		background: color-mix(in oklab, var(--ansi-1) 14%, var(--surface-2));
+	}
+
+	.ghost.danger:not(:disabled) {
+		color: var(--ansi-1);
+	}
+
+	.ghost.danger:hover:not(:disabled),
+	.ghost.danger:focus-visible:not(:disabled) {
+		background: color-mix(in oklab, var(--ansi-1) 12%, transparent);
+		color: var(--ansi-1);
 	}
 
 	.sm {

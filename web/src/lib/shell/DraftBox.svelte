@@ -64,12 +64,12 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions (Keeps focus in the note, whose reflow on blur would move a button out from under the click.) -->
 	<div class="actions" onmousedown={(event) => event.preventDefault()}>
 		{#if suggestion !== undefined}
-			<Button disabled={busy} onclick={suggest}>Suggest a change</Button>
+			<Button variant="ghost" disabled={busy} onclick={suggest}>Suggest a change</Button>
 		{/if}
 		{#if error}<span class="error" role="alert">{error}</span>{/if}
 		<span class="gap"></span>
 		{#if saved}
-			<Button variant="danger" disabled={busy} onclick={() => run(ondelete)}>Delete</Button>
+			<Button variant="ghost" tone="danger" disabled={busy} onclick={() => run(ondelete)}>Delete</Button>
 		{/if}
 		{#if onaccept && !dirty}
 			<Button variant="primary" disabled={busy} onclick={() => run(onaccept)}>Accept</Button>
@@ -89,7 +89,7 @@
 		padding: var(--space-3);
 		border: var(--border-width) solid var(--border);
 		border-top: calc(2 * var(--border-width)) solid var(--selected-border);
-		border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+		border-radius: var(--radius-lg);
 		background: var(--card);
 		font-family: var(--font-ui);
 	}
@@ -130,6 +130,14 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--space-2);
+	}
+
+	.actions > :global(.ghost:first-child) {
+		margin-left: calc(-1 * var(--space-2));
+	}
+
+	.actions > :global(.ghost:last-child) {
+		margin-right: calc(-1 * var(--space-2));
 	}
 
 	.gap {

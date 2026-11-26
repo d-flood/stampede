@@ -265,7 +265,7 @@ function editorSelection({ foreground, background, selectionBackground }: Palett
 function mutedText({ foreground, background }: Palette, scheme: 'light' | 'dark'): string {
 	const surface = mixLab(background, foreground, scheme === 'light' ? 0.95 : 0.96);
 	const readable = (color: string) => contrast(color, background) >= 4.5 && contrast(color, surface) >= 4.5;
-	for (let percent = 70; percent < 100; percent++) {
+	for (let percent = scheme === 'light' ? 70 : 78; percent < 100; percent++) {
 		const muted = mix(foreground, background, percent / 100);
 		if (readable(muted)) return muted;
 	}

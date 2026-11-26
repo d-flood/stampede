@@ -109,24 +109,25 @@
 			{#snippet rigChips()}
 				<!-- svelte-ignore a11y_no_static_element_interactions (Hover and focus only start loading the model list.) -->
 				<span class="chips" onpointerenter={reach} onfocusin={reach}>
-					<Chips agent={rig.rig.agent} {settings} ready={!!options} {choices} onrun={(setting, value) => value !== 'default' && (overrides = { ...overrides, [setting]: value })} />
+					<Chips agent={rig.rig.agent} {settings} ready={!!options} {choices} mark={false} onrun={(setting, value) => value !== 'default' && (overrides = { ...overrides, [setting]: value })} />
 				</span>
 			{/snippet}
 			<Composer id="launchpad:{path}" placeholder="Message {rig.label}" footer={phone ? rigChips : undefined} onsend={start}>
-				{#snippet leading()}
+				{#snippet actions(text, clear)}
+					{@const Logo = rig.icon}
 					<span class="rig-picker">
 						<Menu side="top" align="start" items={rigMenu}>
 							{#snippet trigger(props)}
 								<Chip {...props} variant="ghost" aria-label="Rig: {rig.label}">
+									{#if Logo}<span class="mark" aria-hidden="true"><Logo /></span>{/if}
 									<span class="rig-name">{rig.label}</span>
 									<span class="caret"><CaretDown aria-hidden="true" /></span>
 								</Chip>
 							{/snippet}
 						</Menu>
 					</span>
-				{/snippet}
-				{#snippet actions(text, clear)}
 					{#if !phone}{@render rigChips()}{/if}
+					<span class="fill"></span>
 					<Button variant="primary" round aria-label="Send" disabled={!text.trim()} onmousedown={(event) => event.preventDefault()} onclick={() => start(text) && clear()}>
 						<PaperPlaneRight />
 					</Button>
@@ -300,6 +301,10 @@
 		font-size: var(--font-size-sm);
 	}
 
+	.fill {
+		flex: 1;
+	}
+
 	.chips {
 		display: flex;
 		flex: 0 1 auto;
@@ -318,6 +323,13 @@
 
 	.rig-picker :global(.chip) {
 		color: var(--color-fg);
+	}
+
+	.mark {
+		display: inline-flex;
+		flex: none;
+		align-items: center;
+		margin-right: var(--space-1);
 	}
 
 	.rig-name {

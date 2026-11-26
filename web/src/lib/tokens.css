@@ -64,14 +64,15 @@
 	--surface-3: color-mix(in lab, var(--color-bg) 84%, var(--color-fg));
 	--border: color-mix(in lab, var(--color-bg) 88%, var(--color-fg));
 	--border-strong: color-mix(in lab, var(--color-bg) 76%, var(--color-fg));
+	--pane-border: color-mix(in lab, var(--color-bg) 92%, var(--color-fg));
 	--hover: color-mix(in lab, var(--color-bg) 90%, var(--color-fg));
 	/* The window ground and side chrome: darker than content in dark schemes so content panes read as raised; in light schemes the ground sits only a whisper below the chrome. */
 	--canvas: color-mix(in lab, var(--color-bg) 93%, var(--color-fg));
 	--chrome: var(--surface-1);
 	/* A control lifted off a surface-2 track: lighter than the track in either scheme. */
 	--raised: var(--color-bg);
-	/* A card floating on content, such as the Composer: never darker than the content it sits on. */
-	--card: var(--color-bg);
+	/* A card floating on content, such as the Composer: the lightest surface in light schemes. */
+	--card: lab(from var(--color-bg) calc(l + 4) a b);
 	/* A step below --card in either scheme: the ground a wide dialog's grouped cards sit on, or a well inside one. */
 	--plane: var(--surface-1);
 	/* Menus and popovers floating over everything else: the lightest surface in light schemes. */
@@ -129,8 +130,8 @@
 	--font-size-xl: calc(var(--font-size-base) + 6px);
 	--border-width: 1px;
 	--shadow-lift: 0 1px 2px color-mix(in oklab, var(--ansi-0) 28%, transparent);
-	/* A card resting on content, such as the Composer: a whisper of lift beside its hairline edge. */
-	--shadow-card: 0 1px 2px color-mix(in oklab, var(--ansi-0) 4%, transparent);
+	--shadow-card: 0 1px 2px color-mix(in oklab, var(--ansi-0) 5%, transparent),
+		0 3px 10px -4px color-mix(in oklab, var(--ansi-0) 10%, transparent);
 	--shadow-float: 0 1px 2px color-mix(in oklab, var(--ansi-0) 30%, transparent),
 		0 14px 36px -12px color-mix(in oklab, var(--ansi-0) 55%, transparent);
 	--gutter: 6px;
@@ -140,6 +141,7 @@
 	--pulse: infinite;
 	--target-min: 24px;
 	--control-min: 20px;
+	--tree-row: 22px;
 	--tile: calc(var(--target-min) + 10px);
 }
 
@@ -170,10 +172,11 @@
 	--surface-1: color-mix(in lab, var(--color-bg) 96%, var(--color-fg));
 	--surface-2: color-mix(in lab, var(--color-bg) 92%, var(--color-fg));
 	--surface-3: color-mix(in lab, var(--color-bg) 86%, var(--color-fg));
+	--pane-border: color-mix(in lab, var(--color-bg) 94%, var(--color-fg));
 	--canvas: rgb(from var(--color-bg) calc(r * 0.72) calc(g * 0.72) calc(b * 0.72));
 	--chrome: color-mix(in lab, var(--canvas) 55%, var(--color-bg));
 	--raised: color-mix(in lab, var(--color-bg) 80%, var(--color-fg));
-	--card: var(--surface-1);
+	--card: var(--surface-2);
 	--shadow-card: none;
 	--plane: var(--color-bg);
 	--float: var(--surface-3);
@@ -184,6 +187,7 @@
 	:root {
 		--target-min: 48px;
 		--control-min: 36px;
+		--tree-row: var(--target-min);
 	}
 }
 

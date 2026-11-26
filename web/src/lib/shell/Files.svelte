@@ -354,7 +354,9 @@
 
 		.row > :global(button:last-child:not(:first-child)) {
 			position: absolute;
+			inset-block: 0;
 			right: 0;
+			min-height: 0;
 			background: var(--chrome);
 			opacity: 0;
 			transition: opacity var(--dur-fast);

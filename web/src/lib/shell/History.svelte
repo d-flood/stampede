@@ -478,9 +478,9 @@
 	.letter {
 		flex: none;
 		width: 1ch;
-		color: color-mix(in oklab, var(--git) 68%, var(--muted-fg));
-		font-size: calc(var(--font-size-sm) - 1px);
-		font-weight: 500;
+		color: var(--git);
+		font-size: var(--font-size-sm);
+		font-weight: 700;
 	}
 
 	.deleted .name {

@@ -291,9 +291,9 @@
 		position: relative;
 		display: grid;
 		grid-template-columns: auto repeat(4, auto) minmax(0, var(--space-3)) repeat(4, auto) minmax(0, 1fr) auto;
-		row-gap: var(--space-2);
+		row-gap: var(--space-3);
 		align-items: center;
-		padding: var(--space-2) var(--space-4);
+		padding: var(--space-4);
 		overflow: hidden;
 		color: var(--muted-fg);
 		font-size: var(--label);
@@ -321,6 +321,7 @@
 	}
 
 	.meter {
+		--brand: color-mix(in oklab, var(--agent-brand) 65%, var(--muted-fg));
 		align-items: baseline;
 	}
 
@@ -333,19 +334,23 @@
 	}
 
 	.claude-code {
-		--brand: #d97757;
+		--agent-brand: #d97757;
+		--brand: var(--agent-brand);
 	}
 
 	.codex {
-		--brand: #10a37f;
+		--agent-brand: #10a37f;
+		--brand: var(--agent-brand);
 	}
 
 	.antigravity {
-		--brand: #8e75b2;
+		--agent-brand: #8e75b2;
+		--brand: var(--agent-brand);
 	}
 
 	.copilot {
-		--brand: var(--color-fg);
+		--agent-brand: var(--color-fg);
+		--brand: var(--agent-brand);
 	}
 
 	.brand {
@@ -359,8 +364,13 @@
 		color: var(--brand);
 	}
 
+	.row .brand :global(svg) {
+		color: color-mix(in oklab, var(--agent-brand) 78%, var(--muted-fg));
+	}
+
 	.meter .period {
 		padding-inline: var(--space-3) var(--space-1);
+		color: color-mix(in oklab, var(--muted-fg) 80%, transparent);
 	}
 
 	.gauge {
@@ -370,7 +380,7 @@
 		margin-right: var(--space-2);
 		overflow: hidden;
 		border-radius: var(--radius-pill);
-		background: color-mix(in oklab, var(--brand) 22%, var(--surface-3));
+		background: color-mix(in oklab, var(--muted-fg) 18%, transparent);
 	}
 
 	.level {
@@ -387,27 +397,28 @@
 
 	.number {
 		justify-self: end;
-		color: var(--color-fg);
+		color: color-mix(in oklab, var(--color-fg) 65%, var(--muted-fg));
 		font-size: var(--number);
-		font-weight: 500;
+		font-weight: 400;
 		font-variant-numeric: tabular-nums;
 	}
 
 	.remaining {
 		padding-left: var(--space-2);
-		color: color-mix(in oklab, var(--color-fg) 80%, var(--muted-fg));
+		color: var(--muted-fg);
 		font-variant-numeric: tabular-nums;
 	}
 
 	.high .number {
 		color: var(--status-waiting);
+		font-weight: 500;
 	}
 
 	.cost {
 		grid-column: 2 / -1;
 		overflow: hidden;
 		padding-left: var(--space-3);
-		color: var(--color-fg);
+		color: color-mix(in oklab, var(--color-fg) 65%, var(--muted-fg));
 		font-size: var(--number);
 		font-variant-numeric: tabular-nums;
 		text-overflow: ellipsis;

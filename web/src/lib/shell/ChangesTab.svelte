@@ -67,7 +67,7 @@
 				diffSigns('b'),
 				diffRows('b'),
 				indentedWrap,
-				unifiedMergeView({ original: before.text, mergeControls: false, highlightChanges: !whole, collapseUnchanged: {}, diffConfig })
+				unifiedMergeView({ original: before.text, mergeControls: false, highlightChanges: !whole, gutter: whole, collapseUnchanged: {}, diffConfig })
 			]
 		});
 		counts[change.path] = diffCounts(getChunks(view.state)?.chunks ?? [], getOriginalDoc(view.state), view.state.doc);
@@ -236,10 +236,6 @@
 
 	.body :global(.cm-content) {
 		padding-block: 0;
-	}
-
-	.body :global(.cm-foldGutter) {
-		display: none !important;
 	}
 
 	.binary,

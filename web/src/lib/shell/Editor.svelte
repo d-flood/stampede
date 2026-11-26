@@ -10,6 +10,7 @@
 	import type { LanguageServers } from '#lib/editor/lsp.svelte.ts';
 	import { Sync } from '#lib/editor/sync.svelte.ts';
 	import { theme } from '#lib/editor/theme.ts';
+	import { indentedWrap } from '#lib/editor/wrap.ts';
 	import { imageSource, OpenConfig, type OpenFile } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { baseline, type Git } from '#lib/git.ts';
@@ -24,7 +25,7 @@
 	import Segmented from '#lib/ui/Segmented.svelte';
 	import Toolbar from '#lib/ui/Toolbar.svelte';
 	import { Compartment, EditorState } from '@codemirror/state';
-	import { EditorView, keymap } from '@codemirror/view';
+	import { EditorView, ViewPlugin, keymap, type ViewUpdate } from '@codemirror/view';
 	import { basicSetup } from 'codemirror';
 	import { onMount, untrack } from 'svelte';
 	import ArrowUDownLeft from '~icons/ph/arrow-u-down-left';
@@ -48,13 +49,17 @@
 	let container: HTMLDivElement;
 	let view = $state.raw<EditorView>();
 	let note = $state<string>();
-	let wrap = $state(false);
+	let narrow = $state(false);
+	let wrapOverride = $state<boolean>();
 	let spell = $state(false);
 	const svg = $derived(/\.svg$/i.test(file.path) && !(file instanceof OpenConfig));
 	const markdown = $derived(/\.(md|markdown)$/i.test(file.path) && !(file instanceof OpenConfig));
 	const html = $derived(/\.html?$/i.test(file.path) && !(file instanceof OpenConfig));
 	const previewable = $derived(svg || markdown || html);
 	const prose = $derived(/\.(md|markdown|txt)$/i.test(file.path) && !(file instanceof OpenConfig));
+	const wrapped = $derived(wrapOverride ?? (markdown || narrow));
+	const wrapKind = $derived<'none' | 'plain' | 'indented'>(!wrapped ? 'none' : markdown ? 'plain' : 'indented');
+	let appliedWrap: 'none' | 'plain' | 'indented' = 'none';
 	const original = $derived(git?.isRepo ? (git.changes.find((change) => change.path === file.path)?.from ?? file.path) : undefined);
 	const head = $derived(git?.head);
 	let rendered = $state(false);
@@ -69,11 +74,32 @@
 	const live = new Compartment();
 	let loaded: string;
 
+	const wrapExtension = (kind: 'none' | 'plain' | 'indented') => (kind === 'plain' ? EditorView.lineWrapping : kind === 'indented' ? indentedWrap : []);
+
+	const measureWidth = ViewPlugin.define((view) => {
+		let last = 0;
+		const check = () => {
+			if (!last) return;
+			const next = last < 100 * view.defaultCharacterWidth;
+			if (next !== narrow) untrack(() => (narrow = next));
+		};
+		const observer = new ResizeObserver(([entry]) => {
+			last = entry.contentRect.width;
+			check();
+		});
+		observer.observe(view.dom);
+		return {
+			update(update: ViewUpdate) {
+				if (update.geometryChanged) check();
+			},
+			destroy: () => observer.disconnect()
+		};
+	});
+
 	onMount(() => {
 		let disposed = false;
 		rendered = svg && !file.cursor;
 		if (markdown) show(file.cursor && markdownMode === 'preview' ? 'live' : markdownMode);
-		wrap = markdown;
 		loaded = file.path;
 		Promise.all([file.read(), language(loaded)]).then(
 			([contents, highlighting]) => {
@@ -83,13 +109,15 @@
 					return;
 				}
 				if (previewable) content = contents.content;
+				appliedWrap = wrapKind;
 				view = new EditorView({
 					parent: container,
 					state: EditorState.create({
 						doc: contents.content,
 						extensions: [
 							keys.of([]),
-							wrapping.of(wrap ? EditorView.lineWrapping : []),
+							wrapping.of(wrapExtension(appliedWrap)),
+							measureWidth,
 							spelling.of([]),
 							keymap.of([{ key: 'Mod-s', run: () => (sync.write(), true) }]),
 							basicSetup,
@@ -135,9 +163,17 @@
 
 	function toggleWrap() {
 		if (!view) return;
-		wrap = !wrap;
-		view.dispatch({ effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []) });
+		wrapOverride = !wrapped;
 	}
+
+	$effect(() => {
+		const kind = wrapKind;
+		untrack(() => {
+			if (!view || kind === appliedWrap) return;
+			appliedWrap = kind;
+			view.dispatch({ effects: wrapping.reconfigure(wrapExtension(kind)) });
+		});
+	});
 
 	function toggleSpell() {
 		if (!view) return;
@@ -216,7 +252,7 @@
 		{/if}
 		{#if !rendered}<ServerSwitch {servers} projectId={file.projectId} path={file.path} />{/if}
 		{#if view && !rendered}
-			<IconButton label="Line wrapping" title="Line wrapping" pressed={wrap} onclick={toggleWrap}><ArrowUDownLeft /></IconButton>
+			<IconButton label="Line wrapping" title="Line wrapping" pressed={wrapped} onclick={toggleWrap}><ArrowUDownLeft /></IconButton>
 			{#if prose}<IconButton label="Spell check" title="Spell check" pressed={spell} onclick={toggleSpell}><span class="squiggle">abc</span></IconButton>{/if}
 		{/if}
 		{#if (form() === 'phone' || rendered) && view}

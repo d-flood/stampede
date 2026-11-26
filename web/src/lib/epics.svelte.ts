@@ -10,6 +10,7 @@ export class OpenEpic {
 	ticket = $state<number>();
 	page = $state<'brief' | 'setup' | 'worktree' | 'review' | 'edit-brief' | 'edit-ticket' | 'new-ticket'>();
 	showResolved = $state(false);
+	collapsed = $state<string[]>([]);
 	rig = $state<string>();
 	parallel = $state(1);
 	reviewers = $state<string[]>([]);

@@ -16,24 +16,22 @@
 		status?: Status;
 		fresh?: boolean;
 		size?: 'md';
-		/** Wraps the title instead of truncating it. */
-		full?: boolean;
 		/** Renders a button for lists outside a Command menu. */
 		plain?: boolean;
 		onselect(): void;
 	};
 
-	let { value, agent, title, time, project, status, fresh = false, size, full = false, plain = false, onselect }: Props = $props();
+	let { value, agent, title, time, project, status, fresh = false, size, plain = false, onselect }: Props = $props();
 
 	const Icon = $derived(logos[agent]);
 </script>
 
 {#snippet row(props: Record<string, unknown>)}
 	<ListItem {...props} {size}>
-		<Icon />
-		<span class="title" class:full>{title}</span>
-		{#if status}<TabMarks {status} {fresh} />{/if}
-		<span class="meta">
+		<span class="icon"><Icon /></span>
+		<span class="title" {title}>{title}</span>
+		{#if status}<span class="status"><TabMarks {status} {fresh} /></span>{/if}
+		<span class="meta" class:aligned={!!status} class:scoped={!!project}>
 			{#if project}<span class="project">{project}</span><span aria-hidden="true">·</span>{/if}
 			<span aria-hidden="true">{ago(time)}</span>
 		</span>
@@ -51,28 +49,49 @@
 {/if}
 
 <style>
+	.icon {
+		display: inline-grid;
+		flex: none;
+		place-items: center;
+		width: 1.25em;
+		height: 1.25em;
+	}
+
 	.title {
 		flex: 1;
 		min-width: 0;
+		margin-inline-end: var(--space-3);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.full {
-		overflow-wrap: anywhere;
-		white-space: normal;
+	.status {
+		display: inline-grid;
+		flex: none;
+		place-items: center;
+		width: 1.25em;
+		height: 1.25em;
 	}
 
 	/* Caps a long Project label so the title keeps most of the row. */
 	.meta {
 		display: flex;
 		flex: none;
+		justify-content: flex-end;
 		gap: var(--space-1);
-		max-width: 50%;
+		max-width: 40%;
 		color: var(--muted-fg);
-		font-size: var(--font-size-sm);
+		font-size: calc(var(--font-size-sm) - 1px);
 		white-space: nowrap;
+	}
+
+	.meta.aligned {
+		width: 4.75rem;
+	}
+
+	.meta.aligned.scoped {
+		width: min(8.75rem, 32%);
 	}
 
 	.meta > * {

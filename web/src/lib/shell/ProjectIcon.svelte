@@ -36,7 +36,7 @@
 		height: 100%;
 		min-width: 0;
 		min-height: 0;
-		padding: var(--space-1);
+		padding: var(--icon-pad, var(--space-1));
 		border-radius: inherit;
 		object-fit: contain;
 	}

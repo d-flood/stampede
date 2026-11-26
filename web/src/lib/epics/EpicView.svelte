@@ -131,6 +131,10 @@
 		setup = undefined;
 	}
 
+	function toggleGroup(name: string) {
+		open.collapsed = open.collapsed.includes(name) ? open.collapsed.filter((other) => other !== name) : [...open.collapsed, name];
+	}
+
 	function edit(page: 'edit-brief' | 'edit-ticket' | 'new-ticket', text: string) {
 		draft = text;
 		title = '';
@@ -431,7 +435,7 @@
 {/snippet}
 
 {#snippet landButton(epic: Epic)}
-	<Button variant="primary" disabled={!!unlandable} title={phone ? undefined : unlandable} onclick={() => ((unlanded = undefined), (confirming = true))}>
+	<Button variant={unlandable ? 'outline' : 'primary'} disabled={!!unlandable} title={phone ? undefined : unlandable} onclick={() => ((unlanded = undefined), (confirming = true))}>
 		{epic.base ? `Land into ${epic.base}` : 'Land'}
 	</Button>
 {/snippet}
@@ -596,14 +600,23 @@
 	<section aria-label="Tickets" class="tickets">
 		{#each groups as group (group.name)}
 			{#if group.tickets.length}
-				<h3 class="group"><span class="slot"></span>{group.name}<span class="count">{group.tickets.length}</span></h3>
-				{#each group.tickets as ticket (ticket.number)}{@render row(ticket)}{/each}
+				{@const expanded = !open.collapsed.includes(group.name)}
+				<h3 class="group-heading">
+					<button class="group fold" aria-expanded={expanded} onclick={() => toggleGroup(group.name)}>
+						<Caret />{group.name}<span class="count">{group.tickets.length}</span>
+					</button>
+				</h3>
+				{#if expanded}
+					{#each group.tickets as ticket (ticket.number)}{@render row(ticket)}{/each}
+				{/if}
 			{/if}
 		{/each}
 		{#if settled.length}
-			<button class="group fold" aria-expanded={open.showResolved} onclick={() => (open.showResolved = !open.showResolved)}>
-				<Caret />Resolved<span class="count">{settled.length}</span>
-			</button>
+			<h3 class="group-heading">
+				<button class="group fold" aria-expanded={open.showResolved} onclick={() => (open.showResolved = !open.showResolved)}>
+					<Caret />Resolved<span class="count">{settled.length}</span>
+				</button>
+			</h3>
 			{#if open.showResolved}
 				{#each settled as ticket (ticket.number)}{@render row(ticket)}{/each}
 			{/if}
@@ -690,10 +703,12 @@
 				<span class="title">{epic.title}</span>
 			</div>
 			{@render progress()}
-			{@render runBar(epic)}
-			<div class="actions">
-				{@render compareButton(epic)}
-				{@render landButton(epic)}
+			<div class="bar-end">
+				{@render runBar(epic)}
+				<div class="actions">
+					{@render compareButton(epic)}
+					{@render landButton(epic)}
+				</div>
 			</div>
 		</header>
 		<div class="split">
@@ -873,7 +888,8 @@
 	}
 
 	.bar .name {
-		flex: 1 1 8rem;
+		flex: 0 1 auto;
+		max-width: 22rem;
 	}
 
 	h1 {
@@ -910,9 +926,21 @@
 		white-space: nowrap;
 	}
 
+	.bar .progress {
+		margin-inline: auto;
+	}
+
 	.meter {
 		display: block;
-		width: 10rem;
+		width: clamp(9rem, 12vw, 12.5rem);
+	}
+
+	.bar-end {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-3) calc(var(--space-6) + var(--space-3));
+		max-width: 100%;
 	}
 
 	.run {
@@ -926,7 +954,6 @@
 	.bar .actions {
 		display: flex;
 		gap: var(--space-2);
-		margin-left: auto;
 	}
 
 	.segment {
@@ -1023,7 +1050,7 @@
 	.split {
 		display: grid;
 		flex: 1;
-		grid-template-columns: clamp(17rem, 34%, 24rem) minmax(0, 1fr);
+		grid-template-columns: clamp(15rem, 26%, 20rem) minmax(0, 1fr);
 		min-height: 0;
 	}
 
@@ -1135,10 +1162,16 @@
 		border-radius: 50%;
 	}
 
+	.group-heading {
+		margin: 0;
+		font-size: inherit;
+	}
+
 	.group {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
+		width: 100%;
 		margin: 0;
 		padding: var(--space-6) var(--space-3) var(--space-1);
 		color: color-mix(in oklab, var(--muted-fg), var(--color-fg) 40%);
@@ -1146,8 +1179,6 @@
 		font-weight: 600;
 	}
 
-	/* Holds the mark column, so every heading starts where the rows' numbers do. */
-	.slot,
 	.fold > :global(.caret) {
 		display: flex;
 		flex: none;
@@ -1162,7 +1193,7 @@
 		font-weight: 400;
 	}
 
-	.tickets > .group:first-child {
+	.tickets > .group-heading:first-child .group {
 		padding-top: var(--space-3);
 	}
 

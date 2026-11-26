@@ -4,6 +4,7 @@ import type { Session, Setting, Settings } from '#lib/device.svelte.ts';
 import type { Component } from 'svelte';
 import FileCode from '~icons/ph/file-code';
 import Globe from '~icons/ph/globe';
+import MagnifyingGlass from '~icons/ph/magnifying-glass';
 import TerminalWindow from '~icons/ph/terminal-window';
 
 export const RECENT = 5;
@@ -39,7 +40,7 @@ export function tabItems(rigs: Rig[], sessions: Session[], actions: Actions, hos
 			{ label: 'Open file', shortcut: 'Ctrl+Shift+O', icon: FileCode, onselect: actions.files }
 		],
 		sessions: recent.map((session) => ({ label: session.title, icon: logos[session.agent], hint: ago(session.updatedAt), onselect: () => actions.reopen(session) })),
-		search: recent.length ? { label: 'Search sessions…', onselect: actions.search } : undefined
+		search: recent.length ? { label: 'Search sessions…', icon: MagnifyingGlass, onselect: actions.search } : undefined
 	};
 }
 

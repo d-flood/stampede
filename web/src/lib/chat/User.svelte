@@ -69,7 +69,7 @@
 
 <style>
 	.message { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
-	.bubble { position: relative; align-self: flex-end; max-width: 85%; }
+	.bubble { position: relative; align-self: flex-end; width: fit-content; max-width: 70%; }
 	.more { position: absolute; bottom: 0; left: 0; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: var(--border-width) solid var(--border); border-radius: 50%; background: var(--surface-1); color: var(--muted-fg); font-size: var(--font-size-sm); cursor: pointer; transform: translate(-50%, 50%); }
 	.more::before { content: ''; position: absolute; inset: calc((24px - var(--target-min)) / 2); border-radius: 50%; }
 	.more:hover, .more[aria-expanded='true'] { background: var(--hover); color: var(--color-fg); }
@@ -86,12 +86,16 @@
 		padding: var(--space-3) var(--space-4);
 		border: var(--border-width) solid transparent;
 		border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
-		background: var(--surface-1);
+		background: var(--surface-2);
 	}
 
 	.user :global(.text) {
 		font-family: var(--font-ui);
 		text-wrap: pretty;
+	}
+
+	.user :global(.text :not(pre) > code) {
+		background: var(--surface-3);
 	}
 
 	details.user {

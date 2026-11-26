@@ -226,7 +226,7 @@
 		display: flex;
 		flex: none;
 		width: 280px;
-		border: var(--border-width) solid var(--border);
+		border: var(--border-width) solid var(--pane-border);
 		border-radius: var(--radius-xl);
 		background: var(--chrome);
 		transition:

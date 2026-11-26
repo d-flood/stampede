@@ -13,6 +13,7 @@
 <button
 	type="button"
 	class="entry"
+	class:file={open === undefined}
 	class:muted
 	class:deleted={git === 'deleted'}
 	style:--depth={depth}
@@ -33,7 +34,7 @@
 		align-items: center;
 		gap: var(--space-1);
 		min-width: 0;
-		min-height: var(--target-min);
+		min-height: var(--tree-row);
 		padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--depth) * var(--space-4));
 		border: none;
 		border-radius: inherit;
@@ -71,6 +72,10 @@
 		white-space: nowrap;
 	}
 
+	.file .name {
+		color: var(--git, currentColor);
+	}
+
 	.deleted .name {
 		text-decoration: line-through;
 	}
@@ -81,8 +86,8 @@
 
 	.letter {
 		flex: none;
-		color: color-mix(in oklab, var(--git, var(--muted-fg)) 68%, var(--muted-fg));
-		font-size: calc(var(--font-size-sm) - 1px);
-		font-weight: 500;
+		color: var(--git, var(--muted-fg));
+		font-size: var(--font-size-sm);
+		font-weight: 700;
 	}
 </style>

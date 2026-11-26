@@ -36,7 +36,7 @@ test('the row shows labelled bars with numbers, reset times, the Reset count, an
 	vi.setSystemTime(now);
 	const view = await render(Usage, { readings, codexResets: resets });
 	const section = view.getByRole('region', { name: 'Usage windows' });
-	await expect.poll(() => section.element().getBoundingClientRect().height).toBe(form() === 'phone' ? 79 : 67);
+	await expect.poll(() => section.element().getBoundingClientRect().height).toBe(85);
 	expect(view.getByRole('group').elements()).toHaveLength(3);
 	expect(view.getByRole('meter').elements()).toHaveLength(3);
 	await expect.element(view.getByRole('meter', { name: 'Claude · 5h' })).toHaveAttribute('aria-valuenow', '100');

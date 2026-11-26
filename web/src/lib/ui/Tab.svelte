@@ -80,7 +80,7 @@
 	</button>
 {/snippet}
 
-<div class="tab {status ?? ''}" class:bottom class:closable={active && !!onclose} {@attach active && reveal}>
+<div class="tab {status ?? ''}" class:active class:long={active && label.length >= 22} class:bottom class:closable={active && !!onclose} {@attach active && reveal}>
 	{#if tooltip}
 		<Tooltip text={tooltip} delayDuration={300} ignoreNonKeyboardFocus>
 			{#snippet children(trigger)}
@@ -117,6 +117,15 @@
 
 	.tab.closable {
 		flex-shrink: 0;
+	}
+
+	.tab.active {
+		max-width: 26rem;
+	}
+
+	.tab.active.long {
+		flex-shrink: 100;
+		min-width: 13rem;
 	}
 
 	.bottom {
@@ -214,7 +223,7 @@
 	}
 
 	.active {
-		--pill: var(--hover);
+		--pill: var(--selected-bg);
 		color: var(--color-fg);
 		font-weight: 500;
 	}
@@ -249,10 +258,6 @@
 	}
 
 	.select.waiting:not(.active) {
-		color: var(--color-fg);
-	}
-
-	.select.waiting:not(.active)::before {
-		box-shadow: inset 0 0 0 var(--border-width) color-mix(in oklab, var(--status-waiting) 42%, var(--border));
+		--pill: color-mix(in oklab, var(--status-waiting) 16%, transparent);
 	}
 </style>

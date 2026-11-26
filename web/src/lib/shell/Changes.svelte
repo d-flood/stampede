@@ -681,7 +681,7 @@
 	.row {
 		display: flex;
 		align-items: center;
-		min-height: var(--target-min);
+		min-height: var(--tree-row);
 	}
 
 	.row:hover {
@@ -761,9 +761,14 @@
 
 		.actions {
 			position: absolute;
+			inset-block: 0;
 			right: 0;
 			border-radius: inherit;
 			background: var(--chrome);
+		}
+
+		.actions > :global(button) {
+			min-height: 0;
 		}
 
 		.row:hover .actions {

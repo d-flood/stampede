@@ -48,15 +48,13 @@
 
 {#snippet trigger(props: Record<string, unknown>)}
 	<!-- Serves every pane, so focusing it mustn't make its own pane the current one. -->
-	{#if form() === 'phone'}
-		<IconButton {...props} label="Chats" {title} onfocusin={(event: FocusEvent) => event.stopPropagation()}>{@render icon()}</IconButton>
-	{:else}
-		<Button {...props} variant="ghost" size="sm" {title} onfocusin={(event: FocusEvent) => event.stopPropagation()}>{@render icon()}Chats</Button>
-	{/if}
-{/snippet}
-
-{#snippet icon()}
-	<span class="icon"><ListMagnifyingGlass />{#if attention}<span class="dot"></span>{/if}</span>
+	<span class="trigger" class:phone={form() === 'phone'}>
+		{#if form() === 'phone'}
+			<IconButton {...props} label="Chats" {title} onfocusin={(event: FocusEvent) => event.stopPropagation()}><ListMagnifyingGlass />{#if attention}<span class="dot"></span>{/if}</IconButton>
+		{:else}
+			<Button {...props} variant="ghost" size="sm" {title} onfocusin={(event: FocusEvent) => event.stopPropagation()}><ListMagnifyingGlass />Chats{#if attention}<span class="dot"></span>{/if}</Button>
+		{/if}
+	</span>
 {/snippet}
 
 {#snippet finder()}
@@ -67,7 +65,7 @@
 		{waiting}
 		{sessions}
 		{reading}
-		full
+		flush
 		onchat={(chat) => pick(() => onchat(chat))}
 		onsession={(session) => pick(() => onsession(session))}
 	/>
@@ -75,30 +73,41 @@
 
 {#if form() === 'phone'}
 	{@render trigger({ 'aria-haspopup': 'dialog', 'aria-expanded': open, onclick: () => toggle(true) })}
-	<Dialog bind:open={() => open, toggle} sheet title="Chats" oncloseautofocus={release}>{@render finder()}</Dialog>
+	<Dialog bind:open={() => open, toggle} sheet title="Chats" oncloseautofocus={release}><div class="sheet">{@render finder()}</div></Dialog>
 {:else}
-	<Popover bind:open={() => open, toggle} label="Chats" align="end" width="30rem" {trigger} oncloseautofocus={release}>{@render finder()}</Popover>
+	<Popover bind:open={() => open, toggle} label="Chats" align="end" width="30rem" flush {trigger} oncloseautofocus={release}>{@render finder()}</Popover>
 {/if}
 
 <style>
-	.icon {
-		--dot: var(--space-2);
-		position: relative;
+	.trigger {
 		display: inline-flex;
 	}
 
-	/* Notches the glyph around the dot, so it reads apart from the lines on any background. */
-	.icon:has(.dot) > :global(svg) {
-		mask: radial-gradient(circle at calc(100% - var(--dot) / 2 + var(--border-width)) calc(var(--dot) / 2 - var(--border-width)), transparent calc(var(--dot) / 2 + var(--border-width)), black calc(var(--dot) / 2 + 2 * var(--border-width)));
+	.trigger :global(button) {
+		position: relative;
+	}
+
+	.trigger:not(.phone) :global(button) {
+		padding-right: var(--space-3);
 	}
 
 	.dot {
 		position: absolute;
-		top: calc(-1 * var(--border-width));
-		right: calc(-1 * var(--border-width));
-		width: var(--dot);
-		height: var(--dot);
+		top: calc(2 * var(--border-width));
+		right: calc(2 * var(--border-width));
+		width: var(--space-2);
+		height: var(--space-2);
 		border-radius: 50%;
 		background: var(--status-waiting);
+		pointer-events: none;
+	}
+
+	.phone .dot {
+		top: var(--space-2);
+		right: var(--space-2);
+	}
+
+	.sheet {
+		margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
 	}
 </style>

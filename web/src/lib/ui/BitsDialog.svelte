@@ -15,6 +15,8 @@
 		dismissible?: boolean;
 		/** Sizes a wide dialog to its content, up to its usual height, without shrinking while open. */
 		fit?: boolean;
+		/** Visually hides the title and removes outer padding, for search-led palettes. */
+		bare?: boolean;
 		title: string;
 		/** A navigation column down the dialog's full height, titled by `title`, beside content headed by `heading`. */
 		nav?: Snippet;
@@ -25,7 +27,7 @@
 		oncloseautofocus?: (event: Event) => void;
 	};
 
-	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, dismissible = true, fit = false, title, nav, heading, description, children, actions, oncloseautofocus }: Props = $props();
+	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, dismissible = true, fit = false, bare = false, title, nav, heading, description, children, actions, oncloseautofocus }: Props = $props();
 
 	function hold(node: HTMLElement) {
 		let tallest = 0;
@@ -42,7 +44,7 @@
 {#snippet titled()}
 	<Dialog.Title>
 		{#snippet child({ props })}
-			<h2 {...props}>{title}</h2>
+			<h2 {...props} class:assistive={bare}>{title}</h2>
 		{/snippet}
 	</Dialog.Title>
 {/snippet}
@@ -84,7 +86,7 @@
 		interactOutsideBehavior={dismissible ? 'close' : 'ignore'}
 	>
 			{#snippet child({ props })}
-				<div {...props} class="dialog" class:wide class:full class:sheet class:fit class:navigated={!!nav} class:footed={!!actions} {@attach wide && fit && !full && hold}>
+				<div {...props} class="dialog" class:wide class:full class:sheet class:fit class:bare class:navigated={!!nav} class:footed={!!actions} {@attach wide && fit && !full && hold}>
 					{#if nav}
 						<div class="nav">
 							{@render titled()}
@@ -97,6 +99,9 @@
 							</div>
 							{@render body()}
 						</div>
+					{:else if bare}
+						{@render titled()}
+						{@render body()}
 					{:else}
 						<div class="heading">
 							{@render titled()}
@@ -149,6 +154,26 @@
 		padding: 0;
 		overflow: hidden;
 		background: var(--plane);
+	}
+
+	.bare {
+		display: flex;
+		flex-direction: column;
+		width: min(32rem, calc(100vw - 2 * var(--space-4)));
+		padding: 0;
+		overflow: hidden;
+		border-color: color-mix(in lab, var(--float) 88%, var(--color-fg));
+		--hover: color-mix(in lab, var(--float) 90%, var(--color-fg));
+		--bare-radius: calc(var(--radius-xl) - var(--border-width));
+		background: var(--float);
+	}
+
+	.assistive {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
 	}
 
 	.wide.fit:not(.full) {

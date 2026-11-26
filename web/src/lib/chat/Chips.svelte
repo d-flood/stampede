@@ -14,11 +14,12 @@
 		settings: Settings;
 		ready: boolean;
 		choices: Record<Setting, Choice[]>;
+		mark?: boolean;
 		children?: Snippet;
 		onrun(setting: Setting, value: string): void;
 	};
 
-	let { agent, settings, ready, choices, children, onrun }: Props = $props();
+	let { agent, settings, ready, choices, mark = true, children, onrun }: Props = $props();
 
 	const names: Record<Setting, string> = { model: 'Model', effort: 'Effort', speed: 'Speed', ultracode: 'Ultracode', mode: 'Mode' };
 	const phone = $derived(form() === 'phone');
@@ -45,8 +46,8 @@
 	);
 </script>
 
-<div class="chips" class:phone>
-	{#if !phone}
+<div class="chips" class:marked={mark} class:phone>
+	{#if mark && !phone}
 		<Tooltip text={agentNames[agent]} delayDuration={0}>
 			{#snippet children(props)}
 				<span {...props} class="agent" role="img" aria-label={agentNames[agent]}><Logo /></span>
@@ -63,7 +64,7 @@
 					aria-label="Model: {parts.join(' ')}{later ? ', next turn' : ''}"
 					title={later ? 'Takes effect on the next turn' : undefined}
 				>
-					<span class="label">{parts.join(' ')}</span>
+					<span class="label">{parts[0]}{#if parts.length > 1}<span class="detail">{parts.slice(1).map((part) => ` ${part}`).join('')}</span>{/if}</span>
 					<span class="caret"><CaretDown aria-hidden="true" /></span>
 				</Chip>
 			{/snippet}
@@ -91,22 +92,34 @@
 <style>
 	.chips {
 		display: flex;
-		flex: 0 1 auto;
+		flex: 1;
 		align-items: center;
 		gap: var(--space-1);
 		min-width: 0;
 		font-size: var(--font-size-sm);
 	}
 
+	.chips.marked:not(.phone) {
+		padding-left: var(--space-2);
+	}
+
+	.chips :global(.chip) {
+		color: var(--color-fg);
+	}
+
 	.chips:not(.phone) :global(.chip) {
 		flex: 0 1 auto;
+	}
+
+	.detail {
+		color: var(--muted-fg);
 	}
 
 	.end {
 		display: flex;
 		flex: none;
 		align-items: center;
-		margin-inline: var(--space-1);
+		margin-left: var(--space-1);
 	}
 
 	.agent {
@@ -137,7 +150,7 @@
 		height: 0.85em;
 	}
 
-	@container (width < 28rem) {
+	@container (width < 24rem) {
 		.suffix {
 			display: none;
 		}

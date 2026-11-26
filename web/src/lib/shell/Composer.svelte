@@ -21,15 +21,13 @@
 		onkeydown?: (event: KeyboardEvent) => void;
 		onpaste?: (event: ClipboardEvent) => void;
 		onsend?(text: string, enter: boolean): boolean;
-		/** Left-aligned context or attachment controls beside `actions`. */
-		leading?: Snippet<[text: string, clear: () => void]>;
 		/** Replaces Insert and Send, and boxes the Composer in a Chat's column. */
 		actions?: Snippet<[text: string, clear: () => void]>;
 		border?: Snippet<[text: string]>;
 		footer?: Snippet;
 	};
 
-	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], mark, onsend, leading, actions, border, footer, menu, onkeydown, onpaste }: Props = $props();
+	let { id, disabled = false, focused = false, placeholder, draft, code = false, history = [], mark, onsend, actions, border, footer, menu, onkeydown, onpaste }: Props = $props();
 
 	const key = $derived(`composer:${id}`);
 	let text = $derived(localStorage.getItem(key) ?? draft ?? '');
@@ -143,10 +141,7 @@
 	{#if actions}
 		<div class="card">
 			<div class="field">{@render editor()}</div>
-			<div class="actions">
-				{#if leading}<div class="lead">{@render leading(text, clear)}</div>{/if}
-				<div class="trail">{@render actions(text, clear)}</div>
-			</div>
+			<div class="actions">{@render actions(text, clear)}</div>
 			{#if border}<div class="outline">{@render border(text)}</div>{/if}
 		</div>
 		{#if footer}<div class="footer">{@render footer()}</div>{/if}
@@ -156,24 +151,20 @@
 			{@render border?.(text)}
 		</div>
 		<div class="actions">
-			<div class="lead">
-				{#if text.trim()}
-					<Button variant="ghost" aria-label="Save as Clip" tip="Save as Clip" onmousedown={(event) => event.preventDefault()} onclick={() => (clipping = true)}><BookmarkSimple /></Button>
-				{/if}
-			</div>
-			<div class="trail">
-				<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
-					Insert
-				</Button>
-				<Button
-					variant="primary"
-					disabled={!text || disabled}
-					onmousedown={(event) => event.preventDefault()}
-					onclick={() => submit(true)}
-				>
-					Send
-				</Button>
-			</div>
+			{#if text.trim()}
+				<Button aria-label="Save as Clip" tip="Save as Clip" onmousedown={(event) => event.preventDefault()} onclick={() => (clipping = true)}><BookmarkSimple /></Button>
+			{/if}
+			<Button disabled={!text || disabled} onmousedown={(event) => event.preventDefault()} onclick={() => submit(false)}>
+				Insert
+			</Button>
+			<Button
+				variant="primary"
+				disabled={!text || disabled}
+				onmousedown={(event) => event.preventDefault()}
+				onclick={() => submit(true)}
+			>
+				Send
+			</Button>
 		</div>
 	{/if}
 </div>
@@ -241,24 +232,8 @@
 
 	.actions {
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-2);
-		container-type: inline-size;
-	}
-
-	.lead,
-	.trail {
-		display: flex;
-		flex: 0 1 auto;
-		align-items: center;
-		gap: var(--space-2);
-		min-width: 0;
-	}
-
-	.trail {
 		justify-content: flex-end;
-		margin-left: auto;
+		gap: var(--space-2);
 	}
 
 	.boxed {
@@ -285,13 +260,11 @@
 	}
 
 	.boxed .actions {
+		align-items: center;
 		flex-wrap: nowrap;
-		padding: 0 var(--space-2) var(--space-2);
-	}
-
-	.boxed:not(.phone) .lead,
-	.boxed:not(.phone) .trail {
 		gap: var(--space-1);
+		padding: 0 var(--space-3) var(--space-3) var(--space-2);
+		container-type: inline-size;
 	}
 
 	.boxed.phone {

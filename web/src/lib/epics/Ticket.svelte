@@ -144,7 +144,7 @@
 	<div class="columns">
 		<div class="props">
 			<div class="prop">
-				<h3>Rig</h3>
+				<div class="heading"><h3>Rig</h3></div>
 				{#if ticket.status === 'not-started'}
 					<RigSelect {open} {ticket} {defaultRig} disabled={starting} />
 				{:else}
@@ -167,12 +167,12 @@
 			{/if}
 			{#if blocks.length}
 				<div class="prop">
-					<h3>Blocks</h3>
+					<div class="heading"><h3>Blocks</h3></div>
 					{#each blocks as other (other.number)}{@render ref(other)}{/each}
 				</div>
 			{/if}
 			<section class="prop" aria-label="Tags">
-				<h3>Tags</h3>
+				<div class="heading"><h3>Tags</h3></div>
 				<Tags tags={ticket.tags ?? []} onchange={tag} disabled={tagging} />
 				{#if tagError}<p role="alert">{tagError}</p>{/if}
 			</section>
@@ -346,25 +346,33 @@
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);
 		font-weight: 600;
+		line-height: 1.4;
 	}
 
 	.heading {
 		display: flex;
 		align-items: baseline;
 		justify-content: space-between;
+		gap: var(--space-2);
+		line-height: 1.4;
+	}
+
+	.heading :global(button.link) {
+		min-height: 0;
+		line-height: inherit;
 	}
 
 	.ref {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-		min-height: var(--target-min);
 		padding: 0;
 		border: none;
 		background: none;
 		color: var(--color-fg);
 		font: inherit;
 		font-size: var(--font-size-sm);
+		line-height: 1.4;
 		text-align: left;
 		cursor: pointer;
 	}
@@ -391,11 +399,9 @@
 	}
 
 	.value {
-		display: flex;
-		align-items: center;
-		min-height: var(--control-min);
 		color: var(--color-fg);
 		font-size: var(--font-size-sm);
+		line-height: 1.4;
 	}
 
 	.value.none {
@@ -483,5 +489,10 @@
 	.phone .props {
 		padding-bottom: var(--space-6);
 		border-bottom: var(--border-width) solid var(--border);
+	}
+
+	.phone .ref,
+	.phone .heading :global(button.link) {
+		min-height: var(--target-min);
 	}
 </style>

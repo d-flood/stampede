@@ -475,7 +475,7 @@
 	.row {
 		display: flex;
 		align-items: center;
-		min-height: var(--target-min);
+		min-height: var(--tree-row);
 		border-radius: var(--radius-md);
 	}
 
@@ -539,7 +539,7 @@
 		flex: none;
 		place-items: center;
 		width: var(--target-min);
-		height: var(--target-min);
+		height: var(--tree-row);
 		cursor: pointer;
 	}
 

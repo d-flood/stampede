@@ -38,6 +38,11 @@
 
 	.sub {
 		min-height: var(--control-min);
-		color: color-mix(in oklab, var(--muted-fg) 75%, transparent);
+		margin-top: var(--space-2);
+		color: color-mix(in oklab, var(--muted-fg) 72%, transparent);
+	}
+
+	.sub:not(:first-child) {
+		margin-top: var(--space-3);
 	}
 </style>

@@ -47,7 +47,7 @@ export const indentedWrap = [
 			}
 			update(update: ViewUpdate) {
 				if (update.docChanged || update.viewportChanged) this.decorations = build(update.view);
-				hangDeletions(update.view);
+				if (update.docChanged || update.viewportChanged || update.transactions.some((tr) => tr.effects.length)) hangDeletions(update.view);
 			}
 		},
 		{ decorations: (plugin) => plugin.decorations }

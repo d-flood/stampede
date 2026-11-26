@@ -217,7 +217,9 @@
 			<FileMenu bind:this={files} {text} {caret} projectId={chat.projectId} {replace} />
 		{/if}
 	{/snippet}
-	{#snippet leading(text: string)}
+	{#snippet actions(text: string, clear: () => void)}
+		{@const hasDraft = !!text.trim() || !!images.length}
+		{@const interruptOnly = stoppable && !hasDraft && !launching}
 		{#if phone}
 			<div class="group">
 				<Menu
@@ -250,18 +252,14 @@
 				<Button variant="ghost" aria-label="Attach image" disabled={!live || reading || !imageable} onclick={() => picker.click()}><Paperclip /></Button>
 			</div>
 		{:else}
+			{@render meta()}
 			<Button variant="ghost" aria-label="Attach image" tip="Attach image" disabled={!live || reading || !imageable} onclick={() => picker.click()}><Paperclip /></Button>
-			<Menu side="top" align="start" items={[{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]}>
+			<Menu side="top" items={[{ label: 'Save as Clip', icon: BookmarkSimple, disabled: !text.trim(), onselect: () => composer.saveAsClip() }, ...branches]}>
 				{#snippet trigger(props)}
 					<Button {...props} variant="ghost" aria-label="More" tip="More"><DotsThree /></Button>
 				{/snippet}
 			</Menu>
 		{/if}
-	{/snippet}
-	{#snippet actions(text: string, clear: () => void)}
-		{@const hasDraft = !!text.trim() || !!images.length}
-		{@const interruptOnly = stoppable && !hasDraft && !launching}
-		{#if !phone}{@render meta()}{/if}
 		<div class={phone ? 'phone-turn' : 'turn'}>
 			{#if interruptOnly}
 				<Button variant="danger" disabled={!live} onmousedown={keepFocus} onclick={interrupt}>

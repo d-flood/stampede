@@ -128,8 +128,8 @@
 		flex-direction: column;
 		gap: var(--space-2);
 		box-sizing: border-box;
-		width: calc(var(--tile) + var(--space-3) + var(--space-1));
-		padding: var(--space-2) var(--space-1) var(--space-2) var(--space-3);
+		width: calc(var(--tile) + var(--space-4) + var(--space-3));
+		padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
 		user-select: none;
 		transition: width var(--dur-med) var(--ease-out);
 	}
@@ -149,7 +149,7 @@
 	ol {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-2);
+		gap: var(--space-3);
 		margin: 0;
 		padding: 0;
 		list-style: none;

@@ -18,15 +18,15 @@
 		status?(chat: Chat): Status;
 		/** Open Chats that need attention, which lead the list under their own heading. */
 		waiting?: Set<string>;
-		/** Wraps titles instead of truncating them. */
-		full?: boolean;
+		/** Renders the search field as a flush top row with a hairline below. */
+		flush?: boolean;
 		/** Holds the list at the recent sessions' height while searching, so nothing around it moves. */
 		steady?: boolean;
 		onchat?(chat: Chat): void;
 		onsession(session: Session): void;
 	};
 
-	let { label, sessions, reading, chats, status, waiting, full = false, steady = false, onchat, onsession }: Props = $props();
+	let { label, sessions, reading, chats, status, waiting, flush = false, steady = false, onchat, onsession }: Props = $props();
 
 	let query = $state('');
 	let height = $state(0);
@@ -63,11 +63,11 @@
 	</Command.GroupHeading>
 {/snippet}
 
-<div class="finder" class:full>
+<div class="finder" class:flush>
 	<Command.Root {label} shouldFilter={false} loop>
 		<Command.Input value={query} placeholder={label} autocomplete="off" spellcheck={false} enterkeyhint="go">
 			{#snippet child({ props })}
-				<TextField {...props} bind:value={query} search />
+				<TextField {...props} bind:value={query} search bare={flush} />
 			{/snippet}
 		</Command.Input>
 		{#if reading}<div class="loading"><Loading label="Reading sessions…" /></div>{/if}
@@ -77,25 +77,24 @@
 					<Command.Viewport>
 						{#each groups as group (group.name)}
 							{#if group.chats.length}
-								<Command.Group>
+								<Command.Group class="group">
 									{@render heading(group.name)}
 									<Command.GroupItems>
 										{#each group.chats as chat (chat.id)}
-											<ChatItem value="chat:{chat.id}" agent={chat.agent} title={chat.title ?? chat.rig} time={chat.created / 1e6} status={status?.(chat)} fresh={!chat.title} size="md" {full} onselect={() => onchat?.(chat)} />
+											<ChatItem value="chat:{chat.id}" agent={chat.agent} title={chat.title ?? chat.rig} time={chat.created / 1e6} status={status?.(chat)} fresh={!chat.title} size="md" onselect={() => onchat?.(chat)} />
 										{/each}
 									</Command.GroupItems>
 								</Command.Group>
 							{/if}
 						{/each}
 						{#if past.length}
-							<Command.Group>
+							<Command.Group class={chats && open.length ? 'group history' : 'group'}>
 								{#if chats}{@render heading('Recent sessions')}{/if}
 								<Command.GroupItems>
 									{#each days as { day, sessions: listed } (day)}
-										<!-- Each row's time already says when, so the day labels are visual only. -->
 										{#if dated}<ListLabel sub aria-hidden="true">{day}</ListLabel>{/if}
 										{#each listed as session (`${session.agent}:${session.sessionId}`)}
-											<ChatItem value="session:{session.agent}:{session.sessionId}" agent={session.agent} title={session.title} time={session.updatedAt} size="md" {full} onselect={() => onsession(session)} />
+											<ChatItem value="session:{session.agent}:{session.sessionId}" agent={session.agent} title={session.title} time={session.updatedAt} size="md" onselect={() => onsession(session)} />
 										{/each}
 									{/each}
 								</Command.GroupItems>
@@ -111,8 +110,26 @@
 </div>
 
 <style>
+	.finder.flush {
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		--bare-inset: calc(var(--space-2) + var(--space-3));
+		--bare-gap: var(--space-3);
+	}
+
+	.flush :global([data-command-root]) {
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+	}
+
 	.loading {
 		margin-top: var(--space-2);
+	}
+
+	.flush .loading {
+		padding-inline: var(--bare-inset);
 	}
 
 	.list {
@@ -120,8 +137,29 @@
 		overflow-y: auto;
 	}
 
-	.full .list {
-		max-height: min(24rem, 50dvh);
+	.flush .list {
+		margin: 0;
+		padding: var(--space-2);
+		max-height: min(26rem, 55dvh);
+	}
+
+	.finder :global(.group + .group) {
+		margin-top: var(--space-2);
+	}
+
+	.finder :global(.group .caption.md) {
+		min-height: var(--control-min);
+		padding-bottom: var(--space-1);
+	}
+
+	.finder.flush :global(.group .sub:first-child) {
+		margin-top: 0;
+	}
+
+	.finder :global(.group.history) {
+		margin-top: var(--space-4);
+		padding-top: var(--space-3);
+		border-top: var(--border-width) solid var(--border);
 	}
 
 	.empty {

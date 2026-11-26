@@ -38,21 +38,26 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await openProject(page, name);
 		await newTab(page, 'Fake Claude');
 		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
-		const nav = panel.getByRole('navigation', { name: 'User messages', exact: true });
+		const floating = project.name === 'pixel';
+		const nav = page.getByRole('navigation', { name: 'User messages', exact: true });
 		const transcript = panel.locator('.transcript');
 		const column = transcript.locator('.column');
 		const before = await column.evaluate((node) => ({ left: node.getBoundingClientRect().left, width: node.getBoundingClientRect().width }));
 		const opacity = () => nav.evaluate((node) => getComputedStyle(node).opacity);
 		const message = (number: number) => panel.getByRole('region', { name: `User message ${number}`, exact: true });
-		const landed = (number: number) => expect.poll(() => message(number).evaluate((node) => Math.abs(node.getBoundingClientRect().top - node.closest('.panel')!.querySelector('nav[aria-label="User messages"]')!.getBoundingClientRect().bottom))).toBeLessThan(2);
-		await expect.poll(opacity).toBe('0');
+		const landed = (number: number) => expect.poll(() => message(number).evaluate((node, floating) => {
+			const scroller = node.closest<HTMLElement>('.transcript')!;
+			const edge = floating ? node.closest('.panel')!.querySelector('nav[aria-label="User messages"]')!.getBoundingClientRect().bottom : scroller.getBoundingClientRect().top + parseFloat(getComputedStyle(scroller).paddingTop);
+			return Math.abs(node.getBoundingClientRect().top - edge);
+		}, floating)).toBeLessThan(2);
+		if (floating) await expect.poll(opacity).toBe('0');
 		await expect.poll(() => transcript.evaluate((node) => node.getBoundingClientRect().width === node.parentElement!.getBoundingClientRect().width)).toBe(true);
 		await transcript.evaluate((node) => { node.scrollTop -= 250; });
 		await expect.poll(opacity).toBe('1');
 		await expect(nav.getByRole('button', { name: 'Message 6 of 6: Prompt 6', exact: true })).toBeVisible();
 		await expect.poll(() => column.evaluate((node) => ({ left: node.getBoundingClientRect().left, width: node.getBoundingClientRect().width }))).toEqual(before);
 		await transcript.evaluate((node) => { node.scrollTop += 100; });
-		await expect.poll(opacity).toBe(project.name === 'pixel' ? '1' : '0');
+		await expect.poll(opacity).toBe('1');
 		await transcript.evaluate((node) => { node.scrollTop -= 100; });
 		await expect.poll(opacity).toBe('1');
 		const previous = nav.getByRole('button', { name: 'Previous message', exact: true });
@@ -74,12 +79,11 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await expect.poll(opacity).toBe('1');
 		await nav.getByRole('button', { name: 'Message 6 of 6: Prompt 6', exact: true }).click();
 		await page.getByRole('menuitemcheckbox', { name: '1. Prompt 1', exact: true }).click();
-		// The navigator floats over the transcript, so the first message tops out above its edge.
 		const first = () => expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(0);
 		await first();
 		await transcript.evaluate((node) => { node.scrollTop = 0; });
 		await first();
-		await expect.poll(opacity).toBe('0');
+		await expect.poll(opacity).toBe(floating ? '0' : '1');
 		await transcript.evaluate((node) => new Promise((resolve) => { node.addEventListener('scroll', resolve, { once: true }); node.scrollTop = 200; }));
 		await transcript.evaluate((node) => { node.scrollTop = 100; });
 		await expect.poll(opacity).toBe('1');
@@ -89,8 +93,8 @@ for (const agent of ['claude-code', 'codex'] as const) {
 		await expect(nav.getByRole('button', { name: 'Message 3 of 6: Prompt 3', exact: true })).toBeVisible();
 		await expect.poll(() => nav.evaluate((node) => {
 			const rect = node.getBoundingClientRect();
-			const panel = node.closest('.panel')!.getBoundingClientRect();
-			return rect.right <= panel.right && rect.top >= panel.top && rect.bottom <= panel.bottom;
+			const bounds = (node.closest('.panel') ?? node.closest('[role="presentation"]'))!.getBoundingClientRect();
+			return rect.right <= bounds.right && rect.top >= bounds.top && rect.bottom <= bounds.bottom;
 		})).toBe(true);
 		await message(3).getByRole('button', { name: 'Actions for message 3', exact: true }).click();
 		await page.getByRole('menuitem', { name: 'Rewind…', exact: true }).click();

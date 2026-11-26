@@ -249,6 +249,7 @@
 	}
 
 	.card .project {
+		--badge-ring: var(--surface-1);
 		gap: var(--space-3);
 		width: 100%;
 		height: auto;
@@ -259,6 +260,7 @@
 
 	.project:hover {
 		--tile-base: var(--hover);
+		--badge-ring: var(--hover);
 		background: var(--hover);
 		color: var(--color-fg);
 	}
@@ -275,7 +277,7 @@
 		position: absolute;
 		top: 22%;
 		bottom: 22%;
-		left: calc(-1 * var(--space-3) - (var(--square) - var(--target-min)) / 2);
+		left: calc(-1 * var(--space-4) - (var(--square) - var(--target-min)) / 2);
 		width: 4px;
 		border-radius: 0 4px 4px 0;
 		background: var(--color-fg);
@@ -293,6 +295,7 @@
 
 	.compact .project.focused {
 		--tile-base: var(--hover);
+		--badge-ring: var(--canvas);
 		border-color: var(--border-strong);
 		background: none;
 	}
@@ -302,7 +305,7 @@
 		position: absolute;
 		top: 22%;
 		bottom: 22%;
-		left: calc(-1 * var(--space-3) - var(--border-width));
+		left: calc(-1 * var(--space-4) - var(--border-width));
 		width: 4px;
 		border-radius: 0 4px 4px 0;
 		background: var(--color-fg);
@@ -330,6 +333,7 @@
 	}
 
 	.square {
+		--icon-pad: calc(var(--space-1) + 2 * var(--border-width));
 		position: relative;
 		display: grid;
 		flex: none;
@@ -376,13 +380,13 @@
 		display: grid;
 		place-items: center;
 		box-sizing: border-box;
-		min-width: 1.4em;
-		height: 1.4em;
-		border: var(--border-width) solid var(--canvas);
-		border-radius: 0.7em;
-		box-shadow: 0 0 0 var(--border-width) var(--canvas);
+		min-width: 1.35em;
+		height: 1.35em;
+		border: none;
+		border-radius: var(--radius-pill);
+		box-shadow: 0 0 0 calc(2 * var(--border-width)) var(--badge-ring, var(--canvas));
 		background: var(--surface-1);
-		font-size: calc(var(--font-size-sm) - 1px);
+		font-size: calc(var(--font-size-sm) - 2px);
 	}
 
 	.attention,
@@ -394,11 +398,11 @@
 	}
 
 	.attention {
-		top: calc(-1 * var(--space-1) / 2);
-		right: calc(-1 * var(--space-1) / 2);
+		top: calc(-1 * var(--space-1));
+		right: calc(-1 * var(--space-1));
 		min-width: 0;
-		width: var(--space-3);
-		height: var(--space-3);
+		width: calc(var(--space-2) + 2 * var(--border-width));
+		height: calc(var(--space-2) + 2 * var(--border-width));
 		padding: 0;
 		background: var(--status-waiting);
 	}
@@ -445,16 +449,16 @@
 		}
 	}
 
-	/* Centred on the corner, so it rides the tile's edge instead of the icon. */
 	.count {
 		z-index: 1;
-		bottom: calc(-0.7em - var(--border-width));
-		left: calc(-0.7em - var(--border-width));
+		bottom: calc(-1 * var(--space-1) - var(--border-width));
+		left: calc(-1 * var(--space-1) - var(--border-width));
+		border: var(--border-width) solid var(--border);
 		color: var(--muted-fg);
 	}
 
 	.compact:has(.count) {
-		margin-bottom: var(--space-2);
+		margin-bottom: var(--space-1);
 	}
 
 	.cloud {
