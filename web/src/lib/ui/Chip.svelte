@@ -91,8 +91,15 @@
 		border-color: var(--accent);
 	}
 
-	[aria-pressed='true'] {
-		border-color: var(--selected-border);
+	/* A toggle reads as off by its outline alone, so only the chosen ones carry a fill. */
+	[aria-pressed='false'] {
+		border-color: var(--border-strong);
+		background: none;
+		color: var(--muted-fg);
+	}
+
+	[aria-pressed='true'],
+	button[aria-pressed='true']:hover:not(:disabled) {
 		background: var(--selected-bg);
 		color: var(--color-fg);
 	}

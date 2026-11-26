@@ -12,6 +12,7 @@
 	import { form } from '#lib/form.ts';
 	import { painted } from '#lib/paint.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
+	import ButtonGroup from '#lib/ui/ButtonGroup.svelte';
 	import Caret from '#lib/ui/Caret.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -23,6 +24,7 @@
 	import SelectTrigger from '#lib/ui/SelectTrigger.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { onMount, type Component } from 'svelte';
+	import Archive from '~icons/ph/archive';
 	import CaretLeft from '~icons/ph/caret-left';
 	import FileText from '~icons/ph/file-text';
 	import GitBranch from '~icons/ph/git-branch';
@@ -358,26 +360,32 @@
 
 {#snippet runBar(epic: Epic)}
 	{@const live = epic.run}
+	{#snippet status()}
+		{#if live}<span class="segment">{@render liveLabel(live)}</span>{/if}
+	{/snippet}
+	{#snippet rigs()}
+		<Popover bind:open={open.showRun} label="Run settings" align="end" portal={false}>
+			{#snippet trigger(props)}
+				<span class="run-trigger"><SelectTrigger {...props} bare value={summary} aria-label="Run settings, {summary}" /></span>
+			{/snippet}
+			<div class="run-settings">{@render settings(epic)}</div>
+		</Popover>
+	{/snippet}
+	{#snippet toggle()}
+		{#if live?.paused}
+			<IconButton label="Resume" onclick={() => run({ kind: 'run.resumed' })}><Play /></IconButton>
+		{:else}
+			<IconButton label="Pause" onclick={() => run({ kind: 'run.paused', reason: 'david' })}><Pause /></IconButton>
+		{/if}
+	{/snippet}
+	{#snippet stop()}
+		<IconButton label="Stop" onclick={stopRun}><Stop /></IconButton>
+	{/snippet}
+	{#snippet start()}
+		<Button variant="ghost" disabled={!rig || epic.setup === null || open.savingRigs.length > 0} onclick={startRun}><Play /> Start Run</Button>
+	{/snippet}
 	<section class="run" aria-label="Run">
-		<div class="controls">
-			{#if live}{@render liveLabel(live)}{/if}
-			<Popover bind:open={open.showRun} label="Run settings" align="end" portal={false}>
-				{#snippet trigger(props)}
-					<span class="run-trigger"><SelectTrigger {...props} value={summary} aria-label="Run settings, {summary}" /></span>
-				{/snippet}
-				<div class="run-settings">{@render settings(epic)}</div>
-			</Popover>
-			{#if live}
-				{#if live.paused}
-					<IconButton label="Resume" onclick={() => run({ kind: 'run.resumed' })}><Play /></IconButton>
-				{:else}
-					<IconButton label="Pause" onclick={() => run({ kind: 'run.paused', reason: 'david' })}><Pause /></IconButton>
-				{/if}
-				<IconButton label="Stop" onclick={stopRun}><Stop /></IconButton>
-			{:else}
-				{@render startButton(epic)}
-			{/if}
-		</div>
+		<ButtonGroup segments={live ? [status, rigs, toggle, stop] : [rigs, start]} />
 		{@render runNotes(epic)}
 	</section>
 {/snippet}
@@ -418,7 +426,7 @@
 {#snippet compareButton(epic: Epic)}
 	{#if epic.integration && epic.base}
 		{@const target = epic.base}
-		<Button onclick={() => oncompare({ target, source: `stampede/${epic.slug}/epic` })}>Compare with base</Button>
+		<Button variant="outline" onclick={() => oncompare({ target, source: `stampede/${epic.slug}/epic` })}>Compare with base</Button>
 	{/if}
 {/snippet}
 
@@ -434,7 +442,7 @@
 			<div class="heading">
 				<h2>Integration Worktree</h2>
 				{#if epic.integration}
-					<Button onclick={() => epic.integration && device.send({ type: 'project.open', path: epic.integration })}>Open</Button>
+					<Button variant="outline" onclick={() => epic.integration && device.send({ type: 'project.open', path: epic.integration })}>Open</Button>
 				{/if}
 			</div>
 		{/if}
@@ -520,7 +528,7 @@
 			{#if !phone}
 				<div class="heading">
 					<h2>Brief</h2>
-					<Button onclick={() => edit('edit-brief', epic.brief)}>Edit</Button>
+					<Button variant="outline" onclick={() => edit('edit-brief', epic.brief)}>Edit</Button>
 				</div>
 			{/if}
 			{@render brief(epic)}
@@ -530,7 +538,7 @@
 			{#if !phone}
 				<div class="heading">
 					<h2>Setup Command</h2>
-					{#if setup === undefined}<Button onclick={() => editSetup(epic.setup)}>Edit</Button>{/if}
+					{#if setup === undefined}<Button variant="outline" onclick={() => editSetup(epic.setup)}>Edit</Button>{/if}
 				</div>
 			{/if}
 			{@render command(epic)}
@@ -554,10 +562,11 @@
 	{@const Mark = marks[ticket.status]}
 	{@const chat = chatOf(ticket)}
 	{@const after = pending(ticket)}
-	<ListItem element="button" size="md" aria-current={!phone && open.ticket === ticket.number ? 'true' : undefined} onclick={() => select(ticket.number)}>
+	{@const current = !phone && open.ticket === ticket.number}
+	<ListItem element="button" size="md" aria-current={current ? 'true' : undefined} onclick={() => select(ticket.number)}>
 		<span class="mark" style:color={tones[ticket.status]}><Mark /></span>
-		<span class="number">{ticket.number}</span>
-		<span class="row-title" class:resolved={resolved(ticket.status)}>{ticket.title}</span>
+		<span class="number" class:current>{ticket.number}</span>
+		<span class="row-title" class:resolved={resolved(ticket.status) && !current}>{ticket.title}</span>
 		<span class="label" class:shown={ticket.status === 'merging'} style:color={tones[ticket.status]}>{label(ticket.status)}</span>
 		{#if ticket.attention}
 			<span class="row-meta flagged">needs attention</span>
@@ -587,7 +596,7 @@
 	<section aria-label="Tickets" class="tickets">
 		{#each groups as group (group.name)}
 			{#if group.tickets.length}
-				<h3 class="group">{group.name}<span class="count">{group.tickets.length}</span></h3>
+				<h3 class="group"><span class="slot"></span>{group.name}<span class="count">{group.tickets.length}</span></h3>
 				{#each group.tickets as ticket (ticket.number)}{@render row(ticket)}{/each}
 			{/if}
 		{/each}
@@ -600,9 +609,15 @@
 			{/if}
 		{/if}
 		{#if !tickets.length}<p class="unset">No Tickets yet.</p>{/if}
-		<button class="add" onclick={() => edit('new-ticket', '')}><Plus /> Add a Ticket</button>
+		<div class="quiet add">
+			<ListItem element="button" size="md" onclick={() => edit('new-ticket', '')}><span class="icon"><Plus /></span>Add a Ticket</ListItem>
+		</div>
 	</section>
-	{#if !epic.archived}<button class="archive" onclick={() => ((error = undefined), (archiving = true))}>Archive Epic</button>{/if}
+	{#if !epic.archived}
+		<footer class="quiet foot">
+			<ListItem element="button" size="md" onclick={() => ((error = undefined), (archiving = true))}><span class="icon"><Archive /></span>Archive Epic</ListItem>
+		</footer>
+	{/if}
 {/snippet}
 
 <div class="epic" class:phone role="tabpanel" aria-label={open.name} hidden={!active}>
@@ -676,8 +691,10 @@
 			</div>
 			{@render progress()}
 			{@render runBar(epic)}
-			{@render compareButton(epic)}
-			{@render landButton(epic)}
+			<div class="actions">
+				{@render compareButton(epic)}
+				{@render landButton(epic)}
+			</div>
 		</header>
 		<div class="split">
 			<div class="list">{@render list(epic)}</div>
@@ -906,9 +923,17 @@
 		max-width: 100%;
 	}
 
-	.bar .run {
-		padding-left: var(--space-6);
-		border-left: var(--border-width) solid var(--border);
+	.bar .actions {
+		display: flex;
+		gap: var(--space-2);
+		margin-left: auto;
+	}
+
+	.segment {
+		display: flex;
+		align-items: center;
+		align-self: stretch;
+		padding: 0 var(--space-3);
 	}
 
 	.controls {
@@ -924,7 +949,7 @@
 		align-items: center;
 		gap: var(--space-2);
 		font-size: var(--font-size-sm);
-		font-weight: 600;
+		font-weight: 500;
 	}
 
 	.live::before {
@@ -1009,7 +1034,7 @@
 		min-height: 0;
 		overflow: auto;
 		padding: var(--space-3) var(--space-2);
-		border-right: var(--border-width) solid var(--border);
+		background: var(--chrome);
 	}
 
 	.pane {
@@ -1056,6 +1081,10 @@
 		font-family: var(--font-mono);
 		font-size: var(--font-size-sm);
 		font-variant-numeric: tabular-nums;
+	}
+
+	.number.current {
+		color: var(--color-fg);
 	}
 
 	.meta {
@@ -1111,16 +1140,30 @@
 		align-items: center;
 		gap: var(--space-2);
 		margin: 0;
-		padding: var(--space-4) var(--space-3) var(--space-1);
-		color: var(--muted-fg);
+		padding: var(--space-6) var(--space-3) var(--space-1);
+		color: color-mix(in oklab, var(--muted-fg), var(--color-fg) 40%);
 		font-size: var(--font-size-sm);
 		font-weight: 600;
+	}
+
+	/* Holds the mark column, so every heading starts where the rows' numbers do. */
+	.slot,
+	.fold > :global(.caret) {
+		display: flex;
+		flex: none;
+		justify-content: center;
+		width: calc(1.2 * var(--font-size-md));
+		margin-right: calc(var(--space-3) - var(--space-2));
 	}
 
 	.count {
 		color: color-mix(in oklab, var(--muted-fg) 70%, var(--color-bg));
 		font-family: var(--font-mono);
 		font-weight: 400;
+	}
+
+	.tickets > .group:first-child {
+		padding-top: var(--space-3);
 	}
 
 	.fold {
@@ -1131,51 +1174,32 @@
 		cursor: pointer;
 	}
 
-
-
 	.tickets > .unset {
 		padding: var(--space-3);
 	}
 
-	.add,
-	.archive {
-		display: flex;
-		align-items: center;
-		gap: var(--space-3);
-		min-height: calc(var(--target-min) + var(--space-2));
-		padding: 0 var(--space-3);
-		border: none;
-		border-radius: var(--radius-md);
-		background: none;
+	.quiet {
 		color: var(--muted-fg);
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
+	}
+
+	.quiet :global(.item:hover) {
+		color: var(--color-fg);
 	}
 
 	.add {
 		margin-top: var(--space-2);
 	}
 
-	.archive {
-		align-self: flex-start;
-		margin-top: auto;
-		padding-top: var(--space-6);
-		font-size: var(--font-size-sm);
+	.foot {
+		position: sticky;
+		bottom: calc(-1 * var(--space-3));
+		margin: auto calc(-1 * var(--space-2)) calc(-1 * var(--space-3));
+		padding: var(--space-2);
+		border-top: var(--border-width) solid var(--border);
+		background: var(--chrome);
 	}
 
-	.add:hover,
-	.archive:hover {
-		color: var(--color-fg);
-	}
-
-	.add:hover {
-		background: var(--hover);
-	}
-
-	.fold:focus-visible,
-	.add:focus-visible,
-	.archive:focus-visible {
+	.fold:focus-visible {
 		outline: var(--focus-ring);
 		outline-offset: var(--focus-inset);
 	}
@@ -1334,9 +1358,16 @@
 	}
 
 	.entry {
-		padding-left: var(--space-3);
-		border-left: 2px solid var(--border);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		padding-left: var(--space-2);
+		border-left: var(--border-width) solid var(--border-strong);
 		font-size: var(--font-size-sm);
+	}
+
+	.entry .meta {
+		color: color-mix(in oklab, var(--muted-fg) 80%, transparent);
 	}
 
 	.entry p {
@@ -1415,13 +1446,11 @@
 
 
 
-	.phone .group {
-		padding-left: var(--space-1);
-	}
-
-	.phone .archive {
-		align-self: stretch;
-		justify-content: center;
+	.phone .foot {
+		position: static;
+		margin: var(--space-6) 0 0;
+		padding: var(--space-2) 0 0;
+		background: none;
 	}
 
 	.phone .page {

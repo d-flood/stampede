@@ -4,12 +4,12 @@
 	import CaretDown from '~icons/ph/caret-down-bold';
 	import CaretRight from '~icons/ph/caret-right-bold';
 
-	type Props = HTMLButtonAttributes & { value: string; leading?: Snippet; caret?: 'down' | 'right' };
+	type Props = HTMLButtonAttributes & { value: string; leading?: Snippet; caret?: 'down' | 'right'; bare?: boolean };
 
-	let { value, leading, caret = 'down', ...rest }: Props = $props();
+	let { value, leading, caret = 'down', bare = false, ...rest }: Props = $props();
 </script>
 
-<button type="button" {...rest}>
+<button type="button" class:bare {...rest}>
 	{@render leading?.()}
 	<span class="value">{value}</span>
 	{#if caret === 'right'}<CaretRight />{:else}<CaretDown />{/if}
@@ -37,6 +37,16 @@
 
 	button:hover:not(:disabled) {
 		border-color: color-mix(in oklab, var(--accent) 60%, var(--border-strong));
+	}
+
+	.bare {
+		border-color: transparent;
+		background: none;
+	}
+
+	.bare:hover:not(:disabled) {
+		border-color: transparent;
+		background: var(--hover);
 	}
 
 	button:focus-visible {

@@ -121,6 +121,7 @@
 	--measure: 760px;
 	--font-size-base: var(--ui-size, 13px);
 	--font-size-chat: var(--chat-size, 15px);
+	--font-size-chat-sm: calc(var(--font-size-chat) - 1px);
 	--font-size-code: var(--code-size, 13px);
 	--font-size-sm: calc(var(--font-size-base) - 1px);
 	--font-size-md: var(--font-size-base);

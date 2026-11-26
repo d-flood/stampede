@@ -85,7 +85,7 @@
 </script>
 
 {#snippet move()}
-	<Button disabled={reopening || ticket.releasing} onclick={() => reopen()}>Move to not started</Button>
+	<Button variant="outline" disabled={reopening || ticket.releasing} onclick={() => reopen()}>Move to not started</Button>
 {/snippet}
 
 {#snippet start()}
@@ -99,7 +99,7 @@
 {/snippet}
 
 {#snippet openChat(chat: Chat, primary: boolean)}
-	<Button variant={primary ? 'primary' : 'default'} onclick={() => onchat(chat.id)}><ChatCircle /> Open Chat</Button>
+	<Button variant={primary ? 'primary' : 'outline'} onclick={() => onchat(chat.id)}><ChatCircle /> Open Chat</Button>
 {/snippet}
 
 {#snippet ref(other: Ticket)}
@@ -112,18 +112,20 @@
 {/snippet}
 
 <article class="ticket" class:phone aria-label="{epic.slug}/{ticket.number}">
-	{#if !phone}<p class="crumb">{epic.slug}/{ticket.number}</p>{/if}
-	<h2>{ticket.title}</h2>
 	<div class="state">
+		{#if !phone}<span class="crumb">{epic.slug}/{ticket.number}</span>{/if}
 		<span class="status" style:--tone={tones[ticket.status]}><Mark />{label(ticket.status)}</span>
 		{#if held}
 			<span class="holder">{held.rig}, <span style:color={chat ? `var(--status-${chat.status})` : undefined}>{chatStatus}</span></span>
 		{/if}
 		{#if edited}<span class="edited">edited since its Chat started</span>{/if}
+	</div>
+	<div class="top">
+		<h2>{ticket.title}</h2>
 		{#if !phone}
 			<span class="actions">
 				{#if chat}{@render openChat(chat, chat.status === 'waiting')}{/if}
-				<Button onclick={onedit}>Edit</Button>
+				<Button variant="outline" onclick={onedit}>Edit</Button>
 				{#if reopenable}{@render move()}{/if}
 				{#if startable}{@render start()}{/if}
 			</span>
@@ -158,7 +160,7 @@
 					{#if changing}
 						<Blockers tickets={others} blockers={ticket.blockers} ontoggle={block} />
 					{:else}
-						{#each blockedBy as other (other.number)}{@render ref(other)}{:else}<p>None</p>{/each}
+						{#each blockedBy as other (other.number)}{@render ref(other)}{:else}<p class="value none">None</p>{/each}
 					{/if}
 					{#if refused}<p class="error" role="alert">{refused}</p>{/if}
 				</section>
@@ -179,7 +181,7 @@
 			<section aria-label="Body">
 				<Text item={{ kind: 'text', text: ticket.body, streaming: false, phase: 'final' }} />
 			</section>
-			<section aria-label="Notes">
+			<section class="notes" aria-label="Notes">
 				<h3>Notes</h3>
 				{#each ticket.notes as note, index (index)}
 					<div class="note">
@@ -189,7 +191,7 @@
 				{:else}
 					<p>No Notes yet.</p>
 				{/each}
-				<form onsubmit={add}>
+				<form class="add" onsubmit={add}>
 					<TextField bind:value={draft} aria-label="Add a Note" placeholder="Add a Note…" enterkeyhint="send" autocomplete="off" readonly={adding} />
 				</form>
 				{#if unsaved}<p class="error" role="alert">{unsaved}</p>{/if}
@@ -230,7 +232,6 @@
 	.crumb {
 		color: var(--muted-fg);
 		font-family: var(--font-mono);
-		font-size: var(--font-size-sm);
 	}
 
 	h2 {
@@ -240,18 +241,23 @@
 		line-height: 1.25;
 	}
 
-	.crumb + h2 {
-		margin-top: calc(-1 * var(--space-2));
-	}
-
 	.state {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--space-2) var(--space-3);
+		font-size: var(--font-size-sm);
+	}
+
+	.top {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: var(--space-3) var(--space-6);
+		margin-top: calc(-1 * var(--space-1));
 		padding-bottom: var(--space-4);
 		border-bottom: var(--border-width) solid var(--border);
-		font-size: var(--font-size-sm);
 	}
 
 	.status {
@@ -281,7 +287,6 @@
 		flex-wrap: wrap;
 		gap: var(--space-2);
 		margin-left: auto;
-		font-size: var(--font-size-md);
 	}
 
 	.attention {
@@ -386,18 +391,42 @@
 	}
 
 	.value {
+		display: flex;
+		align-items: center;
+		min-height: var(--control-min);
 		color: var(--color-fg);
 		font-size: var(--font-size-sm);
 	}
 
+	.value.none {
+		color: var(--muted-fg);
+	}
+
+	.notes {
+		gap: var(--space-4);
+	}
+
+	.notes h3 {
+		margin-bottom: calc(-1 * var(--space-2));
+	}
+
+	/* Rule and padding match the field's border and padding, so Note text and typed text share a column. */
 	.note {
-		padding-left: var(--space-3);
-		border-left: 2px solid var(--border);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		padding-left: var(--space-2);
+		border-left: var(--border-width) solid var(--border-strong);
+		--font-size-chat: var(--font-size-chat-sm);
 	}
 
 	.meta {
-		color: var(--muted-fg);
+		color: color-mix(in oklab, var(--muted-fg) 80%, transparent);
 		font-size: var(--font-size-sm);
+	}
+
+	.add {
+		margin-top: calc(var(--space-6) - var(--space-4));
 	}
 
 	p {
@@ -442,7 +471,7 @@
 		font-size: 1.25em;
 	}
 
-	.phone .state {
+	.phone .top {
 		padding-bottom: var(--space-3);
 	}
 

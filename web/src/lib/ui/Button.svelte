@@ -4,7 +4,7 @@
 	import { mergeProps } from 'bits-ui';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	type Props = HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'ghost' | 'danger' | 'link'; size?: 'sm' | 'lg'; round?: boolean; tip?: string; busy?: boolean };
+	type Props = HTMLButtonAttributes & { variant?: 'default' | 'primary' | 'outline' | 'ghost' | 'danger' | 'link'; size?: 'sm' | 'lg'; round?: boolean; tip?: string; busy?: boolean };
 
 	let { variant = 'default', size, round = false, tip, busy, children: content, ...rest }: Props = $props();
 </script>
@@ -96,6 +96,19 @@
 		background: var(--fill);
 		color: var(--color-bg);
 		opacity: 0.4;
+	}
+
+	.outline {
+		border-color: var(--border-strong);
+		background: none;
+	}
+
+	.outline:hover:not(:disabled) {
+		background: var(--hover);
+	}
+
+	.outline:disabled {
+		background: none;
 	}
 
 	.ghost {
