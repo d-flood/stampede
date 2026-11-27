@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use super::{
     AgentCommand, Answer, Builtin, CLOSING, Capabilities, Chat, Choice, ChoiceDescription, CommandStatus,
-    Cache, Context, Driver, Event, Image, Item, Lapse, Notice, Outcome, Phase, Question, Request, RequestKind, Session,
+    Cache, Context, Driver, Event, Image, Item, Lapse, Notice, Outcome, Phase, Question, Request, RequestKind, NativeSession,
     Settings, Status, Subagent, Tokens, ToolCall, ToolKind, html, relative, unified, words, HOUR,
 };
 use crate::{config::{Agent, AgentSettings}, usage::{Consumption, Reading, Unit, Window}};
@@ -241,13 +241,13 @@ async fn recorded_costs(client: &Client) -> io::Result<Vec<Reading>> {
     Ok(readings)
 }
 
-pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
+pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<NativeSession>> {
     let mut connection = Connection::open(cwd, env).await?;
     let filter = SessionListFilter { working_directory: Some(cwd.display().to_string()), ..Default::default() };
     let result = rpc(connection.client.list_sessions(Some(filter))).await.map(|sessions| sessions.into_iter().filter_map(|session| {
         if session.is_remote { return None; }
         let title = session.summary.as_deref().filter(|title| !title.is_empty())?;
-        Some(Session::new(Agent::Copilot, session.session_id.as_str(), title, super::epoch_ms(&session.modified_time)?))
+        Some(NativeSession::new(session.session_id.as_str(), title, super::epoch_ms(&session.modified_time)?))
     }).collect());
     connection.close().await;
     result
@@ -1261,7 +1261,7 @@ mod tests {
         let env = BTreeMap::from([("COPILOT_CLI_PATH".to_owned(), script.display().to_string())]);
         let chat = Chat {
             id: "early".to_owned(), project_id: "p".to_owned(), rig: "Argon".to_owned(), agent: Agent::Copilot,
-            cwd: root.path().to_owned(), created: 0, agent_session: None, title: None, resume_at: None,
+            cwd: root.path().to_owned(), created: 0, agent_session: None, session_store: String::new(), title: None, resume_at: None,
             plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
             running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
             queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),

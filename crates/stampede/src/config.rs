@@ -142,7 +142,7 @@ pub struct Rig {
 }
 
 impl Rig {
-    fn starter(agent: Agent) -> Self {
+    pub(crate) fn starter(agent: Agent) -> Self {
         let (name, mode) = match agent {
             Agent::ClaudeCode => ("Claude Code", "auto"),
             Agent::Codex => ("Codex", "approve-for-me"),
@@ -241,7 +241,7 @@ pub fn codex_policy(mode: &str) -> Option<(&'static str, &'static str, &'static 
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum Agent {
     ClaudeCode,

@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use super::{
     AgentCommand, Answer, Builtin, CLOSING, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Image, Item,
-    Notice, Phase, Request, RequestKind, Session, Settings, Status, Tokens, ToolCall, ToolKind, delegation, html, questions,
+    Notice, Phase, Request, RequestKind, NativeSession, Settings, Status, Tokens, ToolCall, ToolKind, delegation, html, questions,
     relative, shell, terminal_tools, unified, words,
 };
 use crate::{
@@ -218,7 +218,7 @@ pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &Agen
 }
 
 /// Lists the conversations agy kept for `cwd`; agy lists every directory's, whatever `cwd` asks for.
-pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
+pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<NativeSession>> {
     let mut connection = Connection::open(cwd, env, false).await?;
     let result = async {
         let mut sessions = Vec::new();
@@ -228,7 +228,7 @@ pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<
             for session in page["sessions"].as_array().into_iter().flatten() {
                 if session["cwd"].as_str().map(Path::new) != Some(cwd) { continue; }
                 let (Some(id), Some(title), Some(updated)) = (session["sessionId"].as_str(), session["title"].as_str().filter(|title| !title.is_empty()), session["updatedAt"].as_str().and_then(super::epoch_ms)) else { continue };
-                sessions.push(Session::new(Agent::Antigravity, id, title, updated));
+                sessions.push(NativeSession::new(id, title, updated));
             }
             if page["nextCursor"].is_null() { return Ok(sessions); }
             params["cursor"] = page["nextCursor"].take();
@@ -1344,7 +1344,7 @@ for line in sys.stdin:
 
         let chat = |id: &str| Chat {
             id: id.to_owned(), project_id: "p".to_owned(), rig: "Neon".to_owned(), agent: Agent::Antigravity,
-            cwd: root.path().to_owned(), created: 0, agent_session: None, title: None, resume_at: None,
+            cwd: root.path().to_owned(), created: 0, agent_session: None, session_store: String::new(), title: None, resume_at: None,
             plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
             running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
             queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),

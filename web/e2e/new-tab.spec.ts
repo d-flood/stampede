@@ -7,13 +7,17 @@ test('New Tab shows session loading and fits the loaded sessions', async ({ page
 	const phone = project.name === 'pixel';
 	const item = phone ? 'button' : 'menuitem';
 	let release: (() => void) | undefined;
+	let requests = 0;
+	page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {
+		if (typeof payload === 'string' && JSON.parse(payload).type === 'sessions.list') requests++;
+	}));
 	await page.routeWebSocket('**/ws', (socket) => {
 		const server = socket.connectToServer();
 		server.onMessage((message) => {
 			if (typeof message === 'string') {
 				const data = JSON.parse(message);
 				if (data.type === 'sessions.listed') {
-					release = () => socket.send(JSON.stringify({ ...data, sessions: [{ agent: 'codex', sessionId: 'past-session', title: 'Continue investigating the manuscript transcription workflow', updatedAt: Date.now() }] }));
+					release = () => socket.send(JSON.stringify({ ...data, sessions: [{ key: { agent: 'codex', store: '/codex', sessionId: 'past-session' }, project: { id: data.projectId, path: '/project' }, title: 'Continue investigating the manuscript transcription workflow', updatedAt: Date.now() }] }));
 					return;
 				}
 			}
@@ -26,6 +30,7 @@ test('New Tab shows session loading and fits the loaded sessions', async ({ page
 	await expect(menu.getByRole('status')).toHaveText('Reading sessions…');
 	await expect(menu.getByRole(item, { name: 'Terminal', exact: true })).toBeEnabled();
 	await expect.poll(() => release !== undefined).toBe(true);
+	expect(requests).toBe(1);
 	release!();
 	await expect(menu.getByRole('status')).toHaveCount(0);
 	await expect(menu.getByRole(phone ? 'option' : 'menuitem', { name: /Continue investigating/ })).toBeVisible();
@@ -56,7 +61,7 @@ test('the Launchpad offers the New Tab items and comes back focused when the las
 		server.onMessage((message) => {
 			if (typeof message === 'string' && JSON.parse(message).type === 'sessions.listed') {
 				const data = JSON.parse(message);
-				socket.send(JSON.stringify({ ...data, sessions: [{ agent: 'codex', sessionId: 'past-session', title: 'Continue the collation', updatedAt: Date.now() }] }));
+				socket.send(JSON.stringify({ ...data, sessions: [{ key: { agent: 'codex', store: '/codex', sessionId: 'past-session' }, project: { id: data.projectId, path: '/project' }, title: 'Continue the collation', updatedAt: Date.now() }] }));
 				return;
 			}
 			socket.send(message);

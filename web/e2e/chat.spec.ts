@@ -2,7 +2,7 @@ import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { Locator, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { closePinned, closeProject, expectCurrent, expectSelected, expectShown, newTab, openProject, pinned, openNewTab, closeSheet, showProjects, showSidebar, showTab, tabCount } from './shell.ts';
 
@@ -635,7 +635,7 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 	mkdirSync(sessions, { recursive: true });
 	const session = '9afa077a-3173-4e49-9197-7ed54344b24e';
 	const fixture = new URL(`../../crates/stampede/tests/fixtures/chats/claude-code/sessions/${session}.jsonl`, import.meta.url);
-	copyFileSync(fileURLToPath(fixture), `${sessions}/${session}.jsonl`);
+	writeFileSync(`${sessions}/${session}.jsonl`, readFileSync(fileURLToPath(fixture), 'utf8').replaceAll('/tmp/stampede-chat', path));
 	appendFileSync(`${sessions}/${session}.jsonl`, `\n${JSON.stringify({ type: 'custom-title', customTitle: 'Palette study' })}\n`);
 	utimesSync(`${sessions}/${session}.jsonl`, new Date(), new Date());
 	await openProject(page, name);

@@ -9,6 +9,7 @@ mod html;
 mod protocol;
 mod questions;
 mod shell;
+pub(crate) mod sessions;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -785,6 +786,8 @@ pub struct Chat {
     pub created: u128,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<String>,
+    #[serde(default)]
+    pub session_store: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -849,39 +852,18 @@ pub enum Duty {
     Remediator,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Session {
-    pub agent: Agent,
+const SESSION_TITLE: usize = 200;
+
+pub struct NativeSession {
     pub session_id: String,
     pub title: String,
     pub updated_at: u64,
 }
 
-const SESSION_TITLE: usize = 200;
-
-impl Session {
-    fn new(agent: Agent, session_id: &str, title: &str, updated_at: u64) -> Self {
-        let title = title.chars().take(SESSION_TITLE).collect();
-        Self { agent, session_id: session_id.to_owned(), title, updated_at }
+impl NativeSession {
+    fn new(session_id: &str, title: &str, updated_at: u64) -> Self {
+        Self { session_id: session_id.to_owned(), title: title.chars().take(SESSION_TITLE).collect(), updated_at }
     }
-}
-
-pub async fn sessions(cwd: &Path, claude: &Rig, codex: &Rig, copilot: &Rig, antigravity: &Rig) -> Vec<Session> {
-    let mut sessions = Vec::new();
-    for (agent, listed) in [
-        (Agent::ClaudeCode, claude::sessions(cwd, &claude.env)),
-        (Agent::Codex, codex::sessions(cwd, &codex.env).await),
-        (Agent::Copilot, copilot::sessions(cwd, &copilot.env).await),
-        (Agent::Antigravity, antigravity::sessions(cwd, &antigravity.env).await),
-    ] {
-        match listed {
-            Ok(listed) => sessions.extend(listed),
-            Err(error) => eprintln!("cannot list {} sessions: {error}", agent.name()),
-        }
-    }
-    sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
-    sessions
 }
 
 /// What closing a Chat stops besides its Agent.
@@ -1013,6 +995,14 @@ impl Chats {
         self.lifecycle.subscribe()
     }
 
+    pub fn session_keys(&self) -> HashSet<sessions::SessionKey> {
+        self.chats.lock().unwrap().iter().filter_map(|entry| entry.chat.lock().unwrap().session_key()).collect()
+    }
+
+    pub fn session_chat(&self, id: &str) -> Option<Chat> {
+        self.get(id).map(|entry| entry.chat.lock().unwrap().clone())
+    }
+
     pub fn list(&self) -> Vec<Chat> {
         self.chats.lock().unwrap().iter().map(|entry| entry.chat.lock().unwrap().clone()).filter(|chat| chat.parent.is_none()).collect()
     }
@@ -1071,7 +1061,9 @@ impl Chats {
         if self.cloud.is_some() && !matches!(rig.agent, Agent::ClaudeCode | Agent::Codex) {
             return Err(io::Error::other("A Cloud Host runs only Claude Code and Codex."));
         }
-        if session.is_some() && self.chats.lock().unwrap().iter().any(|entry| entry.chat.lock().unwrap().agent_session.as_deref() == session) {
+        let cloned = rig.clone();
+        let session_store = tokio::task::spawn_blocking(move || sessions::store(cloned.agent, &cloned.env)).await.map_err(io::Error::other)?;
+        if session.is_some_and(|session_id| self.session_keys().contains(&sessions::SessionKey { agent: rig.agent, store: session_store.clone(), session_id: session_id.to_owned() })) {
             return Err(io::Error::other("Another Chat is still running that conversation."));
         }
         let (handoff_from, draft) = match handoff {
@@ -1086,6 +1078,7 @@ impl Chats {
             cwd: cwd.to_owned(),
             created: SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_nanos(),
             agent_session: session.map(str::to_owned),
+            session_store,
             title: None,
             resume_at: None,
             plan_resolved: None,
@@ -1114,7 +1107,9 @@ impl Chats {
             disabled_tools: rig.disabled_tools.clone(),
         };
         fs::create_dir_all(self.data_dir.join("chats"))?;
-        let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, cwd, &rig.env).await?;
+        let mut env = rig.env.clone();
+        sessions::apply_store(rig.agent, &chat.session_store, &mut env);
+        let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, cwd, &env).await?;
         write_record(&self.data_dir, &chat)?;
         let started = match rig.agent {
             Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen, session, self.cloud.is_some())
@@ -1157,8 +1152,14 @@ impl Chats {
             }
         }
         chats.sort_by_key(|chat| chat.created);
-        for chat in chats {
-            let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
+        for mut chat in chats {
+            let mut env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
+            if chat.session_store.is_empty() {
+                let (agent, cloned) = (chat.agent, env.clone());
+                chat.session_store = tokio::task::spawn_blocking(move || sessions::store(agent, &cloned)).await.map_err(io::Error::other)?;
+                write_record(&self.data_dir, &chat)?;
+            }
+            sessions::apply_store(chat.agent, &chat.session_store, &mut env);
             let storage = match crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, &chat.cwd, &env).await {
                 Ok(storage) => storage,
                 Err(error) => { eprintln!("cannot restore storage for chat {}: {error}", chat.id); continue }
@@ -1255,7 +1256,8 @@ impl Chats {
     }
 
     pub async fn reopen(self: &Arc<Self>, chat: Chat, rigs: &[Rig]) -> io::Result<Chat> {
-        let env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
+        let mut env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
+        sessions::apply_store(chat.agent, &chat.session_store, &mut env);
         let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, &chat.cwd, &env).await?;
         self.open(chat, storage).await
     }
@@ -1278,7 +1280,8 @@ impl Chats {
             .ok_or_else(|| io::Error::other("This message has no checkpoint to fork from. Choose another user message."))?;
         let source = entry.chat.lock().unwrap().clone();
         let session = source.agent_session.clone().ok_or_else(|| io::Error::other("The Chat has no conversation to fork yet."))?;
-        let env = rigs.iter().find(|rig| rig.name == source.rig).map(|rig| rig.env.clone()).unwrap_or_default();
+        let mut env = rigs.iter().find(|rig| rig.name == source.rig).map(|rig| rig.env.clone()).unwrap_or_default();
+        sessions::apply_store(source.agent, &source.session_store, &mut env);
         let mut chat = Chat {
             id: format!("{:016x}", Uuid::new_v4().as_u64_pair().1),
             created: SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_nanos(),
@@ -2053,6 +2056,10 @@ pub async fn usage(rig: &Rig) -> io::Result<Snapshot> {
 }
 
 impl Chat {
+    pub fn session_key(&self) -> Option<sessions::SessionKey> {
+        Some(sessions::SessionKey { agent: self.agent, store: self.session_store.clone(), session_id: self.agent_session.clone()? })
+    }
+
     fn needs_attention(&self) -> bool {
         !self.closing && match self.status {
             Status::Waiting => true,

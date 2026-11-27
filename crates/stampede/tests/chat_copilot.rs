@@ -391,9 +391,14 @@ async fn copilot_lists_models_and_saved_sessions() {
     assert_eq!(response["models"][0]["efforts"], json!(["low", "medium", "high"]));
     assert_eq!(response["settings"]["model"], "claude-sonnet-4.6");
     control(&mut socket, json!({ "type": "sessions.list", "projectId": chat["projectId"] })).await;
-    let sessions = timeout(Duration::from_secs(15), next_control(&mut socket, "sessions.listed")).await.unwrap()["sessions"].clone();
-    let saved = sessions.as_array().unwrap().iter().find(|session| session["agent"] == "copilot").unwrap();
-    assert_eq!(saved["sessionId"], "saved-copilot-session");
+    let sessions = timeout(Duration::from_secs(15), async {
+        loop {
+            let listed = next_control(&mut socket, "sessions.listed").await["sessions"].clone();
+            if listed.as_array().unwrap().iter().any(|row| row["key"]["agent"] == "copilot") { break listed; }
+        }
+    }).await.unwrap();
+    let saved = sessions.as_array().unwrap().iter().find(|session| session["key"]["agent"] == "copilot").unwrap();
+    assert_eq!(saved["key"]["sessionId"], "saved-copilot-session");
     assert_eq!(saved["title"], "A saved Copilot conversation");
     assert_eq!(saved["updatedAt"], 1792411200000_u64);
     close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;

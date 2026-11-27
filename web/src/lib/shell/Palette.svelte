@@ -106,9 +106,9 @@
 		{
 			heading: 'Sessions',
 			entries: find(scope === 'sessions' && focused ? sessions[focused.id] ?? [] : [], (session) => session.title).map((session) => ({
-				value: `session:${session.sessionId}`,
+				value: `session:${session.key.agent}:${session.key.store}:${session.key.sessionId}`,
 				label: session.title,
-				icon: logos[session.agent],
+				icon: logos[session.key.agent],
 				hint: ago(session.updatedAt),
 				onselect: () => focused && onsession(focused.id, session)
 			}))
@@ -190,8 +190,8 @@
 							<Command.Group class="group">
 								{@render heading('Recent sessions')}
 								<Command.GroupItems>
-									{#each past as { session, projectId } (`${projectId}:${session.agent}:${session.sessionId}`)}
-										<ChatItem value="session:{projectId}:{session.agent}:{session.sessionId}" agent={session.agent} title={session.title} time={session.updatedAt} project={labels.get(projectId)} onselect={() => onsession(projectId, session)} />
+									{#each past as { session, projectId } (`${projectId}:${session.key.agent}:${session.key.store}:${session.key.sessionId}`)}
+										<ChatItem value="session:{projectId}:{session.key.agent}:{session.key.store}:{session.key.sessionId}" agent={session.key.agent} title={session.title} time={session.updatedAt} project={labels.get(projectId)} onselect={() => onsession(projectId, session)} />
 									{/each}
 								</Command.GroupItems>
 							</Command.Group>

@@ -8,7 +8,7 @@ const chat = (id: string, status: Chat['status'], title: string): Chat => ({
 	id, projectId: 'p', rig: 'Claude', agent: 'claude-code', status, created: Date.now() * 1e6, title,
 	context: null, tokens: null, queued: [], queueRevision: 0, todos: [], answeredQuestions: [], settings: {}
 });
-const sessions: Session[] = [{ agent: 'claude-code', sessionId: 's', title: 'Past work', updatedAt: Date.now() }];
+const sessions: Session[] = [{ key: { agent: 'claude-code', store: '/claude', sessionId: 's' }, project: { id: 'p', path: '/project' }, title: 'Past work', updatedAt: Date.now() }];
 
 test('the Chats list leads with waiting Chats, then running, then the rest, and its button carries a dot only while one waits', async () => {
 	const chats = [chat('a', 'done', 'Viewed'), chat('b', 'working', 'Busy'), chat('c', 'done', 'Unseen'), chat('d', 'waiting', 'Blocked')];
