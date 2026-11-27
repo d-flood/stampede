@@ -41,7 +41,9 @@ export const test = base.extend<{ starterRigs: boolean }, { projectTemplate: str
 		const root = mkdtempSync(join(parent, 'test-'));
 		try {
 			cpSync(projectTemplate, root, { recursive: true });
-			writeFileSync(join(root, 'config.toml'), readFileSync(join(root, 'config.toml'), 'utf8').replaceAll(projectTemplate, root));
+			for (const file of ['config.toml', 'codex-threads.json']) {
+				writeFileSync(join(root, file), readFileSync(join(root, file), 'utf8').replaceAll(projectTemplate, root));
+			}
 			const port = String(await unusedPort());
 			if (starterRigs) writeFileSync(join(root, 'config.toml'), `roots = [${JSON.stringify(join(root, 'projects'))}]\n`);
 			process.env.STAMPEDE_E2E_ROOT = root;

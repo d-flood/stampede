@@ -347,7 +347,7 @@ impl Sessions {
                 let mut rigs = BTreeMap::new();
                 for agent in Agent::ALL {
                     if cloud && !matches!(agent, Agent::ClaudeCode | Agent::Codex) { continue; }
-                    if agent == Agent::ClaudeCode {
+                    if matches!(agent, Agent::ClaudeCode | Agent::Codex) {
                         for rig in config.rigs.iter().filter(|rig| rig.agent == agent).cloned().chain([Rig::starter(agent)]) {
                             rigs.entry((agent, store(agent, &rig.env))).or_insert(rig);
                         }
@@ -360,6 +360,12 @@ impl Sessions {
             }).await else { return };
             if startup {
                 for agent in Agent::ALL {
+                    if agent == Agent::Codex {
+                        for (key, rig) in rigs.iter().filter(|(key, _)| key.0 == agent) {
+                            let _ = service.queue(key.clone(), rig.clone(), None);
+                        }
+                        continue;
+                    }
                     let service = service.clone();
                     let stores: Vec<_> = rigs.iter().filter(|(key, _)| key.0 == agent).map(|(key, rig)| (key.clone(), rig.clone())).collect();
                     tokio::spawn(async move {
@@ -434,7 +440,7 @@ impl Sessions {
         }))
     }
 
-    async fn scan(&self, key: Store, rig: Rig, chat: Option<Chat>) -> io::Result<bool> {
+    async fn scan(self: &Arc<Self>, key: Store, rig: Rig, chat: Option<Chat>) -> io::Result<bool> {
         let projects = self.projects.list();
         let epics = self.epics.clone();
         let dir = self.dir.clone();
@@ -443,6 +449,16 @@ impl Sessions {
         let filter = target.clone();
         // Wait behind Project-open records before taking the catalogue's read snapshot.
         self.write(|_, _| Ok(())).await?;
+        if key.0 == Agent::Codex {
+            let service = self.clone();
+            let (send, receive) = oneshot::channel();
+            std::thread::Builder::new().name("codex-catalogue".to_owned()).spawn(move || {
+                let result = tokio::runtime::Builder::new_current_thread().enable_all().build()
+                    .and_then(|runtime| runtime.block_on(service.scan_codex(key, rig, target.as_deref())));
+                let _ = send.send(result);
+            })?;
+            return receive.await.map_err(io::Error::other)?;
+        }
         let (rows, directories) = tokio::task::spawn_blocking(move || {
             let known = known_projects(&read_connection(&dir.join("archive.sqlite"))?)?;
             let data = dir.parent().unwrap();
@@ -465,10 +481,9 @@ impl Sessions {
                     let cwd = Path::new(&path);
                     let listed = runtime.block_on(async {
                         match scope.0 {
-                            Agent::Codex => codex::sessions(cwd, &rig.env).await,
                             Agent::Copilot => copilot::sessions(cwd, &rig.env).await,
                             Agent::Antigravity => antigravity::sessions(cwd, &rig.env).await,
-                            Agent::ClaudeCode => unreachable!(),
+                            Agent::ClaudeCode | Agent::Codex => unreachable!(),
                         }
                     })?;
                     directories.insert(path.clone());
@@ -489,6 +504,56 @@ impl Sessions {
             self.index_snapshots(&key, target.as_deref()).await?;
         }
         Ok(changed)
+    }
+
+    async fn scan_codex(&self, key: Store, mut rig: Rig, target: Option<&str>) -> io::Result<bool> {
+        if store(key.0, &rig.env) != key.1 {
+            return Err(io::Error::other("The Rig no longer points at this history store"));
+        }
+        apply_store(key.0, &key.1, &mut rig.env);
+        let data = self.dir.parent().unwrap();
+        let known = known_projects(&read_connection(&self.dir.join("archive.sqlite"))?)?;
+        let mut catalogue = codex::Catalogue::open(&crate::home(), &rig.env).await?;
+        // Keep the shared daemon at normal priority.
+        unsafe { nix::libc::nice(10); }
+        let result = async {
+            let mut rows = Vec::new();
+            for thread in catalogue.list().await? {
+                let id = thread["id"].as_str().ok_or_else(|| io::Error::other("Thread without id"))?;
+                if target.is_some_and(|target| target != id) { continue; }
+                let cwd = thread["cwd"].as_str().ok_or_else(|| io::Error::other("Thread without cwd"))?;
+                let directory = canonical(Path::new(cwd)).to_string_lossy().into_owned();
+                let Some(project) = attribute(&directory, &known, data, &self.epics) else { continue };
+                let title = thread["name"].as_str().filter(|title| !title.trim().is_empty())
+                    .or_else(|| thread["preview"].as_str().filter(|preview| !preview.trim().is_empty()));
+                let Some(title) = title else { continue };
+                let updated = thread["updatedAt"].as_i64().ok_or_else(|| io::Error::other("Thread without updatedAt"))?;
+                rows.push(Row { session_id: id.to_owned(), directory, project, title: title.chars().take(200).collect(), updated_at: updated * 1000, revision: updated.to_string() });
+            }
+            let scope = key.clone();
+            let filter = target.map(str::to_owned);
+            let changed = self.write(move |index, archive| replace(index, archive, &scope, rows, None, filter.as_deref())).await?;
+            if changed { self.notify(); }
+            let mut failure = None;
+            for (id, session, cwd, revision) in self.snapshot_rows(&key, target).await? {
+                let minimum = self.config.borrow().storage.min_free_gib;
+                if crate::storage::Storage::new(data).pressure(data, minimum)?.is_some() { break; }
+                match catalogue.snapshot(&session, Path::new(&cwd), data).await {
+                    Ok(items) => {
+                        if self.write(move |index, _| save_snapshot(index, id, &revision, None, &items)).await? { self.notify(); }
+                    }
+                    Err(error) => {
+                        let timed_out = error.kind() == io::ErrorKind::TimedOut;
+                        failure = Some(error);
+                        if timed_out { break; }
+                    }
+                }
+            }
+            if let Some(error) = failure { return Err(error); }
+            Ok(changed)
+        }.await;
+        catalogue.close().await;
+        result
     }
 
     pub async fn list(&self, project: String, chats: Arc<Chats>) -> (Vec<Session>, Coverage) {
@@ -742,10 +807,10 @@ fn coverage(dir: &Path, stale: BTreeSet<Agent>) -> io::Result<Coverage> {
     Ok(Coverage { total, indexed, ended, stale: stale.into_iter().collect(), bytes: Bytes { index: size(dir, "index.sqlite"), archive: size(dir, "archive.sqlite") } })
 }
 
-fn save_snapshot(index: &mut Connection, id: i64, revision: &str, path: &Path, items: &[super::Item]) -> io::Result<bool> {
+fn save_snapshot(index: &mut Connection, id: i64, revision: &str, path: Option<&Path>, items: &[super::Item]) -> io::Result<bool> {
     let transaction = index.transaction().map_err(io::Error::other)?;
     let current: Option<String> = transaction.query_row("SELECT revision FROM sessions WHERE id=?", [id], |row| row.get(0)).optional().map_err(io::Error::other)?;
-    if current.as_deref() != Some(revision) || fs::metadata(path).ok().is_none_or(|metadata| fingerprint(&metadata) != revision) { return Ok(false); }
+    if current.as_deref() != Some(revision) || path.is_some_and(|path| fs::metadata(path).ok().is_none_or(|metadata| fingerprint(&metadata) != revision)) { return Ok(false); }
     let encoded = serde_json::to_vec(items).map_err(io::Error::other)?;
     transaction.execute("INSERT INTO snapshots(session, version, items) VALUES (?, ?, ?) ON CONFLICT(session) DO UPDATE SET version=excluded.version, items=excluded.items", params![id, SNAPSHOT_VERSION, encoded]).map_err(io::Error::other)?;
     transaction.execute("DELETE FROM messages WHERE session=?", [id]).map_err(io::Error::other)?;
@@ -758,23 +823,28 @@ fn save_snapshot(index: &mut Connection, id: i64, revision: &str, path: &Path, i
         transaction.execute("INSERT INTO messages(session, item, role, text) VALUES (?, ?, ?, ?)", params![id, item as i64, role, text]).map_err(io::Error::other)?;
     }
     transaction.execute("UPDATE sessions SET snapshot_revision=? WHERE id=?", params![revision, id]).map_err(io::Error::other)?;
-    if fs::metadata(path).ok().is_none_or(|metadata| fingerprint(&metadata) != revision) { return Ok(false); }
+    if path.is_some_and(|path| fs::metadata(path).ok().is_none_or(|metadata| fingerprint(&metadata) != revision)) { return Ok(false); }
     transaction.commit().map_err(io::Error::other)?;
     Ok(true)
 }
 
 impl Sessions {
-    async fn index_snapshots(&self, key: &Store, target: Option<&str>) -> io::Result<()> {
+    async fn snapshot_rows(&self, key: &Store, target: Option<&str>) -> io::Result<Vec<(i64, String, String, String)>> {
         let dir = self.dir.clone();
         let store = key.1.clone();
         let target = target.map(str::to_owned);
-        let rows = tokio::task::spawn_blocking(move || {
+        let agent = key.0;
+        tokio::task::spawn_blocking(move || {
             let index = read_connection(&dir.join("index.sqlite"))?;
             let mut query = index.prepare("SELECT sessions.id, session_id, directory, revision FROM sessions LEFT JOIN snapshots ON snapshots.session=sessions.id
                 WHERE agent=? AND store=? AND (? IS NULL OR session_id=?) AND (snapshot_revision IS NOT revision OR version IS NOT ?) ORDER BY updated_at DESC").map_err(io::Error::other)?;
-            let rows = query.query_map(params![Agent::ClaudeCode.name(), store, target, target, SNAPSHOT_VERSION], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?))).map_err(io::Error::other)?;
+            let rows = query.query_map(params![agent.name(), store, target, target, SNAPSHOT_VERSION], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?))).map_err(io::Error::other)?;
             rows.collect::<rusqlite::Result<Vec<_>>>().map_err(io::Error::other)
-        }).await.map_err(io::Error::other)??;
+        }).await.map_err(io::Error::other)?
+    }
+
+    async fn index_snapshots(&self, key: &Store, target: Option<&str>) -> io::Result<()> {
+        let rows = self.snapshot_rows(key, target).await?;
         for (id, session, cwd, revision) in rows {
             let data = self.dir.parent().unwrap().to_owned();
             let store = key.1.clone();
@@ -797,7 +867,7 @@ impl Sessions {
             })?;
             match receive.await.map_err(io::Error::other)? {
                 Ok(Some((path, items))) => {
-                    if self.write(move |index, _| save_snapshot(index, id, &revision, &path, &items)).await? { self.notify(); }
+                    if self.write(move |index, _| save_snapshot(index, id, &revision, Some(&path), &items)).await? { self.notify(); }
                 }
                 Ok(None) => break,
                 Err(error) => eprintln!("cannot snapshot Session {id}: {error}"),
