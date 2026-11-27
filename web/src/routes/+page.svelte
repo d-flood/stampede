@@ -51,6 +51,7 @@
 	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
 	import { menuItems, tabItems } from '#lib/shell/new-tab.ts';
+	import type { Searching } from '#lib/shell/session-search.svelte.ts';
 	import type { Action, Scope } from '#lib/shell/Palette.svelte';
 	import Projects from '#lib/shell/Projects.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
@@ -110,6 +111,8 @@
 	let openSubagents = $state<Record<string, string[]>>({});
 	let sessions = $state<Record<string, Session[]>>({});
 	let readingSessions = $state<Record<string, boolean>>({});
+	/** Whether each Host, by name (the Home Host's is empty), has any Session to search. */
+	let searchable = $state<Record<string, boolean>>({});
 	let resumeError = $state<string>();
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
@@ -170,7 +173,7 @@
 	let drawer: Drawer;
 	let renamer = $state<Rename>();
 	let drawerOpen = $state(false);
-	let settle: ((error?: string) => void) | undefined;
+	let settle: ((opened: { projectId?: string; error?: string }) => void) | undefined;
 	let updateAvailable = $state(false);
 	const dirty = $derived(Object.values(files).flat().some((file) => file.dirty));
 	const servers = new LanguageServers(
@@ -482,6 +485,7 @@
 			case 'sessions.listed':
 				sessions[message.projectId] = message.sessions.filter(({ key }) => runsOn(host, key.agent));
 				readingSessions[message.projectId] = false;
+				searchable[host ?? ''] = message.coverage.total + message.coverage.ended > 0;
 				break;
 			case 'terminal.title':
 				for (const terminal of Object.values(terminals).flat()) {
@@ -601,10 +605,10 @@
 			case 'project.opened':
 				focus(message.projectId);
 				picking = false;
-				settle?.();
+				settle?.({ projectId: message.projectId });
 				break;
 			case 'project.error':
-				settle?.(message.error);
+				settle?.({ error: message.error });
 				break;
 		}
 	}
@@ -703,8 +707,8 @@
 		home.send({ type: 'picker.list' });
 	}
 
-	function open(path: string): Promise<string | undefined> {
-		settle?.();
+	function open(path: string): Promise<{ projectId?: string; error?: string }> {
+		settle?.({});
 		home.send({ type: 'project.open', path });
 		return new Promise((resolve) => (settle = resolve));
 	}
@@ -768,6 +772,31 @@
 
 	function reopen(projectId: string, { key }: Session) {
 		devices.of(projectId).send({ type: 'chat.resume', projectId, key });
+	}
+
+	function searching(projectId: string): Searching {
+		return { device: devices.of(projectId), projectId, focus: projects.find((project) => project.id === projectId)?.worktree?.parent ?? projectId };
+	}
+
+	/** Whether a Session a finder found can be resumed: a Cloud Host can't reopen a closed Project from here. */
+	function selectable({ project, key }: Session) {
+		return runsOn(hostOf(project.id), key.agent) && (!hostOf(project.id) || projects.some((open) => open.id === project.id));
+	}
+
+	/** Focuses the Chat driving a Session, or resumes it in its Project, opening that first if it's closed. */
+	function resume(session: Session) {
+		const chat = session.chatId ? allChats.find((chat) => chat.id === session.chatId) : undefined;
+		if (chat) return attend(chat.projectId, chat.id);
+		const projectId = session.project.id;
+		if (projects.some((project) => project.id === projectId)) {
+			chosen = projectId;
+			return reopen(projectId, session);
+		}
+		if (hostOf(projectId)) return;
+		open(session.project.path).then((opened) => {
+			if (opened.error) resumeError = opened.error;
+			else if (opened.projectId) reopen(opened.projectId, session);
+		});
 	}
 
 	/** A first message waiting for its Chat, which the server creates before it can take input. */
@@ -1132,10 +1161,13 @@
 			items={newTab(project.id)}
 			sessions={sessions[project.id] ?? []}
 			reading={!!readingSessions[project.id]}
+			search={searching(project.id)}
+			searchable={!!searchable[project.host ?? '']}
+			{selectable}
 			waiting={allChats.filter((chat) => waitingChats.has(chat.id) && projects.find((other) => other.id === chat.projectId)?.worktree?.parent === project.id)}
 			labels={projectLabels}
 			onread={() => readSessions(project.id)}
-			onsession={(session) => reopen(project.id, session)}
+			onsession={resume}
 			onchat={(chat) => attend(chat.projectId, chat.id)}
 		/>
 	{/key}
@@ -1360,9 +1392,12 @@
 							waiting={waitingChats}
 							sessions={sessions[projectId] ?? []}
 							reading={!!readingSessions[projectId]}
+							search={searching(projectId)}
+							labels={projectLabels}
+							{selectable}
 							onopen={() => readSessions(projectId)}
 							onchat={(chat) => choose(projectId, chat.id)}
-							onsession={(session) => reopen(projectId, session)}
+							onsession={resume}
 						/>
 					{/if}
 					{#if !phone && !sidebar && focused && sidebarPosition.side === 'right' && index === groups.length - 1}
@@ -1566,7 +1601,7 @@
 					<h2>Open a Project</h2>
 					<p class="lede">Choose a folder to work in. Its Chats, Terminals and Git stay together as a Project.</p>
 					{#await loadPicker() then { default: Picker }}
-						<Picker {directories} onopen={open} autofocus={!phone} />
+						<Picker {directories} onopen={(path) => open(path).then(({ error }) => error)} autofocus={!phone} />
 					{/await}
 				</div>
 			{/if}
@@ -1727,11 +1762,13 @@
 					status={chatStatus}
 					{sessions}
 					loadingSessions={!!readingSessions[palette === 'tabs' ? tabTarget ?? '' : focused?.id ?? '']}
+					search={focused && searching(focused.id)}
+					{selectable}
 					onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
 					onrig={(launcher) => (launch(launcher), (palette = undefined))}
 					onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
 					onchat={(chat) => ((afterPalette = () => attend(chat.projectId, chat.id)), (palette = undefined))}
-					onsession={(projectId, session) => ((chosen = projectId), reopen(projectId, session), (palette = undefined))}
+					onsession={(session) => ((afterPalette = () => resume(session)), (palette = undefined))}
 				/>
 			{/key}
 		{/await}
@@ -1746,7 +1783,7 @@
 
 <Dialog bind:open={picking} full={phone} title="Open Project">
 	{#await loadPicker() then { default: Picker }}
-		<Picker {directories} onopen={open} autofocus={false} />
+		<Picker {directories} onopen={(path) => open(path).then(({ error }) => error)} autofocus={false} />
 	{/await}
 </Dialog>
 

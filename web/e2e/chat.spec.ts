@@ -662,9 +662,9 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 			.toBe(true);
 		await listed.getByText('Search sessions…').click();
 		const palette = page.getByRole('dialog', { name: 'Past Sessions' });
-		await palette.getByPlaceholder('Find a session by title').fill('palette');
+		await palette.getByPlaceholder('Find a session').fill('palette');
 		await expect(palette.getByRole('option')).toHaveText([/Palette study/]);
-		await palette.getByPlaceholder('Find a session by title').fill('three');
+		await palette.getByPlaceholder('Find a session').fill('three');
 		await expect(palette.getByRole('option')).toHaveText([/Say hi in three words\./]);
 		await page.keyboard.press('Escape');
 		await expect(palette).toBeHidden();

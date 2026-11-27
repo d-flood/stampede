@@ -2,6 +2,7 @@
 	import type { Chat, Session } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import ChatFinder from '#lib/shell/ChatFinder.svelte';
+	import type { Searching } from '#lib/shell/session-search.svelte.ts';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
@@ -16,12 +17,15 @@
 		waiting: Set<string>;
 		sessions: Session[];
 		reading: boolean;
+		search: Searching;
+		labels?: Map<string, string>;
+		selectable?(session: Session): boolean;
 		onopen(): void;
 		onchat(chat: Chat): void;
 		onsession(session: Session): void;
 	};
 
-	let { chats, status, waiting, sessions, reading, onopen, onchat, onsession }: Props = $props();
+	let { chats, status, waiting, sessions, reading, search, labels, selectable, onopen, onchat, onsession }: Props = $props();
 
 	let open = $state(false);
 	const attention = $derived(chats.some((chat) => waiting.has(chat.id)));
@@ -65,6 +69,9 @@
 		{waiting}
 		{sessions}
 		{reading}
+		{search}
+		{labels}
+		{selectable}
 		flush
 		onchat={(chat) => pick(() => onchat(chat))}
 		onsession={(session) => pick(() => onsession(session))}
