@@ -100,16 +100,26 @@ async fn both_agents_past_sessions_are_listed_newest_first() {
         ])
     );
     assert!(server.root.path().join("home/.codex/fake-daemon/list-received.jsonl").is_file());
+    let indexed = search(&mut socket, &project_id, "Crimson", |results| results.len() == 1).await;
+    assert_eq!(indexed[0]["excerpt"]["who"], "agent");
     let home = server.root.path().join("home");
     let mut watcher = inotify::Inotify::init().unwrap();
     watcher.watches().add(sessions(&server).join(format!("{COLOR}.jsonl")), inotify::WatchMask::OPEN).unwrap();
     let hold = home.join(".hold-session-list");
     fs::write(&hold, "").unwrap();
-    let warm = timeout(Duration::from_secs(1), list(&mut socket, &project_id, |rows| rows.len() == 4)).await.expect("warm list waited on an Agent");
+    let warm = timeout(Duration::from_millis(100), list(&mut socket, &project_id, |rows| rows.len() == 4)).await.expect("warm list waited on an Agent");
     assert_eq!(warm.as_array().unwrap().len(), 4);
     timeout(Duration::from_secs(10), async {
         while !home.join(".listing-held").exists() { tokio::time::sleep(Duration::from_millis(20)).await; }
     }).await.unwrap();
+    control(&mut socket, json!({ "type": "sessions.search", "searchId": "warm", "projectId": project_id, "query": "Crimson" })).await;
+    let warm = timeout(Duration::from_millis(100), async {
+        loop {
+            let found = next_control(&mut socket, "sessions.found").await;
+            if found["searchId"] == "warm" { break found; }
+        }
+    }).await.expect("warm search waited on an Agent");
+    assert_eq!(warm["results"][0]["key"]["sessionId"], COLOR);
     let grill = sessions(&server).join(format!("{GRILL}.jsonl"));
     let content = fs::read_to_string(&grill).unwrap();
     fs::write(&grill, format!("{content}\n{}\n", json!({ "customTitle": "Changed session" }))).unwrap();
@@ -120,6 +130,98 @@ async fn both_agents_past_sessions_are_listed_newest_first() {
     assert!(list(&mut socket, &json!("not-open"), |rows| rows.is_empty()).await.as_array().unwrap().is_empty());
     fs::remove_file(hold).unwrap();
 
+}
+
+async fn search(socket: &mut Socket, project_id: &Value, query: &str, expected: impl Fn(&[Value]) -> bool) -> Value {
+    let id = uuid::Uuid::new_v4().to_string();
+    control(socket, json!({ "type": "sessions.search", "searchId": id, "projectId": project_id, "query": query })).await;
+    timeout(Duration::from_secs(15), async {
+        loop {
+            let found = next_control(socket, "sessions.found").await;
+            if found["searchId"] == id && expected(found["results"].as_array().unwrap()) { break found["results"].clone(); }
+        }
+    }).await.unwrap_or_else(|_| panic!("Unexpected search results for {query:?}"))
+}
+
+fn write_history(path: &Path, entries: &[Value]) {
+    fs::write(path, entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n") + "\n").unwrap();
+}
+
+fn conversation(text: &str) -> Vec<Value> {
+    vec![
+        json!({ "type": "user", "uuid": "prompt", "parentUuid": null, "message": { "role": "user", "content": "A neutral prompt" } }),
+        json!({ "type": "assistant", "uuid": "reply", "parentUuid": "prompt", "message": { "role": "assistant", "id": "reply", "content": [{"type": "text", "text": text}] } }),
+    ]
+}
+
+#[tokio::test]
+async fn indexed_messages_follow_replay() {
+    let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
+    let path = sessions(&server).join(format!("{COLOR}.jsonl"));
+    let template = include_str!("../src/templates/grill.md").trim_end();
+    write_history(&path, &[
+        json!({ "type": "user", "uuid": "prompt", "parentUuid": null, "message": { "role": "user", "content": "A neutral prompt" } }),
+        json!({ "type": "assistant", "uuid": "abandoned", "parentUuid": "prompt", "message": { "id": "abandoned", "role": "assistant", "content": [{"type": "text", "text": "discardedbranch"}] } }),
+        json!({ "type": "assistant", "uuid": "tool", "parentUuid": "prompt", "message": { "id": "tool", "role": "assistant", "content": [{"type": "thinking", "thinking": "privatethought"}, {"type": "tool_use", "name": "Bash", "id": "bash", "input": {"command": "echo test"}}] } }),
+        json!({ "type": "user", "uuid": "result", "parentUuid": "tool", "message": { "role": "user", "content": [{"type": "tool_result", "tool_use_id": "bash", "content": "discardedoutput"}] } }),
+        json!({ "type": "system", "subtype": "local_command", "uuid": "local", "parentUuid": "result", "content": "<local-command-stdout>localcommandoutput</local-command-stdout>" }),
+        json!({ "type": "user", "uuid": "template", "parentUuid": "local", "message": { "role": "user", "content": format!("{template}\n\nTypedonly") } }),
+        json!({ "type": "assistant", "uuid": "reply", "parentUuid": "template", "message": { "id": "reply", "role": "assistant", "content": [{"type": "text", "text": "😀 amber quartz."}] } }),
+    ]);
+    let results = search(&mut socket, &project_id, r#""amber quartz""#, |results| results.len() == 1).await;
+    assert_eq!(results[0]["excerpt"], json!({"who": "agent", "text": "😀 amber quartz.", "ranges": [[3, 15]]}));
+    assert_eq!(results[0]["matches"], 1);
+    assert_eq!(search(&mut socket, &project_id, "amber qua", |results| results.len() == 1).await[0]["key"]["sessionId"], COLOR);
+    assert_eq!(search(&mut socket, &project_id, "typedonly", |results| results.len() == 1).await[0]["excerpt"]["text"], "/grill Typedonly");
+    for query in ["discardedbranch", "discardedoutput", "privatethought", "localcommandoutput", "relentlessly", r#""quartz amber""#, "(!@#)"] {
+        search(&mut socket, &project_id, query, |results| results.is_empty()).await;
+    }
+}
+
+#[tokio::test]
+async fn snapshot_reconciliation_and_archive_survive_restart() {
+    let config = format!("{RIGS}\n[storage]\nmin_free_gib = 1000000\n");
+    let (mut server, mut socket, project_id) = start(&config, Vec::new()).await;
+    fs::write(server.root.path().join("home/.claude/settings.json"), r#"{"cleanupPeriodDays":2}"#).unwrap();
+    let young = sessions(&server).join(format!("{COLOR}.jsonl"));
+    let aged = sessions(&server).join(format!("{GRILL}.jsonl"));
+    write_history(&young, &conversation("youngword"));
+    write_history(&aged, &conversation("agedword"));
+    touch(&aged, 1_500_000_000);
+    list(&mut socket, &project_id, |rows| rows.len() == 4).await;
+    let id = "low-space";
+    control(&mut socket, json!({ "type": "sessions.search", "searchId": id, "projectId": project_id, "query": "youngword" })).await;
+    let paused = next_control(&mut socket, "sessions.found").await;
+    assert_eq!(paused["coverage"]["indexed"], 0);
+    assert_eq!(paused["results"], json!([]));
+    fs::write(server.root.path().join("config.toml"), RIGS).unwrap();
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    search(&mut socket, &project_id, "youngword", |results| results.len() == 1).await;
+    search(&mut socket, &project_id, "agedword", |results| results.len() == 1).await;
+    write_history(&young, &conversation("rewrittenword"));
+    search(&mut socket, &project_id, "rewrittenword", |results| results.len() == 1).await;
+    search(&mut socket, &project_id, "youngword", |results| results.is_empty()).await;
+    fs::remove_file(&young).unwrap();
+    fs::remove_file(&aged).unwrap();
+    search(&mut socket, &project_id, "rewrittenword", |results| results.is_empty()).await;
+    search(&mut socket, &project_id, "agedword", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    search(&mut socket, &project_id, "agedword", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    server.stop().await;
+    fs::remove_file(server.root.path().join("data/sessions/index.sqlite")).unwrap();
+    write_history(&young, &conversation("rebuiltword"));
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    search(&mut socket, &project_id, "rebuiltword", |results| results.len() == 1).await;
+    search(&mut socket, &project_id, "agedword", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
 }
 
 #[tokio::test]
@@ -272,7 +374,7 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
                 if let Ok(db) = rusqlite::Connection::open_with_flags(&index, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
                     let count = db.query_row("SELECT count(*) FROM sessions WHERE project = ? AND store = ?", [repo_id.as_str().unwrap(), second_store.to_str().unwrap()], |row| row.get::<_, i64>(0));
                     let version = db.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0));
-                    if matches!((count, version), (Ok(4), Ok(1))) { break; }
+                    if matches!((count, version), (Ok(4), Ok(2))) { break; }
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }

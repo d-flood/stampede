@@ -172,7 +172,7 @@ mod tests {
     use super::*;
 
     fn edit(path: &str) -> Item {
-        Item::Edit { path: path.to_owned(), diff: String::new(), added: 3, removed: 1, write: false }
+        Item::Edit { elided: false, path: path.to_owned(), diff: String::new(), added: 3, removed: 1, write: false }
     }
 
     #[test]

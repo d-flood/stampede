@@ -97,6 +97,8 @@ enum Control {
     ResumeChat { project_id: String, key: SessionKey },
     #[serde(rename = "sessions.list")]
     ListSessions { project_id: String },
+    #[serde(rename = "sessions.search")]
+    SearchSessions { search_id: String, project_id: String, query: String },
     #[serde(rename = "chat.send")]
     SendChat {
         chat_id: String,
@@ -202,6 +204,7 @@ struct Device {
     chats: Arc<Chats>,
     sessions: Arc<Sessions>,
     session_requests: HashMap<String, Arc<Notify>>,
+    session_search: Option<tokio::task::AbortHandle>,
     canvases: Arc<Canvases>,
     attached: HashMap<String, u64>,
     expanded: HashMap<(String, usize), u64>,
@@ -271,6 +274,7 @@ async fn connect(
         chats,
         sessions,
         session_requests: HashMap::new(),
+        session_search: None,
         canvases,
         attached: HashMap::new(),
         expanded: HashMap::new(),
@@ -634,6 +638,7 @@ impl Device {
                 });
             }
             Control::ListSessions { project_id } => self.list_sessions(project_id),
+            Control::SearchSessions { search_id, project_id, query } => self.search_sessions(search_id, project_id, query),
             Control::SendChat { chat_id, text, queue, images } => self.chats.send(&chat_id, &text, queue, &images),
             Control::InterruptChat { chat_id } => self.chats.interrupt(&chat_id),
             Control::UnqueueChat { chat_id, index, revision } => {
@@ -909,6 +914,25 @@ impl Device {
         });
     }
 
+    fn search_sessions(&mut self, search_id: String, project_id: String, query: String) {
+        if let Some(search) = self.session_search.take() { search.abort(); }
+        let empty = query.trim().is_empty();
+        if !empty { self.sessions.refresh(); }
+        let sessions = self.sessions.clone();
+        let chats = self.chats.clone();
+        let outgoing = self.outgoing.clone();
+        let mut updated = sessions.subscribe();
+        self.session_search = Some(self.attachments.spawn(async move {
+            loop {
+                updated.mark_unchanged();
+                let (results, coverage) = sessions.search(project_id.clone(), query.clone(), chats.clone()).await;
+                send(&outgoing, json!({ "type": "sessions.found", "searchId": search_id, "results": results, "coverage": coverage }));
+                if empty || updated.changed().await.is_err() { break; }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }));
+    }
+
     fn chats_changed(&self, project_id: &str) {
         let chats = self.chats.owned(project_id);
         send(&self.outgoing, json!({ "type": "chats.changed", "projectId": project_id, "chats": chats }));
@@ -1004,28 +1028,24 @@ impl Device {
 /// A subagent's items other than its own subagents, and a long finished command's output, stay on the server until a
 /// Device expands the item.
 fn brief(mut item: chats::Item) -> Value {
-    let mut nested = None;
-    let elided = match &mut item {
-        chats::Item::Subagent { status, items, .. } if *status != chats::Status::Done || !items.is_empty() => {
-            let subagents = std::mem::take(items).into_iter().filter(|item| matches!(item, chats::Item::Subagent { .. }));
-            nested = Some(subagents.map(brief).collect::<Vec<_>>());
-            true
+    trim_brief(&mut item);
+    json!(item)
+}
+
+fn trim_brief(item: &mut chats::Item) {
+    match item {
+        chats::Item::Subagent { status, items, elided, .. } if *status != chats::Status::Done || !items.is_empty() => {
+            items.retain(|item| matches!(item, chats::Item::Subagent { .. }));
+            for item in items.iter_mut() { trim_brief(item); }
+            *elided = true;
         }
-        chats::Item::Command { status, output, .. } | chats::Item::Shell { status, output, .. }
+        chats::Item::Command { status, output, elided, .. } | chats::Item::Shell { status, output, elided, .. }
             if *status != chats::CommandStatus::Running && output.len() > BRIEF_OUTPUT => {
             output.clear();
-            true
+            *elided = true;
         }
-        _ => false,
-    };
-    let mut value = json!(item);
-    if let Some(nested) = nested {
-        value["items"] = json!(nested);
+        _ => (),
     }
-    if elided {
-        value["elided"] = json!(true);
-    }
-    value
 }
 
 /// Each queued message holds its share of a byte budget until it is written, so a Device that stops

@@ -994,7 +994,7 @@ impl Transcript {
             (Chunk::Text, None) => self.push(Item::Text { text: String::new(), streaming: !history, phase: Phase::Commentary }),
             (Chunk::Thought, None) => {
                 self.thinking = (!history).then(Instant::now);
-                self.push(Item::Thinking { seconds: 0, text: Some(String::new()) })
+                self.push(Item::Thinking { elided: false, seconds: 0, text: Some(String::new()) })
             }
         };
         match &mut self.items[index] {
@@ -1070,7 +1070,7 @@ impl Transcript {
         if call["kind"] == "execute" {
             let status = match status { Some("completed") => CommandStatus::Ok, Some("failed") => CommandStatus::Failed, _ => CommandStatus::Running };
             let started_at = started_at.filter(|_| status == CommandStatus::Running);
-            return Item::Command { command: command(call), status, output: output(call), started_at };
+            return Item::Command { elided: false, command: command(call), status, output: output(call), started_at };
         }
         if status == Some("completed") && let Some(change) = diff(call) && let Some(path) = change["path"].as_str() {
             let new = change["newText"].as_str().unwrap_or_default();
@@ -1116,12 +1116,12 @@ impl Transcript {
     }
 
     fn run_shell(&mut self, command: String, progress: &UnboundedSender<shell::Progress>, env: &BTreeMap<String, String>) {
-        let item = Item::Shell { command: command.clone(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(super::now()) };
+        let item = Item::Shell { elided: false, command: command.clone(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(super::now()) };
         let index = self.push(item.clone());
         match shell::spawn(index, &command, &self.cwd, env, progress.clone()) {
             Ok(stop) => { self.running.insert(index, Running { item, stdout: shell::Capture::default(), stderr: shell::Capture::default(), stop: Some(stop) }); }
             Err(error) => {
-                self.items[index] = Item::Shell { command, status: CommandStatus::Failed, output: error.to_string(), pending: false, started_at: None };
+                self.items[index] = Item::Shell { elided: false, command, status: CommandStatus::Failed, output: error.to_string(), pending: false, started_at: None };
                 self.changed(index);
             }
         }
@@ -1180,7 +1180,7 @@ impl Transcript {
     fn shells(&mut self, parts: Vec<shell::Part>) {
         for part in parts {
             if let shell::Part::Input(command) = part {
-                let item = Item::Shell { command, status: CommandStatus::Ok, output: String::new(), pending: false, started_at: None };
+                let item = Item::Shell { elided: false, command, status: CommandStatus::Ok, output: String::new(), pending: false, started_at: None };
                 self.shell = Some((self.push(item.clone()), item));
                 continue;
             }
@@ -1297,7 +1297,7 @@ mod tests {
             "sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "completed",
             "rawOutput": { "output": "Rendered HTML in the chat." },
         })), false).await;
-        assert_eq!(live.transcript.items[0], Item::Html { title: "Preview".to_owned(), html: "<p>Hi</p>".to_owned() });
+        assert_eq!(live.transcript.items[0], Item::Html { elided: false, title: "Preview".to_owned(), html: "<p>Hi</p>".to_owned() });
 
         live.handle(session_update(json!({
             "sessionUpdate": "tool_call", "toolCallId": "call_2", "status": "completed",
