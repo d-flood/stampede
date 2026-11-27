@@ -103,8 +103,10 @@ impl Connection {
             "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false },
             "clientInfo": { "name": "Stampede", "version": env!("CARGO_PKG_VERSION") },
         });
-        connection.call("initialize", initialize, &mut Vec::new()).await?;
-        Ok(connection)
+        match connection.call("initialize", initialize, &mut Vec::new()).await {
+            Ok(_) => Ok(connection),
+            Err(error) => { connection.close().await; Err(error) }
+        }
     }
 
     async fn write(&mut self, mut message: Value) -> io::Result<()> {
@@ -217,25 +219,57 @@ pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &Agen
     result
 }
 
-/// Lists the conversations agy kept for `cwd`; agy lists every directory's, whatever `cwd` asks for.
-pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<NativeSession>> {
-    let mut connection = Connection::open(cwd, env, false).await?;
-    let result = async {
+pub(super) struct Catalogue(Connection);
+
+impl Catalogue {
+    pub(super) async fn open(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Self> {
+        Ok(Self(Connection::open(cwd, env, false).await?))
+    }
+
+    pub(super) async fn list(&mut self) -> io::Result<Vec<NativeSession>> {
         let mut sessions = Vec::new();
-        let mut params = json!({ "cwd": cwd });
+        let mut params = json!({});
+        let mut cursors = HashSet::new();
         loop {
-            let mut page = connection.call("session/list", params.clone(), &mut Vec::new()).await?;
-            for session in page["sessions"].as_array().into_iter().flatten() {
-                if session["cwd"].as_str().map(Path::new) != Some(cwd) { continue; }
-                let (Some(id), Some(title), Some(updated)) = (session["sessionId"].as_str(), session["title"].as_str().filter(|title| !title.is_empty()), session["updatedAt"].as_str().and_then(super::epoch_ms)) else { continue };
-                sessions.push(NativeSession::new(id, title, updated));
+            let mut page = self.0.call("session/list", params.clone(), &mut Vec::new()).await?;
+            let listed = page["sessions"].as_array().ok_or_else(|| io::Error::other("Missing Antigravity Session list"))?;
+            for session in listed {
+                let Some(title) = session["title"].as_str().filter(|title| !title.is_empty()) else { continue };
+                let (Some(id), Some(cwd), Some(updated)) = (session["sessionId"].as_str(), session["cwd"].as_str(), session["updatedAt"].as_str().and_then(super::epoch_ms)) else {
+                    return Err(io::Error::other("Incomplete Antigravity Session metadata"));
+                };
+                sessions.push(NativeSession::new(cwd, id, title, updated));
             }
             if page["nextCursor"].is_null() { return Ok(sessions); }
+            let cursor = page["nextCursor"].as_str().ok_or_else(|| io::Error::other("Invalid Antigravity Session cursor"))?;
+            if !cursors.insert(cursor.to_owned()) { return Err(io::Error::other("Repeated Antigravity Session cursor")); }
             params["cursor"] = page["nextCursor"].take();
         }
-    }.await;
-    connection.close().await;
-    result
+    }
+
+    pub(super) async fn snapshot(&mut self, session: &str, cwd: &Path, data: &Path) -> io::Result<Vec<Item>> {
+        let mut held = Vec::new();
+        self.0.call("session/load", json!({ "sessionId": session, "cwd": cwd, "mcpServers": [] }), &mut held).await?;
+        let (events, received) = mpsc::unbounded_channel();
+        drop(received);
+        let mut transcript = Transcript::new(data, cwd, events, Settings::default());
+        for message in held {
+            if message["method"] == "session/update" && message["params"]["sessionId"] == session {
+                transcript.update(&message["params"]["update"], true);
+            } else if message.get("id").is_some() && message.get("method").is_some() {
+                return Err(io::Error::other("Unexpected request during Antigravity history replay"));
+            }
+        }
+        transcript.stop_commands();
+        transcript.finish();
+        for item in &mut transcript.items {
+            super::transform_item(data, cwd, item);
+            item.trim_snapshot();
+        }
+        Ok(transcript.items)
+    }
+
+    pub(super) async fn close(self) { self.0.close().await; }
 }
 
 /// Opens the Chat's conversation, showing in the Chat why agy could not, so that the user can fix it and send again.

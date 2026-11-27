@@ -13,7 +13,7 @@ use copilot_sdk::{
     ResumeSessionOptions, SessionEvent, SessionId, SessionListFilter, SetModelOptions, SystemMessageConfig,
     handler::{PermissionHandler, PermissionResult, UserInputHandler, UserInputResponse},
     session::Session as CopilotSession,
-    rpc::{EventsReadDirection, ModelListRequest, SessionsForkRequest, SessionsReadPersistedEventsRequest},
+    rpc::{EventsCursorStatus, EventsReadDirection, ModelListRequest, SessionsForkRequest, SessionsReadPersistedEventsRequest},
     session_events::{AiCreditsStatus, ProviderMonthlyUsageScope, ProviderMonthlyUsageState, ProviderQuotaState, ProviderQuotaUnit, SessionQuotaObservationData, UsageGetMetricsResult},
 };
 use serde_json::{Value, json};
@@ -98,12 +98,18 @@ impl Connection {
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
             .kill_on_drop(true).spawn()
             .map_err(|error| io::Error::new(error.kind(), format!("Cannot start GitHub Copilot CLI: {error}. Install Copilot CLI and run `copilot login`.")))?;
-        let client = Client::from_streams(ClientMode::CodingAgent, child.stdout.take().unwrap(), child.stdin.take().unwrap(), cwd.to_owned()).map_err(io::Error::other)?;
-        rpc(client.verify_protocol_version()).await?;
-        if !rpc(client.get_auth_status()).await?.is_authenticated {
-            return Err(io::Error::other("GitHub Copilot is not signed in. Run `copilot login` on the Stampede host, then try again."));
+        let result = async {
+            let client = Client::from_streams(ClientMode::CodingAgent, child.stdout.take().unwrap(), child.stdin.take().unwrap(), cwd.to_owned()).map_err(io::Error::other)?;
+            rpc(client.verify_protocol_version()).await?;
+            if !rpc(client.get_auth_status()).await?.is_authenticated {
+                return Err(io::Error::other("GitHub Copilot is not signed in. Run `copilot login` on the Stampede host, then try again."));
+            }
+            Ok(client)
+        }.await;
+        match result {
+            Ok(client) => Ok(Self { client, child }),
+            Err(error) => { let _ = child.kill().await; Err(error) }
         }
-        Ok(Self { client, child })
     }
 
     async fn close(&mut self) {
@@ -241,16 +247,74 @@ async fn recorded_costs(client: &Client) -> io::Result<Vec<Reading>> {
     Ok(readings)
 }
 
-pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<NativeSession>> {
-    let mut connection = Connection::open(cwd, env).await?;
-    let filter = SessionListFilter { working_directory: Some(cwd.display().to_string()), ..Default::default() };
-    let result = rpc(connection.client.list_sessions(Some(filter))).await.map(|sessions| sessions.into_iter().filter_map(|session| {
-        if session.is_remote { return None; }
-        let title = session.summary.as_deref().filter(|title| !title.is_empty())?;
-        Some(NativeSession::new(session.session_id.as_str(), title, super::epoch_ms(&session.modified_time)?))
-    }).collect());
-    connection.close().await;
-    result
+pub(super) struct Catalogue(Connection);
+
+impl Catalogue {
+    pub(super) async fn open(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Self> {
+        Ok(Self(Connection::open(cwd, env).await?))
+    }
+
+    pub(super) async fn list(&self, directories: &HashSet<String>) -> io::Result<Vec<NativeSession>> {
+        let mut sessions = Vec::new();
+        let mut missing = HashSet::new();
+        let fallback = match rpc(self.0.client.rpc().sessions().list()).await {
+            Ok(listed) => {
+                for session in listed.sessions {
+                    if session["isRemote"] == true { continue; }
+                    let Some(title) = session["summary"].as_str().filter(|title| !title.is_empty()) else { continue };
+                    let id = session["sessionId"].as_str().ok_or_else(|| io::Error::other("Session without id"))?;
+                    let updated = session["modifiedTime"].as_str().and_then(super::epoch_ms).ok_or_else(|| io::Error::other("Session without modified time"))?;
+                    if let Some(cwd) = session["context"]["cwd"].as_str().filter(|cwd| !cwd.is_empty()) {
+                        sessions.push(NativeSession::new(cwd, id, title, updated));
+                    } else {
+                        missing.insert(id.to_owned());
+                    }
+                }
+                false
+            }
+            Err(error) if error.get_ref().and_then(|error| error.downcast_ref::<copilot_sdk::Error>())
+                .is_some_and(|error| matches!(error.kind(), copilot_sdk::ErrorKind::Rpc { code: -32601 })) => true,
+            Err(error) => return Err(error),
+        };
+        if fallback || !missing.is_empty() {
+            for directory in directories {
+                let filter = SessionListFilter { working_directory: Some(directory.clone()), ..Default::default() };
+                for session in rpc(self.0.client.list_sessions(Some(filter))).await? {
+                    if session.is_remote || !fallback && !missing.remove(session.session_id.as_str()) { continue; }
+                    let Some(title) = session.summary.as_deref().filter(|title| !title.is_empty()) else { continue };
+                    let updated = super::epoch_ms(&session.modified_time).ok_or_else(|| io::Error::other("Session without modified time"))?;
+                    sessions.push(NativeSession::new(directory, session.session_id.as_str(), title, updated));
+                }
+            }
+        }
+        Ok(sessions)
+    }
+
+    pub(super) async fn snapshot(&self, session: &str, cwd: &Path, data: &Path) -> io::Result<Vec<Item>> {
+        let (events, received) = mpsc::unbounded_channel();
+        drop(received);
+        let mut transcript = Transcript::new(cwd, events, Settings::default());
+        transcript.data_dir = Some(data.to_owned());
+        let mut cursor = None;
+        loop {
+            let page = rpc(self.0.client.rpc().sessions().read_persisted_events(SessionsReadPersistedEventsRequest {
+                session_id: SessionId::new(session), direction: Some(EventsReadDirection::Forward), max: None, cursor,
+            })).await?;
+            if !matches!(page.cursor_status, EventsCursorStatus::Ok) { return Err(io::Error::other("Copilot Session history changed")); }
+            for event in page.events { transcript.read(&event, true); }
+            if !page.has_more { break; }
+            cursor = Some(page.cursor);
+        }
+        transcript.stop_commands();
+        transcript.finish();
+        for item in &mut transcript.items {
+            super::transform_item(data, cwd, item);
+            item.trim_snapshot();
+        }
+        Ok(transcript.items)
+    }
+
+    pub(super) async fn close(mut self) { self.0.close().await; }
 }
 
 struct Interaction {
