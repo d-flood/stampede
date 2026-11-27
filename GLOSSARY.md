@@ -105,11 +105,11 @@ True of a Chat whose Agent has not started: it shows its Session's conversation,
 _Avoid_: preview, read-only, inactive, idle, asleep
 
 **Ended Session**:
-A Session whose native history is gone, because its Cloud Host was destroyed or its Agent deleted it for age, kept by Stampede as a read-only record until dismissed. It can be found and viewed but not resumed.
+A Session whose native history is gone, such as when its Cloud Host was destroyed or its Agent deleted it for age, kept by Stampede as a read-only record until dismissed. It can be found, viewed and forked, but not resumed.
 _Avoid_: archived session, orphaned session, dead session
 
 **Fork**:
-A new Chat that continues another Chat's conversation from before one of its user messages, which waits in the new Chat's Composer; the original Chat is unchanged.
+A new Chat that continues an earlier conversation from before one of its user messages, which waits in the new Chat's Composer, or from an Ended Session's end; the original is unchanged. Where the Agent cannot continue it natively, the new Chat receives the earlier messages as context.
 _Avoid_: branch, clone, copy
 
 **Activity**:
