@@ -92,7 +92,7 @@ while True:
     elif method == 'session.model.list':
         models = [{'id': 'claude-sonnet-4.6', 'name': 'Claude Sonnet 4.6', 'supportedReasoningEfforts': ['low', 'medium', 'high']}]
         if params.get('skipCache'):
-            models.append({'id': 'gemini-3.8-flash', 'name': 'Gemini 3.8 Flash', 'supportedReasoningEfforts': ['low', 'high']})
+            models.append({'id': 'gemini-3.8-flash', 'name': 'Gemini 3.8 Flash', 'capabilities': {'supports': {'reasoning_effort': ['low', 'high']}}})
         reply(request, {'list': models})
     elif method == 'session.model.getCurrent':
         reply(request, {'modelId': model, 'reasoningEffort': effort})

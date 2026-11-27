@@ -146,6 +146,12 @@ async fn models(session: &CopilotSession) -> io::Result<Vec<Value>> {
     rpc(session.rpc().model().list_with_params(ModelListRequest { skip_cache: Some(true) })).await.map(|catalog| catalog.list)
 }
 
+pub fn efforts(model: &Value) -> Vec<&str> {
+    model["capabilities"]["supports"]["reasoning_effort"].as_array()
+        .or_else(|| model["supportedReasoningEfforts"].as_array())
+        .into_iter().flatten().filter_map(Value::as_str).collect()
+}
+
 pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
     let mut connection = Connection::open(&crate::home(), env).await?;
     let result = async {
@@ -721,7 +727,7 @@ impl Transcript {
             self.capabilities.models = models.iter().filter_map(|model| model["id"].as_str().map(str::to_owned)).collect();
             self.efforts = models.iter().filter_map(|model| {
                 let id = model["id"].as_str()?.to_owned();
-                let efforts = model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+                let efforts = efforts(model).into_iter().map(str::to_owned).collect();
                 Some((id, efforts))
             }).collect();
         });

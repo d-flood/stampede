@@ -374,7 +374,9 @@ test('Copilot rigs use CLI models and open a chat', { tag: '@desktop' }, async (
 	const model = dialog.getByRole('combobox', { name: 'Model', exact: true });
 	await expect(model).toBeEnabled();
 	await model.selectOption('gemini-3.8-flash');
-	await dialog.getByRole('combobox', { name: 'Effort level', exact: true }).selectOption('high');
+	const effort = dialog.getByRole('combobox', { name: 'Effort level', exact: true });
+	await expect(effort).toBeEnabled();
+	await effort.selectOption('high');
 	await expect(dialog.getByRole('combobox', { name: 'Permission mode', exact: true })).toHaveValue('default');
 	await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Copilot');
 	await dialog.getByRole('button', { name: 'Save rig', exact: true }).click();
@@ -388,6 +390,10 @@ test('Copilot rigs use CLI models and open a chat', { tag: '@desktop' }, async (
 	await composer.fill('Hello');
 	await page.getByRole('button', { name: 'Send', exact: true }).click();
 	await expect(page.getByText('Welcome—glad you’re here.', { exact: true })).toBeVisible();
+	const panel = page.getByRole('tabpanel').filter({ has: composer });
+	await panel.getByRole('button', { name: 'Model: gemini-3.8-flash high', exact: true }).click();
+	await page.getByRole('menuitemcheckbox', { name: 'low', exact: true }).click();
+	await expect(panel.getByRole('button', { name: 'Model: gemini-3.8-flash low', exact: true })).toBeVisible();
 	await expect.poll(() => page.getByRole('tabpanel').filter({ has: composer }).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 

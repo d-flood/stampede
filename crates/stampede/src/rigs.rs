@@ -44,7 +44,7 @@ pub async fn options(State(state): State<AppState>, Query(selection): Query<Sele
             ),
             Agent::Copilot => (
                 model["id"].as_str()?, model["name"].as_str().or(model["id"].as_str())?,
-                model["supportedReasoningEfforts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect(),
+                copilot::efforts(model),
                 Vec::new(),
             ),
             Agent::Antigravity => (
