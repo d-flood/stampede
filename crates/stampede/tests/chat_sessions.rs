@@ -87,12 +87,11 @@ async fn both_agents_past_sessions_are_listed_newest_first() {
     let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
     let elsewhere = server.root.path().join("home/.claude/projects/-tmp-stampede-elsewhere");
     fs::create_dir_all(&elsewhere).unwrap();
-    fs::copy(sessions(&server).join(format!("{COLOR}.jsonl")), elsewhere.join("0d9c4b7e-2f41-4a8e-9b3c-6e5d1a7f8c20.jsonl"))
-        .unwrap();
+    fs::write(elsewhere.join("0d9c4b7e-2f41-4a8e-9b3c-6e5d1a7f8c20.jsonl"), fs::read_to_string(sessions(&server).join(format!("{COLOR}.jsonl"))).unwrap().replace(server.root.path().join("home").to_str().unwrap(), "/tmp/stampede-elsewhere")).unwrap();
     touch(&elsewhere.join("0d9c4b7e-2f41-4a8e-9b3c-6e5d1a7f8c20.jsonl"), 1_792_182_880);
 
     assert_eq!(
-        list(&mut socket, &project_id).await,
+        projected(list(&mut socket, &project_id, |rows| rows.len() == 4).await),
         json!([
             { "agent": "claude-code", "sessionId": GRILL, "title": "/grill the past sessions menu", "updatedAt": 1_792_182_860_000u64 },
             { "agent": "codex", "sessionId": EXEC, "title": "Reply with exactly: ok", "updatedAt": 1_792_182_853_000u64 },
@@ -100,8 +99,27 @@ async fn both_agents_past_sessions_are_listed_newest_first() {
             { "agent": "codex", "sessionId": THREAD, "title": "Say hi in three words.", "updatedAt": 1_792_182_848_000u64 },
         ])
     );
-    let methods: Vec<Value> = received(&server).iter().map(|message| message["method"].clone()).collect();
-    assert_eq!(methods, ["initialize", "initialized", "thread/list"]);
+    assert!(server.root.path().join("home/.codex/fake-daemon/list-received.jsonl").is_file());
+    let home = server.root.path().join("home");
+    let mut watcher = inotify::Inotify::init().unwrap();
+    watcher.watches().add(sessions(&server).join(format!("{COLOR}.jsonl")), inotify::WatchMask::OPEN).unwrap();
+    let hold = home.join(".hold-session-list");
+    fs::write(&hold, "").unwrap();
+    let warm = timeout(Duration::from_secs(1), list(&mut socket, &project_id, |rows| rows.len() == 4)).await.expect("warm list waited on an Agent");
+    assert_eq!(warm.as_array().unwrap().len(), 4);
+    timeout(Duration::from_secs(10), async {
+        while !home.join(".listing-held").exists() { tokio::time::sleep(Duration::from_millis(20)).await; }
+    }).await.unwrap();
+    let grill = sessions(&server).join(format!("{GRILL}.jsonl"));
+    let content = fs::read_to_string(&grill).unwrap();
+    fs::write(&grill, format!("{content}\n{}\n", json!({ "customTitle": "Changed session" }))).unwrap();
+    let updated = list(&mut socket, &project_id, |rows| rows.iter().any(|row| row["title"] == "Changed session")).await;
+    assert_eq!(updated.as_array().unwrap().len(), 4);
+    let mut events = [0u8; 4096];
+    assert!(matches!(watcher.read_events(&mut events), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock), "unchanged transcript was opened");
+    assert!(list(&mut socket, &json!("not-open"), |rows| rows.is_empty()).await.as_array().unwrap().is_empty());
+    fs::remove_file(hold).unwrap();
+
 }
 
 #[tokio::test]
@@ -115,8 +133,8 @@ async fn codex_sessions_prefer_names_and_fall_back_to_previews() {
     fs::write(&path, threads.to_string()).unwrap();
     let config = RIGS.replace("STAMPEDE_FAKE_THREADS = \"threads\"", &format!("STAMPEDE_FAKE_THREADS = {:?}", path));
     let (_server, mut socket, project_id) = start(&config, Vec::new()).await;
-    let listed = list(&mut socket, &project_id).await;
-    let codex: Vec<_> = listed.as_array().unwrap().iter().filter(|session| session["agent"] == "codex").map(|session| &session["title"]).collect();
+    let listed = list(&mut socket, &project_id, |rows| rows.iter().filter(|row| row["key"]["agent"] == "codex").count() == 2).await;
+    let codex: Vec<_> = listed.as_array().unwrap().iter().filter(|session| session["key"]["agent"] == "codex").map(|session| &session["title"]).collect();
     assert_eq!(codex, ["A named Codex session", "Say hi in three words."]);
 }
 
@@ -136,19 +154,41 @@ async fn claude_sessions_prefer_native_metadata_in_long_transcripts() {
         (json!({}), json!({ "customTitle": "", "aiTitle": " ", "lastPrompt": "", "summary": "" }), "Original prompt"),
     ] {
         fs::write(&path, format!("{head}\n{prompt}\n{padding}\n{tail}\n")).unwrap();
-        let listed = list(&mut socket, &project_id).await;
-        let session = listed.as_array().unwrap().iter().find(|session| session["sessionId"] == COLOR).unwrap();
+        let listed = list(&mut socket, &project_id, |rows| rows.iter().any(|row| row["key"]["sessionId"] == COLOR && row["title"] == expected)).await;
+        let session = listed.as_array().unwrap().iter().find(|session| session["key"]["sessionId"] == COLOR).unwrap();
         assert_eq!(session["title"], expected);
     }
     fs::write(&path, json!({ "type": "custom-title", "customTitle": "Title without a prompt" }).to_string()).unwrap();
-    let listed = list(&mut socket, &project_id).await;
-    let session = listed.as_array().unwrap().iter().find(|session| session["sessionId"] == COLOR).unwrap();
+    let listed = list(&mut socket, &project_id, |rows| rows.iter().any(|row| row["key"]["sessionId"] == COLOR && row["title"] == "Title without a prompt")).await;
+    let session = listed.as_array().unwrap().iter().find(|session| session["key"]["sessionId"] == COLOR).unwrap();
     assert_eq!(session["title"], "Title without a prompt");
 }
 
 #[tokio::test]
 async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
-    let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
+    let second = tempfile::tempdir().unwrap();
+    let config = RIGS.replace("STAMPEDE_FAKE_FIXTURE = \"simple-turn\"", &format!("STAMPEDE_FAKE_FIXTURE = \"resume\", CLAUDE_CONFIG_DIR = {:?}", second.path()));
+    let (mut server, mut socket, project_id) = start(&config, Vec::new()).await;
+    let home = server.root.path().join("home");
+    let worktree = server.root.path().join("data/worktrees/_branches").join(project_id.as_str().unwrap()).join("branch");
+    fs::create_dir_all(&worktree).unwrap();
+    let slug: String = worktree.to_str().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' }).collect();
+    let directory = second.path().join("projects").join(slug);
+    fs::create_dir_all(&directory).unwrap();
+    let transcript = fs::read_to_string(sessions(&server).join(format!("{COLOR}.jsonl"))).unwrap().replace(home.to_str().unwrap(), worktree.to_str().unwrap());
+    fs::write(directory.join(format!("{COLOR}.jsonl")), transcript).unwrap();
+    let second_store = fs::canonicalize(second.path()).unwrap();
+    let rows = list(&mut socket, &project_id, |rows| rows.iter().any(|row| row["key"]["store"] == json!(second_store))).await;
+    let key = &rows.as_array().unwrap().iter().find(|row| row["key"]["store"] == json!(second_store)).unwrap()["key"];
+    control(&mut socket, json!({ "type": "chat.resume", "projectId": project_id, "key": key })).await;
+    let other = timeout(Duration::from_secs(10), next_control(&mut socket, "chat.created")).await.unwrap()["chat"].clone();
+    assert_eq!(other["rig"], "other claude");
+    assert_eq!(other["cwd"], json!(worktree));
+    assert_eq!(other["sessionStore"], json!(second_store));
+    close_chat(&mut socket, server.root.path(), other["id"].as_str().unwrap()).await;
+    fs::remove_file(directory.join(format!("{COLOR}.jsonl"))).unwrap();
+    // Wait for the deleted fixture to leave the catalogue before checking the default-store resume.
+    list(&mut socket, &project_id, |rows| rows.iter().all(|row| row["key"]["store"] != json!(second_store)) && rows.iter().any(|row| row["key"]["sessionId"] == COLOR)).await;
     let chat = resume(&mut socket, &project_id, "claude-code", COLOR).await;
     let chat_id = chat["id"].as_str().unwrap();
     assert_eq!(chat["rig"], "claude");
@@ -171,8 +211,8 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
     let cache = json!({ "expires": 1792186875163u64, "then": "cold" });
     assert_eq!(context.await.expect("the resumed chat never reported its context"), json!({ "used": 4436, "window": 1000000, "cache": cache }), "cold an hour after its last response");
 
-    let listed = list(&mut socket, &project_id).await;
-    let ids: Vec<&Value> = listed.as_array().unwrap().iter().map(|session| &session["sessionId"]).collect();
+    let listed = list(&mut socket, &project_id, |rows| rows.len() == 3 && rows.iter().all(|row| row["key"]["sessionId"] != COLOR)).await;
+    let ids: Vec<&Value> = listed.as_array().unwrap().iter().map(|session| &session["key"]["sessionId"]).collect();
     assert_eq!(ids, [GRILL, EXEC, THREAD]);
 
     assert_eq!(turn(&mut socket, chat_id, "Now name a fruit in one word.").await, ["working", "done"]);
@@ -185,6 +225,59 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
         serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{chat_id}.json"))).unwrap()).unwrap();
     assert_eq!(record["agentSession"], COLOR);
     close_chat(&mut socket, server.root.path(), chat_id).await;
+
+    let root = server.root.path();
+    let repo = common::init(root, "repo");
+    control(&mut socket, json!({ "type": "project.open", "path": repo })).await;
+    let repo_id = next_control(&mut socket, "project.opened").await["projectId"].clone();
+    common::Cli { data_dir: root.join("data") }.ok(&repo, &["epic", "add", "history", "--title", "History", "--brief", "-"], "# History");
+    for (name, path) in [
+        ("ticket", root.join("data/worktrees/history/1")),
+        ("reviewer", root.join("data/worktrees/history/reviewer-1")),
+        ("resolver", root.join("data/worktrees/history/integration")),
+        ("branch", root.join("data/worktrees/_branches").join(repo_id.as_str().unwrap()).join("branch")),
+    ] {
+        let slug: String = path.to_str().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' }).collect();
+        let directory = second.path().join("projects").join(slug);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(format!("{name}.jsonl")), format!("{}\n{}\n", json!({ "type": "queue-operation" }), json!({ "cwd": path, "customTitle": name }))).unwrap();
+    }
+    let rows = list(&mut socket, &repo_id, |rows| rows.iter().filter(|row| row["key"]["store"] == json!(second_store)).count() == 4).await;
+    assert!(rows.as_array().unwrap().iter().all(|row| row["project"] == json!({ "id": repo_id, "path": repo })));
+    control(&mut socket, json!({ "type": "project.close", "projectId": repo_id })).await;
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let projects = next_control(&mut socket, "projects.changed").await;
+            if projects["projects"].as_array().unwrap().iter().all(|project| project["id"] != repo_id) { break; }
+        }
+    }).await.unwrap();
+    list(&mut socket, &repo_id, |rows| rows.is_empty()).await;
+    let databases = root.join("data/sessions");
+    for delete in [false, true] {
+        server.stop().await;
+        let archive = rusqlite::Connection::open(databases.join("archive.sqlite")).unwrap();
+        let path: String = archive.query_row("SELECT path FROM projects WHERE id = ?", [repo_id.as_str().unwrap()], |row| row.get(0)).unwrap();
+        assert_eq!(path, repo.to_str().unwrap());
+        drop(archive);
+        let index = databases.join("index.sqlite");
+        if delete {
+            fs::remove_file(&index).unwrap();
+        } else {
+            let db = rusqlite::Connection::open(&index).unwrap();
+            db.pragma_update(None, "user_version", 99).unwrap();
+        }
+        server.restart().await;
+        timeout(Duration::from_secs(15), async {
+            loop {
+                if let Ok(db) = rusqlite::Connection::open_with_flags(&index, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                    let count = db.query_row("SELECT count(*) FROM sessions WHERE project = ? AND store = ?", [repo_id.as_str().unwrap(), second_store.to_str().unwrap()], |row| row.get::<_, i64>(0));
+                    let version = db.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0));
+                    if matches!((count, version), (Ok(4), Ok(1))) { break; }
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -263,7 +356,7 @@ async fn notifications_already_in_a_paged_codex_history_are_shown_once() {
     let fixture = scratch.path().join("echoes.recorded.jsonl");
     fs::write(&fixture, entries.iter().map(|entry| entry.to_string() + "\n").collect::<String>()).unwrap();
 
-    let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", fixture.into())]).await;
+    let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", fixture.into()), ("STAMPEDE_FAKE_THREADS", "threads".into())]).await;
     let chat = resume(&mut socket, &project_id, "codex", THREAD).await;
     let chat_id = chat["id"].as_str().unwrap();
     assert_eq!(attach(&mut socket, chat_id).await, [
@@ -276,7 +369,7 @@ async fn notifications_already_in_a_paged_codex_history_are_shown_once() {
 
 #[tokio::test]
 async fn without_a_rig_a_session_opens_with_its_agents_defaults() {
-    let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", "resume".into())]).await;
+    let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", "resume".into()), ("STAMPEDE_FAKE_THREADS", "threads".into())]).await;
     for (agent, session, rig) in [("claude-code", COLOR, "Claude Code"), ("codex", THREAD, "Codex")] {
         let chat = resume(&mut socket, &project_id, agent, session).await;
         assert_eq!((&chat["rig"], &chat["agentSession"]), (&json!(rig), &json!(session)));
@@ -294,7 +387,7 @@ async fn start(config: &str, mut env: Vec<(&'static str, OsString)>) -> (Server,
     fs::create_dir_all(&sessions).unwrap();
     for (session, seconds) in [(COLOR, 1_792_182_850), (GRILL, 1_792_182_860), (MODEL, 1_792_182_870)] {
         let name = format!("{session}.jsonl");
-        fs::copy(fixtures.join(&name), sessions.join(&name)).unwrap();
+        fs::write(sessions.join(&name), fs::read_to_string(fixtures.join(&name)).unwrap().replace("/tmp/stampede-chat", server.root.path().join("home").to_str().unwrap())).unwrap();
         touch(&sessions.join(&name), seconds);
     }
     fs::create_dir(sessions.join(COLOR)).unwrap();
@@ -319,16 +412,26 @@ fn touch(path: &Path, seconds: u64) {
     file.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)).unwrap();
 }
 
-async fn list(socket: &mut Socket, project_id: &Value) -> Value {
+fn projected(rows: Value) -> Value {
+    json!(rows.as_array().unwrap().iter().map(|row| json!({
+        "agent": row["key"]["agent"], "sessionId": row["key"]["sessionId"], "title": row["title"], "updatedAt": row["updatedAt"],
+    })).collect::<Vec<_>>())
+}
+
+async fn list(socket: &mut Socket, project_id: &Value, expected: impl Fn(&[Value]) -> bool) -> Value {
     control(socket, json!({ "type": "sessions.list", "projectId": project_id })).await;
-    let listed = timeout(Duration::from_secs(10), next_control(socket, "sessions.listed")).await;
-    let listed = listed.expect("the sessions were never listed");
-    assert_eq!(listed["projectId"], *project_id);
-    listed["sessions"].clone()
+    timeout(Duration::from_secs(15), async {
+        loop {
+            let listed = next_control(socket, "sessions.listed").await;
+            if listed["projectId"] == *project_id && expected(listed["sessions"].as_array().unwrap()) { break listed["sessions"].clone(); }
+        }
+    }).await.expect("the expected Sessions were never listed")
 }
 
 async fn resume(socket: &mut Socket, project_id: &Value, agent: &str, session: &str) -> Value {
-    control(socket, json!({ "type": "chat.resume", "projectId": project_id, "agent": agent, "sessionId": session })).await;
+    let listed = list(socket, project_id, |rows| rows.iter().any(|row| row["key"]["agent"] == agent && row["key"]["sessionId"] == session)).await;
+    let key = &listed.as_array().unwrap().iter().find(|row| row["key"]["agent"] == agent && row["key"]["sessionId"] == session).unwrap()["key"];
+    control(socket, json!({ "type": "chat.resume", "projectId": project_id, "key": key })).await;
     let created = timeout(Duration::from_secs(10), next_control(socket, "chat.created")).await;
     let chat = created.expect("the chat was never created")["chat"].clone();
     assert_eq!(chat["agent"], agent);

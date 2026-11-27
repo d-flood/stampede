@@ -24,7 +24,7 @@ def fail(reason):
 
 
 FIXTURES = Path(__file__).resolve().parent.parent / 'fixtures/chats/codex'
-QUIET = ('initialize', 'initialized', 'account/rateLimits/read')
+QUIET = ('initialize', 'initialized', 'account/rateLimits/read', 'thread/list')
 HISTORY = ('thread/items/list', 'thread/turns/list')
 PAGE = 2
 held = []
@@ -180,9 +180,12 @@ def receive():
     return None
 
 
-# A connection that only reads rate limits, as the server's usage poll does, stays out of the log.
+# Keep background-only connections out of the Chat log.
 def log(message, payload):
     global logging
+    if message.get('method') == 'thread/list':
+        with open(daemon() / 'list-received.jsonl', 'a') as file:
+            file.write(payload.decode() + '\n')
     held.append(payload.decode() + '\n')
     logging = logging or message.get('method') not in QUIET
     if logging:
@@ -247,6 +250,12 @@ def reset_request(message):
 
 def list_threads(message):
     params = message.get('params') or {}
+    directory = Path(params['cwd']) if isinstance(params.get('cwd'), str) else Path.cwd()
+    hold = directory / '.hold-session-list'
+    if hold.exists():
+        (directory / '.listing-held').touch()
+        while hold.exists():
+            time.sleep(0.02)
     name = os.environ.get('STAMPEDE_FAKE_THREADS')
     listed = json.loads(recorded(name, 'recorded.json').read_text().replace(HERE, os.getcwd())) if name else []
     cwds = [params['cwd']] if isinstance(params.get('cwd'), str) else params.get('cwd')

@@ -110,6 +110,7 @@
 	let openSubagents = $state<Record<string, string[]>>({});
 	let sessions = $state<Record<string, Session[]>>({});
 	let readingSessions = $state<Record<string, boolean>>({});
+	let resumeError = $state<string>();
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
 	let codexResets = $state<ResetCredits | null>(null);
@@ -453,6 +454,7 @@
 				}
 				break;
 			case 'chat.created': {
+				if (message.resumed) focus(message.chat.projectId);
 				chats[message.chat.projectId] ??= [];
 				const owned = chats[message.chat.projectId];
 				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
@@ -474,8 +476,11 @@
 				closePanel();
 				break;
 			}
+			case 'chat.resume.error':
+				resumeError = message.error;
+				break;
 			case 'sessions.listed':
-				sessions[message.projectId] = message.sessions.filter(({ agent }) => runsOn(host, agent));
+				sessions[message.projectId] = message.sessions.filter(({ key }) => runsOn(host, key.agent));
 				readingSessions[message.projectId] = false;
 				break;
 			case 'terminal.title':
@@ -745,6 +750,7 @@
 	}
 
 	function readSessions(projectId: string) {
+		if (readingSessions[projectId]) return;
 		readingSessions[projectId] = true;
 		devices.of(projectId).send({ type: 'sessions.list', projectId });
 	}
@@ -760,8 +766,8 @@
 		}, hostOf(projectId));
 	}
 
-	function reopen(projectId: string, { agent, sessionId }: Session) {
-		devices.of(projectId).send({ type: 'chat.resume', projectId, agent, sessionId });
+	function reopen(projectId: string, { key }: Session) {
+		devices.of(projectId).send({ type: 'chat.resume', projectId, key });
 	}
 
 	/** A first message waiting for its Chat, which the server creates before it can take input. */
@@ -1805,6 +1811,12 @@
 	{#snippet actions()}
 		<Button onclick={() => (closingProject = undefined)}>Cancel</Button>
 		<Button variant="primary" onclick={() => closingProject && closeProject(closingProject, true)}>Close</Button>
+	{/snippet}
+</Dialog>
+
+<Dialog bind:open={() => !!resumeError, (open) => !open && (resumeError = undefined)} title="Could not resume Session" description={resumeError}>
+	{#snippet actions()}
+		<Button variant="primary" onclick={() => (resumeError = undefined)}>OK</Button>
 	{/snippet}
 </Dialog>
 

@@ -21,7 +21,7 @@ use tokio_tungstenite::{
 
 use super::{
     AgentCommand, Answer, Builtin, CLOSING, Cache, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
-    Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
+    Settings, NativeSession, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
     html, HOUR, Lapse,
 };
 use crate::{
@@ -371,7 +371,7 @@ async fn reconnect(
 }
 
 /// This cwd's threads, non-interactive ones included.
-pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
+pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<NativeSession>> {
     let (mut connection, mut proxy) = connect(cwd, env).await?;
     let mut sessions = Vec::new();
     let mut cursor = Value::Null;
@@ -384,7 +384,7 @@ pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<
             if let (Some(id), Some(title), Some(updated)) =
                 (thread["id"].as_str(), title, thread["updatedAt"].as_u64())
             {
-                sessions.push(Session::new(Agent::Codex, id, title, updated * 1000));
+                sessions.push(NativeSession::new(id, title, updated * 1000));
             }
         }
         cursor = listed["nextCursor"].clone();
@@ -2305,7 +2305,7 @@ mod tests {
 
         let chat = Chat {
             id: "early".to_owned(), project_id: "p".to_owned(), rig: "Codex".to_owned(), agent: Agent::Codex,
-            cwd: root.path().to_owned(), created: 0, agent_session: None, title: None, resume_at: None,
+            cwd: root.path().to_owned(), created: 0, agent_session: None, session_store: String::new(), title: None, resume_at: None,
             plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
             running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
             queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),

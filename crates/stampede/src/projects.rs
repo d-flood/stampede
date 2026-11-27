@@ -1,7 +1,7 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use serde::{Deserialize, Serialize};
@@ -52,6 +52,7 @@ pub type List = Arc<Vec<Project>>;
 pub struct Projects {
     file: PathBuf,
     list: watch::Sender<List>,
+    remember: Mutex<Option<Box<dyn Fn(Project) + Send + Sync>>>,
 }
 
 impl Projects {
@@ -64,7 +65,17 @@ impl Projects {
         for project in &mut list {
             project.icon = icon(data_dir, &project.id);
         }
-        Ok(Self { file, list: watch::Sender::new(Arc::new(list)) })
+        Ok(Self { file, list: watch::Sender::new(Arc::new(list)), remember: Mutex::new(None) })
+    }
+
+    pub fn remember(&self, callback: impl Fn(Project) + Send + Sync + 'static) {
+        let list = self.list.borrow();
+        for project in list.iter() { callback(project.clone()); }
+        *self.remember.lock().unwrap() = Some(Box::new(callback));
+    }
+
+    fn opened(&self, project: &Project) {
+        if let Some(remember) = self.remember.lock().unwrap().as_ref() { remember(project.clone()); }
     }
 
     pub fn list(&self) -> List {
@@ -94,7 +105,9 @@ impl Projects {
             if list.iter().any(|project| project.id == id) {
                 return false;
             }
-            list.push(Project { icon: icon(self.file.parent().unwrap(), &id), id: id.clone(), path, worktree: None });
+            let project = Project { icon: icon(self.file.parent().unwrap(), &id), id: id.clone(), path, worktree: None };
+            self.opened(&project);
+            list.push(project);
             true
         });
         Ok(id)
@@ -109,6 +122,7 @@ impl Projects {
                 false
             }
             None => {
+                self.opened(&nested);
                 list.push(nested.clone());
                 true
             }

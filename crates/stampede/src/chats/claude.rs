@@ -5,7 +5,6 @@ use std::{
     io::{self, BufRead, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process::Stdio,
-    time::UNIX_EPOCH,
 };
 
 use futures_util::StreamExt;
@@ -24,7 +23,7 @@ use uuid::Uuid;
 
 use super::{
     AgentCommand, Answer, Builtin, Cache, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
-    Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
+    Settings, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     html,
     protocol::{self, Message},
@@ -671,47 +670,32 @@ fn image_urls(content: &Value) -> Vec<String> {
     }).collect()
 }
 
-pub fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
-    let Some(config) = config_dir(env) else { return Ok(Vec::new()) };
-    let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    let entries = match fs::read_dir(config.join("projects").join(name)) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        entries => entries?,
-    };
-    let mut sessions = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension() != Some("jsonl".as_ref()) {
-            continue;
-        }
-        let (Some(id), Some(title)) = (path.file_stem().and_then(|stem| stem.to_str()), session_title(&path, &["customTitle", "aiTitle", "lastPrompt", "summary"])) else {
-            continue;
-        };
-        let Some(updated) = entry.metadata().and_then(|metadata| metadata.modified()).ok() else { continue };
-        let updated = updated.duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_millis() as u64;
-        sessions.push(Session::new(Agent::ClaudeCode, id, &title, updated));
-    }
-    Ok(sessions)
+fn session_title(path: &Path, fields: &[&str]) -> Option<String> {
+    read_title(path, fields).ok().flatten()
 }
 
-fn session_title(path: &Path, fields: &[&str]) -> Option<String> {
-    let mut file = File::open(path).ok()?;
-    let size = file.metadata().ok()?.len();
+pub(super) fn catalogue_title(path: &Path) -> io::Result<Option<String>> {
+    read_title(path, &["customTitle", "aiTitle", "lastPrompt", "summary"])
+}
+
+fn read_title(path: &Path, fields: &[&str]) -> io::Result<Option<String>> {
+    let mut file = File::open(path)?;
+    let size = file.metadata()?.len();
     let mut head = Vec::new();
-    (&mut file).take(HEAD).read_to_end(&mut head).ok()?;
+    (&mut file).take(HEAD).read_to_end(&mut head)?;
     let mut tail = Vec::new();
     if size > HEAD {
-        file.seek(SeekFrom::Start(size.saturating_sub(HEAD))).ok()?;
-        (&mut file).take(HEAD).read_to_end(&mut tail).ok()?;
+        file.seek(SeekFrom::Start(size.saturating_sub(HEAD)))?;
+        (&mut file).take(HEAD).read_to_end(&mut tail)?;
     }
     let entries: Vec<Value> = tail.split(|byte| *byte == b'\n').rev().chain(head.split(|byte| *byte == b'\n').rev())
         .filter_map(|line| serde_json::from_slice(line).ok()).collect();
     for field in fields {
         if let Some(title) = entries.iter().find_map(|entry| entry[field].as_str().filter(|title| !title.trim().is_empty())) {
-            return Some(title.to_owned());
+            return Ok(Some(title.to_owned()));
         }
     }
-    first_prompt(&head)
+    Ok(first_prompt(&head))
 }
 
 fn first_prompt(head: &[u8]) -> Option<String> {
@@ -922,7 +906,7 @@ fn session_file(env: &BTreeMap<String, String>, session: &str) -> Option<PathBuf
     projects.flatten().map(|project| project.path().join(&name)).find(|path| path.is_file())
 }
 
-fn config_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
+pub(super) fn config_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
     match env.get("CLAUDE_CONFIG_DIR") {
         Some(dir) => Some(PathBuf::from(dir)),
         None => std::env::var_os("CLAUDE_CONFIG_DIR")

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -30,11 +30,11 @@ use crate::{
     AppState,
     attention::{Attention, Feed},
     canvas::Canvases,
-    chats::{self, Builtin, Chats},
+    chats::{self, Builtin, Chats, sessions::{SessionKey, Sessions}},
     cloud::{self, Service},
     cloud_hosts::CloudHosts,
     cloud_setup::Run,
-    config::{Agent, Config},
+    config::Config,
     epics::Epics,
     git,
     holder::Owner,
@@ -94,7 +94,7 @@ enum Control {
     #[serde(rename = "chat.fork")]
     ForkChat { chat_id: String, index: usize },
     #[serde(rename = "chat.resume")]
-    ResumeChat { project_id: String, agent: Agent, session_id: String },
+    ResumeChat { project_id: String, key: SessionKey },
     #[serde(rename = "sessions.list")]
     ListSessions { project_id: String },
     #[serde(rename = "chat.send")]
@@ -200,6 +200,8 @@ struct Device {
     connection: Uuid,
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
+    sessions: Arc<Sessions>,
+    session_requests: HashMap<String, Arc<Notify>>,
     canvases: Arc<Canvases>,
     attached: HashMap<String, u64>,
     expanded: HashMap<(String, usize), u64>,
@@ -227,7 +229,7 @@ struct Device {
 
 async fn connect(
     socket: WebSocket,
-    AppState { cloud, terminals, chats, attention, usage, projects, cloud_hosts, cloud_setup, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
+    AppState { cloud, terminals, chats, sessions, attention, usage, projects, cloud_hosts, cloud_setup, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
 ) {
     let _connected = devices.connect();
     let (mut sink, mut stream) = socket.split();
@@ -267,6 +269,8 @@ async fn connect(
         connection: Uuid::new_v4(),
         terminals,
         chats,
+        sessions,
+        session_requests: HashMap::new(),
         canvases,
         attached: HashMap::new(),
         expanded: HashMap::new(),
@@ -618,16 +622,16 @@ impl Device {
                     }
                 });
             }
-            Control::ResumeChat { project_id, agent, session_id } => {
-                let projects = self.projects.list();
-                let Some(project) = projects.iter().find(|project| project.id == project_id) else {
-                    return eprintln!("cannot resume a chat in {project_id}: not open");
-                };
-                let rig = self.config.borrow().rig_for(agent);
-                match self.chats.create(project, Path::new(&project.path), &rig, Some(&session_id), None).await {
-                    Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
-                    Err(error) => eprintln!("cannot resume session {session_id}: {error}"),
-                }
+            Control::ResumeChat { project_id, key } => {
+                let sessions = self.sessions.clone();
+                let chats = self.chats.clone();
+                let outgoing = self.outgoing.clone();
+                tokio::spawn(async move {
+                    match sessions.resume(key, project_id.clone(), chats).await {
+                        Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat, "resumed": true })),
+                        Err(error) => send(&outgoing, json!({ "type": "chat.resume.error", "projectId": project_id, "error": error.to_string() })),
+                    }
+                });
             }
             Control::ListSessions { project_id } => self.list_sessions(project_id),
             Control::SendChat { chat_id, text, queue, images } => self.chats.send(&chat_id, &text, queue, &images),
@@ -879,22 +883,29 @@ impl Device {
         self.attached.insert(chat_id, seq);
     }
 
-    fn list_sessions(&self, project_id: String) {
-        let projects = self.projects.list();
-        let Some(project) = projects.iter().find(|project| project.id == project_id) else {
-            return eprintln!("cannot list sessions in {project_id}: not open");
-        };
-        let cwd = PathBuf::from(&project.path);
-        let config = self.config.borrow();
-        let [claude, codex, copilot, antigravity] = Agent::ALL.map(|agent| config.rig_for(agent));
-        drop(config);
-        let chats = self.chats.list().into_iter().map(|chat| chat.agent_session);
-        let live: HashSet<String> = chats.flatten().collect();
+    fn list_sessions(&mut self, project_id: String) {
+        self.sessions.refresh();
+        if let Some(request) = self.session_requests.get(&project_id) {
+            request.notify_one();
+            return;
+        }
+        let request = Arc::new(Notify::new());
+        self.session_requests.insert(project_id.clone(), request.clone());
+        let sessions = self.sessions.clone();
+        let chats = self.chats.clone();
         let outgoing = self.outgoing.clone();
-        tokio::spawn(async move {
-            let mut sessions = chats::sessions(&cwd, &claude, &codex, &copilot, &antigravity).await;
-            sessions.retain(|session| !live.contains(&session.session_id));
-            send(&outgoing, json!({ "type": "sessions.listed", "projectId": project_id, "sessions": sessions }));
+        let mut updated = sessions.subscribe();
+        self.attachments.spawn(async move {
+            loop {
+                updated.mark_unchanged();
+                let (listed, coverage) = sessions.list(project_id.clone(), chats.clone()).await;
+                send(&outgoing, json!({ "type": "sessions.listed", "projectId": project_id, "sessions": listed, "coverage": coverage }));
+                tokio::select! {
+                    _ = request.notified() => (),
+                    Ok(()) = updated.changed() => (),
+                    else => break,
+                }
+            }
         });
     }
 

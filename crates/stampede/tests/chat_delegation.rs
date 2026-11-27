@@ -55,6 +55,31 @@ async fn review(agent: &str, target: &str, finding: &str) {
     assert_eq!(child["cwd"], source["cwd"]);
     assert_eq!(child["projectId"], source["projectId"]);
     assert_eq!(child["parent"], source["id"]);
+    if target == "claude-code" {
+        let home = server.root.path().join("home");
+        let slug: String = home.to_str().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' }).collect();
+        let directory = home.join(".claude/projects").join(slug);
+        fs::create_dir_all(&directory).unwrap();
+        let session = child["agentSession"].as_str().expect("delegated Chat has no Session");
+        let child_file = directory.join(format!("{session}.jsonl"));
+        if !child_file.exists() {
+            fs::write(&child_file, format!("{}\n", json!({ "cwd": home, "customTitle": "Child conversation" }))).unwrap();
+        }
+        let visible = "past-visible";
+        fs::write(directory.join(format!("{visible}.jsonl")), format!("{}\n", json!({ "cwd": home, "customTitle": "Past conversation" }))).unwrap();
+        control(&mut socket, json!({ "type": "sessions.list", "projectId": source["projectId"] })).await;
+        let rows = timeout(Duration::from_secs(15), async {
+            loop {
+                let listed = next_control(&mut socket, "sessions.listed").await;
+                if listed["sessions"].as_array().unwrap().iter().any(|row| row["key"]["sessionId"] == visible) { break listed; }
+            }
+        }).await.unwrap();
+        assert!(rows["sessions"].as_array().unwrap().iter().all(|row| row["key"]["sessionId"] != session), "{rows}");
+        let index = rusqlite::Connection::open(server.root.path().join("data/sessions/index.sqlite")).unwrap();
+        let count: i64 = index.query_row("SELECT count(*) FROM sessions WHERE session_id = ?", [session], |row| row.get(0)).unwrap();
+        assert_eq!(count, 1, "child Session must actually have been indexed");
+    }
+
     let catalog = catalog(&server, &child).await;
     let names: Vec<_> = catalog["tools"].as_array().unwrap().iter().map(|tool| tool["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["ask_questions", "stage_command", "read_terminal", "render_html", "render_media", "pr_review"]);

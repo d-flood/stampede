@@ -107,6 +107,7 @@ struct AppState {
     canvases: Arc<canvas::Canvases>,
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
+    sessions: Arc<chats::sessions::Sessions>,
     attention: Arc<Feed>,
     home_link: Option<Arc<cloud_link::HomeLink>>,
     usage: Arc<Usage>,
@@ -275,6 +276,8 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     terminals.restore().await?;
     cloud_setup.interrupted(&terminals)?;
     chats.restore(&rigs).await?;
+    let sessions = chats::sessions::Sessions::new(&args.data_dir, projects.clone(), epics.clone(), config.clone(), args.cloud.is_some()).await?;
+    sessions.follow(chats.clone());
     if let Some(cloud::Service::Sprite) = args.cloud {
         keep_awake::spawn(busy, chats.busy(), cloud_setup.subscribe(), terminals.printed());
     }
@@ -312,7 +315,7 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
     if args.cloud.is_some() {
         std::fs::write(args.data_dir.join("port"), port.to_string())?;
     }
-    let state = AppState { cloud: args.cloud, logins: Arc::new(cloud_logins::Store::new(args.data_dir.clone())), cloud_hosts, cloud_setup, media_dir: args.data_dir.join("media"), canvases, terminals, chats, attention, home_link, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, pr_reviews, runs, devices, origin };
+    let state = AppState { cloud: args.cloud, logins: Arc::new(cloud_logins::Store::new(args.data_dir.clone())), cloud_hosts, cloud_setup, media_dir: args.data_dir.join("media"), canvases, terminals, chats, sessions, attention, home_link, usage, projects, config, config_path: args.config, disk, opened, git, push, languages, layouts, browsers, epics, pr_reviews, runs, devices, origin };
     cloud_link::spawn(state.clone());
     let listener = listener.tap_io(|stream| {
         let _ = stream.set_nodelay(true);

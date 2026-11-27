@@ -93,8 +93,8 @@
 								<Command.GroupItems>
 									{#each days as { day, sessions: listed } (day)}
 										{#if dated}<ListLabel sub aria-hidden="true">{day}</ListLabel>{/if}
-										{#each listed as session (`${session.agent}:${session.sessionId}`)}
-											<ChatItem value="session:{session.agent}:{session.sessionId}" agent={session.agent} title={session.title} time={session.updatedAt} size="md" onselect={() => onsession(session)} />
+										{#each listed as session (`${session.key.agent}:${session.key.store}:${session.key.sessionId}`)}
+											<ChatItem value="session:{session.key.agent}:{session.key.store}:{session.key.sessionId}" agent={session.key.agent} title={session.title} time={session.updatedAt} size="md" onselect={() => onsession(session)} />
 										{/each}
 									{/each}
 								</Command.GroupItems>
