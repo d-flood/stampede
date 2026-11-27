@@ -11,12 +11,13 @@
 	import Eye from '~icons/ph/eye';
 	import EyeSlash from '~icons/ph/eye-slash';
 	import SlidersHorizontal from '~icons/ph/sliders-horizontal';
+	import UploadSimple from '~icons/ph/upload-simple';
 	import X from '~icons/ph/x';
 
-	type Props = { projectId: string; device: Device; query: string; includeIgnored: boolean; onignored(): void; onopen(path: string, cursor: Cursor): void };
+	type Props = { projectId: string; device: Device; query: string; includeIgnored: boolean; uploading: boolean; onupload(): void; onignored(): void; onopen(path: string, cursor: Cursor): void };
 	type Result = { file: string; matches: Found[] };
 
-	let { projectId, device, query = $bindable(), includeIgnored, onignored, onopen }: Props = $props();
+	let { projectId, device, query = $bindable(), includeIgnored, uploading, onupload, onignored, onopen }: Props = $props();
 
 	let include = $state('');
 	let exclude = $state('');
@@ -164,7 +165,10 @@
 			/>
 			{#if query}<IconButton type="button" label="Clear search" title="Clear search" onclick={clear}><X /></IconButton>{/if}
 		</div>
-		{#if !query}{@render eye()}{/if}
+		{#if !query}
+			<IconButton type="button" label="Upload files" title="Upload files" disabled={uploading} onclick={onupload}><UploadSimple /></IconButton>
+			{@render eye()}
+		{/if}
 	</div>
 	{#if query}
 		<div class="options">

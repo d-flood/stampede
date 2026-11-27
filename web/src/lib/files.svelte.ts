@@ -235,6 +235,27 @@ export async function create(projectId: string, path: string, dir: boolean): Pro
 	invalidate(projectId);
 }
 
+export async function upload(projectId: string, path: string, file: File): Promise<void> {
+	// Checks first: a 409 sent before the server reads a large body can reset the connection.
+	if ((await fetch(projectUrl(projectId, `file?${new URLSearchParams({ path })}`), { method: 'HEAD' })).ok) {
+		throw new RequestError(409, 'A file or directory with that name already exists.');
+	}
+	const response = await fetch(projectUrl(projectId, `file/transfer?${new URLSearchParams({ path })}`), {
+		method: 'POST',
+		headers: { 'content-type': 'application/octet-stream' },
+		body: file
+	});
+	if (!response.ok) throw new RequestError(response.status, await response.text());
+	invalidate(projectId);
+}
+
+export function download(projectId: string, path: string) {
+	const link = document.createElement('a');
+	link.href = projectUrl(projectId, `file/transfer?${new URLSearchParams({ path })}`);
+	link.download = path.split('/').at(-1) ?? path;
+	link.click();
+}
+
 export async function copy(projectId: string, path: string, destination: string): Promise<{ path: string }> {
 	const result = await json<{ path: string }>(await fetch(projectUrl(projectId, 'file/copy'), {
 		method: 'POST',

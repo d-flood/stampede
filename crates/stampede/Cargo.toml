@@ -31,9 +31,10 @@ serde_json = "1.0.154"
 sha2 = "0.11.1"
 shlex = "2.0.1"
 tar = "0.4.46"
+tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "process", "sync", "io-util", "time", "fs"] }
 tokio-tungstenite = "0.30.0"
-tokio-util = { version = "0.7.20", features = ["codec"] }
+tokio-util = { version = "0.7.20", features = ["codec", "io"] }
 tower-http = { version = "0.7.1", features = ["compression-gzip"] }
 toml = "1.2.2"
 ttf-parser = "0.25.1"
@@ -45,5 +46,4 @@ name = "integration"
 path = "tests/integration.rs"
 
 [dev-dependencies]
-tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["time"] }

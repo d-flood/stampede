@@ -93,8 +93,20 @@ An Agent running its own terminal interface, started by the user in an ordinary 
 _Avoid_: agent, agent terminal
 
 **Chat**:
-An Agent that Stampede drives directly and shows in its own interface; it keeps running when Devices disconnect or Stampede restarts, stops when its Tab is closed.
+An Agent that Stampede drives directly and shows in its own interface; once started, it keeps running when Devices disconnect or Stampede restarts, and stops when its Tab is closed.
 _Avoid_: conversation, thread, session, native agent
+
+**Session**:
+An Agent's own record of one conversation, kept in its native history whether a Chat or a TUI started it; a Chat drives one and can resume it after its Tab closes.
+_Avoid_: past chat, conversation, thread, transcript, history
+
+**Dormant**:
+True of a Chat whose Agent has not started: it shows its Session's conversation, and its Agent starts when David sends a message or forks it.
+_Avoid_: preview, read-only, inactive, idle, asleep
+
+**Ended Session**:
+A Session whose native history is gone, because its Cloud Host was destroyed or its Agent deleted it for age, kept by Stampede as a read-only record until dismissed. It can be found and viewed but not resumed.
+_Avoid_: archived session, orphaned session, dead session
 
 **Fork**:
 A new Chat that continues another Chat's conversation from before one of its user messages, which waits in the new Chat's Composer; the original Chat is unchanged.
@@ -319,7 +331,7 @@ Two Tabs shown side by side in the main window.
 _Avoid_: tile, pane
 
 **Launchpad**:
-What a Project's main window shows when it has no Tabs: the ways to open one, such as its Rigs and recent sessions.
+What a Project's main window shows when it has no Tabs: the ways to open one, such as its Rigs and recent Sessions.
 _Avoid_: start screen, new tab page, empty state
 
 **Sidebar**:

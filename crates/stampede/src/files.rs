@@ -1,20 +1,30 @@
 use std::{
     collections::HashSet,
     fs, io,
+    os::{fd::AsRawFd, unix::fs::PermissionsExt},
     path::{Component, Path, PathBuf},
 };
 
 use axum::{
     Json,
+    body::Body,
     extract::{Path as Param, Query, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use futures_util::StreamExt;
 use ignore::WalkBuilder;
-use nix::fcntl::{AT_FDCWD, RenameFlags, renameat2};
+use nix::{
+    errno::Errno,
+    fcntl::{AT_FDCWD, AtFlags, OFlag, RenameFlags, openat, renameat2},
+    sys::stat::Mode,
+    unistd::linkat,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_util::io::ReaderStream;
 
 use crate::{AppState, config};
 
@@ -190,13 +200,7 @@ pub async fn create(
 ) -> Result<Response, Failure> {
     let root = root(&state, &id)?;
     blocking(move || {
-        let relative = Path::new(&create.path);
-        if !relative.components().all(|part| matches!(part, Component::Normal(_))) {
-            return Err((StatusCode::FORBIDDEN, "Invalid path within the Project".to_owned()));
-        }
-        let name = relative.file_name().ok_or_else(|| (StatusCode::BAD_REQUEST, "No name".to_owned()))?;
-        let parent = relative.parent().unwrap_or(Path::new(""));
-        let path = resolve(&root, &parent.to_string_lossy())?.join(name);
+        let path = new_path(&root, &create.path)?;
         if create.dir {
             fs::create_dir(path).map_err(failure)?;
         } else {
@@ -205,6 +209,85 @@ pub async fn create(
         Ok(StatusCode::CREATED.into_response())
     })
     .await
+}
+
+pub async fn upload(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Query(query): Query<FileQuery>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, Failure> {
+    if headers.get(header::CONTENT_TYPE).and_then(|value| value.to_str().ok()) != Some("application/octet-stream") {
+        return Err((StatusCode::UNSUPPORTED_MEDIA_TYPE, "Expected application/octet-stream".to_owned()));
+    }
+    let root = root(&state, &id)?;
+    let (path, dir, file, temporary) = tokio::task::spawn_blocking(move || {
+        let path = new_path(&root, &query.path)?;
+        match fs::symlink_metadata(&path) {
+            Ok(_) => return Err((StatusCode::CONFLICT, "A file or directory with that name already exists.".to_owned())),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {},
+            Err(error) => return Err(failure(error)),
+        }
+        let parent = path.parent().unwrap();
+        let dir = fs::File::open(parent).map_err(failure)?;
+        // Stages an unnamed file so the watcher, tree, and Git never see a partial upload.
+        let (file, temporary) = match openat(&dir, ".", OFlag::O_TMPFILE | OFlag::O_WRONLY | OFlag::O_CLOEXEC, Mode::from_bits_truncate(0o666)) {
+            Ok(fd) => (fs::File::from(fd), None),
+            Err(Errno::EOPNOTSUPP | Errno::EISDIR) => {
+                let (file, temporary) = tempfile::Builder::new()
+                    .prefix(".stampede-upload-")
+                    .permissions(fs::Permissions::from_mode(0o666))
+                    .tempfile_in(parent)
+                    .map_err(failure)?
+                    .into_parts();
+                (file, Some(temporary))
+            }
+            Err(error) => return Err(failure(error.into())),
+        };
+        Ok((path, dir, file, temporary))
+    }).await.map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))??;
+    let mut file = tokio::fs::File::from_std(file);
+    let mut stream = body.into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+        file.write_all(&chunk).await.map_err(failure)?;
+    }
+    file.flush().await.map_err(failure)?;
+    let file = file.into_std().await;
+    blocking(move || {
+        match temporary {
+            None => linkat(AT_FDCWD, format!("/proc/self/fd/{}", file.as_raw_fd()).as_str(), &dir, path.file_name().unwrap(), AtFlags::AT_SYMLINK_FOLLOW)
+                .map_err(|error| failure(error.into()))?,
+            Some(temporary) => temporary.persist_noclobber(path).map_err(|error| failure(error.error))?,
+        }
+        Ok(StatusCode::CREATED.into_response())
+    }).await
+}
+
+pub async fn download(
+    State(state): State<AppState>,
+    Param(id): Param<String>,
+    Query(query): Query<FileQuery>,
+) -> Result<Response, Failure> {
+    let root = root(&state, &id)?;
+    blocking(move || {
+        let path = resolve(&root, &query.path)?;
+        if !fs::metadata(&path).map_err(failure)?.is_file() {
+            return Err((StatusCode::BAD_REQUEST, "Only files can be downloaded".to_owned()));
+        }
+        let name = Path::new(&query.path).file_name().unwrap().to_string_lossy();
+        let encoded: String = name.bytes().map(|byte| format!("%{byte:02X}")).collect();
+        let file = fs::File::open(path).map_err(failure)?;
+        let length = file.metadata().map_err(failure)?.len();
+        Ok(([
+            (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
+            (header::CONTENT_DISPOSITION, format!("attachment; filename*=UTF-8''{encoded}")),
+            (header::CONTENT_LENGTH, length.to_string()),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
+        ], Body::from_stream(ReaderStream::with_capacity(tokio::fs::File::from_std(file).take(length), 64 * 1024))).into_response())
+    }).await
 }
 
 pub async fn delete(
@@ -398,6 +481,16 @@ fn resolve(root: &Path, rel: &str) -> Result<PathBuf, Failure> {
         return Err(outside());
     }
     Ok(path)
+}
+
+fn new_path(root: &Path, rel: &str) -> Result<PathBuf, Failure> {
+    let relative = Path::new(rel);
+    if !relative.components().all(|part| matches!(part, Component::Normal(_))) {
+        return Err((StatusCode::FORBIDDEN, "Invalid path within the Project".to_owned()));
+    }
+    let name = relative.file_name().ok_or_else(|| (StatusCode::BAD_REQUEST, "No name".to_owned()))?;
+    let parent = relative.parent().unwrap_or(Path::new(""));
+    Ok(resolve(root, &parent.to_string_lossy())?.join(name))
 }
 
 fn list(dir: &Path, rel: &str, include_ignored: bool) -> io::Result<Vec<Entry>> {

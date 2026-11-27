@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Device } from '#lib/device.svelte.ts';
-	import { copy, create, list, remove, RequestError, type Cursor, type Entry } from '#lib/files.svelte.ts';
+	import { copy, create, download, list, remove, upload, RequestError, type Cursor, type Entry } from '#lib/files.svelte.ts';
 	import { letters, type Change } from '#lib/git.ts';
 	import Rename from '#lib/shell/Rename.svelte';
 	import Search from '#lib/shell/Search.svelte';
@@ -15,10 +15,12 @@
 	import Clipboard from '~icons/ph/clipboard';
 	import Copy from '~icons/ph/copy';
 	import DotsThree from '~icons/ph/dots-three';
+	import DownloadSimple from '~icons/ph/download-simple';
 	import FilePlus from '~icons/ph/file-plus';
 	import FolderPlus from '~icons/ph/folder-plus';
 	import PencilSimple from '~icons/ph/pencil-simple';
 	import Trash from '~icons/ph/trash';
+	import UploadSimple from '~icons/ph/upload-simple';
 
 	type Props = { projectId: string; device: Device; changes: Change[]; hidden: boolean; onopen(path: string, cursor?: Cursor): void; onrename(from: string, to: string): void };
 
@@ -39,6 +41,12 @@
 	let copied = $state<Entry>();
 	let pasting = $state(false);
 	let pasteError = $state('');
+	let picker: HTMLInputElement;
+	let uploadDirectory = '';
+	let uploading = $state(false);
+	let uploadStatus = $state('');
+	let uploadError = $state('');
+	let dropDirectory = $state<string>();
 	let renamer: Rename;
 	let search: Search;
 	let treeElement = $state<HTMLDivElement>();
@@ -102,8 +110,74 @@
 		return [
 			{ label: 'New File', icon: FilePlus, onselect: () => startCreate(path, false) },
 			{ label: 'New Directory', icon: FolderPlus, onselect: () => startCreate(path, true) },
+			{ label: 'Upload Files…', icon: UploadSimple, disabled: uploading, onselect: () => chooseUpload(path) },
 			{ label: 'Paste', icon: Clipboard, disabled: !copied || pasting, onselect: () => paste(path) }
 		];
+	}
+
+	function chooseUpload(path: string) {
+		uploadDirectory = path;
+		picker.click();
+	}
+
+	function picked() {
+		const files = Array.from(picker.files ?? []);
+		picker.value = '';
+		uploadFiles(uploadDirectory, files);
+	}
+
+	async function uploadFiles(directory: string, files: File[], errors: string[] = []) {
+		if (uploading || (!files.length && !errors.length)) return;
+		uploading = true;
+		uploadError = '';
+		try {
+			for (const [index, file] of files.entries()) {
+				uploadStatus = `Uploading ${index + 1} of ${files.length}…`;
+				try {
+					await upload(projectId, directory ? `${directory}/${file.name}` : file.name, file);
+				} catch (cause) {
+					errors.push(`${file.name}: ${cause instanceof Error ? cause.message : String(cause)}`);
+				}
+			}
+			if (directory) expanded.add(directory);
+			reload();
+		} finally {
+			uploadError = errors.join('\n');
+			uploadStatus = '';
+			uploading = false;
+		}
+	}
+
+	function dropDestination(event: DragEvent) {
+		return event.target instanceof Element ? event.target.closest<HTMLElement>('[data-upload-directory]')?.dataset.uploadDirectory ?? '' : '';
+	}
+
+	function dragover(event: DragEvent) {
+		if (!event.dataTransfer?.types.includes('Files')) return;
+		event.preventDefault();
+		const allowed = !uploading && !query;
+		event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+		dropDirectory = allowed ? dropDestination(event) : undefined;
+	}
+
+	function dragleave(event: DragEvent & { currentTarget: HTMLElement }) {
+		if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) dropDirectory = undefined;
+	}
+
+	function drop(event: DragEvent) {
+		if (!event.dataTransfer?.types.includes('Files')) return;
+		event.preventDefault();
+		dropDirectory = undefined;
+		if (query) return;
+		const files: File[] = [];
+		const errors: string[] = [];
+		for (const item of event.dataTransfer.items) {
+			const file = item.getAsFile();
+			if (!file) continue;
+			if (item.webkitGetAsEntry()?.isDirectory) errors.push(`${file.name}: Directories cannot be uploaded`);
+			else files.push(file);
+		}
+		uploadFiles(dropDestination(event), files, errors);
 	}
 
 	function copyEntry(entry: Entry) {
@@ -220,12 +294,13 @@
 			{@const changed = kind ?? (entry.dir && marked.has(entry.path) ? 'modified' : undefined)}
 			{@const items = [
 				{ label: 'Copy', icon: Copy, onselect: () => copyEntry(entry) },
+				...(!entry.dir ? [{ label: 'Download', icon: DownloadSimple, onselect: () => download(projectId, entry.path) }] : []),
 				...creationItems(entry.dir ? entry.path : path),
 				{ label: 'Rename', icon: PencilSimple, onselect: () => renamer.start(entry.path, entry.dir) },
 				{ label: 'Delete', icon: Trash, onselect: () => confirm(entry) }
 			]}
 			<li>
-				<div class="row" onfocusin={() => (focused = entry)}>
+				<div class="row" class:dropTarget={entry.dir && dropDirectory === entry.path} data-upload-directory={entry.dir ? entry.path : path} onfocusin={() => (focused = entry)}>
 					<Menu context {items}>
 						{#snippet trigger(props)}
 							<TreeRow
@@ -259,15 +334,18 @@
 	</ul>
 {/snippet}
 
-<section aria-label="Files" {hidden}>
-	<Search bind:this={search} {projectId} {device} bind:query {includeIgnored} onignored={showIgnored} {onopen} />
+<section aria-label="Files" {hidden} ondragover={dragover} ondragleave={dragleave} ondrop={drop}>
+	<input type="file" multiple hidden bind:this={picker} onchange={picked} />
+	<Search bind:this={search} {projectId} {device} bind:query {includeIgnored} {uploading} onupload={() => chooseUpload('')} onignored={showIgnored} {onopen} />
 	{#if !query}
 		<Menu context items={creationItems('')}>
 			{#snippet trigger(props)}
-				<div {...props} bind:this={treeElement} class="tree" role="group" aria-label="File tree" aria-busy={pasting}>{@render tree('', 0)}</div>
+				<div {...props} bind:this={treeElement} class="tree" class:dropTarget={dropDirectory === ''} role="group" aria-label="File tree" aria-busy={pasting || uploading}>{@render tree('', 0)}</div>
 			{/snippet}
 		</Menu>
-		{#if pasteError}<p role="alert">{pasteError}</p>{/if}
+		{#if pasteError}<p class="notice" role="alert">{pasteError}</p>{/if}
+		{#if uploadStatus}<p class="notice" role="status">{uploadStatus}</p>{/if}
+		{#if uploadError}<p class="notice" role="alert">{uploadError}</p>{/if}
 	{/if}
 </section>
 
@@ -317,6 +395,24 @@
 		flex: 1;
 		overflow: auto;
 		padding: 0 var(--space-2) var(--space-3);
+	}
+
+	.notice {
+		margin: 0;
+		padding: var(--space-1) var(--space-4);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+
+	.notice[role='alert'] {
+		color: var(--ansi-1);
+	}
+
+	.tree.dropTarget, .row.dropTarget {
+		background: var(--selected-bg);
+		box-shadow: inset 0 0 0 var(--border-width) var(--selected-border);
 	}
 
 	ul {

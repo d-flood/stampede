@@ -5,6 +5,49 @@ import { openProject, showSidebar } from './shell.ts';
 
 test.use({ reducedMotion: 'reduce' });
 
+test('Files transfers binary contents between the Device and Project without overwriting', { tag: '@desktop' }, async ({ page }) => {
+	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/transfer`;
+	mkdirSync(`${root}/destination`, { recursive: true });
+	writeFileSync(`${root}/reference`, '');
+	const bytes = Buffer.alloc(3 * 1024 * 1024, 255);
+	bytes[0] = 0;
+	const file = { name: 'data # é.bin', mimeType: 'application/octet-stream', buffer: bytes };
+	await openProject(page, 'transfer');
+	const sidebar = await showSidebar(page);
+	const chooser = page.waitForEvent('filechooser');
+	await sidebar.getByRole('button', { name: 'Upload files', exact: true }).click();
+	await (await chooser).setFiles(file);
+	const row = sidebar.getByRole('button', { name: file.name, exact: true });
+	await expect(row).toBeVisible();
+	expect(readFileSync(`${root}/${file.name}`).equals(bytes)).toBe(true);
+	expect(statSync(`${root}/${file.name}`).mode).toBe(statSync(`${root}/reference`).mode);
+	const folder = sidebar.getByRole('button', { name: 'destination', exact: true });
+	await sidebar.getByRole('button', { name: 'Actions for destination', exact: true }).click();
+	const nestedChooser = page.waitForEvent('filechooser');
+	await page.getByRole('menuitem', { name: 'Upload Files…', exact: true }).click();
+	await (await nestedChooser).setFiles(file);
+	await expect(row).toHaveCount(2);
+	expect(readFileSync(`${root}/destination/${file.name}`).equals(bytes)).toBe(true);
+	const transfer = await page.evaluateHandle(() => {
+		const data = new DataTransfer();
+		data.items.add(new File(['different'], 'data # é.bin'));
+		data.items.add(new File(['dropped'], 'dropped.txt'));
+		return data;
+	});
+	await folder.dispatchEvent('dragover', { dataTransfer: transfer });
+	await folder.dispatchEvent('drop', { dataTransfer: transfer });
+	await expect(sidebar.getByRole('alert')).toHaveText(`${file.name}: A file or directory with that name already exists.`);
+	await expect(sidebar.getByRole('button', { name: 'dropped.txt', exact: true })).toBeVisible();
+	expect(readFileSync(`${root}/destination/${file.name}`).equals(bytes)).toBe(true);
+	expect(readFileSync(`${root}/destination/dropped.txt`, 'utf8')).toBe('dropped');
+	await row.first().click({ button: 'right' });
+	const downloaded = page.waitForEvent('download');
+	await page.getByRole('menuitem', { name: 'Download', exact: true }).click();
+	const result = await downloaded;
+	expect(result.suggestedFilename()).toBe(file.name);
+	expect(readFileSync(await result.path()).equals(bytes)).toBe(true);
+});
+
 test('menus copy files and directories without replacing existing contents', { tag: '@desktop' }, async ({ page }) => {
 	const root = `${process.env.STAMPEDE_E2E_ROOT}/projects/copy`;
 	mkdirSync(`${root}/source/nested`, { recursive: true });
