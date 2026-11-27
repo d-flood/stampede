@@ -216,6 +216,7 @@ fn store_variable(agent: Agent) -> Option<&'static str> {
     match agent {
         Agent::ClaudeCode => Some("CLAUDE_CONFIG_DIR"),
         Agent::Codex => Some("CODEX_HOME"),
+        // GitHub Copilot CLI configuration-directory reference: COPILOT_HOME replaces ~/.copilot, including session history.
         Agent::Copilot => Some("COPILOT_HOME"),
         Agent::Antigravity => None,
     }
@@ -232,6 +233,7 @@ pub(super) fn store(agent: Agent, env: &BTreeMap<String, String>) -> String {
                 home.join(match agent {
                     Agent::Codex => ".codex",
                     Agent::Copilot => ".copilot",
+                    // Antigravity CLI /resume and settings reference: state lives under ~/.gemini/antigravity-cli.
                     Agent::Antigravity => ".gemini/antigravity-cli",
                     Agent::ClaudeCode => unreachable!(),
                 })
@@ -347,33 +349,24 @@ impl Sessions {
                 let mut rigs = BTreeMap::new();
                 for agent in Agent::ALL {
                     if cloud && !matches!(agent, Agent::ClaudeCode | Agent::Codex) { continue; }
-                    if matches!(agent, Agent::ClaudeCode | Agent::Codex) {
-                        for rig in config.rigs.iter().filter(|rig| rig.agent == agent).cloned().chain([Rig::starter(agent)]) {
-                            rigs.entry((agent, store(agent, &rig.env))).or_insert(rig);
-                        }
-                    } else {
-                        let rig = config.rig_for(agent);
-                        rigs.insert((agent, store(agent, &rig.env)), rig);
+                    for rig in config.rigs.iter().filter(|rig| rig.agent == agent).cloned().chain([Rig::starter(agent)]) {
+                        rigs.entry((agent, store(agent, &rig.env))).or_insert(rig);
                     }
                 }
                 rigs
             }).await else { return };
             if startup {
-                for agent in Agent::ALL {
-                    if agent == Agent::Codex {
-                        for (key, rig) in rigs.iter().filter(|(key, _)| key.0 == agent) {
-                            let _ = service.queue(key.clone(), rig.clone(), None);
-                        }
-                        continue;
-                    }
-                    let service = service.clone();
-                    let stores: Vec<_> = rigs.iter().filter(|(key, _)| key.0 == agent).map(|(key, rig)| (key.clone(), rig.clone())).collect();
-                    tokio::spawn(async move {
-                        for (key, rig) in stores {
-                            if let Some(scan) = service.queue(key, rig, None) { let _ = scan.await; }
-                        }
-                    });
+                let service = service.clone();
+                let mut claude = Vec::new();
+                for (key, rig) in rigs {
+                    if key.0 == Agent::ClaudeCode { claude.push((key, rig)); }
+                    else { let _ = service.queue(key, rig, None); }
                 }
+                tokio::spawn(async move {
+                    for (key, rig) in claude {
+                        if let Some(scan) = service.queue(key, rig, None) { let _ = scan.await; }
+                    }
+                });
             } else {
                 for (key, rig) in rigs { let _ = service.queue(key, rig, None); }
             }
@@ -441,7 +434,6 @@ impl Sessions {
     }
 
     async fn scan(self: &Arc<Self>, key: Store, rig: Rig, chat: Option<Chat>) -> io::Result<bool> {
-        let projects = self.projects.list();
         let epics = self.epics.clone();
         let dir = self.dir.clone();
         let scope = key.clone();
@@ -449,61 +441,92 @@ impl Sessions {
         let filter = target.clone();
         // Wait behind Project-open records before taking the catalogue's read snapshot.
         self.write(|_, _| Ok(())).await?;
-        if key.0 == Agent::Codex {
+        if key.0 != Agent::ClaudeCode {
             let service = self.clone();
             let (send, receive) = oneshot::channel();
-            std::thread::Builder::new().name("codex-catalogue".to_owned()).spawn(move || {
+            std::thread::Builder::new().name("session-catalogue".to_owned()).spawn(move || {
                 let result = tokio::runtime::Builder::new_current_thread().enable_all().build()
-                    .and_then(|runtime| runtime.block_on(service.scan_codex(key, rig, target.as_deref())));
+                    .and_then(|runtime| runtime.block_on(async {
+                        if key.0 == Agent::Codex { service.scan_codex(key, rig, target.as_deref()).await }
+                        else { service.scan_cli(key, rig, target.as_deref()).await }
+                    }));
                 let _ = send.send(result);
             })?;
             return receive.await.map_err(io::Error::other)?;
         }
-        let (rows, directories) = tokio::task::spawn_blocking(move || {
+        let rows = tokio::task::spawn_blocking(move || {
             let known = known_projects(&read_connection(&dir.join("archive.sqlite"))?)?;
             let data = dir.parent().unwrap();
-            if scope.0 == Agent::ClaudeCode {
-                let previous = current(&read_connection(&dir.join("index.sqlite"))?, &scope)?;
-                Ok((claude_rows(&scope.1, &known, data, &epics, &previous, filter.as_deref())?, None))
-            } else {
-                if store(scope.0, &rig.env) != scope.1 {
-                    return Err(io::Error::other("The Rig no longer points at this history store"));
-                }
-                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-                let mut rows = Vec::new();
-                let mut directories = HashSet::new();
-                let paths: Vec<_> = if let Some(chat) = &chat {
-                    vec![chat.cwd.to_string_lossy().into_owned()]
-                } else {
-                    projects.iter().map(|project| project.path.clone()).collect()
-                };
-                for path in paths {
-                    let cwd = Path::new(&path);
-                    let listed = runtime.block_on(async {
-                        match scope.0 {
-                            Agent::Copilot => copilot::sessions(cwd, &rig.env).await,
-                            Agent::Antigravity => antigravity::sessions(cwd, &rig.env).await,
-                            Agent::ClaudeCode | Agent::Codex => unreachable!(),
-                        }
-                    })?;
-                    directories.insert(path.clone());
-                    let Some(parent) = attribute(&path, &known, data, &epics) else { continue };
-                    rows.extend(listed.into_iter().filter(|session| filter.as_ref().is_none_or(|id| *id == session.session_id)).map(|session| Row {
-                        session_id: session.session_id, directory: path.clone(), project: parent.clone(),
-                        revision: session.updated_at.to_string(), title: session.title, updated_at: session.updated_at as i64,
-                    }));
-                }
-                Ok::<_, io::Error>((rows, Some(directories)))
-            }
+            let previous = current(&read_connection(&dir.join("index.sqlite"))?, &scope)?;
+            claude_rows(&scope.1, &known, data, &epics, &previous, filter.as_deref())
         }).await.map_err(io::Error::other)??;
         let scope = key.clone();
         let filter = target.clone();
-        let changed = self.write(move |index, archive| replace(index, archive, &scope, rows, directories, filter.as_deref())).await?;
+        let changed = self.write(move |index, archive| replace(index, archive, &scope, rows, None, filter.as_deref())).await?;
         if changed { self.notify(); }
-        if key.0 == Agent::ClaudeCode {
-            self.index_snapshots(&key, target.as_deref()).await?;
-        }
+        self.index_snapshots(&key, target.as_deref()).await?;
         Ok(changed)
+    }
+
+    async fn scan_cli(&self, key: Store, mut rig: Rig, target: Option<&str>) -> io::Result<bool> {
+        if store(key.0, &rig.env) != key.1 {
+            return Err(io::Error::other("The Rig no longer points at this history store"));
+        }
+        apply_store(key.0, &key.1, &mut rig.env);
+        let data = self.dir.parent().unwrap();
+        let known = known_projects(&read_connection(&self.dir.join("archive.sqlite"))?)?;
+        let previous = current(&read_connection(&self.dir.join("index.sqlite"))?, &key)?;
+        let directories = known.iter().map(|project| project.path.clone()).chain(previous.values().map(|row| row.directory.clone())).collect();
+        unsafe { nix::libc::nice(10); }
+        enum Catalogue { Copilot(copilot::Catalogue), Antigravity(antigravity::Catalogue) }
+        let mut catalogue = match key.0 {
+            Agent::Copilot => Catalogue::Copilot(copilot::Catalogue::open(&crate::home(), &rig.env).await?),
+            Agent::Antigravity => Catalogue::Antigravity(antigravity::Catalogue::open(&crate::home(), &rig.env).await?),
+            _ => unreachable!(),
+        };
+        let result = async {
+            let listed = match &mut catalogue {
+                Catalogue::Copilot(connection) => connection.list(&directories).await?,
+                Catalogue::Antigravity(connection) => connection.list().await?,
+            };
+            let rows = listed.into_iter().filter_map(|session| {
+                if target.is_some_and(|target| target != session.session_id) { return None; }
+                let directory = canonical(Path::new(&session.directory)).to_string_lossy().into_owned();
+                let project = attribute(&directory, &known, data, &self.epics)?;
+                Some(Row { session_id: session.session_id, directory, project, title: session.title,
+                    updated_at: session.updated_at as i64, revision: session.updated_at.to_string() })
+            }).collect();
+            let scope = key.clone();
+            let filter = target.map(str::to_owned);
+            let changed = self.write(move |index, archive| replace(index, archive, &scope, rows, None, filter.as_deref())).await?;
+            if changed { self.notify(); }
+            let mut failure = None;
+            for (id, session, cwd, revision) in self.snapshot_rows(&key, target).await? {
+                let minimum = self.config.borrow().storage.min_free_gib;
+                if crate::storage::Storage::new(data).pressure(data, minimum)?.is_some() { break; }
+                let snapshot = match &mut catalogue {
+                    Catalogue::Copilot(connection) => connection.snapshot(&session, Path::new(&cwd), data).await,
+                    Catalogue::Antigravity(connection) => connection.snapshot(&session, Path::new(&cwd), data).await,
+                };
+                match snapshot {
+                    Ok(items) => {
+                        if self.write(move |index, _| save_snapshot(index, id, &revision, None, &items)).await? { self.notify(); }
+                    }
+                    Err(error) => {
+                        let timed_out = error.kind() == io::ErrorKind::TimedOut;
+                        failure = Some(error);
+                        if timed_out { break; }
+                    }
+                }
+            }
+            if let Some(error) = failure { return Err(error); }
+            Ok(changed)
+        }.await;
+        match catalogue {
+            Catalogue::Copilot(connection) => connection.close().await,
+            Catalogue::Antigravity(connection) => connection.close().await,
+        }
+        result
     }
 
     async fn scan_codex(&self, key: Store, mut rig: Rig, target: Option<&str>) -> io::Result<bool> {

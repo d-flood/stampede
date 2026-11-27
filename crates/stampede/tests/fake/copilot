@@ -98,9 +98,9 @@ while True:
         reply(request, {'modelId': model, 'reasoningEffort': effort})
     elif method == 'session.getMessages':
         reply(request, {'events': history})
-    elif method == 'session.list':
+    elif method in ['session.list', 'sessions.list']:
         ids = ['saved-copilot-session'] if fixture == 'sessions' else ['closed-copilot-session'] if fixture == 'historical-cost' else [path.stem for path in state.glob('*.json')]
-        reply(request, {'sessions': [{'sessionId': id, 'startTime': '2026-10-18T12:00:00Z', 'modifiedTime': '2026-10-19T12:00:00Z', 'summary': 'A saved Copilot conversation', 'isRemote': False} for id in ids]})
+        reply(request, {'sessions': [{'sessionId': id, 'startTime': '2026-10-18T12:00:00Z', 'modifiedTime': '2026-10-19T12:00:00Z', 'summary': 'A saved Copilot conversation', 'isRemote': False, 'context': {'cwd': str(root / 'home')}} for id in ids]})
     elif method == 'sessions.readPersistedEvents':
         if fixture == 'historical-cost':
             snapshot = {**metrics(), 'totalNanoAiu': 3432400000, 'totalUserRequests': 1}
@@ -108,7 +108,10 @@ while True:
             reply(request, {'events': events, 'cursor': 'older', 'cursorStatus': 'ok', 'hasMore': not bool(params.get('cursor'))})
         else:
             path = state / f"{params['sessionId']}.json"
-            reply(request, {'events': json.loads(path.read_text()) if path.exists() else [], 'cursor': 'end', 'cursorStatus': 'ok', 'hasMore': False})
+            events = json.loads(path.read_text()) if path.exists() else []
+            if params['sessionId'] == 'saved-copilot-session':
+                events = [{'id': 'saved-reply', 'type': 'assistant.message', 'timestamp': '2026-10-19T12:00:00Z', 'parentId': None, 'data': {'messageId': 'saved-reply', 'content': 'A remembered narwhal'}}]
+            reply(request, {'events': events, 'cursor': 'end', 'cursorStatus': 'ok', 'hasMore': False})
     elif method == 'session.send':
         message = str(uuid.uuid4())
         reply(request, {'messageId': message})

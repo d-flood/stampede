@@ -890,14 +890,15 @@ pub enum Duty {
 const SESSION_TITLE: usize = 200;
 
 pub struct NativeSession {
+    pub directory: String,
     pub session_id: String,
     pub title: String,
     pub updated_at: u64,
 }
 
 impl NativeSession {
-    fn new(session_id: &str, title: &str, updated_at: u64) -> Self {
-        Self { session_id: session_id.to_owned(), title: title.chars().take(SESSION_TITLE).collect(), updated_at }
+    fn new(directory: &str, session_id: &str, title: &str, updated_at: u64) -> Self {
+        Self { directory: directory.to_owned(), session_id: session_id.to_owned(), title: title.chars().take(SESSION_TITLE).collect(), updated_at }
     }
 }
 
