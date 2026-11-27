@@ -1640,14 +1640,14 @@ impl Transcript {
             Some("item/reasoning/summaryTextDelta") => {
                 let Some(id) = params["itemId"].as_str() else { return };
                 if !self.thinking.contains_key(id) {
-                    let index = self.push(Item::Thinking { seconds: 0, text: None });
+                    let index = self.push(Item::Thinking { elided: false, seconds: 0, text: None });
                     self.thinking.insert(id.to_owned(), (index, BTreeMap::new()));
                 }
                 let (index, parts) = self.thinking.get_mut(id).unwrap();
                 parts.entry(params["summaryIndex"].as_u64().unwrap_or_default()).or_default()
                     .push_str(params["delta"].as_str().unwrap_or_default());
                 let text = parts.values().cloned().collect::<Vec<_>>().join("\n\n");
-                let _ = self.events.send(Event::Item(*index, Item::Thinking { seconds: 0, text: Some(text) }));
+                let _ = self.events.send(Event::Item(*index, Item::Thinking { elided: false, seconds: 0, text: Some(text) }));
             }
             Some("item/started") if item["type"] == "commandExecution" => {
                 self.command(item);
@@ -1707,7 +1707,7 @@ impl Transcript {
                 };
                 let streamed = self.thinking.remove(&text("id"));
                 let text = parts("summary").or_else(|| parts("content")).or_else(|| streamed.as_ref().map(|(_, parts)| parts.values().cloned().collect::<Vec<_>>().join("\n\n")));
-                let item = Item::Thinking { seconds: seconds(elapsed), text };
+                let item = Item::Thinking { elided: false, seconds: seconds(elapsed), text };
                 if let Some((index, _)) = streamed {
                     let _ = self.events.send(Event::Item(index, item));
                 } else {
@@ -1941,8 +1941,8 @@ fn command(item: &Value) -> Item {
     };
     let output = item["aggregatedOutput"].as_str().unwrap_or_default().to_owned();
     match item["source"].as_str() {
-        Some("userShell") => Item::Shell { command, status, output, pending: false, started_at: (status == CommandStatus::Running).then(super::now) },
-        _ => Item::Command { command, status, output, started_at: (status == CommandStatus::Running).then(super::now) },
+        Some("userShell") => Item::Shell { elided: false, command, status, output, pending: false, started_at: (status == CommandStatus::Running).then(super::now) },
+        _ => Item::Command { elided: false, command, status, output, started_at: (status == CommandStatus::Running).then(super::now) },
     }
 }
 

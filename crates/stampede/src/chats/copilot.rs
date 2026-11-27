@@ -872,7 +872,7 @@ impl Transcript {
             "assistant.reasoning_delta" | "assistant.reasoning" => {
                 let complete = event.event_type == "assistant.reasoning";
                 let index = if let Some((index, _)) = self.thinking { index } else {
-                    let index = self.push(Item::Thinking { seconds: 0, text: Some(String::new()) });
+                    let index = self.push(Item::Thinking { elided: false, seconds: 0, text: Some(String::new()) });
                     self.thinking = Some((index, Instant::now())); index
                 };
                 if let Item::Thinking { text: Some(text), .. } = &mut self.items[index] {
@@ -885,7 +885,7 @@ impl Transcript {
             "tool.user_requested" => {
                 let (Some(id), Some(command)) = (data["toolCallId"].as_str(), data["arguments"]["command"].as_str()) else { return };
                 if self.tools.contains_key(id) { return; }
-                let index = self.push(Item::Shell { command: command.to_owned(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(super::epoch_ms(&event.timestamp).unwrap_or_else(super::now)) });
+                let index = self.push(Item::Shell { elided: false, command: command.to_owned(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(super::epoch_ms(&event.timestamp).unwrap_or_else(super::now)) });
                 self.tools.insert(id.to_owned(), (index, data.clone()));
             }
             "tool.execution_complete" => self.tool_complete(data),
@@ -1057,7 +1057,7 @@ impl Transcript {
         let name = data["toolName"].as_str().unwrap_or("tool");
         let args = &data["arguments"];
         let item = if let Some(command) = args["command"].as_str().filter(|_| matches!(name, "bash" | "powershell" | "shell" | "local_shell")) {
-            Item::Command { command: command.to_owned(), status: CommandStatus::Running, output: String::new(), started_at: Some(started_at) }
+            Item::Command { elided: false, command: command.to_owned(), status: CommandStatus::Running, output: String::new(), started_at: Some(started_at) }
         } else if data["mcpServerName"] == html::SERVER && data["mcpToolName"] == html::TOOL {
             html::item(args).unwrap_or_else(|| tool(name, args, ToolKind::Mcp))
         } else {

@@ -45,82 +45,92 @@ const CLOSING: Duration = Duration::from_secs(5);
 /// How long an Agent may take to resume after its last shell finishes before its Chat counts as done.
 const RESUMING: Duration = Duration::from_millis(1500);
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
 pub enum Item {
     User {
         text: String,
         images: usize,
-        #[serde(skip_serializing_if = "Vec::is_empty")]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         image_urls: Vec<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        template: Option<&'static str>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        template: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         rewind_from: Option<usize>,
     },
     Text { text: String, streaming: bool, phase: Phase },
     Thinking {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        elided: bool,
         seconds: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<String>,
     },
     Tools { calls: Vec<ToolCall> },
-    Html { title: String, html: String },
+    Html { title: String, html: String, #[serde(default, skip_serializing_if = "std::ops::Not::not")] elided: bool },
     Media { title: String, asset: String },
     Edit {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        elided: bool,
         path: String,
         diff: String,
         added: usize,
         removed: usize,
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         write: bool,
     },
     Canvas {
         canvas: String,
         added: usize,
         removed: usize,
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         write: bool,
     },
     Command {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        elided: bool,
         command: String,
         status: CommandStatus,
         output: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         started_at: Option<u64>,
     },
     Shell {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        elided: bool,
         command: String,
         status: CommandStatus,
         output: String,
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pending: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         started_at: Option<u64>,
     },
     Subagent {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        elided: bool,
         id: String,
         origin: SubagentOrigin,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         role: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         agent: Option<crate::config::Agent>,
         task: String,
         status: Status,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         outcome: Option<Outcome>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         report: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         started_at: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         totals: Option<Totals>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         activity: Option<String>,
         items: Vec<Item>,
     },
@@ -135,7 +145,7 @@ pub enum Outcome {
     Stopped,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SubagentOrigin {
     Harness,
@@ -147,16 +157,16 @@ pub enum SubagentOrigin {
 pub struct Totals {
     pub duration_ms: u64,
     pub tools: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub kind: ToolKind,
     pub name: String,
     pub detail: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rationale: Option<String>,
 }
 
@@ -166,7 +176,7 @@ impl ToolCall {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolKind {
     Read,
@@ -178,7 +188,7 @@ pub enum ToolKind {
     Other,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Phase {
     Commentary,
@@ -190,7 +200,7 @@ fn presents(server: &str, tool: &str) -> bool {
     server == html::SERVER && [questions::TOOL, html::TOOL, crate::media::TOOL, terminal_tools::STAGE].contains(&tool)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CommandStatus {
     Running,
@@ -198,7 +208,7 @@ pub enum CommandStatus {
     Failed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Notice {
     Compacted,
@@ -210,7 +220,31 @@ pub enum Notice {
     Speed,
 }
 
+fn transform_item(data: &Path, cwd: &Path, item: &mut Item) {
+    crate::media::cache_images(data, item);
+    crate::canvas::recognize(data, cwd, item);
+    if let Item::User { text, template, .. } = item
+        && let Some((name, typed)) = templates::recognize(text, data)
+    {
+        (*template, *text) = (Some(name.to_owned()), typed);
+    }
+    if matches!(item, Item::User { template: Some(name), .. } if name == "tickets") {
+        *item = Item::Notice { notice: Notice::Tickets, text: "Building Tickets".to_owned() };
+    }
+}
+
 impl Item {
+    fn trim_snapshot(&mut self) {
+        match self {
+            Self::Edit { diff, elided, .. } => { diff.clear(); *elided = true; }
+            Self::Command { output, elided, .. } | Self::Shell { output, elided, .. } => { output.clear(); *elided = true; }
+            Self::Thinking { text, elided, .. } => { *text = None; *elided = true; }
+            Self::Html { html, elided, .. } => { html.clear(); *elided = true; }
+            Self::Subagent { items, elided, .. } => { items.clear(); *elided = true; }
+            _ => (),
+        }
+    }
+
     fn compacted() -> Self {
         Item::Notice { notice: Notice::Compacted, text: "Conversation compacted".to_owned() }
     }
@@ -221,7 +255,7 @@ impl Item {
 
     fn edit(path: String, diff: String, write: bool) -> Self {
         let count = |sign: char| diff.lines().skip_while(|line| !line.starts_with("@@")).filter(|line| line.starts_with(sign)).count();
-        Item::Edit { path, added: count('+'), removed: count('-'), diff, write }
+        Item::Edit { elided: false, path, added: count('+'), removed: count('-'), diff, write }
     }
 }
 
@@ -374,6 +408,7 @@ impl Subagent {
             tokens: self.tokens,
         });
         Item::Subagent {
+            elided: false,
             id: self.id.clone(),
             origin: SubagentOrigin::Harness,
             name: self.name.clone(),
@@ -396,9 +431,9 @@ impl Subagent {
 fn appended(existing: &Item, item: &Item) -> Option<String> {
     let (before, after) = match (existing, item) {
         (Item::Text { text: before, streaming: true, phase }, Item::Text { text: after, streaming: true, phase: same }) if phase == same => (before, after),
-        (Item::Command { command, status, output: before, started_at }, Item::Command { command: same, status: unchanged, output: after, started_at: same_start })
+        (Item::Command { command, status, output: before, started_at, .. }, Item::Command { command: same, status: unchanged, output: after, started_at: same_start, .. })
             if command == same && status == unchanged && started_at == same_start => (before, after),
-        (Item::Shell { command, status, output: before, pending, started_at }, Item::Shell { command: same, status: unchanged, output: after, pending: still, started_at: same_start })
+        (Item::Shell { command, status, output: before, pending, started_at, .. }, Item::Shell { command: same, status: unchanged, output: after, pending: still, started_at: same_start, .. })
             if command == same && status == unchanged && pending == still && started_at == same_start => (before, after),
         _ => return None,
     };
@@ -1519,16 +1554,7 @@ impl Chats {
                     let _ = self.changed.send(Change::Todos { chat_id: id.clone(), todos });
                 }
                 Event::Item(index, mut item) => {
-                    crate::media::cache_images(&self.data_dir, &mut item);
-                    crate::canvas::recognize(&self.data_dir, &cwd, &mut item);
-                    if let Item::User { text, template, .. } = &mut item
-                        && let Some((name, typed)) = templates::recognize(text, &self.data_dir)
-                    {
-                        (*template, *text) = (Some(name), typed);
-                    }
-                    if matches!(&item, Item::User { template: Some("tickets"), .. }) {
-                        item = Item::Notice { notice: Notice::Tickets, text: "Building Tickets".to_owned() };
-                    }
+                    transform_item(&self.data_dir, &cwd, &mut item);
                     if let Item::User { text, .. } = &item { self.retitle(&entry, text, false); }
                     let mut transcript = entry.transcript.lock().unwrap();
                     if matches!(&item, Item::User { .. }) { transcript.recoverable = false; }

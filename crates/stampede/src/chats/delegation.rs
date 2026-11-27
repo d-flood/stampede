@@ -62,6 +62,7 @@ impl Report {
 
     fn item(&self, status: Status, activity: Option<String>, items: Vec<Item>) -> Item {
         Item::Subagent {
+            elided: false,
             id: self.id.clone(), origin: super::SubagentOrigin::Stampede, name: Some(self.rig.clone()), role: None, agent: self.agent, task: self.task.lines().next().unwrap_or_default().chars().take(200).collect(),
             status, outcome: self.outcome, prompt: Some(self.task.clone()), report: self.report.clone(), model: self.model.clone(),
             started_at: self.started_at, totals: Some(self.totals), activity, items,

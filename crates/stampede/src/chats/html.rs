@@ -40,7 +40,7 @@ pub fn item(arguments: &Value) -> Option<Item> {
     {
         return None;
     }
-    Some(Item::Html { title: snippet.title, html: snippet.html })
+    Some(Item::Html { elided: false, title: snippet.title, html: snippet.html })
 }
 
 fn record(args: &ChatToolsArgs) -> Option<super::Chat> {
