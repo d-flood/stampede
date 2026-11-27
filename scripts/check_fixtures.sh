@@ -37,12 +37,31 @@ name = "Fake Claude (steer)"
 agent = "claude-code"
 env = { STAMPEDE_FAKE_FIXTURE = "steer-queue-interrupt" }
 EOF
+python3 - "$STAMPEDE_E2E_ROOT" <<'PYTHON'
+import json
+import sys
+import uuid
+from pathlib import Path
+
+root = Path(sys.argv[1])
+threads = json.loads(Path("crates/stampede/tests/fixtures/chats/codex/threads.recorded.json").read_text())
+listed = []
+for form in ("desktop", "pixel"):
+    for thread in threads:
+        if thread["cwd"] != "/tmp/stampede-chat":
+            continue
+        thread = dict(thread, cwd=str(root / "projects" / f"sessions-{form}"))
+        if form == "pixel":
+            thread["id"] = thread["sessionId"] = str(uuid.uuid5(uuid.NAMESPACE_URL, thread["id"]))
+        listed.append(thread)
+(root / "codex-threads.json").write_text(json.dumps(listed))
+PYTHON
 cat >> "$STAMPEDE_E2E_ROOT/config.toml" <<EOF
 
 [[rig]]
 name = "Fake Codex"
 agent = "codex"
-env = { STAMPEDE_FAKE_FIXTURE = "simple-turn", STAMPEDE_FAKE_THREADS = "threads", CODEX_HOME = "$STAMPEDE_E2E_ROOT/codex" }
+env = { STAMPEDE_FAKE_FIXTURE = "simple-turn", STAMPEDE_FAKE_THREADS = "$STAMPEDE_E2E_ROOT/codex-threads.json", CODEX_HOME = "$STAMPEDE_E2E_ROOT/codex" }
 
 [[rig]]
 name = "Fake Claude Tools"

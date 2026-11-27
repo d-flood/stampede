@@ -234,10 +234,14 @@ async fn codex_sessions_prefer_names_and_fall_back_to_previews() {
     threads[1]["name"] = json!(" \n ");
     fs::write(&path, threads.to_string()).unwrap();
     let config = RIGS.replace("STAMPEDE_FAKE_THREADS = \"threads\"", &format!("STAMPEDE_FAKE_THREADS = {:?}", path));
-    let (_server, mut socket, project_id) = start(&config, Vec::new()).await;
+    let (server, mut socket, project_id) = start(&config, Vec::new()).await;
     let listed = list(&mut socket, &project_id, |rows| rows.iter().filter(|row| row["key"]["agent"] == "codex").count() == 2).await;
     let codex: Vec<_> = listed.as_array().unwrap().iter().filter(|session| session["key"]["agent"] == "codex").map(|session| &session["title"]).collect();
     assert_eq!(codex, ["A named Codex session", "Say hi in three words."]);
+    let matches = search(&mut socket, &project_id, "friend", |results| results.iter().any(|result| result["key"]["sessionId"] == THREAD)).await;
+    let found = matches.as_array().unwrap().iter().find(|result| result["key"]["sessionId"] == THREAD).unwrap();
+    assert_eq!(found["excerpt"], json!({ "who": "agent", "text": "Hi there, friend!", "ranges": [[10, 16]] }));
+    assert!(!received(&server).iter().any(|message| message["method"] == "thread/resume"));
 }
 
 #[tokio::test]
@@ -422,7 +426,7 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
     ];
     assert_eq!(attach(&mut socket, chat_id).await, [&hi[..], &bye].concat());
     close_chat(&mut socket, server.root.path(), chat_id).await;
-    let received = received(&server);
+    let received: Vec<_> = received(&server).into_iter().filter(|message| message["catalogue"] != true).collect();
     let methods: Vec<Value> = received.iter().map(|message| message["method"].clone()).collect();
     assert_eq!(methods, [
         "initialize", "initialized", "thread/resume", "thread/items/list", "thread/items/list", "thread/turns/list",

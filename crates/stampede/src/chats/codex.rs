@@ -21,7 +21,7 @@ use tokio_tungstenite::{
 
 use super::{
     AgentCommand, Answer, Builtin, CLOSING, Cache, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
-    Settings, NativeSession, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
+    Settings, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
     html, HOUR, Lapse,
 };
 use crate::{
@@ -371,29 +371,47 @@ async fn reconnect(
 }
 
 /// This cwd's threads, non-interactive ones included.
-pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<NativeSession>> {
-    let (mut connection, mut proxy) = connect(cwd, env).await?;
-    let mut sessions = Vec::new();
-    let mut cursor = Value::Null;
-    loop {
-        let params = json!({ "cwd": cwd, "sourceKinds": SOURCES, "sortKey": "updated_at", "cursor": cursor });
-        let listed = connection.call("thread/list", params).await?;
-        for thread in listed["data"].as_array().into_iter().flatten() {
-            let title = thread["name"].as_str().filter(|title| !title.trim().is_empty())
-                .or_else(|| thread["preview"].as_str().filter(|preview| !preview.trim().is_empty()));
-            if let (Some(id), Some(title), Some(updated)) =
-                (thread["id"].as_str(), title, thread["updatedAt"].as_u64())
-            {
-                sessions.push(NativeSession::new(id, title, updated * 1000));
+pub(super) struct Catalogue {
+    connection: Connection,
+    proxy: Child,
+}
+
+impl Catalogue {
+    pub(super) async fn open(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Self> {
+        let (connection, proxy) = timeout(RECONNECTING, connect(cwd, env)).await??;
+        Ok(Self { connection, proxy })
+    }
+
+    pub(super) async fn list(&mut self) -> io::Result<Vec<Value>> {
+        let params = json!({ "sourceKinds": SOURCES, "sortKey": "updated_at", "modelProviders": [] });
+        timeout(RECONNECTING, self.connection.pages("thread/list", params, &mut Vec::new())).await?
+    }
+
+    pub(super) async fn snapshot(&mut self, session: &str, cwd: &Path, data: &Path) -> io::Result<Vec<Item>> {
+        let turns = timeout(RECONNECTING, self.connection.history(session, &mut Vec::new())).await??;
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(session, cwd, events);
+        transcript.data_dir = Some(data.to_owned());
+        transcript.resumed(&turns);
+        let mut items = Vec::new();
+        while let Ok(event) = received.try_recv() {
+            match event {
+                Event::Item(index, mut item) => {
+                    super::transform_item(data, cwd, &mut item);
+                    item.trim_snapshot();
+                    if let Some(existing) = items.get_mut(index) { *existing = item; } else { items.push(item); }
+                }
+                Event::Truncate(len) => items.truncate(len),
+                _ => (),
             }
         }
-        cursor = listed["nextCursor"].clone();
-        if cursor.is_null() {
-            break;
-        }
+        Ok(items)
     }
-    let _ = proxy.kill().await;
-    Ok(sessions)
+
+    pub(super) async fn close(mut self) {
+        drop(self.connection);
+        let _ = self.proxy.kill().await;
+    }
 }
 
 pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &AgentSettings) -> io::Result<(Vec<Value>, AgentSettings)> {
@@ -850,7 +868,8 @@ impl Connection {
         let mut data = Vec::new();
         loop {
             let mut page = self.hold(method, params.clone(), held).await?;
-            if let Value::Array(entries) = page["data"].take() { data.extend(entries); }
+            let Value::Array(entries) = page["data"].take() else { return Err(io::Error::other(format!("{method}: missing page data"))); };
+            data.extend(entries);
             if page["nextCursor"].is_null() { return Ok(data); }
             params["cursor"] = page["nextCursor"].take();
         }

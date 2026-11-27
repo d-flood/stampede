@@ -29,6 +29,7 @@ HISTORY = ('thread/items/list', 'thread/turns/list')
 PAGE = 2
 held = []
 logging = False
+catalogue = False
 # The turns recorded results carried, served page by page instead.
 histories = {}
 
@@ -40,7 +41,7 @@ def recorded(name, suffix):
 
 
 def fixture():
-    name = os.environ.get('STAMPEDE_FAKE_FIXTURE') or fail('STAMPEDE_FAKE_FIXTURE is not set')
+    name = os.environ.get('STAMPEDE_FAKE_FIXTURE', 'simple-turn')
     return recorded(name, 'recorded.jsonl')
 
 
@@ -180,17 +181,21 @@ def receive():
     return None
 
 
-# Keep background-only connections out of the Chat log.
+# Keep list-only connections out of the Chat log; mark history indexing separately.
 def log(message, payload):
-    global logging
+    global logging, catalogue
     if message.get('method') == 'thread/list':
+        catalogue = True
         with open(daemon() / 'list-received.jsonl', 'a') as file:
             file.write(payload.decode() + '\n')
     held.append(payload.decode() + '\n')
     logging = logging or message.get('method') not in QUIET
     if logging:
         with open(daemon() / 'received.jsonl', 'a') as file:
-            file.writelines(held)
+            if catalogue:
+                file.writelines(json.dumps(dict(json.loads(line), catalogue=True)) + '\n' for line in held)
+            else:
+                file.writelines(held)
         held.clear()
 
 
@@ -260,6 +265,14 @@ def list_threads(message):
     listed = json.loads(recorded(name, 'recorded.json').read_text().replace(HERE, os.getcwd())) if name else []
     cwds = [params['cwd']] if isinstance(params.get('cwd'), str) else params.get('cwd')
     kinds = params.get('sourceKinds') or INTERACTIVE
+    for line in (FIXTURES / 'resume.recorded.jsonl').read_text().splitlines():
+        thread = json.loads(line).get('stdout', {}).get('result', {})
+        if isinstance(thread, dict) and 'thread' in thread:
+            thread = thread['thread']
+            histories[thread['id']] = thread.get('turns', [])
+    for thread in listed:
+        if thread.get('turns'):
+            histories[thread['id']] = thread['turns']
     data = [thread for thread in listed if (cwds is None or thread['cwd'] in cwds) and thread['source'] in kinds]
     send({'id': message['id'], 'result': {'data': data, 'nextCursor': None, 'backwardsCursor': None}})
 
