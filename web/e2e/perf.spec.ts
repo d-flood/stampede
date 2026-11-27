@@ -7,6 +7,9 @@ import { newTab, openProject, screen, showSidebar } from './shell.ts';
 declare global {
 	interface Window {
 		clicked?: number;
+		loaded?: { at: number; data: string };
+		received?: number;
+		shown?: Promise<number>;
 	}
 }
 
@@ -20,6 +23,23 @@ function fixture(name: string) {
 	const source = Array.from({ length: 50 }, (_, n) => step(n)).join('\n');
 	for (const file of files) writeFileSync(`${dir}/${file}`, source);
 	return name;
+}
+
+function longSession(session: string, turns: number) {
+	const entries: object[] = [];
+	const uuid = (index: number) => `${session.slice(0, 8)}-0000-4000-8000-${String(index).padStart(12, '0')}`;
+	const push = (role: 'user' | 'assistant', content: unknown) =>
+		entries.push({ type: role, uuid: uuid(entries.length), parentUuid: entries.length ? uuid(entries.length - 1) : null, sessionId: session, message: { role, content } });
+	const code = (seed: number) => Array.from({ length: 12 }, (_, n) => `const value${n} = compute(${n}, ${seed});`).join('\n');
+	for (let turn = 0; turn < turns; turn++) {
+		push('user', `Turn ${turn}: handle case ${turn} in the \`parser\`.`);
+		push('assistant', [{ type: 'tool_use', id: `read-${turn}`, name: 'Read', input: { file_path: `/project/parser${turn % 5}.ts` } }]);
+		push('user', [{ type: 'tool_result', tool_use_id: `read-${turn}`, content: code(turn) }]);
+		push('assistant', [{ type: 'tool_use', id: `test-${turn}`, name: 'Bash', input: { command: 'pnpm test parser' } }]);
+		push('user', [{ type: 'tool_result', tool_use_id: `test-${turn}`, content: ' ✓ parser\n ✓ lexer' }]);
+		push('assistant', [{ type: 'text', text: `## Case ${turn}\n\nHandled **case ${turn}** in \`parse()\`.\n\n- Kept the API\n- Added tests\n\n\`\`\`ts\n${code(turn)}\n\`\`\`` }]);
+	}
+	return entries.map((entry) => JSON.stringify(entry)).join('\n');
 }
 
 function mark(page: Page, name: string, after = 0) {
@@ -89,9 +109,76 @@ test('switching Tab or Project paints within 50 ms, and opening a file within 10
 	const opens = [];
 	for (const file of files) {
 		const sidebar = await showSidebar(page);
-		opens.push(await measure(page, sidebar.getByRole('button', { name: file, exact: true }), page.getByRole('tab', { name: file })));
+		// Find the Tab by CSS: a role query computes accessible names on the main thread being timed.
+		opens.push(await measure(page, sidebar.getByRole('button', { name: file, exact: true }), page.locator('[role="tab"]', { hasText: file })));
 	}
 	check('Open file', opens, 100);
+});
+
+test('a long Chat paints within 300 ms of loading, switches back within 150 ms, and shows a new item within 80 ms', async ({ page }, { project }) => {
+	let route: WebSocketRoute;
+	await page.routeWebSocket('**/ws', (socket) => {
+		route = socket;
+		const server = socket.connectToServer();
+		server.onMessage((data) => socket.send(data));
+	});
+	await page.addInitScript(() => {
+		const Native = WebSocket;
+		window.WebSocket = class extends Native {
+			constructor(...args: ConstructorParameters<typeof WebSocket>) {
+				super(...args);
+				this.addEventListener('message', ({ data }) => {
+					if (typeof data !== 'string') return;
+					if (data.startsWith('{"type":"chat.items"')) window.loaded = { at: performance.now(), data };
+					else if (data.startsWith('{"type":"chat.item"')) window.received = performance.now();
+				});
+			}
+		};
+	});
+	const name = `long-chat-${project.name}`;
+	const path = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+	const sessions = `${process.env.STAMPEDE_E2E_ROOT}/claude/projects/${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+	const session = '5e5510b0-1111-4111-8111-111111111111';
+	mkdirSync(path, { recursive: true });
+	mkdirSync(sessions, { recursive: true });
+	writeFileSync(`${sessions}/${session}.jsonl`, longSession(session, 500));
+	await openProject(page, name);
+	const terminal = page.locator(`[data-tab="${await newTerminal(page)}"]`);
+	await page.getByRole('button', { name: 'New Tab' }).click();
+	await page.getByRole('group', { name: 'Sessions' }).getByRole('menuitem').filter({ hasText: 'Turn 0:' }).click();
+	const id = (await page.getByRole('tab', { name: /^Turn 0:/ }).getAttribute('data-tab'))!;
+	const painted = await mark(page, `painted:${id}`);
+	const loaded = (await page.evaluate(() => window.loaded))!;
+	check('Long Chat paint', [painted - loaded.at], 300);
+	await expect(page.locator('.panel:not([hidden]) [data-user-message]')).toHaveCount(500, { timeout: 30_000 });
+
+	const chat = page.locator(`[data-tab="${id}"]`);
+	const switches = [];
+	for (let run = 0; run < runs; run++) {
+		await terminal.click();
+		switches.push(await measure(page, chat, chat));
+	}
+	check('Long Chat switch', switches, 150);
+
+	const count = JSON.parse(loaded.data).items.length;
+	const additions = [];
+	for (let run = 0; run < runs; run++) {
+		const text = `New item ${run}`;
+		await page.evaluate((text) => {
+			const panel = document.querySelector('.panel:not([hidden])')!;
+			window.shown = new Promise((resolve) => {
+				const observer = new MutationObserver(() => {
+					if (!panel.querySelector('.turn:last-child')?.textContent?.includes(text)) return;
+					observer.disconnect();
+					requestAnimationFrame(() => setTimeout(() => resolve(performance.now() - window.received!)));
+				});
+				observer.observe(panel, { subtree: true, childList: true, characterData: true });
+			});
+		}, text);
+		route!.send(JSON.stringify({ type: 'chat.item', chatId: id, index: count + run, item: { kind: 'text', text, streaming: false, phase: 'commentary' } }));
+		additions.push(await page.evaluate(() => window.shown!));
+	}
+	check('Long Chat new item', additions, 80);
 });
 
 for (const streaming of [true, false]) {

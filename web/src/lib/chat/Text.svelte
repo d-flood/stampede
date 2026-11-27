@@ -9,7 +9,10 @@
 	let framed = $state.raw(untrack(() => ({ text: item.text, streaming: item.streaming })));
 	$effect(() => {
 		if (!active) return;
-		if (!item.streaming) { framed = { text: item.text, streaming: false }; return; }
+		if (!item.streaming) {
+			if (item.text !== framed.text || framed.streaming) framed = { text: item.text, streaming: false };
+			return;
+		}
 		if (item.text !== framed.text) {
 			const frame = requestAnimationFrame(() => {
 				framed = { text: item.text, streaming: item.streaming };

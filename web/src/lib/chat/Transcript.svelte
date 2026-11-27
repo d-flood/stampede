@@ -14,32 +14,72 @@
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
 	let { host, items, main, active = true, answered = [], activity, path = [], agent, resets, onopen, onattend, ondiff, oncanvas, onexpand, onrewind, onfork, onhandoff }: { host: string | undefined; items: Item[]; main?: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; agent?: Agent; resets?: ResetCredits | null; onhandoff?(): void; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(index: number): void; onrewind?(index: number): void; onfork?(index: number): void } = $props();
+	const wrapped = new WeakMap<AnsweredQuestions, Entry>();
 	const entries = $derived.by(() => {
-		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map((record) => ({ kind: 'questions', record }));
+		const wrap = (record: AnsweredQuestions) => wrapped.get(record) ?? wrapped.set(record, { kind: 'questions', record }).get(record)!;
+		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map(wrap);
 		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
+	});
+
+	const prompts = $derived.by(() => {
+		const prompts = new Map<Item, { index: number; number: number }>();
+		items.forEach((item, index) => item.kind === 'user' && prompts.set(item, { index, number: prompts.size + 1 }));
+		return prompts;
 	});
 
 	function interim(item: Entry) {
 		return !['user', 'shell', 'text', 'html', 'media', 'notice', 'questions'].includes(item.kind) && !(item.kind === 'canvas' && item.write);
 	}
 
-	type Block = { kind: 'spawn' | 'rail' | 'plain'; indices: number[] };
-	const turns = $derived(
-		entries.reduce<Block[][]>((turns, item, index) => {
+	type Block = { kind: 'spawn' | 'rail' | 'plain'; indices: number[]; entries: Entry[] };
+	let previous: Block[][] = [];
+	// Reuse unchanged turns so a new item re-renders only the turn it lands in.
+	const turns = $derived.by(() => {
+		const built = entries.reduce<Block[][]>((turns, item, index) => {
 			const kind = item.kind === 'subagent' ? 'spawn' : interim(item) ? 'rail' : 'plain';
 			if (!turns.length || (item.kind === 'user' && turns.at(-1)!.length)) turns.push([]);
 			const turn = turns.at(-1)!;
 			const last = turn.at(-1);
-			if (kind !== 'plain' && last?.kind === kind) last.indices.push(index);
-			else turn.push({ kind, indices: [index] });
+			if (kind !== 'plain' && last?.kind === kind) {
+				last.indices.push(index);
+				last.entries.push(item);
+			} else turn.push({ kind, indices: [index], entries: [item] });
 			return turns;
-		}, [])
-	);
+		}, []);
+		previous = built.map((turn, index) => (same(turn, previous[index]) ? previous[index] : turn));
+		return previous;
+	});
+
+	function same(turn: Block[], before: Block[] | undefined) {
+		return turn.length === before?.length && turn.every((block, index) => {
+			const old = before[index];
+			return block.kind === old.kind && block.indices[0] === old.indices[0] && block.entries.length === old.entries.length && block.entries.every((entry, at) => entry === old.entries[at]);
+		});
+	}
+
+	// Render the newest turns first and older ones in idle time, so a long Chat paints without a long freeze.
+	const batch = 10;
+	let limit = $state(batch);
+	const shown = $derived(turns.length > limit ? turns.slice(-limit) : turns);
+
+	$effect(() => {
+		if (limit === Infinity || !turns.length) return;
+		if (limit >= turns.length) {
+			limit = Infinity;
+			return;
+		}
+		if (typeof requestIdleCallback !== 'function') {
+			const timer = setTimeout(() => (limit += batch));
+			return () => clearTimeout(timer);
+		}
+		const idle = requestIdleCallback(() => (limit += batch));
+		return () => cancelIdleCallback(idle);
+	});
 
 	function role(block: Block) {
 		if (block.kind === 'rail') return 'activity';
 		if (block.kind === 'spawn') return 'subagent';
-		const item = entries[block.indices[0]];
+		const [item] = block.entries;
 		return item.kind === 'user' ? 'prompt' : item.kind === 'text' ? item.phase : 'other';
 	}
 
@@ -58,7 +98,8 @@
 
 {#snippet entry(item: Entry, index: number)}
 	{#if item.kind === 'user'}
-		<User {host} {item} first={index === 0} index={items.indexOf(item)} number={items.slice(0, items.indexOf(item)).filter((entry) => entry.kind === 'user').length + 1} {onrewind} {onfork} />
+		{@const prompt = prompts.get(item)!}
+		<User {host} {item} first={index === 0} index={prompt.index} number={prompt.number} {onrewind} {onfork} />
 	{:else if item.kind === 'text'}
 		<Text {item} {active} />
 	{:else if item.kind === 'html'}
@@ -77,16 +118,17 @@
 {/snippet}
 
 <div class="turns">
-	{#each turns as turn (turn[0].indices[0])}
-		<div class="turn">
+	{#each shown as turn (turn[0].indices[0])}
+		{@const first = turn[0].entries[0]}
+		<div class="turn" data-user-message={first.kind === 'user' ? prompts.get(first)!.index : undefined}>
 			{#each turn as block, index (block.indices[0])}
 				<div class="block" style:margin-top={space(turn, index)}>
 					{#if block.kind === 'spawn'}
-						<Spawn subagents={block.indices.map((index) => entries[index]).filter((item): item is Subagent => item.kind === 'subagent')} {path} main={main ?? items} {onopen} {onattend} />
+						<Spawn subagents={block.entries.filter((item): item is Subagent => item.kind === 'subagent')} {path} main={main ?? items} {onopen} {onattend} />
 					{:else if block.kind === 'rail'}
-						<Calls items={block.indices.map((index) => entries[index]).filter((item): item is Item => item.kind !== 'questions')} activity={block === turns.at(-1)!.at(-1) ? activity : null} open={path.length > 0} {ondiff} {oncanvas} onexpand={onexpand && ((item) => onexpand(items.indexOf(item)))} />
+						<Calls items={block.entries.filter((item): item is Item => item.kind !== 'questions')} activity={block === turns.at(-1)!.at(-1) ? activity : null} open={path.length > 0} {ondiff} {oncanvas} onexpand={onexpand && ((item) => onexpand(items.indexOf(item)))} />
 					{:else}
-						{@render entry(entries[block.indices[0]], block.indices[0])}
+						{@render entry(block.entries[0], block.indices[0])}
 					{/if}
 				</div>
 			{/each}
@@ -106,6 +148,16 @@
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
+	}
+
+	/* Skipped turns resize as they scroll into view, which only scroll anchoring keeps steady. */
+	@supports (overflow-anchor: auto) {
+		.turn {
+			content-visibility: auto;
+			contain-intrinsic-size: auto 500px;
+			/* Room for focus rings and a prompt's actions button, which paint containment would clip. */
+			overflow-clip-margin: var(--space-6);
+		}
 	}
 
 	@media (pointer: coarse) and (max-width: 767px) {

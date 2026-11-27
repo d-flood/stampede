@@ -1,3 +1,9 @@
+<script module lang="ts">
+	import { cached } from '#lib/paint.svelte.ts';
+
+	const loadMarkdownEditor = cached(() => import('#lib/editor/MarkdownEditor.svelte'));
+</script>
+
 <script lang="ts">
 	import { ago } from '#lib/chat/sessions.ts';
 	import Text from '#lib/chat/Text.svelte';
@@ -279,7 +285,7 @@
 {/snippet}
 
 {#snippet markdown(label: string, autofocus = true)}
-	{#await import('#lib/editor/MarkdownEditor.svelte') then { default: MarkdownEditor }}
+	{#await loadMarkdownEditor() then { default: MarkdownEditor }}
 		<MarkdownEditor bind:text={draft} {label} {autofocus} onsave={saveDraft} />
 	{/await}
 {/snippet}

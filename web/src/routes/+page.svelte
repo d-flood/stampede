@@ -33,7 +33,7 @@
 	import type { PrReview } from '#lib/pr-reviews.ts';
 	import { hostOf, hostUrl } from '#lib/host.ts';
 	import { capture, putLayout, restore, saveLayout, sendClosing } from '#lib/layout.ts';
-	import { afterPaint, warm, warmUp } from '#lib/paint.svelte.ts';
+	import { afterPaint, cached, warm, warmUp } from '#lib/paint.svelte.ts';
 	import { closePanel, openPanel, panel as phonePanel } from '#lib/phone.svelte.ts';
 	import { labels, worktrees } from '#lib/projects.ts';
 	import { sidebarPosition } from '#lib/sidebar.svelte.ts';
@@ -80,8 +80,20 @@
 	import X from '~icons/ph/x';
 	import WifiSlash from '~icons/ph/wifi-slash';
 
-	const editor = () => import('#lib/shell/Editor.svelte');
-	afterPaint(editor);
+	const loadEditor = cached(() => import('#lib/shell/Editor.svelte'));
+	afterPaint(loadEditor);
+	const loadCanvasView = cached(() => import('#lib/chat/CanvasView.svelte'));
+	const loadEpicView = cached(() => import('#lib/epics/EpicView.svelte'));
+	const loadChatView = cached(() => import('#lib/chat/ChatView.svelte'));
+	const loadChangesTab = cached(() => import('#lib/shell/ChangesTab.svelte'));
+	const loadDiff = cached(() => import('#lib/shell/Diff.svelte'));
+	const loadImageView = cached(() => import('#lib/shell/ImageView.svelte'));
+	const loadProjectIconPicker = cached(() => import('#lib/shell/ProjectIconPicker.svelte'));
+	const loadNewWorktree = cached(() => import('#lib/shell/NewWorktree.svelte'));
+	const loadPalette = cached(() => import('#lib/shell/Palette.svelte'));
+	const loadPicker = cached(() => import('#lib/shell/Picker.svelte'));
+	afterPaint(loadPalette);
+	afterPaint(loadPicker);
 	const restored = restore();
 	const devices = new Devices(message);
 	const { home } = devices;
@@ -1376,7 +1388,7 @@
 			{#each Object.values(canvases).flat() as canvas (canvas.id)}
 				<div class="view" hidden={!showing(canvas.id)} style:grid-column={column(canvas.id)} onfocusin={() => choose(canvas.projectId, canvas.id)}>
 					{#if showing(canvas.id) || warms(canvas.projectId)}
-						{#await import('#lib/chat/CanvasView.svelte') then { default: CanvasView }}
+						{#await loadCanvasView() then { default: CanvasView }}
 							<CanvasView {canvas} />
 						{/await}
 					{/if}
@@ -1385,7 +1397,7 @@
 			{#each Object.values(epicTabs).flat() as epic (epic.id)}
 				<div class="view" hidden={!showing(epic.id)} style:grid-column={column(epic.id)} onfocusin={() => choose(epic.projectId, epic.id)}>
 					{#if showing(epic.id) || warm()}
-						{#await import('#lib/epics/EpicView.svelte') then { default: EpicView }}
+						{#await loadEpicView() then { default: EpicView }}
 							<EpicView
 								open={epic}
 								epic={epics[epic.projectId]?.find((listed) => listed.slug === epic.slug)}
@@ -1459,7 +1471,7 @@
 					onfocusin={() => choose(chat.projectId, chat.id)}
 				>
 					{#if showing(chat.id) || warm()}
-						{#await import('#lib/chat/ChatView.svelte') then { default: ChatView }}
+						{#await loadChatView() then { default: ChatView }}
 							<ChatView
 								device={devices.of(chat.projectId)}
 								{chat}
@@ -1500,19 +1512,19 @@
 					>
 						{#if active || (warm() && known(file.projectId))}
 							{#if file instanceof OpenChanges}
-								{#await import('#lib/shell/ChangesTab.svelte') then { default: ChangesTab }}
+								{#await loadChangesTab() then { default: ChangesTab }}
 									<ChangesTab tab={file} git={git.get(file.projectId)} {active} onopen={(path) => openFile(file.projectId, path)} />
 								{/await}
 							{:else if file instanceof OpenDiff}
-								{#await import('#lib/shell/Diff.svelte') then { default: Diff }}
+								{#await loadDiff() then { default: Diff }}
 									<Diff diff={file} git={git.get(file.projectId)} reviews={prReviews[file.projectId]} {device} {servers} {active} displayed={active && foreground} focused={file.id === activeTab} {onshowdiff} />
 								{/await}
 							{:else if image(file.path) && !/\.svg$/i.test(file.path)}
-								{#await import('#lib/shell/ImageView.svelte') then { default: ImageView }}
+								{#await loadImageView() then { default: ImageView }}
 									<ImageView {file} {device} {active} />
 								{/await}
 							{:else}
-								{#await editor() then { default: Editor }}
+								{#await loadEditor() then { default: Editor }}
 									<Editor
 										{file}
 										{device}
@@ -1544,7 +1556,7 @@
 					<img class="mark" src="/icons/icon.svg" alt="" />
 					<h2>Open a Project</h2>
 					<p class="lede">Choose a folder to work in. Its Chats, Terminals and Git stay together as a Project.</p>
-					{#await import('#lib/shell/Picker.svelte') then { default: Picker }}
+					{#await loadPicker() then { default: Picker }}
 						<Picker {directories} onopen={open} autofocus={!phone} />
 					{/await}
 				</div>
@@ -1694,7 +1706,7 @@
 	title={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[palette ?? 'all']}
 >
 	{#if palette}
-		{#await import('#lib/shell/Palette.svelte') then { default: Palette }}
+		{#await loadPalette() then { default: Palette }}
 			{#key palette}
 				<Palette
 					scope={palette}
@@ -1724,14 +1736,14 @@
 </Dialog>
 
 <Dialog bind:open={picking} full={phone} title="Open Project">
-	{#await import('#lib/shell/Picker.svelte') then { default: Picker }}
-		<Picker {directories} onopen={open} />
+	{#await loadPicker() then { default: Picker }}
+		<Picker {directories} onopen={open} autofocus={false} />
 	{/await}
 </Dialog>
 
 <Dialog bind:open={() => !!iconProject, (open) => !open && (iconProject = undefined)} full={phone} title="Change project icon">
 	{#if iconProject}
-		{#await import('#lib/shell/ProjectIconPicker.svelte') then { default: ProjectIconPicker }}
+		{#await loadProjectIconPicker() then { default: ProjectIconPicker }}
 			<ProjectIconPicker project={iconProject} onclose={() => (iconProject = undefined)} />
 		{/await}
 	{/if}
@@ -1744,7 +1756,7 @@
 	description={branching && `A branch of ${projectLabels.get(branching.id)}, checked out in its own worktree beside it.`}
 >
 	{#if branching}
-		{#await import('#lib/shell/NewWorktree.svelte') then { default: NewWorktree }}
+		{#await loadNewWorktree() then { default: NewWorktree }}
 			<NewWorktree
 				project={branching}
 				current={git.get(branching.id)?.branch}

@@ -29,7 +29,7 @@
 	{/if}
 {/snippet}
 
-<section class="message" data-user-message={index} aria-label="User message {number}">
+<section class="message" aria-label="User message {number}">
 	{#if item.text}
 		<div class="bubble">
 			{#if lines.length > 12}

@@ -13,16 +13,27 @@
 	let { items, context = false, trigger, onopen, ...rest }: Props = $props();
 
 	let open = $state(false);
+	let engaged = $state(false);
 	const Popup = $derived(bits());
 
 	function toggle(value: boolean) {
 		open = value;
-		if (open) onopen?.();
+		if (!open) return;
+		engaged = true;
+		onopen?.();
 	}
 </script>
 
-{#if Popup}
+<!-- Dropdowns mount their popup on first open; a context menu needs the opening event's position. -->
+{#if Popup && (context || engaged)}
 	<Popup {items} {context} {trigger} {...rest} bind:open={() => open, toggle} />
+{:else if context}
+	{@render trigger({ onclick: warmUp })}
 {:else}
-	{@render trigger({ onclick: () => (toggle(!context), warmUp()) })}
+	{@render trigger({
+		'aria-haspopup': 'menu',
+		'aria-expanded': false,
+		onclick: () => (toggle(true), warmUp()),
+		onkeydown: (event: KeyboardEvent) => event.key === 'ArrowDown' && (event.preventDefault(), toggle(true), warmUp())
+	})}
 {/if}

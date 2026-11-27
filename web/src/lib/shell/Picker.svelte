@@ -44,7 +44,7 @@
 		spellcheck={false}
 	>
 		{#snippet child({ props })}
-			<TextField {...props} bind:value={query} {@attach (element) => { if (autofocus) element.focus(); }} />
+			<TextField {...props} bind:value={query} data-autofocus {@attach (element) => { if (autofocus) element.focus(); }} />
 		{/snippet}
 	</Command.Input>
 	{#if error}

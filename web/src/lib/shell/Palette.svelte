@@ -166,7 +166,7 @@
 			spellcheck={false}
 		>
 			{#snippet child({ props })}
-				<TextField {...props} bind:value={query} search bare {@attach (element) => element.focus()} />
+				<TextField {...props} bind:value={query} search bare data-autofocus />
 			{/snippet}
 		</Command.Input>
 		{#if reading}

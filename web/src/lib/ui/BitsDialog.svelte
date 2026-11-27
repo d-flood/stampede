@@ -28,6 +28,15 @@
 	};
 
 	let { open = $bindable(false), full = false, sheet = false, wide = false, closeButton = true, dismissible = true, fit = false, bare = false, title, nav, heading, description, children, actions, oncloseautofocus }: Props = $props();
+	let content = $state<HTMLElement | null>(null);
+
+	// Focusing here, after the focus scope records what to restore on close, keeps a field that focuses itself from becoming that target.
+	function autofocus(event: Event) {
+		const field = content?.querySelector<HTMLElement>('[data-autofocus]');
+		if (!field) return;
+		event.preventDefault();
+		field.focus();
+	}
 
 	function hold(node: HTMLElement) {
 		let tallest = 0;
@@ -81,6 +90,8 @@
 			{/snippet}
 		</Dialog.Overlay>
 	<Dialog.Content
+		bind:ref={content}
+		onOpenAutoFocus={autofocus}
 		onCloseAutoFocus={oncloseautofocus}
 		escapeKeydownBehavior={dismissible ? 'close' : 'ignore'}
 		interactOutsideBehavior={dismissible ? 'close' : 'ignore'}

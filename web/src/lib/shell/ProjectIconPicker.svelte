@@ -1,3 +1,9 @@
+<script module lang="ts">
+	import { cached } from '#lib/paint.svelte.ts';
+
+	const loadEmojiPicker = cached(() => import('#lib/shell/EmojiPicker.svelte'));
+</script>
+
 <script lang="ts">
 	import { projectUrl } from '#lib/host.ts';
 	import type { Project } from '#lib/device.svelte.ts';
@@ -118,7 +124,7 @@
 	</div>
 	{#if emojis}
 		<div inert={busy}>
-			{#await import('#lib/shell/EmojiPicker.svelte')}
+			{#await loadEmojiPicker()}
 				<p role="status">Loading emoji…</p>
 			{:then { default: EmojiPicker }}
 				<EmojiPicker onselect={selectEmoji} />

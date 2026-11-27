@@ -141,11 +141,23 @@ test('turns are spaced further apart than the entries within them', async () => 
 	];
 	const view = await render(Transcript, { host: undefined, items, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
 	const blocks = [...view.container.querySelectorAll('.block')];
-	const gaps = blocks.slice(1).map((block, index) => Math.round(block.getBoundingClientRect().top - blocks[index].getBoundingClientRect().bottom));
+	const gaps = () => blocks.slice(1).map((block, index) => Math.round(block.getBoundingClientRect().top - blocks[index].getBoundingClientRect().bottom));
 	const between = matchMedia('(pointer: coarse) and (max-width: 767px)').matches ? 32 : 44;
 	expect(view.container.querySelectorAll('.turn')).toHaveLength(2);
-	expect(gaps).toEqual([20, 8, 14, 22, between, 20]);
-	expect(between).toBeGreaterThan(Math.max(...gaps.filter((gap) => gap !== between)));
+	await expect.poll(gaps).toEqual([20, 8, 14, 22, between, 20]);
+	expect(between).toBeGreaterThan(Math.max(...gaps().filter((gap) => gap !== between)));
+});
+
+test('a long Chat renders its newest turns first, then every older turn in order', async () => {
+	const items = Array.from({ length: 40 }, (_, index): Item[] => [
+		{ kind: 'user', text: `Prompt ${index + 1}`, images: 0 },
+		{ kind: 'text', text: `Reply ${index + 1}`, phase: 'final', streaming: false }
+	]).flat();
+	const view = await render(Transcript, { host: undefined, items, onopen: vi.fn(), onattend: vi.fn(), ondiff: vi.fn(), oncanvas: vi.fn() });
+	const prompts = () => [...view.container.querySelectorAll('[aria-label^="User message"]')].map((node) => node.getAttribute('aria-label'));
+	expect(prompts().length).toBeLessThan(40);
+	expect(prompts().at(-1)).toBe('User message 40');
+	await expect.poll(prompts).toEqual(Array.from({ length: 40 }, (_, index) => `User message ${index + 1}`));
 });
 
 test('the prompt’s ⋯ menu opens Rewind without reserving layout space', async () => {

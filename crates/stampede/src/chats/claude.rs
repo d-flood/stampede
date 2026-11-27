@@ -511,7 +511,7 @@ pub async fn parent(env: &BTreeMap<String, String>, session: &str, message: &str
     let path = session_file(env, session).ok_or_else(|| io::Error::other("The session history is unavailable"))?;
     let message = message.to_owned();
     tokio::task::spawn_blocking(move || {
-        lines(File::open(path)?).filter_map(|line| serde_json::from_str::<Link>(&line).ok())
+        lines(File::open(path)?).filter_map(|line| serde_json::from_slice::<Link>(&line).ok())
             .find(|link| link.uuid.as_deref() == Some(&message)).and_then(|link| link.parent)
             .ok_or_else(|| io::Error::other("The message's conversation boundary is unavailable"))
     }).await.map_err(io::Error::other)?
@@ -737,8 +737,9 @@ fn tagged<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     Some(&text[start..end])
 }
 
-fn lines(file: File) -> impl Iterator<Item = String> {
-    std::io::BufReader::new(file).lines().map_while(Result::ok)
+/// Image-heavy sessions run to hundreds of megabytes, so lines stay bytes rather than paying to validate them as text.
+fn lines(file: File) -> impl Iterator<Item = Vec<u8>> {
+    std::io::BufReader::new(file).split(b'\n').map_while(Result::ok)
 }
 
 /// How a session entry chains to the others, which is all replaying needs before reading the entry in full.
@@ -776,6 +777,11 @@ impl Link {
 
     fn compact(&self) -> bool {
         self.kind.as_deref() == Some("system") && self.subtype.as_deref() == Some("compact_boundary")
+    }
+
+    /// Whether replaying reads the entry at all; the kinds it ignores include request blobs heavy with images.
+    fn replayed(&self) -> bool {
+        matches!(self.kind.as_deref(), Some("user" | "assistant" | "system" | "attachment"))
     }
 
     fn tool_uses(&self) -> impl Iterator<Item = &str> {
@@ -844,8 +850,8 @@ const RESULT: Only = Only(&[
     "totalTokens", "backgroundTaskId", "resumedAgentId", "result", "commandName", "background", "transcriptDir", "workflowName", "summary",
 ]);
 
-fn entry(line: &str) -> Option<Value> {
-    let mut deserializer = serde_json::Deserializer::from_str(line);
+fn entry(line: &[u8]) -> Option<Value> {
+    let mut deserializer = serde_json::Deserializer::from_slice(line);
     let entry = ENTRY.deserialize(&mut deserializer).ok()?;
     deserializer.end().ok()?;
     Some(entry)
@@ -1177,7 +1183,7 @@ fn forked_agent(history: &Path, prompt: &str) -> Option<String> {
         let agent = name.strip_prefix("agent-")?.strip_suffix(".jsonl")?.to_owned();
         let meta: Value = serde_json::from_slice(&fs::read(file.path().with_extension("meta.json")).ok()?).ok()?;
         if meta.get("toolUseId").is_some() || meta.get("parentAgentId").is_some() { return None; }
-        let first: Value = serde_json::from_str(&lines(File::open(file.path()).ok()?).next()?).ok()?;
+        let first: Value = serde_json::from_slice(&lines(File::open(file.path()).ok()?).next()?).ok()?;
         (first["promptId"] == prompt).then_some(agent)
     };
     fs::read_dir(history.with_extension("").join("subagents")).ok()?.flatten().find_map(forked)
@@ -1597,7 +1603,7 @@ impl Transcript {
         let Some(path) = session_file(env, session) else { return };
         let Ok(file) = File::open(&path) else { return };
         self.history = Some(path.clone());
-        let links: Vec<Option<Link>> = lines(file).map(|line| serde_json::from_str(&line).ok()).collect();
+        let links: Vec<Option<Link>> = lines(file).map(|line| serde_json::from_slice(&line).ok()).collect();
         let entries = links.iter().enumerate().filter_map(|(index, link)| Some((index, link.as_ref()?)));
         let chained: HashMap<&str, &Link> = entries.clone().filter(|(_, link)| !link.sidechain).filter_map(|(_, link)| Some((link.uuid.as_deref()?, link))).collect();
         let leaf = until.and_then(|id| entries.clone().find(|(_, link)| link.uuid.as_deref() == Some(id)))
@@ -1627,6 +1633,7 @@ impl Transcript {
                 } else { self.compacted = false; }
                 break;
             }
+            if !link.replayed() { continue; }
             let Some(entry) = entry(&line) else { continue };
             self.recorded(&entry);
         }
@@ -1855,7 +1862,7 @@ impl Transcript {
     fn read_own(&mut self, subagent: &mut Subagent) {
         let finished = subagent.status == Status::Done;
         if let Some(mut tail) = self.tail.take() {
-            for entry in tail.lines(finished).iter().filter_map(|line| entry(line)) {
+            for entry in tail.lines(finished).iter().filter_map(|line| entry(line.as_bytes())) {
                 self.saw(&entry);
                 if subagent.prompt.is_none() { subagent.prompt = agent_prompt(&entry).map(str::to_owned); }
                 agent_model(subagent, &entry);

@@ -30,3 +30,9 @@ export function lazy<T>(load: () => Promise<{ default: T }>): () => T | undefine
 	afterPaint(() => load().then((module) => (component = module.default)));
 	return () => component;
 }
+
+// Returns the module itself once loaded, so {#await} renders it in the same update rather than a task later.
+export function cached<T>(load: () => Promise<T>): () => T | Promise<T> {
+	let module: T | undefined;
+	return () => module ?? load().then((loaded) => (module = loaded));
+}
