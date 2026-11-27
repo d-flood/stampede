@@ -6,6 +6,7 @@
 	import ArrowsSplit from '~icons/ph/arrows-split';
 	import DotsThree from '~icons/ph/dots-three-bold';
 	import Caret from '#lib/ui/Caret.svelte';
+	import ImageBroken from '~icons/ph/image-broken';
 	import Menu from '#lib/ui/Menu.svelte';
 
 	let { host, item, first, index, number, onrewind, onfork }: { host: string | undefined; item: Extract<Item, { kind: 'user' }>; first: boolean; index: number; number: number; onrewind?(index: number): void; onfork?(index: number): void } = $props();
@@ -61,6 +62,9 @@
 				<a href={src} target="_blank" rel="noreferrer" aria-label="Open attached image {index + 1}">
 					<img {src} alt="Attached image {index + 1}" loading="lazy" />
 				</a>
+			{/each}
+			{#each { length: item.images - (item.imageUrls?.length ?? 0) }}
+				<div class="unavailable"><ImageBroken aria-hidden="true" />Image unavailable</div>
 			{/each}
 		</div>
 	{/if}
@@ -163,6 +167,28 @@
 		max-height: min(24rem, 50dvh);
 		border-radius: var(--radius-md);
 		object-fit: contain;
+	}
+
+	.unavailable {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-2);
+		width: calc(var(--space-6) * 8);
+		max-width: 100%;
+		aspect-ratio: 4 / 3;
+		padding: var(--space-2);
+		text-align: center;
+		border: var(--border-width) dashed var(--border-strong);
+		border-radius: var(--radius-md);
+		background: var(--surface-1);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.unavailable :global(svg) {
+		font-size: var(--font-size-xl);
 	}
 
 	.body {

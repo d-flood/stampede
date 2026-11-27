@@ -1,3 +1,4 @@
+import MessageNav from '#lib/chat/MessageNav.svelte';
 import Transcript from '#lib/chat/Transcript.svelte';
 import type { Item } from '#lib/device.svelte.ts';
 import { expect, onTestFinished, test, vi } from 'vitest';
@@ -158,6 +159,36 @@ test('a long Chat renders its newest turns first, then every older turn in order
 	expect(prompts().length).toBeLessThan(40);
 	expect(prompts().at(-1)).toBe('User message 40');
 	await expect.poll(prompts).toEqual(Array.from({ length: 40 }, (_, index) => `User message ${index + 1}`));
+});
+
+test('jumping to an unrendered turn renders it, then scrolls it into view', async () => {
+	vi.stubGlobal('requestIdleCallback', () => 0);
+	vi.stubGlobal('cancelIdleCallback', () => {});
+	onTestFinished(() => { vi.unstubAllGlobals(); });
+	const items = Array.from({ length: 40 }, (_, index): Item[] => [
+		{ kind: 'user', text: `Prompt ${index + 1}`, images: 0 },
+		{ kind: 'text', text: `Reply ${index + 1}`, phase: 'final', streaming: false }
+	]).flat();
+	const view = await render(Transcript, { host: undefined, items, ...handlers });
+	const scroller = view.container;
+	scroller.style.cssText = 'height: 400px; overflow: auto';
+	scroller.scrollTop = 100;
+	await render(MessageNav, { items, scroller, reveal: view.component.reveal });
+	expect(scroller.querySelector('[data-item="0"]')).toBeNull();
+	await page.getByRole('button', { name: /^(Message \d+ of 40|40 user messages)/ }).click();
+	await page.getByRole('menuitemcheckbox', { name: '1. Prompt 1', exact: true }).click();
+	const target = scroller.querySelector('[data-item="0"]')!;
+	expect(scroller.querySelectorAll('[aria-label^="User message"]')).toHaveLength(40);
+	await expect.poll(() => target.getBoundingClientRect().top).toBeGreaterThanOrEqual(scroller.getBoundingClientRect().top - 1);
+	expect(target.getBoundingClientRect().top).toBeLessThan(scroller.getBoundingClientRect().bottom - target.getBoundingClientRect().height);
+});
+
+test('a counted image that could not be cached renders as an unavailable tile', async () => {
+	const view = await render(Transcript, { host: undefined, items: [{ kind: 'user', text: '', images: 2, imageUrls: ['data:image/gif;base64,R0lGODlhAQABAAAAACw='] }], ...handlers });
+	const images = view.container.querySelector('[aria-label="Attached images"]')!;
+	expect(images.querySelectorAll('img')).toHaveLength(1);
+	expect([...images.querySelectorAll('.unavailable')].map((tile) => tile.textContent)).toEqual(['Image unavailable']);
+	expect(images.querySelector('.unavailable')!.closest('a')).toBeNull();
 });
 
 test('the prompt’s ⋯ menu opens Rewind without reserving layout space', async () => {

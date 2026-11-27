@@ -48,7 +48,8 @@ fn title_valid(title: &str) -> bool {
 pub fn cache_images(data_dir: &Path, item: &mut Item) {
     match item {
         Item::User { image_urls, .. } => {
-            *image_urls = image_urls.iter().filter_map(|source| cache_image(data_dir, source).ok()).collect();
+            *image_urls = image_urls.iter().filter_map(|source| cache_image(data_dir, source)
+                .inspect_err(|error| eprintln!("cannot cache an attached image: {error}")).ok()).collect();
         }
         Item::Subagent { items, .. } => {
             for item in items { cache_images(data_dir, item); }

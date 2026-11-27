@@ -58,6 +58,11 @@
 	const asker = $derived(request?.subagent && subagents.find(({ subagent }) => subagent.id === request.subagent)?.subagent.task);
 	let card = $state<RequestCard>();
 	let composer = $state<ChatComposer>();
+	let transcript = $state<Transcript>();
+
+	export function reveal(item: number, land: (node: HTMLElement) => void) {
+		transcript?.reveal(item, land);
+	}
 	let handoff = $state<Handoff>();
 	let mover = $state<MoveToWorktree>();
 	const onhandoff = $derived(handoff?.enabled() ? () => handoff?.show() : undefined);
@@ -270,11 +275,11 @@
 		<div class="transcript" bind:this={scroller} {@attach (node) => follow(node, (bottom) => (ended = bottom))}>
 			<div class="column">
 				{#if attached && !items.length && !chat.queued.length}<EmptyChat rig={chat.rig} agent={chat.agent} {project} {branch} />{/if}
-				<Transcript {host} {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={capabilities.rewinds ? (index) => run('rewind', index) : undefined} onfork={live && attached && capabilities.forks ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
+				<Transcript bind:this={transcript} {host} {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={capabilities.rewinds ? (index) => run('rewind', index) : undefined} onfork={live && attached && capabilities.forks ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
 			</div>
 		</div>
-		{#if form() === 'phone'}<MessageNav {items} {scroller} />{/if}
+		{#if form() === 'phone'}<MessageNav {items} {scroller} {reveal} />{/if}
 	</div>
 	{#if selected}
 		{#key opened.join('/')}

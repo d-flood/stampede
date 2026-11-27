@@ -7,6 +7,7 @@
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
 	import MessageNav from '#lib/chat/MessageNav.svelte';
+	import type ChatViewInstance from '#lib/chat/ChatView.svelte';
 	import { hostName, rigs, runsOn, type Rig } from '#lib/config.svelte.ts';
 	import { previewThemes, themeBar } from '#lib/themes.svelte.ts';
 	import {
@@ -102,6 +103,7 @@
 	let chats = $state<Record<string, Chat[]>>({});
 	let chatItems = $state<Record<string, Item[]>>({});
 	let transcripts = $state<Record<string, HTMLElement | null>>({});
+	const chatViews: Record<string, ChatViewInstance> = {};
 	let htmlPreview = $state<HtmlItem>();
 	let htmlDialog = $state<HTMLDialogElement>();
 	setHtmlPreview((item) => htmlPreview = item);
@@ -1342,7 +1344,7 @@
 					{/if}
 					<span class="fill"></span>
 					{#if !phone && group.active && chatIds.has(group.active) && !openSubagents[group.active]?.length}
-						<MessageNav items={chatItems[group.active] ?? []} scroller={transcripts[group.active]} />
+						<MessageNav items={chatItems[group.active] ?? []} scroller={transcripts[group.active]} reveal={(item, land) => chatViews[group.active!]?.reveal(item, land)} />
 					{/if}
 					{#if focused && index === groups.length - 1}
 						{@const projectId = focused.id}
@@ -1473,6 +1475,7 @@
 					{#if showing(chat.id) || warm()}
 						{#await loadChatView() then { default: ChatView }}
 							<ChatView
+								bind:this={chatViews[chat.id]}
 								device={devices.of(chat.projectId)}
 								{chat}
 								chats={allChats}
