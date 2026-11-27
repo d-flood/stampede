@@ -26,6 +26,7 @@
 	import ChatItem from '#lib/shell/ChatItem.svelte';
 	import { openSettings } from '#lib/shell/Settings.svelte';
 	import type { TabItems } from '#lib/shell/new-tab.ts';
+	import type { Searching } from '#lib/shell/session-search.svelte.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Card from '#lib/ui/Card.svelte';
@@ -45,6 +46,10 @@
 		items: TabItems;
 		sessions: Session[];
 		reading: boolean;
+		search: Searching;
+		/** Whether the Host has any Session to search, even when this Project has none. */
+		searchable: boolean;
+		selectable(session: Session): boolean;
 		/** Chats in this Project's worktrees that need attention. */
 		waiting: Chat[];
 		labels: Map<string, string>;
@@ -53,7 +58,7 @@
 		onchat(chat: Chat): void;
 	};
 
-	let { name, path, git, items, sessions, reading, waiting, labels, onread, onsession, onchat }: Props = $props();
+	let { name, path, git, items, sessions, reading, search, searchable, selectable, waiting, labels, onread, onsession, onchat }: Props = $props();
 
 	const id = $props.id();
 	const phone = $derived(form() === 'phone');
@@ -165,10 +170,10 @@
 				</div>
 			</section>
 		{/if}
-		{#if reading || sessions.length}
+		{#if reading || sessions.length || searchable}
 			<section class="recent" aria-labelledby="{id}-recent">
 				<h3 id="{id}-recent">Recent sessions</h3>
-				<ChatFinder label="Search sessions" {sessions} {reading} steady {onsession} />
+				<ChatFinder label="Search sessions" {sessions} {reading} {search} {labels} {selectable} steady {onsession} />
 			</section>
 		{/if}
 	</div>

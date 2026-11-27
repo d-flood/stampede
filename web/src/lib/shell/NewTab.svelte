@@ -48,20 +48,18 @@
 			{/each}
 		</NavList>
 	</section>
-	{#if reading || items.sessions.length}
-		<section aria-labelledby="{id}-recent">
-			<ListLabel element="h3" id="{id}-recent">Recent sessions</ListLabel>
-			{#if reading}<Loading label="Reading sessions…" />{/if}
-			<div class="list">
-				<NavList element="ul">
-					{#each items.sessions as session, index (index)}
-						{@render item(session, `session-${index}`, session.hint)}
-					{/each}
-					{#if items.search}{@render item(items.search, 'search')}{/if}
-				</NavList>
-			</div>
-		</section>
-	{/if}
+	<section aria-labelledby="{id}-recent">
+		<ListLabel element="h3" id="{id}-recent">Recent sessions</ListLabel>
+		{#if reading}<Loading label="Reading sessions…" />{/if}
+		<div class="list">
+			<NavList element="ul">
+				{#each items.sessions as session, index (index)}
+					{@render item(session, `session-${index}`, session.hint)}
+				{/each}
+				{@render item(items.search, 'search')}
+			</NavList>
+		</div>
+	</section>
 </Dialog>
 
 <style>

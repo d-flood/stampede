@@ -142,6 +142,7 @@ export type ResetCredits = { availableCount: number; expiresAt?: number; creditI
 export type SessionKey = { agent: Agent; store: string; sessionId: string };
 export type Coverage = { indexed: number; total: number; stale: Agent[]; ended: number; bytes: { index: number; archive: number } };
 export type Session = { key: SessionKey; project: { id: string; path: string }; title: string; updatedAt: number; ended?: 'aged' | 'cloud' | 'missing'; chatId?: string };
+export type FoundSession = Session & { item?: number; matches: number; excerpt?: { who: 'user' | 'agent'; text: string; ranges: [number, number][] } };
 
 export type TicketStatus = 'not-started' | 'in-progress' | 'merging' | 'merged' | 'skipped';
 export type TicketTag = 'routine' | 'judgment' | 'frontend-design';
@@ -244,6 +245,7 @@ export type ServerMessage =
 	| { type: 'chat.activity'; chatId: string; activity: string | null }
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
 	| { type: 'sessions.listed'; projectId: string; sessions: Session[]; coverage: Coverage }
+	| { type: 'sessions.found'; searchId: string; results: FoundSession[]; coverage: Coverage }
 	| { type: 'chat.todos'; chatId: string; todos: Todo[] }
 	| { type: 'chat.queued'; chatId: string; queued: string[]; revision: number }
 	| { type: 'chat.unqueued'; chatId: string; text: string; images: Image[] }
@@ -292,6 +294,7 @@ export type ClientMessage =
 	| { type: 'chat.fork'; chatId: string; index: number }
 	| { type: 'chat.resume'; projectId: string; key: SessionKey }
 	| { type: 'sessions.list'; projectId: string }
+	| { type: 'sessions.search'; searchId: string; projectId: string; query: string }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }
 	| { type: 'chat.unqueue'; chatId: string; index: number; revision: number }
 	| { type: 'chat.shell'; chatId: string; command: string }

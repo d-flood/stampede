@@ -5,13 +5,14 @@
 </script>
 
 <script lang="ts">
-	import { ago, logos } from '#lib/chat/sessions.ts';
+	import { logos } from '#lib/chat/sessions.ts';
 	import { rigs, runsOn, type Rig } from '#lib/config.svelte.ts';
-	import type { Chat, Project, Session } from '#lib/device.svelte.ts';
+	import type { Chat, FoundSession, Project, Session } from '#lib/device.svelte.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { split } from '#lib/git.ts';
 	import ChatItem from '#lib/shell/ChatItem.svelte';
+	import { grouped, projectName, SessionSearch, sessionKey, type Searching } from '#lib/shell/session-search.svelte.ts';
 	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
@@ -37,26 +38,33 @@
 		/** Past sessions read so far, by Project. */
 		sessions?: Record<string, Session[]>;
 		loadingSessions?: boolean;
+		/** Where a typed query searches what was said in Sessions. */
+		search?: Searching;
+		/** Whether a found Session can be resumed from here; Ended Sessions never can. */
+		selectable?(session: Session): boolean;
 		onproject(projectId: string): void;
 		onrig(rig: Rig): void;
 		onfile(path: string): void;
 		onchat?(chat: Chat): void;
-		onsession(projectId: string, session: Session): void;
+		onsession(session: Session): void;
 	};
 	type Entry = { value: string; label: string; parent?: string; icon?: Component; projectIcon?: string; hint?: string; shortcut?: string; onselect(): void };
 
-	let { scope, projects, labels, focused, actions = [], chats = [], status, sessions = {}, loadingSessions = false, onproject, onrig, onfile, onchat, onsession }: Props = $props();
+	let { scope, projects, labels, focused, actions = [], chats = [], status, sessions = {}, loadingSessions = false, search, selectable, onproject, onrig, onfile, onchat, onsession }: Props = $props();
 
 	let query = $state('');
+	const host = new SessionSearch(() => (scope === 'all' || scope === 'sessions' ? search : undefined));
 	let more = $state(false);
 	const brokenIcons = new SvelteSet<string>();
 
 	const all = $derived(scope === 'all');
 	const open = $derived(all ? ranked(chats.toSorted((a, b) => b.created - a.created), (chat) => chat.title ?? chat.rig, 5) : []);
+	const found = $derived(query && search && (all || scope === 'sessions') ? grouped(host.found, projects.flatMap((project) => sessions[project.id] ?? []), query, search.focus) : undefined);
 	const past = $derived.by(() => {
+		if (found) return [];
+		if (scope === 'sessions') return focused ? sessions[focused.id] ?? [] : [];
 		if (!all) return [];
-		const listed = projects.flatMap((project) => (sessions[project.id] ?? []).map((session) => ({ session, projectId: project.id })));
-		return ranked(listed.toSorted((a, b) => b.session.updatedAt - a.session.updatedAt), ({ session }) => session.title, 3);
+		return projects.flatMap((project) => sessions[project.id] ?? []).toSorted((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
 	});
 	const reading = $derived(loadingSessions && (scope === 'tabs' || scope === 'sessions'));
 	const files = $derived.by(() => {
@@ -104,16 +112,6 @@
 		},
 		{ heading: 'Files', entries: files },
 		{
-			heading: 'Sessions',
-			entries: find(scope === 'sessions' && focused ? sessions[focused.id] ?? [] : [], (session) => session.title).map((session) => ({
-				value: `session:${session.key.agent}:${session.key.store}:${session.key.sessionId}`,
-				label: session.title,
-				icon: logos[session.key.agent],
-				hint: ago(session.updatedAt),
-				onselect: () => focused && onsession(focused.id, session)
-			}))
-		},
-		{
 			heading: 'Commands',
 			entries: find(all ? actions : [], (action) => action.label).map((action) => ({
 				value: `command:${action.label}`,
@@ -157,16 +155,44 @@
 	</Command.GroupHeading>
 {/snippet}
 
+{#snippet session(session: Session | FoundSession, project?: string)}
+	{@const disabled = !!session.ended || selectable?.(session) === false}
+	<ChatItem
+		value="session:{session.project.id}:{sessionKey(session)}"
+		agent={session.key.agent}
+		title={session.title}
+		time={session.updatedAt}
+		{project}
+		excerpt={'excerpt' in session && session.excerpt ? { ...session.excerpt, matches: session.matches } : undefined}
+		ended={!!session.ended}
+		{disabled}
+		onselect={disabled ? undefined : () => onsession(session)}
+	/>
+{/snippet}
+
+{#snippet sessionGroup(text: string, listed: (Session | FoundSession)[], labelled: boolean)}
+	{#if listed.length}
+		<Command.Group class="group">
+			{@render heading(text)}
+			<Command.GroupItems>
+				{#each listed as item (`${item.project.id}:${sessionKey(item)}`)}
+					{@render session(item, labelled ? projectName(item, labels) : undefined)}
+				{/each}
+			</Command.GroupItems>
+		</Command.Group>
+	{/if}
+{/snippet}
+
 <div class="palette">
 	<Command.Root label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[scope]} shouldFilter={false} loop>
 		<Command.Input
 			value={query}
-			placeholder={{ all: 'Find a Chat, Project, Rig or file', files: 'Find a file', sessions: 'Find a session by title', tabs: 'Choose what to open' }[scope]}
+			placeholder={{ all: 'Find a Chat, Project, Rig or file', files: 'Find a file', sessions: 'Find a session', tabs: 'Choose what to open' }[scope]}
 			autocomplete="off"
 			spellcheck={false}
 		>
 			{#snippet child({ props })}
-				<TextField {...props} bind:value={query} search bare data-autofocus />
+				<TextField {...props} bind:value={() => query, (value) => ((query = value), host.set(value))} search bare data-autofocus />
 			{/snippet}
 		</Command.Input>
 		{#if reading}
@@ -186,15 +212,11 @@
 								</Command.GroupItems>
 							</Command.Group>
 						{/if}
-						{#if past.length}
-							<Command.Group class="group">
-								{@render heading('Recent sessions')}
-								<Command.GroupItems>
-									{#each past as { session, projectId } (`${projectId}:${session.key.agent}:${session.key.store}:${session.key.sessionId}`)}
-										<ChatItem value="session:{projectId}:{session.key.agent}:{session.key.store}:{session.key.sessionId}" agent={session.key.agent} title={session.title} time={session.updatedAt} project={labels.get(projectId)} onselect={() => onsession(projectId, session)} />
-									{/each}
-								</Command.GroupItems>
-							</Command.Group>
+						{#if found}
+							{@render sessionGroup('Sessions', found.here, false)}
+							{@render sessionGroup('Other Projects', found.other, true)}
+						{:else}
+							{@render sessionGroup(all ? 'Recent sessions' : 'Sessions', past, all)}
 						{/if}
 						{#each groups as { heading: text, entries } (text)}
 							{#if entries.length}
@@ -228,13 +250,16 @@
 								</Command.Group>
 							{/if}
 						{/each}
-						{#if !reading && !open.length && !past.length && groups.every(({ entries }) => !entries.length)}
+						{#if !reading && !open.length && !past.length && !found?.here.length && !found?.other.length && !(found && (host.pending || host.indexing)) && groups.every(({ entries }) => !entries.length)}
 							<ListLabel element="p">{query ? 'No matches' : scope === 'sessions' ? 'No past sessions' : 'Type to find a Chat or file'}</ListLabel>
 						{/if}
 					</Command.Viewport>
 				</div>
 			{/snippet}
 		</Command.List>
+		{#if found && host.indexing && host.coverage}
+			<div class="coverage"><Loading label="Indexing {host.coverage.indexed.toLocaleString()} of {host.coverage.total.toLocaleString()} Sessions" /></div>
+		{/if}
 	</Command.Root>
 </div>
 
@@ -275,6 +300,11 @@
 
 	.loading {
 		padding: var(--space-2) var(--bare-inset) 0;
+	}
+
+	.coverage {
+		padding: var(--space-2) var(--bare-inset);
+		border-top: var(--border-width) solid var(--border);
 	}
 
 	.slot {
