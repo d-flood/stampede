@@ -5,7 +5,7 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
-    time::UNIX_EPOCH,
+    time::{Duration, UNIX_EPOCH},
 };
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
@@ -386,21 +386,25 @@ impl Sessions {
         self.refresh_all(false);
     }
 
+    async fn rigs(&self) -> io::Result<BTreeMap<Store, Rig>> {
+        let config = self.config.borrow().clone();
+        let cloud = self.cloud;
+        tokio::task::spawn_blocking(move || {
+            let mut rigs = BTreeMap::new();
+            for agent in Agent::ALL {
+                if cloud && !matches!(agent, Agent::ClaudeCode | Agent::Codex) { continue; }
+                for rig in config.rigs.iter().filter(|rig| rig.agent == agent).cloned().chain([Rig::starter(agent)]) {
+                    rigs.entry((agent, store(agent, &rig.env))).or_insert(rig);
+                }
+            }
+            rigs
+        }).await.map_err(io::Error::other)
+    }
+
     fn refresh_all(self: &Arc<Self>, startup: bool) {
         let service = self.clone();
-        let config = self.config.borrow().clone();
         tokio::spawn(async move {
-            let cloud = service.cloud;
-            let Ok(rigs) = tokio::task::spawn_blocking(move || {
-                let mut rigs = BTreeMap::new();
-                for agent in Agent::ALL {
-                    if cloud && !matches!(agent, Agent::ClaudeCode | Agent::Codex) { continue; }
-                    for rig in config.rigs.iter().filter(|rig| rig.agent == agent).cloned().chain([Rig::starter(agent)]) {
-                        rigs.entry((agent, store(agent, &rig.env))).or_insert(rig);
-                    }
-                }
-                rigs
-            }).await else { return };
+            let Ok(rigs) = service.rigs().await else { return };
             if startup {
                 let service = service.clone();
                 let mut claude = Vec::new();
@@ -428,12 +432,16 @@ impl Sessions {
     }
 
     fn queue(self: &Arc<Self>, key: Store, rig: Rig, target: Option<String>) -> Option<tokio::task::JoinHandle<()>> {
+        self.queue_scan(key, rig, target, false)
+    }
+
+    fn queue_scan(self: &Arc<Self>, key: Store, rig: Rig, target: Option<String>, final_refresh: bool) -> Option<tokio::task::JoinHandle<()>> {
         {
             let mut running = self.running.lock().unwrap();
             if let Some(flight) = running.get_mut(&key) {
                 if let Some(id) = target {
                     flight.pending.insert(id, rig);
-                } else if !flight.full || key.0 == Agent::ClaudeCode || flight.projects != self.projects.list() {
+                } else if final_refresh || !flight.full || key.0 == Agent::ClaudeCode || flight.projects != self.projects.list() {
                     flight.pending_full = Some(rig);
                 }
                 return None;
@@ -473,7 +481,7 @@ impl Sessions {
                         None
                     }
                 };
-                if marked || matches!(result, Ok(true)) { service.notify(); }
+                if marked || matches!(result, Ok(true)) || service.cloud && next.is_none() { service.notify(); }
                 let Some(next) = next else { break };
                 work = next;
             }
@@ -1229,4 +1237,146 @@ impl Sessions {
             Err(error) => { eprintln!("cannot search Sessions: {error}"); (Vec::new(), Coverage::default()) }
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ExportedSession {
+    key: SessionKey,
+    title: String,
+    updated_at: i64,
+    revision: String,
+    snapshot_revision: Option<String>,
+    snapshot: Option<(i64, serde_json::Value)>,
+    messages: Vec<(i64, String, String)>,
+}
+
+impl ExportedSession {
+    pub fn assets(&self) -> BTreeSet<String> {
+        fn collect(items: &serde_json::Value, assets: &mut BTreeSet<String>) {
+            for item in items.as_array().into_iter().flatten() {
+                match item["kind"].as_str() {
+                    Some("user") => {
+                        for url in item["imageUrls"].as_array().into_iter().flatten() {
+                            if let Some(asset) = url.as_str().and_then(|url| url.strip_prefix("/api/media/")) {
+                                assets.insert(asset.to_owned());
+                            }
+                        }
+                    }
+                    Some("media") => {
+                        if let Some(asset) = item["asset"].as_str() { assets.insert(asset.to_owned()); }
+                    }
+                    Some("subagent") => collect(&item["items"], assets),
+                    _ => (),
+                }
+            }
+        }
+        let mut assets = BTreeSet::new();
+        if let Some((_, items)) = &self.snapshot { collect(items, &mut assets); }
+        assets
+    }
+}
+
+impl Sessions {
+    async fn final_refresh(self: &Arc<Self>) -> io::Result<()> {
+        let rigs = self.rigs().await?;
+        let stores: BTreeSet<_> = rigs.keys().cloned().collect();
+        let mut changed = self.subscribe();
+        for (key, rig) in rigs { let _ = self.queue_scan(key, rig, None, true); }
+        let finished = tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                changed.mark_unchanged();
+                if self.running.lock().unwrap().keys().all(|key| !stores.contains(key)) { break; }
+                if changed.changed().await.is_err() { break; }
+            }
+        }).await;
+        let stale = self.stale.lock().unwrap().intersection(&stores).cloned().collect::<Vec<_>>();
+        let running = self.running.lock().unwrap().keys().filter(|key| stores.contains(*key)).cloned().collect::<Vec<_>>();
+        let dir = self.dir.clone();
+        let pending = tokio::task::spawn_blocking(move || {
+            let db = read_connection(&dir.join("index.sqlite"))?;
+            db.query_row("SELECT count(*) FROM sessions LEFT JOIN snapshots ON snapshots.session=sessions.id
+                WHERE snapshot_revision IS NOT revision OR version IS NOT ?", [SNAPSHOT_VERSION], |row| row.get::<_, i64>(0)).map_err(io::Error::other)
+        }).await.map_err(io::Error::other)??;
+        if finished.is_err() || !stale.is_empty() || pending != 0 {
+            return Err(io::Error::other(format!("Session refresh incomplete: {pending} stale snapshots; failed stores {stale:?}; unfinished stores {running:?}")));
+        }
+        Ok(())
+    }
+
+    pub async fn import_cloud(&self, session: ExportedSession, parent: Project) -> io::Result<()> {
+        self.write(move |_, archive| {
+            let transaction = archive.transaction().map_err(io::Error::other)?;
+            let id: i64 = transaction.query_row("
+                INSERT INTO sessions(agent, store, session_id, directory, project, title, updated_at, revision, snapshot_revision, ended, ended_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'cloud', ?)
+                ON CONFLICT(agent, store, session_id) DO UPDATE SET directory=excluded.directory, project=excluded.project,
+                title=excluded.title, updated_at=excluded.updated_at, revision=excluded.revision, snapshot_revision=excluded.snapshot_revision,
+                ended=excluded.ended, ended_at=excluded.ended_at RETURNING id",
+                params![session.key.agent.name(), session.key.store, session.key.session_id, parent.path, parent.id, session.title,
+                    session.updated_at, session.revision, session.snapshot_revision, super::now() as i64],
+                |row| row.get(0)).map_err(io::Error::other)?;
+            transaction.execute("DELETE FROM snapshots WHERE session=?", [id]).map_err(io::Error::other)?;
+            transaction.execute("DELETE FROM messages WHERE session=?", [id]).map_err(io::Error::other)?;
+            if let Some((version, items)) = session.snapshot {
+                let items = serde_json::to_vec(&items).map_err(io::Error::other)?;
+                transaction.execute("INSERT INTO snapshots VALUES (?, ?, ?)", params![id, version, items]).map_err(io::Error::other)?;
+            }
+            for (item, role, text) in session.messages {
+                transaction.execute("INSERT INTO messages(session, item, role, text) VALUES (?, ?, ?, ?)", params![id, item, role, text]).map_err(io::Error::other)?;
+            }
+            transaction.commit().map_err(io::Error::other)
+        }).await?;
+        self.notify();
+        Ok(())
+    }
+}
+
+fn export_db(db: &Connection, send: &tokio::sync::mpsc::Sender<io::Result<Vec<u8>>>) -> io::Result<()> {
+    let mut query = db.prepare("SELECT id, agent, store, session_id, title, updated_at, revision, snapshot_revision FROM sessions").map_err(io::Error::other)?;
+    let mut rows = query.query([]).map_err(io::Error::other)?;
+    let mut snapshot = db.prepare("SELECT version, items FROM snapshots WHERE session=?").map_err(io::Error::other)?;
+    let mut messages = db.prepare("SELECT item, role, text FROM messages WHERE session=? ORDER BY item").map_err(io::Error::other)?;
+    while let Some(row) = rows.next().map_err(io::Error::other)? {
+        let get = |column| row.get::<_, String>(column).map_err(io::Error::other);
+        let id = row.get::<_, i64>(0).map_err(io::Error::other)?;
+        let name = get(1)?;
+        let agent = Agent::ALL.into_iter().find(|agent| agent.name() == name).ok_or_else(|| io::Error::other("Unknown Session Agent"))?;
+        let snapshot = snapshot.query_row([id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)))
+            .optional().map_err(io::Error::other)?
+            .map(|(version, items)| serde_json::from_slice(&items).map(|items| (version, items))).transpose().map_err(io::Error::other)?;
+        let messages = messages.query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).map_err(io::Error::other)?
+            .collect::<rusqlite::Result<Vec<_>>>().map_err(io::Error::other)?;
+        let session = ExportedSession {
+            key: SessionKey { agent, store: get(2)?, session_id: get(3)? },
+            title: get(4)?, updated_at: row.get(5).map_err(io::Error::other)?, revision: get(6)?,
+            snapshot_revision: row.get(7).map_err(io::Error::other)?, snapshot, messages,
+        };
+        let mut line = serde_json::to_vec(&session).map_err(io::Error::other)?;
+        line.push(b'\n');
+        send.blocking_send(Ok(line)).map_err(io::Error::other)?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn export(axum::extract::State(state): axum::extract::State<crate::AppState>) -> Result<axum::body::Body, crate::files::Failure> {
+    state.sessions.final_refresh().await.map_err(|error| (axum::http::StatusCode::SERVICE_UNAVAILABLE, error.to_string()))?;
+    let dir = state.sessions.dir.clone();
+    let (send, receive) = tokio::sync::mpsc::channel(1);
+    tokio::task::spawn_blocking(move || {
+        let result = (|| {
+            let index = read_connection(&dir.join("index.sqlite"))?;
+            let archive = read_connection(&dir.join("archive.sqlite"))?;
+            index.execute_batch("BEGIN").map_err(io::Error::other)?;
+            index.query_row("SELECT id FROM sessions LIMIT 1", [], |row| row.get::<_, i64>(0)).optional().map_err(io::Error::other)?;
+            archive.execute_batch("BEGIN").map_err(io::Error::other)?;
+            export_db(&archive, &send)?;
+            export_db(&index, &send)?;
+            Ok::<_, io::Error>(())
+        })();
+        // Require an explicit end marker so a truncated response cannot authorize destruction.
+        let _ = send.blocking_send(result.map(|_| b"null\n".to_vec()));
+    });
+    Ok(axum::body::Body::from_stream(futures_util::stream::unfold(receive, |mut receive| async {
+        receive.recv().await.map(|line| (line, receive))
+    })))
 }

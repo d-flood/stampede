@@ -167,6 +167,7 @@ fn router(state: AppState) -> Router {
         home_only = home_only.route_layer(middleware::from_fn(refuse));
         settings = settings.route_layer(middleware::from_fn(refuse_writes));
         cloud_only = cloud_only
+            .route("/api/sessions-export", get(chats::sessions::export))
             .route("/api/cloud-setup", post(cloud_setup::start))
             .route("/api/cloud-setup/again", post(cloud_setup::again));
     }

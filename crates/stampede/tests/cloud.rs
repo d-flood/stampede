@@ -343,7 +343,9 @@ async fn the_home_host_links_each_cloud_host_for_its_settings_attention_and_push
     let gates = tempfile::tempdir().unwrap();
     let fixture = format!("{}/tests/fixtures/chats/claude-code/background-shell-idle.synthetic.jsonl", env!("CARGO_MANIFEST_DIR"));
     let config = format!("[[rig]]\nname = \"Gated\"\nagent = \"claude-code\"\nenv = {{ STAMPEDE_FAKE_FIXTURE = {fixture:?}, STAMPEDE_FAKE_GATES = {:?} }}\n", gates.path());
-    let mut server = Server::with_env("cloud-link-", &config, vec![("STAMPEDE_TERMINAL_QUIET_MS", "2000".into())]).await;
+    let threads = gates.path().join("cloud-threads.json");
+    fs::write(&threads, "[]").unwrap();
+    let mut server = Server::with_env("cloud-link-", &config, vec![("STAMPEDE_TERMINAL_QUIET_MS", "2000".into()), ("STAMPEDE_FAKE_THREADS", threads.clone().into_os_string())]).await;
     let root = server.root.path().to_owned();
     fs::write(root.join("sprite.json"), r#"{"organization":"test-org"}"#).unwrap();
     let repo = init(&root, "repo");
@@ -364,7 +366,9 @@ async fn the_home_host_links_each_cloud_host_for_its_settings_attention_and_push
     let created: Value = serde_json::from_str(created.lines().last().unwrap()).unwrap();
     let (host, project) = (created["host"].as_str().unwrap_or_else(|| panic!("{created}")), &created["projectId"]);
     let cloud_http = format!("{home_http}/cloud/{host}/api");
-
+    let cloud_home = root.join("sprites").join(host).join("home");
+    let cloud_repo = cloud_home.join("repo");
+    fs::write(&threads, include_str!("fixtures/chats/codex/threads.recorded.json").replace("/tmp/stampede-chat", cloud_repo.to_str().unwrap())).unwrap();
     let rig = json!({ "name": "Linked", "agent": "codex", "mode": "full-access" });
     let saved = client.put(format!("{home_http}/api/rigs")).header("content-type", "application/json").body(rig.to_string()).send().await.unwrap();
     assert_eq!(saved.status(), 200);
@@ -412,6 +416,78 @@ async fn the_home_host_links_each_cloud_host_for_its_settings_attention_and_push
 
     server.restart().await;
     listed().await;
+
+    let slug: String = cloud_repo.to_str().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' }).collect();
+    let histories = cloud_home.join(".claude/projects").join(slug);
+    fs::create_dir_all(&histories).unwrap();
+    let session = "2e7c93db-3fca-4a7c-a46f-a716b68f5b37";
+    let entries = [
+        json!({ "type": "user", "uuid": "prompt", "parentUuid": null, "cwd": cloud_repo, "message": { "role": "user", "content": [
+            {"type": "text", "text": "Cloud archive prompt"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aGVsbG8="}}
+        ] } }),
+        json!({ "type": "assistant", "uuid": "reply", "parentUuid": "prompt", "message": { "role": "assistant", "id": "reply", "content": [{"type": "text", "text": "Cloud archive narwhal"}] } }),
+    ];
+    fs::write(histories.join(format!("{session}.jsonl")), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n") + "\n").unwrap();
+    let (mut cloud, _) = connect_async(format!("ws://127.0.0.1:{}/cloud/{host}/ws", server.port)).await.unwrap();
+    let search = |project: &Value, query: &str| json!({ "type": "sessions.search", "searchId": query, "projectId": project, "query": query });
+    control(&mut cloud, search(project, "narwhal")).await;
+    let found = timeout(Duration::from_secs(20), async {
+        loop {
+            let found = next_control(&mut cloud, "sessions.found").await;
+            if found["results"].as_array().unwrap().iter().any(|result| result["key"]["sessionId"] == session) { break found["results"][0].clone(); }
+        }
+    }).await.unwrap();
+    let key = &found["key"];
+    assert_eq!(found["project"]["id"], *project);
+    control(&mut cloud, search(project, "friend")).await;
+    timeout(Duration::from_secs(20), async {
+        loop {
+            let result = next_control(&mut cloud, "sessions.found").await;
+            if result["results"].as_array().unwrap().iter().any(|row| row["key"]["agent"] == "codex" && row["excerpt"]["who"] == "agent") { break; }
+        }
+    }).await.expect("the Cloud Host never indexed Codex messages");
+    assert_eq!(client.get(format!("{cloud_http}/sessions-export")).send().await.unwrap().status(), 404);
+    let media = cloud_home.join(".local/share/stampede/media");
+    let asset = fs::read_dir(&media).unwrap().next().unwrap().unwrap().path();
+    let bytes = fs::read(&asset).unwrap();
+    assert_eq!(bytes, b"hello");
+    fs::remove_file(&asset).unwrap();
+    drop(cloud);
+    let deletion = format!("{home_http}/api/cloud-hosts/{host}");
+    let failed = client.delete(&deletion).send().await.unwrap();
+    assert_eq!(failed.status(), 400);
+    assert!(failed.text().await.unwrap().contains("Cannot keep its Sessions: Media"));
+    assert!(cloud_home.exists());
+    fs::write(&asset, &bytes).unwrap();
+    fs::write(root.join("sprite-fail"), "destroy\nFly refused the destruction\n").unwrap();
+    let failed = client.delete(&deletion).send().await.unwrap();
+    assert_eq!(failed.status(), 400);
+    assert_eq!(failed.text().await.unwrap(), "Fly refused the destruction");
+    let (mut home, _) = connect_async(&home_ws).await.unwrap();
+    control(&mut home, search(&json!(parent), "narwhal")).await;
+    let archived = next_control(&mut home, "sessions.found").await;
+    assert_eq!(archived["results"][0]["ended"], "cloud");
+    fs::remove_file(root.join("sprite-fail")).unwrap();
+    assert_eq!(client.delete(&deletion).send().await.unwrap().status(), 204);
+
+    control(&mut home, json!({ "type": "sessions.search", "searchId": "after-destroy", "projectId": parent, "query": "narwhal" })).await;
+    let result = loop {
+        let found = next_control(&mut home, "sessions.found").await;
+        if found["searchId"] == "after-destroy" { break found; }
+    };
+    assert_eq!(result["results"].as_array().unwrap().len(), 1);
+    let result = &result["results"][0];
+    assert_eq!(result["key"], *key);
+    assert_eq!(result["ended"], "cloud");
+    assert_eq!(result["project"], json!({"id": parent, "path": repo}));
+    control(&mut home, json!({"type": "chat.open", "projectId": parent, "key": key})).await;
+    let chat = next_control(&mut home, "chat.created").await["chat"].clone();
+    assert_eq!(chat["ended"], "cloud");
+    control(&mut home, json!({"type": "chat.attach", "chatId": chat["id"]})).await;
+    let items = next_control(&mut home, "chat.items").await;
+    let image = items["items"][0]["imageUrls"][0].as_str().unwrap();
+    assert_eq!(client.get(format!("{home_http}{image}")).send().await.unwrap().bytes().await.unwrap().as_ref(), b"hello");
 }
 
 #[tokio::test]
@@ -612,8 +688,10 @@ async fn cloud_deletion_checks_work_and_keeps_unreachable_and_gone_records_visib
         }
     }).await.unwrap();
     let refused = delete(host, false).await.unwrap();
-    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap()), (409, "Its Cloud Host can't be reached, so its work can't be checked. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
-    assert_eq!(delete(host, true).await.unwrap().status(), 204);
+    assert_eq!((refused.status().as_u16(), refused.text().await.unwrap()), (409, "Its Cloud Host can't be reached, so its work can't be checked or its Sessions kept. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
+    let forced = delete(host, true).await.unwrap();
+    assert_eq!(forced.status(), 204);
+    assert!(forced.headers()["warning"].to_str().unwrap().contains("Sessions could not be kept"));
     assert!(repo.join(".git/refs/heads/existing").exists());
     fs::remove_file(root.join("sprite-fail")).unwrap();
 
