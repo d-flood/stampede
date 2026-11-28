@@ -12,7 +12,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, oneshot, watch};
 
-use super::{Chat, Chats, Lifecycle, Status, antigravity, claude, codex, copilot};
+use super::{Chat, Chats, Item, Landing, Lifecycle, Status, antigravity, claude, codex, copilot};
 use crate::{config::{Agent, Config, Rig}, epics::Epics, projects::{Project, Projects}};
 
 const VERSION: i32 = 2;
@@ -25,6 +25,25 @@ pub struct SessionKey {
     pub agent: Agent,
     pub store: String,
     pub session_id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Ended {
+    Aged,
+    Cloud,
+    Missing,
+}
+
+/// What a Dormant Chat shows of its Session.
+pub struct Snapshot {
+    pub title: String,
+    pub items: Vec<Item>,
+    pub ended: Option<Ended>,
+    pub answered: Vec<super::AnsweredQuestions>,
+    directory: String,
+    project: String,
+    current: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -104,7 +123,7 @@ struct Flight {
     full: bool,
     projects: crate::projects::List,
     pending_full: Option<Rig>,
-    pending: BTreeMap<String, (Rig, Chat)>,
+    pending: BTreeMap<String, Rig>,
 }
 
 pub struct Sessions {
@@ -113,7 +132,7 @@ pub struct Sessions {
     changed: watch::Sender<u64>,
     running: Mutex<BTreeMap<Store, Flight>>,
     stale: Mutex<BTreeSet<Store>>,
-    resuming: Mutex<HashSet<SessionKey>>,
+    opening: Mutex<HashSet<SessionKey>>,
     projects: Arc<Projects>,
     epics: Arc<Epics>,
     config: watch::Receiver<Arc<Config>>,
@@ -279,7 +298,7 @@ impl Sessions {
         })?;
         opened.await.map_err(io::Error::other)??;
         let service = Arc::new(Self {
-            dir, writer, changed: watch::Sender::new(0), running: Mutex::default(), stale: Mutex::default(), resuming: Mutex::default(),
+            dir, writer, changed: watch::Sender::new(0), running: Mutex::default(), stale: Mutex::default(), opening: Mutex::default(),
             projects, epics, config, cloud,
         });
         let writer = service.writer.clone();
@@ -378,25 +397,25 @@ impl Sessions {
         let mut rig = self.config.borrow().rigs.iter().find(|rig| rig.name == chat.rig && rig.agent == chat.agent).cloned()
             .unwrap_or_else(|| Rig::starter(chat.agent));
         apply_store(chat.agent, &chat.session_store, &mut rig.env);
-        let _ = self.queue((chat.agent, chat.session_store.clone()), rig, Some(chat));
+        let _ = self.queue((chat.agent, chat.session_store.clone()), rig, chat.agent_session);
     }
 
-    fn queue(self: &Arc<Self>, key: Store, rig: Rig, chat: Option<Chat>) -> Option<tokio::task::JoinHandle<()>> {
+    fn queue(self: &Arc<Self>, key: Store, rig: Rig, target: Option<String>) -> Option<tokio::task::JoinHandle<()>> {
         {
             let mut running = self.running.lock().unwrap();
             if let Some(flight) = running.get_mut(&key) {
-                if let Some(chat) = chat {
-                    if let Some(id) = chat.agent_session.clone() { flight.pending.insert(id, (rig, chat)); }
+                if let Some(id) = target {
+                    flight.pending.insert(id, rig);
                 } else if !flight.full || key.0 == Agent::ClaudeCode || flight.projects != self.projects.list() {
                     flight.pending_full = Some(rig);
                 }
                 return None;
             }
-            running.insert(key.clone(), Flight { full: chat.is_none(), projects: self.projects.list(), pending_full: None, pending: BTreeMap::new() });
+            running.insert(key.clone(), Flight { full: target.is_none(), projects: self.projects.list(), pending_full: None, pending: BTreeMap::new() });
         }
         let service = self.clone();
         Some(tokio::spawn(async move {
-            let mut work = (rig, chat);
+            let mut work = (rig, target);
             loop {
                 let full = work.1.is_none();
                 let result = service.scan(key.clone(), work.0, work.1).await;
@@ -418,9 +437,9 @@ impl Sessions {
                         flight.full = true;
                         flight.projects = service.projects.list();
                         Some((rig, None))
-                    } else if let Some((_, (rig, chat))) = flight.pending.pop_first() {
+                    } else if let Some((id, rig)) = flight.pending.pop_first() {
                         flight.full = false;
-                        Some((rig, Some(chat)))
+                        Some((rig, Some(id)))
                     } else {
                         running.remove(&key);
                         None
@@ -433,11 +452,10 @@ impl Sessions {
         }))
     }
 
-    async fn scan(self: &Arc<Self>, key: Store, rig: Rig, chat: Option<Chat>) -> io::Result<bool> {
+    async fn scan(self: &Arc<Self>, key: Store, rig: Rig, target: Option<String>) -> io::Result<bool> {
         let epics = self.epics.clone();
         let dir = self.dir.clone();
         let scope = key.clone();
-        let target = chat.as_ref().and_then(|chat| chat.agent_session.clone());
         let filter = target.clone();
         // Wait behind Project-open records before taking the catalogue's read snapshot.
         self.write(|_, _| Ok(())).await?;
@@ -613,42 +631,127 @@ impl Sessions {
         }
     }
 
-    pub async fn resume(&self, key: SessionKey, project: String, chats: Arc<Chats>) -> io::Result<Chat> {
+    /// Opens a past Session as a Dormant Chat, or answers with the top-level Chat already driving it.
+    pub async fn open(self: &Arc<Self>, key: SessionKey, project: String, landing: Option<Landing>, chats: Arc<Chats>) -> io::Result<Chat> {
         if self.cloud && !matches!(key.agent, Agent::ClaudeCode | Agent::Codex) {
             return Err(io::Error::other("A Cloud Host runs only Claude Code and Codex."));
         }
-        if !self.resuming.lock().unwrap().insert(key.clone()) {
-            return Err(io::Error::other("Another Chat is already resuming that Session."));
+        if !self.opening.lock().unwrap().insert(key.clone()) {
+            return Err(io::Error::other("That Session is already opening."));
         }
-        let _resuming = Resuming { key: key.clone(), pending: &self.resuming };
-        let dir = self.dir.clone();
+        let _opening = Opening { key: key.clone(), pending: &self.opening };
+        if let Some(chat) = chats.driving(&key) {
+            return if chat.parent.is_none() { Ok(chat) } else { Err(io::Error::other("A delegated Chat is driving that Session.")) };
+        }
+        let mut snapshot = self.snapshot(&key).await?;
+        if key.agent == Agent::ClaudeCode && snapshot.ended.is_none() {
+            let (store, session, cwd) = (key.store.clone(), key.session_id.clone(), PathBuf::from(&snapshot.directory));
+            snapshot.answered = tokio::task::spawn_blocking(move || claude::answered(&store, &session, &cwd)).await.map_err(io::Error::other)?;
+        }
+        if snapshot.project != project { return Err(io::Error::other("Session is not in the catalogue.")); }
         let config = self.config.borrow().clone();
         let projects = self.projects.list();
-        let id = key.session_id.clone();
+        let (directory, ended, agent, store) = (snapshot.directory.clone(), snapshot.ended, key.agent, key.store.clone());
         let (rig, cwd, project) = tokio::task::spawn_blocking(move || {
-            let index = read_connection(&dir.join("index.sqlite"))?;
-            let directory: String = index.query_row("SELECT directory FROM sessions WHERE agent = ? AND store = ? AND session_id = ? AND project = ?", params![key.agent.name(), key.store, key.session_id, project], |row| row.get(0))
-                .optional().map_err(io::Error::other)?.ok_or_else(|| io::Error::other("Session is not in the catalogue."))?;
             let cwd = PathBuf::from(directory);
-            if !cwd.is_dir() { return Err(io::Error::other("The Session's directory no longer exists.")); }
-            let rig = config.rigs.iter().filter(|rig| rig.agent == key.agent).cloned().chain([Rig::starter(key.agent)])
-                .find(|rig| store(rig.agent, &rig.env) == key.store).ok_or_else(|| io::Error::other("No Rig matches the Session's history store."))?;
+            if ended.is_none() && !cwd.is_dir() { return Err(io::Error::other("The Session's directory no longer exists.")); }
+            let rig = matching_rig(&config.rigs, agent, &store, None)
+                .or_else(|| ended.map(|_| config.rigs.iter().find(|rig| rig.agent == agent).cloned().unwrap_or_else(|| Rig::starter(agent))))
+                .ok_or_else(|| io::Error::other("No Rig matches the Session's history store."))?;
             let project = projects.iter().find(|entry| entry.path == cwd.to_string_lossy())
                 .or_else(|| projects.iter().find(|entry| entry.id == project)).cloned()
                 .ok_or_else(|| io::Error::other("The Project is not open."))?;
             Ok::<_, io::Error>((rig, cwd, project))
         }).await.map_err(io::Error::other)??;
-        chats.create(&project, &cwd, &rig, Some(&id), None).await
+        chats.open_dormant(&project.id, &cwd, &rig, &key, snapshot, landing)
+    }
+
+    /// The Session's snapshot, rebuilt first when it is missing or stale.
+    async fn snapshot(self: &Arc<Self>, key: &SessionKey) -> io::Result<Snapshot> {
+        let mut updated = self.subscribe();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        let mut refreshed = false;
+        loop {
+            updated.mark_unchanged();
+            let (dir, read) = (self.dir.clone(), key.clone());
+            let snapshot = tokio::task::spawn_blocking(move || stored(&dir, &read)).await.map_err(io::Error::other)??
+                .ok_or_else(|| io::Error::other("Session is not in the catalogue."))?;
+            let store = (key.agent, key.store.clone());
+            if snapshot.current || tokio::time::Instant::now() >= deadline || refreshed && !self.running.lock().unwrap().contains_key(&store) {
+                return Ok(snapshot);
+            }
+            if !refreshed {
+                let config = self.config.borrow().clone();
+                let (agent, path) = store.clone();
+                let mut rig = tokio::task::spawn_blocking(move || matching_rig(&config.rigs, agent, &path, None)).await.map_err(io::Error::other)?
+                    .unwrap_or_else(|| Rig::starter(key.agent));
+                apply_store(key.agent, &key.store, &mut rig.env);
+                let _ = self.queue(store, rig, Some(key.session_id.clone()));
+                refreshed = true;
+            }
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(500), updated.changed()).await;
+        }
+    }
+
+    /// The Session's items as already indexed or archived, without rebuilding them.
+    pub async fn stored(&self, key: &SessionKey) -> Option<Vec<Item>> {
+        let (dir, key) = (self.dir.clone(), key.clone());
+        match tokio::task::spawn_blocking(move || stored(&dir, &key)).await {
+            Ok(Ok(snapshot)) => snapshot.filter(|snapshot| !snapshot.items.is_empty() || snapshot.current).map(|snapshot| snapshot.items),
+            Ok(Err(error)) => { eprintln!("cannot read Session snapshot: {error}"); None }
+            Err(error) => { eprintln!("cannot read Session snapshot: {error}"); None }
+        }
     }
 }
 
-struct Resuming<'a> {
+struct Opening<'a> {
     key: SessionKey,
     pending: &'a Mutex<HashSet<SessionKey>>,
 }
 
-impl Drop for Resuming<'_> {
+impl Drop for Opening<'_> {
     fn drop(&mut self) { self.pending.lock().unwrap().remove(&self.key); }
+}
+
+/// The first Rig whose Agent and history store match, preferring `preferred`.
+pub(super) fn matching_rig(rigs: &[Rig], agent: Agent, path: &str, preferred: Option<&str>) -> Option<Rig> {
+    let mut matching = rigs.iter().filter(|rig| rig.agent == agent).cloned().chain([Rig::starter(agent)])
+        .filter(|rig| store(rig.agent, &rig.env) == path);
+    let first = matching.next()?;
+    if preferred.is_none_or(|name| first.name == name) { return Some(first); }
+    Some(matching.find(|rig| Some(rig.name.as_str()) == preferred).unwrap_or(first))
+}
+
+fn stored(dir: &Path, key: &SessionKey) -> io::Result<Option<Snapshot>> {
+    let session = |db: &Connection, archived: bool| {
+        let ended = if archived { "ended" } else { "NULL" };
+        db.query_row(&format!("SELECT sessions.id, directory, project, title, {ended}, snapshot_revision IS revision AND version IS ?, version, items
+            FROM sessions LEFT JOIN snapshots ON snapshots.session=sessions.id WHERE agent=? AND store=? AND session_id=?"),
+            params![SNAPSHOT_VERSION, key.agent.name(), key.store, key.session_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, Option<String>>(4)?,
+                row.get::<_, bool>(5)?, row.get::<_, Option<i32>>(6)?, row.get::<_, Option<Vec<u8>>>(7)?)))
+            .optional().map_err(io::Error::other)
+    };
+    let decode = |items: Option<Vec<u8>>| items.and_then(|items| serde_json::from_slice::<Vec<Item>>(&items).ok());
+    if let Some((_, directory, project, title, _, current, _, items)) = session(&read_connection(&dir.join("index.sqlite"))?, false)? {
+        return Ok(Some(Snapshot { title, items: decode(items).unwrap_or_default(), ended: None, answered: Vec::new(), directory, project, current }));
+    }
+    let archive = read_connection(&dir.join("archive.sqlite"))?;
+    let Some((id, directory, project, title, ended, _, version, items)) = session(&archive, true)? else { return Ok(None) };
+    let ended = ended.and_then(|ended| serde_json::from_value(serde_json::Value::String(ended)).ok());
+    let items = match decode(items).filter(|_| version == Some(SNAPSHOT_VERSION)) {
+        Some(items) => items,
+        None => {
+            let mut query = archive.prepare("SELECT role, text FROM messages WHERE session=? ORDER BY item").map_err(io::Error::other)?;
+            let rows = query.query_map([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(io::Error::other)?;
+            rows.map(|row| row.map(|(role, text)| if role == "user" {
+                Item::User { text, images: 0, image_urls: Vec::new(), template: None, rewind_from: None }
+            } else {
+                Item::Text { text, streaming: false, phase: super::Phase::Final }
+            })).collect::<rusqlite::Result<_>>().map_err(io::Error::other)?
+        }
+    };
+    Ok(Some(Snapshot { title, items, ended, answered: Vec::new(), directory, project, current: true }))
 }
 
 fn size(dir: &Path, file: &str) -> u64 {

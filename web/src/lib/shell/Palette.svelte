@@ -40,7 +40,7 @@
 		loadingSessions?: boolean;
 		/** Where a typed query searches what was said in Sessions. */
 		search?: Searching;
-		/** Whether a found Session can be resumed from here; Ended Sessions never can. */
+		/** Whether a found Session can be opened from here. */
 		selectable?(session: Session): boolean;
 		onproject(projectId: string): void;
 		onrig(rig: Rig): void;
@@ -156,7 +156,7 @@
 {/snippet}
 
 {#snippet session(session: Session | FoundSession, project?: string)}
-	{@const disabled = !!session.ended || selectable?.(session) === false}
+	{@const disabled = selectable?.(session) === false}
 	<ChatItem
 		value="session:{session.project.id}:{sessionKey(session)}"
 		agent={session.key.agent}

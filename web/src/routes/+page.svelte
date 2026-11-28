@@ -113,7 +113,7 @@
 	let readingSessions = $state<Record<string, boolean>>({});
 	/** Whether each Host, by name (the Home Host's is empty), has any Session to search. */
 	let searchable = $state<Record<string, boolean>>({});
-	let resumeError = $state<string>();
+	let openError = $state<string>();
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
 	let codexResets = $state<ResetCredits | null>(null);
@@ -457,7 +457,7 @@
 				}
 				break;
 			case 'chat.created': {
-				if (message.resumed) focus(message.chat.projectId);
+				if (message.opened) focus(message.chat.projectId);
 				chats[message.chat.projectId] ??= [];
 				const owned = chats[message.chat.projectId];
 				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
@@ -479,8 +479,8 @@
 				closePanel();
 				break;
 			}
-			case 'chat.resume.error':
-				resumeError = message.error;
+			case 'chat.open.error':
+				openError = message.error;
 				break;
 			case 'sessions.listed':
 				sessions[message.projectId] = message.sessions.filter(({ key }) => runsOn(host, key.agent));
@@ -633,6 +633,7 @@
 	}
 
 	function chatStatus(chat: Chat) {
+		if (chat.dormant) return 'done';
 		if (chat.status !== 'done') return chat.status;
 		return subagents(chatItems[chat.id] ?? []).find(({ subagent }) => subagent.status !== 'done')?.subagent.status ?? (chat.background ? 'background' : 'done');
 	}
@@ -771,7 +772,7 @@
 	}
 
 	function reopen(projectId: string, { key }: Session) {
-		devices.of(projectId).send({ type: 'chat.resume', projectId, key });
+		devices.of(projectId).send({ type: 'chat.open', projectId, key });
 	}
 
 	function searching(projectId: string): Searching {
@@ -794,7 +795,7 @@
 		}
 		if (hostOf(projectId)) return;
 		open(session.project.path).then((opened) => {
-			if (opened.error) resumeError = opened.error;
+			if (opened.error) openError = opened.error;
 			else if (opened.projectId) reopen(opened.projectId, session);
 		});
 	}
@@ -838,7 +839,8 @@
 	}
 
 	function place(projectId: string, tabId: string) {
-		if (projectId === focused?.id && side === 'right') splits[projectId].right.tabs.push(tabId);
+		const split = splits[projectId];
+		if (projectId === focused?.id && side === 'right' && !split.left.tabs.includes(tabId) && !split.right.tabs.includes(tabId)) split.right.tabs.push(tabId);
 	}
 
 	function move(tabId: string, to: Side) {
@@ -1298,7 +1300,8 @@
 												bottom={phone}
 												variant="agent"
 												agent={chat.agent}
-												status={chatStatus(chat)}
+												dormant={chat.dormant}
+												status={chat.dormant ? undefined : chatStatus(chat)}
 												fresh={!chat.title}
 												label={chat.title ?? chat.rig}
 												tooltip={chat.title && `${chat.title}\n${chat.rig}`}
@@ -1520,7 +1523,7 @@
 								device={devices.of(chat.projectId)}
 								{chat}
 								chats={allChats}
-								movable={!hostOf(chat.projectId)}
+								movable={!hostOf(chat.projectId) && !chat.dormant}
 								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); closePanel(); }}
 								items={chatItems[chat.id] ?? []}
 								saved={[...saved].filter((canvas) => canvas.startsWith(`${chat.id}/`))}
@@ -1851,9 +1854,9 @@
 	{/snippet}
 </Dialog>
 
-<Dialog bind:open={() => !!resumeError, (open) => !open && (resumeError = undefined)} title="Could not resume Session" description={resumeError}>
+<Dialog bind:open={() => !!openError, (open) => !open && (openError = undefined)} title="Could not open Session" description={openError}>
 	{#snippet actions()}
-		<Button variant="primary" onclick={() => (resumeError = undefined)}>OK</Button>
+		<Button variant="primary" onclick={() => (openError = undefined)}>OK</Button>
 	{/snippet}
 </Dialog>
 

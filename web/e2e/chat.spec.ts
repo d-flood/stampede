@@ -626,7 +626,7 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 	await closeProject(page, name);
 });
 
-test('past sessions of both Agents are listed newest first, searchable, and reopen as a Chat', async ({ page }, { project }) => {
+test('past sessions of both Agents are listed newest first, searchable, and open as a Dormant Chat', async ({ page }, { project }) => {
 	const name = `sessions-${project.name}`;
 	const root = process.env.STAMPEDE_E2E_ROOT;
 	const path = `${root}/projects/${name}`;
@@ -677,10 +677,20 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await expect(panel.getByRole('region', { name: 'User message 1' }).getByText('Name a color in one word.')).toBeVisible();
 	await expect(panel.getByText('Crimson')).toBeVisible();
+	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	await expect(composer).toHaveAttribute('placeholder', 'Message to resume this Session');
+	await expect(tab.getByTitle('done')).toHaveCount(0);
 
 	listed = await sessionItems();
 	await expect(listed).toHaveText([/Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
 	await page.keyboard.press('Escape');
+	await expectSelected(tab);
+	await composer.fill('Greet the reader');
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await expect(panel.getByText(/^Hello and welcome!/)).toBeVisible();
+	await expect(panel.getByText('Crimson')).toHaveCount(1);
+	await expect(composer).toHaveAttribute('placeholder', 'Message Claude');
+	await expect(tab.getByTitle('done')).toBeVisible();
 	await closePinned(tab);
 	await expect(tab).toHaveCount(0);
 });

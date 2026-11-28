@@ -307,7 +307,7 @@ server.serve_forever()
     let added = add.output().await.unwrap();
     assert!(!added.status.success() && String::from_utf8_lossy(&added.stderr).contains(refusal), "{added:?}");
 
-    control(&mut cloud_socket, json!({ "type": "chat.resume", "projectId": project, "key": { "agent": "antigravity", "store": "", "sessionId": "session" } })).await;
+    control(&mut cloud_socket, json!({ "type": "chat.open", "projectId": project, "key": { "agent": "antigravity", "store": "", "sessionId": "session" } })).await;
     control(&mut cloud_socket, json!({ "type": "chat.create", "projectId": project, "rig": "Claude Code" })).await;
     let chat = next_control(&mut cloud_socket, "chat.created").await["chat"].clone();
     assert_eq!(chat["agent"], "claude-code");

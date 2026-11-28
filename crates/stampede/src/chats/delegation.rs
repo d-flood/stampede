@@ -244,10 +244,10 @@ impl Chats {
                     report.outcome = Some(Outcome::Failed);
                     report.report = Some("The delegated agent ended without a final response.".to_owned());
                 }
-                parent.driver.delegated(report.item(Status::Done, None, items));
+                parent.driver().delegated(report.item(Status::Done, None, items));
                 break;
             }
-            parent.driver.delegated(report.item(if status == Status::Done { Status::Working } else { status }, activity, items));
+            parent.driver().delegated(report.item(if status == Status::Done { Status::Working } else { status }, activity, items));
             let stopped = tokio::select! {
                 stopped = async {
                     loop {
@@ -270,7 +270,7 @@ impl Chats {
                 report.outcome = Some(Outcome::Stopped);
                 report.report = Some("Delegation stopped before the agent finished.".to_owned());
                 let items = entry.transcript.lock().unwrap().items.clone();
-                parent.driver.delegated(report.item(Status::Done, None, items));
+                parent.driver().delegated(report.item(Status::Done, None, items));
                 break;
             }
         }
