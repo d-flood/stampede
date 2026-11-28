@@ -11,7 +11,7 @@ export const RECENT = 5;
 
 export type TabItem = { label: string; icon?: Component; hint?: string; shortcut?: string; onselect: () => void };
 export type RigItem = TabItem & { rig: Rig; model: string; onprompt(text: string, settings?: Settings): void };
-export type TabItems = { rigs: RigItem[]; tools: TabItem[]; sessions: TabItem[]; search?: TabItem };
+export type TabItems = { rigs: RigItem[]; tools: TabItem[]; sessions: TabItem[]; search: TabItem };
 
 type Actions = {
 	launch(rig: Rig, text?: string, settings?: Partial<Record<Setting, string>>): void;
@@ -39,8 +39,8 @@ export function tabItems(rigs: Rig[], sessions: Session[], actions: Actions, hos
 			{ label: 'Browser', icon: Globe, onselect: actions.browser },
 			{ label: 'Open file', shortcut: 'Ctrl+Shift+O', icon: FileCode, onselect: actions.files }
 		],
-		sessions: recent.map((session) => ({ label: session.title, icon: logos[session.agent], hint: ago(session.updatedAt), onselect: () => actions.reopen(session) })),
-		search: recent.length ? { label: 'Search sessions…', icon: MagnifyingGlass, onselect: actions.search } : undefined
+		sessions: recent.map((session) => ({ label: session.title, icon: logos[session.key.agent], hint: ago(session.updatedAt), onselect: () => actions.reopen(session) })),
+		search: { label: 'Search sessions…', icon: MagnifyingGlass, onselect: actions.search }
 	};
 }
 
@@ -48,6 +48,6 @@ export function menuItems({ rigs, tools, sessions, search }: TabItems) {
 	return [
 		...(rigs.length ? [{ heading: 'Rigs', items: rigs }] : []),
 		{ heading: 'Open', items: tools },
-		...(search ? [{ heading: 'Sessions', items: [...sessions, search] }] : [])
+		{ heading: 'Sessions', items: [...sessions, search] }
 	];
 }

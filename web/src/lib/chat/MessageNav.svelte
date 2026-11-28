@@ -4,11 +4,12 @@
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import { untrack } from 'svelte';
 	import { on } from 'svelte/events';
 	import CaretDown from '~icons/ph/caret-down';
 	import CaretUp from '~icons/ph/caret-up';
 
-	let { items, scroller }: { items: Item[]; scroller?: HTMLElement | null } = $props();
+	let { items, scroller, reveal }: { items: Item[]; scroller?: HTMLElement | null; reveal(item: number, land: (node: HTMLElement) => void): void } = $props();
 	const messages = $derived(items.flatMap((item, index) => item.kind === 'user' ? [{ index, summary: item.text.trim().split('\n')[0] || `${item.images} attached image${item.images === 1 ? '' : 's'}` }] : []));
 	let nav = $state<HTMLElement>();
 	let current = $state<number>();
@@ -22,7 +23,7 @@
 	const position = $derived(messages.findIndex(({ index }) => index === current));
 	const shown = $derived(!atTop && away);
 	const label = $derived(position < 0 ? `${messages.length} user messages` : `Message ${position + 1} of ${messages.length}: ${messages[position].summary}`);
-	const menu = $derived(messages.map((message, number) => ({ label: `${number + 1}. ${message.summary}`, checked: message.index === current, onselect: () => jump(scroller?.querySelector<HTMLElement>(`[data-user-message="${message.index}"]`)) })));
+	const menu = $derived(messages.map((message, number) => ({ label: `${number + 1}. ${message.summary}`, checked: message.index === current, onselect: () => reveal(message.index, jump) })));
 
 	function bottom() {
 		return nav ? nav.offsetTop + nav.offsetHeight : 0;
@@ -41,7 +42,7 @@
 		const list = entries();
 		const at = list.findLast(({ top }) => top <= line + 2);
 		current = at && Number(at.node.dataset.userMessage);
-		above = list.some(({ top }) => top < line - 2) && scroller!.scrollTop > 0;
+		above = (list.some(({ top }) => top < line - 2) && scroller!.scrollTop > 0) || unrendered(list).length > 0;
 		below = list.some(({ top }) => top > line + 2) && scroller!.scrollTop < scroller!.scrollHeight - scroller!.clientHeight - 1;
 		gutter = scroller!.offsetWidth - scroller!.clientWidth;
 	}
@@ -59,20 +60,29 @@
 			measure();
 			update();
 		});
-		measure();
-		update();
+		untrack(() => {
+			measure();
+			update();
+		});
 		return () => { observer.disconnect(); off(); away = false; };
 	}
 
-	function jump(node?: HTMLElement | null) {
-		if (!node || !scroller) return;
+	function unrendered(list: { node: HTMLElement }[]) {
+		const first = list.length ? Number(list[0].node.dataset.userMessage) : Infinity;
+		return messages.filter(({ index }) => index < first);
+	}
+
+	function jump(node: HTMLElement) {
+		if (!scroller) return;
 		scroller.scrollTop += node.getBoundingClientRect().top - edge();
 	}
 
 	function step(direction: -1 | 1) {
 		const line = edge();
 		const list = entries();
-		jump((direction < 0 ? list.findLast(({ top }) => top < line - 2) : list.find(({ top }) => top > line + 2))?.node);
+		const target = direction < 0 ? list.findLast(({ top }) => top < line - 2) : list.find(({ top }) => top > line + 2);
+		const index = target ? Number(target.node.dataset.userMessage) : direction < 0 ? unrendered(list).at(-1)?.index : undefined;
+		if (index !== undefined) reveal(index, jump);
 	}
 </script>
 

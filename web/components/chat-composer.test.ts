@@ -17,6 +17,8 @@ async function mount(overrides: Partial<Chat> = {}) {
 		chat,
 		live: true,
 		capabilities,
+		settings: chat.settings,
+		ready: false,
 		choices: { model: [], effort: [], speed: [], ultracode: [], mode: [] },
 		branches: [],
 		history: [],
@@ -171,7 +173,7 @@ test('the model menu shows it is loading, then its models, above the Composer', 
 	await expect.element(menu.getByRole('menuitemcheckbox', { name: 'haiku' })).toBeVisible();
 	await expect.element(menu.getByRole('status')).not.toBeInTheDocument();
 	await above();
-	await view.rerender({ capabilities: { ...capabilities, ready: true }, choices: { model: [], effort: [], speed: [], ultracode: [], mode: [] } });
+	await view.rerender({ ready: true, choices: { model: [], effort: [], speed: [], ultracode: [], mode: [] } });
 	await expect.element(menu.getByText('No models available')).toBeVisible();
 	await expect.element(menu.getByRole('status')).not.toBeInTheDocument();
 });

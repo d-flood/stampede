@@ -57,9 +57,10 @@ async fn past_claude_questions_are_recovered_without_duplicating_saved_answers()
         json!({ "type": "user", "uuid": "parallel-result", "parentUuid": "parallel-tool", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "read", "content": "Notes" }] } }),
     ];
     fs::write(sessions(&server).join(format!("{COLOR}.jsonl")), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
-    let chat = resume(&mut socket, &project_id, "claude-code", COLOR).await;
+    let chat = open(&mut socket, &project_id, "claude-code", COLOR).await;
     let chat_id = chat["id"].as_str().unwrap();
     attach(&mut socket, chat_id).await;
+    assert_eq!(turn(&mut socket, chat_id, "Now name a fruit in one word.").await, ["working", "done"]);
     let path = server.root.path().join("data/chats").join(format!("{chat_id}.json"));
     let mut saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     let history = saved["answeredQuestions"].as_array().unwrap();
@@ -87,12 +88,11 @@ async fn both_agents_past_sessions_are_listed_newest_first() {
     let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
     let elsewhere = server.root.path().join("home/.claude/projects/-tmp-stampede-elsewhere");
     fs::create_dir_all(&elsewhere).unwrap();
-    fs::copy(sessions(&server).join(format!("{COLOR}.jsonl")), elsewhere.join("0d9c4b7e-2f41-4a8e-9b3c-6e5d1a7f8c20.jsonl"))
-        .unwrap();
+    fs::write(elsewhere.join("0d9c4b7e-2f41-4a8e-9b3c-6e5d1a7f8c20.jsonl"), fs::read_to_string(sessions(&server).join(format!("{COLOR}.jsonl"))).unwrap().replace(server.root.path().join("home").to_str().unwrap(), "/tmp/stampede-elsewhere")).unwrap();
     touch(&elsewhere.join("0d9c4b7e-2f41-4a8e-9b3c-6e5d1a7f8c20.jsonl"), 1_792_182_880);
 
     assert_eq!(
-        list(&mut socket, &project_id).await,
+        projected(list(&mut socket, &project_id, |rows| rows.len() == 4).await),
         json!([
             { "agent": "claude-code", "sessionId": GRILL, "title": "/grill the past sessions menu", "updatedAt": 1_792_182_860_000u64 },
             { "agent": "codex", "sessionId": EXEC, "title": "Reply with exactly: ok", "updatedAt": 1_792_182_853_000u64 },
@@ -100,8 +100,179 @@ async fn both_agents_past_sessions_are_listed_newest_first() {
             { "agent": "codex", "sessionId": THREAD, "title": "Say hi in three words.", "updatedAt": 1_792_182_848_000u64 },
         ])
     );
-    let methods: Vec<Value> = received(&server).iter().map(|message| message["method"].clone()).collect();
-    assert_eq!(methods, ["initialize", "initialized", "thread/list"]);
+    assert!(server.root.path().join("home/.codex/fake-daemon/list-received.jsonl").is_file());
+    let indexed = search(&mut socket, &project_id, "Crimson", |results| results.len() == 1).await;
+    assert_eq!(indexed[0]["excerpt"]["who"], "agent");
+    let home = server.root.path().join("home");
+    let mut watcher = inotify::Inotify::init().unwrap();
+    watcher.watches().add(sessions(&server).join(format!("{COLOR}.jsonl")), inotify::WatchMask::OPEN).unwrap();
+    let hold = home.join(".hold-session-list");
+    fs::write(&hold, "").unwrap();
+    let warm = timeout(Duration::from_millis(100), list(&mut socket, &project_id, |rows| rows.len() == 4)).await.expect("warm list waited on an Agent");
+    assert_eq!(warm.as_array().unwrap().len(), 4);
+    timeout(Duration::from_secs(10), async {
+        while !home.join(".listing-held").exists() { tokio::time::sleep(Duration::from_millis(20)).await; }
+    }).await.unwrap();
+    control(&mut socket, json!({ "type": "sessions.search", "searchId": "warm", "projectId": project_id, "query": "Crimson" })).await;
+    let warm = timeout(Duration::from_millis(100), async {
+        loop {
+            let found = next_control(&mut socket, "sessions.found").await;
+            if found["searchId"] == "warm" { break found; }
+        }
+    }).await.expect("warm search waited on an Agent");
+    assert_eq!(warm["results"][0]["key"]["sessionId"], COLOR);
+    let grill = sessions(&server).join(format!("{GRILL}.jsonl"));
+    let content = fs::read_to_string(&grill).unwrap();
+    fs::write(&grill, format!("{content}\n{}\n", json!({ "customTitle": "Changed session" }))).unwrap();
+    let updated = list(&mut socket, &project_id, |rows| rows.iter().any(|row| row["title"] == "Changed session")).await;
+    assert_eq!(updated.as_array().unwrap().len(), 4);
+    let mut events = [0u8; 4096];
+    assert!(matches!(watcher.read_events(&mut events), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock), "unchanged transcript was opened");
+    assert!(list(&mut socket, &json!("not-open"), |rows| rows.is_empty()).await.as_array().unwrap().is_empty());
+    fs::remove_file(hold).unwrap();
+
+}
+
+#[tokio::test]
+async fn a_session_listed_in_a_worktree_opens_in_that_worktree() {
+    let (server, mut socket, _) = start(RIGS, Vec::new()).await;
+    let repo = common::init(server.root.path(), "repo");
+    common::git(&repo, &["commit", "-q", "--allow-empty", "-m", "Initial commit"]);
+    control(&mut socket, json!({ "type": "project.open", "path": repo })).await;
+    let parent = next_control(&mut socket, "project.opened").await["projectId"].as_str().unwrap().to_owned();
+    let response = reqwest::Client::new().post(format!("http://127.0.0.1:{}/api/projects/{parent}/worktrees", server.port))
+        .header("content-type", "application/json").body(json!({ "branch": "history", "from": "HEAD" }).to_string()).send().await.unwrap().error_for_status().unwrap();
+    let worktree_id = serde_json::from_str::<Value>(&response.text().await.unwrap()).unwrap()["projectId"].clone();
+    let worktree = server.root.path().join("data/worktrees/_branches").join(&parent).join("history");
+    let slug: String = worktree.to_str().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' }).collect();
+    let directory = sessions(&server).parent().unwrap().join(slug);
+    fs::create_dir_all(&directory).unwrap();
+    let session = "b811825f-bf23-4b09-820b-f7e01fdbcbae";
+    let transcript = fs::read_to_string(sessions(&server).join(format!("{COLOR}.jsonl"))).unwrap()
+        .replace(server.root.path().join("home").to_str().unwrap(), worktree.to_str().unwrap()).replace(COLOR, session);
+    fs::write(directory.join(format!("{session}.jsonl")), transcript).unwrap();
+    let rows = list(&mut socket, &worktree_id, |rows| rows.len() == 1).await;
+    assert_eq!(rows[0]["project"]["id"], worktree_id);
+    control(&mut socket, json!({ "type": "chat.open", "projectId": worktree_id, "key": rows[0]["key"] })).await;
+    let opened = timeout(Duration::from_secs(10), async {
+        loop {
+            let message = next(&mut socket).await;
+            if matches!(message["type"].as_str(), Some("chat.created" | "chat.open.error")) { break message; }
+        }
+    }).await.unwrap();
+    assert_eq!(opened["type"], "chat.created", "{opened}");
+    let chat = &opened["chat"];
+    assert_eq!((&chat["projectId"], &chat["cwd"], &chat["dormant"]), (&worktree_id, &json!(worktree), &json!(true)));
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
+}
+
+async fn search(socket: &mut Socket, project_id: &Value, query: &str, expected: impl Fn(&[Value]) -> bool) -> Value {
+    let id = uuid::Uuid::new_v4().to_string();
+    control(socket, json!({ "type": "sessions.search", "searchId": id, "projectId": project_id, "query": query })).await;
+    timeout(Duration::from_secs(15), async {
+        loop {
+            let found = next_control(socket, "sessions.found").await;
+            if found["searchId"] == id && expected(found["results"].as_array().unwrap()) { break found["results"].clone(); }
+        }
+    }).await.unwrap_or_else(|_| panic!("Unexpected search results for {query:?}"))
+}
+
+fn write_history(path: &Path, entries: &[Value]) {
+    fs::write(path, entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n") + "\n").unwrap();
+}
+
+fn conversation(text: &str) -> Vec<Value> {
+    vec![
+        json!({ "type": "user", "uuid": "prompt", "parentUuid": null, "message": { "role": "user", "content": "A neutral prompt" } }),
+        json!({ "type": "assistant", "uuid": "reply", "parentUuid": "prompt", "message": { "role": "assistant", "id": "reply", "content": [{"type": "text", "text": text}] } }),
+    ]
+}
+
+#[tokio::test]
+async fn indexed_messages_follow_replay() {
+    let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
+    let path = sessions(&server).join(format!("{COLOR}.jsonl"));
+    let template = include_str!("../src/templates/grill.md").trim_end();
+    write_history(&path, &[
+        json!({ "type": "user", "uuid": "prompt", "parentUuid": null, "message": { "role": "user", "content": "A neutral prompt" } }),
+        json!({ "type": "assistant", "uuid": "abandoned", "parentUuid": "prompt", "message": { "id": "abandoned", "role": "assistant", "content": [{"type": "text", "text": "discardedbranch"}] } }),
+        json!({ "type": "assistant", "uuid": "tool", "parentUuid": "prompt", "message": { "id": "tool", "role": "assistant", "content": [{"type": "thinking", "thinking": "privatethought"}, {"type": "tool_use", "name": "Bash", "id": "bash", "input": {"command": "echo test"}}] } }),
+        json!({ "type": "user", "uuid": "result", "parentUuid": "tool", "message": { "role": "user", "content": [{"type": "tool_result", "tool_use_id": "bash", "content": "discardedoutput"}] } }),
+        json!({ "type": "system", "subtype": "local_command", "uuid": "local", "parentUuid": "result", "content": "<local-command-stdout>localcommandoutput</local-command-stdout>" }),
+        json!({ "type": "user", "uuid": "template", "parentUuid": "local", "message": { "role": "user", "content": format!("{template}\n\nTypedonly") } }),
+        json!({ "type": "assistant", "uuid": "reply", "parentUuid": "template", "message": { "id": "reply", "role": "assistant", "content": [{"type": "text", "text": "😀 amber quartz."}] } }),
+    ]);
+    let results = search(&mut socket, &project_id, r#""amber quartz""#, |results| results.len() == 1).await;
+    assert_eq!(results[0]["excerpt"], json!({"who": "agent", "text": "😀 amber quartz.", "ranges": [[3, 15]]}));
+    assert_eq!(results[0]["matches"], 1);
+    assert_eq!(search(&mut socket, &project_id, "amber qua", |results| results.len() == 1).await[0]["key"]["sessionId"], COLOR);
+    assert_eq!(search(&mut socket, &project_id, "typedonly", |results| results.len() == 1).await[0]["excerpt"]["text"], "/grill Typedonly");
+    for query in ["discardedbranch", "discardedoutput", "privatethought", "localcommandoutput", "relentlessly", r#""quartz amber""#, "(!@#)"] {
+        search(&mut socket, &project_id, query, |results| results.is_empty()).await;
+    }
+}
+
+#[tokio::test]
+async fn snapshot_reconciliation_and_archive_survive_restart() {
+    let config = format!("{RIGS}\n[storage]\nmin_free_gib = 1000000\n");
+    let (mut server, mut socket, project_id) = start(&config, Vec::new()).await;
+    fs::write(server.root.path().join("home/.claude/settings.json"), r#"{"cleanupPeriodDays":2}"#).unwrap();
+    let young = sessions(&server).join(format!("{COLOR}.jsonl"));
+    let aged = sessions(&server).join(format!("{GRILL}.jsonl"));
+    write_history(&young, &conversation("youngword"));
+    write_history(&aged, &conversation("agedword"));
+    touch(&aged, 1_500_000_000);
+    list(&mut socket, &project_id, |rows| rows.len() == 4).await;
+    let id = "low-space";
+    control(&mut socket, json!({ "type": "sessions.search", "searchId": id, "projectId": project_id, "query": "youngword" })).await;
+    let paused = next_control(&mut socket, "sessions.found").await;
+    assert_eq!(paused["coverage"]["indexed"], 0);
+    assert_eq!(paused["results"], json!([]));
+    fs::write(server.root.path().join("config.toml"), RIGS).unwrap();
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    search(&mut socket, &project_id, "youngword", |results| results.len() == 1).await;
+    search(&mut socket, &project_id, "agedword", |results| results.len() == 1).await;
+    write_history(&young, &conversation("rewrittenword"));
+    search(&mut socket, &project_id, "rewrittenword", |results| results.len() == 1).await;
+    search(&mut socket, &project_id, "youngword", |results| results.is_empty()).await;
+    fs::remove_file(&young).unwrap();
+    fs::remove_file(&aged).unwrap();
+    search(&mut socket, &project_id, "rewrittenword", |results| results.is_empty()).await;
+    search(&mut socket, &project_id, "agedword", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    search(&mut socket, &project_id, "agedword", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    server.stop().await;
+    fs::remove_file(server.root.path().join("data/sessions/index.sqlite")).unwrap();
+    write_history(&young, &conversation("rebuiltword"));
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    search(&mut socket, &project_id, "rebuiltword", |results| results.len() == 1).await;
+    let ended = search(&mut socket, &project_id, "agedword", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    control(&mut socket, json!({ "type": "sessions.dismiss", "key": ended[0]["key"] })).await;
+    search(&mut socket, &project_id, "agedword", |results| results.is_empty()).await;
+    write_history(&aged, &conversation("backdatedword"));
+    touch(&aged, 1_500_000_000);
+    search(&mut socket, &project_id, "backdatedword", |results| results.len() == 1).await;
+    fs::remove_file(&aged).unwrap();
+    search(&mut socket, &project_id, "backdatedword", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    server.stop().await;
+    let archive = rusqlite::Connection::open(server.root.path().join("data/sessions/archive.sqlite")).unwrap();
+    archive.execute("UPDATE sessions SET ended_at = ended_at - 2 * 86400000", []).unwrap();
+    drop(archive);
+    fs::write(server.root.path().join("config.toml"), format!("{RIGS}\n[storage]\nkeep_ended_days = 1\n")).unwrap();
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    search(&mut socket, &project_id, "backdatedword", |results| results.is_empty()).await;
 }
 
 #[tokio::test]
@@ -114,10 +285,14 @@ async fn codex_sessions_prefer_names_and_fall_back_to_previews() {
     threads[1]["name"] = json!(" \n ");
     fs::write(&path, threads.to_string()).unwrap();
     let config = RIGS.replace("STAMPEDE_FAKE_THREADS = \"threads\"", &format!("STAMPEDE_FAKE_THREADS = {:?}", path));
-    let (_server, mut socket, project_id) = start(&config, Vec::new()).await;
-    let listed = list(&mut socket, &project_id).await;
-    let codex: Vec<_> = listed.as_array().unwrap().iter().filter(|session| session["agent"] == "codex").map(|session| &session["title"]).collect();
+    let (server, mut socket, project_id) = start(&config, Vec::new()).await;
+    let listed = list(&mut socket, &project_id, |rows| rows.iter().filter(|row| row["key"]["agent"] == "codex").count() == 2).await;
+    let codex: Vec<_> = listed.as_array().unwrap().iter().filter(|session| session["key"]["agent"] == "codex").map(|session| &session["title"]).collect();
     assert_eq!(codex, ["A named Codex session", "Say hi in three words."]);
+    let matches = search(&mut socket, &project_id, "friend", |results| results.iter().any(|result| result["key"]["sessionId"] == THREAD)).await;
+    let found = matches.as_array().unwrap().iter().find(|result| result["key"]["sessionId"] == THREAD).unwrap();
+    assert_eq!(found["excerpt"], json!({ "who": "agent", "text": "Hi there, friend!", "ranges": [[10, 16]] }));
+    assert!(!received(&server).iter().any(|message| message["method"] == "thread/resume"));
 }
 
 #[tokio::test]
@@ -136,31 +311,79 @@ async fn claude_sessions_prefer_native_metadata_in_long_transcripts() {
         (json!({}), json!({ "customTitle": "", "aiTitle": " ", "lastPrompt": "", "summary": "" }), "Original prompt"),
     ] {
         fs::write(&path, format!("{head}\n{prompt}\n{padding}\n{tail}\n")).unwrap();
-        let listed = list(&mut socket, &project_id).await;
-        let session = listed.as_array().unwrap().iter().find(|session| session["sessionId"] == COLOR).unwrap();
+        let listed = list(&mut socket, &project_id, |rows| rows.iter().any(|row| row["key"]["sessionId"] == COLOR && row["title"] == expected)).await;
+        let session = listed.as_array().unwrap().iter().find(|session| session["key"]["sessionId"] == COLOR).unwrap();
         assert_eq!(session["title"], expected);
     }
     fs::write(&path, json!({ "type": "custom-title", "customTitle": "Title without a prompt" }).to_string()).unwrap();
-    let listed = list(&mut socket, &project_id).await;
-    let session = listed.as_array().unwrap().iter().find(|session| session["sessionId"] == COLOR).unwrap();
+    let listed = list(&mut socket, &project_id, |rows| rows.iter().any(|row| row["key"]["sessionId"] == COLOR && row["title"] == "Title without a prompt")).await;
+    let session = listed.as_array().unwrap().iter().find(|session| session["key"]["sessionId"] == COLOR).unwrap();
     assert_eq!(session["title"], "Title without a prompt");
 }
 
 #[tokio::test]
-async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
-    let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
-    let chat = resume(&mut socket, &project_id, "claude-code", COLOR).await;
+async fn a_past_claude_session_opens_dormant_and_resumes_from_a_store_matching_rig() {
+    let second = tempfile::tempdir().unwrap();
+    let config = RIGS.replace("STAMPEDE_FAKE_FIXTURE = \"simple-turn\"", &format!("STAMPEDE_FAKE_FIXTURE = \"resume\", CLAUDE_CONFIG_DIR = {:?}", second.path()));
+    let launched = second.path().join("launched.jsonl");
+    let (mut server, mut socket, project_id) = start(&config, vec![("STAMPEDE_FAKE_ARGS", launched.clone().into())]).await;
+    let resumes = || fs::read_to_string(&launched).unwrap_or_default().lines()
+        .filter(|line| serde_json::from_str::<Vec<String>>(line).unwrap().windows(2).any(|pair| pair == ["--resume", COLOR])).count();
+    let home = server.root.path().join("home");
+    let worktree = server.root.path().join("data/worktrees/_branches").join(project_id.as_str().unwrap()).join("branch");
+    fs::create_dir_all(&worktree).unwrap();
+    let slug: String = worktree.to_str().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' }).collect();
+    let directory = second.path().join("projects").join(slug);
+    fs::create_dir_all(&directory).unwrap();
+    let transcript = fs::read_to_string(sessions(&server).join(format!("{COLOR}.jsonl"))).unwrap().replace(home.to_str().unwrap(), worktree.to_str().unwrap());
+    fs::write(directory.join(format!("{COLOR}.jsonl")), transcript).unwrap();
+    let second_store = fs::canonicalize(second.path()).unwrap();
+    let rows = list(&mut socket, &project_id, |rows| rows.iter().any(|row| row["key"]["store"] == json!(second_store))).await;
+    let key = &rows.as_array().unwrap().iter().find(|row| row["key"]["store"] == json!(second_store)).unwrap()["key"];
+    control(&mut socket, json!({ "type": "chat.open", "projectId": project_id, "key": key })).await;
+    let other = timeout(Duration::from_secs(10), next_control(&mut socket, "chat.created")).await.unwrap()["chat"].clone();
+    assert_eq!(other["rig"], "other claude");
+    assert_eq!(other["cwd"], json!(worktree));
+    assert_eq!(other["sessionStore"], json!(second_store));
+    let other_id = other["id"].as_str().unwrap();
+    assert_eq!(turn(&mut socket, other_id, "Now name a fruit in one word.").await, ["working", "done"]);
+    assert!(leftovers(server.root.path()).iter().any(|process| process.contains(&format!(" --resume {COLOR}"))));
+    close_chat(&mut socket, server.root.path(), other_id).await;
+    fs::remove_file(directory.join(format!("{COLOR}.jsonl"))).unwrap();
+    // Wait for the deleted fixture to leave the catalogue before checking the default-store resume.
+    list(&mut socket, &project_id, |rows| rows.iter().all(|row| row["key"]["store"] != json!(second_store)) && rows.iter().any(|row| row["key"]["sessionId"] == COLOR)).await;
+    let before = resumes();
+    let chat = open(&mut socket, &project_id, "claude-code", COLOR).await;
     let chat_id = chat["id"].as_str().unwrap();
     assert_eq!(chat["rig"], "claude");
     assert_eq!(chat["agentSession"], COLOR);
+    assert_eq!(chat["dormant"], true);
     let color = [
         json!({ "kind": "user", "text": "Name a color in one word.", "images": 0 }),
         json!({ "kind": "text", "text": "Crimson", "streaming": false, "phase": "final" }),
     ];
     assert_eq!(attach(&mut socket, chat_id).await, color);
-    let running = leftovers(server.root.path());
-    assert!(running.iter().any(|process| process.contains(&format!(" --resume {COLOR}"))), "{running:?}");
+    let listed = list(&mut socket, &project_id, |rows| rows.len() == 3 && rows.iter().all(|row| row["key"]["sessionId"] != COLOR)).await;
+    let ids: Vec<&Value> = listed.as_array().unwrap().iter().map(|session| &session["key"]["sessionId"]).collect();
+    assert_eq!(ids, [GRILL, EXEC, THREAD]);
+    server.restart().await;
+    let (restarted, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    socket = restarted;
+    control(&mut socket, json!({ "type": "hello", "deviceId": "restarted" })).await;
+    next_control(&mut socket, "hello").await;
+    assert_eq!(attach(&mut socket, chat_id).await, color);
     let record = server.root.path().join(format!("data/chats/{chat_id}.json"));
+    assert_eq!(serde_json::from_slice::<Value>(&fs::read(&record).unwrap()).unwrap()["dormant"], true);
+    assert_eq!(resumes(), before, "a Dormant Chat launched its Agent");
+
+    control(&mut socket, json!({ "type": "chat.run", "chatId": chat_id, "command": "model", "value": "haiku" })).await;
+    next_control(&mut socket, "chat.settings").await;
+    assert_eq!(resumes(), before, "choosing a model launched a Dormant Chat's Agent");
+    assert_eq!(turn(&mut socket, chat_id, "Now name a fruit in one word.").await, ["working", "done"]);
+    assert_eq!(resumes(), before + 1);
+    let launch = fs::read_to_string(&launched).unwrap().lines().map(|line| serde_json::from_str::<Vec<String>>(line).unwrap())
+        .filter(|args| args.windows(2).any(|pair| pair == ["--resume", COLOR])).last().unwrap();
+    assert!(launch.windows(2).any(|pair| pair == ["--model", "haiku"]), "the resume ignored the chosen model: {launch:?}");
     let context = timeout(Duration::from_secs(10), async {
         loop {
             let chat: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
@@ -168,14 +391,8 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     });
-    let cache = json!({ "expires": 1792186875163u64, "then": "cold" });
-    assert_eq!(context.await.expect("the resumed chat never reported its context"), json!({ "used": 4436, "window": 1000000, "cache": cache }), "cold an hour after its last response");
-
-    let listed = list(&mut socket, &project_id).await;
-    let ids: Vec<&Value> = listed.as_array().unwrap().iter().map(|session| &session["sessionId"]).collect();
-    assert_eq!(ids, [GRILL, EXEC, THREAD]);
-
-    assert_eq!(turn(&mut socket, chat_id, "Now name a fruit in one word.").await, ["working", "done"]);
+    let context = context.await.expect("the resumed chat never reported its context");
+    assert_eq!((&context["used"], &context["window"]), (&json!(24416), &json!(1000000)));
     let fruit = [
         json!({ "kind": "user", "text": "Now name a fruit in one word.", "images": 0 }),
         json!({ "kind": "text", "text": "Mango", "streaming": false, "phase": "final" }),
@@ -185,6 +402,59 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
         serde_json::from_slice(&fs::read(server.root.path().join(format!("data/chats/{chat_id}.json"))).unwrap()).unwrap();
     assert_eq!(record["agentSession"], COLOR);
     close_chat(&mut socket, server.root.path(), chat_id).await;
+
+    let root = server.root.path();
+    let repo = common::init(root, "repo");
+    control(&mut socket, json!({ "type": "project.open", "path": repo })).await;
+    let repo_id = next_control(&mut socket, "project.opened").await["projectId"].clone();
+    common::Cli { data_dir: root.join("data") }.ok(&repo, &["epic", "add", "history", "--title", "History", "--brief", "-"], "# History");
+    for (name, path) in [
+        ("ticket", root.join("data/worktrees/history/1")),
+        ("reviewer", root.join("data/worktrees/history/reviewer-1")),
+        ("resolver", root.join("data/worktrees/history/integration")),
+        ("branch", root.join("data/worktrees/_branches").join(repo_id.as_str().unwrap()).join("branch")),
+    ] {
+        let slug: String = path.to_str().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' }).collect();
+        let directory = second.path().join("projects").join(slug);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(format!("{name}.jsonl")), format!("{}\n{}\n", json!({ "type": "queue-operation" }), json!({ "cwd": path, "customTitle": name }))).unwrap();
+    }
+    let rows = list(&mut socket, &repo_id, |rows| rows.iter().filter(|row| row["key"]["store"] == json!(second_store)).count() == 4).await;
+    assert!(rows.as_array().unwrap().iter().all(|row| row["project"] == json!({ "id": repo_id, "path": repo })));
+    control(&mut socket, json!({ "type": "project.close", "projectId": repo_id })).await;
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let projects = next_control(&mut socket, "projects.changed").await;
+            if projects["projects"].as_array().unwrap().iter().all(|project| project["id"] != repo_id) { break; }
+        }
+    }).await.unwrap();
+    list(&mut socket, &repo_id, |rows| rows.is_empty()).await;
+    let databases = root.join("data/sessions");
+    for delete in [false, true] {
+        server.stop().await;
+        let archive = rusqlite::Connection::open(databases.join("archive.sqlite")).unwrap();
+        let path: String = archive.query_row("SELECT path FROM projects WHERE id = ?", [repo_id.as_str().unwrap()], |row| row.get(0)).unwrap();
+        assert_eq!(path, repo.to_str().unwrap());
+        drop(archive);
+        let index = databases.join("index.sqlite");
+        if delete {
+            fs::remove_file(&index).unwrap();
+        } else {
+            let db = rusqlite::Connection::open(&index).unwrap();
+            db.pragma_update(None, "user_version", 99).unwrap();
+        }
+        server.restart().await;
+        timeout(Duration::from_secs(15), async {
+            loop {
+                if let Ok(db) = rusqlite::Connection::open_with_flags(&index, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                    let count = db.query_row("SELECT count(*) FROM sessions WHERE project = ? AND store = ?", [repo_id.as_str().unwrap(), second_store.to_str().unwrap()], |row| row.get::<_, i64>(0));
+                    let version = db.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0));
+                    if matches!((count, version), (Ok(4), Ok(3))) { break; }
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -193,8 +463,9 @@ async fn chats_take_their_agents_title_and_otherwise_their_first_prompt() {
     let path = sessions(&server).join(format!("{COLOR}.jsonl"));
     let session = fs::read_to_string(&path).unwrap() + &json!({ "type": "ai-title", "aiTitle": "Naming colors", "sessionId": COLOR }).to_string();
     fs::write(&path, session + "\n").unwrap();
-    let resumed = resume(&mut socket, &project_id, "claude-code", COLOR).await;
+    let resumed = open(&mut socket, &project_id, "claude-code", COLOR).await;
     let resumed = resumed["id"].as_str().unwrap();
+    assert_eq!(turn(&mut socket, resumed, "Now name a fruit in one word.").await, ["working", "done"]);
     titled(&server, resumed, "Naming colors").await;
     close_chat(&mut socket, server.root.path(), resumed).await;
 
@@ -207,9 +478,9 @@ async fn chats_take_their_agents_title_and_otherwise_their_first_prompt() {
 }
 
 #[tokio::test]
-async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
+async fn a_past_codex_thread_opens_dormant_and_resumes_from_the_first_codex_rig() {
     let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
-    let chat = resume(&mut socket, &project_id, "codex", THREAD).await;
+    let chat = open(&mut socket, &project_id, "codex", THREAD).await;
     let chat_id = chat["id"].as_str().unwrap();
     assert_eq!(chat["rig"], "codex");
     assert_eq!(chat["agentSession"], THREAD);
@@ -218,7 +489,9 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
         json!({ "kind": "thinking", "seconds": 0 }),
         json!({ "kind": "text", "text": "Hi there, friend!", "streaming": false, "phase": "final" }),
     ];
-    assert_eq!(attach(&mut socket, chat_id).await, hi);
+    let mut snapshot = hi.clone();
+    snapshot[1]["elided"] = json!(true);
+    assert_eq!(attach(&mut socket, chat_id).await, snapshot);
 
     assert_eq!(turn(&mut socket, chat_id, "Now say bye in two words.").await, ["working", "done"]);
     let bye = [
@@ -227,7 +500,7 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
     ];
     assert_eq!(attach(&mut socket, chat_id).await, [&hi[..], &bye].concat());
     close_chat(&mut socket, server.root.path(), chat_id).await;
-    let received = received(&server);
+    let received: Vec<_> = received(&server).into_iter().filter(|message| message["catalogue"] != true).collect();
     let methods: Vec<Value> = received.iter().map(|message| message["method"].clone()).collect();
     assert_eq!(methods, [
         "initialize", "initialized", "thread/resume", "thread/items/list", "thread/items/list", "thread/turns/list",
@@ -243,8 +516,9 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
 #[tokio::test]
 async fn a_codex_thread_larger_than_a_websocket_message_limit_opens() {
     let (server, mut socket, project_id) = start(RIGS, vec![("STAMPEDE_FAKE_PADDING", (65 << 20).to_string().into())]).await;
-    let chat = resume(&mut socket, &project_id, "codex", THREAD).await;
+    let chat = open(&mut socket, &project_id, "codex", THREAD).await;
     let chat_id = chat["id"].as_str().unwrap();
+    assert_eq!(turn(&mut socket, chat_id, "Now say bye in two words.").await, ["working", "done"]);
     assert_eq!(attach(&mut socket, chat_id).await[2]["text"], "Hi there, friend!");
     close_chat(&mut socket, server.root.path(), chat_id).await;
 }
@@ -253,20 +527,21 @@ async fn a_codex_thread_larger_than_a_websocket_message_limit_opens() {
 async fn notifications_already_in_a_paged_codex_history_are_shown_once() {
     let mut entries: Vec<Value> = include_str!("fixtures/chats/codex/resume.recorded.jsonl").lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     let resumed = entries.iter().position(|entry| entry["stdout"]["result"]["thread"]["turns"][0].is_object()).unwrap();
-    let turn = entries[resumed]["stdout"]["result"]["thread"]["turns"][0].clone();
-    let items = turn["items"].as_array().unwrap().iter().map(|item| {
-        json!({ "stdout": { "method": "item/completed", "params": { "threadId": THREAD, "turnId": turn["id"], "item": item } } })
+    let recorded = entries[resumed]["stdout"]["result"]["thread"]["turns"][0].clone();
+    let items = recorded["items"].as_array().unwrap().iter().map(|item| {
+        json!({ "stdout": { "method": "item/completed", "params": { "threadId": THREAD, "turnId": recorded["id"], "item": item } } })
     });
-    let echoes: Vec<Value> = items.chain([json!({ "stdout": { "method": "turn/completed", "params": { "threadId": THREAD, "turn": turn } } })]).collect();
+    let echoes: Vec<Value> = items.chain([json!({ "stdout": { "method": "turn/completed", "params": { "threadId": THREAD, "turn": recorded } } })]).collect();
     entries.splice(resumed + 1..resumed + 1, echoes);
     let scratch = tempfile::tempdir().unwrap();
     let fixture = scratch.path().join("echoes.recorded.jsonl");
     fs::write(&fixture, entries.iter().map(|entry| entry.to_string() + "\n").collect::<String>()).unwrap();
 
-    let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", fixture.into())]).await;
-    let chat = resume(&mut socket, &project_id, "codex", THREAD).await;
+    let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", fixture.into()), ("STAMPEDE_FAKE_THREADS", "threads".into())]).await;
+    let chat = open(&mut socket, &project_id, "codex", THREAD).await;
     let chat_id = chat["id"].as_str().unwrap();
-    assert_eq!(attach(&mut socket, chat_id).await, [
+    assert_eq!(turn(&mut socket, chat_id, "Now say bye in two words.").await, ["working", "done"]);
+    assert_eq!(attach(&mut socket, chat_id).await[..3], [
         json!({ "kind": "user", "text": "Say hi in three words.", "images": 0 }),
         json!({ "kind": "thinking", "seconds": 0 }),
         json!({ "kind": "text", "text": "Hi there, friend!", "streaming": false, "phase": "final" }),
@@ -276,12 +551,60 @@ async fn notifications_already_in_a_paged_codex_history_are_shown_once() {
 
 #[tokio::test]
 async fn without_a_rig_a_session_opens_with_its_agents_defaults() {
-    let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", "resume".into())]).await;
+    let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", "resume".into()), ("STAMPEDE_FAKE_THREADS", "threads".into())]).await;
     for (agent, session, rig) in [("claude-code", COLOR, "Claude Code"), ("codex", THREAD, "Codex")] {
-        let chat = resume(&mut socket, &project_id, agent, session).await;
+        let chat = open(&mut socket, &project_id, agent, session).await;
         assert_eq!((&chat["rig"], &chat["agentSession"]), (&json!(rig), &json!(session)));
+        assert_eq!(turn(&mut socket, chat["id"].as_str().unwrap(), "Next").await, ["working", "done"]);
         close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
     }
+}
+
+#[tokio::test]
+async fn an_ended_session_continues_in_a_new_chat_with_its_messages_as_context() {
+    let config = format!("{RIGS}\n[[rig]]\nname = \"fresh codex\"\nagent = \"codex\"\ncommand = \"codex\"\nenv = {{ STAMPEDE_FAKE_FIXTURE = \"simple-turn\" }}\n");
+    let (server, mut socket, project_id) = start(&config, Vec::new()).await;
+    fs::write(server.root.path().join("home/.claude/settings.json"), r#"{"cleanupPeriodDays":2}"#).unwrap();
+    let path = sessions(&server).join(format!("{GRILL}.jsonl"));
+    write_history(&path, &[
+        json!({ "type": "user", "uuid": "first", "parentUuid": null, "message": { "role": "user", "content": "First prompt" } }),
+        json!({ "type": "assistant", "uuid": "one", "parentUuid": "first", "message": { "role": "assistant", "id": "one", "content": [{"type": "text", "text": "firstreply"}] } }),
+        json!({ "type": "user", "uuid": "second", "parentUuid": "one", "message": { "role": "user", "content": "Second prompt" } }),
+        json!({ "type": "assistant", "uuid": "two", "parentUuid": "second", "message": { "role": "assistant", "id": "two", "content": [{"type": "text", "text": "secondreply"}] } }),
+    ]);
+    touch(&path, 1_500_000_000);
+    search(&mut socket, &project_id, "secondreply", |results| results.len() == 1).await;
+    fs::remove_file(&path).unwrap();
+    let ended = search(&mut socket, &project_id, "secondreply", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    control(&mut socket, json!({ "type": "chat.open", "projectId": project_id, "key": ended[0]["key"] })).await;
+    let source = next_control(&mut socket, "chat.created").await["chat"].clone();
+    let source_id = source["id"].as_str().unwrap();
+    let second = attach(&mut socket, source_id).await.iter().position(|item| item["text"] == "Second prompt").unwrap();
+    let context = |chat: &Value| fs::read_to_string(chat["continuation"].as_str().unwrap()).unwrap();
+    let openings = |server: &Server| -> Vec<String> {
+        received(server).iter().filter(|message| message["method"] == "turn/start").map(|message| message["params"]["input"][0]["text"].as_str().unwrap().to_owned()).collect()
+    };
+    let opening = |chat: &Value, typed: &str| format!("{}\n\n{typed}", include_str!("../src/templates/continued.md").trim_end().replace("{path}", chat["continuation"].as_str().unwrap()));
+
+    control(&mut socket, json!({ "type": "chat.continue", "chatId": source_id, "rig": "fresh codex", "text": "Carry on" })).await;
+    let continued = next_control(&mut socket, "chat.created").await["chat"].clone();
+    assert_eq!((&continued["rig"], &continued["forkedFrom"], &continued["projectId"]), (&json!("fresh codex"), &source["id"], &project_id));
+    assert!(continued["continuation"].as_str().unwrap().ends_with("/continued.md"));
+    let written = context(&continued);
+    for said in ["First prompt", "firstreply", "Second prompt", "secondreply"] { assert!(written.contains(said), "{said} missing from {written}"); }
+    timeout(Duration::from_secs(15), async { while openings(&server).is_empty() { tokio::time::sleep(Duration::from_millis(50)).await; } }).await.expect("the continued Chat never started a turn");
+    assert_eq!(openings(&server), [opening(&continued, "Carry on")]);
+    close_chat(&mut socket, server.root.path(), continued["id"].as_str().unwrap()).await;
+
+    control(&mut socket, json!({ "type": "chat.continue", "chatId": source_id, "rig": "fresh codex", "index": second })).await;
+    let forked = next_control(&mut socket, "chat.created").await["chat"].clone();
+    assert_eq!(forked["draft"], "Second prompt");
+    let written = context(&forked);
+    assert!(written.contains("firstreply") && !written.contains("Second prompt") && !written.contains("secondreply"), "{written}");
+    assert_eq!(openings(&server).len(), 1);
+    assert_eq!(turn(&mut socket, forked["id"].as_str().unwrap(), "Second prompt").await, ["working", "done"]);
+    assert_eq!(openings(&server).last().unwrap(), &opening(&forked, "Second prompt"));
+    for chat in [&forked, &source] { close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await; }
 }
 
 /// A server whose home holds the fixture Claude sessions, with a Device on the home Project.
@@ -294,7 +617,7 @@ async fn start(config: &str, mut env: Vec<(&'static str, OsString)>) -> (Server,
     fs::create_dir_all(&sessions).unwrap();
     for (session, seconds) in [(COLOR, 1_792_182_850), (GRILL, 1_792_182_860), (MODEL, 1_792_182_870)] {
         let name = format!("{session}.jsonl");
-        fs::copy(fixtures.join(&name), sessions.join(&name)).unwrap();
+        fs::write(sessions.join(&name), fs::read_to_string(fixtures.join(&name)).unwrap().replace("/tmp/stampede-chat", server.root.path().join("home").to_str().unwrap())).unwrap();
         touch(&sessions.join(&name), seconds);
     }
     fs::create_dir(sessions.join(COLOR)).unwrap();
@@ -319,16 +642,27 @@ fn touch(path: &Path, seconds: u64) {
     file.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)).unwrap();
 }
 
-async fn list(socket: &mut Socket, project_id: &Value) -> Value {
-    control(socket, json!({ "type": "sessions.list", "projectId": project_id })).await;
-    let listed = timeout(Duration::from_secs(10), next_control(socket, "sessions.listed")).await;
-    let listed = listed.expect("the sessions were never listed");
-    assert_eq!(listed["projectId"], *project_id);
-    listed["sessions"].clone()
+fn projected(rows: Value) -> Value {
+    json!(rows.as_array().unwrap().iter().map(|row| json!({
+        "agent": row["key"]["agent"], "sessionId": row["key"]["sessionId"], "title": row["title"], "updatedAt": row["updatedAt"],
+    })).collect::<Vec<_>>())
 }
 
-async fn resume(socket: &mut Socket, project_id: &Value, agent: &str, session: &str) -> Value {
-    control(socket, json!({ "type": "chat.resume", "projectId": project_id, "agent": agent, "sessionId": session })).await;
+async fn list(socket: &mut Socket, project_id: &Value, expected: impl Fn(&[Value]) -> bool) -> Value {
+    control(socket, json!({ "type": "sessions.list", "projectId": project_id })).await;
+    timeout(Duration::from_secs(15), async {
+        loop {
+            let listed = next_control(socket, "sessions.listed").await;
+            if listed["projectId"] == *project_id && expected(listed["sessions"].as_array().unwrap()) { break listed["sessions"].clone(); }
+        }
+    }).await.expect("the expected Sessions were never listed")
+}
+
+/// Opens a listed Session as a Dormant Chat.
+async fn open(socket: &mut Socket, project_id: &Value, agent: &str, session: &str) -> Value {
+    let listed = list(socket, project_id, |rows| rows.iter().any(|row| row["key"]["agent"] == agent && row["key"]["sessionId"] == session)).await;
+    let key = &listed.as_array().unwrap().iter().find(|row| row["key"]["agent"] == agent && row["key"]["sessionId"] == session).unwrap()["key"];
+    control(socket, json!({ "type": "chat.open", "projectId": project_id, "key": key })).await;
     let created = timeout(Duration::from_secs(10), next_control(socket, "chat.created")).await;
     let chat = created.expect("the chat was never created")["chat"].clone();
     assert_eq!(chat["agent"], agent);

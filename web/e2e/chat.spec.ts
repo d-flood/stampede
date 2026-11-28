@@ -2,7 +2,7 @@ import type { ServerMessage } from '#lib/device.svelte.ts';
 import { expect, test } from './fixtures.ts';
 import type { Locator, WebSocketRoute } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { closePinned, closeProject, expectCurrent, expectSelected, expectShown, newTab, openProject, pinned, openNewTab, closeSheet, showProjects, showSidebar, showTab, tabCount } from './shell.ts';
 
@@ -626,7 +626,7 @@ test('Rigs launch Chats from New Tab, the Palette, and shortcuts on every device
 	await closeProject(page, name);
 });
 
-test('past sessions of both Agents are listed newest first, searchable, and reopen as a Chat', async ({ page }, { project }) => {
+test('past sessions of both Agents are listed newest first, searchable, and open as a Dormant Chat', async ({ page }, { project }) => {
 	const name = `sessions-${project.name}`;
 	const root = process.env.STAMPEDE_E2E_ROOT;
 	const path = `${root}/projects/${name}`;
@@ -635,7 +635,7 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 	mkdirSync(sessions, { recursive: true });
 	const session = '9afa077a-3173-4e49-9197-7ed54344b24e';
 	const fixture = new URL(`../../crates/stampede/tests/fixtures/chats/claude-code/sessions/${session}.jsonl`, import.meta.url);
-	copyFileSync(fileURLToPath(fixture), `${sessions}/${session}.jsonl`);
+	writeFileSync(`${sessions}/${session}.jsonl`, readFileSync(fileURLToPath(fixture), 'utf8').replaceAll('/tmp/stampede-chat', path));
 	appendFileSync(`${sessions}/${session}.jsonl`, `\n${JSON.stringify({ type: 'custom-title', customTitle: 'Palette study' })}\n`);
 	utimesSync(`${sessions}/${session}.jsonl`, new Date(), new Date());
 	await openProject(page, name);
@@ -662,9 +662,9 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 			.toBe(true);
 		await listed.getByText('Search sessions…').click();
 		const palette = page.getByRole('dialog', { name: 'Past Sessions' });
-		await palette.getByPlaceholder('Find a session by title').fill('palette');
+		await palette.getByPlaceholder('Find a session').fill('palette');
 		await expect(palette.getByRole('option')).toHaveText([/Palette study/]);
-		await palette.getByPlaceholder('Find a session by title').fill('three');
+		await palette.getByPlaceholder('Find a session').fill('three');
 		await expect(palette.getByRole('option')).toHaveText([/Say hi in three words\./]);
 		await page.keyboard.press('Escape');
 		await expect(palette).toBeHidden();
@@ -677,10 +677,20 @@ test('past sessions of both Agents are listed newest first, searchable, and reop
 	const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
 	await expect(panel.getByRole('region', { name: 'User message 1' }).getByText('Name a color in one word.')).toBeVisible();
 	await expect(panel.getByText('Crimson')).toBeVisible();
+	const composer = panel.getByRole('textbox', { name: 'Composer' });
+	await expect(composer).toHaveAttribute('placeholder', 'Message to resume this Session');
+	await expect(tab.getByTitle('done')).toHaveCount(0);
 
 	listed = await sessionItems();
 	await expect(listed).toHaveText([/Reply with exactly: ok/, /Say hi in three words\./, /Search sessions…/]);
 	await page.keyboard.press('Escape');
+	await expectSelected(tab);
+	await composer.fill('Greet the reader');
+	await panel.getByRole('button', { name: 'Send' }).click();
+	await expect(panel.getByText(/^Hello and welcome!/)).toBeVisible();
+	await expect(panel.getByText('Crimson')).toHaveCount(1);
+	await expect(composer).toHaveAttribute('placeholder', 'Message Claude');
+	await expect(tab.getByTitle('done')).toBeVisible();
 	await closePinned(tab);
 	await expect(tab).toHaveCount(0);
 });

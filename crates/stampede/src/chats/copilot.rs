@@ -13,7 +13,7 @@ use copilot_sdk::{
     ResumeSessionOptions, SessionEvent, SessionId, SessionListFilter, SetModelOptions, SystemMessageConfig,
     handler::{PermissionHandler, PermissionResult, UserInputHandler, UserInputResponse},
     session::Session as CopilotSession,
-    rpc::{EventsReadDirection, ModelListRequest, SessionsForkRequest, SessionsReadPersistedEventsRequest},
+    rpc::{EventsCursorStatus, EventsReadDirection, ModelListRequest, SessionsForkRequest, SessionsReadPersistedEventsRequest},
     session_events::{AiCreditsStatus, ProviderMonthlyUsageScope, ProviderMonthlyUsageState, ProviderQuotaState, ProviderQuotaUnit, SessionQuotaObservationData, UsageGetMetricsResult},
 };
 use serde_json::{Value, json};
@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use super::{
     AgentCommand, Answer, Builtin, CLOSING, Capabilities, Chat, Choice, ChoiceDescription, CommandStatus,
-    Cache, Context, Driver, Event, Image, Item, Lapse, Notice, Outcome, Phase, Question, Request, RequestKind, Session,
+    Cache, Context, Driver, Event, Image, Item, Lapse, Notice, Outcome, Phase, Question, Request, RequestKind, NativeSession,
     Settings, Status, Subagent, Tokens, ToolCall, ToolKind, html, relative, unified, words, HOUR,
 };
 use crate::{config::{Agent, AgentSettings}, usage::{Consumption, Reading, Unit, Window}};
@@ -98,12 +98,18 @@ impl Connection {
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
             .kill_on_drop(true).spawn()
             .map_err(|error| io::Error::new(error.kind(), format!("Cannot start GitHub Copilot CLI: {error}. Install Copilot CLI and run `copilot login`.")))?;
-        let client = Client::from_streams(ClientMode::CodingAgent, child.stdout.take().unwrap(), child.stdin.take().unwrap(), cwd.to_owned()).map_err(io::Error::other)?;
-        rpc(client.verify_protocol_version()).await?;
-        if !rpc(client.get_auth_status()).await?.is_authenticated {
-            return Err(io::Error::other("GitHub Copilot is not signed in. Run `copilot login` on the Stampede host, then try again."));
+        let result = async {
+            let client = Client::from_streams(ClientMode::CodingAgent, child.stdout.take().unwrap(), child.stdin.take().unwrap(), cwd.to_owned()).map_err(io::Error::other)?;
+            rpc(client.verify_protocol_version()).await?;
+            if !rpc(client.get_auth_status()).await?.is_authenticated {
+                return Err(io::Error::other("GitHub Copilot is not signed in. Run `copilot login` on the Stampede host, then try again."));
+            }
+            Ok(client)
+        }.await;
+        match result {
+            Ok(client) => Ok(Self { client, child }),
+            Err(error) => { let _ = child.kill().await; Err(error) }
         }
-        Ok(Self { client, child })
     }
 
     async fn close(&mut self) {
@@ -241,16 +247,74 @@ async fn recorded_costs(client: &Client) -> io::Result<Vec<Reading>> {
     Ok(readings)
 }
 
-pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
-    let mut connection = Connection::open(cwd, env).await?;
-    let filter = SessionListFilter { working_directory: Some(cwd.display().to_string()), ..Default::default() };
-    let result = rpc(connection.client.list_sessions(Some(filter))).await.map(|sessions| sessions.into_iter().filter_map(|session| {
-        if session.is_remote { return None; }
-        let title = session.summary.as_deref().filter(|title| !title.is_empty())?;
-        Some(Session::new(Agent::Copilot, session.session_id.as_str(), title, super::epoch_ms(&session.modified_time)?))
-    }).collect());
-    connection.close().await;
-    result
+pub(super) struct Catalogue(Connection);
+
+impl Catalogue {
+    pub(super) async fn open(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Self> {
+        Ok(Self(Connection::open(cwd, env).await?))
+    }
+
+    pub(super) async fn list(&self, directories: &HashSet<String>) -> io::Result<Vec<NativeSession>> {
+        let mut sessions = Vec::new();
+        let mut missing = HashSet::new();
+        let fallback = match rpc(self.0.client.rpc().sessions().list()).await {
+            Ok(listed) => {
+                for session in listed.sessions {
+                    if session["isRemote"] == true { continue; }
+                    let Some(title) = session["summary"].as_str().filter(|title| !title.is_empty()) else { continue };
+                    let id = session["sessionId"].as_str().ok_or_else(|| io::Error::other("Session without id"))?;
+                    let updated = session["modifiedTime"].as_str().and_then(super::epoch_ms).ok_or_else(|| io::Error::other("Session without modified time"))?;
+                    if let Some(cwd) = session["context"]["cwd"].as_str().filter(|cwd| !cwd.is_empty()) {
+                        sessions.push(NativeSession::new(cwd, id, title, updated));
+                    } else {
+                        missing.insert(id.to_owned());
+                    }
+                }
+                false
+            }
+            Err(error) if error.get_ref().and_then(|error| error.downcast_ref::<copilot_sdk::Error>())
+                .is_some_and(|error| matches!(error.kind(), copilot_sdk::ErrorKind::Rpc { code: -32601 })) => true,
+            Err(error) => return Err(error),
+        };
+        if fallback || !missing.is_empty() {
+            for directory in directories {
+                let filter = SessionListFilter { working_directory: Some(directory.clone()), ..Default::default() };
+                for session in rpc(self.0.client.list_sessions(Some(filter))).await? {
+                    if session.is_remote || !fallback && !missing.remove(session.session_id.as_str()) { continue; }
+                    let Some(title) = session.summary.as_deref().filter(|title| !title.is_empty()) else { continue };
+                    let updated = super::epoch_ms(&session.modified_time).ok_or_else(|| io::Error::other("Session without modified time"))?;
+                    sessions.push(NativeSession::new(directory, session.session_id.as_str(), title, updated));
+                }
+            }
+        }
+        Ok(sessions)
+    }
+
+    pub(super) async fn snapshot(&self, session: &str, cwd: &Path, data: &Path) -> io::Result<Vec<Item>> {
+        let (events, received) = mpsc::unbounded_channel();
+        drop(received);
+        let mut transcript = Transcript::new(cwd, events, Settings::default());
+        transcript.data_dir = Some(data.to_owned());
+        let mut cursor = None;
+        loop {
+            let page = rpc(self.0.client.rpc().sessions().read_persisted_events(SessionsReadPersistedEventsRequest {
+                session_id: SessionId::new(session), direction: Some(EventsReadDirection::Forward), max: None, cursor,
+            })).await?;
+            if !matches!(page.cursor_status, EventsCursorStatus::Ok) { return Err(io::Error::other("Copilot Session history changed")); }
+            for event in page.events { transcript.read(&event, true); }
+            if !page.has_more { break; }
+            cursor = Some(page.cursor);
+        }
+        transcript.stop_commands();
+        transcript.finish();
+        for item in &mut transcript.items {
+            super::transform_item(data, cwd, item);
+            item.trim_snapshot();
+        }
+        Ok(transcript.items)
+    }
+
+    pub(super) async fn close(mut self) { self.0.close().await; }
 }
 
 struct Interaction {
@@ -312,7 +376,7 @@ impl UserInputHandler for Handlers {
     }
 }
 
-async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: Arc<Handlers>) -> io::Result<CopilotSession> {
+async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, readable: Vec<PathBuf>, handlers: Arc<Handlers>) -> io::Result<CopilotSession> {
     let mut server = html::config(data_dir, &chat.id);
     server["type"] = json!("stdio");
     server["timeout"] = json!(86400000);
@@ -320,7 +384,7 @@ async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: A
     let stampede = SystemMessageConfig::new().with_content(html::instructions(data_dir, Some(&chat.id), &chat.disabled_tools));
     if let Some(id) = &chat.agent_session {
         let mut config = ResumeSessionOptions::new(SessionId::new(id))
-            .with_working_directory(&chat.cwd).with_events(|group| group.with_streaming(true)).with_mcp(|group| group.with_servers(servers))
+            .with_working_directory(&chat.cwd).with_filesystem(|group| group.with_additional_directories(readable)).with_events(|group| group.with_streaming(true)).with_mcp(|group| group.with_servers(servers))
             .with_system_message(stampede).with_tools(|group| group.with_excluded_tools(["ask_user"]))
             .with_permissions(|group| group.with_on_request(handlers.clone())).with_interaction(|group| group.with_on_user_input_request(handlers));
         if let Some(model) = &chat.settings.chosen.model { config = config.with_model(model); }
@@ -328,7 +392,7 @@ async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: A
         rpc(client.resume_session(config)).await
     } else {
         let mut config = CreateSessionOptions::default()
-            .with_working_directory(&chat.cwd).with_events(|group| group.with_streaming(true)).with_mcp(|group| group.with_servers(servers))
+            .with_working_directory(&chat.cwd).with_filesystem(|group| group.with_additional_directories(readable)).with_events(|group| group.with_streaming(true)).with_mcp(|group| group.with_servers(servers))
             .with_system_message(stampede).with_tools(|group| group.with_excluded_tools(["ask_user"]))
             .with_permissions(|group| group.with_on_request(handlers.clone())).with_interaction(|group| group.with_on_user_input_request(handlers));
         if let Some(model) = &chat.settings.chosen.model { config = config.with_model(model); }
@@ -370,7 +434,7 @@ async fn establish(
     let connection = Connection::open(&chat.cwd, &env).await?;
     let (interactions, pending) = mpsc::unbounded_channel();
     let handlers = Arc::new(Handlers(interactions));
-    let session = open_session(&connection.client, &data_dir, &chat, handlers).await?;
+    let session = open_session(&connection.client, &data_dir, &chat, super::readable(&data_dir, &env), handlers).await?;
     Ok((connection, session, pending))
 }
 
@@ -872,7 +936,7 @@ impl Transcript {
             "assistant.reasoning_delta" | "assistant.reasoning" => {
                 let complete = event.event_type == "assistant.reasoning";
                 let index = if let Some((index, _)) = self.thinking { index } else {
-                    let index = self.push(Item::Thinking { seconds: 0, text: Some(String::new()) });
+                    let index = self.push(Item::Thinking { elided: false, seconds: 0, text: Some(String::new()) });
                     self.thinking = Some((index, Instant::now())); index
                 };
                 if let Item::Thinking { text: Some(text), .. } = &mut self.items[index] {
@@ -885,7 +949,7 @@ impl Transcript {
             "tool.user_requested" => {
                 let (Some(id), Some(command)) = (data["toolCallId"].as_str(), data["arguments"]["command"].as_str()) else { return };
                 if self.tools.contains_key(id) { return; }
-                let index = self.push(Item::Shell { command: command.to_owned(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(super::epoch_ms(&event.timestamp).unwrap_or_else(super::now)) });
+                let index = self.push(Item::Shell { elided: false, command: command.to_owned(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(super::epoch_ms(&event.timestamp).unwrap_or_else(super::now)) });
                 self.tools.insert(id.to_owned(), (index, data.clone()));
             }
             "tool.execution_complete" => self.tool_complete(data),
@@ -1057,7 +1121,7 @@ impl Transcript {
         let name = data["toolName"].as_str().unwrap_or("tool");
         let args = &data["arguments"];
         let item = if let Some(command) = args["command"].as_str().filter(|_| matches!(name, "bash" | "powershell" | "shell" | "local_shell")) {
-            Item::Command { command: command.to_owned(), status: CommandStatus::Running, output: String::new(), started_at: Some(started_at) }
+            Item::Command { elided: false, command: command.to_owned(), status: CommandStatus::Running, output: String::new(), started_at: Some(started_at) }
         } else if data["mcpServerName"] == html::SERVER && data["mcpToolName"] == html::TOOL {
             html::item(args).unwrap_or_else(|| tool(name, args, ToolKind::Mcp))
         } else {
@@ -1261,12 +1325,12 @@ mod tests {
         let env = BTreeMap::from([("COPILOT_CLI_PATH".to_owned(), script.display().to_string())]);
         let chat = Chat {
             id: "early".to_owned(), project_id: "p".to_owned(), rig: "Argon".to_owned(), agent: Agent::Copilot,
-            cwd: root.path().to_owned(), created: 0, agent_session: None, title: None, resume_at: None,
+            cwd: root.path().to_owned(), created: 0, agent_session: None, session_store: String::new(), title: None, resume_at: None,
             plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
             running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
             queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),
-            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, parent: None,
-            duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
+            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, rigs: Vec::new(), ended: None, gone: false, continued_from: None, continuation: None, landing: None, parent: None,
+            duty: None, draft: None, draft_images: Vec::new(), shell_context: Vec::new(), disabled_tools: Vec::new(),
         };
 
         let (driver, mut events) = start(root.path(), &chat, &env).await.unwrap();

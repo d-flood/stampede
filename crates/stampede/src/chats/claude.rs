@@ -5,7 +5,6 @@ use std::{
     io::{self, BufRead, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process::Stdio,
-    time::UNIX_EPOCH,
 };
 
 use futures_util::StreamExt;
@@ -24,7 +23,7 @@ use uuid::Uuid;
 
 use super::{
     AgentCommand, Answer, Builtin, Cache, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
-    Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
+    Settings, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind,
     holder::{self, Frames},
     html,
     protocol::{self, Message},
@@ -224,7 +223,8 @@ async fn launch(
             super::terminal_tools::CLAUDE_STAGE, super::terminal_tools::CLAUDE_READ, crate::cli::CLAUDE_TOOL, crate::pr_reviews::CLAUDE_TOOL].join(","),
         "--disallowedTools".to_owned(), "AskUserQuestion".to_owned(),
         "--add-dir".to_owned(), crate::canvas::root(data_dir).display().to_string()];
-    let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.claude_flags()).chain(tools);
+    let readable = super::readable(data_dir, env).into_iter().flat_map(|directory| ["--add-dir".to_owned(), directory.display().to_string()]);
+    let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.claude_flags()).chain(tools).chain(readable);
     let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
     let rewind = at.into_iter().flat_map(|at| ["--resume-session-at".to_owned(), at.to_owned()]);
     let fork = (fork && session.is_some()).then(|| "--fork-session".to_owned());
@@ -671,47 +671,32 @@ fn image_urls(content: &Value) -> Vec<String> {
     }).collect()
 }
 
-pub fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
-    let Some(config) = config_dir(env) else { return Ok(Vec::new()) };
-    let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    let entries = match fs::read_dir(config.join("projects").join(name)) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        entries => entries?,
-    };
-    let mut sessions = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension() != Some("jsonl".as_ref()) {
-            continue;
-        }
-        let (Some(id), Some(title)) = (path.file_stem().and_then(|stem| stem.to_str()), session_title(&path, &["customTitle", "aiTitle", "lastPrompt", "summary"])) else {
-            continue;
-        };
-        let Some(updated) = entry.metadata().and_then(|metadata| metadata.modified()).ok() else { continue };
-        let updated = updated.duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_millis() as u64;
-        sessions.push(Session::new(Agent::ClaudeCode, id, &title, updated));
-    }
-    Ok(sessions)
+fn session_title(path: &Path, fields: &[&str]) -> Option<String> {
+    read_title(path, fields).ok().flatten()
 }
 
-fn session_title(path: &Path, fields: &[&str]) -> Option<String> {
-    let mut file = File::open(path).ok()?;
-    let size = file.metadata().ok()?.len();
+pub(super) fn catalogue_title(path: &Path) -> io::Result<Option<String>> {
+    read_title(path, &["customTitle", "aiTitle", "lastPrompt", "summary"])
+}
+
+fn read_title(path: &Path, fields: &[&str]) -> io::Result<Option<String>> {
+    let mut file = File::open(path)?;
+    let size = file.metadata()?.len();
     let mut head = Vec::new();
-    (&mut file).take(HEAD).read_to_end(&mut head).ok()?;
+    (&mut file).take(HEAD).read_to_end(&mut head)?;
     let mut tail = Vec::new();
     if size > HEAD {
-        file.seek(SeekFrom::Start(size.saturating_sub(HEAD))).ok()?;
-        (&mut file).take(HEAD).read_to_end(&mut tail).ok()?;
+        file.seek(SeekFrom::Start(size.saturating_sub(HEAD)))?;
+        (&mut file).take(HEAD).read_to_end(&mut tail)?;
     }
     let entries: Vec<Value> = tail.split(|byte| *byte == b'\n').rev().chain(head.split(|byte| *byte == b'\n').rev())
         .filter_map(|line| serde_json::from_slice(line).ok()).collect();
     for field in fields {
         if let Some(title) = entries.iter().find_map(|entry| entry[field].as_str().filter(|title| !title.trim().is_empty())) {
-            return Some(title.to_owned());
+            return Ok(Some(title.to_owned()));
         }
     }
-    first_prompt(&head)
+    Ok(first_prompt(&head))
 }
 
 fn first_prompt(head: &[u8]) -> Option<String> {
@@ -916,13 +901,70 @@ impl<'de> Visitor<'de> for Only {
     }
 }
 
-fn session_file(env: &BTreeMap<String, String>, session: &str) -> Option<PathBuf> {
+pub(super) fn snapshot(store: &str, session: &str, cwd: &Path, data: &Path) -> io::Result<Vec<Item>> {
+    let env = BTreeMap::from([("CLAUDE_CONFIG_DIR".to_owned(), store.to_owned())]);
+    let path = session_file(&env, session).ok_or_else(|| io::Error::other("Session is missing"))?;
+    File::open(&path)?;
+    let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let mut transcript = Transcript::new(events, cwd);
+    transcript.history(&env, session, None, true, true);
+    let mut items = Vec::new();
+    while let Ok(event) = received.try_recv() {
+        match event {
+            Event::Item(index, mut item) => {
+                super::transform_item(data, cwd, &mut item);
+                item.trim_snapshot();
+                if let Some(existing) = items.get_mut(index) { *existing = item; } else { items.push(item); }
+            }
+            Event::Truncate(len) => items.truncate(len),
+            _ => (),
+        }
+    }
+    Ok(items)
+}
+
+/// The questions the Session answered, read from its transcript without starting Claude Code.
+pub(super) fn answered(store: &str, session: &str, cwd: &Path) -> Vec<AnsweredQuestions> {
+    let env = BTreeMap::from([("CLAUDE_CONFIG_DIR".to_owned(), store.to_owned())]);
+    if session_file(&env, session).is_none() { return Vec::new(); }
+    let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let mut transcript = Transcript::new(events, cwd);
+    transcript.history(&env, session, None, true, true);
+    let mut answered: Vec<AnsweredQuestions> = Vec::new();
+    while let Ok(event) = received.try_recv() {
+        match event {
+            Event::QuestionsRecovered(record) => {
+                answered.retain(|saved| saved.source != record.source);
+                answered.push(record);
+            }
+            Event::QuestionsTruncated(after) => answered.retain(|record| record.after <= after),
+            _ => (),
+        }
+    }
+    answered
+}
+
+pub(super) fn session_file(env: &BTreeMap<String, String>, session: &str) -> Option<PathBuf> {
     let name = format!("{session}.jsonl");
     let projects = fs::read_dir(config_dir(env)?.join("projects")).ok()?;
     projects.flatten().map(|project| project.path().join(&name)).find(|path| path.is_file())
 }
 
-fn config_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
+/// Whether the history store has no transcript of `session`, judged only once its `projects` directory and each project in it read without error.
+pub(super) fn missing(env: &BTreeMap<String, String>, session: &str) -> io::Result<bool> {
+    let store = config_dir(env).ok_or_else(|| io::Error::other("no history store"))?;
+    let name = format!("{session}.jsonl");
+    for project in fs::read_dir(store.join("projects"))? {
+        match fs::metadata(project?.path().join(&name)) {
+            Ok(_) => return Ok(false),
+            Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(true)
+}
+
+pub(super) fn config_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
     match env.get("CLAUDE_CONFIG_DIR") {
         Some(dir) => Some(PathBuf::from(dir)),
         None => std::env::var_os("CLAUDE_CONFIG_DIR")
@@ -1043,6 +1085,7 @@ struct Transcript {
     tasks: HashMap<String, String>,
     todos_held: bool,
     history: Option<PathBuf>,
+    skip_subagents: bool,
     compacted: bool,
     error_reported: bool,
     status: Status,
@@ -1243,6 +1286,7 @@ impl Transcript {
             tasks: HashMap::new(),
             todos_held: false,
             history: None,
+            skip_subagents: false,
             compacted: false,
             error_reported: false,
             status: Status::Done,
@@ -1590,7 +1634,7 @@ impl Transcript {
     async fn replay(mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>, inclusive: bool) -> io::Result<Self> {
         let (env, session, until) = (env.clone(), session.to_owned(), until.map(str::to_owned));
         tokio::task::spawn_blocking(move || {
-            self.history(&env, &session, until.as_deref(), inclusive);
+            self.history(&env, &session, until.as_deref(), inclusive, false);
             self
         })
         .await
@@ -1599,7 +1643,8 @@ impl Transcript {
 
     /// Translates the session file's entries, up to the one whose uuid is `until`. A first pass keeps only how
     /// the entries chain, so a long session is never held in memory whole.
-    fn history(&mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>, inclusive: bool) {
+    fn history(&mut self, env: &BTreeMap<String, String>, session: &str, until: Option<&str>, inclusive: bool, skip_subagents: bool) {
+        self.skip_subagents = skip_subagents;
         let Some(path) = session_file(env, session) else { return };
         let Ok(file) = File::open(&path) else { return };
         self.history = Some(path.clone());
@@ -1650,8 +1695,13 @@ impl Transcript {
         match entry["type"].as_str() {
             Some("system") if entry["subtype"] == "compact_boundary" => self.compacted = true,
             Some("system") if entry["subtype"] == "local_command" => {
+                let command = self.command.as_ref().map(|(command, _)| command.clone());
                 self.recorded_fork();
-                self.local_output(&entry["content"], &entry["uuid"]);
+                if self.skip_subagents {
+                    self.snapshot_local_output(&entry["content"], &entry["uuid"], command.unwrap_or_else(|| "Local command".to_owned()));
+                } else {
+                    self.local_output(&entry["content"], &entry["uuid"]);
+                }
             }
             Some("user") if entry["promptSource"] != "system" => match entry["message"]["content"].as_str() {
                 Some(content) => {
@@ -1698,6 +1748,7 @@ impl Transcript {
 
     fn recorded_fork(&mut self) {
         let (Some((command, prompt)), Some(history)) = (self.command.take(), self.history.clone()) else { return };
+        if self.skip_subagents { return; }
         let Some(agent) = forked_agent(&history, &prompt) else { return };
         let task = command.split_whitespace().next().unwrap_or(&command).to_owned();
         let (mut subagent, events) = Subagent::new(&agent, task, super::now());
@@ -1711,6 +1762,17 @@ impl Transcript {
         let _ = self.events.send(Event::Item(subagent.index, subagent.item()));
         self.tasks.insert(agent.clone(), agent.clone());
         self.subagents.insert(agent, (subagent, transcript));
+    }
+
+    fn snapshot_local_output(&mut self, output: &Value, uuid: &Value, command: String) {
+        let output = output.as_str().unwrap_or_default();
+        let (status, text) = if let Some(text) = tagged(output, "local-command-stderr") {
+            (CommandStatus::Failed, text)
+        } else {
+            (CommandStatus::Ok, tagged(output, "local-command-stdout").unwrap_or_default())
+        };
+        if text.is_empty() || uuid.as_str().is_some_and(|uuid| !self.outputs.insert(uuid.to_owned())) { return; }
+        self.push(Item::Command { elided: true, command, status, output: String::new(), started_at: None });
     }
 
     /// Compacting repeats the output of earlier commands under their original uuids.
@@ -1916,7 +1978,7 @@ impl Transcript {
 
     fn run_shell(&mut self, command: String, progress: &UnboundedSender<shell::Progress>) {
         let started_at = super::now();
-        let item = Item::Shell { command: command.clone(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(started_at) };
+        let item = Item::Shell { elided: false, command: command.clone(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(started_at) };
         let index = self.push(item.clone());
         let env = self.location.as_ref().map(|location| location.env.clone()).unwrap_or_default();
         match shell::spawn(index, &command, &self.cwd, &env, progress.clone()) {
@@ -1924,7 +1986,7 @@ impl Transcript {
                 self.running.insert(index, Running { item, stdout: shell::Capture::default(), stderr: shell::Capture::default(), stop: Some(stop) });
             }
             Err(error) => {
-                let _ = self.events.send(Event::Item(index, Item::Shell { command, status: CommandStatus::Failed, output: error.to_string(), pending: false, started_at: None }));
+                let _ = self.events.send(Event::Item(index, Item::Shell { elided: false, command, status: CommandStatus::Failed, output: error.to_string(), pending: false, started_at: None }));
             }
         }
     }
@@ -1963,7 +2025,7 @@ impl Transcript {
     fn stop_commands(&mut self) {
         for (id, (index, command, output, _)) in self.commands.drain() {
             self.activity.finish(&id, &self.events);
-            let _ = self.events.send(Event::Item(index, Item::Command { command, status: CommandStatus::Failed, output, started_at: None }));
+            let _ = self.events.send(Event::Item(index, Item::Command { elided: false, command, status: CommandStatus::Failed, output, started_at: None }));
         }
         for (subagent, transcript) in self.subagents.values_mut() {
             transcript.stop_commands();
@@ -1990,7 +2052,7 @@ impl Transcript {
     fn shells(&mut self, parts: Vec<shell::Part>) {
         for part in parts {
             if let shell::Part::Input(command) = part {
-                let item = Item::Shell { command, status: CommandStatus::Ok, output: String::new(), pending: false, started_at: None };
+                let item = Item::Shell { elided: false, command, status: CommandStatus::Ok, output: String::new(), pending: false, started_at: None };
                 self.shell = Some((self.push(item.clone()), item));
                 continue;
             }
@@ -2269,7 +2331,7 @@ impl Transcript {
             }
             if let Some((index, command, output, _)) = tool.as_ref().and_then(|tool| self.commands.remove(tool)) {
                 let status = if status == Some("completed") { CommandStatus::Ok } else { CommandStatus::Failed };
-                let _ = self.events.send(Event::Item(index, Item::Command { command, status, output, started_at: None }));
+                let _ = self.events.send(Event::Item(index, Item::Command { elided: false, command, status, output, started_at: None }));
             }
         }
     }
@@ -2342,7 +2404,7 @@ impl Transcript {
                     let streamed = self.thinking.pop_first().map(|(_, item)| item);
                     let text = block["thinking"].as_str().filter(|text| !text.is_empty()).map(str::to_owned)
                         .or_else(|| streamed.as_ref().map(|(_, text)| text.clone()).filter(|text| !text.is_empty()));
-                    let item = Item::Thinking { seconds: seconds(thinking.as_u64().unwrap_or_default()), text };
+                    let item = Item::Thinking { elided: false, seconds: seconds(thinking.as_u64().unwrap_or_default()), text };
                     if let Some((index, _)) = streamed {
                         let _ = self.events.send(Event::Item(index, item));
                     } else {
@@ -2406,7 +2468,7 @@ impl Transcript {
             "Bash" => {
                 let command = text("command");
                 let started_at = timestamp.as_str().and_then(super::epoch_ms).unwrap_or_else(super::now);
-                let running = Item::Command { command: command.clone(), status: CommandStatus::Running, output: String::new(), started_at: Some(started_at) };
+                let running = Item::Command { elided: false, command: command.clone(), status: CommandStatus::Running, output: String::new(), started_at: Some(started_at) };
                 let index = self.push(running);
                 self.commands.insert(id.to_owned(), (index, command, String::new(), started_at));
             }
@@ -2534,7 +2596,7 @@ impl Transcript {
             }
             if let Some((subagent, transcript)) = self.subagents.get_mut(id) {
                 if let Some(task) = result["agentId"].as_str() { self.tasks.insert(task.to_owned(), id.to_owned()); }
-                if let Some(history) = &self.history
+                if !self.skip_subagents && let Some(history) = &self.history
                     && let Some(agent) = result["agentId"].as_str().map(str::to_owned).or_else(|| spawned_agent(history, id))
                 {
                     let path = history.with_extension("").join("subagents").join(format!("agent-{agent}.jsonl"));
@@ -2544,7 +2606,7 @@ impl Transcript {
                     subagent.name = Some(name.to_owned());
                     if let Some(summary) = result["summary"].as_str() { subagent.task = summary.to_owned(); }
                 }
-                if let Some(directory) = result["transcriptDir"].as_str() {
+                if !self.skip_subagents && let Some(directory) = result["transcriptDir"].as_str() {
                     transcript.journal = Some(Tail::new(Path::new(directory).join("journal.jsonl")));
                     if self.history.is_some() {
                         transcript.read_own(subagent);
@@ -2588,7 +2650,7 @@ impl Transcript {
             } else {
                 CommandStatus::Ok
             };
-            let _ = self.events.send(Event::Item(index, Item::Command { command, status, output, started_at: (status == CommandStatus::Running).then_some(started_at) }));
+            let _ = self.events.send(Event::Item(index, Item::Command { elided: false, command, status, output, started_at: (status == CommandStatus::Running).then_some(started_at) }));
         }
         if interrupted(content) {
             self.push(Item::interrupted());
@@ -2653,13 +2715,13 @@ impl Transcript {
         match event["type"].as_str() {
             Some("content_block_start") if event["content_block"]["type"] == "thinking" => {
                 let text = event["content_block"]["thinking"].as_str().unwrap_or_default().to_owned();
-                let index = self.push(Item::Thinking { seconds: 0, text: Some(text.clone()) });
+                let index = self.push(Item::Thinking { elided: false, seconds: 0, text: Some(text.clone()) });
                 self.thinking.insert(block, (index, text));
             }
             Some("content_block_delta") if event["delta"]["type"] == "thinking_delta" => {
                 if let Some((index, text)) = self.thinking.get_mut(&block) {
                     text.push_str(event["delta"]["thinking"].as_str().unwrap_or_default());
-                    let _ = self.events.send(Event::Item(*index, Item::Thinking { seconds: 0, text: Some(text.clone()) }));
+                    let _ = self.events.send(Event::Item(*index, Item::Thinking { elided: false, seconds: 0, text: Some(text.clone()) }));
                 }
             }
             Some("content_block_start") if event["content_block"]["type"] == "text" => {
@@ -3001,7 +3063,7 @@ mod subagent_tests {
             json!({ "type": "system", "subtype": "local_command", "uuid": "b", "parentUuid": "a", "isMeta": false, "content": "<local-command-stdout>All done.</local-command-stdout>" }),
         ]));
         let (mut restored, mut received) = live(&files);
-        restored.history(&files.env, "session", None, true);
+        restored.history(&files.env, "session", None, true, false);
         let mut items = BTreeMap::new();
         apply(&mut received, &mut items);
         assert!(matches!(items.get(&0), Some(Item::User { text, .. }) if text == "/forky now"), "{items:?}");
@@ -3051,7 +3113,7 @@ mod subagent_tests {
                 "status": "completed", "agentId": "outertask", "content": [{ "type": "text", "text": "  <tools-used-before-summary>Agent</tools-used-before-summary>\nOuter report" }], "totalDurationMs": 5 } }),
         ]));
         let (mut restored, mut received) = live(&files);
-        restored.history(&files.env, "session", None, true);
+        restored.history(&files.env, "session", None, true, false);
         let mut items = BTreeMap::new();
         apply(&mut received, &mut items);
         let Some(Item::Subagent { report, items: outer, .. }) = items.get(&0) else { panic!("{items:?}") };
@@ -3108,7 +3170,7 @@ mod subagent_tests {
                 "<task-notification>\n<task-id>wf</task-id>\n<tool-use-id>run</tool-use-id>\n<status>completed</status>\n<result>Finished</result>\n</task-notification>" } }),
         ]));
         let (mut restored, mut received) = live(&files);
-        restored.history(&files.env, "session", None, true);
+        restored.history(&files.env, "session", None, true, false);
         let mut items = BTreeMap::new();
         apply(&mut received, &mut items);
         check(items.get(&0));
@@ -3145,7 +3207,7 @@ mod subagent_tests {
             json!({ "type": "system", "subtype": "local_command", "uuid": "c", "parentUuid": "b", "isMeta": false, "content": "<local-command-stdout></local-command-stdout>" }),
         ]));
         let (mut restored, mut received) = live(&files);
-        restored.history(&files.env, "session", None, true);
+        restored.history(&files.env, "session", None, true, false);
         let mut items = BTreeMap::new();
         apply(&mut received, &mut items);
         assert!(matches!(items.get(&0), Some(Item::User { text, .. }) if text == "/usage"), "{items:?}");
@@ -3441,7 +3503,7 @@ mod subagent_tests {
                         fs::create_dir_all(&project).unwrap();
                         fs::write(project.join("session.jsonl"), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
                         let env = BTreeMap::from([("CLAUDE_CONFIG_DIR".to_owned(), directory.path().to_str().unwrap().to_owned())]);
-                        transcript.history(&env, "session", None, false);
+                        transcript.history(&env, "session", None, false, false);
                     } else {
                         for entry in entries { transcript.read(&entry); }
                     }
@@ -3560,7 +3622,7 @@ mod subagent_tests {
             let (events, mut received) = mpsc::unbounded_channel();
             let mut transcript = Transcript::new(events, Path::new("/project"));
             fs::write(project.join("session.jsonl"), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
-            transcript.history(&env, "session", None, false);
+            transcript.history(&env, "session", None, false, false);
             let latest = latest_subagent(&mut received);
             (transcript, latest)
         };

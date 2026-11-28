@@ -383,7 +383,7 @@ async fn copilot_questions_return_the_user_selection() {
 
 #[tokio::test]
 async fn copilot_lists_models_and_saved_sessions() {
-    let (server, mut socket, chat) = launch("sessions", "default").await;
+    let (mut server, mut socket, chat) = launch("sessions", "default").await;
     let response = reqwest::Client::new().get(format!("http://127.0.0.1:{}/api/rigs/options?agent=copilot&rig=Copilot", server.port)).send().await.unwrap();
     assert!(response.status().is_success(), "{}", response.text().await.unwrap());
     let response: Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
@@ -391,12 +391,45 @@ async fn copilot_lists_models_and_saved_sessions() {
     assert_eq!(response["models"][0]["efforts"], json!(["low", "medium", "high"]));
     assert_eq!(response["settings"]["model"], "claude-sonnet-4.6");
     control(&mut socket, json!({ "type": "sessions.list", "projectId": chat["projectId"] })).await;
-    let sessions = timeout(Duration::from_secs(15), next_control(&mut socket, "sessions.listed")).await.unwrap()["sessions"].clone();
-    let saved = sessions.as_array().unwrap().iter().find(|session| session["agent"] == "copilot").unwrap();
-    assert_eq!(saved["sessionId"], "saved-copilot-session");
+    let sessions = timeout(Duration::from_secs(15), async {
+        loop {
+            let listed = next_control(&mut socket, "sessions.listed").await["sessions"].clone();
+            if listed.as_array().unwrap().iter().any(|row| row["key"]["agent"] == "copilot") { break listed; }
+        }
+    }).await.unwrap();
+    let saved = sessions.as_array().unwrap().iter().find(|session| session["key"]["agent"] == "copilot").unwrap();
+    assert_eq!(saved["key"]["sessionId"], "saved-copilot-session");
     assert_eq!(saved["title"], "A saved Copilot conversation");
     assert_eq!(saved["updatedAt"], 1792411200000_u64);
+    assert_eq!(saved["key"]["store"], json!(server.root.path().join("home/.copilot")));
+    control(&mut socket, json!({ "type": "sessions.search", "searchId": "copilot-reply", "projectId": chat["projectId"], "query": "narwhal" })).await;
+    let found = timeout(Duration::from_secs(15), async {
+        loop {
+            let message = next_control(&mut socket, "sessions.found").await;
+            if message["searchId"] == "copilot-reply" && !message["results"].as_array().unwrap().is_empty() { break message; }
+        }
+    }).await.unwrap();
+    assert_eq!(found["results"][0]["key"], saved["key"]);
+    let calls = received(&server);
+    assert!(calls.iter().any(|call| call["method"] == "sessions.list" && call["params"]["filter"].is_null()));
+    assert!(!calls.iter().any(|call| call["method"] == "session.resume" || call["method"] == "session.send"));
     close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
+    let home = server.root.path().join("home");
+    let histories = home.join(".claude/projects").join(home.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>());
+    fs::create_dir_all(&histories).unwrap();
+    fs::write(histories.join("healthy.jsonl"), json!({ "type": "user", "uuid": "prompt", "cwd": home, "message": { "role": "user", "content": "A Claude narwhal" } }).to_string() + "\n").unwrap();
+    fs::write(server.root.path().join("config.toml"), "[[rig]]\nname = 'Copilot'\nagent = 'copilot'\nenv = { COPILOT_CLI_PATH = '/nonexistent/copilot' }\n").unwrap();
+    server.restart().await;
+    let mut socket = device(server.port).await;
+    control(&mut socket, json!({ "type": "sessions.search", "searchId": "stale-copilot", "projectId": chat["projectId"], "query": "narwhal" })).await;
+    let found = timeout(Duration::from_secs(15), async {
+        loop {
+            let message = next_control(&mut socket, "sessions.found").await;
+            if message["searchId"] == "stale-copilot" && message["coverage"]["stale"] == json!(["copilot"]) && message["results"].as_array().unwrap().len() == 2 { break message; }
+        }
+    }).await.unwrap();
+    assert!(found["results"].as_array().unwrap().iter().any(|row| row["key"] == saved["key"]));
+    assert!(found["results"].as_array().unwrap().iter().any(|row| row["key"]["agent"] == "claude-code"));
 }
 
 #[tokio::test]

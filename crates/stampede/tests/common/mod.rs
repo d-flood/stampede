@@ -122,6 +122,8 @@ async fn spawn(root: &Path, port: u16, env: &[(&str, OsString)]) -> Child {
         .env("SHELL", "/bin/bash")
         .env("HOME", root.join("home"))
         .env_remove("CODEX_HOME")
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("COPILOT_HOME")
         .env_remove("STAMPEDE_SCRATCH")
         .env_remove("STAMPEDE_CACHE")
         .env_remove("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING")

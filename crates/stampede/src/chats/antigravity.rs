@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use super::{
     AgentCommand, Answer, Builtin, CLOSING, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Image, Item,
-    Notice, Phase, Request, RequestKind, Session, Settings, Status, Tokens, ToolCall, ToolKind, delegation, html, questions,
+    Notice, Phase, Request, RequestKind, NativeSession, Settings, Status, Tokens, ToolCall, ToolKind, delegation, html, questions,
     relative, shell, terminal_tools, unified, words,
 };
 use crate::{
@@ -78,9 +78,10 @@ struct Connection {
 }
 
 impl Connection {
-    async fn open(cwd: &Path, env: &BTreeMap<String, String>, full_access: bool) -> io::Result<Self> {
+    async fn open(cwd: &Path, env: &BTreeMap<String, String>, full_access: bool, readable: &[PathBuf]) -> io::Result<Self> {
         let mut command = Command::new(executable(env));
         command.arg("acp");
+        for directory in readable { command.arg("--add-dir").arg(directory); }
         if full_access { command.arg("--dangerously-skip-permissions"); }
         let mut child = command.current_dir(cwd).envs(env)
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
@@ -103,8 +104,10 @@ impl Connection {
             "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false },
             "clientInfo": { "name": "Stampede", "version": env!("CARGO_PKG_VERSION") },
         });
-        connection.call("initialize", initialize, &mut Vec::new()).await?;
-        Ok(connection)
+        match connection.call("initialize", initialize, &mut Vec::new()).await {
+            Ok(_) => Ok(connection),
+            Err(error) => { connection.close().await; Err(error) }
+        }
     }
 
     async fn write(&mut self, mut message: Value) -> io::Result<()> {
@@ -199,7 +202,7 @@ pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
 }
 
 pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &AgentSettings) -> io::Result<(Vec<Value>, AgentSettings)> {
-    let connection = Connection::open(cwd, env, false).await?;
+    let connection = Connection::open(cwd, env, false, &[]).await?;
     let mut connection = connection;
     let result = connection.call("session/new", json!({ "cwd": cwd, "mcpServers": [] }), &mut Vec::new()).await.map(|session| {
         let options = session["configOptions"].as_array().cloned().unwrap_or_default();
@@ -217,25 +220,57 @@ pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &Agen
     result
 }
 
-/// Lists the conversations agy kept for `cwd`; agy lists every directory's, whatever `cwd` asks for.
-pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
-    let mut connection = Connection::open(cwd, env, false).await?;
-    let result = async {
+pub(super) struct Catalogue(Connection);
+
+impl Catalogue {
+    pub(super) async fn open(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Self> {
+        Ok(Self(Connection::open(cwd, env, false, &[]).await?))
+    }
+
+    pub(super) async fn list(&mut self) -> io::Result<Vec<NativeSession>> {
         let mut sessions = Vec::new();
-        let mut params = json!({ "cwd": cwd });
+        let mut params = json!({});
+        let mut cursors = HashSet::new();
         loop {
-            let mut page = connection.call("session/list", params.clone(), &mut Vec::new()).await?;
-            for session in page["sessions"].as_array().into_iter().flatten() {
-                if session["cwd"].as_str().map(Path::new) != Some(cwd) { continue; }
-                let (Some(id), Some(title), Some(updated)) = (session["sessionId"].as_str(), session["title"].as_str().filter(|title| !title.is_empty()), session["updatedAt"].as_str().and_then(super::epoch_ms)) else { continue };
-                sessions.push(Session::new(Agent::Antigravity, id, title, updated));
+            let mut page = self.0.call("session/list", params.clone(), &mut Vec::new()).await?;
+            let listed = page["sessions"].as_array().ok_or_else(|| io::Error::other("Missing Antigravity Session list"))?;
+            for session in listed {
+                let Some(title) = session["title"].as_str().filter(|title| !title.is_empty()) else { continue };
+                let (Some(id), Some(cwd), Some(updated)) = (session["sessionId"].as_str(), session["cwd"].as_str(), session["updatedAt"].as_str().and_then(super::epoch_ms)) else {
+                    return Err(io::Error::other("Incomplete Antigravity Session metadata"));
+                };
+                sessions.push(NativeSession::new(cwd, id, title, updated));
             }
             if page["nextCursor"].is_null() { return Ok(sessions); }
+            let cursor = page["nextCursor"].as_str().ok_or_else(|| io::Error::other("Invalid Antigravity Session cursor"))?;
+            if !cursors.insert(cursor.to_owned()) { return Err(io::Error::other("Repeated Antigravity Session cursor")); }
             params["cursor"] = page["nextCursor"].take();
         }
-    }.await;
-    connection.close().await;
-    result
+    }
+
+    pub(super) async fn snapshot(&mut self, session: &str, cwd: &Path, data: &Path) -> io::Result<Vec<Item>> {
+        let mut held = Vec::new();
+        self.0.call("session/load", json!({ "sessionId": session, "cwd": cwd, "mcpServers": [] }), &mut held).await?;
+        let (events, received) = mpsc::unbounded_channel();
+        drop(received);
+        let mut transcript = Transcript::new(data, cwd, events, Settings::default());
+        for message in held {
+            if message["method"] == "session/update" && message["params"]["sessionId"] == session {
+                transcript.update(&message["params"]["update"], true);
+            } else if message.get("id").is_some() && message.get("method").is_some() {
+                return Err(io::Error::other("Unexpected request during Antigravity history replay"));
+            }
+        }
+        transcript.stop_commands();
+        transcript.finish();
+        for item in &mut transcript.items {
+            super::transform_item(data, cwd, item);
+            item.trim_snapshot();
+        }
+        Ok(transcript.items)
+    }
+
+    pub(super) async fn close(self) { self.0.close().await; }
 }
 
 /// Opens the Chat's conversation, showing in the Chat why agy could not, so that the user can fix it and send again.
@@ -272,7 +307,7 @@ async fn establish(
     full_access: bool,
     session: Option<String>,
 ) -> io::Result<(Connection, Value, Vec<Value>)> {
-    let mut connection = Connection::open(&cwd, &env, full_access).await?;
+    let mut connection = Connection::open(&cwd, &env, full_access, &super::readable(&data_dir, &env)).await?;
     let config = html::config(&data_dir, &chat_id);
     let servers = json!([{ "name": html::SERVER, "command": config["command"], "args": config["args"], "env": [] }]);
     let mut held = Vec::new();
@@ -994,7 +1029,7 @@ impl Transcript {
             (Chunk::Text, None) => self.push(Item::Text { text: String::new(), streaming: !history, phase: Phase::Commentary }),
             (Chunk::Thought, None) => {
                 self.thinking = (!history).then(Instant::now);
-                self.push(Item::Thinking { seconds: 0, text: Some(String::new()) })
+                self.push(Item::Thinking { elided: false, seconds: 0, text: Some(String::new()) })
             }
         };
         match &mut self.items[index] {
@@ -1070,7 +1105,7 @@ impl Transcript {
         if call["kind"] == "execute" {
             let status = match status { Some("completed") => CommandStatus::Ok, Some("failed") => CommandStatus::Failed, _ => CommandStatus::Running };
             let started_at = started_at.filter(|_| status == CommandStatus::Running);
-            return Item::Command { command: command(call), status, output: output(call), started_at };
+            return Item::Command { elided: false, command: command(call), status, output: output(call), started_at };
         }
         if status == Some("completed") && let Some(change) = diff(call) && let Some(path) = change["path"].as_str() {
             let new = change["newText"].as_str().unwrap_or_default();
@@ -1116,12 +1151,12 @@ impl Transcript {
     }
 
     fn run_shell(&mut self, command: String, progress: &UnboundedSender<shell::Progress>, env: &BTreeMap<String, String>) {
-        let item = Item::Shell { command: command.clone(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(super::now()) };
+        let item = Item::Shell { elided: false, command: command.clone(), status: CommandStatus::Running, output: String::new(), pending: false, started_at: Some(super::now()) };
         let index = self.push(item.clone());
         match shell::spawn(index, &command, &self.cwd, env, progress.clone()) {
             Ok(stop) => { self.running.insert(index, Running { item, stdout: shell::Capture::default(), stderr: shell::Capture::default(), stop: Some(stop) }); }
             Err(error) => {
-                self.items[index] = Item::Shell { command, status: CommandStatus::Failed, output: error.to_string(), pending: false, started_at: None };
+                self.items[index] = Item::Shell { elided: false, command, status: CommandStatus::Failed, output: error.to_string(), pending: false, started_at: None };
                 self.changed(index);
             }
         }
@@ -1180,7 +1215,7 @@ impl Transcript {
     fn shells(&mut self, parts: Vec<shell::Part>) {
         for part in parts {
             if let shell::Part::Input(command) = part {
-                let item = Item::Shell { command, status: CommandStatus::Ok, output: String::new(), pending: false, started_at: None };
+                let item = Item::Shell { elided: false, command, status: CommandStatus::Ok, output: String::new(), pending: false, started_at: None };
                 self.shell = Some((self.push(item.clone()), item));
                 continue;
             }
@@ -1297,7 +1332,7 @@ mod tests {
             "sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "completed",
             "rawOutput": { "output": "Rendered HTML in the chat." },
         })), false).await;
-        assert_eq!(live.transcript.items[0], Item::Html { title: "Preview".to_owned(), html: "<p>Hi</p>".to_owned() });
+        assert_eq!(live.transcript.items[0], Item::Html { elided: false, title: "Preview".to_owned(), html: "<p>Hi</p>".to_owned() });
 
         live.handle(session_update(json!({
             "sessionUpdate": "tool_call", "toolCallId": "call_2", "status": "completed",
@@ -1344,12 +1379,12 @@ for line in sys.stdin:
 
         let chat = |id: &str| Chat {
             id: id.to_owned(), project_id: "p".to_owned(), rig: "Neon".to_owned(), agent: Agent::Antigravity,
-            cwd: root.path().to_owned(), created: 0, agent_session: None, title: None, resume_at: None,
+            cwd: root.path().to_owned(), created: 0, agent_session: None, session_store: String::new(), title: None, resume_at: None,
             plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
             running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
             queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),
-            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, parent: None,
-            duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
+            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, rigs: Vec::new(), ended: None, gone: false, continued_from: None, continuation: None, landing: None, parent: None,
+            duty: None, draft: None, draft_images: Vec::new(), shell_context: Vec::new(), disabled_tools: Vec::new(),
         };
 
         let env = BTreeMap::from([

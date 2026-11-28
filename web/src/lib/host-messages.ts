@@ -30,6 +30,10 @@ export function incoming(message: ServerMessage, host?: string): ServerMessage |
 		case 'chat.created':
 		case 'chat.moved':
 			return { ...message, chat: chat(message.chat) };
+		case 'sessions.listed':
+			return { ...message, projectId: named(message.projectId), sessions: message.sessions.map(session => ({ ...session, project: { ...session.project, id: named(session.project.id) } })) };
+		case 'sessions.found':
+			return { ...message, results: message.results.map((found) => ({ ...found, project: { ...found.project, id: named(found.project.id) } })) };
 		case 'chats.changed':
 			return { ...message, projectId: named(message.projectId), chats: message.chats.map(chat) };
 		case 'origin.changed':

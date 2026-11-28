@@ -4,11 +4,13 @@
 	import type { Item } from '#lib/device.svelte.ts';
 	import ArrowCounterClockwise from '~icons/ph/arrow-counter-clockwise';
 	import ArrowsSplit from '~icons/ph/arrows-split';
+	import ClockCounterClockwise from '~icons/ph/clock-counter-clockwise';
 	import DotsThree from '~icons/ph/dots-three-bold';
 	import Caret from '#lib/ui/Caret.svelte';
+	import ImageBroken from '~icons/ph/image-broken';
 	import Menu from '#lib/ui/Menu.svelte';
 
-	let { host, item, first, index, number, onrewind, onfork }: { host: string | undefined; item: Extract<Item, { kind: 'user' }>; first: boolean; index: number; number: number; onrewind?(index: number): void; onfork?(index: number): void } = $props();
+	let { host, item, continued, first, index, number, onrewind, onfork }: { host: string | undefined; item: Extract<Item, { kind: 'user' }>; /** The title of the Session this Chat continues. */ continued?: string; first: boolean; index: number; number: number; onrewind?(index: number): void; onfork?(index: number): void } = $props();
 
 	const lines = $derived(item.text.split('\n'));
 	const actions = $derived([
@@ -32,7 +34,13 @@
 <section class="message" aria-label="User message {number}">
 	{#if item.text}
 		<div class="bubble">
-			{#if lines.length > 12}
+			{#if item.template === 'continued'}
+				{@const typed = item.text.slice('/continued'.length).trim()}
+				<div class="user continued">
+					<p class="origin"><ClockCounterClockwise aria-hidden="true" /><span>Continued from <span class="source">{continued || 'an earlier Session'}</span></span></p>
+					{#if typed}<Text item={markdown(typed)} />{/if}
+				</div>
+			{:else if lines.length > 12}
 				<details class="user">
 					<summary>
 						<span class="first">
@@ -61,6 +69,9 @@
 				<a href={src} target="_blank" rel="noreferrer" aria-label="Open attached image {index + 1}">
 					<img {src} alt="Attached image {index + 1}" loading="lazy" />
 				</a>
+			{/each}
+			{#each { length: item.images - (item.imageUrls?.length ?? 0) }}
+				<div class="unavailable"><ImageBroken aria-hidden="true" />Image unavailable</div>
 			{/each}
 		</div>
 	{/if}
@@ -131,6 +142,37 @@
 		color: var(--muted-fg);
 	}
 
+	.continued {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+
+	.origin {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-2);
+		margin: 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.origin :global(svg) {
+		flex: none;
+		align-self: center;
+	}
+
+	.continued:has(:global(.text)) .origin {
+		padding-bottom: var(--space-2);
+		border-bottom: var(--border-width) solid var(--border);
+	}
+
+	.source {
+		color: var(--color-fg);
+		font-weight: 600;
+		overflow-wrap: anywhere;
+	}
+
 	.templated {
 		display: flow-root;
 	}
@@ -163,6 +205,28 @@
 		max-height: min(24rem, 50dvh);
 		border-radius: var(--radius-md);
 		object-fit: contain;
+	}
+
+	.unavailable {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-2);
+		width: calc(var(--space-6) * 8);
+		max-width: 100%;
+		aspect-ratio: 4 / 3;
+		padding: var(--space-2);
+		text-align: center;
+		border: var(--border-width) dashed var(--border-strong);
+		border-radius: var(--radius-md);
+		background: var(--surface-1);
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.unavailable :global(svg) {
+		font-size: var(--font-size-xl);
 	}
 
 	.body {

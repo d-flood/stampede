@@ -48,12 +48,12 @@ export type Subagent = {
 export type Item =
 	| { kind: 'user'; text: string; images: number; imageUrls?: string[]; template?: string; rewindFrom?: number }
 	| { kind: 'text'; text: string; streaming: boolean; phase: 'commentary' | 'final' }
-	| { kind: 'thinking'; seconds: number; text?: string }
+	| { kind: 'thinking'; seconds: number; text?: string; elided?: true }
 	| { kind: 'tools'; calls: ToolCall[] }
-	| { kind: 'html'; title: string; html: string }
+	| { kind: 'html'; title: string; html: string; elided?: true }
 	| { kind: 'media'; title: string; asset: string }
 	| Subagent
-	| { kind: 'edit'; path: string; diff: string; added: number; removed: number; write?: true }
+	| { kind: 'edit'; path: string; diff: string; added: number; removed: number; write?: true; elided?: true }
 	| { kind: 'canvas'; canvas: string; added: number; removed: number; write?: true }
 	| { kind: 'command'; command: string; status: 'running' | 'ok' | 'failed'; output: string; startedAt?: number; elided?: true }
 	| { kind: 'shell'; command: string; status: 'running' | 'ok' | 'failed'; output: string; startedAt?: number; pending?: true; elided?: true }
@@ -119,6 +119,7 @@ export type Chat = {
 	created: number;
 	closing?: true;
 	agentSession?: string;
+	sessionStore?: string;
 	title?: string;
 	activity?: string | null;
 	background?: boolean;
@@ -132,14 +133,30 @@ export type Chat = {
 	settings: Settings;
 	handoffFrom?: string;
 	forkedFrom?: string;
+	/** Its Agent hasn't started; the transcript is its Session's snapshot. */
+	dormant?: true;
+	/** The Rigs a Dormant Chat can resume with: its Agent's, sharing its history store. */
+	rigs?: string[];
+	/** Why its Session can never resume. */
+	ended?: Ended;
+	/** The Session's directory no longer exists, so it continues only in a new Chat. */
+	gone?: true;
+	/** The title of the Session whose messages this Chat received as context. */
+	continuedFrom?: string;
+	landing?: { item?: number; query?: string };
 	draft?: string;
+	draftImages?: string[];
 };
 
 export type Reading = { agent: Agent; window: 'five-hour' | 'weekly' | 'monthly' | 'session'; group?: { name: string; short: string }; used?: number; consumption?: { amount: number; unit: 'credits' | 'requests' | 'tokens' }; chatId?: string; sessionId?: string; partial?: boolean; startsAt?: number; resetsAt?: number; readAt: number };
 
 export type ResetCredits = { availableCount: number; expiresAt?: number; creditId?: string };
 
-export type Session = { agent: Agent; sessionId: string; title: string; updatedAt: number };
+export type SessionKey = { agent: Agent; store: string; sessionId: string };
+export type Coverage = { indexed: number; total: number; stale: Agent[]; ended: number; bytes: { index: number; archive: number } };
+export type Ended = 'aged' | 'cloud' | 'missing';
+export type Session = { key: SessionKey; project: { id: string; path: string }; title: string; updatedAt: number; ended?: Ended; chatId?: string };
+export type FoundSession = Session & { item?: number; matches: number; excerpt?: { who: 'user' | 'agent'; text: string; ranges: [number, number][] } };
 
 export type TicketStatus = 'not-started' | 'in-progress' | 'merging' | 'merged' | 'skipped';
 export type TicketTag = 'routine' | 'judgment' | 'frontend-design';
@@ -227,9 +244,11 @@ export type ServerMessage =
 	| { type: 'terminal.title'; terminalId: string; label: string }
 	| { type: 'terminal.attached'; terminalId: string; channel: number; cols: number; rows: number }
 	| { type: 'terminal.resized'; terminalId: string; cols: number; rows: number }
-	| { type: 'chat.created'; chat: Chat }
+	| { type: 'chat.created'; chat: Chat; opened?: boolean }
 	| { type: 'chat.handoff.error'; chatId: string; error: string }
+	| { type: 'chat.open.error'; projectId: string; error: string }
 	| { type: 'chat.fork.error'; chatId: string; error: string }
+	| { type: 'chat.continue.error'; chatId: string; error: string }
 	| { type: 'chat.moved'; chatId: string; chat: Chat }
 	| { type: 'chat.move.error'; chatId: string; error: string }
 	| { type: 'chats.changed'; projectId: string; chats: Chat[] }
@@ -240,7 +259,9 @@ export type ServerMessage =
 	| { type: 'chat.background'; chatId: string; background: boolean; running?: Running[] }
 	| { type: 'chat.activity'; chatId: string; activity: string | null }
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
-	| { type: 'sessions.listed'; projectId: string; sessions: Session[] }
+	| { type: 'sessions.listed'; projectId: string; sessions: Session[]; coverage: Coverage }
+	| { type: 'sessions.found'; searchId: string; results: FoundSession[]; coverage: Coverage }
+	| { type: 'sessions.preview'; previewId: string; key: SessionKey; items: Item[]; focus: number }
 	| { type: 'chat.todos'; chatId: string; todos: Todo[] }
 	| { type: 'chat.queued'; chatId: string; queued: string[]; revision: number }
 	| { type: 'chat.unqueued'; chatId: string; text: string; images: Image[] }
@@ -287,8 +308,13 @@ export type ClientMessage =
 	| { type: 'chat.handoff'; chatId: string; rig: string; focus: string }
 	| { type: 'chat.move'; chatId: string; branch: string }
 	| { type: 'chat.fork'; chatId: string; index: number }
-	| { type: 'chat.resume'; projectId: string; agent: Agent; sessionId: string }
+	| { type: 'chat.rig'; chatId: string; rig: string }
+	| { type: 'chat.continue'; chatId: string; rig: string; index?: number; text?: string; images?: Image[] }
+	| { type: 'chat.open'; projectId: string; key: SessionKey; item?: number; query?: string }
 	| { type: 'sessions.list'; projectId: string }
+	| { type: 'sessions.search'; searchId: string; projectId: string; query: string }
+	| { type: 'sessions.preview'; previewId: string; key: SessionKey; item?: number }
+	| { type: 'sessions.dismiss'; key: SessionKey }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }
 	| { type: 'chat.unqueue'; chatId: string; index: number; revision: number }
 	| { type: 'chat.shell'; chatId: string; command: string }

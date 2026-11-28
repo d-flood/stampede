@@ -48,7 +48,8 @@ fn title_valid(title: &str) -> bool {
 pub fn cache_images(data_dir: &Path, item: &mut Item) {
     match item {
         Item::User { image_urls, .. } => {
-            *image_urls = image_urls.iter().filter_map(|source| cache_image(data_dir, source).ok()).collect();
+            *image_urls = image_urls.iter().filter_map(|source| cache_image(data_dir, source)
+                .inspect_err(|error| eprintln!("cannot cache an attached image: {error}")).ok()).collect();
         }
         Item::Subagent { items, .. } => {
             for item in items { cache_images(data_dir, item); }
@@ -198,4 +199,26 @@ pub async fn read(State(state): State<AppState>, Param(asset): Param<String>, he
         response.headers_mut().insert(header::CONTENT_RANGE, format!("bytes {start}-{end}/{length}").parse().unwrap());
     }
     response
+}
+
+pub async fn pull(client: &reqwest::Client, base: &str, directory: &Path, asset: &str) -> io::Result<()> {
+    use futures_util::StreamExt;
+    if mime(asset).is_none() { return Err(io::Error::other("Invalid media asset")); }
+    let destination = directory.join(asset);
+    if tokio::fs::try_exists(&destination).await? { return Ok(()); }
+    let response = client.get(format!("{base}/api/media/{asset}")).timeout(std::time::Duration::from_secs(60)).send().await
+        .and_then(reqwest::Response::error_for_status).map_err(io::Error::other)?;
+    tokio::fs::create_dir_all(directory).await?;
+    let temporary = directory.join(format!("{}.partial", Uuid::new_v4()));
+    let result = async {
+        let mut file = tokio::fs::File::create_new(&temporary).await?;
+        let stream = response.bytes_stream().map(|result| result.map_err(io::Error::other));
+        let mut source = tokio_util::io::StreamReader::new(stream).take(LIMIT + 1);
+        let length = tokio::io::copy(&mut source, &mut file).await?;
+        if length == 0 || length > LIMIT { return Err(io::Error::other("Invalid media length")); }
+        file.sync_all().await?;
+        tokio::fs::rename(&temporary, &destination).await
+    }.await;
+    if result.is_err() { let _ = tokio::fs::remove_file(temporary).await; }
+    result
 }

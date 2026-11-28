@@ -257,12 +257,16 @@ async fn a_tickets_chat_works_only_its_own_ticket_through_its_epic_tool() {
     let call = |arguments: Value| json!({ "id": 2, "method": "tools/call", "params": { "name": "epic", "arguments": arguments } });
     let text = |reply: &Value| (reply["content"][0]["text"].as_str().unwrap().to_owned(), reply["isError"] == true);
     let replies = chat_tools(&data, &chat_id, &[
+        json!({ "id": 0, "method": "initialize" }),
         list.clone(),
         call(json!({ "action": "ticket" })),
         call(json!({ "action": "note", "text": "Chose the shorter path." })),
         call(json!({ "action": "reviewed" })),
         call(json!({ "action": "skip", "text": "The codebase already has it." })),
     ]);
+    let (initialized, replies) = replies.split_first().unwrap();
+    let instructions = initialized["instructions"].as_str().unwrap().lines().next().unwrap();
+    assert!(instructions.contains("ALL_TOOLS") && instructions.contains("mcp__stampede_chat__epic"), "{instructions}");
     let tool = replies[0]["tools"].as_array().unwrap().iter().find(|tool| tool["name"] == "epic").unwrap();
     assert_eq!(tool["inputSchema"]["properties"]["action"]["enum"], json!(["brief", "ticket", "note", "complete", "skip"]));
     assert!(text(&replies[1]).0.starts_with("# work/1: Moot\n\nStatus: in progress\n"), "{}", replies[1]);

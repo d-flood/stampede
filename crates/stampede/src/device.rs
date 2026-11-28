@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -30,11 +30,11 @@ use crate::{
     AppState,
     attention::{Attention, Feed},
     canvas::Canvases,
-    chats::{self, Builtin, Chats},
+    chats::{self, Builtin, Chats, sessions::{SessionKey, Sessions}},
     cloud::{self, Service},
     cloud_hosts::CloudHosts,
     cloud_setup::Run,
-    config::{Agent, Config},
+    config::Config,
     epics::Epics,
     git,
     holder::Owner,
@@ -93,10 +93,20 @@ enum Control {
     MoveChat { chat_id: String, branch: String },
     #[serde(rename = "chat.fork")]
     ForkChat { chat_id: String, index: usize },
-    #[serde(rename = "chat.resume")]
-    ResumeChat { project_id: String, agent: Agent, session_id: String },
+    #[serde(rename = "chat.rig")]
+    RigChat { chat_id: String, rig: String },
+    #[serde(rename = "chat.continue")]
+    ContinueChat { chat_id: String, rig: String, index: Option<usize>, #[serde(default)] text: String, #[serde(default)] images: Vec<chats::Image> },
+    #[serde(rename = "chat.open")]
+    OpenChat { project_id: String, key: SessionKey, item: Option<usize>, query: Option<String> },
     #[serde(rename = "sessions.list")]
     ListSessions { project_id: String },
+    #[serde(rename = "sessions.search")]
+    SearchSessions { search_id: String, project_id: String, query: String },
+    #[serde(rename = "sessions.dismiss")]
+    DismissSession { key: SessionKey },
+    #[serde(rename = "sessions.preview")]
+    PreviewSession { preview_id: String, key: SessionKey, item: Option<usize> },
     #[serde(rename = "chat.send")]
     SendChat {
         chat_id: String,
@@ -200,6 +210,9 @@ struct Device {
     connection: Uuid,
     terminals: Arc<Terminals>,
     chats: Arc<Chats>,
+    sessions: Arc<Sessions>,
+    session_requests: HashMap<String, Arc<Notify>>,
+    session_search: Option<tokio::task::AbortHandle>,
     canvases: Arc<Canvases>,
     attached: HashMap<String, u64>,
     expanded: HashMap<(String, usize), u64>,
@@ -227,7 +240,7 @@ struct Device {
 
 async fn connect(
     socket: WebSocket,
-    AppState { cloud, terminals, chats, attention, usage, projects, cloud_hosts, cloud_setup, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
+    AppState { cloud, terminals, chats, sessions, attention, usage, projects, cloud_hosts, cloud_setup, mut config, disk, canvases, git, languages, epics, pr_reviews, runs, devices, mut origin, .. }: AppState,
 ) {
     let _connected = devices.connect();
     let (mut sink, mut stream) = socket.split();
@@ -267,6 +280,9 @@ async fn connect(
         connection: Uuid::new_v4(),
         terminals,
         chats,
+        sessions,
+        session_requests: HashMap::new(),
+        session_search: None,
         canvases,
         attached: HashMap::new(),
         expanded: HashMap::new(),
@@ -618,18 +634,60 @@ impl Device {
                     }
                 });
             }
-            Control::ResumeChat { project_id, agent, session_id } => {
-                let projects = self.projects.list();
-                let Some(project) = projects.iter().find(|project| project.id == project_id) else {
-                    return eprintln!("cannot resume a chat in {project_id}: not open");
+            Control::ContinueChat { chat_id, rig, index, text, images } => {
+                let Some(rig) = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned() else {
+                    send(&self.outgoing, json!({ "type": "chat.continue.error", "chatId": chat_id, "error": "That Rig is no longer configured." }));
+                    return;
                 };
-                let rig = self.config.borrow().rig_for(agent);
-                match self.chats.create(project, Path::new(&project.path), &rig, Some(&session_id), None).await {
-                    Ok(chat) => send(&self.outgoing, json!({ "type": "chat.created", "chat": chat })),
-                    Err(error) => eprintln!("cannot resume session {session_id}: {error}"),
-                }
+                let chats = Arc::clone(&self.chats);
+                let projects = self.projects.list();
+                let outgoing = self.outgoing.clone();
+                tokio::spawn(async move {
+                    match chats.continue_session(&chat_id, &rig, &projects, index, &text, &images).await {
+                        Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat, "opened": true })),
+                        Err(error) => send(&outgoing, json!({ "type": "chat.continue.error", "chatId": chat_id, "error": error.to_string() })),
+                    }
+                });
+            }
+            Control::OpenChat { project_id, key, item, query } => {
+                let sessions = self.sessions.clone();
+                let chats = self.chats.clone();
+                let outgoing = self.outgoing.clone();
+                let landing = (item.is_some() || query.is_some()).then_some(chats::Landing { item, query });
+                tokio::spawn(async move {
+                    match sessions.open(key, project_id.clone(), landing, chats).await {
+                        Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat, "opened": true })),
+                        Err(error) => send(&outgoing, json!({ "type": "chat.open.error", "projectId": project_id, "error": error.to_string() })),
+                    }
+                });
+            }
+            Control::RigChat { chat_id, rig } => {
+                let chats = Arc::clone(&self.chats);
+                tokio::spawn(async move {
+                    if let Err(error) = chats.choose_rig(&chat_id, &rig).await { eprintln!("cannot switch chat {chat_id} to Rig {rig}: {error}"); }
+                });
             }
             Control::ListSessions { project_id } => self.list_sessions(project_id),
+            Control::SearchSessions { search_id, project_id, query } => self.search_sessions(search_id, project_id, query),
+            Control::DismissSession { key } => {
+                let sessions = self.sessions.clone();
+                let chats = self.chats.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = sessions.dismiss(key, &chats).await { eprintln!("cannot dismiss Session: {error}"); }
+                });
+            }
+            Control::PreviewSession { preview_id, key, item } => {
+                let sessions = self.sessions.clone();
+                let outgoing = self.outgoing.clone();
+                tokio::spawn(async move {
+                    let (items, focus) = sessions.preview(key.clone(), item).await.unwrap_or_else(|error| {
+                        eprintln!("cannot preview Session: {error}");
+                        (Vec::new(), 0)
+                    });
+                    let items: Vec<Value> = items.into_iter().map(brief).collect();
+                    send(&outgoing, json!({ "type": "sessions.preview", "previewId": preview_id, "key": key, "items": items, "focus": focus }));
+                });
+            }
             Control::SendChat { chat_id, text, queue, images } => self.chats.send(&chat_id, &text, queue, &images),
             Control::InterruptChat { chat_id } => self.chats.interrupt(&chat_id),
             Control::UnqueueChat { chat_id, index, revision } => {
@@ -879,23 +937,49 @@ impl Device {
         self.attached.insert(chat_id, seq);
     }
 
-    fn list_sessions(&self, project_id: String) {
-        let projects = self.projects.list();
-        let Some(project) = projects.iter().find(|project| project.id == project_id) else {
-            return eprintln!("cannot list sessions in {project_id}: not open");
-        };
-        let cwd = PathBuf::from(&project.path);
-        let config = self.config.borrow();
-        let [claude, codex, copilot, antigravity] = Agent::ALL.map(|agent| config.rig_for(agent));
-        drop(config);
-        let chats = self.chats.list().into_iter().map(|chat| chat.agent_session);
-        let live: HashSet<String> = chats.flatten().collect();
+    fn list_sessions(&mut self, project_id: String) {
+        self.sessions.refresh();
+        if let Some(request) = self.session_requests.get(&project_id) {
+            request.notify_one();
+            return;
+        }
+        let request = Arc::new(Notify::new());
+        self.session_requests.insert(project_id.clone(), request.clone());
+        let sessions = self.sessions.clone();
+        let chats = self.chats.clone();
         let outgoing = self.outgoing.clone();
-        tokio::spawn(async move {
-            let mut sessions = chats::sessions(&cwd, &claude, &codex, &copilot, &antigravity).await;
-            sessions.retain(|session| !live.contains(&session.session_id));
-            send(&outgoing, json!({ "type": "sessions.listed", "projectId": project_id, "sessions": sessions }));
+        let mut updated = sessions.subscribe();
+        self.attachments.spawn(async move {
+            loop {
+                updated.mark_unchanged();
+                let (listed, coverage) = sessions.list(project_id.clone(), chats.clone()).await;
+                send(&outgoing, json!({ "type": "sessions.listed", "projectId": project_id, "sessions": listed, "coverage": coverage }));
+                tokio::select! {
+                    _ = request.notified() => (),
+                    Ok(()) = updated.changed() => (),
+                    else => break,
+                }
+            }
         });
+    }
+
+    fn search_sessions(&mut self, search_id: String, project_id: String, query: String) {
+        if let Some(search) = self.session_search.take() { search.abort(); }
+        let empty = query.trim().is_empty();
+        if !empty { self.sessions.refresh(); }
+        let sessions = self.sessions.clone();
+        let chats = self.chats.clone();
+        let outgoing = self.outgoing.clone();
+        let mut updated = sessions.subscribe();
+        self.session_search = Some(self.attachments.spawn(async move {
+            loop {
+                updated.mark_unchanged();
+                let (results, coverage) = sessions.search(project_id.clone(), query.clone(), chats.clone()).await;
+                send(&outgoing, json!({ "type": "sessions.found", "searchId": search_id, "results": results, "coverage": coverage }));
+                if empty || updated.changed().await.is_err() { break; }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }));
     }
 
     fn chats_changed(&self, project_id: &str) {
@@ -993,28 +1077,24 @@ impl Device {
 /// A subagent's items other than its own subagents, and a long finished command's output, stay on the server until a
 /// Device expands the item.
 fn brief(mut item: chats::Item) -> Value {
-    let mut nested = None;
-    let elided = match &mut item {
-        chats::Item::Subagent { status, items, .. } if *status != chats::Status::Done || !items.is_empty() => {
-            let subagents = std::mem::take(items).into_iter().filter(|item| matches!(item, chats::Item::Subagent { .. }));
-            nested = Some(subagents.map(brief).collect::<Vec<_>>());
-            true
+    trim_brief(&mut item);
+    json!(item)
+}
+
+fn trim_brief(item: &mut chats::Item) {
+    match item {
+        chats::Item::Subagent { status, items, elided, .. } if *status != chats::Status::Done || !items.is_empty() => {
+            items.retain(|item| matches!(item, chats::Item::Subagent { .. }));
+            for item in items.iter_mut() { trim_brief(item); }
+            *elided = true;
         }
-        chats::Item::Command { status, output, .. } | chats::Item::Shell { status, output, .. }
+        chats::Item::Command { status, output, elided, .. } | chats::Item::Shell { status, output, elided, .. }
             if *status != chats::CommandStatus::Running && output.len() > BRIEF_OUTPUT => {
             output.clear();
-            true
+            *elided = true;
         }
-        _ => false,
-    };
-    let mut value = json!(item);
-    if let Some(nested) = nested {
-        value["items"] = json!(nested);
+        _ => (),
     }
-    if elided {
-        value["elided"] = json!(true);
-    }
-    value
 }
 
 /// Each queued message holds its share of a byte budget until it is written, so a Device that stops

@@ -1,18 +1,26 @@
 <script lang="ts">
-	import type { Chat, Session } from '#lib/device.svelte.ts';
+	import type { Chat, FoundSession, Session } from '#lib/device.svelte.ts';
 	import ChatItem from '#lib/shell/ChatItem.svelte';
+	import SessionPreview from '#lib/shell/SessionPreview.svelte';
 	import { RECENT } from '#lib/shell/new-tab.ts';
+	import { grouped, outOfDate, PANE_MIN, projectName, SessionSearch, sessionKey, type Searching } from '#lib/shell/session-search.svelte.ts';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import type { Status } from '#lib/ui/TabMarks.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
 	import fuzzysort from 'fuzzysort';
+	import { tick } from 'svelte';
 
 	type Props = {
 		label: string;
+		/** The focused Project's recent Sessions. */
 		sessions: Session[];
 		reading: boolean;
+		search: Searching;
+		labels?: Map<string, string>;
+		/** Whether a found Session can be opened from here. */
+		selectable?(session: Session): boolean;
 		/** Open Chats, listed under their own heading before the sessions. */
 		chats?: Chat[];
 		status?(chat: Chat): Status;
@@ -20,15 +28,25 @@
 		waiting?: Set<string>;
 		/** Renders the search field as a flush top row with a hairline below. */
 		flush?: boolean;
-		/** Holds the list at the recent sessions' height while searching, so nothing around it moves. */
+		/** Holds the list at the recent sessions' height, or room for a few found rows, while searching, so little around it moves. */
 		steady?: boolean;
 		onchat?(chat: Chat): void;
-		onsession(session: Session): void;
+		/** `query` is set when a typed search found the Session. */
+		onsession(session: Session | FoundSession, query?: string): void;
 	};
 
-	let { label, sessions, reading, chats, status, waiting, flush = false, steady = false, onchat, onsession }: Props = $props();
+	let { label, sessions, reading, search, labels, selectable, chats, status, waiting, flush = false, steady = false, onchat, onsession }: Props = $props();
 
 	let query = $state('');
+	let command: Command.Root | undefined;
+	const host = new SessionSearch(
+		() => search,
+		async () => {
+			await tick();
+			command?.updateSelectedToIndex(0);
+		}
+	);
+	const found = $derived(query ? grouped(host.found, sessions, query, search.focus) : undefined);
 	let height = $state(0);
 	const open = $derived(find(chats ?? [], (chat) => chat.title ?? chat.rig));
 	const groups = $derived.by(() => {
@@ -39,16 +57,19 @@
 		const shown = [{ name: 'Waiting', chats: attention }, { name: 'Running', chats: running }, { name: 'Open', chats: rest }].filter((group) => group.chats.length);
 		return shown.length > 1 ? shown : [{ name: 'Open Chats', chats: open }];
 	});
-	const past = $derived(query ? find(sessions, (session) => session.title) : sessions.slice(0, RECENT));
+	const past = $derived<(Session | FoundSession)[]>(found ? [...found.here, ...found.other] : sessions.slice(0, RECENT));
+	let width = $state(0);
+	let highlighted = $state('');
+	const paned = $derived(!!query && past.length > 0 && width >= PANE_MIN);
+	const previewed = $derived(paned ? past.find((session) => `session:${sessionKey(session)}` === highlighted) : undefined);
 	const days = $derived.by(() => {
-		if (query) return [{ day: '', sessions: past }];
 		const midnight = new Date().setHours(0, 0, 0, 0);
 		return [
 			{ day: 'Today', sessions: past.filter((session) => session.updatedAt >= midnight) },
 			{ day: 'Earlier', sessions: past.filter((session) => session.updatedAt < midnight) }
 		];
 	});
-	const dated = $derived(days.length > 1 && days.every(({ sessions }) => sessions.length));
+	const dated = $derived(days.every(({ sessions }) => sessions.length));
 
 	function find<T>(items: T[], key: (item: T) => string): T[] {
 		return query ? fuzzysort.go(query, items, { key, limit: 0, threshold: 0 }).map((result) => result.obj) : items;
@@ -63,49 +84,95 @@
 	</Command.GroupHeading>
 {/snippet}
 
-<div class="finder" class:flush>
-	<Command.Root {label} shouldFilter={false} loop>
+{#snippet session(session: Session | FoundSession)}
+	{@const here = !query || session.project.id === search.focus}
+	{@const disabled = selectable?.(session) === false}
+	<ChatItem
+		value="session:{sessionKey(session)}"
+		agent={session.key.agent}
+		title={session.title}
+		time={session.updatedAt}
+		project={here ? undefined : projectName(session, labels)}
+		excerpt={'excerpt' in session && session.excerpt ? { ...session.excerpt, matches: session.matches } : undefined}
+		ended={!!session.ended}
+		{disabled}
+		size="md"
+		onselect={disabled ? undefined : () => onsession(session, query || undefined)}
+		ondismiss={() => search.device.send({ type: 'sessions.dismiss', key: session.key })}
+	/>
+{/snippet}
+
+<div class="finder" class:flush bind:clientWidth={width}>
+	<Command.Root bind:this={command} {label} shouldFilter={false} loop bind:value={highlighted}>
 		<Command.Input value={query} placeholder={label} autocomplete="off" spellcheck={false} enterkeyhint="go">
 			{#snippet child({ props })}
-				<TextField {...props} bind:value={query} search bare={flush} />
+				<TextField {...props} bind:value={() => query, (value) => ((query = value), host.set(value))} search bare={flush} />
 			{/snippet}
 		</Command.Input>
 		{#if reading}<div class="loading"><Loading label="Reading sessions…" /></div>{/if}
-		<Command.List>
-			{#snippet child({ props })}
-				<div {...props} class="list" style:height={steady && query ? `${height}px` : undefined} bind:clientHeight={null, (value: number) => { if (!query) height = value; }}>
-					<Command.Viewport>
-						{#each groups as group (group.name)}
-							{#if group.chats.length}
-								<Command.Group class="group">
-									{@render heading(group.name)}
+		<div class="results" class:paned>
+			<Command.List>
+				{#snippet child({ props })}
+					<div {...props} class="list" style:height={steady && query && !paned ? `max(${height}px, ${RECENT} * (var(--target-min) + var(--space-2)))` : undefined} bind:clientHeight={null, (value: number) => { if (!query) height = value; }}>
+						<Command.Viewport>
+							{#each groups as group (group.name)}
+								{#if group.chats.length}
+									<Command.Group class="group">
+										{@render heading(group.name)}
+										<Command.GroupItems>
+											{#each group.chats as chat (chat.id)}
+												<ChatItem value="chat:{chat.id}" agent={chat.agent} title={chat.title ?? chat.rig} time={chat.created / 1e6} status={status?.(chat)} fresh={!chat.title} size="md" onselect={() => onchat?.(chat)} />
+											{/each}
+										</Command.GroupItems>
+									</Command.Group>
+								{/if}
+							{/each}
+							{#if found}
+								{#if found.here.length}
+									<Command.Group class={chats && open.length ? 'group history' : 'group'}>
+										{#if chats}{@render heading('Sessions')}{/if}
+										<Command.GroupItems>
+											{#each found.here as hit (sessionKey(hit))}{@render session(hit)}{/each}
+										</Command.GroupItems>
+									</Command.Group>
+								{/if}
+								{#if found.other.length}
+									<Command.Group class={(chats && open.length) || found.here.length ? 'group history' : 'group'}>
+										{@render heading('Other Projects')}
+										<Command.GroupItems>
+											{#each found.other as hit (sessionKey(hit))}{@render session(hit)}{/each}
+										</Command.GroupItems>
+									</Command.Group>
+								{/if}
+							{:else if past.length}
+								<Command.Group class={chats && open.length ? 'group history' : 'group'}>
+									{#if chats}{@render heading('Recent sessions')}{/if}
 									<Command.GroupItems>
-										{#each group.chats as chat (chat.id)}
-											<ChatItem value="chat:{chat.id}" agent={chat.agent} title={chat.title ?? chat.rig} time={chat.created / 1e6} status={status?.(chat)} fresh={!chat.title} size="md" onselect={() => onchat?.(chat)} />
+										{#each days as { day, sessions: listed } (day)}
+											{#if dated}<ListLabel sub aria-hidden="true">{day}</ListLabel>{/if}
+											{#each listed as item (sessionKey(item))}{@render session(item)}{/each}
 										{/each}
 									</Command.GroupItems>
 								</Command.Group>
 							{/if}
-						{/each}
-						{#if past.length}
-							<Command.Group class={chats && open.length ? 'group history' : 'group'}>
-								{#if chats}{@render heading('Recent sessions')}{/if}
-								<Command.GroupItems>
-									{#each days as { day, sessions: listed } (day)}
-										{#if dated}<ListLabel sub aria-hidden="true">{day}</ListLabel>{/if}
-										{#each listed as session (`${session.agent}:${session.sessionId}`)}
-											<ChatItem value="session:{session.agent}:{session.sessionId}" agent={session.agent} title={session.title} time={session.updatedAt} size="md" onselect={() => onsession(session)} />
-										{/each}
-									{/each}
-								</Command.GroupItems>
-							</Command.Group>
-						{:else if !reading && !open.length}
-							<div class="empty"><ListLabel element="p">{query ? 'No matches' : chats ? 'No Chats or sessions yet' : 'No past sessions'}</ListLabel></div>
-						{/if}
-					</Command.Viewport>
+							{#if !past.length && !open.length && !reading && !(query && (host.pending || host.indexing))}
+								<div class="empty"><ListLabel element="p">{query ? 'No matches' : chats ? 'No Chats or sessions yet' : 'No past sessions'}</ListLabel></div>
+							{/if}
+						</Command.Viewport>
+					</div>
+				{/snippet}
+			</Command.List>
+			{#if paned}<div class="pane"><SessionPreview device={search.device} session={previewed} /></div>{/if}
+		</div>
+		{#if query && host.coverage}
+			{@const stale = outOfDate(host.coverage)}
+			{#if host.indexing || stale}
+				<div class="coverage">
+					{#if host.indexing}<Loading label="Indexing {host.coverage.indexed.toLocaleString()} of {host.coverage.total.toLocaleString()} Sessions" />{/if}
+					{#if stale}<p>{stale}</p>{/if}
 				</div>
-			{/snippet}
-		</Command.List>
+			{/if}
+		{/if}
 	</Command.Root>
 </div>
 
@@ -132,9 +199,47 @@
 		padding-inline: var(--bare-inset);
 	}
 
+	.coverage {
+		display: grid;
+		gap: var(--space-1);
+		margin-top: var(--space-2);
+	}
+
+	.coverage p {
+		margin: 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
+	}
+
+	.flush .coverage {
+		margin: 0;
+		padding: var(--space-2) var(--bare-inset);
+		border-top: var(--border-width) solid var(--border);
+	}
+
 	.list {
 		margin: var(--space-3) calc(-1 * var(--space-3)) 0;
 		overflow-y: auto;
+	}
+
+	.paned {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+		gap: var(--space-4);
+		height: min(26rem, 55dvh);
+		margin-top: var(--space-3);
+	}
+
+	.paned .list {
+		margin-top: 0;
+	}
+
+	.pane {
+		display: flex;
+		min-height: 0;
+		overflow: hidden;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-lg);
 	}
 
 	.flush .list {

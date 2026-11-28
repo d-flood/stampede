@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+	import { formatSize } from '#lib/size.ts';
 	import type { Device } from '#lib/device.svelte.ts';
 	import type { OpenDiff } from '#lib/files.svelte.ts';
 	import { painted } from '#lib/paint.svelte.ts';
@@ -80,7 +81,7 @@
 
 	function caption({ src, bytes }: Pane) {
 		const size = src && sizes[src];
-		const amount = bytes === undefined ? '' : bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+		const amount = bytes === undefined ? '' : formatSize(bytes);
 		return [size && size !== 'broken' && `${size.width} × ${size.height}`, amount].filter(Boolean).join(' · ');
 	}
 </script>

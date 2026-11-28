@@ -170,13 +170,33 @@ async fn antigravity_reopens_history_after_restart_and_lists_project_sessions() 
     let session = received(&server).iter().find(|message| message["method"] == "session/load").expect("the Chat never loaded its session")["params"]["sessionId"].clone();
     close_chat(&mut socket, server.root.path(), id).await;
     control(&mut socket, json!({ "type": "sessions.list", "projectId": project })).await;
-    let sessions = timeout(Duration::from_secs(15), next_control(&mut socket, "sessions.listed")).await.unwrap()["sessions"].clone();
-    let listed: Vec<_> = sessions.as_array().unwrap().iter().filter(|session| session["agent"] == "antigravity").collect();
+    let sessions = timeout(Duration::from_secs(15), async {
+        loop {
+            let listed = next_control(&mut socket, "sessions.listed").await["sessions"].clone();
+            if listed.as_array().unwrap().iter().any(|row| row["key"]["agent"] == "antigravity") { break listed; }
+        }
+    }).await.unwrap();
+    let listed: Vec<_> = sessions.as_array().unwrap().iter().filter(|session| session["key"]["agent"] == "antigravity").collect();
     assert_eq!(listed.len(), 1, "{sessions}");
-    assert_eq!((&listed[0]["sessionId"], &listed[0]["title"], &listed[0]["updatedAt"]), (&session, &json!("Shell Command Execution Test"), &json!(1795066939000_u64)));
-    control(&mut socket, json!({ "type": "chat.resume", "projectId": project, "agent": "antigravity", "sessionId": session })).await;
+    assert_eq!((&listed[0]["key"]["sessionId"], &listed[0]["title"], &listed[0]["updatedAt"]), (&session, &json!("Shell Command Execution Test"), &json!(1795066939000_u64)));
+    assert_eq!(listed[0]["key"]["store"], json!(server.root.path().join("home/.gemini/antigravity-cli")));
+    control(&mut socket, json!({ "type": "sessions.search", "searchId": "agy-reply", "projectId": project, "query": "glad" })).await;
+    let found = timeout(Duration::from_secs(15), async {
+        loop {
+            let message = next_control(&mut socket, "sessions.found").await;
+            if message["searchId"] == "agy-reply" && !message["results"].as_array().unwrap().is_empty() { break message; }
+        }
+    }).await.unwrap();
+    assert_eq!(found["results"][0]["key"], listed[0]["key"]);
+    let calls = received(&server);
+    assert!(calls.iter().any(|call| call["method"] == "session/list" && call["params"]["cwd"].is_null() && call["params"]["cursor"] == "more"));
+    assert_eq!(calls.iter().filter(|call| call["method"] == "session/prompt").count(), 2);
+    control(&mut socket, json!({ "type": "chat.open", "projectId": project, "key": listed[0]["key"] })).await;
     let resumed = timeout(Duration::from_secs(20), next_control(&mut socket, "chat.created")).await.unwrap()["chat"].clone();
     assert_eq!(attached(&mut socket, &resumed).await["items"].as_array().unwrap().len(), 4);
+    control(&mut socket, json!({ "type": "chat.send", "chatId": resumed["id"], "text": "Once more" })).await;
+    done(&mut socket).await;
+    assert_eq!(attached(&mut socket, &resumed).await["items"].as_array().unwrap().len(), 6);
     close_chat(&mut socket, server.root.path(), resumed["id"].as_str().unwrap()).await;
 }
 

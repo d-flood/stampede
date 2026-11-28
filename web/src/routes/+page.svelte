@@ -6,14 +6,18 @@
 	import { clock, same, subagents } from '#lib/chat/agents.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
+	import { landings } from '#lib/chat/landing.ts';
 	import MessageNav from '#lib/chat/MessageNav.svelte';
+	import type ChatViewInstance from '#lib/chat/ChatView.svelte';
 	import { hostName, rigs, runsOn, type Rig } from '#lib/config.svelte.ts';
 	import { previewThemes, themeBar } from '#lib/themes.svelte.ts';
 	import {
 		tabOf,
 		type Attention,
 		type Chat,
+		type Coverage,
 		type Epic,
+		type FoundSession,
 		type Item,
 		type Project,
 		type Reading,
@@ -50,6 +54,7 @@
 	import ProjectIcon from '#lib/shell/ProjectIcon.svelte';
 	import Leader from '#lib/shell/Leader.svelte';
 	import { menuItems, tabItems } from '#lib/shell/new-tab.ts';
+	import type { Searching } from '#lib/shell/session-search.svelte.ts';
 	import type { Action, Scope } from '#lib/shell/Palette.svelte';
 	import Projects from '#lib/shell/Projects.svelte';
 	import Rail from '#lib/shell/Rail.svelte';
@@ -102,12 +107,17 @@
 	let chats = $state<Record<string, Chat[]>>({});
 	let chatItems = $state<Record<string, Item[]>>({});
 	let transcripts = $state<Record<string, HTMLElement | null>>({});
+	const chatViews: Record<string, ChatViewInstance> = {};
 	let htmlPreview = $state<HtmlItem>();
 	let htmlDialog = $state<HTMLDialogElement>();
 	setHtmlPreview((item) => htmlPreview = item);
 	let openSubagents = $state<Record<string, string[]>>({});
 	let sessions = $state<Record<string, Session[]>>({});
 	let readingSessions = $state<Record<string, boolean>>({});
+	let coverage = $state<Record<string, Coverage>>({});
+	/** Whether each Host, by name (the Home Host's is empty), has any Session to search. */
+	let searchable = $state<Record<string, boolean>>({});
+	let openError = $state<string>();
 	let attentionList = $state<Attention[]>([]);
 	let usage = $state<Reading[]>([]);
 	let codexResets = $state<ResetCredits | null>(null);
@@ -156,6 +166,7 @@
 	let branching = $state<Project>();
 	let creatingWorktree = $state(false);
 	let palette = $state<Scope>();
+	let paletteWide = $state(false);
 	let tabTarget = $state<string>();
 	let afterPalette: (() => void) | undefined;
 	let unfocused = $state(false);
@@ -167,7 +178,7 @@
 	let drawer: Drawer;
 	let renamer = $state<Rename>();
 	let drawerOpen = $state(false);
-	let settle: ((error?: string) => void) | undefined;
+	let settle: ((opened: { projectId?: string; error?: string }) => void) | undefined;
 	let updateAvailable = $state(false);
 	const dirty = $derived(Object.values(files).flat().some((file) => file.dirty));
 	const servers = new LanguageServers(
@@ -451,6 +462,10 @@
 				}
 				break;
 			case 'chat.created': {
+				if (message.opened) {
+					landings.add(message.chat.id);
+					focus(message.chat.projectId);
+				}
 				chats[message.chat.projectId] ??= [];
 				const owned = chats[message.chat.projectId];
 				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
@@ -472,9 +487,14 @@
 				closePanel();
 				break;
 			}
+			case 'chat.open.error':
+				openError = message.error;
+				break;
 			case 'sessions.listed':
-				sessions[message.projectId] = message.sessions.filter(({ agent }) => runsOn(host, agent));
+				sessions[message.projectId] = message.sessions.filter(({ key }) => runsOn(host, key.agent));
 				readingSessions[message.projectId] = false;
+				coverage[message.projectId] = message.coverage;
+				searchable[host ?? ''] = message.coverage.total + message.coverage.ended > 0;
 				break;
 			case 'terminal.title':
 				for (const terminal of Object.values(terminals).flat()) {
@@ -594,10 +614,10 @@
 			case 'project.opened':
 				focus(message.projectId);
 				picking = false;
-				settle?.();
+				settle?.({ projectId: message.projectId });
 				break;
 			case 'project.error':
-				settle?.(message.error);
+				settle?.({ error: message.error });
 				break;
 		}
 	}
@@ -622,6 +642,7 @@
 	}
 
 	function chatStatus(chat: Chat) {
+		if (chat.dormant) return 'done';
 		if (chat.status !== 'done') return chat.status;
 		return subagents(chatItems[chat.id] ?? []).find(({ subagent }) => subagent.status !== 'done')?.subagent.status ?? (chat.background ? 'background' : 'done');
 	}
@@ -696,8 +717,8 @@
 		home.send({ type: 'picker.list' });
 	}
 
-	function open(path: string): Promise<string | undefined> {
-		settle?.();
+	function open(path: string): Promise<{ projectId?: string; error?: string }> {
+		settle?.({});
 		home.send({ type: 'project.open', path });
 		return new Promise((resolve) => (settle = resolve));
 	}
@@ -743,6 +764,7 @@
 	}
 
 	function readSessions(projectId: string) {
+		if (readingSessions[projectId]) return;
 		readingSessions[projectId] = true;
 		devices.of(projectId).send({ type: 'sessions.list', projectId });
 	}
@@ -758,8 +780,34 @@
 		}, hostOf(projectId));
 	}
 
-	function reopen(projectId: string, { agent, sessionId }: Session) {
-		devices.of(projectId).send({ type: 'chat.resume', projectId, agent, sessionId });
+	function reopen(projectId: string, session: Session | FoundSession, query?: string) {
+		devices.of(projectId).send({ type: 'chat.open', projectId, key: session.key, item: query && 'item' in session ? session.item : undefined, query });
+	}
+
+	function searching(projectId: string): Searching {
+		const project = projects.find((project) => project.id === projectId);
+		return { device: devices.of(projectId), projectId, focus: project?.host ? projectId : project?.worktree?.parent ?? projectId };
+	}
+
+	/** Whether a Session a finder found can be resumed: a Cloud Host can't reopen a closed Project from here. */
+	function selectable({ project, key }: Session) {
+		return runsOn(hostOf(project.id), key.agent) && (!hostOf(project.id) || projects.some((open) => open.id === project.id));
+	}
+
+	/** Focuses the Chat driving a Session, or resumes it in its Project, opening that first if it's closed. */
+	function resume(session: Session | FoundSession, query?: string) {
+		const chat = session.chatId ? allChats.find((chat) => chat.id === session.chatId) : undefined;
+		if (chat) return attend(chat.projectId, chat.id);
+		const projectId = session.project.id;
+		if (projects.some((project) => project.id === projectId)) {
+			chosen = projectId;
+			return reopen(projectId, session, query);
+		}
+		if (hostOf(projectId)) return;
+		open(session.project.path).then((opened) => {
+			if (opened.error) openError = opened.error;
+			else if (opened.projectId) reopen(opened.projectId, session, query);
+		});
 	}
 
 	/** A first message waiting for its Chat, which the server creates before it can take input. */
@@ -801,7 +849,8 @@
 	}
 
 	function place(projectId: string, tabId: string) {
-		if (projectId === focused?.id && side === 'right') splits[projectId].right.tabs.push(tabId);
+		const split = splits[projectId];
+		if (projectId === focused?.id && side === 'right' && !split.left.tabs.includes(tabId) && !split.right.tabs.includes(tabId)) split.right.tabs.push(tabId);
 	}
 
 	function move(tabId: string, to: Side) {
@@ -1124,10 +1173,13 @@
 			items={newTab(project.id)}
 			sessions={sessions[project.id] ?? []}
 			reading={!!readingSessions[project.id]}
+			search={searching(project.id)}
+			searchable={!!searchable[project.host ?? '']}
+			{selectable}
 			waiting={allChats.filter((chat) => waitingChats.has(chat.id) && projects.find((other) => other.id === chat.projectId)?.worktree?.parent === project.id)}
 			labels={projectLabels}
 			onread={() => readSessions(project.id)}
-			onsession={(session) => reopen(project.id, session)}
+			onsession={resume}
 			onchat={(chat) => attend(chat.projectId, chat.id)}
 		/>
 	{/key}
@@ -1258,7 +1310,8 @@
 												bottom={phone}
 												variant="agent"
 												agent={chat.agent}
-												status={chatStatus(chat)}
+												dormant={chat.dormant}
+												status={chat.dormant ? undefined : chatStatus(chat)}
 												fresh={!chat.title}
 												label={chat.title ?? chat.rig}
 												tooltip={chat.title && `${chat.title}\n${chat.rig}`}
@@ -1342,7 +1395,7 @@
 					{/if}
 					<span class="fill"></span>
 					{#if !phone && group.active && chatIds.has(group.active) && !openSubagents[group.active]?.length}
-						<MessageNav items={chatItems[group.active] ?? []} scroller={transcripts[group.active]} />
+						<MessageNav items={chatItems[group.active] ?? []} scroller={transcripts[group.active]} reveal={(item, land) => chatViews[group.active!]?.reveal(item, land)} />
 					{/if}
 					{#if focused && index === groups.length - 1}
 						{@const projectId = focused.id}
@@ -1352,9 +1405,12 @@
 							waiting={waitingChats}
 							sessions={sessions[projectId] ?? []}
 							reading={!!readingSessions[projectId]}
+							search={searching(projectId)}
+							labels={projectLabels}
+							{selectable}
 							onopen={() => readSessions(projectId)}
 							onchat={(chat) => choose(projectId, chat.id)}
-							onsession={(session) => reopen(projectId, session)}
+							onsession={resume}
 						/>
 					{/if}
 					{#if !phone && !sidebar && focused && sidebarPosition.side === 'right' && index === groups.length - 1}
@@ -1473,10 +1529,11 @@
 					{#if showing(chat.id) || warm()}
 						{#await loadChatView() then { default: ChatView }}
 							<ChatView
+								bind:this={chatViews[chat.id]}
 								device={devices.of(chat.projectId)}
 								{chat}
 								chats={allChats}
-								movable={!hostOf(chat.projectId)}
+								movable={!hostOf(chat.projectId) && !chat.dormant}
 								onchat={(target) => { chosen = target.projectId; choose(target.projectId, target.id); closePanel(); }}
 								items={chatItems[chat.id] ?? []}
 								saved={[...saved].filter((canvas) => canvas.startsWith(`${chat.id}/`))}
@@ -1557,7 +1614,7 @@
 					<h2>Open a Project</h2>
 					<p class="lede">Choose a folder to work in. Its Chats, Terminals and Git stay together as a Project.</p>
 					{#await loadPicker() then { default: Picker }}
-						<Picker {directories} onopen={open} autofocus={!phone} />
+						<Picker {directories} onopen={(path) => open(path).then(({ error }) => error)} autofocus={!phone} />
 					{/await}
 				</div>
 			{/if}
@@ -1702,6 +1759,7 @@
 <Dialog
 	bind:open={() => !!palette, (open) => !open && (palette = undefined)}
 	bare
+	wide={paletteWide}
 	oncloseautofocus={finishTabSelection}
 	title={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[palette ?? 'all']}
 >
@@ -1718,11 +1776,15 @@
 					status={chatStatus}
 					{sessions}
 					loadingSessions={!!readingSessions[palette === 'tabs' ? tabTarget ?? '' : focused?.id ?? '']}
+					search={focused && searching(focused.id)}
+					coverage={focused && coverage[focused.id]}
+					{selectable}
 					onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
 					onrig={(launcher) => (launch(launcher), (palette = undefined))}
 					onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
 					onchat={(chat) => ((afterPalette = () => attend(chat.projectId, chat.id)), (palette = undefined))}
-					onsession={(projectId, session) => ((chosen = projectId), reopen(projectId, session), (palette = undefined))}
+					onsession={(session, query) => ((afterPalette = () => resume(session, query)), (palette = undefined))}
+					bind:wide={paletteWide}
 				/>
 			{/key}
 		{/await}
@@ -1737,7 +1799,7 @@
 
 <Dialog bind:open={picking} full={phone} title="Open Project">
 	{#await loadPicker() then { default: Picker }}
-		<Picker {directories} onopen={open} autofocus={false} />
+		<Picker {directories} onopen={(path) => open(path).then(({ error }) => error)} autofocus={false} />
 	{/await}
 </Dialog>
 
@@ -1802,6 +1864,12 @@
 	{#snippet actions()}
 		<Button onclick={() => (closingProject = undefined)}>Cancel</Button>
 		<Button variant="primary" onclick={() => closingProject && closeProject(closingProject, true)}>Close</Button>
+	{/snippet}
+</Dialog>
+
+<Dialog bind:open={() => !!openError, (open) => !open && (openError = undefined)} title="Could not open Session" description={openError}>
+	{#snippet actions()}
+		<Button variant="primary" onclick={() => (openError = undefined)}>OK</Button>
 	{/snippet}
 </Dialog>
 

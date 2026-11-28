@@ -62,6 +62,7 @@ impl Report {
 
     fn item(&self, status: Status, activity: Option<String>, items: Vec<Item>) -> Item {
         Item::Subagent {
+            elided: false,
             id: self.id.clone(), origin: super::SubagentOrigin::Stampede, name: Some(self.rig.clone()), role: None, agent: self.agent, task: self.task.lines().next().unwrap_or_default().chars().take(200).collect(),
             status, outcome: self.outcome, prompt: Some(self.task.clone()), report: self.report.clone(), model: self.model.clone(),
             started_at: self.started_at, totals: Some(self.totals), activity, items,
@@ -210,7 +211,7 @@ impl Chats {
             return Err(io::Error::other("Return your result to the calling agent instead of delegating again."));
         }
         let mut changes = self.subscribe();
-        let child = self.start(&source.project_id, &source.cwd, rig, None, None, Some(source.id.clone()), None).await?;
+        let child = self.start(&source.project_id, &source.cwd, rig, None, super::Seed::default(), Some(source.id.clone()), None).await?;
         let entry = self.get(&child.id).ok_or_else(|| io::Error::other("The delegated agent did not start."))?;
         let mut report = Report { id: child.id.clone(), rig: child.rig.clone(), agent: Some(rig.agent), task, model: child.settings.chosen.model.clone(),
             started_at: super::now(), outcome: None, report: None, totals: Totals { duration_ms: 0, tools: 0, tokens: None } };
@@ -243,10 +244,10 @@ impl Chats {
                     report.outcome = Some(Outcome::Failed);
                     report.report = Some("The delegated agent ended without a final response.".to_owned());
                 }
-                parent.driver.delegated(report.item(Status::Done, None, items));
+                parent.driver().delegated(report.item(Status::Done, None, items));
                 break;
             }
-            parent.driver.delegated(report.item(if status == Status::Done { Status::Working } else { status }, activity, items));
+            parent.driver().delegated(report.item(if status == Status::Done { Status::Working } else { status }, activity, items));
             let stopped = tokio::select! {
                 stopped = async {
                     loop {
@@ -269,7 +270,7 @@ impl Chats {
                 report.outcome = Some(Outcome::Stopped);
                 report.report = Some("Delegation stopped before the agent finished.".to_owned());
                 let items = entry.transcript.lock().unwrap().items.clone();
-                parent.driver.delegated(report.item(Status::Done, None, items));
+                parent.driver().delegated(report.item(Status::Done, None, items));
                 break;
             }
         }

@@ -21,7 +21,7 @@ use tokio_tungstenite::{
 
 use super::{
     AgentCommand, Answer, Builtin, CLOSING, Cache, Capabilities, Chat, Choice, CommandStatus, Context, Driver, Event, Item, Notice, Outcome, Phase, Setting,
-    Settings, Session, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
+    Settings, Subagent, Todo, TodoStatus, Tokens, ToolCall, ToolKind, Image, Question, Scope, diff, relative, seconds, unified, words,
     html, HOUR, Lapse,
 };
 use crate::{
@@ -268,6 +268,9 @@ async fn rejoin(
         let mut message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;
         if response(&message) == Some(id) {
             if let Some(error) = message.get("error") {
+                if error["message"].as_str().is_some_and(|message| message.starts_with("no rollout found for thread id")) {
+                    return Err(io::Error::other(super::Unresumable::Missing));
+                }
                 return Err(io::Error::other(format!("thread/resume: {error}")));
             }
             break message["result"].take();
@@ -371,29 +374,47 @@ async fn reconnect(
 }
 
 /// This cwd's threads, non-interactive ones included.
-pub async fn sessions(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Vec<Session>> {
-    let (mut connection, mut proxy) = connect(cwd, env).await?;
-    let mut sessions = Vec::new();
-    let mut cursor = Value::Null;
-    loop {
-        let params = json!({ "cwd": cwd, "sourceKinds": SOURCES, "sortKey": "updated_at", "cursor": cursor });
-        let listed = connection.call("thread/list", params).await?;
-        for thread in listed["data"].as_array().into_iter().flatten() {
-            let title = thread["name"].as_str().filter(|title| !title.trim().is_empty())
-                .or_else(|| thread["preview"].as_str().filter(|preview| !preview.trim().is_empty()));
-            if let (Some(id), Some(title), Some(updated)) =
-                (thread["id"].as_str(), title, thread["updatedAt"].as_u64())
-            {
-                sessions.push(Session::new(Agent::Codex, id, title, updated * 1000));
+pub(super) struct Catalogue {
+    connection: Connection,
+    proxy: Child,
+}
+
+impl Catalogue {
+    pub(super) async fn open(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Self> {
+        let (connection, proxy) = timeout(RECONNECTING, connect(cwd, env)).await??;
+        Ok(Self { connection, proxy })
+    }
+
+    pub(super) async fn list(&mut self) -> io::Result<Vec<Value>> {
+        let params = json!({ "sourceKinds": SOURCES, "sortKey": "updated_at", "modelProviders": [] });
+        timeout(RECONNECTING, self.connection.pages("thread/list", params, &mut Vec::new())).await?
+    }
+
+    pub(super) async fn snapshot(&mut self, session: &str, cwd: &Path, data: &Path) -> io::Result<Vec<Item>> {
+        let turns = timeout(RECONNECTING, self.connection.history(session, &mut Vec::new())).await??;
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut transcript = Transcript::new(session, cwd, events);
+        transcript.data_dir = Some(data.to_owned());
+        transcript.resumed(&turns);
+        let mut items = Vec::new();
+        while let Ok(event) = received.try_recv() {
+            match event {
+                Event::Item(index, mut item) => {
+                    super::transform_item(data, cwd, &mut item);
+                    item.trim_snapshot();
+                    if let Some(existing) = items.get_mut(index) { *existing = item; } else { items.push(item); }
+                }
+                Event::Truncate(len) => items.truncate(len),
+                _ => (),
             }
         }
-        cursor = listed["nextCursor"].clone();
-        if cursor.is_null() {
-            break;
-        }
+        Ok(items)
     }
-    let _ = proxy.kill().await;
-    Ok(sessions)
+
+    pub(super) async fn close(mut self) {
+        drop(self.connection);
+        let _ = self.proxy.kill().await;
+    }
 }
 
 pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &AgentSettings) -> io::Result<(Vec<Value>, AgentSettings)> {
@@ -850,7 +871,8 @@ impl Connection {
         let mut data = Vec::new();
         loop {
             let mut page = self.hold(method, params.clone(), held).await?;
-            if let Value::Array(entries) = page["data"].take() { data.extend(entries); }
+            let Value::Array(entries) = page["data"].take() else { return Err(io::Error::other(format!("{method}: missing page data"))); };
+            data.extend(entries);
             if page["nextCursor"].is_null() { return Ok(data); }
             params["cursor"] = page["nextCursor"].take();
         }
@@ -1640,14 +1662,14 @@ impl Transcript {
             Some("item/reasoning/summaryTextDelta") => {
                 let Some(id) = params["itemId"].as_str() else { return };
                 if !self.thinking.contains_key(id) {
-                    let index = self.push(Item::Thinking { seconds: 0, text: None });
+                    let index = self.push(Item::Thinking { elided: false, seconds: 0, text: None });
                     self.thinking.insert(id.to_owned(), (index, BTreeMap::new()));
                 }
                 let (index, parts) = self.thinking.get_mut(id).unwrap();
                 parts.entry(params["summaryIndex"].as_u64().unwrap_or_default()).or_default()
                     .push_str(params["delta"].as_str().unwrap_or_default());
                 let text = parts.values().cloned().collect::<Vec<_>>().join("\n\n");
-                let _ = self.events.send(Event::Item(*index, Item::Thinking { seconds: 0, text: Some(text) }));
+                let _ = self.events.send(Event::Item(*index, Item::Thinking { elided: false, seconds: 0, text: Some(text) }));
             }
             Some("item/started") if item["type"] == "commandExecution" => {
                 self.command(item);
@@ -1707,7 +1729,7 @@ impl Transcript {
                 };
                 let streamed = self.thinking.remove(&text("id"));
                 let text = parts("summary").or_else(|| parts("content")).or_else(|| streamed.as_ref().map(|(_, parts)| parts.values().cloned().collect::<Vec<_>>().join("\n\n")));
-                let item = Item::Thinking { seconds: seconds(elapsed), text };
+                let item = Item::Thinking { elided: false, seconds: seconds(elapsed), text };
                 if let Some((index, _)) = streamed {
                     let _ = self.events.send(Event::Item(index, item));
                 } else {
@@ -1941,8 +1963,8 @@ fn command(item: &Value) -> Item {
     };
     let output = item["aggregatedOutput"].as_str().unwrap_or_default().to_owned();
     match item["source"].as_str() {
-        Some("userShell") => Item::Shell { command, status, output, pending: false, started_at: (status == CommandStatus::Running).then(super::now) },
-        _ => Item::Command { command, status, output, started_at: (status == CommandStatus::Running).then(super::now) },
+        Some("userShell") => Item::Shell { elided: false, command, status, output, pending: false, started_at: (status == CommandStatus::Running).then(super::now) },
+        _ => Item::Command { elided: false, command, status, output, started_at: (status == CommandStatus::Running).then(super::now) },
     }
 }
 
@@ -2305,12 +2327,12 @@ mod tests {
 
         let chat = Chat {
             id: "early".to_owned(), project_id: "p".to_owned(), rig: "Codex".to_owned(), agent: Agent::Codex,
-            cwd: root.path().to_owned(), created: 0, agent_session: None, title: None, resume_at: None,
+            cwd: root.path().to_owned(), created: 0, agent_session: None, session_store: String::new(), title: None, resume_at: None,
             plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
             running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
             queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),
-            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, parent: None,
-            duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
+            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, rigs: Vec::new(), ended: None, gone: false, continued_from: None, continuation: None, landing: None, parent: None,
+            duty: None, draft: None, draft_images: Vec::new(), shell_context: Vec::new(), disabled_tools: Vec::new(),
         };
         let (driver, mut events) = start(root.path(), &chat, &env).await.unwrap();
 

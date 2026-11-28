@@ -11,15 +11,18 @@
 	import Shell from '#lib/chat/Shell.svelte';
 	import type { Agent } from '#lib/config.svelte.ts';
 	import type { AnsweredQuestions, Item, ResetCredits, Subagent } from '#lib/device.svelte.ts';
+	import { tick } from 'svelte';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
-	let { host, items, main, active = true, answered = [], activity, path = [], agent, resets, onopen, onattend, ondiff, oncanvas, onexpand, onrewind, onfork, onhandoff }: { host: string | undefined; items: Item[]; main?: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; agent?: Agent; resets?: ResetCredits | null; onhandoff?(): void; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(index: number): void; onrewind?(index: number): void; onfork?(index: number): void } = $props();
+	let { host, items, continued, main, active = true, answered = [], activity, path = [], agent, resets, outlined, onopen, onattend, ondiff, oncanvas, onexpand, onrewind, onfork, onhandoff }: { host: string | undefined; items: Item[]; /** The title of the Session this Chat continues. */ continued?: string; main?: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; agent?: Agent; resets?: ResetCredits | null; /** The item whose block wears an outline. */ outlined?: number; onhandoff?(): void; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(index: number): void; onrewind?(index: number): void; onfork?(index: number): void } = $props();
 	const wrapped = new WeakMap<AnsweredQuestions, Entry>();
 	const entries = $derived.by(() => {
 		const wrap = (record: AnsweredQuestions) => wrapped.get(record) ?? wrapped.set(record, { kind: 'questions', record }).get(record)!;
 		const records = (after: number): Entry[] => answered.filter((record) => Math.min(record.after, items.length) === after).map(wrap);
 		return [...records(0), ...items.flatMap((item, index): Entry[] => [item, ...records(index + 1)])];
 	});
+
+	const positions = $derived(new Map(items.map((item, index) => [item, index])));
 
 	const prompts = $derived.by(() => {
 		const prompts = new Map<Item, { index: number; number: number }>();
@@ -76,6 +79,20 @@
 		return () => cancelIdleCallback(idle);
 	});
 
+	let root = $state<HTMLElement>();
+
+	export async function reveal(item: number, land: (node: HTMLElement) => void) {
+		const target = items[item];
+		const at = turns.findIndex((turn) => turn.some((block) => block.entries.includes(target)));
+		if (at < 0) return;
+		// A turn above keeps the target off scroll offset 0, where browsers stop anchoring as older turns render in.
+		limit = Math.max(limit, turns.length - at + 1);
+		await tick();
+		const block = turns[at].find((block) => block.entries.includes(target))!;
+		const node = root?.querySelector<HTMLElement>(`[data-item="${positions.get(block.entries[0] as Item)}"]`);
+		if (node) land(node);
+	}
+
 	function role(block: Block) {
 		if (block.kind === 'rail') return 'activity';
 		if (block.kind === 'spawn') return 'subagent';
@@ -99,7 +116,7 @@
 {#snippet entry(item: Entry, index: number)}
 	{#if item.kind === 'user'}
 		{@const prompt = prompts.get(item)!}
-		<User {host} {item} first={index === 0} index={prompt.index} number={prompt.number} {onrewind} {onfork} />
+		<User {host} {item} {continued} first={index === 0} index={prompt.index} number={prompt.number} {onrewind} {onfork} />
 	{:else if item.kind === 'text'}
 		<Text {item} {active} />
 	{:else if item.kind === 'html'}
@@ -117,12 +134,13 @@
 	{/if}
 {/snippet}
 
-<div class="turns">
+<div class="turns" bind:this={root}>
 	{#each shown as turn (turn[0].indices[0])}
 		{@const first = turn[0].entries[0]}
 		<div class="turn" data-user-message={first.kind === 'user' ? prompts.get(first)!.index : undefined}>
 			{#each turn as block, index (block.indices[0])}
-				<div class="block" style:margin-top={space(turn, index)}>
+				{@const at = positions.get(block.entries[0] as Item)}
+				<div class="block" class:outlined={at !== undefined && at === outlined} data-item={at} style:margin-top={space(turn, index)}>
 					{#if block.kind === 'spawn'}
 						<Spawn subagents={block.entries.filter((item): item is Subagent => item.kind === 'subagent')} {path} main={main ?? items} {onopen} {onattend} />
 					{:else if block.kind === 'rail'}
@@ -148,6 +166,12 @@
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
+	}
+
+	.outlined {
+		border-radius: var(--radius-md);
+		outline: calc(2 * var(--border-width)) solid var(--selected-border);
+		outline-offset: var(--space-2);
 	}
 
 	/* Skipped turns resize as they scroll into view, which only scroll anchoring keeps steady. */

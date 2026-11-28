@@ -21,6 +21,8 @@
 		dirty?: boolean;
 		deleted?: boolean;
 		ended?: boolean;
+		/** A Chat whose Agent hasn't started: its logo dims and it shows no status. */
+		dormant?: boolean;
 		closing?: boolean;
 		/** Hangs from the content above, as on a phone's bottom strip, instead of rising into the content below. */
 		bottom?: boolean;
@@ -39,6 +41,7 @@
 		dirty = false,
 		deleted = false,
 		ended = false,
+		dormant = false,
 		closing = false,
 		bottom = false,
 		onclose,
@@ -70,13 +73,14 @@
 		class:active
 		class:deleted
 		class:ended
+		class:dormant
 		class:closing
 		{...props}
 	>
 		<TabIcon {variant} {agent} {label} />
 		<span class="label">{label}</span>
 		{#if variant === 'diff' && against}<span class="vs">· {against}</span>{/if}
-		<TabMarks {status} {dirty} {fresh} />
+		{#if !dormant}<TabMarks {status} {dirty} {fresh} />{/if}
 	</button>
 {/snippet}
 
@@ -242,6 +246,10 @@
 		color: color-mix(in oklab, var(--muted-fg) 55%, var(--color-bg));
 		font-weight: 400;
 		cursor: default;
+	}
+
+	.dormant > :global(svg:first-child) {
+		color: color-mix(in oklab, var(--muted-fg) 55%, var(--color-bg));
 	}
 
 	.closing :global(svg) {
