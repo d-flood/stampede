@@ -868,6 +868,9 @@ pub struct Chat {
     /// The Agent has not started; the transcript is the Session's snapshot.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dormant: bool,
+    /// The Rigs a Dormant Chat can resume with: its Agent's, sharing its history store.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rigs: Vec<String>,
     /// Why the Session can never resume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended: Option<sessions::Ended>,
@@ -1002,6 +1005,8 @@ struct Entry {
     /// Unset while the Chat is Dormant; set once, under the Chat's lock, when its Agent starts.
     driver: OnceLock<Box<dyn Driver>>,
     storage: OnceLock<crate::storage::Session>,
+    /// How a Dormant Chat's last start ended, once its Agent has replayed the Session or failed to launch.
+    started: watch::Sender<Option<Result<(), String>>>,
 }
 
 impl Entry {
@@ -1089,9 +1094,10 @@ impl Chats {
     pub fn rename_rig(&self, original: &str, name: &str) -> io::Result<()> {
         for entry in self.chats.lock().unwrap().iter() {
             let mut chat = entry.chat.lock().unwrap();
-            if chat.rig == original {
+            if chat.rig == original || chat.rigs.iter().any(|rig| rig == original) {
                 let mut renamed = chat.clone();
-                name.clone_into(&mut renamed.rig);
+                if renamed.rig == original { name.clone_into(&mut renamed.rig); }
+                for rig in renamed.rigs.iter_mut().filter(|rig| *rig == original) { name.clone_into(rig); }
                 let _writing = entry.writing.lock().unwrap();
                 write_record(&self.data_dir, &renamed)?;
                 *chat = renamed;
@@ -1180,12 +1186,12 @@ impl Chats {
     }
 
     /// Opens a Dormant Chat on a past Session, showing `items` without starting its Agent.
-    pub(crate) fn open_dormant(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, key: &sessions::SessionKey, snapshot: sessions::Snapshot, landing: Option<Landing>) -> io::Result<Chat> {
+    pub(crate) fn open_dormant(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, rigs: Vec<String>, key: &sessions::SessionKey, snapshot: sessions::Snapshot, landing: Option<Landing>) -> io::Result<Chat> {
         if self.session_keys().contains(key) {
             return Err(io::Error::other("Another Chat is still running that conversation."));
         }
         let title = Some(snapshot.title).filter(|title| !title.trim().is_empty());
-        let chat = Chat { title, dormant: true, ended: snapshot.ended, answered_questions: snapshot.answered, landing, ..Chat::new(project_id, cwd, rig, key.store.clone(), Some(&key.session_id))? };
+        let chat = Chat { title, dormant: true, rigs, ended: snapshot.ended, answered_questions: snapshot.answered, landing, ..Chat::new(project_id, cwd, rig, key.store.clone(), Some(&key.session_id))? };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
         self.adopt_dormant(chat.clone(), snapshot.items);
@@ -1194,14 +1200,16 @@ impl Chats {
     }
 
     fn adopt_dormant(self: &Arc<Self>, chat: Chat, items: Vec<Item>) -> Arc<Entry> {
+        let forks = chat.ended.is_none() && matches!(chat.agent, Agent::ClaudeCode | Agent::Codex | Agent::Copilot);
         let transcript = Transcript { recoverable: false, seq: 0, items, requests: Vec::new(), reported: Status::Done, turns: 0, handoff: None, questions: HashMap::new(), starting: false };
         let entry = Arc::new(Entry {
             chat: Mutex::new(chat),
             writing: Mutex::default(),
             transcript: Mutex::new(transcript),
-            capabilities: Mutex::new(Capabilities { ready: true, ..Capabilities::default() }),
+            capabilities: Mutex::new(Capabilities { ready: true, forks, ..Capabilities::default() }),
             driver: OnceLock::new(),
             storage: OnceLock::new(),
+            started: watch::Sender::new(None),
         });
         self.chats.lock().unwrap().push(Arc::clone(&entry));
         entry
@@ -1226,18 +1234,84 @@ impl Chats {
         });
     }
 
+    /// Marks a Dormant Chat's Agent as launching; true when the caller must wake it.
+    fn begin(entry: &Entry, transcript: &mut Transcript) -> bool {
+        if std::mem::replace(&mut transcript.starting, true) { return false; }
+        entry.started.send_replace(None);
+        true
+    }
+
+    /// Switches a Dormant Chat to another Rig sharing its Session's history store, with that Rig's settings.
+    pub async fn choose_rig(&self, id: &str, name: &str) -> io::Result<()> {
+        let entry = self.get(id).ok_or_else(|| io::Error::other("The Chat is no longer open."))?;
+        let (agent, store) = {
+            let chat = entry.chat.lock().unwrap();
+            if !chat.dormant || !chat.rigs.iter().any(|rig| rig == name) {
+                return Err(io::Error::other("Only a Dormant Chat can switch to a Rig that shares its history store."));
+            }
+            (chat.agent, chat.session_store.clone())
+        };
+        let (rigs, wanted) = (self.config.borrow().rigs.clone(), name.to_owned());
+        let rig = tokio::task::spawn_blocking(move || sessions::matching_rig(&rigs, agent, &store, Some(&wanted))).await.map_err(io::Error::other)?
+            .filter(|rig| rig.name == name)
+            .ok_or_else(|| io::Error::other("That Rig no longer shares the Session's history store."))?;
+        let transcript = entry.transcript.lock().unwrap();
+        let mut chat = entry.chat.lock().unwrap();
+        if !chat.dormant || transcript.starting {
+            return Err(io::Error::other("The Session is already resuming."));
+        }
+        chat.settings = Settings { chosen: rig.settings(), pending: Vec::new() };
+        chat.rig = rig.name;
+        chat.disabled_tools = rig.disabled_tools;
+        let (settings, project_id) = (chat.settings.clone(), chat.project_id.clone());
+        self.save(&entry, chat);
+        drop(transcript);
+        let _ = self.changed.send(Change::Settings(id.to_owned(), settings));
+        let _ = self.changed.send(Change::Chats(project_id));
+        Ok(())
+    }
+
+    /// Starts a Dormant Chat to fork it from its user message at `index`, and gives that message's index once the Agent has replayed the Session.
+    async fn wake_to_fork(self: &Arc<Self>, entry: &Arc<Entry>, index: usize) -> io::Result<usize> {
+        let ordinal = {
+            let mut transcript = entry.transcript.lock().unwrap();
+            let chat = entry.chat.lock().unwrap();
+            if !chat.dormant { return Ok(index); }
+            if chat.ended.is_some() || chat.closing { return Err(io::Error::other("This Session can't resume.")); }
+            if !matches!(transcript.items.get(index), Some(Item::User { .. })) { return Err(io::Error::other("Choose a user message to fork from.")); }
+            let ordinal = transcript.items[..index].iter().filter(|item| matches!(item, Item::User { .. })).count();
+            drop(chat);
+            if Self::begin(entry, &mut transcript) {
+                drop(transcript);
+                self.wake(Arc::clone(entry));
+            }
+            ordinal
+        };
+        let mut started = entry.started.subscribe();
+        let result = started.wait_for(Option::is_some).await.map_err(io::Error::other)?.clone();
+        if let Some(Err(error)) = result { return Err(io::Error::other(format!("Couldn't resume this Session: {error}"))); }
+        if entry.chat.lock().unwrap().closing { return Err(io::Error::other("The Chat is no longer open.")); }
+        let transcript = entry.transcript.lock().unwrap();
+        transcript.items.iter().enumerate().filter(|(_, item)| matches!(item, Item::User { .. })).nth(ordinal).map(|(index, _)| index)
+            .ok_or_else(|| io::Error::other("That message is no longer in the Session."))
+    }
+
     /// Launches a Dormant Chat's Agent, which resumes its Session, then delivers what was sent meanwhile.
     fn wake(self: &Arc<Self>, entry: Arc<Entry>) {
         let chats = Arc::clone(self);
         tokio::spawn(async move {
             let id = entry.chat.lock().unwrap().id.clone();
             let error = match chats.launch(&entry).await {
-                Ok(()) => return,
+                Ok(()) => {
+                    entry.started.send_replace(Some(Ok(())));
+                    return;
+                }
                 Err(error) => error,
             };
             eprintln!("cannot resume chat {id}: {error}");
             let mut transcript = entry.transcript.lock().unwrap();
             transcript.starting = false;
+            entry.started.send_replace(Some(Err(error.to_string())));
             if entry.chat.lock().unwrap().closing { return; }
             let index = transcript.items.len();
             let item = Item::Notice { notice: Notice::Error, text: format!("Couldn't resume this Session: {error}") };
@@ -1271,6 +1345,7 @@ impl Chats {
             let _ = entry.storage.set(storage);
             (!chat.closing).then(|| {
                 chat.dormant = false;
+                chat.rigs.clear();
                 let project_id = chat.project_id.clone();
                 self.save(entry, chat);
                 project_id
@@ -1341,6 +1416,10 @@ impl Chats {
                     continue;
                 }
                 let Some(key) = chat.session_key() else { continue };
+                if chat.ended.is_none() {
+                    let (rigs, agent, store, current) = (rigs.to_vec(), chat.agent, chat.session_store.clone(), chat.rig.clone());
+                    chat.rigs = tokio::task::spawn_blocking(move || sessions::eligible_rigs(&rigs, agent, &store, &current)).await.map_err(io::Error::other)?;
+                }
                 let items = sessions.stored(&key).await;
                 let filled = items.is_some();
                 let entry = self.adopt_dormant(chat, items.unwrap_or_default());
@@ -1462,6 +1541,7 @@ impl Chats {
     /// Starts a Chat that continues `id`'s conversation from before its user message at `index`, with that message in its Composer.
     pub async fn fork(self: &Arc<Self>, id: &str, index: usize, rigs: &[Rig]) -> io::Result<Chat> {
         let entry = self.get(id).ok_or_else(|| io::Error::other("The Chat is no longer open."))?;
+        let index = self.wake_to_fork(&entry, index).await?;
         let (index, text) = {
             let transcript = entry.transcript.lock().unwrap();
             let start = match transcript.items.get(index) {
@@ -1504,6 +1584,7 @@ impl Chats {
             forked_from: Some(source.id.clone()),
             forking: false,
             dormant: false,
+            rigs: Vec::new(),
             ended: None,
             landing: None,
             parent: None,
@@ -1545,6 +1626,7 @@ impl Chats {
             transcript: Mutex::new(transcript),
             capabilities: Mutex::default(),
             driver: OnceLock::from(driver),
+            started: watch::Sender::new(None),
         });
         let _ = fs::create_dir_all(crate::canvas::dir(&self.data_dir, &entry.chat.lock().unwrap().id));
         self.chats.lock().unwrap().push(Arc::clone(&entry));
@@ -1972,7 +2054,7 @@ impl Chats {
             chat.queued.push(text.to_owned());
             chat.queued_images.push(images.to_vec());
             self.queued(&entry, chat);
-            if !std::mem::replace(&mut transcript.starting, true) {
+            if Self::begin(&entry, &mut transcript) {
                 drop(transcript);
                 self.wake(entry);
             }
@@ -2131,6 +2213,10 @@ impl Chats {
 
     pub fn run(&self, id: &str, builtin: Builtin) {
         if let Some(entry) = self.get(id) {
+            if entry.driver.get().is_none() {
+                self.choose_setting(&entry, builtin);
+                return;
+            }
             if matches!(builtin, Builtin::Rewind(_) | Builtin::Compact)
                 && entry.chat.lock().unwrap().status != Status::Done { return; }
             if matches!(builtin, Builtin::Rewind(_)) {
@@ -2141,6 +2227,26 @@ impl Chats {
             }
             entry.driver().run(builtin);
         }
+    }
+
+    /// Records a setting chosen while the Chat is Dormant, for its Agent to apply when it starts.
+    fn choose_setting(&self, entry: &Entry, builtin: Builtin) {
+        let (setting, value) = match builtin {
+            Builtin::Model(value) => (Setting::Model, value),
+            Builtin::Effort(value) => (Setting::Effort, value),
+            Builtin::Speed(value) => (Setting::Speed, value),
+            Builtin::Ultracode(value) => (Setting::Ultracode, value),
+            Builtin::Mode(value) => (Setting::Mode, value),
+            Builtin::Compact | Builtin::Rewind(_) => return,
+        };
+        let transcript = entry.transcript.lock().unwrap();
+        let mut chat = entry.chat.lock().unwrap();
+        if !chat.dormant || chat.ended.is_some() || transcript.starting { return; }
+        *chat.settings.get_mut(setting) = Some(value);
+        chat.settings.mark_pending(setting);
+        let (id, settings) = (chat.id.clone(), chat.settings.clone());
+        self.save(entry, chat);
+        let _ = self.changed.send(Change::Settings(id, settings));
     }
 
     pub fn close(&self, id: &str) {
@@ -2314,6 +2420,7 @@ impl Chat {
             forked_from: None,
             forking: false,
             dormant: false,
+            rigs: Vec::new(),
             ended: None,
             landing: None,
             parent: None,

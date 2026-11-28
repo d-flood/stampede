@@ -343,8 +343,14 @@ async fn a_past_claude_session_opens_dormant_and_resumes_from_a_store_matching_r
     assert_eq!(serde_json::from_slice::<Value>(&fs::read(&record).unwrap()).unwrap()["dormant"], true);
     assert_eq!(resumes(), before, "a Dormant Chat launched its Agent");
 
+    control(&mut socket, json!({ "type": "chat.run", "chatId": chat_id, "command": "model", "value": "haiku" })).await;
+    next_control(&mut socket, "chat.settings").await;
+    assert_eq!(resumes(), before, "choosing a model launched a Dormant Chat's Agent");
     assert_eq!(turn(&mut socket, chat_id, "Now name a fruit in one word.").await, ["working", "done"]);
     assert_eq!(resumes(), before + 1);
+    let launch = fs::read_to_string(&launched).unwrap().lines().map(|line| serde_json::from_str::<Vec<String>>(line).unwrap())
+        .filter(|args| args.windows(2).any(|pair| pair == ["--resume", COLOR])).last().unwrap();
+    assert!(launch.windows(2).any(|pair| pair == ["--model", "haiku"]), "the resume ignored the chosen model: {launch:?}");
     let context = timeout(Duration::from_secs(10), async {
         loop {
             let chat: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();

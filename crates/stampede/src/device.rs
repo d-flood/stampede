@@ -93,6 +93,8 @@ enum Control {
     MoveChat { chat_id: String, branch: String },
     #[serde(rename = "chat.fork")]
     ForkChat { chat_id: String, index: usize },
+    #[serde(rename = "chat.rig")]
+    RigChat { chat_id: String, rig: String },
     #[serde(rename = "chat.open")]
     OpenChat { project_id: String, key: SessionKey, item: Option<usize>, query: Option<String> },
     #[serde(rename = "sessions.list")]
@@ -640,6 +642,12 @@ impl Device {
                         Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat, "opened": true })),
                         Err(error) => send(&outgoing, json!({ "type": "chat.open.error", "projectId": project_id, "error": error.to_string() })),
                     }
+                });
+            }
+            Control::RigChat { chat_id, rig } => {
+                let chats = Arc::clone(&self.chats);
+                tokio::spawn(async move {
+                    if let Err(error) = chats.choose_rig(&chat_id, &rig).await { eprintln!("cannot switch chat {chat_id} to Rig {rig}: {error}"); }
                 });
             }
             Control::ListSessions { project_id } => self.list_sessions(project_id),

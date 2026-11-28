@@ -17,13 +17,14 @@
 	import { canvases as written } from '#lib/canvas.svelte.ts';
 	import Handoff from '#lib/chat/Handoff.svelte';
 	import { mark, matcher, says } from '#lib/chat/landing.ts';
+	import { listOptions, type Options } from '#lib/chat/options.ts';
 	import MoveToWorktree from '#lib/chat/MoveToWorktree.svelte';
 	import Prompt from '#lib/chat/Prompt.svelte';
 	import SubagentHeader from '#lib/chat/SubagentHeader.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import { agentNames, modes } from '#lib/config.svelte.ts';
-	import type { Answer, Builtin, Capabilities, Chat, Device, Ended, Item, Request, ResetCredits, ServerMessage } from '#lib/device.svelte.ts';
+	import type { Answer, Builtin, Capabilities, Chat, Choice, Device, Ended, Item, Request, ResetCredits, ServerMessage, Setting, Settings } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { hostOf } from '#lib/host.ts';
 	import { form } from '#lib/form.ts';
@@ -136,13 +137,33 @@
 		if (subagents.some(({ subagent }) => subagent.status !== 'done')) return 'Wait for subagents to finish, or interrupt first.';
 	});
 	let capabilities = $state<Capabilities>({ ready: false, models: [], efforts: [], speeds: [], ultracode: false, modes: [], commands: [], rewindsFiles: false, forks: false, rewinds: false, compacts: false });
-	const choices = $derived({
-		model: capabilities.models.map((value) => ({ value, label: value })),
-		effort: capabilities.efforts.map((value) => ({ value, label: value })),
-		speed: capabilities.speeds,
-		ultracode: capabilities.ultracode ? ['off', 'on'].map((value) => ({ value, label: value })) : [],
-		mode: capabilities.modes.filter((choice) => !modes(chat.agent).some((mode) => mode.value === choice.value && !mode.available))
-	});
+	const resumable = $derived(!!chat.dormant && !chat.ended);
+	let listing = $state.raw<{ rig: string; options: Options }>();
+	const options = $derived(listing?.rig === chat.rig ? listing.options : undefined);
+	const settings = $derived<Settings>(resumable ? { ...chat.settings, model: chat.settings.model ?? options?.settings?.model ?? 'default', effort: chat.settings.effort ?? options?.settings?.effort } : chat.settings);
+	const choices = $derived<Record<Setting, Choice[]>>(
+		resumable
+			? {
+					model: options?.models.map(({ value, label }) => ({ value, label })) ?? [{ value: 'default', label: 'Default model' }],
+					effort: (options?.models.find(({ value }) => value === settings.model)?.efforts ?? []).map((value) => ({ value, label: value })),
+					speed: [],
+					ultracode: [],
+					mode: modes(chat.agent).filter(({ available }) => available).map(({ value, label }) => ({ value, label }))
+				}
+			: {
+					model: capabilities.models.map((value) => ({ value, label: value })),
+					effort: capabilities.efforts.map((value) => ({ value, label: value })),
+					speed: capabilities.speeds,
+					ultracode: capabilities.ultracode ? ['off', 'on'].map((value) => ({ value, label: value })) : [],
+					mode: capabilities.modes.filter((choice) => !modes(chat.agent).some((mode) => mode.value === choice.value && !mode.available))
+				}
+	);
+
+	function reach() {
+		if (!resumable || options) return;
+		const rig = chat.rig;
+		listOptions(chat.agent, rig).then((options) => (listing = { rig, options }), () => {});
+	}
 
 	$effect(() => {
 		if (active && attached) painted(chat.id);
@@ -216,6 +237,7 @@
 	function run(command: Builtin, value?: string | number) {
 		if (command === 'rewind') { rewindTarget = typeof value === 'number' ? value : undefined; rewinding = true; return; }
 		rewinding = false;
+		if (resumable && command === 'model' && value === 'default') return;
 		device.send({ type: 'chat.run', chatId: chat.id, command, value });
 	}
 
@@ -370,7 +392,7 @@
 				{/if}
 			</div>
 		{:else if !selected}
-			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {shell} {live} {request} {capabilities} {choices} {branches} {focused} onrun={run} />
+			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {shell} {live} {request} {capabilities} {settings} ready={resumable ? !!options : capabilities.ready} {choices} {branches} {focused} rigs={resumable ? chat.rigs : undefined} onreach={reach} onrun={run} />
 		{:else}
 			<div class="subagent"><span>Subagent</span><Button onclick={() => onopen([])}>Back to Main</Button></div>
 		{/if}
