@@ -268,6 +268,9 @@ async fn rejoin(
         let mut message = connection.next().await.ok_or_else(|| io::Error::other("codex hung up during thread/resume"))?;
         if response(&message) == Some(id) {
             if let Some(error) = message.get("error") {
+                if error["message"].as_str().is_some_and(|message| message.starts_with("no rollout found for thread id")) {
+                    return Err(io::Error::other(super::Unresumable::Missing));
+                }
                 return Err(io::Error::other(format!("thread/resume: {error}")));
             }
             break message["result"].take();
@@ -2328,8 +2331,8 @@ mod tests {
             plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
             running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
             queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),
-            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, rigs: Vec::new(), ended: None, landing: None, parent: None,
-            duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
+            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, rigs: Vec::new(), ended: None, gone: false, continued_from: None, continuation: None, landing: None, parent: None,
+            duty: None, draft: None, draft_images: Vec::new(), shell_context: Vec::new(), disabled_tools: Vec::new(),
         };
         let (driver, mut events) = start(root.path(), &chat, &env).await.unwrap();
 

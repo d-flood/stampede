@@ -23,8 +23,9 @@
 	import SubagentHeader from '#lib/chat/SubagentHeader.svelte';
 	import Text from '#lib/chat/Text.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
-	import { agentNames, modes } from '#lib/config.svelte.ts';
-	import type { Answer, Builtin, Capabilities, Chat, Choice, Device, Ended, Item, Request, ResetCredits, ServerMessage, Setting, Settings } from '#lib/device.svelte.ts';
+	import { logos } from '#lib/chat/sessions.ts';
+	import { agentNames, modes, rigs as configured, runsOn } from '#lib/config.svelte.ts';
+	import type { Answer, Builtin, Capabilities, Chat, Choice, Device, Ended, Image, Item, Request, ResetCredits, ServerMessage, Setting, Settings } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { hostOf } from '#lib/host.ts';
 	import { form } from '#lib/form.ts';
@@ -58,6 +59,7 @@
 	let ended = $state(true);
 	let forkError = $state('');
 	let forkFailed = $state(false);
+	let failedTitle = $state('Could not fork');
 	let requests = $state<Request[]>([]);
 	let attached = $state(false);
 	let attending = $state<string>();
@@ -137,7 +139,22 @@
 		if (subagents.some(({ subagent }) => subagent.status !== 'done')) return 'Wait for subagents to finish, or interrupt first.';
 	});
 	let capabilities = $state<Capabilities>({ ready: false, models: [], efforts: [], speeds: [], ultracode: false, modes: [], commands: [], rewindsFiles: false, forks: false, rewinds: false, compacts: false });
-	const resumable = $derived(!!chat.dormant && !chat.ended);
+	const resumable = $derived(!!chat.dormant && !chat.ended && !chat.gone);
+	const continuable = $derived(!!chat.dormant && (!!chat.ended || !!chat.gone));
+	const targets = $derived(configured().filter(({ agent }) => runsOn(host, agent)));
+	let chosenTarget = $state<string>();
+	const target = $derived(targets.find(({ name }) => name === chosenTarget) ?? targets.find(({ agent }) => agent === chat.agent) ?? targets[0]);
+	const picker = $derived(
+		continuable
+			? { rigs: targets.map(({ name, agent }) => ({ label: name, icon: logos[agent] })), current: target ? targets.indexOf(target) : -1, onpick: (index: number) => (chosenTarget = targets[index].name) }
+			: resumable && chat.rigs
+				? { rigs: chat.rigs.map((label) => ({ label, icon: logos[chat.agent] })), current: chat.rigs.indexOf(chat.rig), onpick: (index: number) => device.send({ type: 'chat.rig', chatId: chat.id, rig: chat.rigs![index] }) }
+				: undefined
+	);
+
+	function continueWith(text: string, images: Image[], index?: number) {
+		if (target) device.send({ type: 'chat.continue', chatId: chat.id, rig: target.name, index, text, images });
+	}
 	let listing = $state.raw<{ rig: string; options: Options }>();
 	const options = $derived(listing?.rig === chat.rig ? listing.options : undefined);
 	const settings = $derived<Settings>(resumable ? { ...chat.settings, model: chat.settings.model ?? options?.settings?.model ?? 'default', effort: chat.settings.effort ?? options?.settings?.effort } : chat.settings);
@@ -205,7 +222,9 @@
 				if (message.chatId === chat.id) composer?.restore(message.text, message.images);
 				break;
 			case 'chat.fork.error':
+			case 'chat.continue.error':
 				if (message.chatId !== chat.id) break;
+				failedTitle = message.type === 'chat.fork.error' ? 'Could not fork' : 'Could not continue';
 				forkError = message.error;
 				forkFailed = true;
 				break;
@@ -348,7 +367,7 @@
 		<div class="transcript" bind:this={scroller} {@attach (node) => follow(node, (bottom) => (ended = bottom))}>
 			<div class="column">
 				{#if attached && !items.length && !chat.queued.length}<EmptyChat rig={chat.rig} agent={chat.agent} {project} {branch} />{/if}
-				<Transcript bind:this={transcript} {host} {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={capabilities.rewinds ? (index) => run('rewind', index) : undefined} onfork={live && attached && capabilities.forks ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={chat.dormant ? undefined : (index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
+				<Transcript bind:this={transcript} {host} {items} continued={chat.continuedFrom} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={capabilities.rewinds ? (index) => run('rewind', index) : undefined} onfork={live && attached && continuable && target ? (index) => continueWith('', [], index) : live && attached && capabilities.forks ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={chat.dormant ? undefined : (index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
 			</div>
 		</div>
@@ -383,16 +402,17 @@
 				<RequestCard {host} bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} onattach={(files) => composer?.attach(files)} />
 			{/key}
 		{/if}
-		{#if chat.ended && !selected}
-			<div class="ended">
-				<p role="status">{causes[chat.ended]}</p>
-				{#if chat.agentSession && chat.sessionStore !== undefined}
-					{@const key = { agent: chat.agent, store: chat.sessionStore, sessionId: chat.agentSession }}
-					<Button size="sm" onclick={() => device.send({ type: 'sessions.dismiss', key })}>Dismiss</Button>
-				{/if}
-			</div>
-		{:else if !selected}
-			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {shell} {live} {request} {capabilities} {settings} ready={resumable ? !!options : capabilities.ready} {choices} {branches} {focused} rigs={resumable ? chat.rigs : undefined} onreach={reach} onrun={run} />
+		{#if !selected}
+			{#if continuable}
+				<div class="ended">
+					<p role="status">{chat.ended ? causes[chat.ended] : "This Session's worktree no longer exists"}</p>
+					{#if chat.ended && chat.agentSession && chat.sessionStore !== undefined}
+						{@const key = { agent: chat.agent, store: chat.sessionStore, sessionId: chat.agentSession }}
+						<Button size="sm" onclick={() => device.send({ type: 'sessions.dismiss', key })}>Dismiss</Button>
+					{/if}
+				</div>
+			{/if}
+			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {shell} {live} {request} {capabilities} {settings} ready={resumable ? !!options : capabilities.ready} {choices} {branches} {focused} rigPicker={picker} onreach={reach} onrun={run} oncontinue={continuable && target ? continueWith : undefined} />
 		{:else}
 			<div class="subagent"><span>Subagent</span><Button onclick={() => onopen([])}>Back to Main</Button></div>
 		{/if}
@@ -401,7 +421,7 @@
 {#if preview && active}<FilePreview projectId={chat.projectId} {...preview} />{/if}
 <Handoff bind:this={handoff} {device} {chat} available={attached && !chat.dormant && items.some((item) => item.kind === 'user')} />
 {#if movable}<MoveToWorktree bind:this={mover} {device} {chat} />{/if}
-<Dialog bind:open={forkFailed} title="Could not fork">
+<Dialog bind:open={forkFailed} title={failedTitle}>
 	<p class="failure" role="alert">{forkError}</p>
 	{#snippet actions()}<Button onclick={() => (forkFailed = false)}>Close</Button>{/snippet}
 </Dialog>

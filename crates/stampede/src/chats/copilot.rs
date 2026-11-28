@@ -376,7 +376,7 @@ impl UserInputHandler for Handlers {
     }
 }
 
-async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: Arc<Handlers>) -> io::Result<CopilotSession> {
+async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, readable: Vec<PathBuf>, handlers: Arc<Handlers>) -> io::Result<CopilotSession> {
     let mut server = html::config(data_dir, &chat.id);
     server["type"] = json!("stdio");
     server["timeout"] = json!(86400000);
@@ -384,7 +384,7 @@ async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: A
     let stampede = SystemMessageConfig::new().with_content(html::instructions(data_dir, Some(&chat.id), &chat.disabled_tools));
     if let Some(id) = &chat.agent_session {
         let mut config = ResumeSessionOptions::new(SessionId::new(id))
-            .with_working_directory(&chat.cwd).with_events(|group| group.with_streaming(true)).with_mcp(|group| group.with_servers(servers))
+            .with_working_directory(&chat.cwd).with_filesystem(|group| group.with_additional_directories(readable)).with_events(|group| group.with_streaming(true)).with_mcp(|group| group.with_servers(servers))
             .with_system_message(stampede).with_tools(|group| group.with_excluded_tools(["ask_user"]))
             .with_permissions(|group| group.with_on_request(handlers.clone())).with_interaction(|group| group.with_on_user_input_request(handlers));
         if let Some(model) = &chat.settings.chosen.model { config = config.with_model(model); }
@@ -392,7 +392,7 @@ async fn open_session(client: &Client, data_dir: &Path, chat: &Chat, handlers: A
         rpc(client.resume_session(config)).await
     } else {
         let mut config = CreateSessionOptions::default()
-            .with_working_directory(&chat.cwd).with_events(|group| group.with_streaming(true)).with_mcp(|group| group.with_servers(servers))
+            .with_working_directory(&chat.cwd).with_filesystem(|group| group.with_additional_directories(readable)).with_events(|group| group.with_streaming(true)).with_mcp(|group| group.with_servers(servers))
             .with_system_message(stampede).with_tools(|group| group.with_excluded_tools(["ask_user"]))
             .with_permissions(|group| group.with_on_request(handlers.clone())).with_interaction(|group| group.with_on_user_input_request(handlers));
         if let Some(model) = &chat.settings.chosen.model { config = config.with_model(model); }
@@ -434,7 +434,7 @@ async fn establish(
     let connection = Connection::open(&chat.cwd, &env).await?;
     let (interactions, pending) = mpsc::unbounded_channel();
     let handlers = Arc::new(Handlers(interactions));
-    let session = open_session(&connection.client, &data_dir, &chat, handlers).await?;
+    let session = open_session(&connection.client, &data_dir, &chat, super::readable(&data_dir, &env), handlers).await?;
     Ok((connection, session, pending))
 }
 
@@ -1329,8 +1329,8 @@ mod tests {
             plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
             running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
             queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),
-            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, rigs: Vec::new(), ended: None, landing: None, parent: None,
-            duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
+            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, rigs: Vec::new(), ended: None, gone: false, continued_from: None, continuation: None, landing: None, parent: None,
+            duty: None, draft: None, draft_images: Vec::new(), shell_context: Vec::new(), disabled_tools: Vec::new(),
         };
 
         let (driver, mut events) = start(root.path(), &chat, &env).await.unwrap();

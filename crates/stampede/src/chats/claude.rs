@@ -223,7 +223,8 @@ async fn launch(
             super::terminal_tools::CLAUDE_STAGE, super::terminal_tools::CLAUDE_READ, crate::cli::CLAUDE_TOOL, crate::pr_reviews::CLAUDE_TOOL].join(","),
         "--disallowedTools".to_owned(), "AskUserQuestion".to_owned(),
         "--add-dir".to_owned(), crate::canvas::root(data_dir).display().to_string()];
-    let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.claude_flags()).chain(tools);
+    let readable = super::readable(data_dir, env).into_iter().flat_map(|directory| ["--add-dir".to_owned(), directory.display().to_string()]);
+    let command = ["claude"].iter().chain(&ARGS).map(|arg| arg.to_string()).chain(settings.claude_flags()).chain(tools).chain(readable);
     let resume = session.into_iter().flat_map(|session| ["--resume".to_owned(), session.to_owned()]);
     let rewind = at.into_iter().flat_map(|at| ["--resume-session-at".to_owned(), at.to_owned()]);
     let fork = (fork && session.is_some()).then(|| "--fork-session".to_owned());
@@ -947,6 +948,20 @@ pub(super) fn session_file(env: &BTreeMap<String, String>, session: &str) -> Opt
     let name = format!("{session}.jsonl");
     let projects = fs::read_dir(config_dir(env)?.join("projects")).ok()?;
     projects.flatten().map(|project| project.path().join(&name)).find(|path| path.is_file())
+}
+
+/// Whether the history store has no transcript of `session`, judged only once its `projects` directory and each project in it read without error.
+pub(super) fn missing(env: &BTreeMap<String, String>, session: &str) -> io::Result<bool> {
+    let store = config_dir(env).ok_or_else(|| io::Error::other("no history store"))?;
+    let name = format!("{session}.jsonl");
+    for project in fs::read_dir(store.join("projects"))? {
+        match fs::metadata(project?.path().join(&name)) {
+            Ok(_) => return Ok(false),
+            Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(true)
 }
 
 pub(super) fn config_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {

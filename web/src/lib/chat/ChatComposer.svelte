@@ -9,17 +9,17 @@
 	import { pastedImages } from '#lib/chat/images.ts';
 	import { redirect } from '#lib/chat/questions.ts';
 	import RigPicker from '#lib/chat/RigPicker.svelte';
-	import { ago, logos } from '#lib/chat/sessions.ts';
+	import { ago } from '#lib/chat/sessions.ts';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
 	import TurnRing from '#lib/chat/TurnRing.svelte';
 	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting, Settings } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
-	import { hostOf } from '#lib/host.ts';
+	import { attachmentUrl, hostOf } from '#lib/host.ts';
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
-	import type { Component } from 'svelte';
+	import { onMount, type Component } from 'svelte';
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { fade, fly } from 'svelte/transition';
 	import ArrowBendUpRight from '~icons/ph/arrow-bend-up-right';
@@ -35,7 +35,7 @@
 	import Terminal from '~icons/ph/terminal';
 	import X from '~icons/ph/x';
 
-	let { device, chat, live, request, capabilities, settings, ready, choices, rigs, branches, history, shelling, shell, focused = false, onreach, onrun }: {
+	let { device, chat, live, request, capabilities, settings, ready, choices, rigPicker, branches, history, shelling, shell, focused = false, onreach, onrun, oncontinue }: {
 		device: Device;
 		chat: Chat;
 		live: boolean;
@@ -49,10 +49,12 @@
 		settings: Settings;
 		ready: boolean;
 		choices: Record<Setting, Choice[]>;
-		/** The Rigs a Dormant Chat can resume with. */
-		rigs?: string[];
+		/** The Rigs a Dormant Chat can start with. */
+		rigPicker?: { rigs: { label: string; icon?: Component }[]; current: number; onpick(index: number): void };
 		onreach?(): void;
 		onrun(command: Builtin, value?: string | number): void;
+		/** Sends to a new Chat that continues this one's Session, instead of to this Chat. */
+		oncontinue?(text: string, images: Image[]): void;
 	} = $props();
 
 	let composer: Composer;
@@ -66,7 +68,30 @@
 	let confirming = $state<{ text: string; queue: boolean; probably: boolean }>();
 	let focusComposer = false;
 	const phone = $derived(form() === 'phone');
+	const continuing = $derived(!!oncontinue);
 	const imageable = $derived(!request || (request.kind === 'question' && !!request.questions[0]?.type));
+
+	onMount(() => {
+		if (chat.draftImages?.length) void restoreDraftImages(chat.draftImages);
+	});
+
+	async function restoreDraftImages(urls: string[]) {
+		reading = true;
+		try {
+			const restored = await Promise.all(urls.map(async (url, index) => {
+				const blob = await (await fetch(attachmentUrl(hostOf(chat.projectId), url))).blob();
+				const data = await new Promise<string>((resolve, reject) => {
+					const reader = new FileReader();
+					reader.onload = () => resolve(String(reader.result).split(',')[1]);
+					reader.onerror = () => reject(reader.error);
+					reader.readAsDataURL(blob);
+				});
+				return { name: `Attached image ${index + 1}`, mediaType: blob.type, data };
+			}));
+			images = [...restored, ...images];
+		} catch { error = "Could not restore the message's images."; }
+		finally { reading = false; }
+	}
 
 	function choose() {
 		const files = [...(picker.files ?? [])];
@@ -110,6 +135,11 @@
 		if (!live || reading || (!text.trim() && !images.length)) return false;
 		if (images.length > 20) { error = 'Attach up to 20 images.'; return false; }
 		if (images.reduce((size, image) => size + image.data.length * 3 / 4, 0) > 20 * 1024 * 1024) { error = 'Keep attachments under 20 MB per message.'; return false; }
+		if (oncontinue) {
+			oncontinue(text, take());
+			error = '';
+			return true;
+		}
 		if (text.trimStart().startsWith('!')) {
 			const command = text.trim().slice(1).trim();
 			if (!command) return false;
@@ -200,20 +230,22 @@
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
 {#snippet meta()}
-	{#if rigs?.length}
-		<RigPicker rigs={rigs.map((label) => ({ label, icon: logos[chat.agent] }))} current={rigs.indexOf(chat.rig)} onpick={(index) => device.send({ type: 'chat.rig', chatId: chat.id, rig: rigs[index] })} />
+	{#if rigPicker?.rigs.length}<RigPicker {...rigPicker} />{/if}
+	{#if continuing}
+		<span class="tuning"></span>
+	{:else}
+		<!-- svelte-ignore a11y_no_static_element_interactions (Hover and focus only start loading the model list.) -->
+		<span class="tuning" onpointerover={onreach} onfocusin={onreach}>
+			<Chips agent={chat.agent} {settings} {ready} {choices} mark={!rigPicker?.rigs.length} {onrun}>
+				{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
+			</Chips>
+		</span>
 	{/if}
-	<!-- svelte-ignore a11y_no_static_element_interactions (Hover and focus only start loading the model list.) -->
-	<span class="tuning" onpointerover={onreach} onfocusin={onreach}>
-		<Chips agent={chat.agent} {settings} {ready} {choices} mark={!rigs?.length} {onrun}>
-			{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
-		</Chips>
-	</span>
 {/snippet}
 
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : chat.dormant ? 'Message to resume this Session' : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} mark={(text) => command(text)?.token.length ?? 0} footer={phone ? meta : undefined} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : continuing ? 'Message to continue in a new Chat' : chat.dormant ? 'Message to resume this Session' : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} mark={(text) => command(text)?.token.length ?? 0} footer={phone ? meta : undefined} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
 	{#snippet border(text: string)}
-		{@const known = chat.status === 'done' && !shell && !slash?.isOpen() && !files?.isOpen() ? command(text) : undefined}
+		{@const known = chat.status === 'done' && !continuing && !shell && !slash?.isOpen() && !files?.isOpen() ? command(text) : undefined}
 		<TurnRing status={chat.status} activity={chat.activity} {shell} />
 		{#if known}
 			<span class="frame" aria-hidden="true" transition:fade={{ duration: 150 }}></span>
@@ -284,11 +316,11 @@
 					</Button>
 					{#if phone}<span class="divider" aria-hidden="true"></span>{/if}
 				{/if}
-				{#if text.trimStart().startsWith('!')}
+				{#if !continuing && text.trimStart().startsWith('!')}
 					<Button variant="primary" disabled={!text.trim().slice(1).trim() || !live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
 						<Terminal /> Run
 					</Button>
-				{:else if !request && !images.length && command(text)?.builtin}
+				{:else if !continuing && !request && !images.length && command(text)?.builtin}
 					<Button variant="primary" disabled={!live || reading} onmousedown={keepFocus} onclick={() => send(text, false) && clear()}>
 						<Play /> Run
 					</Button>

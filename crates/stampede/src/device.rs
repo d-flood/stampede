@@ -95,6 +95,8 @@ enum Control {
     ForkChat { chat_id: String, index: usize },
     #[serde(rename = "chat.rig")]
     RigChat { chat_id: String, rig: String },
+    #[serde(rename = "chat.continue")]
+    ContinueChat { chat_id: String, rig: String, index: Option<usize>, #[serde(default)] text: String, #[serde(default)] images: Vec<chats::Image> },
     #[serde(rename = "chat.open")]
     OpenChat { project_id: String, key: SessionKey, item: Option<usize>, query: Option<String> },
     #[serde(rename = "sessions.list")]
@@ -629,6 +631,21 @@ impl Device {
                     match chats.fork(&chat_id, index, &rigs).await {
                         Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat })),
                         Err(error) => send(&outgoing, json!({ "type": "chat.fork.error", "chatId": chat_id, "error": error.to_string() })),
+                    }
+                });
+            }
+            Control::ContinueChat { chat_id, rig, index, text, images } => {
+                let Some(rig) = self.config.borrow().rigs.iter().find(|other| other.name == rig).cloned() else {
+                    send(&self.outgoing, json!({ "type": "chat.continue.error", "chatId": chat_id, "error": "That Rig is no longer configured." }));
+                    return;
+                };
+                let chats = Arc::clone(&self.chats);
+                let projects = self.projects.list();
+                let outgoing = self.outgoing.clone();
+                tokio::spawn(async move {
+                    match chats.continue_session(&chat_id, &rig, &projects, index, &text, &images).await {
+                        Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat, "opened": true })),
+                        Err(error) => send(&outgoing, json!({ "type": "chat.continue.error", "chatId": chat_id, "error": error.to_string() })),
                     }
                 });
             }

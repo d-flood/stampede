@@ -193,6 +193,12 @@ impl Storage {
     }
 }
 
+impl Session {
+    pub fn scratch(&self) -> &Path {
+        &self.scratch
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         let _ = fs::write(self.cache.join(".used"), b"");

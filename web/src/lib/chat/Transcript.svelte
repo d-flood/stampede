@@ -14,7 +14,7 @@
 	import { tick } from 'svelte';
 
 	type Entry = Item | { kind: 'questions'; record: AnsweredQuestions };
-	let { host, items, main, active = true, answered = [], activity, path = [], agent, resets, outlined, onopen, onattend, ondiff, oncanvas, onexpand, onrewind, onfork, onhandoff }: { host: string | undefined; items: Item[]; main?: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; agent?: Agent; resets?: ResetCredits | null; /** The item whose block wears an outline. */ outlined?: number; onhandoff?(): void; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(index: number): void; onrewind?(index: number): void; onfork?(index: number): void } = $props();
+	let { host, items, continued, main, active = true, answered = [], activity, path = [], agent, resets, outlined, onopen, onattend, ondiff, oncanvas, onexpand, onrewind, onfork, onhandoff }: { host: string | undefined; items: Item[]; /** The title of the Session this Chat continues. */ continued?: string; main?: Item[]; active?: boolean; answered?: AnsweredQuestions[]; activity?: string | null; path?: string[]; agent?: Agent; resets?: ResetCredits | null; /** The item whose block wears an outline. */ outlined?: number; onhandoff?(): void; onopen(path: string[]): void; onattend(subagent: string): void; ondiff(path: string): void; oncanvas(canvas: string): void; onexpand?(index: number): void; onrewind?(index: number): void; onfork?(index: number): void } = $props();
 	const wrapped = new WeakMap<AnsweredQuestions, Entry>();
 	const entries = $derived.by(() => {
 		const wrap = (record: AnsweredQuestions) => wrapped.get(record) ?? wrapped.set(record, { kind: 'questions', record }).get(record)!;
@@ -116,7 +116,7 @@
 {#snippet entry(item: Entry, index: number)}
 	{#if item.kind === 'user'}
 		{@const prompt = prompts.get(item)!}
-		<User {host} {item} first={index === 0} index={prompt.index} number={prompt.number} {onrewind} {onfork} />
+		<User {host} {item} {continued} first={index === 0} index={prompt.index} number={prompt.number} {onrewind} {onfork} />
 	{:else if item.kind === 'text'}
 		<Text {item} {active} />
 	{:else if item.kind === 'html'}
