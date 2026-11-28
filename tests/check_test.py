@@ -147,6 +147,31 @@ if "build" in sys.argv and Path(sys.argv[0]).name == "pnpm":
         self.assertFalse(self.log.exists())
         self.assertTrue((self.root / "runner-executed").exists())
 
+    def test_cloud_setup_repairs_pnpm_that_only_runs_through_the_shell(self):
+        self.env["HOME"] = str(self.root / "home")
+        self.env["PATH"] = f"{self.root}/bin:/usr/bin:/bin"
+        installed = Path(self.env["HOME"]) / ".local/bin/pnpm"
+        installed.parent.mkdir(parents=True)
+        installed.write_text("echo 12.23.0\n")
+        installed.chmod(0o755)
+        for name, body in {
+            "sudo": "exit 0",
+            "rustc": "echo rustc 1.96.0",
+            "zig": "echo 0.17.1",
+            "cargo": "exit 0",
+            "npm": 'case " $* " in *" --allow-scripts=pnpm "*) ;; *) exit 1;; esac\n'
+                   'rm "$HOME/.local/bin/pnpm"\n'
+                   'ln -s "$CHECK_TEST_ROOT/pnpm" "$HOME/.local/bin/pnpm"',
+        }.items():
+            executable = self.root / "bin" / name
+            executable.write_text(f"#!/bin/sh\n{body}\n")
+            executable.chmod(0o755)
+        pnpm = (self.root / "bin/pnpm").rename(self.root / "pnpm")
+        pnpm.write_text(pnpm.read_text().replace("root = Path(", 'if sys.argv[1:] == ["--version"]:\n    print("12.23.0")\n    sys.exit(0)\nroot = Path(', 1))
+        result = subprocess.run(["bash", str(self.root / "scripts/cloud-setup")], env=self.env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(self.calls("pnpm -C web install --frozen-lockfile"))
+
     def test_failed_runner_check_preserves_failure(self):
         (self.root / "fail-runner").touch()
         result = self.run_check("runner", success=False)

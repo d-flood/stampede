@@ -20,10 +20,14 @@ if ! printf '%s\n' 1.96 "$rust_version" | sort -V -C; then
 fi
 printf '%s\n' 1.96 "$(rustc --version | cut -d' ' -f2)" | sort -V -C
 
-if [[ $(pnpm --version 2>/dev/null) != 12.23.0 ]]; then
-    npm install --global --prefix "$HOME/.local" pnpm@12.23.0
+pnpm_version() {
+    python3 -c 'import subprocess; subprocess.run(["pnpm", "--version"], check=True)'
+}
+
+if [[ $(pnpm_version 2>/dev/null) != 12.23.0 ]]; then
+    npm install --global --prefix "$HOME/.local" --allow-scripts=pnpm pnpm@12.23.0
 fi
-[[ $(pnpm --version) == 12.23.0 ]]
+[[ $(pnpm_version) == 12.23.0 ]]
 
 if [[ $(zig version 2>/dev/null) != 0.17.* ]]; then
     scratch=$(mktemp -d)
