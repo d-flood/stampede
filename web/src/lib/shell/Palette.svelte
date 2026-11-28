@@ -12,7 +12,8 @@
 	import { form } from '#lib/form.ts';
 	import { split } from '#lib/git.ts';
 	import ChatItem from '#lib/shell/ChatItem.svelte';
-	import { grouped, projectName, SessionSearch, sessionKey, type Searching } from '#lib/shell/session-search.svelte.ts';
+	import SessionPreview from '#lib/shell/SessionPreview.svelte';
+	import { grouped, PANE_MIN, projectName, SessionSearch, sessionKey, type Searching } from '#lib/shell/session-search.svelte.ts';
 	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
@@ -46,11 +47,14 @@
 		onrig(rig: Rig): void;
 		onfile(path: string): void;
 		onchat?(chat: Chat): void;
-		onsession(session: Session): void;
+		/** `query` is set when a typed search found the Session. */
+		onsession(session: Session | FoundSession, query?: string): void;
+		/** Whether the dialog should widen to fit a preview pane beside the results. */
+		wide?: boolean;
 	};
 	type Entry = { value: string; label: string; parent?: string; icon?: Component; projectIcon?: string; hint?: string; shortcut?: string; onselect(): void };
 
-	let { scope, projects, labels, focused, actions = [], chats = [], status, sessions = {}, loadingSessions = false, search, selectable, onproject, onrig, onfile, onchat, onsession }: Props = $props();
+	let { scope, projects, labels, focused, actions = [], chats = [], status, sessions = {}, loadingSessions = false, search, selectable, onproject, onrig, onfile, onchat, onsession, wide = $bindable(false) }: Props = $props();
 
 	let query = $state('');
 	const host = new SessionSearch(() => (scope === 'all' || scope === 'sessions' ? search : undefined));
@@ -60,6 +64,16 @@
 	const all = $derived(scope === 'all');
 	const open = $derived(all ? ranked(chats.toSorted((a, b) => b.created - a.created), (chat) => chat.title ?? chat.rig, 5) : []);
 	const found = $derived(query && search && (all || scope === 'sessions') ? grouped(host.found, projects.flatMap((project) => sessions[project.id] ?? []), query, search.focus) : undefined);
+	let width = $state(0);
+	let highlighted = $state('');
+	const paned = $derived(!!found && width >= PANE_MIN && found.here.length + found.other.length > 0);
+	const previewed = $derived(paned && found ? [...found.here, ...found.other].find((session) => `session:${session.project.id}:${sessionKey(session)}` === highlighted) : undefined);
+
+	$effect(() => {
+		wide = !!found;
+		return () => (wide = false);
+	});
+
 	const past = $derived.by(() => {
 		if (found) return [];
 		if (scope === 'sessions') return focused ? sessions[focused.id] ?? [] : [];
@@ -166,7 +180,7 @@
 		excerpt={'excerpt' in session && session.excerpt ? { ...session.excerpt, matches: session.matches } : undefined}
 		ended={!!session.ended}
 		{disabled}
-		onselect={disabled ? undefined : () => onsession(session)}
+		onselect={disabled ? undefined : () => onsession(session, query || undefined)}
 	/>
 {/snippet}
 
@@ -183,8 +197,8 @@
 	{/if}
 {/snippet}
 
-<div class="palette">
-	<Command.Root label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[scope]} shouldFilter={false} loop>
+<div class="palette" bind:clientWidth={width}>
+	<Command.Root label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[scope]} shouldFilter={false} loop bind:value={highlighted}>
 		<Command.Input
 			value={query}
 			placeholder={{ all: 'Find a Chat, Project, Rig or file', files: 'Find a file', sessions: 'Find a session', tabs: 'Choose what to open' }[scope]}
@@ -198,65 +212,68 @@
 		{#if reading}
 			<div class="loading"><Loading label="Reading sessions…" /></div>
 		{/if}
-		<Command.List>
-			{#snippet child({ props })}
-				<div {...props} class="list" class:more {@attach trackScroll}>
-					<Command.Viewport>
-						{#if open.length}
-							<Command.Group class="group">
-								{@render heading('Open Chats')}
-								<Command.GroupItems>
-									{#each open as chat (chat.id)}
-										<ChatItem value="chat:{chat.id}" agent={chat.agent} title={chat.title ?? chat.rig} time={chat.created / 1e6} project={labels.get(chat.projectId)} status={status?.(chat)} fresh={!chat.title} onselect={() => onchat?.(chat)} />
-									{/each}
-								</Command.GroupItems>
-							</Command.Group>
-						{/if}
-						{#if found}
-							{@render sessionGroup('Sessions', found.here, false)}
-							{@render sessionGroup('Other Projects', found.other, true)}
-						{:else}
-							{@render sessionGroup(all ? 'Recent sessions' : 'Sessions', past, all)}
-						{/if}
-						{#each groups as { heading: text, entries } (text)}
-							{#if entries.length}
+		<div class="results" class:paned>
+			<Command.List>
+				{#snippet child({ props })}
+					<div {...props} class="list" class:more {@attach trackScroll}>
+						<Command.Viewport>
+							{#if open.length}
 								<Command.Group class="group">
-									{@render heading(text)}
+									{@render heading('Open Chats')}
 									<Command.GroupItems>
-										{#each entries as { value, label, parent, icon: Icon, projectIcon, hint, shortcut, onselect } (value)}
-											<Command.Item {value} onSelect={onselect}>
-												{#snippet child({ props })}
-													<ListItem {...props}>
-														{#if parent === undefined}
-															<span class="slot" aria-hidden="true">
-																{#if projectIcon}
-																	<img class="project-icon" src="/api/project-icons/{projectIcon}" alt="" onerror={() => brokenIcons.add(projectIcon)} />
-																{:else if Icon}
-																	<Icon />
-																{/if}
-															</span>
-															<span class="label" title={label}>{label}</span>
-															{#if hint}<span class="hint" aria-hidden="true">{hint}</span>{/if}
-															{#if shortcut && form() !== 'phone'}<span class="keycap" aria-hidden="true"><Shortcut keys={shortcut} /></span>{/if}
-														{:else}
-															<span class="slot" aria-hidden="true"><FileIcon path={label} /></span>
-															<span class="path" title={parent ? `${parent}${label}` : label}><span class="parent">{parent}</span><span class="name">{label}</span></span>
-														{/if}
-													</ListItem>
-												{/snippet}
-											</Command.Item>
+										{#each open as chat (chat.id)}
+											<ChatItem value="chat:{chat.id}" agent={chat.agent} title={chat.title ?? chat.rig} time={chat.created / 1e6} project={labels.get(chat.projectId)} status={status?.(chat)} fresh={!chat.title} onselect={() => onchat?.(chat)} />
 										{/each}
 									</Command.GroupItems>
 								</Command.Group>
 							{/if}
-						{/each}
-						{#if !reading && !open.length && !past.length && !found?.here.length && !found?.other.length && !(found && (host.pending || host.indexing)) && groups.every(({ entries }) => !entries.length)}
-							<ListLabel element="p">{query ? 'No matches' : scope === 'sessions' ? 'No past sessions' : 'Type to find a Chat or file'}</ListLabel>
-						{/if}
-					</Command.Viewport>
-				</div>
-			{/snippet}
-		</Command.List>
+							{#if found}
+								{@render sessionGroup('Sessions', found.here, false)}
+								{@render sessionGroup('Other Projects', found.other, true)}
+							{:else}
+								{@render sessionGroup(all ? 'Recent sessions' : 'Sessions', past, all)}
+							{/if}
+							{#each groups as { heading: text, entries } (text)}
+								{#if entries.length}
+									<Command.Group class="group">
+										{@render heading(text)}
+										<Command.GroupItems>
+											{#each entries as { value, label, parent, icon: Icon, projectIcon, hint, shortcut, onselect } (value)}
+												<Command.Item {value} onSelect={onselect}>
+													{#snippet child({ props })}
+														<ListItem {...props}>
+															{#if parent === undefined}
+																<span class="slot" aria-hidden="true">
+																	{#if projectIcon}
+																		<img class="project-icon" src="/api/project-icons/{projectIcon}" alt="" onerror={() => brokenIcons.add(projectIcon)} />
+																	{:else if Icon}
+																		<Icon />
+																	{/if}
+																</span>
+																<span class="label" title={label}>{label}</span>
+																{#if hint}<span class="hint" aria-hidden="true">{hint}</span>{/if}
+																{#if shortcut && form() !== 'phone'}<span class="keycap" aria-hidden="true"><Shortcut keys={shortcut} /></span>{/if}
+															{:else}
+																<span class="slot" aria-hidden="true"><FileIcon path={label} /></span>
+																<span class="path" title={parent ? `${parent}${label}` : label}><span class="parent">{parent}</span><span class="name">{label}</span></span>
+															{/if}
+														</ListItem>
+													{/snippet}
+												</Command.Item>
+											{/each}
+										</Command.GroupItems>
+									</Command.Group>
+								{/if}
+							{/each}
+							{#if !reading && !open.length && !past.length && !found?.here.length && !found?.other.length && !(found && (host.pending || host.indexing)) && groups.every(({ entries }) => !entries.length)}
+								<ListLabel element="p">{query ? 'No matches' : scope === 'sessions' ? 'No past sessions' : 'Type to find a Chat or file'}</ListLabel>
+							{/if}
+						</Command.Viewport>
+					</div>
+				{/snippet}
+			</Command.List>
+			{#if paned && search}<div class="pane"><SessionPreview device={search.device} session={previewed} /></div>{/if}
+		</div>
 		{#if found && host.indexing && host.coverage}
 			<div class="coverage"><Loading label="Indexing {host.coverage.indexed.toLocaleString()} of {host.coverage.total.toLocaleString()} Sessions" /></div>
 		{/if}
@@ -282,6 +299,22 @@
 		max-height: min(26rem, 55dvh);
 		padding: var(--space-2);
 		overflow-y: auto;
+	}
+
+	.paned {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+		height: min(26rem, 55dvh);
+	}
+
+	.paned .list {
+		max-height: none;
+	}
+
+	.pane {
+		display: flex;
+		min-height: 0;
+		border-left: var(--border-width) solid var(--border);
 	}
 
 	.list.more {

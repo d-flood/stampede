@@ -83,6 +83,8 @@
 	--accent: var(--ansi-4);
 	--selected-bg: color-mix(in oklab, var(--accent) 9%, transparent);
 	--selected-border: color-mix(in oklab, var(--accent) 55%, var(--border));
+	/* Words a search matched. */
+	--match-bg: color-mix(in oklab, var(--accent) 22%, transparent);
 	--focus-ring: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
 	--focus-offset: 1px;
 	--focus-inset: -2px;

@@ -16,6 +16,7 @@
 	import Tray from '#lib/chat/Tray.svelte';
 	import { canvases as written } from '#lib/canvas.svelte.ts';
 	import Handoff from '#lib/chat/Handoff.svelte';
+	import { mark, matcher, says } from '#lib/chat/landing.ts';
 	import MoveToWorktree from '#lib/chat/MoveToWorktree.svelte';
 	import Prompt from '#lib/chat/Prompt.svelte';
 	import SubagentHeader from '#lib/chat/SubagentHeader.svelte';
@@ -28,7 +29,7 @@
 	import { form } from '#lib/form.ts';
 	import { fileLink, relative } from '#lib/links.ts';
 	import { painted } from '#lib/paint.svelte.ts';
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { on } from 'svelte/events';
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { fade } from 'svelte/transition';
@@ -67,6 +68,50 @@
 
 	export function reveal(item: number, land: (node: HTMLElement) => void) {
 		transcript?.reveal(item, land);
+	}
+
+	let landed = false;
+	let unmark: (() => void) | undefined;
+	let pinMain: ((bottom: boolean) => void) | undefined;
+
+	$effect(() => {
+		const landing = chat.landing;
+		if (landed || !chat.dormant || landing?.item === undefined || !active || !attached || !items.length || !scroller) return;
+		landed = true;
+		untrack(() => land(landing.item!, landing.query));
+	});
+
+	$effect(() => {
+		if (!chat.dormant) unmark?.();
+	});
+
+	$effect(() => () => unmark?.());
+
+	/** Scrolls to the message a search found and highlights its terms, or to the first message that still has them. */
+	function land(item: number, query?: string) {
+		const pattern = query ? matcher(query) : undefined;
+		const fallback = pattern && !says(items[item], pattern) ? items.findIndex((entry) => says(entry, pattern)) : -1;
+		const target = fallback >= 0 ? fallback : item;
+		if (target >= items.length) return;
+		transcript?.reveal(target, (node) => {
+			if (!scroller) return;
+			const marked = pattern ? mark(node, pattern) : undefined;
+			marked?.ranges[0]?.startContainer.parentElement?.closest('details')?.setAttribute('open', '');
+			const view = scroller.getBoundingClientRect();
+			const box = node.getBoundingClientRect();
+			const first = marked?.ranges[0]?.getBoundingClientRect();
+			pinMain?.(false);
+			const anchor = box.height > view.height * 0.6 && first ? first.top - view.height / 3 : box.top - view.height / 6;
+			scroller.scrollTop += anchor - view.top;
+			if (!marked) return;
+			const observer = new IntersectionObserver(([entry]) => !entry.isIntersecting && scroller?.getClientRects().length && unmark?.(), { root: scroller });
+			observer.observe(node);
+			unmark = () => {
+				observer.disconnect();
+				marked.clear();
+				unmark = undefined;
+			};
+		});
 	}
 	let handoff = $state<Handoff>();
 	let mover = $state<MoveToWorktree>();
@@ -239,6 +284,7 @@
 			onpin?.(bottom);
 		};
 		pin(true);
+		if (onpin) pinMain = pin;
 		const observer = new ResizeObserver(() => {
 			if (!scroller.getClientRects().length) { visible = false; return; }
 			if (pinned) scroller.scrollTop = scroller.scrollHeight;
@@ -347,6 +393,7 @@
 	.phone .conversation::before { height: calc(4 * var(--space-2)); }
 	.conversation::after { bottom: 0; background: linear-gradient(transparent, var(--color-bg)); }
 	.conversation[hidden] { display: none; }
+	.transcript :global(::highlight(landing)) { background-color: var(--match-bg); }
 	.latest { position: absolute; z-index: 2; right: 0; bottom: calc(100% + var(--space-2)); border-radius: var(--radius-pill); box-shadow: var(--shadow-float); }
 	.panel {
 		--chat-gutter: calc(var(--space-6) + var(--space-3));

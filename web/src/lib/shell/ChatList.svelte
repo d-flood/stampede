@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Chat, Session } from '#lib/device.svelte.ts';
+	import type { Chat, FoundSession, Session } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import ChatFinder from '#lib/shell/ChatFinder.svelte';
 	import type { Searching } from '#lib/shell/session-search.svelte.ts';
@@ -22,7 +22,7 @@
 		selectable?(session: Session): boolean;
 		onopen(): void;
 		onchat(chat: Chat): void;
-		onsession(session: Session): void;
+		onsession(session: Session | FoundSession, query?: string): void;
 	};
 
 	let { chats, status, waiting, sessions, reading, search, labels, selectable, onopen, onchat, onsession }: Props = $props();
@@ -74,7 +74,7 @@
 		{selectable}
 		flush
 		onchat={(chat) => pick(() => onchat(chat))}
-		onsession={(session) => pick(() => onsession(session))}
+		onsession={(session, query) => pick(() => onsession(session, query))}
 	/>
 {/snippet}
 

@@ -44,6 +44,8 @@ pub struct Snapshot {
     directory: String,
     project: String,
     current: bool,
+    /// Each item's index in the original snapshot, when its message rows stand in for it.
+    positions: Option<Vec<usize>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -704,6 +706,34 @@ impl Sessions {
     }
 }
 
+impl Sessions {
+    /// The turn holding `item`, or the last turn, with a turn either side and `item`'s index among them. Never rebuilds the snapshot.
+    pub async fn preview(&self, key: SessionKey, item: Option<usize>) -> io::Result<(Vec<Item>, usize)> {
+        let dir = self.dir.clone();
+        tokio::task::spawn_blocking(move || {
+            let snapshot = stored(&dir, &key)?.ok_or_else(|| io::Error::other("Session is not in the catalogue."))?;
+            let item = match (&snapshot.positions, item) {
+                (Some(positions), Some(item)) => positions.iter().position(|&at| at >= item),
+                (_, item) => item,
+            };
+            Ok(around(snapshot.items, item))
+        }).await.map_err(io::Error::other)?
+    }
+}
+
+fn around(mut items: Vec<Item>, item: Option<usize>) -> (Vec<Item>, usize) {
+    if items.is_empty() { return (items, 0); }
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(items.iter().enumerate().skip(1).filter(|(_, item)| matches!(item, Item::User { .. })).map(|(index, _)| index))
+        .collect();
+    let focus = item.unwrap_or_else(|| *starts.last().unwrap()).min(items.len() - 1);
+    let turn = starts.partition_point(|&start| start <= focus) - 1;
+    let start = starts[turn.saturating_sub(1)];
+    let end = starts.get(turn + 2).copied().unwrap_or(items.len());
+    items.truncate(end);
+    (items.split_off(start), focus - start)
+}
+
 struct Opening<'a> {
     key: SessionKey,
     pending: &'a Mutex<HashSet<SessionKey>>,
@@ -734,24 +764,27 @@ fn stored(dir: &Path, key: &SessionKey) -> io::Result<Option<Snapshot>> {
     };
     let decode = |items: Option<Vec<u8>>| items.and_then(|items| serde_json::from_slice::<Vec<Item>>(&items).ok());
     if let Some((_, directory, project, title, _, current, _, items)) = session(&read_connection(&dir.join("index.sqlite"))?, false)? {
-        return Ok(Some(Snapshot { title, items: decode(items).unwrap_or_default(), ended: None, answered: Vec::new(), directory, project, current }));
+        return Ok(Some(Snapshot { title, items: decode(items).unwrap_or_default(), ended: None, answered: Vec::new(), directory, project, current, positions: None }));
     }
     let archive = read_connection(&dir.join("archive.sqlite"))?;
     let Some((id, directory, project, title, ended, _, version, items)) = session(&archive, true)? else { return Ok(None) };
     let ended = ended.and_then(|ended| serde_json::from_value(serde_json::Value::String(ended)).ok());
-    let items = match decode(items).filter(|_| version == Some(SNAPSHOT_VERSION)) {
-        Some(items) => items,
+    let (items, positions) = match decode(items).filter(|_| version == Some(SNAPSHOT_VERSION)) {
+        Some(items) => (items, None),
         None => {
-            let mut query = archive.prepare("SELECT role, text FROM messages WHERE session=? ORDER BY item").map_err(io::Error::other)?;
-            let rows = query.query_map([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(io::Error::other)?;
-            rows.map(|row| row.map(|(role, text)| if role == "user" {
+            let mut query = archive.prepare("SELECT item, role, text FROM messages WHERE session=? ORDER BY item").map_err(io::Error::other)?;
+            let rows = query.query_map([id], |row| Ok((row.get::<_, i64>(0)? as usize, row.get::<_, String>(1)?, row.get::<_, String>(2)?))).map_err(io::Error::other)?;
+            let rows = rows.collect::<rusqlite::Result<Vec<_>>>().map_err(io::Error::other)?;
+            let positions = rows.iter().map(|(item, ..)| *item).collect();
+            let items = rows.into_iter().map(|(_, role, text)| if role == "user" {
                 Item::User { text, images: 0, image_urls: Vec::new(), template: None, rewind_from: None }
             } else {
                 Item::Text { text, streaming: false, phase: super::Phase::Final }
-            })).collect::<rusqlite::Result<_>>().map_err(io::Error::other)?
+            }).collect();
+            (items, Some(positions))
         }
     };
-    Ok(Some(Snapshot { title, items, ended, answered: Vec::new(), directory, project, current: true }))
+    Ok(Some(Snapshot { title, items, ended, answered: Vec::new(), directory, project, current: true, positions }))
 }
 
 fn size(dir: &Path, file: &str) -> u64 {

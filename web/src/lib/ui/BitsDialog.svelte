@@ -179,6 +179,11 @@
 		background: var(--float);
 	}
 
+	.bare.wide {
+		width: min(54rem, calc(100vw - 2 * var(--space-4)));
+		height: auto;
+	}
+
 	.assistive {
 		position: absolute;
 		width: 1px;

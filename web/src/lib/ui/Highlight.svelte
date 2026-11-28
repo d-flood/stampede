@@ -20,7 +20,7 @@
 <style>
 	mark {
 		border-radius: var(--radius-sm);
-		background: color-mix(in oklab, var(--accent) 22%, transparent);
+		background: var(--match-bg);
 		color: var(--color-fg);
 		box-decoration-break: clone;
 	}

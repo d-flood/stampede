@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures.ts';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { openProject } from './shell.ts';
 
 test.use({ starterRigs: true });
@@ -120,4 +121,47 @@ test('a Launchpad without Rigs offers Create a Rig, which opens Rigs settings', 
 	await launchpad.getByRole('button', { name: /^Create a Rig/ }).click();
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 	await expect(settings.getByRole('heading', { name: 'Rigs', exact: true })).toBeVisible();
+});
+
+test.describe('with the fake Agents', () => {
+	test.use({ starterRigs: false });
+
+	test('a found Session previews its matching turn and opens as a Dormant Chat at the match', { tag: '@desktop' }, async ({ page }, { project }) => {
+		const name = `preview-${project.name}`;
+		const path = `${process.env.STAMPEDE_E2E_ROOT}/projects/${name}`;
+		const sessions = `${process.env.STAMPEDE_E2E_ROOT}/claude/projects/${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+		mkdirSync(path, { recursive: true });
+		mkdirSync(sessions, { recursive: true });
+		const sessionId = '3b0c5f7e-2d4a-4c6b-9e1f-8a7d6c5b4a39';
+		const filler = 'Each witness carries its own readings into the apparatus, and the stemma has to account for every one of them. '.repeat(8);
+		const entry = (type: string, uuid: string, parentUuid: string | null, message: object) => JSON.stringify({ type, uuid, parentUuid, isSidechain: false, cwd: path, sessionId, timestamp: new Date().toISOString(), message });
+		const lines = Array.from({ length: 30 }, (_, turn) => [
+			entry('user', `u${turn}`, turn ? `a${turn - 1}` : null, { role: 'user', content: `Question ${turn + 1}` }),
+			entry('assistant', `a${turn}`, `u${turn}`, { id: `m${turn}`, role: 'assistant', content: [{ type: 'text', text: turn === 3 ? `The colophon names a quokka as scribe. ${filler}` : filler }], stop_reason: 'end_turn' })
+		]).flat();
+		writeFileSync(`${sessions}/${sessionId}.jsonl`, [...lines, JSON.stringify({ type: 'custom-title', customTitle: 'Witness survey', sessionId })].join('\n') + '\n');
+		await openProject(page, name);
+
+		const recent = page.getByRole('region', { name, exact: true }).getByRole('region', { name: 'Recent sessions' });
+		await recent.getByRole('combobox', { name: 'Search sessions' }).fill('quokka');
+		await expect(recent.getByRole('option')).toHaveText([/Witness survey/]);
+		const preview = recent.getByRole('region', { name: 'Session preview' });
+		await expect(preview.getByRole('region', { name: /^User message/ })).toHaveText([/Question 3/, /Question 4/, /Question 5/]);
+		await expect(preview.locator('.outlined')).toHaveText(/^The colophon names a quokka/);
+		const panel = page.getByRole('tabpanel').filter({ has: page.getByRole('textbox', { name: 'Composer' }) });
+		await expect(panel).toHaveCount(0);
+
+		await page.keyboard.press('Enter');
+		await expect(panel.getByText(/^The colophon names a quokka/)).toBeInViewport();
+		await expect(panel.getByText('Question 30')).not.toBeInViewport();
+		const marked = () => page.evaluate(() => [...(CSS.highlights.get('landing') ?? [])].map((range) => (range as Range).toString()));
+		await expect.poll(marked).toEqual(['quokka']);
+
+		const composer = panel.getByRole('textbox', { name: 'Composer' });
+		await expect(composer).toHaveAttribute('placeholder', 'Message to resume this Session');
+		await composer.fill('Greet the reader');
+		await panel.getByRole('button', { name: 'Send' }).click();
+		await expect(panel.getByText(/^Hello and welcome!/)).toBeVisible();
+		await expect.poll(marked).toEqual([]);
+	});
 });
