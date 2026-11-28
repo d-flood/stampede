@@ -750,9 +750,12 @@ impl Sessions {
             let (store, session, cwd) = (key.store.clone(), key.session_id.clone(), PathBuf::from(&snapshot.directory));
             snapshot.answered = tokio::task::spawn_blocking(move || claude::answered(&store, &session, &cwd)).await.map_err(io::Error::other)?;
         }
-        if snapshot.project != project { return Err(io::Error::other("Session is not in the catalogue.")); }
-        let config = self.config.borrow().clone();
         let projects = self.projects.list();
+        if snapshot.project != project && !projects.iter().any(|entry| entry.id == project && entry.path == snapshot.directory
+            && entry.worktree.as_ref().is_some_and(|worktree| worktree.parent == snapshot.project)) {
+            return Err(io::Error::other("Session is not in the catalogue."));
+        }
+        let config = self.config.borrow().clone();
         let (directory, ended, agent, store) = (snapshot.directory.clone(), snapshot.ended, key.agent, key.store.clone());
         let (rig, rigs, cwd, project, gone) = tokio::task::spawn_blocking(move || {
             let cwd = PathBuf::from(directory);

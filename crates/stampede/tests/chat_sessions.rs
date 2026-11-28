@@ -133,6 +133,39 @@ async fn both_agents_past_sessions_are_listed_newest_first() {
 
 }
 
+#[tokio::test]
+async fn a_session_listed_in_a_worktree_opens_in_that_worktree() {
+    let (server, mut socket, _) = start(RIGS, Vec::new()).await;
+    let repo = common::init(server.root.path(), "repo");
+    common::git(&repo, &["commit", "-q", "--allow-empty", "-m", "Initial commit"]);
+    control(&mut socket, json!({ "type": "project.open", "path": repo })).await;
+    let parent = next_control(&mut socket, "project.opened").await["projectId"].as_str().unwrap().to_owned();
+    let response = reqwest::Client::new().post(format!("http://127.0.0.1:{}/api/projects/{parent}/worktrees", server.port))
+        .header("content-type", "application/json").body(json!({ "branch": "history", "from": "HEAD" }).to_string()).send().await.unwrap().error_for_status().unwrap();
+    let worktree_id = serde_json::from_str::<Value>(&response.text().await.unwrap()).unwrap()["projectId"].clone();
+    let worktree = server.root.path().join("data/worktrees/_branches").join(&parent).join("history");
+    let slug: String = worktree.to_str().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' }).collect();
+    let directory = sessions(&server).parent().unwrap().join(slug);
+    fs::create_dir_all(&directory).unwrap();
+    let session = "b811825f-bf23-4b09-820b-f7e01fdbcbae";
+    let transcript = fs::read_to_string(sessions(&server).join(format!("{COLOR}.jsonl"))).unwrap()
+        .replace(server.root.path().join("home").to_str().unwrap(), worktree.to_str().unwrap()).replace(COLOR, session);
+    fs::write(directory.join(format!("{session}.jsonl")), transcript).unwrap();
+    let rows = list(&mut socket, &worktree_id, |rows| rows.len() == 1).await;
+    assert_eq!(rows[0]["project"]["id"], worktree_id);
+    control(&mut socket, json!({ "type": "chat.open", "projectId": worktree_id, "key": rows[0]["key"] })).await;
+    let opened = timeout(Duration::from_secs(10), async {
+        loop {
+            let message = next(&mut socket).await;
+            if matches!(message["type"].as_str(), Some("chat.created" | "chat.open.error")) { break message; }
+        }
+    }).await.unwrap();
+    assert_eq!(opened["type"], "chat.created", "{opened}");
+    let chat = &opened["chat"];
+    assert_eq!((&chat["projectId"], &chat["cwd"], &chat["dormant"]), (&worktree_id, &json!(worktree), &json!(true)));
+    close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
+}
+
 async fn search(socket: &mut Socket, project_id: &Value, query: &str, expected: impl Fn(&[Value]) -> bool) -> Value {
     let id = uuid::Uuid::new_v4().to_string();
     control(socket, json!({ "type": "sessions.search", "searchId": id, "projectId": project_id, "query": query })).await;
