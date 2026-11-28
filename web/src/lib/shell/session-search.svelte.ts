@@ -1,3 +1,4 @@
+import { agentNames } from '#lib/config.svelte.ts';
 import type { Coverage, Device, FoundSession, ServerMessage, Session } from '#lib/device.svelte.ts';
 import fuzzysort from 'fuzzysort';
 import { onMount } from 'svelte';
@@ -16,6 +17,14 @@ export function projectName(session: Session, labels?: Map<string, string>): str
 	return labels?.get(session.project.id) ?? session.project.path.split('/').filter(Boolean).pop() ?? session.project.path;
 }
 
+/** Names the Agents whose Sessions the Host couldn't list or index. */
+export function outOfDate({ stale }: Coverage): string | undefined {
+	return stale.length ? `${new Intl.ListFormat('en').format(stale.map((agent) => agentNames[agent]))} Sessions may be out of date` : undefined;
+}
+
+/** Each Device's finders that have searched, least recent first; the Host runs only a Device's newest search. */
+const senders = new Map<Device, SessionSearch[]>();
+
 /** The Host's results for the latest query a finder typed. Call during component init. */
 export class SessionSearch {
 	found = $state.raw<FoundSession[]>([]);
@@ -23,21 +32,23 @@ export class SessionSearch {
 	/** Whether the latest query still awaits its first reply. */
 	pending = $state(false);
 	#target: () => Searching | undefined;
+	#onfound: (() => void) | undefined;
 	#query = '';
 	#current: string | undefined;
 	#timer: ReturnType<typeof setTimeout> | undefined;
-	#sent = false;
+	#sentTo: Searching | undefined;
 
-	constructor(target: () => Searching | undefined) {
+	/** `onfound` runs when a new query's first results arrive. */
+	constructor(target: () => Searching | undefined, onfound?: () => void) {
 		this.#target = target;
+		this.#onfound = onfound;
 		onMount(() => {
 			const device = target()?.device;
 			const unlisten = device?.listen({ message: (message) => this.#message(message) });
 			return () => {
 				clearTimeout(this.#timer);
 				unlisten?.();
-				const target = this.#target();
-				if (this.#sent && target) target.device.send({ type: 'sessions.search', searchId: crypto.randomUUID(), projectId: target.projectId, query: '' });
+				this.#release();
 			};
 		});
 	}
@@ -63,8 +74,22 @@ export class SessionSearch {
 		const target = this.#target();
 		if (!this.#query || !target) return;
 		this.#current = crypto.randomUUID();
-		this.#sent = true;
+		this.#sentTo = target;
+		senders.set(target.device, [...(senders.get(target.device) ?? []).filter((search) => search !== this), this]);
 		target.device.send({ type: 'sessions.search', searchId: this.#current, projectId: target.projectId, query: this.#query });
+	}
+
+	/** Hands the Device's search back to the newest other finder still holding a query, or stops it. */
+	#release() {
+		if (!this.#sentTo) return;
+		const { device, projectId } = this.#sentTo;
+		const sent = senders.get(device) ?? [];
+		const others = sent.filter((search) => search !== this);
+		senders.set(device, others);
+		if (sent.at(-1) !== this) return;
+		const next = others.findLast((search) => search.#query);
+		if (next) next.#run();
+		else device.send({ type: 'sessions.search', searchId: crypto.randomUUID(), projectId, query: '' });
 	}
 
 	#message(message: ServerMessage) {
@@ -72,7 +97,9 @@ export class SessionSearch {
 		if (message.type !== 'sessions.found' || message.searchId !== this.#current) return;
 		this.found = message.results;
 		this.coverage = message.coverage;
+		if (!this.pending) return;
 		this.pending = false;
+		this.#onfound?.();
 	}
 }
 

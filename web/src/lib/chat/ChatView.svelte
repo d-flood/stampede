@@ -16,7 +16,7 @@
 	import Tray from '#lib/chat/Tray.svelte';
 	import { canvases as written } from '#lib/canvas.svelte.ts';
 	import Handoff from '#lib/chat/Handoff.svelte';
-	import { mark, matcher, says } from '#lib/chat/landing.ts';
+	import { landings, mark, matcher, says } from '#lib/chat/landing.ts';
 	import { listOptions, type Options } from '#lib/chat/options.ts';
 	import MoveToWorktree from '#lib/chat/MoveToWorktree.svelte';
 	import Prompt from '#lib/chat/Prompt.svelte';
@@ -73,14 +73,13 @@
 		transcript?.reveal(item, land);
 	}
 
-	let landed = false;
 	let unmark: (() => void) | undefined;
 	let pinMain: ((bottom: boolean) => void) | undefined;
 
 	$effect(() => {
 		const landing = chat.landing;
-		if (landed || !chat.dormant || landing?.item === undefined || !active || !attached || !items.length || !scroller) return;
-		landed = true;
+		if (!landings.has(chat.id) || !chat.dormant || landing?.item === undefined || !active || !attached || !items.length || !scroller) return;
+		landings.delete(chat.id);
 		untrack(() => land(landing.item!, landing.query));
 	});
 
@@ -152,8 +151,12 @@
 				: undefined
 	);
 
+	let continuing: { text: string; images: Image[] } | undefined;
+
 	function continueWith(text: string, images: Image[], index?: number) {
-		if (target) device.send({ type: 'chat.continue', chatId: chat.id, rig: target.name, index, text, images });
+		if (!target) return;
+		continuing = index === undefined ? { text, images } : undefined;
+		device.send({ type: 'chat.continue', chatId: chat.id, rig: target.name, index, text, images });
 	}
 	let listing = $state.raw<{ rig: string; options: Options }>();
 	const options = $derived(listing?.rig === chat.rig ? listing.options : undefined);
@@ -221,9 +224,16 @@
 			case 'chat.unqueued':
 				if (message.chatId === chat.id) composer?.restore(message.text, message.images);
 				break;
+			case 'chat.created':
+				if (message.chat.forkedFrom === chat.id) continuing = undefined;
+				break;
 			case 'chat.fork.error':
 			case 'chat.continue.error':
 				if (message.chatId !== chat.id) break;
+				if (message.type === 'chat.continue.error' && continuing) {
+					composer?.restore(continuing.text, continuing.images);
+					continuing = undefined;
+				}
 				failedTitle = message.type === 'chat.fork.error' ? 'Could not fork' : 'Could not continue';
 				forkError = message.error;
 				forkFailed = true;

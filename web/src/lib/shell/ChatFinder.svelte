@@ -3,13 +3,14 @@
 	import ChatItem from '#lib/shell/ChatItem.svelte';
 	import SessionPreview from '#lib/shell/SessionPreview.svelte';
 	import { RECENT } from '#lib/shell/new-tab.ts';
-	import { grouped, PANE_MIN, projectName, SessionSearch, sessionKey, type Searching } from '#lib/shell/session-search.svelte.ts';
+	import { grouped, outOfDate, PANE_MIN, projectName, SessionSearch, sessionKey, type Searching } from '#lib/shell/session-search.svelte.ts';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Loading from '#lib/ui/Loading.svelte';
 	import type { Status } from '#lib/ui/TabMarks.svelte';
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
 	import fuzzysort from 'fuzzysort';
+	import { tick } from 'svelte';
 
 	type Props = {
 		label: string;
@@ -37,7 +38,14 @@
 	let { label, sessions, reading, search, labels, selectable, chats, status, waiting, flush = false, steady = false, onchat, onsession }: Props = $props();
 
 	let query = $state('');
-	const host = new SessionSearch(() => search);
+	let command: Command.Root | undefined;
+	const host = new SessionSearch(
+		() => search,
+		async () => {
+			await tick();
+			command?.updateSelectedToIndex(0);
+		}
+	);
 	const found = $derived(query ? grouped(host.found, sessions, query, search.focus) : undefined);
 	let height = $state(0);
 	const open = $derived(find(chats ?? [], (chat) => chat.title ?? chat.rig));
@@ -95,7 +103,7 @@
 {/snippet}
 
 <div class="finder" class:flush bind:clientWidth={width}>
-	<Command.Root {label} shouldFilter={false} loop bind:value={highlighted}>
+	<Command.Root bind:this={command} {label} shouldFilter={false} loop bind:value={highlighted}>
 		<Command.Input value={query} placeholder={label} autocomplete="off" spellcheck={false} enterkeyhint="go">
 			{#snippet child({ props })}
 				<TextField {...props} bind:value={() => query, (value) => ((query = value), host.set(value))} search bare={flush} />
@@ -156,8 +164,14 @@
 			</Command.List>
 			{#if paned}<div class="pane"><SessionPreview device={search.device} session={previewed} /></div>{/if}
 		</div>
-		{#if query && host.indexing && host.coverage}
-			<div class="coverage"><Loading label="Indexing {host.coverage.indexed.toLocaleString()} of {host.coverage.total.toLocaleString()} Sessions" /></div>
+		{#if query && host.coverage}
+			{@const stale = outOfDate(host.coverage)}
+			{#if host.indexing || stale}
+				<div class="coverage">
+					{#if host.indexing}<Loading label="Indexing {host.coverage.indexed.toLocaleString()} of {host.coverage.total.toLocaleString()} Sessions" />{/if}
+					{#if stale}<p>{stale}</p>{/if}
+				</div>
+			{/if}
 		{/if}
 	</Command.Root>
 </div>
@@ -186,7 +200,15 @@
 	}
 
 	.coverage {
+		display: grid;
+		gap: var(--space-1);
 		margin-top: var(--space-2);
+	}
+
+	.coverage p {
+		margin: 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
 	}
 
 	.flush .coverage {

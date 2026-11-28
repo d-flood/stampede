@@ -6,6 +6,7 @@
 	import { clock, same, subagents } from '#lib/chat/agents.ts';
 	import Html from '#lib/chat/Html.svelte';
 	import { setHtmlPreview, type HtmlItem } from '#lib/chat/html.ts';
+	import { landings } from '#lib/chat/landing.ts';
 	import MessageNav from '#lib/chat/MessageNav.svelte';
 	import type ChatViewInstance from '#lib/chat/ChatView.svelte';
 	import { hostName, rigs, runsOn, type Rig } from '#lib/config.svelte.ts';
@@ -461,7 +462,10 @@
 				}
 				break;
 			case 'chat.created': {
-				if (message.opened) focus(message.chat.projectId);
+				if (message.opened) {
+					landings.add(message.chat.id);
+					focus(message.chat.projectId);
+				}
 				chats[message.chat.projectId] ??= [];
 				const owned = chats[message.chat.projectId];
 				if (!owned.some((chat) => chat.id === message.chat.id)) owned.push(message.chat);
@@ -781,7 +785,8 @@
 	}
 
 	function searching(projectId: string): Searching {
-		return { device: devices.of(projectId), projectId, focus: projects.find((project) => project.id === projectId)?.worktree?.parent ?? projectId };
+		const project = projects.find((project) => project.id === projectId);
+		return { device: devices.of(projectId), projectId, focus: project?.host ? projectId : project?.worktree?.parent ?? projectId };
 	}
 
 	/** Whether a Session a finder found can be resumed: a Cloud Host can't reopen a closed Project from here. */

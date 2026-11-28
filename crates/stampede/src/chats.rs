@@ -1137,6 +1137,14 @@ impl Chats {
         self.get(id).map(|entry| entry.chat.lock().unwrap().clone())
     }
 
+    /// A Dormant Chat and the transcript it shows.
+    pub(crate) fn dormant(&self, id: &str) -> Option<(Chat, Vec<Item>)> {
+        let entry = self.get(id)?;
+        let transcript = entry.transcript.lock().unwrap();
+        let chat = entry.chat.lock().unwrap();
+        chat.dormant.then(|| (chat.clone(), transcript.items.clone()))
+    }
+
     pub fn list(&self) -> Vec<Chat> {
         self.chats.lock().unwrap().iter().map(|entry| entry.chat.lock().unwrap().clone()).filter(|chat| chat.parent.is_none()).collect()
     }
@@ -1279,7 +1287,7 @@ impl Chats {
     }
 
     /// Opens a Dormant Chat on a past Session, showing `items` without starting its Agent.
-    pub(crate) fn open_dormant(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, rigs: Vec<String>, key: &sessions::SessionKey, snapshot: sessions::Snapshot, landing: Option<Landing>, gone: bool) -> io::Result<Chat> {
+    pub(crate) fn open_dormant(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, rigs: Vec<String>, key: &sessions::SessionKey, snapshot: sessions::Snapshot, landing: Option<Landing>, gone: bool, sessions: &Arc<sessions::Sessions>) -> io::Result<Chat> {
         if self.session_keys().contains(key) {
             return Err(io::Error::other("Another Chat is still running that conversation."));
         }
@@ -1287,7 +1295,8 @@ impl Chats {
         let chat = Chat { title, dormant: true, rigs, ended: snapshot.ended, gone, answered_questions: snapshot.answered, landing, ..Chat::new(project_id, cwd, rig, key.store.clone(), Some(&key.session_id))? };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
-        self.adopt_dormant(chat.clone(), snapshot.items);
+        let entry = self.adopt_dormant(chat.clone(), snapshot.items);
+        if !snapshot.current { self.fill(entry, key.clone(), Arc::clone(sessions), true); }
         let _ = self.changed.send(Change::Chats(chat.project_id.clone()));
         Ok(chat)
     }
@@ -1308,15 +1317,16 @@ impl Chats {
         entry
     }
 
-    /// Fills a restored Dormant Chat's transcript once its Session's snapshot is indexed.
-    fn fill(self: &Arc<Self>, entry: Arc<Entry>, key: sessions::SessionKey, sessions: Arc<sessions::Sessions>) {
+    /// Fills a Dormant Chat's transcript once its Session's snapshot is indexed or, with `current`, up to date.
+    fn fill(self: &Arc<Self>, entry: Arc<Entry>, key: sessions::SessionKey, sessions: Arc<sessions::Sessions>, current: bool) {
         let chats = Arc::clone(self);
         let id = entry.chat.lock().unwrap().id.clone();
         tokio::spawn(async move {
             let mut updated = sessions.subscribe();
+            updated.mark_changed();
             loop {
                 if updated.changed().await.is_err() || !chats.get(&id).is_some_and(|other| Arc::ptr_eq(&other, &entry)) { return; }
-                let Some(items) = sessions.stored(&key).await else { continue };
+                let Some(items) = sessions.stored(&key, current).await else { continue };
                 let mut transcript = entry.transcript.lock().unwrap();
                 if transcript.starting || !entry.chat.lock().unwrap().dormant { return; }
                 transcript.items = items;
@@ -1548,10 +1558,10 @@ impl Chats {
                     let (rigs, agent, store, current) = (rigs.to_vec(), chat.agent, chat.session_store.clone(), chat.rig.clone());
                     chat.rigs = tokio::task::spawn_blocking(move || sessions::eligible_rigs(&rigs, agent, &store, &current)).await.map_err(io::Error::other)?;
                 }
-                let items = sessions.stored(&key).await;
+                let items = sessions.stored(&key, false).await;
                 let filled = items.is_some();
                 let entry = self.adopt_dormant(chat, items.unwrap_or_default());
-                if !filled { self.fill(entry, key, Arc::clone(sessions)); }
+                if !filled { self.fill(entry, key, Arc::clone(sessions), false); }
                 continue;
             }
             let mut env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
@@ -1641,7 +1651,7 @@ impl Chats {
         Ok(())
     }
 
-    pub async fn relocate(self: &Arc<Self>, source: &Chat, project_id: &str, cwd: &Path, note: &str, rigs: &[Rig]) -> io::Result<Chat> {
+    pub async fn relocate(self: &Arc<Self>, source: &Chat, project_id: &str, cwd: &Path, note: &str, rigs: &[Rig], continuation: Option<String>) -> io::Result<Chat> {
         let draft = match &source.draft {
             Some(draft) => format!("{note}\n\n{draft}"),
             None => note.to_owned(),
@@ -1656,13 +1666,22 @@ impl Chats {
             draft: Some(draft),
             ..source.clone()
         };
-        self.reopen(chat, rigs).await
+        self.reopen(chat, rigs, continuation).await
     }
 
-    pub async fn reopen(self: &Arc<Self>, chat: Chat, rigs: &[Rig]) -> io::Result<Chat> {
+    /// Reopens a stopped Chat, rewriting into its scratch directory the context its first message has yet to name.
+    pub async fn reopen(self: &Arc<Self>, mut chat: Chat, rigs: &[Rig], continuation: Option<String>) -> io::Result<Chat> {
         let mut env = rigs.iter().find(|rig| rig.name == chat.rig).map(|rig| rig.env.clone()).unwrap_or_default();
         sessions::apply_store(chat.agent, &chat.session_store, &mut env);
         let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, &chat.cwd, &env).await?;
+        chat.continuation = match continuation {
+            Some(context) => {
+                let path = storage.scratch().join("continued.md");
+                fs::write(&path, context)?;
+                Some(path)
+            }
+            None => None,
+        };
         self.open(chat, storage).await
     }
 
@@ -2575,6 +2594,7 @@ impl Chat {
     }
 
     pub fn session_key(&self) -> Option<sessions::SessionKey> {
+        if self.forking { return None; }
         Some(sessions::SessionKey { agent: self.agent, store: self.session_store.clone(), session_id: self.agent_session.clone()? })
     }
 

@@ -1,4 +1,8 @@
 import type { Item } from '#lib/device.svelte.ts';
+import { SvelteSet } from 'svelte/reactivity';
+
+/** The Chats this Device just opened, which land on their search match once shown. */
+export const landings = new SvelteSet<string>();
 
 const word = '[\\p{L}\\p{N}]';
 const gap = '[^\\p{L}\\p{N}]+';

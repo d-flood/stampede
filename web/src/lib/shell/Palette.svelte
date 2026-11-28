@@ -14,7 +14,7 @@
 	import { split } from '#lib/git.ts';
 	import ChatItem from '#lib/shell/ChatItem.svelte';
 	import SessionPreview from '#lib/shell/SessionPreview.svelte';
-	import { grouped, PANE_MIN, projectName, SessionSearch, sessionKey, type Searching } from '#lib/shell/session-search.svelte.ts';
+	import { grouped, outOfDate, PANE_MIN, projectName, SessionSearch, sessionKey, type Searching } from '#lib/shell/session-search.svelte.ts';
 	import FileIcon from '#lib/ui/FileIcon.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
@@ -24,6 +24,7 @@
 	import TextField from '#lib/ui/TextField.svelte';
 	import { Command } from 'bits-ui';
 	import fuzzysort, { type Key } from 'fuzzysort';
+	import { tick } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import CommandIcon from '~icons/ph/command';
 	import FolderSimple from '~icons/ph/folder-simple';
@@ -60,13 +61,20 @@
 	let { scope, projects, labels, focused, actions = [], chats = [], status, sessions = {}, loadingSessions = false, search, coverage, selectable, onproject, onrig, onfile, onchat, onsession, wide = $bindable(false) }: Props = $props();
 
 	let query = $state('');
-	const host = new SessionSearch(() => (scope === 'all' || scope === 'sessions' ? search : undefined));
+	let command: Command.Root | undefined;
+	const host = new SessionSearch(
+		() => (scope === 'all' || scope === 'sessions' ? search : undefined),
+		async () => {
+			await tick();
+			command?.updateSelectedToIndex(0);
+		}
+	);
 	let more = $state(false);
 	const brokenIcons = new SvelteSet<string>();
 
 	const all = $derived(scope === 'all');
 	const open = $derived(all ? ranked(chats.toSorted((a, b) => b.created - a.created), (chat) => chat.title ?? chat.rig, 5) : []);
-	const found = $derived(query && search && (all || scope === 'sessions') ? grouped(host.found, projects.flatMap((project) => sessions[project.id] ?? []), query, search.focus) : undefined);
+	const found = $derived(query && search && (all || scope === 'sessions') ? grouped(host.found, projects.filter((project) => project.host === focused?.host).flatMap((project) => sessions[project.id] ?? []), query, search.focus) : undefined);
 	let width = $state(0);
 	let highlighted = $state('');
 	const covered = $derived(found ? host.coverage : coverage);
@@ -203,7 +211,7 @@
 {/snippet}
 
 <div class="palette" bind:clientWidth={width}>
-	<Command.Root label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[scope]} shouldFilter={false} loop bind:value={highlighted}>
+	<Command.Root bind:this={command} label={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[scope]} shouldFilter={false} loop bind:value={highlighted}>
 		<Command.Input
 			value={query}
 			placeholder={{ all: 'Find a Chat, Project, Rig or file', files: 'Find a file', sessions: 'Find a session', tabs: 'Choose what to open' }[scope]}
@@ -279,10 +287,19 @@
 			</Command.List>
 			{#if paned && search}<div class="pane"><SessionPreview device={search.device} session={previewed} /></div>{/if}
 		</div>
-		{#if found && host.indexing && host.coverage}
-			<div class="coverage"><Loading label="Indexing {host.coverage.indexed.toLocaleString()} of {host.coverage.total.toLocaleString()} Sessions" /></div>
-		{:else if scope === 'sessions' && covered && covered.indexed === covered.total}
-			<p class="coverage totals">{covered.ended.toLocaleString()} Ended {covered.ended === 1 ? 'Session' : 'Sessions'} · {formatSize(covered.bytes.index + covered.bytes.archive)}</p>
+		{#if covered && (found || scope === 'sessions')}
+			{@const indexing = covered.indexed < covered.total}
+			{@const stale = outOfDate(covered)}
+			{#if indexing || stale || scope === 'sessions'}
+				<div class="coverage">
+					{#if indexing}
+						<Loading label="Indexing {covered.indexed.toLocaleString()} of {covered.total.toLocaleString()} Sessions" />
+					{:else if scope === 'sessions'}
+						<p>{covered.ended.toLocaleString()} Ended {covered.ended === 1 ? 'Session' : 'Sessions'} · {formatSize(covered.bytes.index + covered.bytes.archive)}</p>
+					{/if}
+					{#if stale}<p>{stale}</p>{/if}
+				</div>
+			{/if}
 		{/if}
 	</Command.Root>
 </div>
@@ -343,11 +360,13 @@
 	}
 
 	.coverage {
+		display: grid;
+		gap: var(--space-1);
 		padding: var(--space-2) var(--bare-inset);
 		border-top: var(--border-width) solid var(--border);
 	}
 
-	.totals {
+	.coverage p {
 		margin: 0;
 		color: var(--muted-fg);
 		font-size: var(--font-size-sm);

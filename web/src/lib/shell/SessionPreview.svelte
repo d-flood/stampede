@@ -3,9 +3,10 @@
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import type { Device, FoundSession, Item, ServerMessage, Session } from '#lib/device.svelte.ts';
 	import { hostOf } from '#lib/host.ts';
+	import { sessionKey } from '#lib/shell/session-search.svelte.ts';
 	import ListLabel from '#lib/ui/ListLabel.svelte';
 	import Shortcut from '#lib/ui/Shortcut.svelte';
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 
 	/** Shows the turn that matched the highlighted Session, read-only, without starting its Agent. */
 	let { device, session }: { device: Device; session?: Session | FoundSession } = $props();
@@ -16,6 +17,7 @@
 	let transcript = $state<Transcript>();
 	const Logo = $derived(shown && logos[shown.session.key.agent]);
 	const inert = () => {};
+	const key = $derived(session && `${sessionKey(session)}:${'item' in session ? session.item : ''}`);
 
 	function request(target: Session | FoundSession) {
 		latest = { id: crypto.randomUUID(), session: target };
@@ -23,11 +25,11 @@
 	}
 
 	$effect(() => {
-		const target = session;
-		if (!target) {
+		if (!key) {
 			shown = latest = undefined;
 			return;
 		}
+		const target = untrack(() => session)!;
 		const timer = setTimeout(() => request(target), 120);
 		return () => clearTimeout(timer);
 	});

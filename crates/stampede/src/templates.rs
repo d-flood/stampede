@@ -102,6 +102,7 @@ pub fn expand<'a>(text: &'a str, data_dir: &Path) -> Cow<'a, str> {
 /// The Template a sent text was expanded from, and the text as it was typed.
 pub fn recognize(text: &str, data_dir: &Path) -> Option<(&'static str, String)> {
     if let Some(typed) = continuation(text) {
+        let typed = typed.map(|typed| recognize(typed, data_dir).map_or_else(|| typed.to_owned(), |(_, typed)| typed));
         return Some(("continued", typed.map_or_else(|| "/continued".to_owned(), |typed| format!("/continued {typed}"))));
     }
     TEMPLATES.iter().chain([&TICKETS, &TICKET, &RESOLVER, &REVIEWER, &REMEDIATOR, &HANDOFF]).find_map(|template| {

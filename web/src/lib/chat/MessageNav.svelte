@@ -4,6 +4,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import IconButton from '#lib/ui/IconButton.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
+	import { untrack } from 'svelte';
 	import { on } from 'svelte/events';
 	import CaretDown from '~icons/ph/caret-down';
 	import CaretUp from '~icons/ph/caret-up';
@@ -59,8 +60,10 @@
 			measure();
 			update();
 		});
-		measure();
-		update();
+		untrack(() => {
+			measure();
+			update();
+		});
 		return () => { observer.disconnect(); off(); away = false; };
 	}
 

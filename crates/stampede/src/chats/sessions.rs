@@ -15,9 +15,9 @@ use tokio::sync::{broadcast, oneshot, watch};
 use super::{Chat, Chats, Item, Landing, Lifecycle, Status, antigravity, claude, codex, copilot};
 use crate::{config::{Agent, Config, Rig}, epics::Epics, projects::{Project, Projects}};
 
-const VERSION: i32 = 2;
+const VERSION: i32 = 3;
 const SNAPSHOT_VERSION: i32 = 1;
-const ARCHIVE_VERSION: i32 = 2;
+const ARCHIVE_VERSION: i32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "camelCase")]
@@ -53,7 +53,7 @@ pub struct Snapshot {
     pub answered: Vec<super::AnsweredQuestions>,
     directory: String,
     project: String,
-    current: bool,
+    pub(super) current: bool,
     /// Each item's index in the original snapshot, when its message rows stand in for it.
     positions: Option<Vec<usize>>,
 }
@@ -133,6 +133,7 @@ type Job = Box<dyn FnOnce(&mut Connection, &mut Connection) + Send>;
 
 struct Flight {
     full: bool,
+    listed: bool,
     projects: crate::projects::List,
     pending_full: Option<Rig>,
     pending: BTreeMap<String, Rig>,
@@ -177,7 +178,7 @@ fn session_schema(archive: bool) -> String {
                 revision TEXT NOT NULL, snapshot_revision TEXT, {ended} UNIQUE (agent, store, session_id)
             );
             CREATE INDEX sessions_project ON sessions(project, updated_at);
-            CREATE VIRTUAL TABLE titles_fts USING fts5(title, content='sessions', content_rowid='id', tokenize='unicode61 remove_diacritics 2');
+            CREATE VIRTUAL TABLE titles_fts USING fts5(title, content='sessions', content_rowid='id', tokenize='unicode61 remove_diacritics 2', prefix='2 3');
             CREATE TRIGGER titles_insert AFTER INSERT ON sessions BEGIN
                 INSERT INTO titles_fts(rowid, title) VALUES (new.id, new.title);
             END;
@@ -200,7 +201,7 @@ const SNAPSHOT_SCHEMA: &str = "
         item INTEGER NOT NULL, role TEXT NOT NULL CHECK (role IN ('user', 'agent')), text TEXT NOT NULL
     );
     CREATE INDEX messages_session ON messages(session);
-    CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='id', tokenize='unicode61 remove_diacritics 2');
+    CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='id', tokenize='unicode61 remove_diacritics 2', prefix='2 3');
     CREATE TRIGGER messages_insert AFTER INSERT ON messages BEGIN
         INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
     END;
@@ -221,24 +222,38 @@ fn initialize(dir: &Path) -> io::Result<(Connection, Connection)> {
     if archive_version == 0 {
         archive.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, path TEXT NOT NULL, parent TEXT, common_dir TEXT); PRAGMA user_version = 1; COMMIT;").map_err(io::Error::other)?;
     }
-    if archive_version < ARCHIVE_VERSION {
+    if archive_version < 2 {
         archive.execute_batch(&format!("BEGIN; {}; {}; PRAGMA user_version = {ARCHIVE_VERSION}; COMMIT;", session_schema(true), SNAPSHOT_SCHEMA)).map_err(io::Error::other)?;
+    } else if archive_version == 2 {
+        archive.execute_batch("BEGIN;
+            DROP TABLE titles_fts;
+            DROP TABLE messages_fts;
+            CREATE VIRTUAL TABLE titles_fts USING fts5(title, content='sessions', content_rowid='id', tokenize='unicode61 remove_diacritics 2', prefix='2 3');
+            CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='id', tokenize='unicode61 remove_diacritics 2', prefix='2 3');
+            INSERT INTO titles_fts(titles_fts) VALUES('rebuild');
+            INSERT INTO messages_fts(messages_fts) VALUES('rebuild');
+            PRAGMA user_version = 3;
+            COMMIT;").map_err(io::Error::other)?;
     }
     let path = dir.join("index.sqlite");
-    let index = if path.exists() { Some(connection(&path)?) } else { None };
-    let index = if index.as_ref().map(version).transpose()? != Some(VERSION) {
-        drop(index);
-        for name in ["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"] {
-            match fs::remove_file(dir.join(name)) {
-                Ok(()) => (),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-                Err(error) => return Err(error),
+    let existing = if path.exists() { Some(connection(&path).and_then(|db| Ok((version(&db)?, db)))) } else { None };
+    let index = match existing {
+        Some(Ok((VERSION, index))) => index,
+        stale => {
+            if let Some(Err(error)) = &stale { eprintln!("cannot open the Session index; rebuilding it: {error}"); }
+            drop(stale);
+            for name in ["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"] {
+                match fs::remove_file(dir.join(name)) {
+                    Ok(()) => (),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+                    Err(error) => return Err(error),
+                }
             }
+            let db = connection(&path)?;
+            db.execute_batch(&format!("BEGIN; {}; {}; PRAGMA user_version = {VERSION}; COMMIT;", session_schema(false), SNAPSHOT_SCHEMA)).map_err(io::Error::other)?;
+            db
         }
-        let db = connection(&path)?;
-        db.execute_batch(&format!("BEGIN; {}; {}; PRAGMA user_version = {VERSION}; COMMIT;", session_schema(false), SNAPSHOT_SCHEMA)).map_err(io::Error::other)?;
-        db
-    } else { index.unwrap() };
+    };
     index.pragma_update(None, "journal_mode", "WAL").map_err(io::Error::other)?;
     Ok((index, archive))
 }
@@ -284,11 +299,12 @@ fn canonical(path: &Path) -> PathBuf {
     path.to_owned()
 }
 
-pub(super) fn apply_store(agent: Agent, store: &str, env: &mut BTreeMap<String, String>) {
-    if store.is_empty() { return; }
+pub(super) fn apply_store(agent: Agent, path: &str, env: &mut BTreeMap<String, String>) {
+    // Claude Code reads ~/.claude.json only when CLAUDE_CONFIG_DIR is unset.
+    if path.is_empty() || store(agent, env) == path { return; }
     if let Some(variable) = store_variable(agent) {
-        env.insert(variable.to_owned(), store.to_owned());
-    } else if let Some(home) = Path::new(store).parent().and_then(Path::parent).filter(|home| home.join(".gemini/antigravity-cli") == Path::new(store)) {
+        env.insert(variable.to_owned(), path.to_owned());
+    } else if let Some(home) = Path::new(path).parent().and_then(Path::parent).filter(|home| home.join(".gemini/antigravity-cli") == Path::new(path)) {
         env.insert("HOME".to_owned(), home.to_string_lossy().into_owned());
     }
 }
@@ -345,7 +361,7 @@ impl Sessions {
                         let chat = match event {
                             Ok(Lifecycle::Session(id, _)) | Ok(Lifecycle::Status(id, Status::Done)) => chats.session_chat(&id),
                             Ok(Lifecycle::Ended(chat)) => Some(*chat),
-                            Ok(Lifecycle::Missing(_, key)) => { service.archive_missing(key); None }
+                            Ok(Lifecycle::Missing(id, key)) => { service.archive_missing(key, chats.dormant(&id)); None }
                             Ok(_) => None,
                             Err(broadcast::error::RecvError::Lagged(_)) => { service.refresh(); service.notify(); None },
                             Err(broadcast::error::RecvError::Closed) => break,
@@ -382,9 +398,10 @@ impl Sessions {
         });
     }
 
-    /// Moves a Session whose Agent has no history of it into the archive.
-    fn archive_missing(self: &Arc<Self>, key: SessionKey) {
+    /// Moves a Session whose Agent has no history of it into the archive, from its Dormant Chat when the index no longer lists it.
+    fn archive_missing(self: &Arc<Self>, key: SessionKey, dormant: Option<(Chat, Vec<Item>)>) {
         let service = self.clone();
+        let (data, epics) = (self.dir.parent().unwrap().to_owned(), self.epics.clone());
         tokio::spawn(async move {
             let archived = service.write(move |index, archive| {
                 let store = (key.agent, key.store.clone());
@@ -392,7 +409,11 @@ impl Sessions {
                     params![key.agent.name(), key.store, key.session_id], |row| Ok(Row {
                         session_id: row.get(0)?, directory: row.get(1)?, project: row.get(2)?, title: row.get(3)?, updated_at: row.get(4)?, revision: row.get(5)?,
                     })).optional().map_err(io::Error::other)?;
-                let Some(row) = row else { return Ok(false) };
+                let Some(row) = row else {
+                    let Some((chat, items)) = dormant else { return Ok(false) };
+                    archive_dormant(archive, &key, &chat, &items, &data, &epics)?;
+                    return Ok(true);
+                };
                 let transaction = index.transaction().map_err(io::Error::other)?;
                 archive_session(&transaction, archive, &store, &row, Ended::Missing)?;
                 transaction.execute("DELETE FROM sessions WHERE agent=? AND store=? AND session_id=?", params![key.agent.name(), key.store, key.session_id]).map_err(io::Error::other)?;
@@ -412,8 +433,9 @@ impl Sessions {
         let archived = key.clone();
         let deleted = self.write(move |_, archive| archive.execute("DELETE FROM sessions WHERE agent=? AND store=? AND session_id=?",
             params![archived.agent.name(), archived.store, archived.session_id]).map_err(io::Error::other)).await?;
-        if deleted == 0 { return Err(io::Error::other("That Session is not an Ended Session.")); }
-        if let Some(chat) = chats.driving(&key).filter(|chat| chat.dormant) { chats.close(&chat.id); }
+        let dormant = chats.driving(&key).filter(|chat| chat.dormant);
+        if deleted == 0 && !dormant.as_ref().is_some_and(|chat| chat.ended.is_some()) { return Err(io::Error::other("That Session is not an Ended Session.")); }
+        if let Some(chat) = dormant { chats.close(&chat.id); }
         self.notify();
         Ok(())
     }
@@ -477,12 +499,12 @@ impl Sessions {
             if let Some(flight) = running.get_mut(&key) {
                 if let Some(id) = target {
                     flight.pending.insert(id, rig);
-                } else if final_refresh || !flight.full || key.0 == Agent::ClaudeCode || flight.projects != self.projects.list() {
+                } else if final_refresh || !flight.full || flight.listed || key.0 == Agent::ClaudeCode || flight.projects != self.projects.list() {
                     flight.pending_full = Some(rig);
                 }
                 return None;
             }
-            running.insert(key.clone(), Flight { full: target.is_none(), projects: self.projects.list(), pending_full: None, pending: BTreeMap::new() });
+            running.insert(key.clone(), Flight { full: target.is_none(), listed: false, projects: self.projects.list(), pending_full: None, pending: BTreeMap::new() });
         }
         let service = self.clone();
         Some(tokio::spawn(async move {
@@ -507,6 +529,7 @@ impl Sessions {
                     let flight = running.get_mut(&key).unwrap();
                     if let Some(rig) = flight.pending_full.take() {
                         flight.full = true;
+                        flight.listed = false;
                         flight.projects = service.projects.list();
                         Some((rig, None))
                     } else if let Some((id, rig)) = flight.pending.pop_first() {
@@ -552,7 +575,7 @@ impl Sessions {
         }).await.map_err(io::Error::other)??;
         let scope = key.clone();
         let filter = target.clone();
-        let changed = self.write(move |index, archive| replace(index, archive, &scope, rows, None, filter.as_deref())).await?;
+        let changed = self.write(move |index, archive| replace(index, archive, &scope, rows, filter.as_deref())).await?;
         if changed { self.notify(); }
         self.index_snapshots(&key, target.as_deref()).await?;
         Ok(changed)
@@ -588,7 +611,8 @@ impl Sessions {
             }).collect();
             let scope = key.clone();
             let filter = target.map(str::to_owned);
-            let changed = self.write(move |index, archive| replace(index, archive, &scope, rows, None, filter.as_deref())).await?;
+            let changed = self.write(move |index, archive| replace(index, archive, &scope, rows, filter.as_deref())).await?;
+            if let Some(flight) = self.running.lock().unwrap().get_mut(&key) { flight.listed = true; }
             if changed { self.notify(); }
             let mut failure = None;
             for (id, session, cwd, revision) in self.snapshot_rows(&key, target).await? {
@@ -645,7 +669,8 @@ impl Sessions {
             }
             let scope = key.clone();
             let filter = target.map(str::to_owned);
-            let changed = self.write(move |index, archive| replace(index, archive, &scope, rows, None, filter.as_deref())).await?;
+            let changed = self.write(move |index, archive| replace(index, archive, &scope, rows, filter.as_deref())).await?;
+            if let Some(flight) = self.running.lock().unwrap().get_mut(&key) { flight.listed = true; }
             if changed { self.notify(); }
             let mut failure = None;
             for (id, session, cwd, revision) in self.snapshot_rows(&key, target).await? {
@@ -678,8 +703,13 @@ impl Sessions {
             let mut sessions = Vec::new();
             if let Some(project) = open {
                 let index = read_connection(&dir.join("index.sqlite"))?;
-                let mut query = index.prepare("SELECT agent, store, session_id, title, updated_at FROM sessions WHERE project = ? ORDER BY updated_at DESC, id").map_err(io::Error::other)?;
-                let rows = query.query_map([&project.id], |row| {
+                let (owner, directory) = match &project.worktree {
+                    Some(worktree) => (&worktree.parent, Some(&project.path)),
+                    None => (&project.id, None),
+                };
+                let mut query = index.prepare("SELECT agent, store, session_id, title, updated_at FROM sessions
+                    WHERE project = ?1 AND (?2 IS NULL OR directory = ?2) ORDER BY updated_at DESC, id").map_err(io::Error::other)?;
+                let rows = query.query_map(params![owner, directory], |row| {
                     let agent_name: String = row.get(0)?;
                     let agent = Agent::ALL.into_iter().find(|agent| agent.name() == agent_name).ok_or(rusqlite::Error::InvalidQuery)?;
                     Ok(Session {
@@ -737,13 +767,18 @@ impl Sessions {
                 .ok_or_else(|| io::Error::other("The Project is not open."))?;
             Ok::<_, io::Error>((rig, rigs, cwd, project, gone))
         }).await.map_err(io::Error::other)??;
-        chats.open_dormant(&project.id, &cwd, &rig, rigs, &key, snapshot, landing, gone)
+        let landing = landing.map(|landing| match (&snapshot.positions, landing.item) {
+            (Some(positions), Some(item)) => Landing { item: positions.iter().position(|&at| at >= item), ..landing },
+            _ => landing,
+        });
+        chats.open_dormant(&project.id, &cwd, &rig, rigs, &key, snapshot, landing, gone, self)
     }
 
     /// The Session's snapshot, rebuilt first when it is missing or stale.
     async fn snapshot(self: &Arc<Self>, key: &SessionKey) -> io::Result<Snapshot> {
         let mut updated = self.subscribe();
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut built = key.agent != Agent::ClaudeCode;
         let mut refreshed = false;
         loop {
             updated.mark_unchanged();
@@ -753,6 +788,12 @@ impl Sessions {
             let store = (key.agent, key.store.clone());
             if snapshot.current || tokio::time::Instant::now() >= deadline || refreshed && !self.running.lock().unwrap().contains_key(&store) {
                 return Ok(snapshot);
+            }
+            if !built {
+                built = true;
+                // Replay is read-only and save_snapshot rechecks the revision, so racing the store's flight is safe.
+                if let Err(error) = self.index_snapshots(&store, Some(&key.session_id)).await { eprintln!("cannot snapshot Session {}: {error}", key.session_id); }
+                continue;
             }
             if !refreshed {
                 let config = self.config.borrow().clone();
@@ -767,11 +808,11 @@ impl Sessions {
         }
     }
 
-    /// The Session's items as already indexed or archived, without rebuilding them.
-    pub async fn stored(&self, key: &SessionKey) -> Option<Vec<Item>> {
+    /// The Session's items as already indexed or archived, without rebuilding them; with `current`, only once they are up to date.
+    pub async fn stored(&self, key: &SessionKey, current: bool) -> Option<Vec<Item>> {
         let (dir, key) = (self.dir.clone(), key.clone());
         match tokio::task::spawn_blocking(move || stored(&dir, &key)).await {
-            Ok(Ok(snapshot)) => snapshot.filter(|snapshot| !snapshot.items.is_empty() || snapshot.current).map(|snapshot| snapshot.items),
+            Ok(Ok(snapshot)) => snapshot.filter(|snapshot| snapshot.current || !current && !snapshot.items.is_empty()).map(|snapshot| snapshot.items),
             Ok(Err(error)) => { eprintln!("cannot read Session snapshot: {error}"); None }
             Err(error) => { eprintln!("cannot read Session snapshot: {error}"); None }
         }
@@ -965,7 +1006,12 @@ fn claude_rows(store: &str, known: &[KnownProject], data: &Path, epics: &Epics, 
             let Some(project) = attribute(&directory, known, data, epics) else { continue };
             let Some(title) = claude::catalogue_title(&path)? else { continue };
             let title = crate::templates::recognize(&title, data).map_or(title, |(_, typed)| typed);
-            if fingerprint(&fs::metadata(&path)?) != revision { return Err(io::Error::other("Session changed during listing")); }
+            if fingerprint(&fs::metadata(&path)?) != revision {
+                if let Some(old) = previous.get(id) && let Some(project) = attribute(&old.directory, known, data, epics) {
+                    rows.push(Row { project, ..old.clone() });
+                }
+                continue;
+            }
             let updated_at = metadata.modified()?.duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_millis() as i64;
             rows.push(Row { session_id: id.to_owned(), directory, project, title: title.chars().take(200).collect(), updated_at, revision });
         }
@@ -977,27 +1023,35 @@ fn fingerprint(metadata: &fs::Metadata) -> String {
     format!("{}:{}:{}:{}:{}:{}", metadata.len(), metadata.mtime(), metadata.mtime_nsec(), metadata.ino(), metadata.ctime(), metadata.ctime_nsec())
 }
 
-fn replace(index: &mut Connection, archive: &mut Connection, key: &Store, rows: Vec<Row>, directories: Option<HashSet<String>>, target: Option<&str>) -> io::Result<bool> {
+fn replace(index: &mut Connection, archive: &mut Connection, key: &Store, rows: Vec<Row>, target: Option<&str>) -> io::Result<bool> {
     let previous = current(index, key)?;
     let transaction = index.transaction().map_err(io::Error::other)?;
     let mut seen = HashSet::new();
+    let mut inserted = Vec::new();
     let mut changed = false;
     for row in rows {
         seen.insert(row.session_id.clone());
         if previous.get(&row.session_id).is_some_and(|old| old.revision == row.revision && old.project == row.project && old.title == row.title && old.directory == row.directory) { continue; }
+        if !previous.contains_key(&row.session_id) { inserted.push(row.session_id.clone()); }
         transaction.execute("INSERT INTO sessions(agent, store, session_id, directory, project, title, updated_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(agent, store, session_id) DO UPDATE SET directory=excluded.directory, project=excluded.project, title=excluded.title, updated_at=excluded.updated_at, revision=excluded.revision",
             params![key.0.name(), key.1, row.session_id, row.directory, row.project, row.title, row.updated_at, row.revision]).map_err(io::Error::other)?;
         changed = true;
     }
     for (id, old) in previous {
-        if target.is_none_or(|target| target == id) && !seen.contains(&id) && directories.as_ref().is_none_or(|dirs| dirs.contains(&old.directory)) {
+        if target.is_none_or(|target| target == id) && !seen.contains(&id) {
             if key.0 == Agent::ClaudeCode && old.updated_at < (super::now() as i64).saturating_sub(cleanup_days(&key.1).saturating_sub(1) * 86_400_000) {
                 archive_session(&transaction, archive, key, &old, Ended::Aged)?;
             }
             transaction.execute("DELETE FROM sessions WHERE agent = ? AND store = ? AND session_id = ?", params![key.0.name(), key.1, id]).map_err(io::Error::other)?;
             changed = true;
         }
+    }
+    transaction.commit().map_err(io::Error::other)?;
+    // Delete only after the index commits: readers pin the index before the archive.
+    let transaction = archive.transaction().map_err(io::Error::other)?;
+    for id in inserted {
+        transaction.execute("DELETE FROM sessions WHERE agent = ? AND store = ? AND session_id = ?", params![key.0.name(), key.1, id]).map_err(io::Error::other)?;
     }
     transaction.commit().map_err(io::Error::other)?;
     Ok(changed)
@@ -1058,18 +1112,44 @@ fn save_snapshot(index: &mut Connection, id: i64, revision: &str, path: Option<&
     let encoded = serde_json::to_vec(items).map_err(io::Error::other)?;
     transaction.execute("INSERT INTO snapshots(session, version, items) VALUES (?, ?, ?) ON CONFLICT(session) DO UPDATE SET version=excluded.version, items=excluded.items", params![id, SNAPSHOT_VERSION, encoded]).map_err(io::Error::other)?;
     transaction.execute("DELETE FROM messages WHERE session=?", [id]).map_err(io::Error::other)?;
-    for (item, record) in items.iter().enumerate() {
-        let (role, text) = match record {
-            super::Item::User { text, .. } => ("user", text),
-            super::Item::Text { text, .. } => ("agent", text),
-            _ => continue,
-        };
-        transaction.execute("INSERT INTO messages(session, item, role, text) VALUES (?, ?, ?, ?)", params![id, item as i64, role, text]).map_err(io::Error::other)?;
-    }
+    insert_messages(&transaction, id, items)?;
     transaction.execute("UPDATE sessions SET snapshot_revision=? WHERE id=?", params![revision, id]).map_err(io::Error::other)?;
     if path.is_some_and(|path| fs::metadata(path).ok().is_none_or(|metadata| fingerprint(&metadata) != revision)) { return Ok(false); }
     transaction.commit().map_err(io::Error::other)?;
     Ok(true)
+}
+
+fn insert_messages(db: &Connection, session: i64, items: &[Item]) -> io::Result<()> {
+    for (item, record) in items.iter().enumerate() {
+        let (role, text) = match record {
+            Item::User { text, .. } => ("user", text),
+            Item::Text { text, .. } => ("agent", text),
+            _ => continue,
+        };
+        db.execute("INSERT INTO messages(session, item, role, text) VALUES (?, ?, ?, ?)", params![session, item as i64, role, text]).map_err(io::Error::other)?;
+    }
+    Ok(())
+}
+
+/// Archives a missing Session as its Dormant Chat shows it.
+fn archive_dormant(archive: &mut Connection, key: &SessionKey, chat: &Chat, items: &[Item], data: &Path, epics: &Epics) -> io::Result<()> {
+    let directory = chat.cwd.to_string_lossy().into_owned();
+    let project = attribute(&directory, &known_projects(archive)?, data, epics).unwrap_or_else(|| chat.project_id.clone());
+    let encoded = serde_json::to_vec(items).map_err(io::Error::other)?;
+    let now = super::now() as i64;
+    let transaction = archive.transaction().map_err(io::Error::other)?;
+    let id: i64 = transaction.query_row("
+        INSERT INTO sessions(agent, store, session_id, directory, project, title, updated_at, revision, snapshot_revision, ended, ended_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)
+        ON CONFLICT(agent, store, session_id) DO UPDATE SET directory=excluded.directory, project=excluded.project, title=excluded.title,
+        updated_at=excluded.updated_at, revision=excluded.revision, snapshot_revision=excluded.snapshot_revision, ended=excluded.ended, ended_at=excluded.ended_at
+        RETURNING id",
+        params![key.agent.name(), key.store, key.session_id, directory, project, chat.title.as_deref().unwrap_or_default(), now, Ended::Missing.name(), now],
+        |row| row.get(0)).map_err(io::Error::other)?;
+    transaction.execute("INSERT INTO snapshots(session, version, items) VALUES (?, ?, ?) ON CONFLICT(session) DO UPDATE SET version=excluded.version, items=excluded.items", params![id, SNAPSHOT_VERSION, encoded]).map_err(io::Error::other)?;
+    transaction.execute("DELETE FROM messages WHERE session=?", [id]).map_err(io::Error::other)?;
+    insert_messages(&transaction, id, items)?;
+    transaction.commit().map_err(io::Error::other)
 }
 
 impl Sessions {
@@ -1149,7 +1229,8 @@ fn fts_query(query: &str) -> String {
         }
     }
     push(&mut terms, &mut part, quoted);
-    if let Some((last, false)) = terms.last_mut() { last.push('*'); }
+    // Leave one-character terms exact: the prefix indexes start at two characters.
+    if let Some((last, false)) = terms.last_mut() && last.chars().filter(|ch| ch.is_alphanumeric()).count() > 1 { last.push('*'); }
     terms.into_iter().map(|(term, _)| term).collect::<Vec<_>>().join(" AND ")
 }
 

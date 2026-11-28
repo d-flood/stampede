@@ -94,6 +94,10 @@ impl Runs {
             }
             Err(error)
         };
+        let continuation = match &source.continuation {
+            Some(path) => tokio::fs::read_to_string(path).await.ok(),
+            None => None,
+        };
         match timeout(Duration::from_secs(30), self.chats.stop(chat_id)).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => return abandon(error.to_string()).await,
@@ -103,7 +107,7 @@ impl Runs {
         let carried = match carry(checkout, Path::new(&path)).await {
             Ok(carried) => carried,
             Err(error) => {
-                if let Err(reopened) = self.chats.reopen(source, &rigs).await {
+                if let Err(reopened) = self.chats.reopen(source, &rigs, continuation).await {
                     eprintln!("cannot reopen chat {chat_id}: {reopened}");
                 }
                 return abandon(format!("The uncommitted changes could not move: {error}")).await;
@@ -116,7 +120,7 @@ impl Runs {
             "FYI: Stampede moved this Chat to a new git worktree. The working directory is now `{path}`, on the new branch `{branch}`, cut from {from}{changes}. \
              Paths earlier in this conversation under `{old}` are now under `{path}`. Read and edit files only here, not in the original checkout."
         );
-        self.chats.relocate(&source, &id, Path::new(&path), &note, &rigs).await.map_err(|error| format!("The worktree {path} is ready, but the Chat could not resume there: {error}"))
+        self.chats.relocate(&source, &id, Path::new(&path), &note, &rigs, continuation).await.map_err(|error| format!("The worktree {path} is ready, but the Chat could not resume there: {error}"))
     }
 
     pub async fn delete_worktree(&self, project_id: &str, force: bool) -> Result<(), Refusal> {

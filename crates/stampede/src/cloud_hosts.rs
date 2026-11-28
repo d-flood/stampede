@@ -315,11 +315,19 @@ impl CloudHosts {
                 return Err(Unmerged(warning));
             }
         }
-        if reached {
-            self.pull_sessions(state, id, &parent).await.map_err(|reason| Refused(format!("Cannot keep its Sessions: {reason}")))?;
+        let kept = if reached {
+            match self.pull_sessions(state, id, &parent).await {
+                Ok(()) => true,
+                Err(reason) if force => {
+                    eprintln!("Cannot keep Sessions from Cloud Host {id}: {reason}");
+                    false
+                }
+                Err(reason) => return Err(Unmerged(format!("Its Sessions can't be kept: {reason}. Deleting it discards them."))),
+            }
         } else {
             eprintln!("Cannot keep Sessions from Cloud Host {id}: unreachable or gone");
-        }
+            false
+        };
         if !self.gone(id) {
             cloud::destroy(id).await.map_err(Refused)?;
         }
@@ -339,7 +347,7 @@ impl CloudHosts {
             }
         }
         state.git.reread(&parent.id);
-        Ok(reached)
+        Ok(kept)
     }
 
     async fn pull_sessions(&self, state: &AppState, id: &str, parent: &Project) -> Result<(), String> {

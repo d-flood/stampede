@@ -416,7 +416,7 @@ async fn a_past_claude_session_opens_dormant_and_resumes_from_a_store_matching_r
                 if let Ok(db) = rusqlite::Connection::open_with_flags(&index, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
                     let count = db.query_row("SELECT count(*) FROM sessions WHERE project = ? AND store = ?", [repo_id.as_str().unwrap(), second_store.to_str().unwrap()], |row| row.get::<_, i64>(0));
                     let version = db.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0));
-                    if matches!((count, version), (Ok(4), Ok(2))) { break; }
+                    if matches!((count, version), (Ok(4), Ok(3))) { break; }
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }

@@ -19,7 +19,7 @@
 	import Button from '#lib/ui/Button.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Menu from '#lib/ui/Menu.svelte';
-	import { onMount, type Component } from 'svelte';
+	import { untrack, type Component } from 'svelte';
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { fade, fly } from 'svelte/transition';
 	import ArrowBendUpRight from '~icons/ph/arrow-bend-up-right';
@@ -71,8 +71,14 @@
 	const continuing = $derived(!!oncontinue);
 	const imageable = $derived(!request || (request.kind === 'question' && !!request.questions[0]?.type));
 
-	onMount(() => {
-		if (chat.draftImages?.length) void restoreDraftImages(chat.draftImages);
+	const restoredDrafts = new Set<string>();
+	$effect(() => {
+		const urls = chat.draftImages ?? [];
+		if (!urls.length) restoredDrafts.clear();
+		const fresh = urls.filter((url) => !restoredDrafts.has(url));
+		if (!fresh.length) return;
+		fresh.forEach((url) => restoredDrafts.add(url));
+		untrack(() => restoreDraftImages(fresh));
 	});
 
 	async function restoreDraftImages(urls: string[]) {
@@ -143,6 +149,7 @@
 		if (text.trimStart().startsWith('!')) {
 			const command = text.trim().slice(1).trim();
 			if (!command) return false;
+			if (chat.dormant) { error = 'Send a message to resume this Session before running a command.'; return false; }
 			if (images.length) { error = 'Remove images before running a command.'; return false; }
 			device.send({ type: 'chat.shell', chatId: chat.id, command });
 			error = '';

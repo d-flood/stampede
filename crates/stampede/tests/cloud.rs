@@ -456,8 +456,8 @@ async fn the_home_host_links_each_cloud_host_for_its_settings_attention_and_push
     drop(cloud);
     let deletion = format!("{home_http}/api/cloud-hosts/{host}");
     let failed = client.delete(&deletion).send().await.unwrap();
-    assert_eq!(failed.status(), 400);
-    assert!(failed.text().await.unwrap().contains("Cannot keep its Sessions: Media"));
+    assert_eq!(failed.status(), 409);
+    assert!(failed.text().await.unwrap().contains("Its Sessions can't be kept: Media"));
     assert!(cloud_home.exists());
     fs::write(&asset, &bytes).unwrap();
     fs::write(root.join("sprite-fail"), "destroy\nFly refused the destruction\n").unwrap();
