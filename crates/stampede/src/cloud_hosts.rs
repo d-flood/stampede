@@ -4,7 +4,7 @@ use axum::{Json, body::Body, extract::{FromRequestParts, Path, Query, Request, S
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::{sync::{Mutex, Notify, mpsc, watch}, time::{sleep, timeout}};
+use tokio::{io::AsyncBufReadExt, sync::{Mutex, Notify, mpsc, watch}, time::{sleep, timeout}};
 use tokio_tungstenite::{connect_async, tungstenite::{Message, client::IntoClientRequest}};
 use uuid::Uuid;
 
@@ -267,7 +267,7 @@ impl CloudHosts {
         Ok(())
     }
 
-    async fn delete(&self, state: &AppState, id: &str, force: bool) -> Result<(), runs::Refusal> {
+    async fn delete(&self, state: &AppState, id: &str, force: bool) -> Result<bool, runs::Refusal> {
         use runs::Refusal::{Refused, Unmerged};
         let reach = self.reach(id);
         let _operation = reach.operation.lock().await;
@@ -275,6 +275,7 @@ impl CloudHosts {
         let checkout = FsPath::new(&parent.path);
         let branch = (!host.existing).then_some(host.branch.as_str());
         let (mut dirty, mut elsewhere) = (false, 0);
+        let mut reached = false;
         if !self.gone(id) {
             let checked = async {
                 let tip = remote(id, &["git", "-C", &host.path, "rev-parse", "--verify", &format!("refs/heads/{}", host.branch)], None).await?;
@@ -290,11 +291,14 @@ impl CloudHosts {
                 Ok(_) if !force && self.records.borrow().iter().any(|host| host.id == id && !host.in_sync) => {
                     return Err(Unmerged("Its Cloud Host's branch is out of sync. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
                 }
-                Ok(found) => (dirty, elsewhere) = found,
+                Ok(found) => {
+                    (dirty, elsewhere) = found;
+                    reached = true;
+                },
                 Err(reason) => {
                     self.failed(id, reason).await;
                     if !force && !self.gone(id) {
-                        return Err(Unmerged("Its Cloud Host can't be reached, so its work can't be checked. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
+                        return Err(Unmerged("Its Cloud Host can't be reached, so its work can't be checked or its Sessions kept. Deleting it discards anything that didn't reach the Home Host.".to_owned()));
                     }
                 }
             }
@@ -310,6 +314,11 @@ impl CloudHosts {
             if let Some(warning) = runs::discard_warning(dirty, mirrored + elsewhere, branch) {
                 return Err(Unmerged(warning));
             }
+        }
+        if reached {
+            self.pull_sessions(state, id, &parent).await.map_err(|reason| Refused(format!("Cannot keep its Sessions: {reason}")))?;
+        } else {
+            eprintln!("Cannot keep Sessions from Cloud Host {id}: unreachable or gone");
         }
         if !self.gone(id) {
             cloud::destroy(id).await.map_err(Refused)?;
@@ -330,7 +339,35 @@ impl CloudHosts {
             }
         }
         state.git.reread(&parent.id);
-        Ok(())
+        Ok(reached)
+    }
+
+    async fn pull_sessions(&self, state: &AppState, id: &str, parent: &Project) -> Result<(), String> {
+        let _held = self.hold(id);
+        let port = self.port(id).await?;
+        let base = format!("http://127.0.0.1:{port}");
+        let response = self.client.get(format!("{base}/api/sessions-export"))
+            .timeout(Duration::from_secs(300)).send().await.map_err(|error| error.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("Export returned {}: {}", response.status(), response.text().await.unwrap_or_default()));
+        }
+        let stream = response.bytes_stream().map(|chunk| chunk.map_err(io::Error::other));
+        let mut lines = tokio::io::BufReader::new(tokio_util::io::StreamReader::new(stream)).lines();
+        while let Some(line) = lines.next_line().await.map_err(|error| error.to_string())? {
+            let session = tokio::task::spawn_blocking(move || {
+                serde_json::from_str::<Option<crate::chats::sessions::ExportedSession>>(&line)
+                    .map(|session| session.map(|session| {
+                        let assets = session.assets();
+                        (session, assets)
+                    }))
+            }).await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())?;
+            let Some((session, assets)) = session else { return Ok(()); };
+            for asset in assets {
+                crate::media::pull(&self.client, &base, &state.media_dir, &asset).await.map_err(|error| format!("Media {asset}: {error}"))?;
+            }
+            state.sessions.import_cloud(session, parent.clone()).await.map_err(|error| error.to_string())?;
+        }
+        Err("Session export ended before completion".to_owned())
     }
 
     fn save(&self, records: Vec<CloudHost>) -> Result<(), String> {
@@ -591,7 +628,10 @@ pub async fn proxy(State(state): State<AppState>, request: Request) -> Result<Re
     if !state.cloud_hosts.records.borrow().iter().any(|host| host.id == id) {
         return Err((StatusCode::NOT_FOUND, format!("Unknown Cloud Host {id}")));
     }
-    if rest.split('?').next() == Some("api/home-link") { return Err((StatusCode::NOT_FOUND, String::new())); }
+    let private = |path: &str| matches!(path, "/api/home-link" | "/api/sessions-export");
+    if reqwest::Url::parse(&format!("http://localhost/{rest}")).is_ok_and(|url| private(url.path())) {
+        return Err((StatusCode::NOT_FOUND, String::new()));
+    }
     // Held before the forward is reached, so the Home link cannot stop the forward under this request.
     let held = state.cloud_hosts.hold(id);
     let port = match state.cloud_hosts.port(id).await {
@@ -681,18 +721,19 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<Value>>, fil
     Ok(Json(items))
 }
 
-pub async fn destroy(State(state): State<AppState>, Path(id): Path<String>, Query(query): Query<crate::Deletion>) -> Result<StatusCode, files::Failure> {
+pub async fn destroy(State(state): State<AppState>, Path(id): Path<String>, Query(query): Query<crate::Deletion>) -> Result<Response, files::Failure> {
     let hosts = &state.cloud_hosts;
     let _creating = hosts.creating.lock().await;
     if hosts.contains(&id) {
         match hosts.delete(&state, &id, query.force).await {
-            Ok(()) => Ok(StatusCode::NO_CONTENT),
+            Ok(true) => Ok(StatusCode::NO_CONTENT.into_response()),
+            Ok(false) => Ok((StatusCode::NO_CONTENT, [("warning", "299 Stampede \"Its Cloud Host could not be reached; Sessions could not be kept.\"")]).into_response()),
             Err(runs::Refusal::Unmerged(work)) => Err((StatusCode::CONFLICT, work)),
             Err(runs::Refusal::Refused(reason)) => Err((StatusCode::BAD_REQUEST, reason)),
         }
     } else if id.starts_with("stampede-") && cloud::list().await.map_err(|error| (StatusCode::BAD_REQUEST, error))?.iter().any(|item| item.name == id) {
         cloud::destroy(&id).await.map_err(|error| (StatusCode::BAD_REQUEST, error))?;
-        Ok(StatusCode::NO_CONTENT)
+        Ok(StatusCode::NO_CONTENT.into_response())
     } else {
         Err((StatusCode::NOT_FOUND, "Unknown Cloud Host".to_owned()))
     }
