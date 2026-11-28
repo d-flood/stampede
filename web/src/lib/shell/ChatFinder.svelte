@@ -90,6 +90,7 @@
 		{disabled}
 		size="md"
 		onselect={disabled ? undefined : () => onsession(session, query || undefined)}
+		ondismiss={() => search.device.send({ type: 'sessions.dismiss', key: session.key })}
 	/>
 {/snippet}
 

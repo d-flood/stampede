@@ -4,8 +4,9 @@
 	import type { FoundSession } from '#lib/device.svelte.ts';
 	import Highlight from '#lib/ui/Highlight.svelte';
 	import ListItem from '#lib/ui/ListItem.svelte';
+	import Menu from '#lib/ui/Menu.svelte';
 	import TabMarks, { type Status } from '#lib/ui/TabMarks.svelte';
-	import { Command } from 'bits-ui';
+	import { Command, mergeProps } from 'bits-ui';
 
 	type Props = {
 		value: string;
@@ -25,9 +26,11 @@
 		/** Renders a button for lists outside a Command menu. */
 		plain?: boolean;
 		onselect?(): void;
+		/** Offers Dismiss in an Ended row's context menu. */
+		ondismiss?(): void;
 	};
 
-	let { value, agent, title, time, project, status, fresh = false, size, excerpt, ended = false, disabled = false, plain = false, onselect }: Props = $props();
+	let { value, agent, title, time, project, status, fresh = false, size, excerpt, ended = false, disabled = false, plain = false, onselect, ondismiss }: Props = $props();
 
 	const Icon = $derived(logos[agent]);
 </script>
@@ -60,14 +63,26 @@
 	</ListItem>
 {/snippet}
 
-{#if plain}
-	{@render row({ element: 'button', onclick: onselect, disabled })}
-{:else}
-	<Command.Item {value} {disabled} onSelect={onselect}>
-		{#snippet child({ props })}
-			{@render row(props)}
+{#snippet item(context: Record<string, unknown>)}
+	{#if plain}
+		{@render row(mergeProps(context, { element: 'button', onclick: onselect, disabled }))}
+	{:else}
+		<Command.Item {value} {disabled} onSelect={onselect}>
+			{#snippet child({ props })}
+				{@render row(mergeProps(context, props))}
+			{/snippet}
+		</Command.Item>
+	{/if}
+{/snippet}
+
+{#if ended && ondismiss}
+	<Menu context items={[{ label: 'Dismiss', onselect: ondismiss }]}>
+		{#snippet trigger(props)}
+			{@render item(props)}
 		{/snippet}
-	</Command.Item>
+	</Menu>
+{:else}
+	{@render item({})}
 {/if}
 
 <style>

@@ -222,7 +222,24 @@ async fn snapshot_reconciliation_and_archive_survive_restart() {
     control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
     next_control(&mut socket, "hello").await;
     search(&mut socket, &project_id, "rebuiltword", |results| results.len() == 1).await;
-    search(&mut socket, &project_id, "agedword", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    let ended = search(&mut socket, &project_id, "agedword", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    control(&mut socket, json!({ "type": "sessions.dismiss", "key": ended[0]["key"] })).await;
+    search(&mut socket, &project_id, "agedword", |results| results.is_empty()).await;
+    write_history(&aged, &conversation("backdatedword"));
+    touch(&aged, 1_500_000_000);
+    search(&mut socket, &project_id, "backdatedword", |results| results.len() == 1).await;
+    fs::remove_file(&aged).unwrap();
+    search(&mut socket, &project_id, "backdatedword", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    server.stop().await;
+    let archive = rusqlite::Connection::open(server.root.path().join("data/sessions/archive.sqlite")).unwrap();
+    archive.execute("UPDATE sessions SET ended_at = ended_at - 2 * 86400000", []).unwrap();
+    drop(archive);
+    fs::write(server.root.path().join("config.toml"), format!("{RIGS}\n[storage]\nkeep_ended_days = 1\n")).unwrap();
+    server.restart().await;
+    let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    control(&mut socket, json!({ "type": "hello", "deviceId": "device" })).await;
+    next_control(&mut socket, "hello").await;
+    search(&mut socket, &project_id, "backdatedword", |results| results.is_empty()).await;
 }
 
 #[tokio::test]

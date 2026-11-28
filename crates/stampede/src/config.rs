@@ -90,11 +90,12 @@ pub struct Storage {
     pub min_free_gib: u64,
     pub cache_max_gib: u64,
     pub cache_max_age_days: u64,
+    pub keep_ended_days: Option<u64>,
 }
 
 impl Default for Storage {
     fn default() -> Self {
-        Self { min_free_gib: 2, cache_max_gib: 8, cache_max_age_days: 7 }
+        Self { min_free_gib: 2, cache_max_gib: 8, cache_max_age_days: 7, keep_ended_days: None }
     }
 }
 
@@ -1039,7 +1040,7 @@ mod tests {
     fn storage_limits_have_defaults_and_can_be_configured() {
         assert_eq!(Config::parse("").unwrap().storage, Storage::default());
         let config = Config::parse("[storage]\nmin_free_gib = 4\ncache_max_gib = 12\ncache_max_age_days = 3\n").unwrap();
-        assert_eq!(config.storage, Storage { min_free_gib: 4, cache_max_gib: 12, cache_max_age_days: 3 });
+        assert_eq!(config.storage, Storage { min_free_gib: 4, cache_max_gib: 12, cache_max_age_days: 3, keep_ended_days: None });
         assert!(check("[storage]\nmin_free_gib = -1\n").is_some());
     }
 

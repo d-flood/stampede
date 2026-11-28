@@ -99,6 +99,8 @@ enum Control {
     ListSessions { project_id: String },
     #[serde(rename = "sessions.search")]
     SearchSessions { search_id: String, project_id: String, query: String },
+    #[serde(rename = "sessions.dismiss")]
+    DismissSession { key: SessionKey },
     #[serde(rename = "sessions.preview")]
     PreviewSession { preview_id: String, key: SessionKey, item: Option<usize> },
     #[serde(rename = "chat.send")]
@@ -642,6 +644,13 @@ impl Device {
             }
             Control::ListSessions { project_id } => self.list_sessions(project_id),
             Control::SearchSessions { search_id, project_id, query } => self.search_sessions(search_id, project_id, query),
+            Control::DismissSession { key } => {
+                let sessions = self.sessions.clone();
+                let chats = self.chats.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = sessions.dismiss(key, &chats).await { eprintln!("cannot dismiss Session: {error}"); }
+                });
+            }
             Control::PreviewSession { preview_id, key, item } => {
                 let sessions = self.sessions.clone();
                 let outgoing = self.outgoing.clone();

@@ -119,6 +119,7 @@ export type Chat = {
 	created: number;
 	closing?: true;
 	agentSession?: string;
+	sessionStore?: string;
 	title?: string;
 	activity?: string | null;
 	background?: boolean;
@@ -303,6 +304,7 @@ export type ClientMessage =
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'sessions.search'; searchId: string; projectId: string; query: string }
 	| { type: 'sessions.preview'; previewId: string; key: SessionKey; item?: number }
+	| { type: 'sessions.dismiss'; key: SessionKey }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }
 	| { type: 'chat.unqueue'; chatId: string; index: number; revision: number }
 	| { type: 'chat.shell'; chatId: string; command: string }
