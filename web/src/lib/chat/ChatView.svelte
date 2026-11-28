@@ -362,7 +362,13 @@
 			{/key}
 		{/if}
 		{#if chat.ended && !selected}
-			<p class="ended" role="status">{causes[chat.ended]}</p>
+			<div class="ended">
+				<p role="status">{causes[chat.ended]}</p>
+				{#if chat.agentSession && chat.sessionStore !== undefined}
+					{@const key = { agent: chat.agent, store: chat.sessionStore, sessionId: chat.agentSession }}
+					<Button size="sm" onclick={() => device.send({ type: 'sessions.dismiss', key })}>Dismiss</Button>
+				{/if}
+			</div>
 		{:else if !selected}
 			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {shell} {live} {request} {capabilities} {choices} {branches} {focused} onrun={run} />
 		{:else}
@@ -383,7 +389,8 @@
 	.handoffs { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: var(--border-width) solid var(--border); font-size: var(--font-size-sm); }
 	.subagent { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); }
 	.subagent span, .report .label, .failure { color: var(--muted-fg); }
-	.ended { margin: 0; padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); color: var(--muted-fg); font-size: var(--font-size-sm); text-align: center; }
+	.ended { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); color: var(--muted-fg); font-size: var(--font-size-sm); }
+	.ended p { margin: 0; }
 	.failure { margin: 0; overflow-wrap: anywhere; }
 	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }
 	.report .label { font-size: var(--font-size-sm); }

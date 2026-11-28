@@ -289,8 +289,9 @@ impl Sessions {
         let (writer, jobs) = mpsc::channel::<Job>();
         let (ready, opened) = oneshot::channel();
         let path = dir.clone();
+        let keep = config.borrow().storage.keep_ended_days;
         std::thread::Builder::new().name("sessions-writer".to_owned()).spawn(move || {
-            match initialize(&path) {
+            match initialize(&path).and_then(|(index, archive)| { prune(&archive, keep)?; Ok((index, archive)) }) {
                 Ok((mut index, mut archive)) => {
                     let _ = ready.send(Ok(()));
                     while let Ok(job) = jobs.recv() { job(&mut index, &mut archive); }
@@ -357,6 +358,30 @@ impl Sessions {
         self.refresh_all(true);
     }
 
+    fn prune(self: &Arc<Self>) {
+        let keep = self.config.borrow().storage.keep_ended_days;
+        if keep.is_none() { return; }
+        let service = self.clone();
+        tokio::spawn(async move {
+            match service.write(move |_, archive| prune(archive, keep)).await {
+                Ok(true) => service.notify(),
+                Ok(false) => (),
+                Err(error) => eprintln!("cannot prune Ended Sessions: {error}"),
+            }
+        });
+    }
+
+    /// Deletes an Ended Session and closes any Dormant Chat on it.
+    pub async fn dismiss(&self, key: SessionKey, chats: &Chats) -> io::Result<()> {
+        let archived = key.clone();
+        let deleted = self.write(move |_, archive| archive.execute("DELETE FROM sessions WHERE agent=? AND store=? AND session_id=?",
+            params![archived.agent.name(), archived.store, archived.session_id]).map_err(io::Error::other)).await?;
+        if deleted == 0 { return Err(io::Error::other("That Session is not an Ended Session.")); }
+        if let Some(chat) = chats.driving(&key).filter(|chat| chat.dormant) { chats.close(&chat.id); }
+        self.notify();
+        Ok(())
+    }
+
     pub fn refresh(self: &Arc<Self>) {
         self.refresh_all(false);
     }
@@ -421,6 +446,7 @@ impl Sessions {
             loop {
                 let full = work.1.is_none();
                 let result = service.scan(key.clone(), work.0, work.1).await;
+                if full { service.prune(); }
                 let marked = {
                     let mut stale = service.stale.lock().unwrap();
                     match result {
@@ -785,6 +811,12 @@ fn stored(dir: &Path, key: &SessionKey) -> io::Result<Option<Snapshot>> {
         }
     };
     Ok(Some(Snapshot { title, items, ended, answered: Vec::new(), directory, project, current: true, positions }))
+}
+
+fn prune(archive: &Connection, keep_days: Option<u64>) -> io::Result<bool> {
+    let Some(days) = keep_days else { return Ok(false) };
+    let cutoff = (super::now() as i64).saturating_sub(days.saturating_mul(86_400_000).min(i64::MAX as u64) as i64);
+    Ok(archive.execute("DELETE FROM sessions WHERE ended_at < ?", [cutoff]).map_err(io::Error::other)? > 0)
 }
 
 fn size(dir: &Path, file: &str) -> u64 {

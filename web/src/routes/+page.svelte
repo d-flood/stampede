@@ -14,6 +14,7 @@
 		tabOf,
 		type Attention,
 		type Chat,
+		type Coverage,
 		type Epic,
 		type FoundSession,
 		type Item,
@@ -112,6 +113,7 @@
 	let openSubagents = $state<Record<string, string[]>>({});
 	let sessions = $state<Record<string, Session[]>>({});
 	let readingSessions = $state<Record<string, boolean>>({});
+	let coverage = $state<Record<string, Coverage>>({});
 	/** Whether each Host, by name (the Home Host's is empty), has any Session to search. */
 	let searchable = $state<Record<string, boolean>>({});
 	let openError = $state<string>();
@@ -487,6 +489,7 @@
 			case 'sessions.listed':
 				sessions[message.projectId] = message.sessions.filter(({ key }) => runsOn(host, key.agent));
 				readingSessions[message.projectId] = false;
+				coverage[message.projectId] = message.coverage;
 				searchable[host ?? ''] = message.coverage.total + message.coverage.ended > 0;
 				break;
 			case 'terminal.title':
@@ -1769,6 +1772,7 @@
 					{sessions}
 					loadingSessions={!!readingSessions[palette === 'tabs' ? tabTarget ?? '' : focused?.id ?? '']}
 					search={focused && searching(focused.id)}
+					coverage={focused && coverage[focused.id]}
 					{selectable}
 					onproject={(projectId) => ((chosen = projectId), (palette = undefined))}
 					onrig={(launcher) => (launch(launcher), (palette = undefined))}

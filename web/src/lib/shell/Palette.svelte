@@ -7,7 +7,8 @@
 <script lang="ts">
 	import { logos } from '#lib/chat/sessions.ts';
 	import { rigs, runsOn, type Rig } from '#lib/config.svelte.ts';
-	import type { Chat, FoundSession, Project, Session } from '#lib/device.svelte.ts';
+	import type { Chat, Coverage, FoundSession, Project, Session } from '#lib/device.svelte.ts';
+	import { formatSize } from '#lib/size.ts';
 	import { listing } from '#lib/files.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { split } from '#lib/git.ts';
@@ -41,6 +42,8 @@
 		loadingSessions?: boolean;
 		/** Where a typed query searches what was said in Sessions. */
 		search?: Searching;
+		/** The focused Project's Host's index coverage, as its latest Session list reported it. */
+		coverage?: Coverage;
 		/** Whether a found Session can be opened from here. */
 		selectable?(session: Session): boolean;
 		onproject(projectId: string): void;
@@ -54,7 +57,7 @@
 	};
 	type Entry = { value: string; label: string; parent?: string; icon?: Component; projectIcon?: string; hint?: string; shortcut?: string; onselect(): void };
 
-	let { scope, projects, labels, focused, actions = [], chats = [], status, sessions = {}, loadingSessions = false, search, selectable, onproject, onrig, onfile, onchat, onsession, wide = $bindable(false) }: Props = $props();
+	let { scope, projects, labels, focused, actions = [], chats = [], status, sessions = {}, loadingSessions = false, search, coverage, selectable, onproject, onrig, onfile, onchat, onsession, wide = $bindable(false) }: Props = $props();
 
 	let query = $state('');
 	const host = new SessionSearch(() => (scope === 'all' || scope === 'sessions' ? search : undefined));
@@ -66,6 +69,7 @@
 	const found = $derived(query && search && (all || scope === 'sessions') ? grouped(host.found, projects.flatMap((project) => sessions[project.id] ?? []), query, search.focus) : undefined);
 	let width = $state(0);
 	let highlighted = $state('');
+	const covered = $derived(found ? host.coverage : coverage);
 	const paned = $derived(!!found && width >= PANE_MIN && found.here.length + found.other.length > 0);
 	const previewed = $derived(paned && found ? [...found.here, ...found.other].find((session) => `session:${session.project.id}:${sessionKey(session)}` === highlighted) : undefined);
 
@@ -181,6 +185,7 @@
 		ended={!!session.ended}
 		{disabled}
 		onselect={disabled ? undefined : () => onsession(session, query || undefined)}
+		ondismiss={search && (() => search.device.send({ type: 'sessions.dismiss', key: session.key }))}
 	/>
 {/snippet}
 
@@ -276,6 +281,8 @@
 		</div>
 		{#if found && host.indexing && host.coverage}
 			<div class="coverage"><Loading label="Indexing {host.coverage.indexed.toLocaleString()} of {host.coverage.total.toLocaleString()} Sessions" /></div>
+		{:else if scope === 'sessions' && covered && covered.indexed === covered.total}
+			<p class="coverage totals">{covered.ended.toLocaleString()} Ended {covered.ended === 1 ? 'Session' : 'Sessions'} · {formatSize(covered.bytes.index + covered.bytes.archive)}</p>
 		{/if}
 	</Command.Root>
 </div>
@@ -338,6 +345,12 @@
 	.coverage {
 		padding: var(--space-2) var(--bare-inset);
 		border-top: var(--border-width) solid var(--border);
+	}
+
+	.totals {
+		margin: 0;
+		color: var(--muted-fg);
+		font-size: var(--font-size-sm);
 	}
 
 	.slot {
