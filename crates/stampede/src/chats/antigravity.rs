@@ -1382,7 +1382,7 @@ for line in sys.stdin:
             plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
             running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
             queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),
-            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, ended: None, landing: None, parent: None,
+            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, rigs: Vec::new(), ended: None, landing: None, parent: None,
             duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
         };
 

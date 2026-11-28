@@ -1,23 +1,7 @@
-<script lang="ts" module>
-	type Options = { models: { value: string; label: string; efforts: string[] }[]; settings?: { model?: string; effort?: string } };
-
-	/** Listing models starts the provider's CLI, so each Rig asks once per session, and only when someone reaches for the chips. */
-	const listings = new Map<string, Promise<Options>>();
-
-	function list(agent: string, rig: string) {
-		const key = `${agent}:${rig}`;
-		let listing = listings.get(key);
-		if (!listing) {
-			listing = fetch(`/api/rigs/options?${new URLSearchParams({ agent, rig })}`).then((response) => (response.ok ? response.json() : Promise.reject(new Error('options'))));
-			listing.catch(() => listings.delete(key));
-			listings.set(key, listing);
-		}
-		return listing;
-	}
-</script>
-
 <script lang="ts">
 	import Chips from '#lib/chat/Chips.svelte';
+	import { listOptions, type Options } from '#lib/chat/options.ts';
+	import RigPicker from '#lib/chat/RigPicker.svelte';
 	import { defaultMode, modes } from '#lib/config.svelte.ts';
 	import type { Chat, FoundSession, Session, Setting, Settings } from '#lib/device.svelte.ts';
 	import type { Git } from '#lib/git.ts';
@@ -30,11 +14,8 @@
 	import Composer from '#lib/shell/Composer.svelte';
 	import Button from '#lib/ui/Button.svelte';
 	import Card from '#lib/ui/Card.svelte';
-	import Chip from '#lib/ui/Chip.svelte';
 	import Shortcut from '#lib/ui/Shortcut.svelte';
-	import Menu from '#lib/ui/Menu.svelte';
 	import { untrack } from 'svelte';
-	import CaretDown from '~icons/ph/caret-down';
 	import GitBranch from '~icons/ph/git-branch';
 	import PaperPlaneRight from '~icons/ph/paper-plane-right';
 	import Plus from '~icons/ph/plus';
@@ -69,7 +50,6 @@
 	let overrides = $state<Settings>({});
 	let options = $state.raw<Options>();
 	const rig = $derived(items.rigs[Math.min(chosen, items.rigs.length - 1)]);
-	const rigMenu = $derived([{ heading: 'Rigs', items: items.rigs.map((entry, index) => ({ label: entry.label, icon: entry.icon, shortcut: entry.shortcut, checked: entry === rig, onselect: () => pick(index) })) }]);
 	const settings = $derived<Settings>(
 		rig ? { model: rig.rig.model ?? options?.settings?.model ?? 'default', effort: rig.rig.effort ?? options?.settings?.effort, mode: rig.rig.mode ?? defaultMode(rig.rig.agent), ...overrides } : {}
 	);
@@ -90,7 +70,7 @@
 	function reach() {
 		if (!rig || options) return;
 		const current = rig;
-		list(current.rig.agent, current.rig.name).then((listed) => current === rig && (options = listed), () => {});
+		listOptions(current.rig.agent, current.rig.name).then((listed) => current === rig && (options = listed), () => {});
 	}
 
 	function enter(node: HTMLElement) {
@@ -119,18 +99,7 @@
 			{/snippet}
 			<Composer id="launchpad:{path}" placeholder="Message {rig.label}" footer={phone ? rigChips : undefined} onsend={start}>
 				{#snippet actions(text, clear)}
-					{@const Logo = rig.icon}
-					<span class="rig-picker">
-						<Menu side="top" align="start" items={rigMenu}>
-							{#snippet trigger(props)}
-								<Chip {...props} variant="ghost" aria-label="Rig: {rig.label}">
-									{#if Logo}<span class="mark" aria-hidden="true"><Logo /></span>{/if}
-									<span class="rig-name">{rig.label}</span>
-									<span class="caret"><CaretDown aria-hidden="true" /></span>
-								</Chip>
-							{/snippet}
-						</Menu>
-					</span>
+					<RigPicker rigs={items.rigs} current={items.rigs.indexOf(rig)} onpick={pick} />
 					{#if !phone}{@render rigChips()}{/if}
 					<span class="fill"></span>
 					<Button variant="primary" round aria-label="Send" disabled={!text.trim()} onmousedown={(event) => event.preventDefault()} onclick={() => start(text) && clear()}>
@@ -318,38 +287,6 @@
 
 	.phone .chips {
 		flex: 1;
-	}
-
-	.rig-picker {
-		display: flex;
-		flex: 0 1 auto;
-		min-width: 0;
-	}
-
-	.rig-picker :global(.chip) {
-		color: var(--color-fg);
-	}
-
-	.mark {
-		display: inline-flex;
-		flex: none;
-		align-items: center;
-		margin-right: var(--space-1);
-	}
-
-	.rig-name {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.caret {
-		display: inline-flex;
-	}
-
-	.caret :global(svg) {
-		width: 0.85em;
-		height: 0.85em;
 	}
 
 	.tool {

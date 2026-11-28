@@ -135,6 +135,8 @@ export type Chat = {
 	forkedFrom?: string;
 	/** Its Agent hasn't started; the transcript is its Session's snapshot. */
 	dormant?: true;
+	/** The Rigs a Dormant Chat can resume with: its Agent's, sharing its history store. */
+	rigs?: string[];
 	/** Why its Session can never resume. */
 	ended?: Ended;
 	landing?: { item?: number; query?: string };
@@ -300,6 +302,7 @@ export type ClientMessage =
 	| { type: 'chat.handoff'; chatId: string; rig: string; focus: string }
 	| { type: 'chat.move'; chatId: string; branch: string }
 	| { type: 'chat.fork'; chatId: string; index: number }
+	| { type: 'chat.rig'; chatId: string; rig: string }
 	| { type: 'chat.open'; projectId: string; key: SessionKey; item?: number; query?: string }
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'sessions.search'; searchId: string; projectId: string; query: string }

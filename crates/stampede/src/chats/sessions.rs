@@ -680,18 +680,19 @@ impl Sessions {
         let config = self.config.borrow().clone();
         let projects = self.projects.list();
         let (directory, ended, agent, store) = (snapshot.directory.clone(), snapshot.ended, key.agent, key.store.clone());
-        let (rig, cwd, project) = tokio::task::spawn_blocking(move || {
+        let (rig, rigs, cwd, project) = tokio::task::spawn_blocking(move || {
             let cwd = PathBuf::from(directory);
             if ended.is_none() && !cwd.is_dir() { return Err(io::Error::other("The Session's directory no longer exists.")); }
             let rig = matching_rig(&config.rigs, agent, &store, None)
                 .or_else(|| ended.map(|_| config.rigs.iter().find(|rig| rig.agent == agent).cloned().unwrap_or_else(|| Rig::starter(agent))))
                 .ok_or_else(|| io::Error::other("No Rig matches the Session's history store."))?;
+            let rigs = if ended.is_none() { eligible_rigs(&config.rigs, agent, &store, &rig.name) } else { Vec::new() };
             let project = projects.iter().find(|entry| entry.path == cwd.to_string_lossy())
                 .or_else(|| projects.iter().find(|entry| entry.id == project)).cloned()
                 .ok_or_else(|| io::Error::other("The Project is not open."))?;
-            Ok::<_, io::Error>((rig, cwd, project))
+            Ok::<_, io::Error>((rig, rigs, cwd, project))
         }).await.map_err(io::Error::other)??;
-        chats.open_dormant(&project.id, &cwd, &rig, &key, snapshot, landing)
+        chats.open_dormant(&project.id, &cwd, &rig, rigs, &key, snapshot, landing)
     }
 
     /// The Session's snapshot, rebuilt first when it is missing or stale.
@@ -767,6 +768,13 @@ struct Opening<'a> {
 
 impl Drop for Opening<'_> {
     fn drop(&mut self) { self.pending.lock().unwrap().remove(&self.key); }
+}
+
+/// The names of the Rigs a Dormant Chat on `current` can resume with, keeping `current` even when it is the Agent's defaults.
+pub(super) fn eligible_rigs(rigs: &[Rig], agent: Agent, path: &str, current: &str) -> Vec<String> {
+    let mut names: Vec<String> = rigs.iter().filter(|rig| rig.agent == agent && store(agent, &rig.env) == path).map(|rig| rig.name.clone()).collect();
+    if !names.iter().any(|name| name == current) { names.insert(0, current.to_owned()); }
+    names
 }
 
 /// The first Rig whose Agent and history store match, preferring `preferred`.

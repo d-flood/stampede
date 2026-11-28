@@ -8,10 +8,11 @@
 	import FileMenu from '#lib/chat/FileMenu.svelte';
 	import { pastedImages } from '#lib/chat/images.ts';
 	import { redirect } from '#lib/chat/questions.ts';
-	import { ago } from '#lib/chat/sessions.ts';
+	import RigPicker from '#lib/chat/RigPicker.svelte';
+	import { ago, logos } from '#lib/chat/sessions.ts';
 	import SlashMenu from '#lib/chat/SlashMenu.svelte';
 	import TurnRing from '#lib/chat/TurnRing.svelte';
-	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting } from '#lib/device.svelte.ts';
+	import type { Builtin, Capabilities, Chat, Choice, Device, Image, Request, Setting, Settings } from '#lib/device.svelte.ts';
 	import { form } from '#lib/form.ts';
 	import { hostOf } from '#lib/host.ts';
 	import Composer from '#lib/shell/Composer.svelte';
@@ -34,7 +35,7 @@
 	import Terminal from '~icons/ph/terminal';
 	import X from '~icons/ph/x';
 
-	let { device, chat, live, request, capabilities, choices, branches, history, shelling, shell, focused = false, onrun }: {
+	let { device, chat, live, request, capabilities, settings, ready, choices, rigs, branches, history, shelling, shell, focused = false, onreach, onrun }: {
 		device: Device;
 		chat: Chat;
 		live: boolean;
@@ -45,7 +46,12 @@
 		focused?: boolean;
 		request?: Request;
 		capabilities: Capabilities;
+		settings: Settings;
+		ready: boolean;
 		choices: Record<Setting, Choice[]>;
+		/** The Rigs a Dormant Chat can resume with. */
+		rigs?: string[];
+		onreach?(): void;
 		onrun(command: Builtin, value?: string | number): void;
 	} = $props();
 
@@ -194,9 +200,15 @@
 {/if}
 {#if error}<div role="alert">{error}</div>{/if}
 {#snippet meta()}
-	<Chips agent={chat.agent} settings={chat.settings} ready={capabilities.ready} {choices} {onrun}>
-		{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
-	</Chips>
+	{#if rigs?.length}
+		<RigPicker rigs={rigs.map((label) => ({ label, icon: logos[chat.agent] }))} current={rigs.indexOf(chat.rig)} onpick={(index) => device.send({ type: 'chat.rig', chatId: chat.id, rig: rigs[index] })} />
+	{/if}
+	<!-- svelte-ignore a11y_no_static_element_interactions (Hover and focus only start loading the model list.) -->
+	<span class="tuning" onpointerover={onreach} onfocusin={onreach}>
+		<Chips agent={chat.agent} {settings} {ready} {choices} mark={!rigs?.length} {onrun}>
+			{#if chat.context}<ContextBar context={chat.context} tokens={chat.tokens} />{/if}
+		</Chips>
+	</span>
 {/snippet}
 
 <Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : chat.dormant ? 'Message to resume this Session' : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} mark={(text) => command(text)?.token.length ?? 0} footer={phone ? meta : undefined} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
@@ -212,7 +224,7 @@
 		{/if}
 	{/snippet}
 	{#snippet menu(text, replace, caret)}
-		<SlashMenu bind:this={slash} {text} agent={chat.agent} settings={chat.settings} {capabilities} {choices} working={chat.status !== 'done'} cloud={!!hostOf(chat.projectId)} {replace} {onrun} />
+		<SlashMenu bind:this={slash} {text} agent={chat.agent} {settings} {capabilities} {choices} working={chat.status !== 'done'} cloud={!!hostOf(chat.projectId)} {replace} {onrun} />
 		{#if !slash?.isOpen()}
 			<FileMenu bind:this={files} {text} {caret} projectId={chat.projectId} {replace} />
 		{/if}
@@ -329,6 +341,12 @@
 </Dialog>
 
 <style>
+	.tuning {
+		display: flex;
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+
 	.attachments { display: flex; gap: var(--space-2); overflow-x: auto; }
 	.thumbnail { position: relative; flex: none; }
 	.thumbnail img { width: 64px; height: 64px; object-fit: cover; border-radius: var(--radius-md); }
