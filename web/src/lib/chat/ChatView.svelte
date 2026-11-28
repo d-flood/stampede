@@ -22,7 +22,7 @@
 	import Text from '#lib/chat/Text.svelte';
 	import Transcript from '#lib/chat/Transcript.svelte';
 	import { agentNames, modes } from '#lib/config.svelte.ts';
-	import type { Answer, Builtin, Capabilities, Chat, Device, Item, Request, ResetCredits, ServerMessage } from '#lib/device.svelte.ts';
+	import type { Answer, Builtin, Capabilities, Chat, Device, Ended, Item, Request, ResetCredits, ServerMessage } from '#lib/device.svelte.ts';
 	import type { Cursor } from '#lib/files.svelte.ts';
 	import { hostOf } from '#lib/host.ts';
 	import { form } from '#lib/form.ts';
@@ -39,6 +39,11 @@
 	let { device, chat, chats, movable = true, onchat, items, saved, opened, onopen, active, focused = false, project, root, branch, changes = 0, onchanges, codexResets = null, ondiff, onfile, oncanvas, scroller = $bindable() }: { device: Device; chat: Chat; chats: Chat[]; movable?: boolean; onchat(chat: Chat): void; items: Item[]; saved: string[]; opened: string[]; onopen(path: string[]): void; active: boolean; focused?: boolean; project?: string; root?: string; branch?: string; changes?: number; onchanges?(): void; codexResets?: ResetCredits | null; ondiff(path: string): void; onfile(path: string, cursor?: Cursor): void; oncanvas(canvas: string): void; scroller?: HTMLElement | null } =
 		$props();
 
+	const causes: Record<Ended, string> = {
+		aged: "Claude Code deleted this Session's history for age",
+		cloud: 'Its Cloud Host was destroyed',
+		missing: "Its Agent no longer has this Session's history"
+	};
 	const host = $derived(hostOf(chat.projectId));
 	const subagents = $derived(flatten(items));
 	const canvases = $derived([...new Set([...written(items), ...saved])]);
@@ -275,7 +280,7 @@
 		<div class="transcript" bind:this={scroller} {@attach (node) => follow(node, (bottom) => (ended = bottom))}>
 			<div class="column">
 				{#if attached && !items.length && !chat.queued.length}<EmptyChat rig={chat.rig} agent={chat.agent} {project} {branch} />{/if}
-				<Transcript bind:this={transcript} {host} {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={capabilities.rewinds ? (index) => run('rewind', index) : undefined} onfork={live && attached && capabilities.forks ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={(index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
+				<Transcript bind:this={transcript} {host} {items} active={active && !selected} answered={attached ? chat.answeredQuestions : []} activity={chat.activity} agent={chat.agent} resets={codexResets} {onhandoff} onopen={open} onattend={attend} {ondiff} {oncanvas} onrewind={capabilities.rewinds ? (index) => run('rewind', index) : undefined} onfork={live && attached && capabilities.forks ? (index) => device.send({ type: 'chat.fork', chatId: chat.id, index }) : undefined} onexpand={chat.dormant ? undefined : (index) => device.send({ type: 'chat.expand', chatId: chat.id, index })} />
 				<Queued queued={chat.queued} disabled={!live} oncancel={(index) => device.send({ type: 'chat.unqueue', chatId: chat.id, index, revision: chat.queueRevision })} />
 			</div>
 		</div>
@@ -310,7 +315,9 @@
 				<RequestCard {host} bind:this={card} {request} {agent} {asker} disabled={!live} onanswer={(chosen) => answer(request, chosen)} onattach={(files) => composer?.attach(files)} />
 			{/key}
 		{/if}
-		{#if !selected}
+		{#if chat.ended && !selected}
+			<p class="ended" role="status">{causes[chat.ended]}</p>
+		{:else if !selected}
 			<ChatComposer bind:this={composer} {device} {chat} {history} {shelling} {shell} {live} {request} {capabilities} {choices} {branches} {focused} onrun={run} />
 		{:else}
 			<div class="subagent"><span>Subagent</span><Button onclick={() => onopen([])}>Back to Main</Button></div>
@@ -318,7 +325,7 @@
 	</div>
 </div>
 {#if preview && active}<FilePreview projectId={chat.projectId} {...preview} />{/if}
-<Handoff bind:this={handoff} {device} {chat} available={attached && items.some((item) => item.kind === 'user')} />
+<Handoff bind:this={handoff} {device} {chat} available={attached && !chat.dormant && items.some((item) => item.kind === 'user')} />
 {#if movable}<MoveToWorktree bind:this={mover} {device} {chat} />{/if}
 <Dialog bind:open={forkFailed} title="Could not fork">
 	<p class="failure" role="alert">{forkError}</p>
@@ -330,6 +337,7 @@
 	.handoffs { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: var(--border-width) solid var(--border); font-size: var(--font-size-sm); }
 	.subagent { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); }
 	.subagent span, .report .label, .failure { color: var(--muted-fg); }
+	.ended { margin: 0; padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); color: var(--muted-fg); font-size: var(--font-size-sm); text-align: center; }
 	.failure { margin: 0; overflow-wrap: anywhere; }
 	.report { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-radius: var(--radius-lg); }
 	.report .label { font-size: var(--font-size-sm); }

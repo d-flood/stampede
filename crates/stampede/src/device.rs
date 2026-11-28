@@ -93,8 +93,8 @@ enum Control {
     MoveChat { chat_id: String, branch: String },
     #[serde(rename = "chat.fork")]
     ForkChat { chat_id: String, index: usize },
-    #[serde(rename = "chat.resume")]
-    ResumeChat { project_id: String, key: SessionKey },
+    #[serde(rename = "chat.open")]
+    OpenChat { project_id: String, key: SessionKey, item: Option<usize>, query: Option<String> },
     #[serde(rename = "sessions.list")]
     ListSessions { project_id: String },
     #[serde(rename = "sessions.search")]
@@ -626,14 +626,15 @@ impl Device {
                     }
                 });
             }
-            Control::ResumeChat { project_id, key } => {
+            Control::OpenChat { project_id, key, item, query } => {
                 let sessions = self.sessions.clone();
                 let chats = self.chats.clone();
                 let outgoing = self.outgoing.clone();
+                let landing = (item.is_some() || query.is_some()).then_some(chats::Landing { item, query });
                 tokio::spawn(async move {
-                    match sessions.resume(key, project_id.clone(), chats).await {
-                        Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat, "resumed": true })),
-                        Err(error) => send(&outgoing, json!({ "type": "chat.resume.error", "projectId": project_id, "error": error.to_string() })),
+                    match sessions.open(key, project_id.clone(), landing, chats).await {
+                        Ok(chat) => send(&outgoing, json!({ "type": "chat.created", "chat": chat, "opened": true })),
+                        Err(error) => send(&outgoing, json!({ "type": "chat.open.error", "projectId": project_id, "error": error.to_string() })),
                     }
                 });
             }

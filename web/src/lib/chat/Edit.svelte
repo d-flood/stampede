@@ -7,27 +7,37 @@
 	let { item, ondiff }: { item: Extract<Item, { kind: 'edit' }>; ondiff(path: string): void } = $props();
 </script>
 
-<details class="edit">
-	<summary>
-		<span class="title">Edited <span class="path" title={item.path}>{form() === 'phone' ? item.path.split('/').at(-1) : item.path}</span></span>
-		<span class="counts">{#if item.added}<span class="added">+{item.added}</span>{/if}{#if item.added && item.removed}{" "}{/if}{#if item.removed}<span class="removed">−{item.removed}</span>{/if}</span>
-	</summary>
-	{#if item.diff}
-		<div class="diff">
-			<Code code={item.diff} path={item.path} diff />
-		</div>
-	{/if}
-	{#if !item.path.startsWith('/')}
-		<Button variant="link" onclick={() => ondiff(item.path)}>Open diff</Button>
-	{/if}
-</details>
+{#snippet heading()}
+	<span class="title">Edited <span class="path" title={item.path}>{form() === 'phone' ? item.path.split('/').at(-1) : item.path}</span></span>
+	<span class="counts">{#if item.added}<span class="added">+{item.added}</span>{/if}{#if item.added && item.removed}{" "}{/if}{#if item.removed}<span class="removed">−{item.removed}</span>{/if}</span>
+{/snippet}
+
+{#if item.elided}
+	<div class="edit summary">{@render heading()}</div>
+{:else}
+	<details class="edit">
+		<summary>{@render heading()}</summary>
+		{#if item.diff}
+			<div class="diff">
+				<Code code={item.diff} path={item.path} diff />
+			</div>
+		{/if}
+		{#if !item.path.startsWith('/')}
+			<Button variant="link" onclick={() => ondiff(item.path)}>Open diff</Button>
+		{/if}
+	</details>
+{/if}
 
 <style>
-	summary {
+	summary,
+	.summary {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
 		min-height: var(--target-min);
+	}
+
+	summary {
 		list-style: none;
 		cursor: pointer;
 	}

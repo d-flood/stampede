@@ -6,7 +6,7 @@
 
 	let { item, full = false, onclose }: { item: HtmlItem; full?: boolean; onclose?: () => void } = $props();
 	const preview = getHtmlPreview();
-	let frame: HTMLIFrameElement;
+	let frame = $state<HTMLIFrameElement>();
 	let height = $state(240);
 
 	const srcdoc = $derived(sandboxed(item.html, `addEventListener('DOMContentLoaded', () => {
@@ -28,16 +28,20 @@
 
 <svelte:window onmessage={resize} />
 
-<section class="html" class:full aria-label={item.title} bind:clientWidth={width}>
+<section class="html" class:full class:elided={item.elided} aria-label={item.title} bind:clientWidth={width}>
 	<div class="heading">
 		<div class="title">{item.title}</div>
-		{#if full}
+		{#if item.elided}
+			<span class="trimmed">Trimmed</span>
+		{:else if full}
 			<IconButton label="Close full screen" onclick={onclose}><X /></IconButton>
 		{:else}
 			<IconButton label="Full screen" onclick={() => preview(item)}><ArrowsOut /></IconButton>
 		{/if}
 	</div>
-	<iframe bind:this={frame} title={item.title} srcdoc={loaded} sandbox="allow-scripts" referrerpolicy="no-referrer" style:height={full ? undefined : `${height}px`}></iframe>
+	{#if !item.elided}
+		<iframe bind:this={frame} title={item.title} srcdoc={loaded} sandbox="allow-scripts" referrerpolicy="no-referrer" style:height={full ? undefined : `${height}px`}></iframe>
+	{/if}
 </section>
 
 <style>
@@ -62,6 +66,16 @@
 		flex: 1;
 		min-width: 0;
 		overflow-wrap: anywhere;
+	}
+
+	.elided .heading {
+		min-height: var(--target-min);
+		padding-right: var(--space-4);
+	}
+
+	.trimmed {
+		flex: none;
+		color: var(--muted-fg);
 	}
 
 	iframe {

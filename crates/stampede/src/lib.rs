@@ -270,13 +270,13 @@ pub async fn serve(args: ServeArgs) -> std::io::Result<()> {
         push::spawn(Arc::clone(&push), &attention);
     }
     let usage = Arc::new(Usage::default());
-    let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage), args.cloud));
+    let chats = Arc::new(Chats::new(args.data_dir.clone(), Arc::clone(&attention), Arc::clone(&usage), args.cloud, config.clone()));
     let rigs = config.borrow().rigs.clone();
     let terminals = Arc::new(Terminals::new(args.data_dir.clone(), args.cloud.is_some()));
     terminals.restore().await?;
     cloud_setup.interrupted(&terminals)?;
-    chats.restore(&rigs).await?;
     let sessions = chats::sessions::Sessions::new(&args.data_dir, projects.clone(), epics.clone(), config.clone(), args.cloud.is_some()).await?;
+    chats.restore(&rigs, &sessions).await?;
     sessions.follow(chats.clone());
     if let Some(cloud::Service::Sprite) = args.cloud {
         keep_awake::spawn(busy, chats.busy(), cloud_setup.subscribe(), terminals.printed());

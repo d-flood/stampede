@@ -922,6 +922,27 @@ pub(super) fn snapshot(store: &str, session: &str, cwd: &Path, data: &Path) -> i
     Ok(items)
 }
 
+/// The questions the Session answered, read from its transcript without starting Claude Code.
+pub(super) fn answered(store: &str, session: &str, cwd: &Path) -> Vec<AnsweredQuestions> {
+    let env = BTreeMap::from([("CLAUDE_CONFIG_DIR".to_owned(), store.to_owned())]);
+    if session_file(&env, session).is_none() { return Vec::new(); }
+    let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let mut transcript = Transcript::new(events, cwd);
+    transcript.history(&env, session, None, true, true);
+    let mut answered: Vec<AnsweredQuestions> = Vec::new();
+    while let Ok(event) = received.try_recv() {
+        match event {
+            Event::QuestionsRecovered(record) => {
+                answered.retain(|saved| saved.source != record.source);
+                answered.push(record);
+            }
+            Event::QuestionsTruncated(after) => answered.retain(|record| record.after <= after),
+            _ => (),
+        }
+    }
+    answered
+}
+
 pub(super) fn session_file(env: &BTreeMap<String, String>, session: &str) -> Option<PathBuf> {
     let name = format!("{session}.jsonl");
     let projects = fs::read_dir(config_dir(env)?.join("projects")).ok()?;

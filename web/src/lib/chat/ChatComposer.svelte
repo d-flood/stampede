@@ -199,7 +199,7 @@
 	</Chips>
 {/snippet}
 
-<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} mark={(text) => command(text)?.token.length ?? 0} footer={phone ? meta : undefined} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
+<Composer bind:this={composer} id={chat.id} draft={chat.draft} {focused} placeholder={request ? `Or tell ${agent} what to do instead…` : chat.dormant ? 'Message to resume this Session' : `Message ${agent}`} {history} code={(text) => text.trimStart().startsWith('!')} mark={(text) => command(text)?.token.length ?? 0} footer={phone ? meta : undefined} onsend={(text) => send(text, false)} onkeydown={keydown} onpaste={paste}>
 	{#snippet border(text: string)}
 		{@const known = chat.status === 'done' && !shell && !slash?.isOpen() && !files?.isOpen() ? command(text) : undefined}
 		<TurnRing status={chat.status} activity={chat.activity} {shell} />

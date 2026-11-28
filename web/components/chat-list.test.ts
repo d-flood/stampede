@@ -65,5 +65,5 @@ test('a query shows the matches the Host found with highlighted excerpts, then t
 	expect(here.elements().map((option) => option.textContent?.match(/Search design|Tokenizer notes/)?.[0])).toEqual(['Search design', 'Tokenizer notes']);
 	const other = list.getByRole('group', { name: 'Other Projects' }).getByRole('option');
 	expect(other.element().textContent).toMatch(/Sidebar perf.*botley.*Ended.*You which tokenizer\?/);
-	await expect.element(other).toHaveAttribute('aria-disabled', 'true');
+	await expect.element(other).not.toHaveAttribute('aria-disabled', 'true');
 });

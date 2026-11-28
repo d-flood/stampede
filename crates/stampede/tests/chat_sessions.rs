@@ -57,9 +57,10 @@ async fn past_claude_questions_are_recovered_without_duplicating_saved_answers()
         json!({ "type": "user", "uuid": "parallel-result", "parentUuid": "parallel-tool", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "read", "content": "Notes" }] } }),
     ];
     fs::write(sessions(&server).join(format!("{COLOR}.jsonl")), entries.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
-    let chat = resume(&mut socket, &project_id, "claude-code", COLOR).await;
+    let chat = open(&mut socket, &project_id, "claude-code", COLOR).await;
     let chat_id = chat["id"].as_str().unwrap();
     attach(&mut socket, chat_id).await;
+    assert_eq!(turn(&mut socket, chat_id, "Now name a fruit in one word.").await, ["working", "done"]);
     let path = server.root.path().join("data/chats").join(format!("{chat_id}.json"));
     let mut saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     let history = saved["answeredQuestions"].as_array().unwrap();
@@ -271,10 +272,13 @@ async fn claude_sessions_prefer_native_metadata_in_long_transcripts() {
 }
 
 #[tokio::test]
-async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
+async fn a_past_claude_session_opens_dormant_and_resumes_from_a_store_matching_rig() {
     let second = tempfile::tempdir().unwrap();
     let config = RIGS.replace("STAMPEDE_FAKE_FIXTURE = \"simple-turn\"", &format!("STAMPEDE_FAKE_FIXTURE = \"resume\", CLAUDE_CONFIG_DIR = {:?}", second.path()));
-    let (mut server, mut socket, project_id) = start(&config, Vec::new()).await;
+    let launched = second.path().join("launched.jsonl");
+    let (mut server, mut socket, project_id) = start(&config, vec![("STAMPEDE_FAKE_ARGS", launched.clone().into())]).await;
+    let resumes = || fs::read_to_string(&launched).unwrap_or_default().lines()
+        .filter(|line| serde_json::from_str::<Vec<String>>(line).unwrap().windows(2).any(|pair| pair == ["--resume", COLOR])).count();
     let home = server.root.path().join("home");
     let worktree = server.root.path().join("data/worktrees/_branches").join(project_id.as_str().unwrap()).join("branch");
     fs::create_dir_all(&worktree).unwrap();
@@ -286,27 +290,44 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
     let second_store = fs::canonicalize(second.path()).unwrap();
     let rows = list(&mut socket, &project_id, |rows| rows.iter().any(|row| row["key"]["store"] == json!(second_store))).await;
     let key = &rows.as_array().unwrap().iter().find(|row| row["key"]["store"] == json!(second_store)).unwrap()["key"];
-    control(&mut socket, json!({ "type": "chat.resume", "projectId": project_id, "key": key })).await;
+    control(&mut socket, json!({ "type": "chat.open", "projectId": project_id, "key": key })).await;
     let other = timeout(Duration::from_secs(10), next_control(&mut socket, "chat.created")).await.unwrap()["chat"].clone();
     assert_eq!(other["rig"], "other claude");
     assert_eq!(other["cwd"], json!(worktree));
     assert_eq!(other["sessionStore"], json!(second_store));
-    close_chat(&mut socket, server.root.path(), other["id"].as_str().unwrap()).await;
+    let other_id = other["id"].as_str().unwrap();
+    assert_eq!(turn(&mut socket, other_id, "Now name a fruit in one word.").await, ["working", "done"]);
+    assert!(leftovers(server.root.path()).iter().any(|process| process.contains(&format!(" --resume {COLOR}"))));
+    close_chat(&mut socket, server.root.path(), other_id).await;
     fs::remove_file(directory.join(format!("{COLOR}.jsonl"))).unwrap();
     // Wait for the deleted fixture to leave the catalogue before checking the default-store resume.
     list(&mut socket, &project_id, |rows| rows.iter().all(|row| row["key"]["store"] != json!(second_store)) && rows.iter().any(|row| row["key"]["sessionId"] == COLOR)).await;
-    let chat = resume(&mut socket, &project_id, "claude-code", COLOR).await;
+    let before = resumes();
+    let chat = open(&mut socket, &project_id, "claude-code", COLOR).await;
     let chat_id = chat["id"].as_str().unwrap();
     assert_eq!(chat["rig"], "claude");
     assert_eq!(chat["agentSession"], COLOR);
+    assert_eq!(chat["dormant"], true);
     let color = [
         json!({ "kind": "user", "text": "Name a color in one word.", "images": 0 }),
         json!({ "kind": "text", "text": "Crimson", "streaming": false, "phase": "final" }),
     ];
     assert_eq!(attach(&mut socket, chat_id).await, color);
-    let running = leftovers(server.root.path());
-    assert!(running.iter().any(|process| process.contains(&format!(" --resume {COLOR}"))), "{running:?}");
+    let listed = list(&mut socket, &project_id, |rows| rows.len() == 3 && rows.iter().all(|row| row["key"]["sessionId"] != COLOR)).await;
+    let ids: Vec<&Value> = listed.as_array().unwrap().iter().map(|session| &session["key"]["sessionId"]).collect();
+    assert_eq!(ids, [GRILL, EXEC, THREAD]);
+    server.restart().await;
+    let (restarted, _) = connect_async(format!("ws://127.0.0.1:{}/ws", server.port)).await.unwrap();
+    socket = restarted;
+    control(&mut socket, json!({ "type": "hello", "deviceId": "restarted" })).await;
+    next_control(&mut socket, "hello").await;
+    assert_eq!(attach(&mut socket, chat_id).await, color);
     let record = server.root.path().join(format!("data/chats/{chat_id}.json"));
+    assert_eq!(serde_json::from_slice::<Value>(&fs::read(&record).unwrap()).unwrap()["dormant"], true);
+    assert_eq!(resumes(), before, "a Dormant Chat launched its Agent");
+
+    assert_eq!(turn(&mut socket, chat_id, "Now name a fruit in one word.").await, ["working", "done"]);
+    assert_eq!(resumes(), before + 1);
     let context = timeout(Duration::from_secs(10), async {
         loop {
             let chat: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
@@ -314,14 +335,8 @@ async fn a_past_claude_session_opens_as_a_chat_from_the_first_claude_rig() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     });
-    let cache = json!({ "expires": 1792186875163u64, "then": "cold" });
-    assert_eq!(context.await.expect("the resumed chat never reported its context"), json!({ "used": 4436, "window": 1000000, "cache": cache }), "cold an hour after its last response");
-
-    let listed = list(&mut socket, &project_id, |rows| rows.len() == 3 && rows.iter().all(|row| row["key"]["sessionId"] != COLOR)).await;
-    let ids: Vec<&Value> = listed.as_array().unwrap().iter().map(|session| &session["key"]["sessionId"]).collect();
-    assert_eq!(ids, [GRILL, EXEC, THREAD]);
-
-    assert_eq!(turn(&mut socket, chat_id, "Now name a fruit in one word.").await, ["working", "done"]);
+    let context = context.await.expect("the resumed chat never reported its context");
+    assert_eq!((&context["used"], &context["window"]), (&json!(24416), &json!(1000000)));
     let fruit = [
         json!({ "kind": "user", "text": "Now name a fruit in one word.", "images": 0 }),
         json!({ "kind": "text", "text": "Mango", "streaming": false, "phase": "final" }),
@@ -392,8 +407,9 @@ async fn chats_take_their_agents_title_and_otherwise_their_first_prompt() {
     let path = sessions(&server).join(format!("{COLOR}.jsonl"));
     let session = fs::read_to_string(&path).unwrap() + &json!({ "type": "ai-title", "aiTitle": "Naming colors", "sessionId": COLOR }).to_string();
     fs::write(&path, session + "\n").unwrap();
-    let resumed = resume(&mut socket, &project_id, "claude-code", COLOR).await;
+    let resumed = open(&mut socket, &project_id, "claude-code", COLOR).await;
     let resumed = resumed["id"].as_str().unwrap();
+    assert_eq!(turn(&mut socket, resumed, "Now name a fruit in one word.").await, ["working", "done"]);
     titled(&server, resumed, "Naming colors").await;
     close_chat(&mut socket, server.root.path(), resumed).await;
 
@@ -406,9 +422,9 @@ async fn chats_take_their_agents_title_and_otherwise_their_first_prompt() {
 }
 
 #[tokio::test]
-async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
+async fn a_past_codex_thread_opens_dormant_and_resumes_from_the_first_codex_rig() {
     let (server, mut socket, project_id) = start(RIGS, Vec::new()).await;
-    let chat = resume(&mut socket, &project_id, "codex", THREAD).await;
+    let chat = open(&mut socket, &project_id, "codex", THREAD).await;
     let chat_id = chat["id"].as_str().unwrap();
     assert_eq!(chat["rig"], "codex");
     assert_eq!(chat["agentSession"], THREAD);
@@ -417,7 +433,9 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
         json!({ "kind": "thinking", "seconds": 0 }),
         json!({ "kind": "text", "text": "Hi there, friend!", "streaming": false, "phase": "final" }),
     ];
-    assert_eq!(attach(&mut socket, chat_id).await, hi);
+    let mut snapshot = hi.clone();
+    snapshot[1]["elided"] = json!(true);
+    assert_eq!(attach(&mut socket, chat_id).await, snapshot);
 
     assert_eq!(turn(&mut socket, chat_id, "Now say bye in two words.").await, ["working", "done"]);
     let bye = [
@@ -442,8 +460,9 @@ async fn a_past_codex_thread_opens_as_a_chat_from_the_first_codex_rig() {
 #[tokio::test]
 async fn a_codex_thread_larger_than_a_websocket_message_limit_opens() {
     let (server, mut socket, project_id) = start(RIGS, vec![("STAMPEDE_FAKE_PADDING", (65 << 20).to_string().into())]).await;
-    let chat = resume(&mut socket, &project_id, "codex", THREAD).await;
+    let chat = open(&mut socket, &project_id, "codex", THREAD).await;
     let chat_id = chat["id"].as_str().unwrap();
+    assert_eq!(turn(&mut socket, chat_id, "Now say bye in two words.").await, ["working", "done"]);
     assert_eq!(attach(&mut socket, chat_id).await[2]["text"], "Hi there, friend!");
     close_chat(&mut socket, server.root.path(), chat_id).await;
 }
@@ -452,20 +471,21 @@ async fn a_codex_thread_larger_than_a_websocket_message_limit_opens() {
 async fn notifications_already_in_a_paged_codex_history_are_shown_once() {
     let mut entries: Vec<Value> = include_str!("fixtures/chats/codex/resume.recorded.jsonl").lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     let resumed = entries.iter().position(|entry| entry["stdout"]["result"]["thread"]["turns"][0].is_object()).unwrap();
-    let turn = entries[resumed]["stdout"]["result"]["thread"]["turns"][0].clone();
-    let items = turn["items"].as_array().unwrap().iter().map(|item| {
-        json!({ "stdout": { "method": "item/completed", "params": { "threadId": THREAD, "turnId": turn["id"], "item": item } } })
+    let recorded = entries[resumed]["stdout"]["result"]["thread"]["turns"][0].clone();
+    let items = recorded["items"].as_array().unwrap().iter().map(|item| {
+        json!({ "stdout": { "method": "item/completed", "params": { "threadId": THREAD, "turnId": recorded["id"], "item": item } } })
     });
-    let echoes: Vec<Value> = items.chain([json!({ "stdout": { "method": "turn/completed", "params": { "threadId": THREAD, "turn": turn } } })]).collect();
+    let echoes: Vec<Value> = items.chain([json!({ "stdout": { "method": "turn/completed", "params": { "threadId": THREAD, "turn": recorded } } })]).collect();
     entries.splice(resumed + 1..resumed + 1, echoes);
     let scratch = tempfile::tempdir().unwrap();
     let fixture = scratch.path().join("echoes.recorded.jsonl");
     fs::write(&fixture, entries.iter().map(|entry| entry.to_string() + "\n").collect::<String>()).unwrap();
 
     let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", fixture.into()), ("STAMPEDE_FAKE_THREADS", "threads".into())]).await;
-    let chat = resume(&mut socket, &project_id, "codex", THREAD).await;
+    let chat = open(&mut socket, &project_id, "codex", THREAD).await;
     let chat_id = chat["id"].as_str().unwrap();
-    assert_eq!(attach(&mut socket, chat_id).await, [
+    assert_eq!(turn(&mut socket, chat_id, "Now say bye in two words.").await, ["working", "done"]);
+    assert_eq!(attach(&mut socket, chat_id).await[..3], [
         json!({ "kind": "user", "text": "Say hi in three words.", "images": 0 }),
         json!({ "kind": "thinking", "seconds": 0 }),
         json!({ "kind": "text", "text": "Hi there, friend!", "streaming": false, "phase": "final" }),
@@ -477,8 +497,9 @@ async fn notifications_already_in_a_paged_codex_history_are_shown_once() {
 async fn without_a_rig_a_session_opens_with_its_agents_defaults() {
     let (server, mut socket, project_id) = start("", vec![("STAMPEDE_FAKE_FIXTURE", "resume".into()), ("STAMPEDE_FAKE_THREADS", "threads".into())]).await;
     for (agent, session, rig) in [("claude-code", COLOR, "Claude Code"), ("codex", THREAD, "Codex")] {
-        let chat = resume(&mut socket, &project_id, agent, session).await;
+        let chat = open(&mut socket, &project_id, agent, session).await;
         assert_eq!((&chat["rig"], &chat["agentSession"]), (&json!(rig), &json!(session)));
+        assert_eq!(turn(&mut socket, chat["id"].as_str().unwrap(), "Next").await, ["working", "done"]);
         close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await;
     }
 }
@@ -534,10 +555,11 @@ async fn list(socket: &mut Socket, project_id: &Value, expected: impl Fn(&[Value
     }).await.expect("the expected Sessions were never listed")
 }
 
-async fn resume(socket: &mut Socket, project_id: &Value, agent: &str, session: &str) -> Value {
+/// Opens a listed Session as a Dormant Chat.
+async fn open(socket: &mut Socket, project_id: &Value, agent: &str, session: &str) -> Value {
     let listed = list(socket, project_id, |rows| rows.iter().any(|row| row["key"]["agent"] == agent && row["key"]["sessionId"] == session)).await;
     let key = &listed.as_array().unwrap().iter().find(|row| row["key"]["agent"] == agent && row["key"]["sessionId"] == session).unwrap()["key"];
-    control(socket, json!({ "type": "chat.resume", "projectId": project_id, "key": key })).await;
+    control(socket, json!({ "type": "chat.open", "projectId": project_id, "key": key })).await;
     let created = timeout(Duration::from_secs(10), next_control(socket, "chat.created")).await;
     let chat = created.expect("the chat was never created")["chat"].clone();
     assert_eq!(chat["agent"], agent);

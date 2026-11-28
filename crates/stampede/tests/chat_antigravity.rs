@@ -191,9 +191,12 @@ async fn antigravity_reopens_history_after_restart_and_lists_project_sessions() 
     let calls = received(&server);
     assert!(calls.iter().any(|call| call["method"] == "session/list" && call["params"]["cwd"].is_null() && call["params"]["cursor"] == "more"));
     assert_eq!(calls.iter().filter(|call| call["method"] == "session/prompt").count(), 2);
-    control(&mut socket, json!({ "type": "chat.resume", "projectId": project, "key": listed[0]["key"] })).await;
+    control(&mut socket, json!({ "type": "chat.open", "projectId": project, "key": listed[0]["key"] })).await;
     let resumed = timeout(Duration::from_secs(20), next_control(&mut socket, "chat.created")).await.unwrap()["chat"].clone();
     assert_eq!(attached(&mut socket, &resumed).await["items"].as_array().unwrap().len(), 4);
+    control(&mut socket, json!({ "type": "chat.send", "chatId": resumed["id"], "text": "Once more" })).await;
+    done(&mut socket).await;
+    assert_eq!(attached(&mut socket, &resumed).await["items"].as_array().unwrap().len(), 6);
     close_chat(&mut socket, server.root.path(), resumed["id"].as_str().unwrap()).await;
 }
 

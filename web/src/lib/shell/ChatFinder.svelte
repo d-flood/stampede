@@ -17,7 +17,7 @@
 		reading: boolean;
 		search: Searching;
 		labels?: Map<string, string>;
-		/** Whether a found Session can be resumed from here; Ended Sessions never can. */
+		/** Whether a found Session can be opened from here. */
 		selectable?(session: Session): boolean;
 		/** Open Chats, listed under their own heading before the sessions. */
 		chats?: Chat[];
@@ -72,7 +72,7 @@
 
 {#snippet session(session: Session | FoundSession)}
 	{@const here = !query || session.project.id === search.focus}
-	{@const disabled = !!session.ended || selectable?.(session) === false}
+	{@const disabled = selectable?.(session) === false}
 	<ChatItem
 		value="session:{sessionKey(session)}"
 		agent={session.key.agent}
