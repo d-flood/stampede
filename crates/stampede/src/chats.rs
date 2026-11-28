@@ -874,6 +874,15 @@ pub struct Chat {
     /// Why the Session can never resume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended: Option<sessions::Ended>,
+    /// The Session's directory no longer exists, so it continues only in a new Chat.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub gone: bool,
+    /// The title of the Session whose messages this Chat received as context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continued_from: Option<String>,
+    /// The context file the first message sent has yet to name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing: Option<Landing>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -882,6 +891,9 @@ pub struct Chat {
     pub duty: Option<Duty>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft: Option<String>,
+    /// Media-store URLs of images waiting in the Composer with `draft`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub draft_images: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shell_context: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -895,6 +907,42 @@ pub struct Landing {
     pub item: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
+}
+
+/// Why a Dormant Chat's Session can't resume, when its driver knows for certain.
+#[derive(Debug)]
+pub(crate) enum Unresumable {
+    /// The Agent's history store holds no such Session.
+    Missing,
+    /// The Session's directory no longer exists.
+    Gone,
+}
+
+impl std::fmt::Display for Unresumable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Unresumable::Missing => "its Agent no longer has this Session's history",
+            Unresumable::Gone => "this Session's worktree no longer exists",
+        })
+    }
+}
+
+impl std::error::Error for Unresumable {}
+
+fn unresumable(error: &io::Error) -> Option<&Unresumable> {
+    error.get_ref()?.downcast_ref()
+}
+
+/// What a new Chat starts with besides its Rig.
+#[derive(Default)]
+struct Seed {
+    handoff_from: Option<String>,
+    forked_from: Option<String>,
+    continued_from: Option<String>,
+    draft: Option<String>,
+    draft_images: Vec<String>,
+    /// The earlier conversation, written to the Chat's scratch directory before its Agent launches.
+    context: Option<String>,
 }
 
 /// What a Run started a Chat to do, which decides the actions of its `epic` tool.
@@ -971,12 +1019,14 @@ pub enum Lifecycle {
     Notice(String, Notice),
     /// The Chat has stopped and its record is gone; this is its last state.
     Ended(Box<Chat>),
+    /// A Dormant Chat's Agent has no history of its Session.
+    Missing(String, sessions::SessionKey),
 }
 
 impl Lifecycle {
     pub fn chat(&self) -> &str {
         match self {
-            Lifecycle::Status(chat, _) | Lifecycle::Session(chat, _) | Lifecycle::Notice(chat, _) => chat,
+            Lifecycle::Status(chat, _) | Lifecycle::Session(chat, _) | Lifecycle::Notice(chat, _) | Lifecycle::Missing(chat, _) => chat,
             Lifecycle::Ended(chat) => &chat.id,
         }
     }
@@ -1135,14 +1185,53 @@ impl Chats {
 
     /// Starts a Chat owned by `project` that runs in `cwd`: the Project's own directory, or a Ticket Worktree.
     pub async fn create(self: &Arc<Self>, project: &Project, cwd: &Path, rig: &Rig, session: Option<&str>, duty: Option<Duty>) -> io::Result<Chat> {
-        self.start(&project.id, cwd, rig, session, None, None, duty).await
+        self.start(&project.id, cwd, rig, session, Seed::default(), None, duty).await
     }
 
     pub async fn create_handoff(self: &Arc<Self>, project: &Project, source: &Chat, rig: &Rig, text: String) -> io::Result<Chat> {
-        self.start(&project.id, &source.cwd, rig, None, Some((source.id.clone(), text)), None, None).await
+        self.start(&project.id, &source.cwd, rig, None, Seed { handoff_from: Some(source.id.clone()), draft: Some(text), ..Seed::default() }, None, None).await
     }
 
-    async fn start(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, session: Option<&str>, handoff: Option<(String, String)>, parent: Option<String>, duty: Option<Duty>) -> io::Result<Chat> {
+    /// Starts a Chat on `rig` that receives an Ended or gone Session's messages as context: those before its user message at `index`,
+    /// which waits in the new Chat's Composer, or else all of them, with `text` sent after.
+    pub async fn continue_session(self: &Arc<Self>, id: &str, rig: &Rig, projects: &[Project], index: Option<usize>, text: &str, images: &[Image]) -> io::Result<Chat> {
+        let entry = self.get(id).ok_or_else(|| io::Error::other("The Chat is no longer open."))?;
+        let (source, items) = {
+            let transcript = entry.transcript.lock().unwrap();
+            let chat = entry.chat.lock().unwrap();
+            (chat.clone(), transcript.items.clone())
+        };
+        let gone = source.gone || !tokio::fs::metadata(&source.cwd).await.is_ok_and(|metadata| metadata.is_dir());
+        if !source.dormant || source.closing || (source.ended.is_none() && !gone) {
+            return Err(io::Error::other("Only an Ended Session, or one whose worktree is gone, continues in a new Chat."));
+        }
+        let (cut, draft, draft_images) = match index {
+            Some(index) => match items.get(index) {
+                Some(Item::User { text, template, image_urls, .. }) => {
+                    let typed = if template.as_deref() == Some("continued") { text.trim_start_matches("/continued").trim_start() } else { text };
+                    (index, Some(typed.to_owned()).filter(|typed| !typed.is_empty()), image_urls.clone())
+                }
+                _ => return Err(io::Error::other("Choose a user message to fork from.")),
+            },
+            None if Image::all_valid(images) && (!text.trim().is_empty() || !images.is_empty()) => (items.len(), None, Vec::new()),
+            None => return Err(io::Error::other("Type a message to continue with.")),
+        };
+        let project = projects.iter().find(|project| project.id == source.project_id).ok_or_else(|| io::Error::other("The Session's Project is no longer open."))?;
+        let (project, cwd) = if gone {
+            let parent = project.worktree.as_ref().and_then(|worktree| projects.iter().find(|other| other.id == worktree.parent)).unwrap_or(project);
+            (parent, PathBuf::from(&parent.path))
+        } else {
+            (project, source.cwd.clone())
+        };
+        let title = source.title.clone().filter(|title| !title.trim().is_empty()).unwrap_or_else(|| "an earlier Session".to_owned());
+        let context = context(&title, source.agent, &items[..cut], &self.data_dir);
+        let seed = Seed { forked_from: Some(source.id.clone()), continued_from: Some(title), draft, draft_images, context: Some(context), ..Seed::default() };
+        let chat = self.start(&project.id, &cwd, rig, None, seed, None, None).await?;
+        if index.is_none() { self.send(&chat.id, text, false, images); }
+        Ok(chat)
+    }
+
+    async fn start(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, session: Option<&str>, seed: Seed, parent: Option<String>, duty: Option<Duty>) -> io::Result<Chat> {
         if self.cloud.is_some() && !matches!(rig.agent, Agent::ClaudeCode | Agent::Codex) {
             return Err(io::Error::other("A Cloud Host runs only Claude Code and Codex."));
         }
@@ -1151,15 +1240,19 @@ impl Chats {
         if session.is_some_and(|session_id| self.session_keys().contains(&sessions::SessionKey { agent: rig.agent, store: session_store.clone(), session_id: session_id.to_owned() })) {
             return Err(io::Error::other("Another Chat is still running that conversation."));
         }
-        let (handoff_from, draft) = match handoff {
-            Some((source, text)) => (Some(source), Some(text)),
-            None => (None, None),
+        let mut chat = Chat {
+            handoff_from: seed.handoff_from, forked_from: seed.forked_from, continued_from: seed.continued_from, draft: seed.draft, draft_images: seed.draft_images,
+            parent, duty, ..Chat::new(project_id, cwd, rig, session_store, session)?
         };
-        let chat = Chat { handoff_from, parent, duty, draft, ..Chat::new(project_id, cwd, rig, session_store, session)? };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         let mut env = rig.env.clone();
         sessions::apply_store(rig.agent, &chat.session_store, &mut env);
         let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&chat.id, cwd, &env).await?;
+        if let Some(context) = seed.context {
+            let path = storage.scratch().join("continued.md");
+            fs::write(&path, context)?;
+            chat.continuation = Some(path);
+        }
         write_record(&self.data_dir, &chat)?;
         let started = match rig.agent {
             Agent::ClaudeCode => claude::start(&self.data_dir, &chat.id, &chat.cwd, &storage.env, &chat.settings.chosen, session, self.cloud.is_some())
@@ -1186,12 +1279,12 @@ impl Chats {
     }
 
     /// Opens a Dormant Chat on a past Session, showing `items` without starting its Agent.
-    pub(crate) fn open_dormant(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, rigs: Vec<String>, key: &sessions::SessionKey, snapshot: sessions::Snapshot, landing: Option<Landing>) -> io::Result<Chat> {
+    pub(crate) fn open_dormant(self: &Arc<Self>, project_id: &str, cwd: &Path, rig: &Rig, rigs: Vec<String>, key: &sessions::SessionKey, snapshot: sessions::Snapshot, landing: Option<Landing>, gone: bool) -> io::Result<Chat> {
         if self.session_keys().contains(key) {
             return Err(io::Error::other("Another Chat is still running that conversation."));
         }
         let title = Some(snapshot.title).filter(|title| !title.trim().is_empty());
-        let chat = Chat { title, dormant: true, rigs, ended: snapshot.ended, answered_questions: snapshot.answered, landing, ..Chat::new(project_id, cwd, rig, key.store.clone(), Some(&key.session_id))? };
+        let chat = Chat { title, dormant: true, rigs, ended: snapshot.ended, gone, answered_questions: snapshot.answered, landing, ..Chat::new(project_id, cwd, rig, key.store.clone(), Some(&key.session_id))? };
         fs::create_dir_all(self.data_dir.join("chats"))?;
         write_record(&self.data_dir, &chat)?;
         self.adopt_dormant(chat.clone(), snapshot.items);
@@ -1200,7 +1293,7 @@ impl Chats {
     }
 
     fn adopt_dormant(self: &Arc<Self>, chat: Chat, items: Vec<Item>) -> Arc<Entry> {
-        let forks = chat.ended.is_none() && matches!(chat.agent, Agent::ClaudeCode | Agent::Codex | Agent::Copilot);
+        let forks = chat.ended.is_none() && !chat.gone && matches!(chat.agent, Agent::ClaudeCode | Agent::Codex | Agent::Copilot);
         let transcript = Transcript { recoverable: false, seq: 0, items, requests: Vec::new(), reported: Status::Done, turns: 0, handoff: None, questions: HashMap::new(), starting: false };
         let entry = Arc::new(Entry {
             chat: Mutex::new(chat),
@@ -1277,7 +1370,7 @@ impl Chats {
             let mut transcript = entry.transcript.lock().unwrap();
             let chat = entry.chat.lock().unwrap();
             if !chat.dormant { return Ok(index); }
-            if chat.ended.is_some() || chat.closing { return Err(io::Error::other("This Session can't resume.")); }
+            if chat.ended.is_some() || chat.gone || chat.closing { return Err(io::Error::other("This Session can't resume.")); }
             if !matches!(transcript.items.get(index), Some(Item::User { .. })) { return Err(io::Error::other("Choose a user message to fork from.")); }
             let ordinal = transcript.items[..index].iter().filter(|item| matches!(item, Item::User { .. })).count();
             drop(chat);
@@ -1313,12 +1406,38 @@ impl Chats {
             transcript.starting = false;
             entry.started.send_replace(Some(Err(error.to_string())));
             if entry.chat.lock().unwrap().closing { return; }
+            if let Some(reason) = unresumable(&error) {
+                drop(transcript);
+                chats.unresumable(&entry, reason);
+                return;
+            }
             let index = transcript.items.len();
             let item = Item::Notice { notice: Notice::Error, text: format!("Couldn't resume this Session: {error}") };
             transcript.items.push(item.clone());
             transcript.seq += 1;
             let _ = chats.changed.send(Change::Item { chat_id: id, seq: transcript.seq, index, item });
         });
+    }
+
+    /// Turns a Dormant Chat whose Session can't resume into one that continues in a new Chat, with what was waiting to resume it in its Composer.
+    fn unresumable(&self, entry: &Entry, reason: &Unresumable) {
+        let mut chat = entry.chat.lock().unwrap();
+        match reason {
+            Unresumable::Missing => chat.ended = Some(sessions::Ended::Missing),
+            Unresumable::Gone => chat.gone = true,
+        }
+        chat.rigs.clear();
+        let waiting: Vec<String> = chat.queued.drain(..).filter(|text| !text.trim().is_empty()).collect();
+        let images: Vec<String> = std::mem::take(&mut chat.queued_images).into_iter().flatten().filter_map(|image| crate::media::cache_image(&self.data_dir, &format!("data:{};base64,{}", image.media_type, image.data))
+            .inspect_err(|error| eprintln!("cannot cache a queued image: {error}")).ok()).collect();
+        chat.draft_images.extend(images);
+        if !waiting.is_empty() { chat.draft = Some(waiting.join("\n\n")); }
+        let (id, project_id, key) = (chat.id.clone(), chat.project_id.clone(), chat.session_key());
+        self.queued(entry, chat);
+        let _ = self.changed.send(Change::Chats(project_id));
+        if let (Unresumable::Missing, Some(key)) = (reason, key) {
+            let _ = self.lifecycle.send(Lifecycle::Missing(id, key));
+        }
     }
 
     async fn launch(self: &Arc<Self>, entry: &Arc<Entry>) -> io::Result<()> {
@@ -1336,6 +1455,15 @@ impl Chats {
         }
         let mut env = rig.env.clone();
         sessions::apply_store(source.agent, &source.session_store, &mut env);
+        if !tokio::fs::metadata(&source.cwd).await.is_ok_and(|metadata| metadata.is_dir()) {
+            return Err(io::Error::other(Unresumable::Gone));
+        }
+        if source.agent == Agent::ClaudeCode && let Some(session) = source.agent_session.clone() {
+            let env = env.clone();
+            let missing = tokio::task::spawn_blocking(move || claude::missing(&env, &session)).await.map_err(io::Error::other)?
+                .map_err(|error| io::Error::other(format!("Claude Code's history couldn't be read: {error}")))?;
+            if missing { return Err(io::Error::other(Unresumable::Missing)); }
+        }
         let storage = crate::storage::Storage::new(&self.data_dir).on_cloud(self.cloud.is_some()).prepare(&source.id, &source.cwd, &env).await?;
         let chat = entry.chat.lock().unwrap().clone();
         let (driver, mut events) = self.resume(&chat, &storage.env).await?;
@@ -1416,7 +1544,7 @@ impl Chats {
                     continue;
                 }
                 let Some(key) = chat.session_key() else { continue };
-                if chat.ended.is_none() {
+                if chat.ended.is_none() && !chat.gone {
                     let (rigs, agent, store, current) = (rigs.to_vec(), chat.agent, chat.session_store.clone(), chat.rig.clone());
                     chat.rigs = tokio::task::spawn_blocking(move || sessions::eligible_rigs(&rigs, agent, &store, &current)).await.map_err(io::Error::other)?;
                 }
@@ -1586,10 +1714,13 @@ impl Chats {
             dormant: false,
             rigs: Vec::new(),
             ended: None,
+            gone: false,
+            continuation: None,
             landing: None,
             parent: None,
             duty: None,
             draft: Some(text),
+            draft_images: Vec::new(),
             shell_context: Vec::new(),
             ..source
         };
@@ -1802,7 +1933,10 @@ impl Chats {
                 }
                 Event::Item(index, mut item) => {
                     transform_item(&self.data_dir, &cwd, &mut item);
-                    if let Item::User { text, .. } = &item { self.retitle(&entry, text, false); }
+                    if let Item::User { text, template, .. } = &item {
+                        let typed = if template.as_deref() == Some("continued") { text.trim_start_matches("/continued") } else { text };
+                        self.retitle(&entry, typed, false);
+                    }
                     let mut transcript = entry.transcript.lock().unwrap();
                     if matches!(&item, Item::User { .. }) { transcript.recoverable = false; }
                     let shells = matches!(&item, Item::Command { .. } | Item::Subagent { .. });
@@ -2047,7 +2181,7 @@ impl Chats {
         let Some(entry) = self.get(id) else { return };
         let mut transcript = entry.transcript.lock().unwrap();
         let mut chat = entry.chat.lock().unwrap();
-        if chat.ended.is_some() || (chat.closing && chat.dormant) { return; }
+        if (chat.dormant && (chat.ended.is_some() || chat.gone)) || (chat.closing && chat.dormant) { return; }
         if chat.dormant {
             chat.draft = None;
             while chat.queued_images.len() < chat.queued.len() { chat.queued_images.push(Vec::new()); }
@@ -2063,7 +2197,7 @@ impl Chats {
         if let Some(handoff) = transcript.handoff.take() {
             let _ = handoff.reply.send(Err(io::Error::other("Handoff cancelled because another message was sent.")));
         }
-        if chat.draft.take().is_some() {
+        if chat.draft.take().is_some() | !std::mem::take(&mut chat.draft_images).is_empty() {
             let project_id = chat.project_id.clone();
             self.save(&entry, chat);
             let _ = self.changed.send(Change::Chats(project_id));
@@ -2084,10 +2218,15 @@ impl Chats {
         let mut chat = entry.chat.lock().unwrap();
         chat.create_epic = text.strip_prefix("/create-epic")
             .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(transcript.items.len());
+        let continuation = chat.continuation.take();
         self.save(entry, chat);
         transcript.reported = Status::Working;
         transcript.recoverable = false;
-        entry.driver().send(&templates::expand(text, &self.data_dir), images);
+        let expanded = templates::expand(text, &self.data_dir);
+        match continuation {
+            Some(path) => entry.driver().send(&templates::continued(&path, &expanded), images),
+            None => entry.driver().send(&expanded, images),
+        }
     }
 
     pub fn shell(&self, id: &str, command: &str) {
@@ -2241,7 +2380,7 @@ impl Chats {
         };
         let transcript = entry.transcript.lock().unwrap();
         let mut chat = entry.chat.lock().unwrap();
-        if !chat.dormant || chat.ended.is_some() || transcript.starting { return; }
+        if !chat.dormant || chat.ended.is_some() || chat.gone || transcript.starting { return; }
         *chat.settings.get_mut(setting) = Some(value);
         chat.settings.mark_pending(setting);
         let (id, settings) = (chat.id.clone(), chat.settings.clone());
@@ -2422,10 +2561,14 @@ impl Chat {
             dormant: false,
             rigs: Vec::new(),
             ended: None,
+            gone: false,
+            continued_from: None,
+            continuation: None,
             landing: None,
             parent: None,
             duty: None,
             draft: None,
+            draft_images: Vec::new(),
             shell_context: Vec::new(),
             disabled_tools: rig.disabled_tools.clone(),
         })
@@ -2470,6 +2613,56 @@ fn first_line(text: &str) -> String {
     let mut line: String = text.lines().next().unwrap_or_default().chars().take(200).collect();
     if line.len() < text.len() { line.push('…'); }
     line
+}
+
+/// A conversation's messages and Activity summaries as Markdown, for the Chat that continues it to read.
+fn context(title: &str, agent: Agent, items: &[Item], data_dir: &Path) -> String {
+    let (agent, media) = (Rig::starter(agent).name, data_dir.join("media"));
+    let located = |url: &str| url.strip_prefix("/api/media/").map_or_else(|| url.to_owned(), |asset| media.join(asset).display().to_string());
+    let mut markdown = format!("# {title}\n");
+    let (mut speaker, mut listing) = (None, false);
+    for item in items {
+        let (user, lines) = match item {
+            Item::User { text, images, image_urls, .. } => {
+                let mut block = text.clone();
+                for url in image_urls { block.push_str(&format!("\n\nImage: {}", located(url))); }
+                let unavailable = images.saturating_sub(image_urls.len());
+                if unavailable > 0 { block.push_str(&format!("\n\n({unavailable} image{} unavailable)", if unavailable == 1 { "" } else { "s" })); }
+                (true, vec![block.trim_start().to_owned()])
+            }
+            Item::Text { text, .. } => (false, vec![text.clone()]),
+            Item::Tools { calls } => (false, calls.iter().map(|call| format!("- {} {}", call.name, call.detail).trim_end().to_owned()).collect()),
+            Item::Edit { path, added, write: true, .. } => (false, vec![format!("- Wrote {path} (+{added})")]),
+            Item::Edit { path, added, removed, .. } => (false, vec![format!("- Edited {path} (+{added} −{removed})")]),
+            Item::Canvas { canvas, added, removed, .. } => (false, vec![format!("- Edited canvas {canvas} (+{added} −{removed})")]),
+            Item::Command { command, .. } | Item::Shell { command, .. } => (false, vec![format!("- Ran `{}`", command.trim().replace('\n', " "))]),
+            Item::Media { title, asset } => (false, vec![format!("- Showed {title}: {}", media.join(asset).display())]),
+            Item::Html { title, .. } => (false, vec![format!("- Rendered {title}")]),
+            Item::Subagent { task, name, .. } => (false, vec![format!("- Subagent: {}", if task.is_empty() { name.as_deref().unwrap_or("Subagent") } else { task })]),
+            Item::Notice { text, .. } => (false, vec![format!("- {text}")]),
+            Item::Thinking { .. } => continue,
+        };
+        if lines.is_empty() { continue; }
+        let list = !matches!(item, Item::User { .. } | Item::Text { .. });
+        if speaker != Some(user) {
+            markdown.push_str(&format!("\n## {}\n\n", if user { "User" } else { agent.as_str() }));
+            speaker = Some(user);
+        } else {
+            markdown.push_str(if list && listing { "\n" } else { "\n\n" });
+        }
+        markdown.push_str(&lines.join("\n"));
+        listing = list;
+    }
+    markdown.push('\n');
+    markdown
+}
+
+/// Directories an Agent reads beyond its working directory without asking: its Chat's scratch and the media store,
+/// which hold a messages-as-context Fork's context file and the images it names.
+fn readable(data_dir: &Path, env: &BTreeMap<String, String>) -> Vec<PathBuf> {
+    let media = data_dir.join("media");
+    let _ = fs::create_dir_all(&media);
+    env.get("STAMPEDE_SCRATCH").map(PathBuf::from).into_iter().chain([media]).collect()
 }
 
 fn record_path(data_dir: &Path, id: &str) -> PathBuf {

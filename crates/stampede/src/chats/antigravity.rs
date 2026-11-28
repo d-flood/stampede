@@ -78,9 +78,10 @@ struct Connection {
 }
 
 impl Connection {
-    async fn open(cwd: &Path, env: &BTreeMap<String, String>, full_access: bool) -> io::Result<Self> {
+    async fn open(cwd: &Path, env: &BTreeMap<String, String>, full_access: bool, readable: &[PathBuf]) -> io::Result<Self> {
         let mut command = Command::new(executable(env));
         command.arg("acp");
+        for directory in readable { command.arg("--add-dir").arg(directory); }
         if full_access { command.arg("--dangerously-skip-permissions"); }
         let mut child = command.current_dir(cwd).envs(env)
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
@@ -201,7 +202,7 @@ pub async fn usage(env: &BTreeMap<String, String>) -> io::Result<Vec<Reading>> {
 }
 
 pub async fn options(cwd: &Path, env: &BTreeMap<String, String>, settings: &AgentSettings) -> io::Result<(Vec<Value>, AgentSettings)> {
-    let connection = Connection::open(cwd, env, false).await?;
+    let connection = Connection::open(cwd, env, false, &[]).await?;
     let mut connection = connection;
     let result = connection.call("session/new", json!({ "cwd": cwd, "mcpServers": [] }), &mut Vec::new()).await.map(|session| {
         let options = session["configOptions"].as_array().cloned().unwrap_or_default();
@@ -223,7 +224,7 @@ pub(super) struct Catalogue(Connection);
 
 impl Catalogue {
     pub(super) async fn open(cwd: &Path, env: &BTreeMap<String, String>) -> io::Result<Self> {
-        Ok(Self(Connection::open(cwd, env, false).await?))
+        Ok(Self(Connection::open(cwd, env, false, &[]).await?))
     }
 
     pub(super) async fn list(&mut self) -> io::Result<Vec<NativeSession>> {
@@ -306,7 +307,7 @@ async fn establish(
     full_access: bool,
     session: Option<String>,
 ) -> io::Result<(Connection, Value, Vec<Value>)> {
-    let mut connection = Connection::open(&cwd, &env, full_access).await?;
+    let mut connection = Connection::open(&cwd, &env, full_access, &super::readable(&data_dir, &env)).await?;
     let config = html::config(&data_dir, &chat_id);
     let servers = json!([{ "name": html::SERVER, "command": config["command"], "args": config["args"], "env": [] }]);
     let mut held = Vec::new();
@@ -1382,8 +1383,8 @@ for line in sys.stdin:
             plan_resolved: None, status: Status::Done, closing: false, activity: None, background: false,
             running: Vec::new(), viewed_since_done: true, context: None, tokens: None, settings: Settings::default(),
             queued: Vec::new(), queue_revision: 0, queued_images: Vec::new(), create_epic: None, todos: Vec::new(),
-            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, rigs: Vec::new(), ended: None, landing: None, parent: None,
-            duty: None, draft: None, shell_context: Vec::new(), disabled_tools: Vec::new(),
+            answered_questions: Vec::new(), handoff_from: None, forked_from: None, forking: false, dormant: false, rigs: Vec::new(), ended: None, gone: false, continued_from: None, continuation: None, landing: None, parent: None,
+            duty: None, draft: None, draft_images: Vec::new(), shell_context: Vec::new(), disabled_tools: Vec::new(),
         };
 
         let env = BTreeMap::from([

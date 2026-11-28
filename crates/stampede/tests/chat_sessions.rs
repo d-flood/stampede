@@ -527,6 +527,53 @@ async fn without_a_rig_a_session_opens_with_its_agents_defaults() {
     }
 }
 
+#[tokio::test]
+async fn an_ended_session_continues_in_a_new_chat_with_its_messages_as_context() {
+    let config = format!("{RIGS}\n[[rig]]\nname = \"fresh codex\"\nagent = \"codex\"\ncommand = \"codex\"\nenv = {{ STAMPEDE_FAKE_FIXTURE = \"simple-turn\" }}\n");
+    let (server, mut socket, project_id) = start(&config, Vec::new()).await;
+    fs::write(server.root.path().join("home/.claude/settings.json"), r#"{"cleanupPeriodDays":2}"#).unwrap();
+    let path = sessions(&server).join(format!("{GRILL}.jsonl"));
+    write_history(&path, &[
+        json!({ "type": "user", "uuid": "first", "parentUuid": null, "message": { "role": "user", "content": "First prompt" } }),
+        json!({ "type": "assistant", "uuid": "one", "parentUuid": "first", "message": { "role": "assistant", "id": "one", "content": [{"type": "text", "text": "firstreply"}] } }),
+        json!({ "type": "user", "uuid": "second", "parentUuid": "one", "message": { "role": "user", "content": "Second prompt" } }),
+        json!({ "type": "assistant", "uuid": "two", "parentUuid": "second", "message": { "role": "assistant", "id": "two", "content": [{"type": "text", "text": "secondreply"}] } }),
+    ]);
+    touch(&path, 1_500_000_000);
+    search(&mut socket, &project_id, "secondreply", |results| results.len() == 1).await;
+    fs::remove_file(&path).unwrap();
+    let ended = search(&mut socket, &project_id, "secondreply", |results| results.first().is_some_and(|result| result["ended"] == "aged")).await;
+    control(&mut socket, json!({ "type": "chat.open", "projectId": project_id, "key": ended[0]["key"] })).await;
+    let source = next_control(&mut socket, "chat.created").await["chat"].clone();
+    let source_id = source["id"].as_str().unwrap();
+    let second = attach(&mut socket, source_id).await.iter().position(|item| item["text"] == "Second prompt").unwrap();
+    let context = |chat: &Value| fs::read_to_string(chat["continuation"].as_str().unwrap()).unwrap();
+    let openings = |server: &Server| -> Vec<String> {
+        received(server).iter().filter(|message| message["method"] == "turn/start").map(|message| message["params"]["input"][0]["text"].as_str().unwrap().to_owned()).collect()
+    };
+    let opening = |chat: &Value, typed: &str| format!("{}\n\n{typed}", include_str!("../src/templates/continued.md").trim_end().replace("{path}", chat["continuation"].as_str().unwrap()));
+
+    control(&mut socket, json!({ "type": "chat.continue", "chatId": source_id, "rig": "fresh codex", "text": "Carry on" })).await;
+    let continued = next_control(&mut socket, "chat.created").await["chat"].clone();
+    assert_eq!((&continued["rig"], &continued["forkedFrom"], &continued["projectId"]), (&json!("fresh codex"), &source["id"], &project_id));
+    assert!(continued["continuation"].as_str().unwrap().ends_with("/continued.md"));
+    let written = context(&continued);
+    for said in ["First prompt", "firstreply", "Second prompt", "secondreply"] { assert!(written.contains(said), "{said} missing from {written}"); }
+    timeout(Duration::from_secs(15), async { while openings(&server).is_empty() { tokio::time::sleep(Duration::from_millis(50)).await; } }).await.expect("the continued Chat never started a turn");
+    assert_eq!(openings(&server), [opening(&continued, "Carry on")]);
+    close_chat(&mut socket, server.root.path(), continued["id"].as_str().unwrap()).await;
+
+    control(&mut socket, json!({ "type": "chat.continue", "chatId": source_id, "rig": "fresh codex", "index": second })).await;
+    let forked = next_control(&mut socket, "chat.created").await["chat"].clone();
+    assert_eq!(forked["draft"], "Second prompt");
+    let written = context(&forked);
+    assert!(written.contains("firstreply") && !written.contains("Second prompt") && !written.contains("secondreply"), "{written}");
+    assert_eq!(openings(&server).len(), 1);
+    assert_eq!(turn(&mut socket, forked["id"].as_str().unwrap(), "Second prompt").await, ["working", "done"]);
+    assert_eq!(openings(&server).last().unwrap(), &opening(&forked, "Second prompt"));
+    for chat in [&forked, &source] { close_chat(&mut socket, server.root.path(), chat["id"].as_str().unwrap()).await; }
+}
+
 /// A server whose home holds the fixture Claude sessions, with a Device on the home Project.
 async fn start(config: &str, mut env: Vec<(&'static str, OsString)>) -> (Server, Socket, Value) {
     let path = format!("{}/tests/fake:{}", env!("CARGO_MANIFEST_DIR"), env::var("PATH").unwrap());

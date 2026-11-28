@@ -42,6 +42,18 @@ pub const COMMIT: &str = include_str!("templates/commit.md");
 pub const HANDOFF: Template =
     Template { name: "handoff", description: "prepare context for a new Chat", text: include_str!("templates/handoff.md") };
 
+/// Opens a messages-as-context Fork, naming the file that holds the earlier conversation in place of `{path}`.
+const CONTINUED: &str = include_str!("templates/continued.md").trim_ascii_end();
+
+/// The first message of a messages-as-context Fork: the opening, then what was typed.
+pub fn continued(path: &Path, typed: &str) -> String {
+    let opening = CONTINUED.replace("{path}", &path.display().to_string());
+    match typed.trim() {
+        "" => opening,
+        _ => format!("{opening}\n\n{typed}"),
+    }
+}
+
 pub const STAMPEDE: &str = include_str!("templates/stampede.md").trim_ascii_end();
 
 pub mod tools {
@@ -89,6 +101,9 @@ pub fn expand<'a>(text: &'a str, data_dir: &Path) -> Cow<'a, str> {
 
 /// The Template a sent text was expanded from, and the text as it was typed.
 pub fn recognize(text: &str, data_dir: &Path) -> Option<(&'static str, String)> {
+    if let Some(typed) = continuation(text) {
+        return Some(("continued", typed.map_or_else(|| "/continued".to_owned(), |typed| format!("/continued {typed}"))));
+    }
     TEMPLATES.iter().chain([&TICKETS, &TICKET, &RESOLVER, &REVIEWER, &REMEDIATOR, &HANDOFF]).find_map(|template| {
         let typed = text.strip_prefix(&template.opening(data_dir))?;
         Some(match typed {
@@ -96,4 +111,15 @@ pub fn recognize(text: &str, data_dir: &Path) -> Option<(&'static str, String)> 
             typed => (template.name, format!("/{} {}", template.name, typed.strip_prefix("\n\n")?)),
         })
     })
+}
+
+/// What was typed after a `continued` opening, whose path varies by Chat; `Some(None)` when nothing was.
+fn continuation(text: &str) -> Option<Option<&str>> {
+    let (before, after) = CONTINUED.split_once("{path}")?;
+    let (path, typed) = text.strip_prefix(before)?.split_once(after)?;
+    if !path.starts_with('/') || path.contains('\n') { return None; }
+    match typed {
+        "" => Some(None),
+        typed => Some(Some(typed.strip_prefix("\n\n")?)),
+    }
 }

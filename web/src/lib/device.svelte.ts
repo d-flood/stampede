@@ -139,8 +139,13 @@ export type Chat = {
 	rigs?: string[];
 	/** Why its Session can never resume. */
 	ended?: Ended;
+	/** The Session's directory no longer exists, so it continues only in a new Chat. */
+	gone?: true;
+	/** The title of the Session whose messages this Chat received as context. */
+	continuedFrom?: string;
 	landing?: { item?: number; query?: string };
 	draft?: string;
+	draftImages?: string[];
 };
 
 export type Reading = { agent: Agent; window: 'five-hour' | 'weekly' | 'monthly' | 'session'; group?: { name: string; short: string }; used?: number; consumption?: { amount: number; unit: 'credits' | 'requests' | 'tokens' }; chatId?: string; sessionId?: string; partial?: boolean; startsAt?: number; resetsAt?: number; readAt: number };
@@ -243,6 +248,7 @@ export type ServerMessage =
 	| { type: 'chat.handoff.error'; chatId: string; error: string }
 	| { type: 'chat.open.error'; projectId: string; error: string }
 	| { type: 'chat.fork.error'; chatId: string; error: string }
+	| { type: 'chat.continue.error'; chatId: string; error: string }
 	| { type: 'chat.moved'; chatId: string; chat: Chat }
 	| { type: 'chat.move.error'; chatId: string; error: string }
 	| { type: 'chats.changed'; projectId: string; chats: Chat[] }
@@ -303,6 +309,7 @@ export type ClientMessage =
 	| { type: 'chat.move'; chatId: string; branch: string }
 	| { type: 'chat.fork'; chatId: string; index: number }
 	| { type: 'chat.rig'; chatId: string; rig: string }
+	| { type: 'chat.continue'; chatId: string; rig: string; index?: number; text?: string; images?: Image[] }
 	| { type: 'chat.open'; projectId: string; key: SessionKey; item?: number; query?: string }
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'sessions.search'; searchId: string; projectId: string; query: string }

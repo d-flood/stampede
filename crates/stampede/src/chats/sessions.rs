@@ -35,6 +35,16 @@ pub enum Ended {
     Missing,
 }
 
+impl Ended {
+    fn name(self) -> &'static str {
+        match self {
+            Ended::Aged => "aged",
+            Ended::Cloud => "cloud",
+            Ended::Missing => "missing",
+        }
+    }
+}
+
 /// What a Dormant Chat shows of its Session.
 pub struct Snapshot {
     pub title: String,
@@ -335,6 +345,7 @@ impl Sessions {
                         let chat = match event {
                             Ok(Lifecycle::Session(id, _)) | Ok(Lifecycle::Status(id, Status::Done)) => chats.session_chat(&id),
                             Ok(Lifecycle::Ended(chat)) => Some(*chat),
+                            Ok(Lifecycle::Missing(_, key)) => { service.archive_missing(key); None }
                             Ok(_) => None,
                             Err(broadcast::error::RecvError::Lagged(_)) => { service.refresh(); service.notify(); None },
                             Err(broadcast::error::RecvError::Closed) => break,
@@ -367,6 +378,31 @@ impl Sessions {
                 Ok(true) => service.notify(),
                 Ok(false) => (),
                 Err(error) => eprintln!("cannot prune Ended Sessions: {error}"),
+            }
+        });
+    }
+
+    /// Moves a Session whose Agent has no history of it into the archive.
+    fn archive_missing(self: &Arc<Self>, key: SessionKey) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            let archived = service.write(move |index, archive| {
+                let store = (key.agent, key.store.clone());
+                let row = index.query_row("SELECT session_id, directory, project, title, updated_at, revision FROM sessions WHERE agent=? AND store=? AND session_id=?",
+                    params![key.agent.name(), key.store, key.session_id], |row| Ok(Row {
+                        session_id: row.get(0)?, directory: row.get(1)?, project: row.get(2)?, title: row.get(3)?, updated_at: row.get(4)?, revision: row.get(5)?,
+                    })).optional().map_err(io::Error::other)?;
+                let Some(row) = row else { return Ok(false) };
+                let transaction = index.transaction().map_err(io::Error::other)?;
+                archive_session(&transaction, archive, &store, &row, Ended::Missing)?;
+                transaction.execute("DELETE FROM sessions WHERE agent=? AND store=? AND session_id=?", params![key.agent.name(), key.store, key.session_id]).map_err(io::Error::other)?;
+                transaction.commit().map_err(io::Error::other)?;
+                Ok(true)
+            }).await;
+            match archived {
+                Ok(true) => service.notify(),
+                Ok(false) => (),
+                Err(error) => eprintln!("cannot archive a missing Session: {error}"),
             }
         });
     }
@@ -688,19 +724,20 @@ impl Sessions {
         let config = self.config.borrow().clone();
         let projects = self.projects.list();
         let (directory, ended, agent, store) = (snapshot.directory.clone(), snapshot.ended, key.agent, key.store.clone());
-        let (rig, rigs, cwd, project) = tokio::task::spawn_blocking(move || {
+        let (rig, rigs, cwd, project, gone) = tokio::task::spawn_blocking(move || {
             let cwd = PathBuf::from(directory);
-            if ended.is_none() && !cwd.is_dir() { return Err(io::Error::other("The Session's directory no longer exists.")); }
+            let gone = !cwd.is_dir();
+            let resumable = ended.is_none() && !gone;
             let rig = matching_rig(&config.rigs, agent, &store, None)
-                .or_else(|| ended.map(|_| config.rigs.iter().find(|rig| rig.agent == agent).cloned().unwrap_or_else(|| Rig::starter(agent))))
+                .or_else(|| (!resumable).then(|| config.rigs.iter().find(|rig| rig.agent == agent).cloned().unwrap_or_else(|| Rig::starter(agent))))
                 .ok_or_else(|| io::Error::other("No Rig matches the Session's history store."))?;
-            let rigs = if ended.is_none() { eligible_rigs(&config.rigs, agent, &store, &rig.name) } else { Vec::new() };
+            let rigs = if resumable { eligible_rigs(&config.rigs, agent, &store, &rig.name) } else { Vec::new() };
             let project = projects.iter().find(|entry| entry.path == cwd.to_string_lossy())
                 .or_else(|| projects.iter().find(|entry| entry.id == project)).cloned()
                 .ok_or_else(|| io::Error::other("The Project is not open."))?;
-            Ok::<_, io::Error>((rig, rigs, cwd, project))
+            Ok::<_, io::Error>((rig, rigs, cwd, project, gone))
         }).await.map_err(io::Error::other)??;
-        chats.open_dormant(&project.id, &cwd, &rig, rigs, &key, snapshot, landing)
+        chats.open_dormant(&project.id, &cwd, &rig, rigs, &key, snapshot, landing, gone)
     }
 
     /// The Session's snapshot, rebuilt first when it is missing or stale.
@@ -956,7 +993,7 @@ fn replace(index: &mut Connection, archive: &mut Connection, key: &Store, rows: 
     for (id, old) in previous {
         if target.is_none_or(|target| target == id) && !seen.contains(&id) && directories.as_ref().is_none_or(|dirs| dirs.contains(&old.directory)) {
             if key.0 == Agent::ClaudeCode && old.updated_at < (super::now() as i64).saturating_sub(cleanup_days(&key.1).saturating_sub(1) * 86_400_000) {
-                archive_session(&transaction, archive, key, &old)?;
+                archive_session(&transaction, archive, key, &old, Ended::Aged)?;
             }
             transaction.execute("DELETE FROM sessions WHERE agent = ? AND store = ? AND session_id = ?", params![key.0.name(), key.1, id]).map_err(io::Error::other)?;
             changed = true;
@@ -980,18 +1017,18 @@ fn cleanup_days(store: &str) -> i64 {
         .or_else(|| days(&Path::new(store).join("settings.json"))).unwrap_or(30).min(i64::MAX / 86_400_000)
 }
 
-fn archive_session(index: &Connection, archive: &mut Connection, key: &Store, row: &Row) -> io::Result<()> {
+fn archive_session(index: &Connection, archive: &mut Connection, key: &Store, row: &Row, ended: Ended) -> io::Result<()> {
     let (id, snapshot_revision): (i64, Option<String>) = index.query_row(
         "SELECT id, snapshot_revision FROM sessions WHERE agent=? AND store=? AND session_id=?",
         params![key.0.name(), key.1, row.session_id], |row| Ok((row.get(0)?, row.get(1)?))).map_err(io::Error::other)?;
     let transaction = archive.transaction().map_err(io::Error::other)?;
     let archived: i64 = transaction.query_row("
         INSERT INTO sessions(agent, store, session_id, directory, project, title, updated_at, revision, snapshot_revision, ended, ended_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'aged', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(agent, store, session_id) DO UPDATE SET directory=excluded.directory, project=excluded.project,
         title=excluded.title, updated_at=excluded.updated_at, revision=excluded.revision, snapshot_revision=excluded.snapshot_revision
         RETURNING id",
-        params![key.0.name(), key.1, row.session_id, row.directory, row.project, row.title, row.updated_at, row.revision, snapshot_revision, super::now() as i64],
+        params![key.0.name(), key.1, row.session_id, row.directory, row.project, row.title, row.updated_at, row.revision, snapshot_revision, ended.name(), super::now() as i64],
         |row| row.get(0)).map_err(io::Error::other)?;
     transaction.execute("DELETE FROM snapshots WHERE session=?", [archived]).map_err(io::Error::other)?;
     transaction.execute("DELETE FROM messages WHERE session=?", [archived]).map_err(io::Error::other)?;

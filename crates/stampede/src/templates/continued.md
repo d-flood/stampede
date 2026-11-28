@@ -1,0 +1,1 @@
+This Chat continues an earlier conversation. {path} holds that conversation's messages, from the user and the Agent, with one-line summaries of the Agent's activity, but no tool results, file contents or reasoning. Read it as needed to pick up where it left off.
