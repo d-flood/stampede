@@ -4,4 +4,5 @@ Each Terminal lives in its own small process that the server reattaches to, so A
 
 - Stampede will be developed with Agents running inside it, so server restarts will be constant.
 - A Host reboot still ends Terminals; their history returns as Ended Terminals with Resume.
+- An Update may rarely end running Terminals and Chats, once speaking to every older holder becomes untenable, and says so before the user confirms it.
 - Rejected: Terminals owned directly by the server, because every upgrade would kill every Agent.

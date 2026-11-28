@@ -74,6 +74,16 @@ _Avoid_: dead terminal, zombie
 A slide-in panel of Terminals that belong to no Project, for quick commands.
 _Avoid_: global terminal, quake terminal, scratch terminal
 
+### Releases
+
+**Release**:
+A numbered, published build of Stampede; there is one line of Releases, each newer than the last.
+_Avoid_: version, build, Landing, channel, nightly, stable
+
+**Update**:
+Replacing a Host's Stampede with a newer Release.
+_Avoid_: upgrade, rebuild, reload
+
 ### Agents
 
 **Agent**:
@@ -101,7 +111,7 @@ An Agent's own record of one conversation, kept in its native history whether a 
 _Avoid_: past chat, conversation, thread, transcript, history
 
 **Dormant**:
-True of a Chat whose Agent has not started: it shows its Session's conversation, and its Agent starts when David sends a message or forks it.
+True of a Chat whose Agent has not started: it shows its Session's conversation, and its Agent starts when the user sends a message or forks it.
 _Avoid_: preview, read-only, inactive, idle, asleep
 
 **Ended Session**:
@@ -125,7 +135,7 @@ Instructions Stampede owns and sends as part of a prompt, such as a Ticket's fir
 _Avoid_: skill, prompt file, command
 
 **Clip**:
-Text David saves and reuses, inserted at the caret in any Composer by typing `;` and its name, and editable there before sending; unlike a Template, Stampede never expands or recognizes it.
+Text the user saves and reuses, inserted at the caret in any Composer by typing `;` and its name, and editable there before sending; unlike a Template, Stampede never expands or recognizes it.
 _Avoid_: snippet, macro, canned prompt, saved prompt, skill
 
 **Rig**:
@@ -201,7 +211,7 @@ A credit from an Agent's provider that restarts a Usage window early when redeem
 _Avoid_: reset credit, refill
 
 **Note**:
-A durable message an Agent or David attaches to a Ticket: a decision, an answer the Ticket asked for, or a hand-off. Stampede attaches its own, and a refused Landing becomes a Note on the Epic.
+A durable message an Agent or the user attaches to a Ticket: a decision, an answer the Ticket asked for, or a hand-off. Stampede attaches its own, and a refused Landing becomes a Note on the Epic.
 _Avoid_: comment, log, message
 
 **Setup Command**:
@@ -213,7 +223,7 @@ The git worktree one Ticket is worked in, cut from its Epic's branch.
 _Avoid_: workspace, sandbox, checkout
 
 **Integration Worktree**:
-The one worktree on an Epic's branch, into which finished Tickets merge one at a time and which David inspects before Landing.
+The one worktree on an Epic's branch, into which finished Tickets merge one at a time and which the user inspects before Landing.
 _Avoid_: main worktree, staging
 
 **Resolver**:
@@ -251,7 +261,7 @@ An indication beside a line in the editor that it differs from the most recent c
 _Avoid_: git decoration, dirty marker
 
 **Regroup**:
-Squashing runs of consecutive commits on the current branch, each run chosen by David, into one commit apiece, keeping their order and the branch's final tree.
+Squashing runs of consecutive commits on the current branch, each run chosen by the user, into one commit apiece, keeping their order and the branch's final tree.
 _Avoid_: interactive rebase, autosquash
 
 **Sync merge**:
@@ -285,11 +295,11 @@ True of a Draft comment whose line changed when the Source moved, so it can't be
 _Avoid_: outdated, orphaned, stale
 
 **Suggested**:
-True of a Draft comment a Chat wrote, until David accepts or edits it; it can't be sent until then or deleted.
+True of a Draft comment a Chat wrote, until the user accepts or edits it; it can't be sent until then or deleted.
 _Avoid_: proposed, AI comment, agent comment
 
 **Viewed**:
-True of a file in a PR review that David has marked as looked at, until the Source changes it.
+True of a file in a PR review that the user has marked as looked at, until the Source changes it.
 _Avoid_: reviewed, seen, read
 
 ### Layout
