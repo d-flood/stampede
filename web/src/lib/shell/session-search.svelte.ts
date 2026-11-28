@@ -5,6 +5,9 @@ import { onMount } from 'svelte';
 /** Where a finder searches: its Device's Host, for a Project, whose Sessions count under `focus`. */
 export type Searching = { device: Device; projectId: string; focus: string };
 
+/** The narrowest finder, in CSS pixels, with room for a preview pane beside its results: the Launchpad has it, the Chat list popover doesn't. */
+export const PANE_MIN = 600;
+
 export function sessionKey({ key }: Session): string {
 	return `${key.agent}:${key.store}:${key.sessionId}`;
 }

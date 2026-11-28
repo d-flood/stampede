@@ -15,6 +15,7 @@
 		type Attention,
 		type Chat,
 		type Epic,
+		type FoundSession,
 		type Item,
 		type Project,
 		type Reading,
@@ -162,6 +163,7 @@
 	let branching = $state<Project>();
 	let creatingWorktree = $state(false);
 	let palette = $state<Scope>();
+	let paletteWide = $state(false);
 	let tabTarget = $state<string>();
 	let afterPalette: (() => void) | undefined;
 	let unfocused = $state(false);
@@ -771,8 +773,8 @@
 		}, hostOf(projectId));
 	}
 
-	function reopen(projectId: string, { key }: Session) {
-		devices.of(projectId).send({ type: 'chat.open', projectId, key });
+	function reopen(projectId: string, session: Session | FoundSession, query?: string) {
+		devices.of(projectId).send({ type: 'chat.open', projectId, key: session.key, item: query && 'item' in session ? session.item : undefined, query });
 	}
 
 	function searching(projectId: string): Searching {
@@ -785,18 +787,18 @@
 	}
 
 	/** Focuses the Chat driving a Session, or resumes it in its Project, opening that first if it's closed. */
-	function resume(session: Session) {
+	function resume(session: Session | FoundSession, query?: string) {
 		const chat = session.chatId ? allChats.find((chat) => chat.id === session.chatId) : undefined;
 		if (chat) return attend(chat.projectId, chat.id);
 		const projectId = session.project.id;
 		if (projects.some((project) => project.id === projectId)) {
 			chosen = projectId;
-			return reopen(projectId, session);
+			return reopen(projectId, session, query);
 		}
 		if (hostOf(projectId)) return;
 		open(session.project.path).then((opened) => {
 			if (opened.error) openError = opened.error;
-			else if (opened.projectId) reopen(opened.projectId, session);
+			else if (opened.projectId) reopen(opened.projectId, session, query);
 		});
 	}
 
@@ -1749,6 +1751,7 @@
 <Dialog
 	bind:open={() => !!palette, (open) => !open && (palette = undefined)}
 	bare
+	wide={paletteWide}
 	oncloseautofocus={finishTabSelection}
 	title={{ all: 'Command Palette', files: 'Open File', sessions: 'Past Sessions', tabs: 'New Tab' }[palette ?? 'all']}
 >
@@ -1771,7 +1774,8 @@
 					onrig={(launcher) => (launch(launcher), (palette = undefined))}
 					onfile={(path) => focused && (openFile(focused.id, path), (palette = undefined))}
 					onchat={(chat) => ((afterPalette = () => attend(chat.projectId, chat.id)), (palette = undefined))}
-					onsession={(session) => ((afterPalette = () => resume(session)), (palette = undefined))}
+					onsession={(session, query) => ((afterPalette = () => resume(session, query)), (palette = undefined))}
+					bind:wide={paletteWide}
 				/>
 			{/key}
 		{/await}

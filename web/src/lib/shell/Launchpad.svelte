@@ -19,7 +19,7 @@
 <script lang="ts">
 	import Chips from '#lib/chat/Chips.svelte';
 	import { defaultMode, modes } from '#lib/config.svelte.ts';
-	import type { Chat, Session, Setting, Settings } from '#lib/device.svelte.ts';
+	import type { Chat, FoundSession, Session, Setting, Settings } from '#lib/device.svelte.ts';
 	import type { Git } from '#lib/git.ts';
 	import { form } from '#lib/form.ts';
 	import ChatFinder from '#lib/shell/ChatFinder.svelte';
@@ -54,7 +54,7 @@
 		waiting: Chat[];
 		labels: Map<string, string>;
 		onread: () => void;
-		onsession(session: Session): void;
+		onsession(session: Session | FoundSession, query?: string): void;
 		onchat(chat: Chat): void;
 	};
 

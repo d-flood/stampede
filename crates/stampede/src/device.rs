@@ -99,6 +99,8 @@ enum Control {
     ListSessions { project_id: String },
     #[serde(rename = "sessions.search")]
     SearchSessions { search_id: String, project_id: String, query: String },
+    #[serde(rename = "sessions.preview")]
+    PreviewSession { preview_id: String, key: SessionKey, item: Option<usize> },
     #[serde(rename = "chat.send")]
     SendChat {
         chat_id: String,
@@ -640,6 +642,18 @@ impl Device {
             }
             Control::ListSessions { project_id } => self.list_sessions(project_id),
             Control::SearchSessions { search_id, project_id, query } => self.search_sessions(search_id, project_id, query),
+            Control::PreviewSession { preview_id, key, item } => {
+                let sessions = self.sessions.clone();
+                let outgoing = self.outgoing.clone();
+                tokio::spawn(async move {
+                    let (items, focus) = sessions.preview(key.clone(), item).await.unwrap_or_else(|error| {
+                        eprintln!("cannot preview Session: {error}");
+                        (Vec::new(), 0)
+                    });
+                    let items: Vec<Value> = items.into_iter().map(brief).collect();
+                    send(&outgoing, json!({ "type": "sessions.preview", "previewId": preview_id, "key": key, "items": items, "focus": focus }));
+                });
+            }
             Control::SendChat { chat_id, text, queue, images } => self.chats.send(&chat_id, &text, queue, &images),
             Control::InterruptChat { chat_id } => self.chats.interrupt(&chat_id),
             Control::UnqueueChat { chat_id, index, revision } => {

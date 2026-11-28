@@ -252,6 +252,7 @@ export type ServerMessage =
 	| { type: 'chat.meters'; chatId: string; context: Context | null; tokens: Tokens | null }
 	| { type: 'sessions.listed'; projectId: string; sessions: Session[]; coverage: Coverage }
 	| { type: 'sessions.found'; searchId: string; results: FoundSession[]; coverage: Coverage }
+	| { type: 'sessions.preview'; previewId: string; key: SessionKey; items: Item[]; focus: number }
 	| { type: 'chat.todos'; chatId: string; todos: Todo[] }
 	| { type: 'chat.queued'; chatId: string; queued: string[]; revision: number }
 	| { type: 'chat.unqueued'; chatId: string; text: string; images: Image[] }
@@ -301,6 +302,7 @@ export type ClientMessage =
 	| { type: 'chat.open'; projectId: string; key: SessionKey; item?: number; query?: string }
 	| { type: 'sessions.list'; projectId: string }
 	| { type: 'sessions.search'; searchId: string; projectId: string; query: string }
+	| { type: 'sessions.preview'; previewId: string; key: SessionKey; item?: number }
 	| { type: 'chat.send'; chatId: string; text: string; queue: boolean; images?: Image[] }
 	| { type: 'chat.unqueue'; chatId: string; index: number; revision: number }
 	| { type: 'chat.shell'; chatId: string; command: string }
